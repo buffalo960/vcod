@@ -1410,6 +1410,12 @@ pub struct ProbeHold {
     pub forward: i8,
     /// `--probe-uo-weapon aim`: every cmd at the newest snapshot's view.
     pub aim: bool,
+    /// Cmds 16, 16 and 18 ms apart, the last on a frame's time and sent
+    /// after that frame has run, as the net probe's ran in the captures
+    /// that log them (`CMDS` lines), in place of an even [`PROBE_CMD_MS`]:
+    /// a drop's airborne prone body is the one its last airborne cmd
+    /// starts at (cod15-movement.md 4).
+    pub framed: bool,
 }
 
 /// `--probe-cmd-ms`'s default.
@@ -1430,9 +1436,18 @@ impl ProbeHold {
         let da =
             ["delta_angles[0]", "delta_angles[1]", "delta_angles[2]"].map(|n| s.ps.field_i32(p, n));
         let mut t = self.last.max(s.server_time - FRAME_MS as i32);
+        let mut times = Vec::new();
+        if self.framed {
+            let f = s.server_time;
+            times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
+        } else {
+            while t + PROBE_CMD_MS <= s.server_time + FRAME_MS as i32 {
+                t += PROBE_CMD_MS;
+                times.push(t);
+            }
+        }
         let mut out = Vec::new();
-        while t + PROBE_CMD_MS <= s.server_time + FRAME_MS as i32 {
-            t += PROBE_CMD_MS;
+        for &t in &times {
             out.push(UserCmd {
                 server_time: t,
                 angles: std::array::from_fn(|i| {
@@ -1444,7 +1459,7 @@ impl ProbeHold {
                 ..UserCmd::default()
             });
         }
-        self.last = t;
+        self.last = times.last().copied().unwrap_or(t);
         out
     }
 }

@@ -2094,8 +2094,17 @@ carriers against the section 19 captures.
 
 - **Bounce.** `G_BounceMissile` (0x5d6e5) reflects the velocity at the
   impact time and scales all of it by 0.4 (.rodata 0xa17a4), 0.1 (0xa17a0)
-  in water or off a surface with flag 0x2000000; 1.1's keeps 0.75 along the
-  surface and 0.3 off it (cod11-combat.md 12.4). The rest test (normal z
+  in water or when `tr+0x20` holds 0x2000000 (`and` at 0x5d841); 1.1's
+  keeps 0.75 along the surface and 0.3 off it (cod11-combat.md 12.4).
+  INFERRED: `tr+0x20` is the trace's `contents` (`G_RunMissile` reads the
+  material bits 0x1f00000 off `tr+0x1c`, the surface flags), so 0x2000000
+  is `CONTENTS_BODY`: a frag off a player keeps a tenth. VERIFIED, live
+  (retail UO 1.51b, 2026-10-16, `mp_carentan-scriptmodel-prone-rest-uo.txt`):
+  a frag that strikes a prone player's back moves under 3 units a frame
+  after it, strikes him again 8 units lower and slides off him to the
+  floor. vcod
+  took 0.4 off a player before 2026-10-16 and threw the frag 50 units up
+  (`a_frag_strikes_a_prone_players_back_on_uo`). The rest test (normal z
   over 0.7, speed under 20), the 0.1 nudge and the 100 units/s event gate
   are 1.1's (VERIFIED decompile and constants). `G_MissileImpact`
   (0x5db67) bounces off a player that takes damage with no event when the

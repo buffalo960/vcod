@@ -1,0 +1,390 @@
+# Retail United Offensive 1.51b dedicated server, 2026-10-16: the PROBE
+# lines of client-probes/probe_scriptmodel's prone part on mp_carentan, then
+# the target's FALL lines that carry his prone body (fTorsoHeight,
+# fTorsoPitch, fWaistPitch, proneDirection), then the thrower's VEH missile
+# lines (each snapshot's eType 4 entities, the base's bits and
+# groundEntityNum).
+# COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<abs> PORT=31997 SECS=48 tools/run_probe.sh client-probes/probe_scriptmodel mp_carentan +set probe_part prone
+# vcod --net-probe 127.0.0.1:31997 --game-dir <UO install> --mod-dir uo --probe-team axis --probe-fall --probe-fall-prone 225 --probe-secs 36   # 10 s in
+# vcod --net-probe 127.0.0.1:31997 --game-dir <UO install> --mod-dir uo --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon throw --probe-secs 28   # 3 s later
+# The target lies at 225 with the body his drop left (-0.134, 0, -0.0055); the first frag strikes his back at z -10.67 (his number its ground), strikes him again at -18.96 and slides off him to rest on the floor (1022) before he is moved. The second rests on the floor.
+PROBE site 1050 (1368.00, 2608.00, -23.75) (1549.02, 2789.02, -23.75) 45
+PROBE shooter 18300 170 1368 2608 -23.852
+PROBE gren 18300 170 (1368.00, 2608.00, 36.15)
+PROBE gren 18350 170 (1398.95, 2638.95, 21.55)
+PROBE gren 18400 170 (1429.90, 2669.90, 4.95)
+PROBE gren 18450 170 (1455.87, 2695.88, -10.67)
+PROBE gren 18500 170 (1457.80, 2698.38, -8.08)
+PROBE gren 18550 170 (1459.73, 2700.89, -7.49)
+PROBE gren 18600 170 (1461.66, 2703.39, -8.90)
+PROBE gren 18650 170 (1463.59, 2705.89, -12.31)
+PROBE gren 18700 170 (1465.51, 2708.39, -17.72)
+PROBE gren 18750 170 (1465.88, 2708.73, -18.96)
+PROBE gren 18800 170 (1466.45, 2708.35, -20.25)
+PROBE gren 18850 170 (1466.51, 2708.26, -20.36)
+PROBE gren 18900 170 (1466.58, 2708.16, -20.59)
+PROBE gren 18950 170 (1466.63, 2708.08, -20.78)
+PROBE gren 19000 170 (1466.68, 2708.00, -20.96)
+PROBE gren 19050 170 (1466.72, 2707.92, -21.14)
+PROBE gren 19100 170 (1466.77, 2707.84, -21.32)
+PROBE gren 19150 170 (1466.82, 2707.76, -21.50)
+PROBE gren 19200 170 (1466.87, 2707.68, -21.68)
+PROBE gren 19250 170 (1466.92, 2707.60, -21.86)
+PROBE gren 19300 170 (1466.96, 2707.52, -22.05)
+PROBE gren 19350 170 (1467.01, 2707.44, -22.23)
+PROBE gren 19400 170 (1467.06, 2707.36, -22.41)
+PROBE gren 19450 170 (1467.11, 2707.28, -22.59)
+PROBE gren 19500 170 (1467.16, 2707.20, -22.77)
+PROBE gren 19550 170 (1467.20, 2707.12, -22.95)
+PROBE gren 19600 170 (1467.25, 2707.04, -23.13)
+PROBE gren 19650 170 (1467.26, 2707.03, -22.38)
+PROBE rest 19700 170 (1467.26, 2707.03, -22.38)
+PROBE gren 19700 170 (1467.26, 2707.03, -22.38)
+PROBE gren 19750 170 (1467.26, 2707.03, -22.38)
+PROBE gren 19800 170 (1467.26, 2707.03, -22.38)
+PROBE gren 19850 170 (1467.26, 2707.03, -22.38)
+PROBE gren 19900 170 (1467.26, 2707.03, -22.38)
+PROBE gren 19950 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20000 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20050 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20100 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20150 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20200 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20250 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20300 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20350 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20400 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20450 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20500 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20550 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20600 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20650 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20700 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20750 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20800 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20850 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20900 170 (1467.26, 2707.03, -22.38)
+PROBE gren 20950 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21000 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21050 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21100 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21150 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21200 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21250 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21300 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21350 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21400 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21450 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21500 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21550 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21600 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21650 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21700 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21750 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21800 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21850 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21900 170 (1467.26, 2707.03, -22.38)
+PROBE gren 21950 170 (1467.26, 2707.03, -22.38)
+PROBE gren 22000 170 (1467.26, 2707.03, -22.38)
+PROBE gren 22050 170 (1467.26, 2707.03, -22.38)
+PROBE gren 22100 170 (1467.26, 2707.03, -22.38)
+PROBE gren 22150 170 (1467.26, 2707.03, -22.38)
+PROBE gren 22200 170 (1467.26, 2707.03, -22.38)
+PROBE gren 22250 170 (1467.26, 2707.03, -22.38)
+PROBE hit 22250 allies dmg 73 mod MOD_GRENADE_SPLASH loc none
+PROBE gren 22300 170 (1467.00, 2707.00, -22.00)
+PROBE gren 22350 170 (1467.00, 2707.00, -22.00)
+PROBE gren 22400 170 (1467.00, 2707.00, -22.00)
+PROBE gren 22450 170 (1467.00, 2707.00, -22.00)
+PROBE gren 22500 170 (1467.00, 2707.00, -22.00)
+PROBE gren 22550 170 (1467.00, 2707.00, -22.00)
+PROBE gren 22600 170 (1467.00, 2707.00, -22.00)
+PROBE shooter 25300 171 1368 2608 -23.852
+PROBE gren 25300 171 (1368.00, 2608.00, 36.15)
+PROBE gren 25350 171 (1398.95, 2638.95, 21.55)
+PROBE gren 25400 171 (1429.90, 2669.90, 4.95)
+PROBE gren 25450 171 (1460.85, 2700.85, -13.65)
+PROBE gren 25500 171 (1476.21, 2716.21, -22.38)
+PROBE gren 25550 171 (1488.59, 2728.59, -15.53)
+PROBE gren 25600 171 (1500.97, 2740.97, -10.69)
+PROBE gren 25650 171 (1513.35, 2753.35, -7.85)
+PROBE gren 25700 171 (1525.73, 2765.73, -7.01)
+PROBE gren 25750 171 (1538.11, 2778.11, -8.17)
+PROBE gren 25800 171 (1550.49, 2790.49, -11.34)
+PROBE gren 25850 171 (1562.87, 2802.87, -16.50)
+PROBE gren 25900 171 (1575.25, 2815.25, -22.38)
+PROBE gren 25950 171 (1580.20, 2820.20, -20.80)
+PROBE gren 26000 171 (1583.78, 2823.88, -21.11)
+PROBE gren 26050 171 (1581.79, 2825.86, -22.48)
+PROBE gren 26100 171 (1580.97, 2826.68, -22.38)
+PROBE gren 26150 171 (1580.18, 2827.47, -22.43)
+PROBE gren 26200 171 (1579.62, 2828.03, -22.38)
+PROBE rest 26250 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26250 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26300 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26350 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26400 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26450 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26500 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26550 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26600 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26650 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26700 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26750 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26800 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26850 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26900 171 (1579.62, 2828.03, -22.38)
+PROBE gren 26950 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27000 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27050 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27100 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27150 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27200 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27250 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27300 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27350 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27400 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27450 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27500 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27550 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27600 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27650 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27700 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27750 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27800 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27850 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27900 171 (1579.62, 2828.03, -22.38)
+PROBE gren 27950 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28000 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28050 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28100 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28150 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28200 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28250 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28300 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28350 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28400 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28450 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28500 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28550 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28600 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28650 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28700 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28750 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28800 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28850 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28900 171 (1579.62, 2828.03, -22.38)
+PROBE gren 28950 171 (1579.62, 2828.03, -22.38)
+PROBE gren 29000 171 (1579.62, 2828.03, -22.38)
+PROBE gren 29050 171 (1579.62, 2828.03, -22.38)
+PROBE gren 29100 171 (1579.62, 2828.03, -22.38)
+PROBE gren 29150 171 (1579.62, 2828.03, -22.38)
+PROBE gren 29200 171 (1579.62, 2828.03, -22.38)
+PROBE gren 29250 171 (1579.62, 2828.03, -22.38)
+PROBE hit 29250 allies dmg 19 mod MOD_GRENADE_SPLASH loc none
+PROBE gren 29300 171 (1579.00, 2828.00, -22.00)
+PROBE gren 29350 171 (1579.00, 2828.00, -22.00)
+PROBE gren 29400 171 (1579.00, 2828.00, -22.00)
+PROBE gren 29450 171 (1579.00, 2828.00, -22.00)
+PROBE gren 29500 171 (1579.00, 2828.00, -22.00)
+PROBE gren 29550 171 (1579.00, 2828.00, -22.00)
+PROBE gren 29600 171 (1579.00, 2828.00, -22.00)
+FALL t=14300 ct=14282 origin=1435.882,2675.882,-23.740 vel=0,0,-40 ground=1023 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.66853523,0,-0.005493164 dir=-135
+FALL t=14350 ct=14332 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14500 ct=14482 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1768 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14550 ct=14548 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1702 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14600 ct=14582 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1668 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14650 ct=14632 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1618 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14700 ct=14682 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1568 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14750 ct=14732 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1518 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14800 ct=14782 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1468 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14850 ct=14832 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1418 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14900 ct=14882 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1368 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=14950 ct=14932 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1318 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15000 ct=14982 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1268 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15050 ct=15048 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1202 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15100 ct=15082 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1168 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15150 ct=15132 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1118 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15200 ct=15182 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1068 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15250 ct=15232 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1018 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15300 ct=15282 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=968 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15350 ct=15332 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=918 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15400 ct=15382 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=868 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15450 ct=15448 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=802 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15500 ct=15466 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=784 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15550 ct=15548 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=702 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15600 ct=15582 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=668 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15650 ct=15632 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=618 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15700 ct=15682 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=568 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15750 ct=15732 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=518 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15800 ct=15782 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=468 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15850 ct=15832 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=418 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15900 ct=15882 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=368 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=15950 ct=15948 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=302 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16000 ct=15966 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=284 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16050 ct=16048 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=202 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16100 ct=16082 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=168 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16150 ct=16132 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=118 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16200 ct=16182 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=68 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16250 ct=16232 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=18 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=16300 ct=16282 origin=1435.882,2675.882,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=186 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=19750 ct=19732 origin=1300.118,2540.118,-151.391 vel=0,0,-33 ground=1023 pm_type=0 pm_flags=0x48001 pm_time=0 health=100 seq=189 events=[141,140,141,141] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+FALL t=19800 ct=19782 origin=1300.118,2540.118,-151.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=190 events=[141,141,141,141] parms=[0,0,0,0] prone=-0.1341343,0,-0.005493164 dir=-135
+VEH 18300 missile 170 type 5 base 1368.000 2608.000 36.148 bits 0x44ab0000 0x45230000 0x4210978e ground 1023 weapon 18
+VEH 18350 missile 170 type 5 base 1368.000 2608.000 36.148 bits 0x44ab0000 0x45230000 0x4210978e ground 1023 weapon 18
+VEH 18400 missile 170 type 5 base 1455.873 2695.883 -10.673 bits 0x44b5fbee 0x45287e21 0xc12ac5c0 ground 0 weapon 18
+VEH 18450 missile 170 type 5 base 1455.873 2695.883 -10.673 bits 0x44b5fbee 0x45287e21 0xc12ac5c0 ground 1023 weapon 18
+VEH 18500 missile 170 type 5 base 1455.873 2695.883 -10.673 bits 0x44b5fbee 0x45287e21 0xc12ac5c0 ground 1023 weapon 18
+VEH 18550 missile 170 type 5 base 1455.873 2695.883 -10.673 bits 0x44b5fbee 0x45287e21 0xc12ac5c0 ground 1023 weapon 18
+VEH 18600 missile 170 type 5 base 1455.873 2695.883 -10.673 bits 0x44b5fbee 0x45287e21 0xc12ac5c0 ground 1023 weapon 18
+VEH 18650 missile 170 type 5 base 1455.873 2695.883 -10.673 bits 0x44b5fbee 0x45287e21 0xc12ac5c0 ground 1023 weapon 18
+VEH 18700 missile 170 type 5 base 1465.879 2708.729 -18.957 bits 0x44b73c23 0x45294bab 0xc197a775 ground 1023 weapon 18
+VEH 18750 missile 170 type 5 base 1465.879 2708.729 -18.957 bits 0x44b73c23 0x45294bab 0xc197a775 ground 1023 weapon 18
+VEH 18800 missile 170 type 5 base 1466.512 2708.264 -20.362 bits 0x44b75063 0x45294439 0xc1a2e528 ground 1023 weapon 18
+VEH 18850 missile 170 type 5 base 1466.578 2708.165 -20.592 bits 0x44b75280 0x452942a3 0xc1a4bd6e ground 1023 weapon 18
+VEH 18900 missile 170 type 5 base 1466.627 2708.083 -20.777 bits 0x44b75414 0x45294156 0xc1a63780 ground 1023 weapon 18
+VEH 18950 missile 170 type 5 base 1466.676 2708.003 -20.959 bits 0x44b7559f 0x4529400d 0xc1a7abc7 ground 1023 weapon 18
+VEH 19000 missile 170 type 5 base 1466.724 2707.923 -21.140 bits 0x44b75729 0x45293ec5 0xc1a91f2b ground 1023 weapon 18
+VEH 19050 missile 170 type 5 base 1466.772 2707.843 -21.321 bits 0x44b758b3 0x45293d7d 0xc1aa923b ground 1023 weapon 18
+VEH 19100 missile 170 type 5 base 1466.820 2707.763 -21.503 bits 0x44b75a3d 0x45293c35 0xc1ac054d ground 1023 weapon 18
+VEH 19150 missile 170 type 5 base 1466.868 2707.683 -21.684 bits 0x44b75bc7 0x45293aed 0xc1ad7860 ground 1023 weapon 18
+VEH 19200 missile 170 type 5 base 1466.916 2707.603 -21.865 bits 0x44b75d51 0x452939a5 0xc1aeeb73 ground 1023 weapon 18
+VEH 19250 missile 170 type 5 base 1466.964 2707.523 -22.046 bits 0x44b75edb 0x4529385d 0xc1b05e85 ground 1023 weapon 18
+VEH 19300 missile 170 type 5 base 1467.012 2707.443 -22.227 bits 0x44b76065 0x45293715 0xc1b1d199 ground 1023 weapon 18
+VEH 19350 missile 170 type 5 base 1467.060 2707.363 -22.409 bits 0x44b761ef 0x452935cd 0xc1b344ab ground 1023 weapon 18
+VEH 19400 missile 170 type 5 base 1467.109 2707.282 -22.590 bits 0x44b76379 0x45293485 0xc1b4b7bd ground 1023 weapon 18
+VEH 19450 missile 170 type 5 base 1467.157 2707.202 -22.771 bits 0x44b76503 0x4529333d 0xc1b62ad1 ground 1023 weapon 18
+VEH 19500 missile 170 type 5 base 1467.205 2707.122 -22.952 bits 0x44b7668d 0x452931f5 0xc1b79de3 ground 1023 weapon 18
+VEH 19550 missile 170 type 5 base 1467.253 2707.042 -23.133 bits 0x44b76817 0x452930ad 0xc1b910f5 ground 1023 weapon 18
+VEH 19600 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19650 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19700 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19750 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19800 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19850 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19900 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 19950 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20000 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20050 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20100 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20150 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20200 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20250 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20300 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20350 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20400 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20450 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20500 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20550 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20600 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20650 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20700 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20750 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20800 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20850 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20900 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 20950 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21000 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21050 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21100 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21150 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21200 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21250 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21300 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21350 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21400 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21450 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21500 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21550 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21600 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21650 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21700 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21750 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21800 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21850 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21900 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 21950 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 22000 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 22050 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 22100 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 22150 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 22200 missile 170 type 0 base 1467.263 2707.026 -22.375 bits 0x44b76868 0x4529306a 0xc1b30000 ground 1022 weapon 18
+VEH 25300 missile 171 type 5 base 1368.000 2608.000 36.148 bits 0x44ab0000 0x45230000 0x4210978e ground 1023 weapon 18
+VEH 25350 missile 171 type 5 base 1368.000 2608.000 36.148 bits 0x44ab0000 0x45230000 0x4210978e ground 1023 weapon 18
+VEH 25400 missile 171 type 5 base 1368.000 2608.000 36.148 bits 0x44ab0000 0x45230000 0x4210978e ground 1023 weapon 18
+VEH 25450 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1022 weapon 18
+VEH 25500 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25550 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25600 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25650 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25700 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25750 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25800 missile 171 type 5 base 1476.209 2716.209 -22.375 bits 0x44b886b3 0x4529c35a 0xc1b30000 ground 1023 weapon 18
+VEH 25850 missile 171 type 5 base 1575.249 2815.250 -22.375 bits 0x44c4e7fb 0x452ff3fe 0xc1b30000 ground 1022 weapon 18
+VEH 25900 missile 171 type 5 base 1575.249 2815.250 -22.375 bits 0x44c4e7fb 0x452ff3fe 0xc1b30000 ground 1023 weapon 18
+VEH 25950 missile 171 type 5 base 1583.775 2823.875 -21.114 bits 0x44c5f8cd 0x45307e00 0xc1a8e886 ground 1023 weapon 18
+VEH 26000 missile 171 type 5 base 1583.775 2823.875 -21.114 bits 0x44c5f8cd 0x45307e00 0xc1a8e886 ground 1023 weapon 18
+VEH 26050 missile 171 type 5 base 1580.969 2826.681 -22.375 bits 0x44c59f05 0x4530aae4 0xc1b30000 ground 1022 weapon 18
+VEH 26100 missile 171 type 5 base 1580.969 2826.681 -22.375 bits 0x44c59f05 0x4530aae4 0xc1b30000 ground 1023 weapon 18
+VEH 26150 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26200 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26250 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26300 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26350 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26400 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26450 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26500 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26550 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26600 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26650 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26700 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26750 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26800 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26850 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26900 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 26950 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27000 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27050 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27100 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27150 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27200 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27250 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27300 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27350 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27400 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27450 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27500 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27550 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27600 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27650 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27700 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27750 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27800 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27850 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27900 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 27950 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28000 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28050 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28100 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28150 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28200 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28250 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28300 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28350 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28400 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28450 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28500 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28550 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28600 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28650 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28700 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28750 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28800 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28850 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28900 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 28950 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 29000 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 29050 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 29100 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 29150 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
+VEH 29200 missile 171 type 0 base 1579.620 2828.030 -22.375 bits 0x44c573d8 0x4530c07a 0xc1b30000 ground 1022 weapon 18
