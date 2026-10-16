@@ -398,6 +398,10 @@ pub struct ClientSim {
     /// it, which a follower numbered below this client copies; `None` on a
     /// frame without one. Dropped after the frame's snapshots.
     pub ring_before_pain: Option<EventRing>,
+    /// The entity state this client's own `ClientEndFrame` left, with the
+    /// frame's time; `None` when it went out unlinked. A client a higher
+    /// slot kills later in the frame is still sent it (combat doc 5.4).
+    pub end_frame_entity: Option<(i32, msg::EntityState)>,
     /// The intermission camera's `ps.commandTime`: `ClientSpawn` puts it
     /// 100 ms behind the spawn's frame and nothing on that arm moves it
     /// (`docs/research/cod11-spectator-follow.md` 13).
@@ -584,6 +588,7 @@ impl ClientSim {
             residue: None,
             end_frame_wire: None,
             ring_before_pain: None,
+            end_frame_entity: None,
             frozen_command_time: None,
         }
     }

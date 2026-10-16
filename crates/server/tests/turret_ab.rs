@@ -273,15 +273,17 @@ impl Rig {
             self.gunner.pump_at(self.now);
             self.gunner.send_frame(&cmd);
         }
+        for ms in TARGET_CMD_MS {
+            self.target.pump_at(start + Duration::from_millis(ms));
+            let mut held = UserCmd {
+                wbuttons: self.target_wbuttons,
+                buttons: self.target_buttons,
+                ..holding(&self.target)
+            };
+            held.angles[0] = deg_to_short(self.target_pitch);
+            self.target.send_frame(&held);
+        }
         self.now = start + Duration::from_millis(FRAME_MS as u64);
-        self.target.pump_at(self.now);
-        let mut held = UserCmd {
-            wbuttons: self.target_wbuttons,
-            buttons: self.target_buttons,
-            ..holding(&self.target)
-        };
-        held.angles[0] = deg_to_short(self.target_pitch);
-        self.target.send_frame(&held);
         if self.gunner_second {
             common::step_pair(
                 &mut self.sv,
@@ -1288,24 +1290,16 @@ const FIXTURE_UO: &str = concat!(
 );
 const LATE_15: &[i32] = &[];
 const LATE_UO: &[i32] = &[];
-/// [`GAPS`] for the 1.5b capture: the killing round's two rows as on 1.1.
+/// [`GAPS`] for the 1.5b capture: the killing round's rows as on 1.1.
 const GAPS_15: &[(&str, &str)] = &[
-    (
-        "[target] event t=30100: retail only (187, 47, \"client 0\")",
-        END_FRAME,
-    ),
     (
         "[target] impact t=30100: retail only 174@[1515.0, 1610.0, 22.0",
         KILLING_ROUND,
     ),
     ("[target] impact t=30100: ours only 174@[151", KILLING_ROUND),
 ];
-/// [`GAPS`] for the UO 1.51b capture: the killing round's two rows.
+/// [`GAPS`] for the UO 1.51b capture: the killing round's rows.
 const GAPS_UO: &[(&str, &str)] = &[
-    (
-        "[target] event t=29300: retail only (187, 47, \"client 0\")",
-        END_FRAME,
-    ),
     (
         "[target] impact t=29300: retail only 173@[1515.0, 1610.0, 22.0",
         KILLING_ROUND,
@@ -1327,19 +1321,12 @@ const GAPS: &[(&str, &str)] = &[
     ),
     ("[target] impact t=34900: ours only 174@[151", ENTRY_POINT),
     (
-        "[target] event t=34950: retail only (187, 47, \"client 0\")",
-        END_FRAME,
-    ),
-    (
         "[target] impact t=34950: retail only 174@[1514.0, 1609.0",
         KILLING_ROUND,
     ),
     ("[target] impact t=34950: ours only 174@[151", KILLING_ROUND),
 ];
 
-const END_FRAME: &str = "entity states are built at snapshot time, and a client dead by then \
-    has none: retail copies the victim's state in its own ClientEndFrame, ahead of the \
-    gunner's, so the kill snapshot still carries it with the pain the round before raised";
 const KILLING_ROUND: &str = "the killing round meets a victim the round before knocked back, \
     and lands about 4 units nearer the gun along the ray than retail's; neither half of the capture \
     carries the victim's origin, so whether the knockback or the pose differs is open";
@@ -1347,6 +1334,9 @@ const ENTRY_POINT: &str = "the wounding round enters the target's body a truncat
     off retail's along the same ray: where it enters is the posed bone box the locational \
     trace meets (cod11-combat.md 3.4), whose idle phase runs from the target's spawn, which \
     the two joins do not put at the same time; not the turret";
+/// When in a frame the target's cmds go out: the net probe sends one every
+/// 16 ms of its own clock, three a frame.
+const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
 const ORIGIN_EPS: f32 = 0.25;
 /// Retail's fixture prints angles to 0.1.
 const PRINT_EPS: f32 = 0.05;
