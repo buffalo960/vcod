@@ -42,11 +42,6 @@ const LOOKAT: &str = "tests/fixtures/triggers/mp_carentan-sd-lookat.txt";
 /// to names. The probe run registered the same shaders in the same order.
 const RETAIL_CS: &str = "tests/fixtures/configstrings/mp_carentan-sd.txt";
 
-/// Where the gsc probe put the planter once the charge was down: the
-/// attackers' courtyard spawn, off the defender's sightline. Ours moves it
-/// there too, since a body on the ray is what stopped retail's lookat.
-const PLANTER_PARK: [f32; 3] = [-512.0, 2688.0, -16.0];
-
 const PITCH_CLAMP_SHORT: i32 = 16000;
 
 /// Rows of the plant diff that are known divergences, each a substring of
@@ -169,6 +164,10 @@ fn rig() -> Option<Rig> {
     let fs = Rc::new(fs);
     let mut now = Instant::now();
     let mut sv = Server::new(common::cfg(MAP, "probe_lookat"), now);
+    // As retail's run: after the plant the probe unlinks the planter and
+    // puts it on its spawn, off the defender's sightline. Its other two
+    // teleports land before the rig places the clients itself.
+    sv.set_cvar("probe_teleport", "1");
     sv.overlay_script(PROBE_PATH, &read(PROBE_SRC));
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
@@ -423,11 +422,7 @@ impl Diff {
         ));
     }
 
-    /// One retail trace against our paired snapshot. `motion` compares
-    /// `pm_type`, the ground entity and the origin; the plant's last frame
-    /// turns it off, being the frame the gsc probe unlinked and teleported
-    /// the planter rather than anything retail did (object-model doc, 23.2).
-    #[allow(clippy::too_many_arguments)]
+    /// One retail trace against our paired snapshot.
     fn trace(
         &mut self,
         rig: &Rig,
@@ -436,7 +431,6 @@ impl Diff {
         ms: i64,
         ours: &Ours,
         anchor: [f32; 3],
-        motion: bool,
     ) {
         let p = &PROTOCOL_V1;
         let ps = &ours.ps;
@@ -450,32 +444,26 @@ impl Diff {
                 format!("{:.1},{:.1}", view[0], view[1]),
             );
         }
-        if motion {
-            let pm_type = ps.field_i32(p, "pm_type");
-            if pm_type != t.pm_type {
-                self.row(phase, ms, "pm_type", t.pm_type, pm_type);
-            }
-            // The release window's first frame is the one retail's cmds
-            // still ran linked; ours replays it from a placement instead.
-            let placed = phase == "release" && ms == 0;
-            let ground = ps.field_i32(p, "groundEntityNum");
-            if ground != t.ground && !placed {
-                self.row(phase, ms, "groundEntityNum", t.ground, ground);
-            }
-            // Absolute origins are not comparable (retail slid into its
-            // link); the link's hold is. Retail moves nothing while linked.
-            if t.pm_type == 1 {
-                let moved = dist(ps.origin(p), anchor);
-                let tol = if t.forward != 0 { 2.0 } else { 1.0 };
-                if moved > tol {
-                    self.row(
-                        phase,
-                        ms,
-                        "origin moved while linked",
-                        "0.0",
-                        format!("{moved:.1}"),
-                    );
-                }
+        let pm_type = ps.field_i32(p, "pm_type");
+        if pm_type != t.pm_type {
+            self.row(phase, ms, "pm_type", t.pm_type, pm_type);
+        }
+        let ground = ps.field_i32(p, "groundEntityNum");
+        if ground != t.ground {
+            self.row(phase, ms, "groundEntityNum", t.ground, ground);
+        }
+        // Absolute origins are not comparable (retail slid into its link);
+        // the link's hold is. Retail moves nothing while linked.
+        if t.pm_type == 1 {
+            let moved = dist(ps.origin(p), anchor);
+            if moved > 0.0 {
+                self.row(
+                    phase,
+                    ms,
+                    "origin moved while linked",
+                    "0.0",
+                    format!("{moved:.3}"),
+                );
             }
         }
         let (icon, bar) = icon_and_bar(&ps.arrays.hud_archived);
@@ -581,22 +569,13 @@ impl Diff {
 
 /// Retail trace `t` in `phase`, against our sample at the trace's offset
 /// from the window's first cmd.
-fn diff_phase(
-    diff: &mut Diff,
-    rig: &Rig,
-    fx: &SdFixture,
-    phase: &str,
-    ours: &[Ours],
-    t0: i32,
-    skip_last_motion: bool,
-) {
+fn diff_phase(diff: &mut Diff, rig: &Rig, fx: &SdFixture, phase: &str, ours: &[Ours], t0: i32) {
     let ph = fx.phase(phase);
     let p = &PROTOCOL_V1;
     // Where ours stood when retail's link began: the origin a linked client
     // is held at, since absolute origins differ (retail slid into its link).
     let mut anchor: Option<[f32; 3]> = None;
-    let n = ph.traces.len();
-    for (i, t) in ph.traces.iter().enumerate() {
+    for t in &ph.traces {
         let rel = i64::from(t.server_time - t0);
         let o = paired(ours, rel);
         let a = if t.pm_type == 1 {
@@ -606,13 +585,13 @@ fn diff_phase(
             [0.0; 3]
         };
         let ms = rel - i64::from(ph.traces[0].server_time - t0);
-        diff.trace(rig, phase, t, ms, o, a, !(skip_last_motion && i + 1 == n));
+        diff.trace(rig, phase, t, ms, o, a);
     }
 }
 
 /// The plant: the attacker's `hold1` from the station, then, from where
-/// retail's own client had slid to by the time it pressed again, `release`
-/// and `hold2`. Returns the rig with the charge down. `with_abort` false
+/// retail's own client had slid to by the time it pressed again, the end of
+/// `hold1`, `release` and `hold2`. Returns the rig with the charge down. `with_abort` false
 /// skips `hold1`, so a gate that only needs a charge down is not hostage to
 /// whatever the abort's aftermath does on ours.
 fn plant(rig: &mut Rig, attacker: &SdFixture, with_abort: bool) -> Diff {
@@ -639,21 +618,15 @@ fn plant(rig: &mut Rig, attacker: &SdFixture, with_abort: bool) -> Diff {
         let delta = calibrate(&cmds, &traces);
         rig.place(0, attacker.station.0, attacker.station.1);
         let ours = replay(rig, 0, &cmds, release.traces[0].server_time - 1, delta);
-        diff_phase(
-            &mut diff,
-            rig,
-            attacker,
-            "hold1",
-            &ours,
-            window_base(&cmds),
-            false,
-        );
+        diff_phase(&mut diff, rig, attacker, "hold1", &ours, window_base(&cmds));
     }
 
-    // release and hold2 from retail's own hold2 origin and view.
+    // release and hold2 from retail's own hold2 origin and view, led in by
+    // hold1's last three frames of use so ours runs the release frame's cmds
+    // linked, as retail did (its `groundEntityNum` reads 1023 there).
     let cmds = cmds_in(
         attacker,
-        release.traces[0].server_time,
+        release.traces[0].server_time - 3 * FRAME_MS as i32,
         hold2.traces.last().unwrap().server_time,
     );
     let traces: Vec<&SdTrace> = release.traces.iter().chain(hold2.traces.iter()).collect();
@@ -673,8 +646,8 @@ fn plant(rig: &mut Rig, attacker: &SdFixture, with_abort: bool) -> Diff {
         delta,
     );
     let t0 = window_base(&cmds);
-    diff_phase(&mut diff, rig, attacker, "release", &ours, t0, false);
-    diff_phase(&mut diff, rig, attacker, "hold2", &ours, t0, true);
+    diff_phase(&mut diff, rig, attacker, "release", &ours, t0);
+    diff_phase(&mut diff, rig, attacker, "hold2", &ours, t0);
     assert_eq!(
         rig.sv.script_aborts(),
         Vec::<String>::new(),
@@ -749,8 +722,6 @@ fn the_defuse_and_the_lookat_match_retail_on_mp_carentan() {
             .any(|l| l.starts_with("A;") && l.contains("bomb_plant")),
         "the plant never landed, so there is nothing to defuse"
     );
-    // The planter out of the way, as the gsc probe's teleport did.
-    rig.place(0, PLANTER_PARK, [0.0, 0.0, 0.0]);
 
     let (sweep, defuse) = (defender.phase("sweep"), defender.phase("defuse"));
     let end = defuse.traces.last().unwrap().server_time;
@@ -774,8 +745,8 @@ fn the_defuse_and_the_lookat_match_retail_on_mp_carentan() {
         rows: Vec::new(),
         cs: retail_cs(),
     };
-    diff_phase(&mut diff, &rig, &defender, "sweep", &ours, t0, false);
-    diff_phase(&mut diff, &rig, &defender, "defuse", &ours, t0, false);
+    diff_phase(&mut diff, &rig, &defender, "sweep", &ours, t0);
+    diff_phase(&mut diff, &rig, &defender, "defuse", &ours, t0);
 
     // The lookat: fires per station, retail's off the server log by clock,
     // ours off the frames replayed inside the same station's span.

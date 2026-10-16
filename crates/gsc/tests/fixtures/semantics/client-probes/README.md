@@ -181,8 +181,9 @@ does not get there. Anything after the map name is passed
 to the engine verbatim, which takes its `+set` arguments in any order. Only
 mp_carentan has the two origins; on any other map the spawn thread logs `PROBE
 teleport unsupported <map>` once and does nothing, and the plant-time thread
-returns without a line. `crates/server/tests`'s A/B
-never sets the cvar, since it stands its clients where it wants them itself.
+returns without a line. `crates/server/tests/sd_plant_ab.rs` sets the cvar
+too, for the post-plant planter teleport; it stands its clients where it
+wants them itself after the spawn teleport and the defender's landing.
 
 What the three halves measure between them: how often a lookat fires while a
 player is aimed at it (the server's log says every frame, with no wait gate in

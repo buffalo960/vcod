@@ -401,6 +401,23 @@ pub struct Step {
     /// carry it. Only the fields a gate names are compared; a transient is
     /// not in here at all, since a settled sample cannot hold one.
     pub settled: BTreeMap<String, i32>,
+    /// Where the replay puts the body before the step runs, origin and yaw;
+    /// `None` leaves it where the step before ended. A gate sets it to
+    /// retail's settled spot after a step that walked, since where a walk
+    /// ends is not reproducible.
+    pub place: Option<([f32; 3], f32)>,
+}
+
+impl Step {
+    /// The origin and yaw retail's playerstate settled at by the step's end,
+    /// if its field lines carry them.
+    pub fn settled_place(&self) -> Option<([f32; 3], f32)> {
+        let f = |k: &str| self.settled.get(k).map(|v| f32::from_bits(*v as u32));
+        Some((
+            [f("origin[0]")?, f("origin[1]")?, f("origin[2]")?],
+            f("viewangles[1]")?,
+        ))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -462,6 +479,7 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
                 switch_ms: 0,
                 trace: Vec::new(),
                 settled: BTreeMap::new(),
+                place: None,
             });
             continue;
         }
@@ -656,26 +674,36 @@ pub fn replay_as(
     // is offset by it. A capture's `!input yaw` is relative to the facing its
     // header records.
     let mut yaw_short = 0;
-    if let Some((origin, yaw)) = place {
+    let put = |sv: &mut vcod_server::Server,
+               cl: &mut vcod_common::net::NetClient<ClientEnd>,
+               now: &mut Instant,
+               (origin, yaw): ([f32; 3], f32)| {
         sv.place_client(0, origin, yaw);
-        yaw_short = (yaw * 65536.0 / 360.0) as i32;
         // The client subtracts the `delta_angles` of the snapshot it last
         // saw, so until the placed spawn's has reached it the view it asks
         // for is built against the old one. The capture's own client had
         // three seconds of that; a few frames is enough to converge.
         let settle = UserCmd {
-            angles: [0, yaw_short, 0],
+            angles: [0, (yaw * 65536.0 / 360.0) as i32, 0],
             ..NULL_USERCMD
         };
         for _ in 0..4 {
-            now += Duration::from_millis(FRAME_MS as u64);
+            *now += Duration::from_millis(FRAME_MS as u64);
             cl.send_frame(&settle);
-            self::step(&mut sv, &q, &mut cl, now);
+            self::step(sv, &q, cl, *now);
         }
+    };
+    if let Some(place) = place {
+        put(&mut sv, &mut cl, &mut now, place);
+        yaw_short = (place.1 * 65536.0 / 360.0) as i32;
     }
     let p = proto;
     let mut out = Vec::new();
     for step in steps {
+        if let Some(place) = step.place {
+            put(&mut sv, &mut cl, &mut now, place);
+            yaw_short = (place.1 * 65536.0 / 360.0) as i32;
+        }
         let mut samples = Vec::new();
         // The held input, carrying the weapon byte the probe sent: a byte that
         // differs from `ps.weapon` is a holster request, so a replay that left
