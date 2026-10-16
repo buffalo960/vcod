@@ -74,7 +74,12 @@ pub fn spawn_entities_from_string(
     if world.get("classname").map(String::as_str) != Some("worldspawn") {
         return Err(ErrorKind::BadType("first entity block is not worldspawn"));
     }
-    host.configstrings[CS_NORTHYAW] = worldspawn_northyaw(&world);
+    // `SP_worldspawn` (0x61cec) writes 2, the start time, 3, 4, 14 and 11
+    // in that order; vcod has no `message` or `g_motd` to write.
+    let start = host.allocators.layout().level_start;
+    host.load_write(start, host.level_time_ms.to_string());
+    host.load_write(3, worldspawn_ambient(&world));
+    host.load_write(CS_NORTHYAW, worldspawn_northyaw(&world));
     // `G_ParseScrVehicleInfo` runs ahead of every other alias of the level.
     crate::game::vehicle::load_level(host);
     for block in blocks {
@@ -272,6 +277,15 @@ fn submodel_index(block: &std::collections::HashMap<String, String>) -> Option<u
         .parse()
         .ok()
         .filter(|&n| n > 0)
+}
+
+/// `SP_worldspawn` (0x61cec): `ambienttrack` as `n\\<track>`, or `""` with
+/// no such key (0x61d72..0x61daa). The gametype's `ambientPlay` overwrites it.
+fn worldspawn_ambient(world: &std::collections::HashMap<String, String>) -> String {
+    match world.get("ambienttrack") {
+        Some(v) if !v.is_empty() => format!("n\\{v}"),
+        _ => String::new(),
+    }
 }
 
 /// `SP_worldspawn` (0x61cec): `G_SpawnString("northyaw", "", &out)` then, if

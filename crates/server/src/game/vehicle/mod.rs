@@ -995,6 +995,19 @@ pub fn vehicle_damage(
                 v.phys.jolt(&info, d, 1.0, 0.0, 0.0, now);
             }
         }
+        // Then the driver (`otherEntityNum`, a connected client) takes the
+        // damage as feedback alone: `damage_blood` up by it and
+        // `damage_from` the vehicle's origin less the point, unnormalised,
+        // or no direction when the vehicle is its own attacker. The op skips
+        // a slot with no sim.
+        let driver = host.vehicles.live.get(&id).map_or(-1, |v| v.wire.other);
+        if (0..host.client_bodies.len() as i32).contains(&driver) {
+            let from = (attacker != id).then(|| std::array::from_fn(|i| origin[i] - point[i]));
+            host.client_sim_ops.push((
+                driver as usize,
+                crate::game::host::SimOp::VehiclePain { damage, from },
+            ));
+        }
     }
     notifies
 }

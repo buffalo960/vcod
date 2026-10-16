@@ -21,6 +21,11 @@ pub enum Effect {
     Disconnect,
     Reconnect,
     Quit,
+    /// `record [name]`; no name picks the next free `demoNNNN`.
+    Record(Option<String>),
+    StopRecord,
+    /// `demo <name>`.
+    Demo(String),
     /// A client command for the server: `say`, `say_team`, `cmd <text>`.
     Forward(String),
     /// A command the client does not know. Retail forwards it to the server
@@ -124,6 +129,7 @@ const COMMANDS: &[&str] = &[
     "cmdlist",
     "connect",
     "cvarlist",
+    "demo",
     "disconnect",
     "echo",
     "exec",
@@ -134,12 +140,14 @@ const COMMANDS: &[&str] = &[
     "mp_QuickMessage",
     "quit",
     "reconnect",
+    "record",
     "say",
     "say_team",
     "set",
     "seta",
     "setfromcvar",
     "snd_restart",
+    "stoprecord",
     "toggle",
     "toggleconsole",
     "unbind",
@@ -355,6 +363,9 @@ impl Shell {
         s.register("cl_maxpackets", "30", ARCHIVE);
         s.register("cl_packetdup", "1", ARCHIVE);
         s.register("cl_timeNudge", "0", 0);
+        // 1.5's and UO's cgame records on the server's `C` and stops on its
+        // `D` while this is 1 (cod11-demos.md, "Automatic demos").
+        s.register("cg_autodemo", "0", ARCHIVE);
         // CoDMP.exe registers `password` CVAR_USERINFO, not archived
         // (0x4123ea); the browser's password popup edits it.
         s.register("password", "", USERINFO);
@@ -654,6 +665,14 @@ impl Shell {
             "connect" => match arg(1) {
                 Some(addr) => out.push(Effect::Connect(addr.to_string())),
                 None => print(out, "usage: connect [server]".into()),
+            },
+            // CoDMP.exe 0x40e540, 0x40e430 and 0x40eb40, their usage lines.
+            "record" if tokens.len() > 2 => print(out, "record <demoname>".into()),
+            "record" => out.push(Effect::Record(arg(1).map(str::to_string))),
+            "stoprecord" => out.push(Effect::StopRecord),
+            "demo" => match (arg(1), tokens.len()) {
+                (Some(name), 2) => out.push(Effect::Demo(name.to_string())),
+                _ => print(out, "playdemo <demoname>".into()),
             },
             "say" | "say_team" => out.push(Effect::Forward(line.trim().to_string())),
             "cmd" => out.push(Effect::Forward(args_from(line, 1))),

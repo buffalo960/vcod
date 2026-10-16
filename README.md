@@ -115,7 +115,7 @@ The ones you'll hit first. The full list is in
 [docs/features.md](docs/features.md#what-it-doesnt-do).
 
 - No listen server. Start New Server always runs a separate `vcod-server`.
-- No PunkBuster and no demo recording.
+- No PunkBuster.
 - A mod's UI DLL is ignored. Its menu files work.
 - Audio follows the engine on paper but has had little checking by ear.
 - Visibility draws a bit more than retail on purpose. Retail assumes nobody

@@ -47,6 +47,12 @@ something, the bullet links it.
   and the menus load from the mod's own `ui_mp/menus.txt` and
   `ui_mp/ingame.txt`, each file tried under `cl_language`'s directory first
   (latched, as retail: a change waits for `vid_restart`).
+- `record [name]` writes retail's demo format (`demos/<name>.dm_1` on 1.1,
+  `.dm_2` on 1.5, `.dm_3` on UO; no name counts up from `demo0000`) and
+  `stoprecord` closes it; `demo <name>` plays any of the three back
+  through the online frame, the recorder drawn as a followed player.
+  `cg_autodemo 1` records on a 1.5 or UO server's `autoDemoStart`, as the
+  1.5 cgame does ([cod11-demos.md](research/cod11-demos.md)).
 - Start New Server runs the stock create server menus (game type, the maps
   `mp/*.arena` lists for it, server and game type settings), then starts
   `vcod-server` from the same directory as `vcod` with those settings and
@@ -379,8 +385,13 @@ console.
   stepped stance, the prone body's swing search, the footstep changes,
   `disableWeapon`), and the bobs take the server's bob cvars
   ([cod15-movement.md](research/cod15-movement.md)).
-  PunkBuster servers refuse it (vcod runs no PunkBuster), and `cg_autodemo`
-  and `cg_autoscreenshot` do nothing (no demos or screenshots).
+  PunkBuster servers refuse it (vcod runs no PunkBuster), and
+  `cg_autoscreenshot` does nothing (no screenshots).
+- Demo playback has no `timedemo`, `cl_freezeDemo` or `cl_avidemo`, no
+  `RECORDING` line on screen while recording, and a demo whose map is
+  missing waits on a download that never comes. No demo has yet crossed
+  between vcod and a retail client either way
+  ([cod11-demos.md](research/cod11-demos.md) 7).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
   Neither does retail's.

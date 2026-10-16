@@ -1269,8 +1269,9 @@ impl ClientSim {
                 self.dead_eye = false;
                 // The cmds see the link the last frame's script left, so the
                 // linking frame's run free and the unlinking frame's linked
-                // (object-model doc, 23.2).
-                self.ps.linked = self.link_to.is_some() || self.unseated;
+                // (object-model doc, 23.2). A seat is `pm_type` 1 too, which
+                // keeps its cone off the airborne rate (coduo-vehicles.md 3).
+                self.ps.linked = self.link_to.is_some() || self.seat.is_some() || self.unseated;
                 self.ps.seat = self.seat.map(|s| pmove::VehicleSeat {
                     kind: s.kind,
                     pos: s.pos,
@@ -1694,6 +1695,14 @@ impl ClientSim {
         self.damage.taken = (force * self.max_health + 50) / 100;
         let d = self.ps.origin - Vec3::from(from);
         self.damage.from = (d.length_squared() > 0.0).then(|| d.normalize());
+    }
+
+    /// UO's `Scr_Vehicle_Pain` (game.mp.uo 0x8d1ca) on the vehicle's
+    /// driver: `damage_blood` up by the vehicle's damage and `damage_from`
+    /// as given, not normalised (coduo-vehicles.md 13).
+    pub fn vehicle_pain(&mut self, damage: i32, from: Option<[f32; 3]>) {
+        self.damage.taken += damage;
+        self.damage.from = from.map(Vec3::from);
     }
 
     /// `P_DamageFeedback` (combat doc, section 6), once per frame after the

@@ -83,18 +83,44 @@ fn write_fog(
 }
 
 /// `ambientPlay(alias [, fade])` -> configstring 3 (`GScr_AmbientPlay`
-/// 0x5ae96). The `t` field is `level.time + fade * 1000`
-/// (docs/research/cod11-sound-system.md, "Per gsc call"); an optional second
-/// argument is accepted and dropped, and `t` is written as `0`. Only three
-/// shipped SP scripts pass a fade, no MP map does, and `host.level_time_ms`
-/// is not threaded to this builtin, which is one half of the restart
-/// divergence in docs/research/cod11-map-cycle.md 4.5: a pinned `t` never
-/// moves, so a restart has nothing to rebroadcast for slot 3.
-pub fn ambient_play(cs: &mut [String], cx: &Cx, args: &[Value]) -> Result<Value, ErrorKind> {
+/// 0x5adc4): `n\\<alias>\\t\\<level.time + fade ms>`, the fade's seconds
+/// times 1000 plus 0.5, truncated (docs/research/cod11-sound-system.md, "Per
+/// gsc call"). A restart re-sends slot 3 because `t` moves with the level
+/// clock (map-cycle doc 4.5).
+pub fn ambient_play(
+    cs: &mut [String],
+    level_time_ms: i32,
+    cx: &Cx,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
     debug_assert!(cs.len() > 3, "configstring table shorter than slot 3");
+    let fade_ms = match args {
+        [_] => 0,
+        [_, f] => {
+            let f = floats(
+                std::slice::from_ref(f),
+                "ambientPlay: fade time is a number",
+            )?[0];
+            (f64::from(f) * 1000.0 + 0.5) as i32
+        }
+        _ => {
+            return Err(ErrorKind::BadType(
+                "USAGE: ambientPlay(alias_name, <fadetime>);",
+            ));
+        }
+    };
     let Some(Value::String(a)) = args.first() else {
         return Err(ErrorKind::BadType("ambientPlay needs an alias"));
     };
-    cs[3] = format!("n\\{}\\t\\0", cx.resolve(*a));
+    let alias = cx.resolve(*a);
+    if alias.is_empty() {
+        return Err(ErrorKind::BadType(
+            "ambientPlay: alias name cannot be the empty string... use stop or fade version",
+        ));
+    }
+    if fade_ms < 0 {
+        return Err(ErrorKind::BadType("ambientPlay: fade time must be >= 0"));
+    }
+    cs[3] = format!("n\\{alias}\\t\\{}", level_time_ms.wrapping_add(fade_ms));
     Ok(Value::Undefined)
 }

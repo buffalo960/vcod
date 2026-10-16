@@ -104,6 +104,18 @@ fn holding(cl: &NetClient<common::ClientEnd>, buttons: u8, last: &mut i32) -> Us
 /// Our run of the probe on `map`, the target boarding a `vehicletype`; the
 /// script log. `aim`: the shooter is `--probe-uo-weapon aim`, else `hold`.
 fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)], aim: bool) -> Option<Vec<String>> {
+    ours_after(map, vehicletype, cvars, aim, 0)
+}
+
+/// [`ours`] with the server run alone `late_ms` longer before the clients
+/// join.
+fn ours_after(
+    map: &str,
+    vehicletype: &str,
+    cvars: &[(&str, &str)],
+    aim: bool,
+    late_ms: i64,
+) -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -120,7 +132,7 @@ fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)], aim: bool) -> Opti
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
+    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS + late_ms);
     let (qa, qb) = (
         Rc::new(RefCell::new(Queues::default())),
         Rc::new(RefCell::new(Queues::default())),
@@ -486,16 +498,18 @@ const SILHOUETTE_GAPS: &[(&str, i32, Allowance, &str)] = &[
     (
         "mp_peaks",
         3,
-        Some((1.1, 1)),
-        "the jeep passenger's torso plays the looping `c_mp_torso_stand_alert`, \
-         whose phase rides the seat change's timing (coduo-vehicles.md 13, \"The silhouette\")",
+        Some((0.6, 0)),
+        "the jeep passenger's torso plays the looping `c_mp_torso_stand_alert`: on retail's level \
+         times four of its 30 cells still stop up to 0.57 off retail's (coduo-vehicles.md 13, \
+         \"The silhouette\")",
     ),
     (
         "mp_cassino",
         1,
         None,
-        "the tank driver, never sent and shot only through the open hatch, \
-         stands up to 3 units off retail's (coduo-vehicles.md 13)",
+        "the tank driver, never sent and shot only through the open hatch: on retail's level \
+         times 62 of 90 cells stop up to 6.4 units off retail's and six meet one side only \
+         (coduo-vehicles.md 13)",
     ),
 ];
 
@@ -543,12 +557,17 @@ fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
     }
 }
 
+/// Retail's target joined 18 s into the level and took the first seat at
+/// 29350, ours at 12750 after a plain join: a rider's clips run on level
+/// time, so the silhouettes replay on retail's.
+const LATE_MS: i64 = 16_600;
+
 fn silhouettes(map: &str, vehicletype: &str, fixture: &str) {
     let mut cvars = vec![("probe_aim_sweep", "1"), ("probe_profile", "1")];
     if vehicletype == "willyjeep_mp" {
         cvars.push(("probe_side", "75"));
     }
-    let Some(log) = ours(map, vehicletype, &cvars, true) else {
+    let Some(log) = ours_after(map, vehicletype, &cvars, true, LATE_MS) else {
         return;
     };
     compare_silhouettes(map, fixture, &log);
