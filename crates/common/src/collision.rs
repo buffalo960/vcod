@@ -2429,35 +2429,18 @@ impl CollisionWorld {
             if !tp.touches_segment(s.to_array(), e.to_array()) {
                 return;
             }
-            if self.point_terrain_v22.load(Ordering::Acquire) {
-                if let Some((f, normal, t)) =
-                    self.terrain
-                        .point_clip_v22(&tp, s.to_array(), e.to_array(), trace.fraction)
-                {
-                    trace.fraction = f;
-                    trace.enter = f;
-                    trace.normal = Vec3::from_array(normal);
-                    trace.surface_flags = surface_flags;
-                    trace.hit = Some(Prim::Tri(t));
-                }
-                return;
-            }
-            for t in tp.first..tp.first + tp.count {
-                if self.terrain.degenerate(t) {
-                    continue;
-                }
-                let mt = ModelTri {
-                    tri: self.tris[t as usize],
-                    contents: 0,
-                    surface_flags,
-                };
-                clip_segment_model(
-                    trace,
-                    start + capsule.center,
-                    end + capsule.center,
-                    &mt,
-                    Prim::Tri(t),
-                );
+            let (s, e) = (s.to_array(), e.to_array());
+            let hit = if self.point_terrain_v22.load(Ordering::Acquire) {
+                self.terrain.point_clip_v22(&tp, s, e, trace.fraction)
+            } else {
+                self.terrain.point_clip(&tp, s, e, trace.fraction)
+            };
+            if let Some((f, normal, t)) = hit {
+                trace.fraction = f;
+                trace.enter = f;
+                trace.normal = Vec3::from_array(normal);
+                trace.surface_flags = surface_flags;
+                trace.hit = Some(Prim::Tri(t));
             }
             return;
         }
