@@ -10736,20 +10736,29 @@ impl FallProbe {
         // and a prone body's bend, printed once it is non-zero
         let bend = ["fTorsoHeight", "fTorsoPitch", "fWaistPitch"].map(i);
         key.extend(bend);
+        // and the prone heading, which 1.1's flat body never shows otherwise
         let heading = i("proneDirection");
+        let prone = i("pm_flags") & 1 != 0;
+        key.push(heading * prone as i32);
+        // and the body's clips, which a prone turn changes without a move
+        let anims = [i("legsAnim"), i("torsoAnim")];
+        key.extend(anims);
         if self.last.as_ref() == Some(&key) {
             return;
         }
         self.last = Some(key);
-        let bend = if bend == [0; 3] {
-            String::new()
-        } else {
+        let dir = f32::from_bits(heading as u32);
+        let bend = if bend != [0; 3] {
             let [h, p, w] = bend.map(|b| f32::from_bits(b as u32));
-            format!(" prone={h},{p},{w} dir={}", f32::from_bits(heading as u32))
+            format!(" prone={h},{p},{w} dir={dir}")
+        } else if prone {
+            format!(" dir={dir}")
+        } else {
+            String::new()
         };
         println!(
             "FALL t={} ct={} origin={:.3},{:.3},{:.3} vel={},{},{} ground={} pm_type={} pm_flags=0x{:x} pm_time={} \
-health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]{bend}",
+health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]{bend} legs={} torso={}",
             snap.server_time,
             i("commandTime"),
             f("origin[0]"),
@@ -10772,6 +10781,8 @@ health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]{bend}",
             i("eventParms[1]"),
             i("eventParms[2]"),
             i("eventParms[3]"),
+            anims[0],
+            anims[1],
         );
     }
 }

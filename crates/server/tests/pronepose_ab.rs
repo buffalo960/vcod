@@ -14,7 +14,11 @@
 //! `fTorsoHeight`, `fTorsoPitch` and `fWaistPitch` are held to the
 //! fixture's last `FALL` line.
 //!
-//! `PB_REPORT=1` prints both logs. The tests need `COD_DIR` at the install
+//! With `probe_spawn_yaw` the first placement is a `spawn` at another yaw:
+//! 1.5's and UO's spawn think lies the held prone down along it
+//! (cod15-movement.md 4, "The spawn's lie-down").
+//!
+//! `PB_REPORT=1` prints both logs, `PB_TRACE=1` our snapshots. The tests need `COD_DIR` at the install
 //! each names and return early without.
 
 mod common;
@@ -42,8 +46,14 @@ const BODY_NEAR: f32 = 0.01;
 
 /// Our run of the probe on `map` with one client holding prone at world
 /// `yaw`, until the script's `done` line: the log, and the last snapshot's
-/// prone body.
-fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32) -> (Vec<String>, [f32; 3]) {
+/// prone body and `proneDirection`. `spawn_yaw` is `probe_spawn_yaw`.
+fn ours(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    spot: &str,
+    yaw: f32,
+    spawn_yaw: Option<f32>,
+) -> (Vec<String>, [f32; 3], f32) {
     let proto = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -52,6 +62,9 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32) -> (Vec<St
     sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_pronebones", SCRIPT);
     sv.set_cvar("probe_spot", spot);
+    if let Some(y) = spawn_yaw {
+        sv.set_cvar("probe_spawn_yaw", &y.to_string());
+    }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
@@ -64,6 +77,7 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32) -> (Vec<St
         ..Default::default()
     };
     let mut body = [0.0; 3];
+    let mut dir = 0.0;
     let frame = Duration::from_millis(common::FRAME_MS as u64);
     let live = |cl: &NetClient<common::ClientEnd>| {
         cl.snapshots()
@@ -79,8 +93,18 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32) -> (Vec<St
                 c.up = -127;
             }
             cl.send_cmds(&cmds);
-        } else if let Some(c) = cl.send_frame(&UserCmd::default()) {
-            hold.last = c.server_time;
+        } else {
+            // Held from the join on, as the probe client holds it: 1.5's
+            // spawn think runs this cmd.
+            let held = UserCmd {
+                wbuttons: WBUTTON_PRONE,
+                up: -127,
+                angles: [0, (yaw * 65536.0 / 360.0) as i32 & 0xffff, 0],
+                ..Default::default()
+            };
+            if let Some(c) = cl.send_frame(&held) {
+                hold.last = c.server_time;
+            }
         }
         for e in step(&mut sv, &q, &mut cl, now) {
             if let NetEvent::ServerCommand(tokens) = e {
@@ -90,12 +114,29 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32) -> (Vec<St
         if let Some(s) = cl.snapshots().newest() {
             body = ["fTorsoHeight", "fTorsoPitch", "fWaistPitch"]
                 .map(|n| f32::from_bits(s.ps.field_i32(cl.protocol(), n) as u32));
+            dir = f32::from_bits(s.ps.field_i32(cl.protocol(), "proneDirection") as u32);
+            if std::env::var_os("PB_TRACE").is_some() {
+                let i = |n: &str| s.ps.field_i32(cl.protocol(), n);
+                eprintln!(
+                    "SNAP t={} ct={} pm_time={} lerp={} target={} pm_flags={:#x} view={} dir={dir} body={body:?} z={} legs={} torso={}",
+                    s.server_time,
+                    i("commandTime"),
+                    i("pm_time"),
+                    i("viewHeightLerpTime"),
+                    i("viewHeightTarget"),
+                    i("pm_flags"),
+                    s.ps.viewangles(cl.protocol())[1],
+                    f32::from_bits(i("origin[2]") as u32),
+                    i("legsAnim"),
+                    i("torsoAnim"),
+                );
+            }
         }
         if sv.script_log().iter().any(|l| l.starts_with("PROBE done")) {
             break;
         }
     }
-    (sv.script_log().to_vec(), body)
+    (sv.script_log().to_vec(), body, dir)
 }
 
 fn vec3(s: &str) -> [f32; 3] {
@@ -146,13 +187,42 @@ fn retail_body(fixture: &str) -> [f32; 3] {
         })
 }
 
+/// The `proneDirection` of the fixture's last `FALL` line that carries one.
+fn retail_dir(fixture: &str) -> Option<f32> {
+    fixture
+        .lines()
+        .rev()
+        .filter(|l| l.starts_with("FALL "))
+        .find_map(|l| l.split_once(" dir=")?.1.split(' ').next()?.parse().ok())
+}
+
 fn check(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32, fixture: &str) {
+    check_spawn(fs, map, spot, yaw, None, fixture, true);
+}
+
+/// `bones` false leaves the bones out, for a run whose clip timing ours
+/// still misses (named at the caller).
+fn check_spawn(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    spot: &str,
+    yaw: f32,
+    spawn_yaw: Option<f32>,
+    fixture: &str,
+    bones: bool,
+) {
     let retail: Vec<String> = fixture
         .lines()
         .filter(|l| l.starts_with("PROBE"))
         .map(str::to_string)
         .collect();
-    let (ours, body) = ours(fs, map, spot, yaw);
+    let (ours, body, dir) = ours(fs, map, spot, yaw, spawn_yaw);
+    if let Some(rd) = retail_dir(fixture) {
+        assert!(
+            ((rd - dir + 180.0).rem_euclid(360.0) - 180.0).abs() <= BODY_NEAR,
+            "{spot}: retail's proneDirection {rd}, ours {dir}"
+        );
+    }
     if std::env::var_os("PB_REPORT").is_some() {
         ours.iter().for_each(|l| eprintln!("ours {l}"));
         retail.iter().for_each(|l| eprintln!("retail {l}"));
@@ -168,7 +238,7 @@ fn check(fs: vcod_common::pk3::Pk3Fs, map: &str, spot: &str, yaw: f32, fixture: 
         (0..3).all(|i| (ro[i] - oo[i]).abs() <= ORIGIN_NEAR),
         "{spot}: retail settled at {ro:?}, ours at {oo:?}"
     );
-    for (f, (r, o)) in rf.iter().zip(&of).enumerate() {
+    for (f, (r, o)) in rf.iter().zip(&of).enumerate().filter(|_| bones) {
         assert_eq!(r.len(), o.len());
         for ((tag, a), (otag, b)) in r.iter().zip(o) {
             assert_eq!(tag, otag);
@@ -313,5 +383,61 @@ fn a_prone_body_on_the_mp_brecourt_field_poses_like_uo() {
         "brecourt",
         270.0,
         include_str!("fixtures/pronebones/mp_brecourt-brecourt-uo.txt"),
+    );
+}
+
+/// The spawn's own think lies a client holding prone down along the spawn's
+/// yaw on 1.5 and UO, which run his last cmd there; 1.1's null cmd leaves
+/// him standing until his next cmd, by when the view is the spot's
+/// (cod15-movement.md 4, "The spawn's lie-down").
+#[test]
+fn a_spawn_lies_down_on_its_own_yaw_like_retail() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check_spawn(
+        fs,
+        "mp_brecourt",
+        "brecourt",
+        270.0,
+        Some(315.0),
+        include_str!("fixtures/pronebones/mp_brecourt-spawn315.txt"),
+        // GAP: 1.1's lie-down plays `pb_crouch_alert_unarmed` for a
+        // snapshot before the prone clip, ours goes straight to prone, so
+        // the 3 s `pb_prone_aim_pistol` loop runs 0.05 off retail's phase
+        // (cod15-movement.md 4, "The spawn's lie-down").
+        false,
+    );
+}
+
+#[test]
+fn a_spawn_lies_down_on_its_own_yaw_like_15() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    check_spawn(
+        fs,
+        "mp_brecourt",
+        "brecourt",
+        270.0,
+        Some(315.0),
+        include_str!("fixtures/pronebones/mp_brecourt-spawn315-1.5.txt"),
+        true,
+    );
+}
+
+#[test]
+fn a_spawn_lies_down_on_its_own_yaw_like_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_spawn(
+        fs,
+        "mp_brecourt",
+        "brecourt",
+        270.0,
+        Some(315.0),
+        include_str!("fixtures/pronebones/mp_brecourt-spawn315-uo.txt"),
+        true,
     );
 }

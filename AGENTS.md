@@ -657,7 +657,12 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - On 1.5 and UO a prone body keeps the bend its last airborne cmd sampled
   (cod15-movement.md 4), so a gate that drops a prone body sends the net
   probe's 16/16/18 ms cmds (`ProbeHold::framed`), or its wire body and
-  every bone land a fraction of a unit off retail's.
+  every bone land a fraction of a unit off retail's. Keep it opt-in:
+  forced on, the UO vehicle hit gates and 1.1's prone-rest gate fail.
+- 1.5's and UO's `ClientSpawn` thinks on the client's last cmd, not 1.1's
+  null one (`ClientSim::spawn_cmd`): a client holding prone lies down
+  along the spawn point's yaw before the script turns him (cod15-movement.md
+  4, "The spawn's lie-down").
 - A blast and the touch pass walk `crate::area::AreaTree`, retail's entity
   area tree, so victim and touch order is link history, not entity order. A
   client links through `GameHost::link_client`, everything else through

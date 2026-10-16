@@ -450,6 +450,21 @@ pub struct AnimInputs<'a> {
     pub weapon_class: &'a str,
 }
 
+impl AnimInputs<'_> {
+    /// The `weapons` condition's name: weapon 0 (no name) is `none`, which
+    /// the file's `weapons none` clauses select. VERIFIED, live (1.1d,
+    /// 1.5b, UO 1.51b): an unarmed prone body plays `pb_prone_aim_pistol`
+    /// and an unarmed crouch `pb_crouch_alert_unarmed`
+    /// (player-model-anim-system.md, "Unarmed").
+    fn condition_weapon(&self) -> String {
+        if self.weapon.is_empty() {
+            "none".to_string()
+        } else {
+            self.weapon.to_ascii_lowercase()
+        }
+    }
+}
+
 /// The `EVENTS` block a weapon event raises, or `None` for one the script has
 /// nothing for. Retail's `PM_Weapon` raises `BG_AnimScriptEvent` where it
 /// enters the state (docs/research/cod11-combat.md, sections 1.5, 1.7, 1.8
@@ -692,6 +707,11 @@ impl ClientSim {
         let rules = self.ps.rules;
         self.ps = pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg);
         self.ps.rules = rules;
+        // `ClientSpawn`'s memset leaves `groundEntityNum` 0, not 0x3ff, and
+        // `PM_CheckDuck` runs ahead of the ground trace (1.5 0x28814,
+        // 0x28819): the think's first step takes 1.5's prone press, which
+        // it drops for a body in the air (0x237d6). 1.1's think has no keys.
+        self.ps.on_ground = rules.v15();
         self.pm_type = mode;
         self.delta_angles = spawn_delta_angles(yaw_deg, cmd_angles);
         self.view_angles = view_angles(cmd_angles, self.delta_angles);
@@ -770,7 +790,7 @@ impl ClientSim {
     /// the caller moves up to the frame's clock. The intermission arm runs no
     /// pmove and a dead one keeps the flag, so only a live or spectating spawn
     /// loses `PMF_RESPAWNED` here; a dead one's eye drops those 100 ms. The
-    /// live arm's 100 ms of null-cmd pmove is [`Self::spawn_move`].
+    /// live arm's 100 ms of pmove is [`Self::spawn_move`].
     fn spawn_think(&mut self, world: Option<MoveWorld<'_>>) {
         // The spawn's own `ClientEndFrame` (0x42a75) ahead of the think: its
         // playing and dead arm gives the client its own view at once.
@@ -793,25 +813,41 @@ impl ClientSim {
 
     /// The live and spectating arms of the spawn's own think, which
     /// `spawn_think` leaves to a caller with a world: 100 ms of pmove up to
-    /// `now_ms` on a cmd with no buttons and no move, whose angles are the
-    /// negated `delta_angles` (`ClientSpawn` 0x42a2f..0x42a69), so the spawn
-    /// frame's `viewangles` read 0. It is what puts the standing idle on a
-    /// player's spawn frame (combat doc, 9.2). `pers.cmd` is not that cmd, so
-    /// the client's own angles stay what `set_view_angle` rebases on.
-    pub fn spawn_move(&mut self, world: MoveWorld<'_>, now_ms: i32) {
+    /// `now_ms` on [`Self::spawn_cmd`]. It is what puts the standing idle on
+    /// a player's spawn frame (combat doc, 9.2). The client's own angles stay
+    /// what `set_view_angle` rebases on.
+    pub fn spawn_move(&mut self, world: MoveWorld<'_>, cmd: &UserCmd) {
         if self.pm_type == PmType::Intermission || self.pm_dead {
             return;
         }
-        let cmd = UserCmd {
-            server_time: now_ms,
-            angles: self.delta_angles.map(|a| a.wrapping_neg() & 0xffff),
-            ..msg::NULL_USERCMD
-        };
         let own = self.last_cmd_angles;
-        for (step, dt) in cmd::chop(now_ms.wrapping_sub(SPAWN_THINK_MS as i32), &cmd) {
+        let start = cmd.server_time.wrapping_sub(SPAWN_THINK_MS as i32);
+        for (step, dt) in cmd::chop(start, cmd) {
             self.step(&step, dt, Some(world), &[]);
         }
         self.last_cmd_angles = own;
+    }
+
+    /// The cmd the spawn's think runs, stamped `now_ms`. 1.1's is zeroed,
+    /// with angles the negated `delta_angles` (`ClientSpawn` 0x42a2f..0x42a69),
+    /// so the spawn frame's `viewangles` read 0. 1.5's and UO's is the
+    /// client's last cmd (`trap_GetUsercmd`, 1.5b 0x3cce6, UO 0x45162), keys
+    /// and stance included, at the spawn's view: a client holding prone lies
+    /// down along the spawn's yaw (cod15-movement.md 4, "The spawn's
+    /// lie-down").
+    pub fn spawn_cmd(&self, last: &UserCmd, now_ms: i32) -> UserCmd {
+        if self.ps.rules.v15() {
+            UserCmd {
+                server_time: now_ms,
+                ..*last
+            }
+        } else {
+            UserCmd {
+                server_time: now_ms,
+                angles: self.delta_angles.map(|a| a.wrapping_neg() & 0xffff),
+                ..msg::NULL_USERCMD
+            }
+        }
     }
 
     /// `ClientEndFrame`'s contents write, once per frame before `end_frame`.
@@ -1311,13 +1347,21 @@ impl ClientSim {
         // no walk key, so retail's walk bit is never set and the `walk*`
         // blocks are unreachable; the prone arm never reads that bit at all
         // (@0x326f1), which is why prone moves through `walkprone`.
-        let movetype = match (self.ps.stance, moving, back) {
+        // 1.5's and UO's `PM_Footsteps` take the stance off the stepped eye
+        // target (`PM_GetEffectiveStance`, called at 1.5 0x24c46), so a
+        // lie-down plays the crouch through its first leg.
+        let stance = if self.ps.rules.v15() {
+            self.ps.effective_stance()
+        } else {
+            self.ps.stance
+        };
+        let movetype = match (stance, moving, back) {
             // Retail's 0x322c8 takes the stance straight off `eFlags & 0xC000`
             // for a mounted player, ahead of both the ladder flag and the
             // speed test: a stand gun always plays `idle` however the
             // gunner's residual velocity from before the mount reads
             // (turrets doc, section 10).
-            _ if self.mounted_on.is_some() || linked_idle => match self.ps.stance {
+            _ if self.mounted_on.is_some() || linked_idle => match stance {
                 pmove::Stance::Prone => Movetype::IdleProne,
                 pmove::Stance::Crouch => Movetype::IdleCr,
                 pmove::Stance::Stand => Movetype::Idle,
@@ -1352,7 +1396,7 @@ impl ClientSim {
         let (seat_mounted, vehicle, vehicle_motion) = seat_conditions(self.seat);
         let conditions = Conditions {
             movetype,
-            weapon: inputs.weapon.to_ascii_lowercase(),
+            weapon: inputs.condition_weapon(),
             weapon_class: inputs.weapon_class.to_ascii_lowercase(),
             // The gated flag, not the raw bit: retail feeds
             // `BG_UpdateConditionValue` slot 7 `pm_flags & 0x20`
@@ -1502,7 +1546,7 @@ impl ClientSim {
         };
         Conditions {
             movetype,
-            weapon: inputs.weapon.to_ascii_lowercase(),
+            weapon: inputs.condition_weapon(),
             weapon_class: inputs.weapon_class.to_ascii_lowercase(),
             ads: false,
             strafing: self.strafing,

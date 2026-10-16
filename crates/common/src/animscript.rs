@@ -517,8 +517,8 @@ impl Conditions {
     fn holds(&self, c: &Condition) -> bool {
         let any = |v: &Vec<String>, x: &str| v.iter().any(|s| s == x);
         match c.kind {
-            // `weapons none` is how the file spells an unarmed player, which
-            // is a weapon name no weapon has.
+            // `weapons none` is how the file spells an unarmed player: the
+            // server names weapon 0 `none`.
             CondKind::Weapons => any(&c.values, &self.weapon),
             CondKind::WeaponClass => any(&c.values, &self.weapon_class),
             CondKind::WeaponPosition => self.ads && any(&c.values, "ads"),
