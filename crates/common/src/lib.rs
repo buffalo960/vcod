@@ -9,6 +9,7 @@ pub mod bsp;
 pub mod collision;
 pub mod deform;
 pub mod game_dir;
+pub mod leafwalk;
 pub mod localize;
 pub mod menu;
 pub mod mesh;

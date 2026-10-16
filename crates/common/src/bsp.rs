@@ -31,6 +31,8 @@ const LUMP_PORTALS: usize = 18;
 const LUMP_LIGHT_INDICES: usize = 19;
 const LUMP_NODES: usize = 20;
 const LUMP_LEAFS: usize = 21;
+const LUMP_LEAF_BRUSHES: usize = 22;
+const LUMP_LEAF_PARTITIONS: usize = 23;
 const LUMP_PVS: usize = 28;
 const LUMP_COLLISION_PARTS: usize = 24;
 const LUMP_COLLISION_VERTS: usize = 25;
@@ -240,6 +242,22 @@ pub struct PatchPart {
     pub first_vert: u32,
 }
 
+/// A lump-23 entry: the lump-24 record a leaf lists, as an index into
+/// [`Bsp::terrain`] or [`Bsp::patches`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Partition {
+    Terrain(u32),
+    Patch(u32),
+}
+
+/// A leaf's runs, (first, count), in [`Bsp::leaf_brushes`] and
+/// [`Bsp::leaf_partitions`] (leaf record bytes 16 and 20, 8 and 12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeafLists {
+    pub brushes: (u32, u32),
+    pub partitions: (u32, u32),
+}
+
 #[derive(Debug)]
 pub struct Bsp {
     pub materials: Vec<Material>,
@@ -277,6 +295,15 @@ pub struct Bsp {
     /// Per leaf, index-aligned with `leafs`: (first, count) into
     /// `light_indices` (leaf record bytes 28 and 32).
     pub leaf_lights: Vec<(u32, u32)>,
+    /// Per leaf, index-aligned with `leafs`: its runs in `leaf_brushes`
+    /// and `leaf_partitions`.
+    pub leaf_lists: Vec<LeafLists>,
+    /// Lump 22: the brushes each leaf lists, as lump-4 indices.
+    pub leaf_brushes: Vec<u32>,
+    /// Lump 23: the lump-24 partitions each leaf lists. A trace clips only
+    /// what the leaves it walks list (bsp-ibsp59-format.md, "The leaf
+    /// walk").
+    pub leaf_partitions: Vec<Partition>,
     /// Lump 30, 72-byte records as raw words; decoded per light type in
     /// `static_light.rs`.
     pub lights: Vec<[u32; 18]>,
@@ -973,6 +1000,7 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
     )?;
     let mut terrain = Vec::new();
     let mut patches = Vec::new();
+    let mut kinds = Vec::new();
     for (i, b) in lump(data, &dir, LUMP_COLLISION_PARTS)?
         .as_chunks::<16>()
         .0
@@ -994,6 +1022,7 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
                 first_vert as usize + a as usize * c as usize <= collision_verts.len(),
                 "patch partition {i} control points out of range"
             );
+            kinds.push(Partition::Patch(patches.len() as u32));
             patches.push(PatchPart {
                 material,
                 width: a,
@@ -1012,6 +1041,7 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
             for &ix in &collision_indices[first_index as usize..][..c as usize] {
                 ensure!(ix < a, "terrain partition {i} index past its vertices");
             }
+            kinds.push(Partition::Terrain(terrain.len() as u32));
             terrain.push(TerrainPart {
                 material,
                 first_vert,
@@ -1021,6 +1051,49 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
             });
         }
     }
+
+    let leaf_lists: Vec<LeafLists> = lump(data, &dir, LUMP_LEAFS)?
+        .as_chunks::<36>()
+        .0
+        .iter()
+        .map(|b| LeafLists {
+            brushes: (le_u32(b, 16), le_u32(b, 20)),
+            partitions: (le_u32(b, 8), le_u32(b, 12)),
+        })
+        .collect();
+    let leaf_brushes = records(
+        lump(data, &dir, LUMP_LEAF_BRUSHES)?,
+        4,
+        "leaf brushes",
+        |b| le_u32(b, 0),
+    )?;
+    let leaf_partitions = records(
+        lump(data, &dir, LUMP_LEAF_PARTITIONS)?,
+        4,
+        "leaf partitions",
+        |b| le_u32(b, 0),
+    )?
+    .into_iter()
+    .enumerate()
+    .map(|(i, r)| {
+        kinds
+            .get(r as usize)
+            .copied()
+            .ok_or_else(|| anyhow!("leaf partition {i} past lump 24"))
+    })
+    .collect::<Result<Vec<_>>>()?;
+    let within = |(first, count): (u32, u32), len: usize| first as u64 + count as u64 <= len as u64;
+    for (l, lists) in leaf_lists.iter().enumerate() {
+        ensure!(
+            within(lists.brushes, leaf_brushes.len())
+                && within(lists.partitions, leaf_partitions.len()),
+            "leaf {l} lists out of bounds"
+        );
+    }
+    ensure!(
+        leaf_brushes.iter().all(|&b| (b as usize) < brushes.len()),
+        "a leaf brush past lump 4"
+    );
 
     let soup_count = soups.len() as u64;
     let in_soups = |first: u32, count: u32| first as u64 + count as u64 <= soup_count;
@@ -1168,6 +1241,9 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
         collision_indices,
         light_indices,
         leaf_lights,
+        leaf_lists,
+        leaf_brushes,
+        leaf_partitions,
         lights,
         light_vis,
     })
