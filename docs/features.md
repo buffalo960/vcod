@@ -298,7 +298,8 @@ something, the bullet links it.
 - Search & Destroy end to end: plant, defuse, progress bar, compass
   objectives.
 - Mounted MG42s: mount, aim inside the arc (1.1's 15-degree step and
-  view snap, 1.5's and UO's plain clamp), fire, dismount.
+  view snap, 1.5's and UO's plain clamp), fire, dismount; 1.1d, 1.5b and
+  UO captures replayed against ours.
 - Map triggers, script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.

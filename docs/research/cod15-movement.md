@@ -178,6 +178,11 @@ Consequences: a crouch tap runs the full 200 ms down and 400 up; standing to
 prone the box is 50 and `eFlags` read crouch for the first leg, and a rise
 from prone keeps the 50 box for the 400 ms leg (INFERRED).
 
+A mounted player runs the same `PM_CheckDuck` (`PmoveSingle`'s mounted
+arm calls 0x332c4; UO's calls 0x37e16), its flags set to the gun's
+stance, so the target and `eFlags` step to the gun's stance on the
+mount (VERIFIED decompile and live, `cod11-turrets.md` 14.8).
+
 ## 4. Lean, view and prone body
 
 - `PM_UpdateLean`: the scale is 0.25 with a prone effective stance and 0.5
