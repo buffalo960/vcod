@@ -442,14 +442,10 @@ pub fn spawn(
     for (b, want) in blends.iter_mut().zip(wanted) {
         if want {
             match host.ents.spawn(cx) {
-                Ok(e) => {
-                    // `SP_sound_blend`'s `svFlags |= 8`: every snapshot
-                    // carries it, at the origin it never leaves.
-                    if let Some(g) = host.ents.get_mut(e) {
-                        g.broadcast = true;
-                    }
-                    *b = Some(e);
-                }
+                // `SP_sound_blend`'s `svFlags |= 8` never reaches the cull:
+                // the snapshot builder tests a blend as its vehicle
+                // (`crate::game::wire::sound_blend_vehicle`).
+                Ok(e) => *b = Some(e),
                 Err(err) => log::error!("vehicle sound blend: {err:?}"),
             }
         }
@@ -490,7 +486,9 @@ pub fn spawn(
             info: info_index,
             spawn_vars,
             blends,
-            sound_blends: [None; 4],
+            // `fn_7cebf` links each blend as it spawns it, silent; only the
+            // think's `G_SetSoundBlend` unlinks one (0x87480).
+            sound_blends: blends.map(|b| b.map(|_| (0, 0, 0.0))),
             hint_string,
             seats: [None; MAX_SEATS + 1],
             driven: false,

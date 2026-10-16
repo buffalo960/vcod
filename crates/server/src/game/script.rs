@@ -2310,12 +2310,16 @@ impl ScriptRuntime {
     }
 
     /// The entities `playSound` made `SVF_BROADCAST`, which every snapshot
-    /// carries past the cull.
-    pub fn broadcast_entities(&self) -> impl Iterator<Item = u32> + '_ {
+    /// carries past the cull, and on 1.5 and UO those whose
+    /// `r.broadcastTime` the network clock `svs_time` has not passed.
+    pub fn broadcast_entities(&self, svs_time: i32) -> impl Iterator<Item = u32> + '_ {
         self.host
             .ents
             .iter_inuse()
-            .filter(|(_, e)| e.broadcast)
+            .filter(move |(_, e)| {
+                let t = e.broadcast_time;
+                e.broadcast || t < 0 || (t != 0 && t.wrapping_sub(svs_time) >= 0)
+            })
             .map(|(id, _)| id.0)
     }
 

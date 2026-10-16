@@ -256,6 +256,36 @@ pavlov), so all of them are `script_model`s. VERIFIED. A `script_brushmodel`
 arrives as `eType` 8 with `solid` `0xffffff` and `index` its inline model
 number (`docs/research/cod11-movers.md` section 14). VERIFIED.
 
+#### The clusters a link keeps
+
+Q3's caps, in 1.1d and UO alike (VERIFIED decompile, `cod_lnxded`
+0x80908b0, `coduo_lnxded` 0x8099dee):
+
+- `CM_BoxLeafnums` lists at most 128 leafs (the 0x80 argument), solid ones
+  included, walking a straddled node's front child first (UO 0x80573e6).
+  Its last-leaf output is the last leaf with a cluster the walk reached,
+  listed or not (UO 0x8057259 updates it before the full-list check).
+- The link keeps the first 16 clusters among the listed leafs, repeats
+  included (`MAX_ENT_CLUSTERS`, the 0x10 break). When it stops on the
+  16th it stores the last leaf's cluster as `lastCluster`, else 0.
+- The snapshot test (UO 0x8096b97) tries the 16 against the viewer's PVS
+  row. With none seen and `lastCluster` non-zero it scans the cluster
+  numbers from the 16th up to `lastCluster`: the scan stopping on a seen
+  cluster below `lastCluster` sends the entity, stopping on `lastCluster`
+  itself hides it, and running past `lastCluster` sends it. So an entity
+  past 16 clusters is hidden only when `lastCluster` is the first seen
+  number of the range.
+
+`bsp::Visibility::link_clusters` and `link_visible` follow this. INFERRED,
+Q3's C, the 1.1d and UO `BoxOnPlaneSide` being hand-written assembly
+Ghidra does not decode: an axial plane puts a box whose low side sits on
+it in front only and one whose high side sits on it behind only; any
+other plane puts the farthest corner at the plane in front and needs the
+nearest strictly behind for the back.
+
+1.5 and United Offensive add a broadcast time and a fog cull to this test
+(`docs/research/cod15-protocol-diff.md` 15).
+
 #### What a map entity looks like
 
 VERIFIED from the traces, and self-consistent with the shipped item list: a

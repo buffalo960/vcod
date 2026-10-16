@@ -1753,6 +1753,13 @@ fn strtol(s: &str) -> i64 {
 
 pub use vcod_common::net::protocol::install_protocol;
 
+/// [`Server::fog_cull`] off the fields, for a caller holding the script.
+fn fog_cull_of(p: &Protocol, configstrings: &[String]) -> Option<f32> {
+    (p.version != vcod_common::net::protocol::PROTOCOL_V1.version)
+        .then(|| crate::world::fog_cull(configstrings.get(p.cs.fog).map_or("", String::as_str)))
+        .flatten()
+}
+
 /// `ClientEndFrame`'s call of `G_GetNonPVSFriendlyInfo` for `slot`
 /// (`crate::compass`): `None` when its session takes no end frame that
 /// makes the call (spectator, intermission), else the packed teammate, its
@@ -1764,7 +1771,7 @@ fn compass_friend(
     slot: usize,
     sessions: &[Option<follow::SessionState>],
     teams: &[i32],
-    vis: Option<&vcod_common::bsp::Visibility>,
+    cull: Option<(&vcod_common::bsp::Visibility, Option<f32>)>,
     time: i32,
     p: &Protocol,
 ) -> Option<Option<(i32, u32, bool)>> {
@@ -1786,9 +1793,9 @@ fn compass_friend(
             return None;
         }
         // No map: nothing to cull against, so everything is in view.
-        let vis = vis?;
+        let (vis, fog) = cull?;
         let e = other.to_entity(p, n, c.last_processed_st);
-        if crate::world::in_snapshot(vis, eye, &e, time, p) {
+        if crate::world::in_snapshot(vis, eye, &e, time, p, fog) {
             return None;
         }
         pinged = other.ping;
@@ -2050,6 +2057,12 @@ impl Server {
     /// restart count (docs/research/cod11-map-cycle.md, section 3 step 16).
     pub fn server_id(&self) -> u8 {
         self.server_id
+    }
+
+    /// The snapshot cull's fog distance, squared: 1.5's and UO's, never
+    /// 1.1's (`crate::world::fog_cull`).
+    fn fog_cull(&self) -> Option<f32> {
+        fog_cull_of(self.proto, &self.configstrings)
     }
 
     /// `svs.time`: what the network runs on (pacing, pings, timeouts, the
@@ -7559,6 +7572,7 @@ impl Server {
             let teams: Vec<i32> = (0..self.clients.len())
                 .map(|slot| rt.client_team(slot))
                 .collect();
+            let fog = fog_cull_of(self.proto, rt.configstrings());
             for slot in 0..self.clients.len() {
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
@@ -7570,7 +7584,7 @@ impl Server {
                     slot,
                     &sessions,
                     &teams,
-                    self.world.as_ref().map(|w| &w.vis),
+                    self.world.as_ref().map(|w| (&w.vis, fog)),
                     self.sv_time_ms,
                     self.proto,
                 );
@@ -8956,7 +8970,7 @@ impl Server {
                     .collect()
             });
         if let Some(rt) = self.script.as_ref() {
-            for n in rt.broadcast_entities() {
+            for n in rt.broadcast_entities(self.svs_time_ms()) {
                 if let Some(e) = culled.remove(&n) {
                     broadcast.insert(n, e);
                 }
@@ -8972,6 +8986,7 @@ impl Server {
             broadcast,
             roster: Rc::new(roster),
             time: self.sv_time_ms,
+            fog: self.fog_cull(),
         }
     }
 

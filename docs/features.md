@@ -235,7 +235,10 @@ something, the bullet links it.
   and delta snapshots. Run from a patch 1.5 install it speaks 1.5 instead
   (protocol 6): 1.5's queries, cvars, menus and gametype scripts, with
   the configstring table 1.5b builds on mp_carentan
-  ([cod15-protocol-diff.md](research/cod15-protocol-diff.md) 13).
+  ([cod15-protocol-diff.md](research/cod15-protocol-diff.md) 13). On 1.5
+  and UO the entity cull follows those engines: a sounded entity rides
+  past the PVS for 300 ms, a looping one for good, and cull fog drops
+  whatever lies past its far distance (same doc, 15).
 - Hosts United Offensive 1.51 (protocol 22) from a UO install with
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
   means of death and event numbering, and UO's stock `dm`, `tdm`, `sd`,
@@ -269,7 +272,8 @@ something, the bullet links it.
   A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
-  field, and so do the seat changes
+  field, and so do the seat changes; a vehicle and its sound blends leave
+  a client's snapshots where retail's do
   ([coduo-vehicles.md](research/coduo-vehicles.md) 10-14).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
