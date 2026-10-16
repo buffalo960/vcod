@@ -2831,6 +2831,15 @@ sent a dead player standing in its death pose under the corpse until the
 respawn, and `--probe-sweep`'s live-target gate saw a target to shoot for the
 whole dead wait.
 
+The flag is set by the dead player's own end frame, so a player killed after
+it, by a higher slot's turret round in that slot's turn, is still sent on the
+kill snapshot, as its end frame copied it: VERIFIED, the `-victim` turret
+captures (`cod11-turrets.md` 13.3), whose victim carries the pain of the
+round before, the anim and trajectory its last cmds left and `solid` 0
+(step 13's relink as a corpse). vcod builds every client's entity from the
+copy its own end-frame turn made (`ClientSim::end_frame_entity`) and sends a
+client killed after that turn on it, `solid` cleared.
+
 ### 5.5 The origin a death drops from
 
 Both things a death drops leave from `r.currentOrigin` (`ent+0x134`), and
