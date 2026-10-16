@@ -854,7 +854,7 @@ spawned there leaves by and never needs again.
 | map | spacing | nodes | edges | ms | spawns in one component | reach it | leaps |
 |---|---|---|---|---|---|---|---|
 | mp_arnhem | 48 | 7640 | 49915 | 511 | 231 / 332 | 287 | 19 |
-| mp_berlin | 48 | 17679 | 123026 | 1833 | 202 / 303 | 303 | 262 |
+| mp_berlin | 48 | 17679 | 123026 | 1833 | 202 / 303 | 303 (301) | 262 |
 | mp_cassino | 48 | 8558 | 57393 | 707 | 94 / 180 | 168 | 11 |
 | mp_foy | 48 | 62126 | 470101 | 7924 | 317 / 391 | 341 | 178 |
 | mp_italy | 48 | 77171 | 590070 | 6130 | 361 / 371 | 361 | 192 |
@@ -873,6 +873,18 @@ spawned there leaves by and never needs again.
 | mp_uo_hurtgen | 48 | 27484 | 207848 | 2785 | 281 / 286 | 282 | 522 |
 | mp_uo_powcamp | 48 | 6440 | 44020 | 333 | 226 / 258 | 254 | 2 |
 
+- `mp_berlin`'s 303 is 301 since 1.5's and UO's stored velocity tail
+  (`cod15-movement.md` 7), and the census floor with it. VERIFIED
+  (measured 2026-10-17, release census, the tail switched back by hand
+  for the comparison): the old tail reaches 303, the stored one 301. The
+  two spawns at (-483, 4415, 743) and (-667, 4414, 743) sit on a roof
+  whose one way out is a 149-unit drop from (-624, 4180.6, 768) onto a
+  slope; `settle` drops each grid sample from rest, which is the tail's
+  tie, and the slope node under the drop lands at (-673.7, 4131.1, 616.1)
+  where it landed at (-675.2, 4134.9, 619.3). The walk off the roof
+  arrives the same under both, but from the new node only the edge to
+  (-718.7, 4122.7, 629.5) proves, and that leads nowhere. INFERRED: the
+  graph's coverage of that slope is fragile, not the drop.
 - `mp_ponyri`'s 242 is 240 since the UO vehicles merge (a7b99cd6), and
   the census floor with it. VERIFIED (measured 2026-10-15, release, the
   census's own build without the rubble unlink): 59 089 nodes, 447 994
