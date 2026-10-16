@@ -1771,10 +1771,9 @@ fn compass_friend(
     slot: usize,
     sessions: &[Option<follow::SessionState>],
     teams: &[i32],
-    vis: Option<&vcod_common::bsp::Visibility>,
+    cull: Option<(&vcod_common::bsp::Visibility, Option<f32>)>,
     time: i32,
     p: &Protocol,
-    fog: Option<f32>,
 ) -> Option<Option<(i32, u32, bool)>> {
     use follow::SessionState::{Dead, Playing};
     let sim = clients[slot].as_ref()?.sim.as_ref()?;
@@ -1794,7 +1793,7 @@ fn compass_friend(
             return None;
         }
         // No map: nothing to cull against, so everything is in view.
-        let vis = vis?;
+        let (vis, fog) = cull?;
         let e = other.to_entity(p, n, c.last_processed_st);
         if crate::world::in_snapshot(vis, eye, &e, time, p, fog) {
             return None;
@@ -7585,10 +7584,9 @@ impl Server {
                     slot,
                     &sessions,
                     &teams,
-                    self.world.as_ref().map(|w| &w.vis),
+                    self.world.as_ref().map(|w| (&w.vis, fog)),
                     self.sv_time_ms,
                     self.proto,
-                    fog,
                 );
                 let sim = self.clients[slot].as_mut().unwrap().sim.as_mut().unwrap();
                 if let Some(found) = found {
