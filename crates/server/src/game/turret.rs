@@ -575,6 +575,9 @@ pub fn slew_home(rec: &mut TurretRecord) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TurretShot {
     pub slot: usize,
+    /// The gun's entity number: `Bullet_Fire`'s inflictor, which a world
+    /// impact names in `otherEntityNum` (cod11-turrets.md 6.3).
+    pub gun: u32,
     pub muzzle: Vec3,
     pub dir: Vec3,
     pub damage: i32,

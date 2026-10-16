@@ -140,6 +140,8 @@ something, the bullet links it.
   chat, scoreboard, sounds, tracers, impacts, muzzle flashes, ejected
   brass and script effects (the S&D bomb, the bombzone exploders, mines,
   `playLoopedFx`, `playFxOnTag`) come off the same events retail reads.
+  Tracers start at the shooter's posed muzzle tag (a mounted gun's own,
+  a gunner's stance point), on 1.1, 1.5 and UO alike.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at

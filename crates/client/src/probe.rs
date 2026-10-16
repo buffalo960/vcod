@@ -2106,6 +2106,7 @@ impl ProbeWatch {
             sounds: p.cs.sounds(),
             weapon_sounds: &no_weapons,
             muzzles: &no_muzzles,
+            shot_fallbacks: &Default::default(),
             listener_pos: glam::Vec3::from(s.ps.origin(p)),
             ps_entity: crate::audio::cues::ps_entity(ps_client),
             uo: p.version == net::protocol::PROTOCOL_V22.version,

@@ -969,6 +969,7 @@ impl ScriptRuntime {
             if let Some(tags) = &rec.tags {
                 shot = Some(TurretShot {
                     slot,
+                    gun: id.0,
                     muzzle: muzzle(tags, origin, angles, rec.angles2, forward).into(),
                     dir: forward.into(),
                     damage: rec.dmg,
