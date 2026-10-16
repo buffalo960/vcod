@@ -901,6 +901,20 @@ plant's first frame until the round's `map_restart`, alive or not.
 vcod-server gave the same list on the same frames;
 `a_sounded_player_rides_every_snapshot_until_the_restart` pins it.
 
+1.5 and United Offensive differ. Their `playSound` writes
+`r.broadcastTime` = level time + 300 and leaves `svFlags` alone,
+`playLoopSound` writes -1 (for as long as it loops) and `stopLoopSound`
+the level time + 300 again; the snapshot builder sends an entity whose
+time is negative or not yet passed (VERIFIED decompile, addresses in
+`cod15-protocol-diff.md` 15). So there a sounded entity rides 300 ms, a
+looping one for good, and a `script_origin` never. VERIFIED live, UO
+1.51b on mp_berlin, `client-probes/probe_uocull`: a parked Panzer out of
+the viewer's PVS rode the seven snapshots from the sound's frame to 300
+ms past it; a `script_origin` sounded beside it never came; mp_berlin's
+looping fire script models rode every snapshot. vcod-server keeps
+`GEntity::broadcast` for 1.1 and `GEntity::broadcast_time` for the other
+two (`uocull_ab`).
+
 ### Minefields
 
 The stock minefield scripts, read out of the paks (VERIFIED). 1.1's

@@ -32,6 +32,8 @@ pub struct WorldFrame {
     pub roster: Rc<BTreeMap<u32, msg::ClientState>>,
     /// The frame's level time, where the cull places a moving entity.
     pub time: i32,
+    /// 1.5's and UO's fog cull, squared (`crate::world::fog_cull`).
+    pub fog: Option<f32>,
 }
 
 impl WorldFrame {
@@ -49,9 +51,17 @@ impl WorldFrame {
         p: &Protocol,
     ) -> BTreeMap<u32, msg::EntityState> {
         let from = vis.map(|v| v.cluster_at(eye));
-        let seen = |e: &msg::EntityState| match (vis, from) {
-            (Some(v), Some(from)) => crate::world::entity_visible(v, from, e, self.time, p),
+        let culled_seen = |e: &msg::EntityState| match (vis, from) {
+            (Some(v), Some(from)) => {
+                crate::world::entity_seen(v, from, eye, e, self.time, p, self.fog)
+            }
             _ => true,
+        };
+        // A UO sound blend goes wherever its vehicle would.
+        let seen = |e: &msg::EntityState| match crate::game::wire::sound_blend_vehicle(p, e) {
+            Some(v) if self.broadcast.contains_key(&v) => true,
+            Some(v) => self.culled.get(&v).is_some_and(|v| culled_seen(v)),
+            None => culled_seen(e),
         };
         let times = (shift != 0).then(|| entity_time_fields(p));
         let take = |e: &msg::EntityState| {
