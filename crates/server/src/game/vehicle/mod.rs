@@ -566,6 +566,7 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
             tris: std::rc::Rc::from(tris),
             owner,
             takes_damage: true,
+            body: false,
         });
     }
     out

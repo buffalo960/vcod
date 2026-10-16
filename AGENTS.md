@@ -658,7 +658,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   reflects off the struck bone's face, not his link box (combat doc 12.4).
   1.1's ground snap then lifts it 1.5 onto his bones; 1.5's and UO's snap
   onto the world only (12.2), and UO's bounce off a body keeps a tenth
-  (coduo-diff.md 21).
+  (coduo-diff.md 21). Off a surface 1.1 keeps 0.75 along it and 0.3 off
+  it; 1.5 scales the whole reflection by 0.5 and UO by 0.4 (12.4).
 - On 1.5 and UO a prone body keeps the bend its last airborne cmd sampled
   (cod15-movement.md 4), so a gate that drops a prone body sends the net
   probe's 16/16/18 ms cmds (`ProbeHold::framed`), or its wire body and

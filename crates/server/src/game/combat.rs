@@ -1495,6 +1495,10 @@ pub struct PlacedModel {
     /// `takedamage`: a vehicle's, and a UO script model's after
     /// `setTakeDamage(1)`; never a 1.1 script model's (combat doc, 2.7).
     pub takes_damage: bool,
+    /// `r.contents` carries `CONTENTS_BODY` (0x2000000): only UO's
+    /// `setContents` can give a script model that, and a missile's bounce
+    /// off it is soft (combat doc 12.4).
+    pub body: bool,
 }
 
 impl PlacedModel {
@@ -2402,6 +2406,7 @@ mod tests {
             tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
             owner: None,
             takes_damage: true,
+            body: false,
         };
         let sims = [(0, &a), (1, &b)];
         let fire = |pass: Pass| {
@@ -2482,6 +2487,7 @@ mod tests {
             tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
             owner: None,
             takes_damage: false,
+            body: false,
         };
         let sims = [(0, &a), (1, &b)];
         let model = crate_(100.0);
@@ -3031,6 +3037,7 @@ mod tests {
             tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
             owner: None,
             takes_damage: false,
+            body: false,
         };
         let open = vcod_common::collision::test_world(&[]);
         assert_eq!(can_damage(at, &near, &open, &[], &[], None), 1.0);

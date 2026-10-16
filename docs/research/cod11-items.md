@@ -1187,8 +1187,12 @@ none of it is fixed here:
 - Retail's log carries `PROBE other 0 noclass 23650`, the probe's own slot
   seen before its first spawn (12.6); ours has none. VERIFIED,
   `crates/server/src/game/entity.rs`: ours gives a client `classname`
-  "player" from the moment the slot exists. Ruling: open, outside item pickup
-  (client entity).
+  "player" from the moment the slot exists. Ruling: closed. The
+  classname was fixed earlier (cod11-gametypes-re-bel.md 8.3); the gate's
+  client joined before the watcher's census and so was never logged as an
+  `other`. VERIFIED, the gate on vcod 2026-10-16: with the client joining
+  after `common::PROBE_JOIN_MS`, ours logs `other 0 noclass` as retail does,
+  and the gate compares the `PROBE other` lines by number and classname.
 
 ### 13.5 Which frame runs a cmd
 

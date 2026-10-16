@@ -338,6 +338,9 @@ fn rig() -> Option<Rig> {
     sv.set_cvar("scr_allow_fg42", "1");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
+    // Past the watcher's census, as retail's probe joined, so its slot is
+    // logged as an `other` before its first spawn.
+    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(Queues::default()));
     let (cl, join) = common::join(&mut sv, &q, &mut now, "allies", "m1carbine_mp");
     assert!(join.findings().is_empty(), "{}", join.summary());
@@ -785,6 +788,18 @@ fn census<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
+/// The `PROBE other` lines as `<num> <classname>`, sorted. Each side's
+/// `getTime` is its own join's, so the time is left out.
+fn others<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = lines
+        .map(|l| l.split_whitespace().collect::<Vec<&str>>())
+        .filter(|t| t.len() > 3 && t[..2] == ["PROBE", "other"])
+        .map(|t| t[2..4].join(" "))
+        .collect();
+    out.sort();
+    out
+}
+
 #[test]
 fn the_engine_notifies_match_retail_on_mp_carentan() {
     let Some(mut rig) = rig() else { return };
@@ -804,6 +819,21 @@ fn the_engine_notifies_match_retail_on_mp_carentan() {
     );
     if rc != oc {
         rows.push(format!("census: retail {rc:?} ours {oc:?}"));
+    }
+    let (ro, oo) = (
+        others(retail.iter().copied()),
+        others(
+            before
+                .iter()
+                .map(String::as_str)
+                .chain(log.iter().map(|(_, l)| l.as_str())),
+        ),
+    );
+    if report() {
+        println!("other: retail {ro:?} ours {oo:?}");
+    }
+    if ro != oo {
+        rows.push(format!("other: retail {ro:?} ours {oo:?}"));
     }
     let rn = names_of(retail.iter().copied());
     let on = names_of(
