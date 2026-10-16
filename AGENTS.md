@@ -617,6 +617,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 
 ### Combat and items
 
+- A 1.1 shot, swing or throw starts at the truncated eye over the
+  truncated origin; 1.5's and UO's start at the unsnapped origin's eye
+  plus the walk bob, never truncated (`combat::muzzle_point_in`, combat
+  doc 2.1).
 - There is no grenade cook in 1.1 MP; "cooking" in the code means held.
   `grenadeTimeLeft` is `fuseTime` at the pullback and 0 at the throw, and the
   fuse always runs in full from release. UO has one, started only by the
