@@ -25,6 +25,44 @@ it joins `argv[1..]` with single spaces into a 0x3fe-byte buffer and calls
 arrives as `a b c d 100% ^1red`, `say    spaced   ` as `spaced`, and a bare
 `say` or `say_team` sends nothing.
 
+VERIFIED, `SV_ExecuteClientCommand` (cod_lnxded 0x8086d58): a client
+command is split by `Cmd_TokenizeString` (0x805b398, which calls
+0x805adc0 with no token limit), so `say` sees the same argv a console line
+or a query does. The rules, VERIFIED off 0x805adc0: a byte up to a space
+separates, and the compares are on a signed `char`, so a byte past 127 does
+too; a `"` opens a token that runs to the next `"` or the end, and neither
+comment counts inside it; outside quotes `//` ends the line, also in the
+middle of a token, and `/*` skips to the first `*/` from its own `*` on (so
+`/*/` is a whole comment) or ends the line when there is none; 256 tokens
+at most. The server's reader has already turned every byte past 127 into
+`.` and kept `%` (`docs/protocol-1.1.md`), so a high byte never reaches the
+tokenizer from a client. VERIFIED live on 2026-10-16, retail 1.1d, 1.5b
+and UO 1.51b, a spectator probe's `--probe-say`, identical on all three
+(the server log for `%`, which the client's own reader turns into `.`):
+
+| `say` text | Chat text |
+|---|---|
+| `http://x` | `http:` |
+| `a /* b */ c` | `a c` |
+| `a/*b` | `a` |
+| `"x//y" z` | `x//y z` |
+| `a /*/ b` | `a b` |
+| `aé b` | `a.. b` |
+| `a;b\c` | `a;b\c` |
+| `a//` | `a` |
+| `//a` | nothing sent |
+| `a/b /c` | `a/b /c` |
+| `a*/b` | `a*/b` |
+| `"a b" "c` | `a b c` |
+| `a%b`, `100% x` | `a%b`, `100% x` |
+
+VERIFIED live, the same day and servers: the console's `say` over rcon
+reads the line twice (handshake doc, "rcon"), so `rcon <pw> say "q//r" s`
+reached clients as `console: q`, `"q r//t" s` as `console: q r//t s`,
+`http://x` as `console: http:`, `a/*/b` as `console: a b`, and `//x` sent
+nothing. vcod's server (`game::say::tokenize`) gives the same lines for
+every row above.
+
 VERIFIED, `Cmd_Tell_f`: `argv[1]` is a client number below
 `level.maxclients` whose entity is in use and has a client; the text is
 `argv[2..]` joined the same way; it logs `tell: %s to %s: %s` and calls
