@@ -624,6 +624,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   inside vcod only; the wire ring carries 0, as retail sends.
 - The explode rides the missile's own entity (`eType` flips to 0), so an
   `eType == 4` filter drops the explode frame.
+- A missile's ground snap is a locational trace like its move: a frag
+  rests on a player's posed bones with his number as its ground. 1.5 and
+  UO drop a resting missile whose ground is not the world once nothing is
+  under it (`Missile::falls`, combat doc 12.6); 1.1 leaves it hanging.
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
