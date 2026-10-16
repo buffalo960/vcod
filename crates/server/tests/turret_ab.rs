@@ -24,7 +24,8 @@ use vcod_common::animtree::PlayerAnims;
 use vcod_common::net::NetClient;
 use vcod_common::net::events::EventTracker;
 use vcod_common::net::msg::{BUTTON_ATTACK, BUTTON_USE, NULL_USERCMD, UserCmd, WBUTTON_CROUCH};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
+use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::aim::angle_subtract;
 use vcod_server::Server;
 
@@ -71,6 +72,8 @@ fn deg_to_short_rounded(deg: f32) -> i32 {
 
 struct Rig {
     sv: Server,
+    /// The server's protocol, which every snapshot field is read through.
+    p: &'static Protocol,
     qg: Rc<RefCell<Queues>>,
     qt: Rc<RefCell<Queues>>,
     now: Instant,
@@ -145,12 +148,29 @@ fn rig_with(cvars: &[(&str, &str)]) -> Option<Rig> {
 /// The rig with `cvars` set and the gunner joining with `weapon`; with
 /// `gunner_second` the target connects first and takes client 0.
 fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Rig> {
-    let fs = vcod_common::testing::game_fs_11()?;
+    build_on(
+        vcod_common::testing::game_fs_11()?,
+        &PROTOCOL_V1,
+        cvars,
+        weapon,
+        gunner_second,
+    )
+}
+
+/// [`build`] on the paks of `fs`, the server speaking `p`.
+fn build_on(
+    fs: Pk3Fs,
+    p: &'static Protocol,
+    cvars: &[(&str, &str)],
+    weapon: &str,
+    gunner_second: bool,
+) -> Option<Rig> {
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let fs = Rc::new(fs);
     let mut now = Instant::now();
     let mut sv = Server::new(common::cfg(MAP, "probe_turret"), now);
+    sv.set_protocol(p);
     sv.overlay_script(PROBE_PATH, &read(PROBE_SRC));
     sv.set_cvar("probe_teleport", "1");
     for (name, value) in cvars {
@@ -182,6 +202,7 @@ fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Ri
     };
     let mut rig = Rig {
         sv,
+        p,
         qg,
         qt,
         now,
@@ -203,7 +224,6 @@ fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Ri
         "{:?}",
         rig.sv.script_aborts()
     );
-    let p = &PROTOCOL_V1;
     let gun = rig
         .gunner
         .snapshots()
@@ -271,12 +291,13 @@ impl Rig {
         }
         let mut s = self.sample();
         if let Some(snap) = self.gunner.snapshots().newest() {
-            for e in self.events.drain(snap, &PROTOCOL_V1) {
-                if e.event == EV_BULLET_HIT_SMALL || e.event == EV_BULLET_HIT_LARGE {
-                    s.impacts.push((e.event, e.pos));
+            for e in self.events.drain(snap, self.p) {
+                let event = nearest_v1(e.event);
+                if event == EV_BULLET_HIT_SMALL || event == EV_BULLET_HIT_LARGE {
+                    s.impacts.push((event, e.pos));
                 }
                 s.events
-                    .push((e.event, e.parm, who(e.entity_num as i64, self.gun)));
+                    .push((event, e.parm, who(e.entity_num as i64, self.gun)));
             }
         }
         s
@@ -289,7 +310,7 @@ impl Rig {
     fn still(&self) -> UserCmd {
         let mut h = holding(&self.gunner);
         if let Some(s) = self.gunner.snapshots().newest() {
-            let v = s.ps.viewangles(&PROTOCOL_V1);
+            let v = s.ps.viewangles(self.p);
             h.angles = [deg_to_short_rounded(v[0]), deg_to_short_rounded(v[1]), 0];
         }
         h
@@ -334,7 +355,7 @@ impl Rig {
 
     /// The turret's `pos.trBase` from the gunner's newest snapshot.
     fn gun_origin(&self) -> [f32; 3] {
-        let p = &PROTOCOL_V1;
+        let p = self.p;
         self.gunner
             .snapshots()
             .newest()
@@ -344,7 +365,7 @@ impl Rig {
 
     /// The turret's `apos.trBase[1]` from the gunner's newest snapshot.
     fn gun_yaw(&self) -> f32 {
-        let p = &PROTOCOL_V1;
+        let p = self.p;
         self.gunner
             .snapshots()
             .newest()
@@ -353,13 +374,14 @@ impl Rig {
     }
 
     fn sample(&self) -> Sample {
-        let p = &PROTOCOL_V1;
+        let p = self.p;
         let Some(s) = self.gunner.snapshots().newest() else {
             return Sample::default();
         };
         let ps = |name: &str| s.ps.field_i32(p, name);
         let gun = s.entities.get(&self.gun);
         let g = |name: &str| gun.map_or(0, |e| e.field_i32(p, name));
+        let ev = |name: &str| ev_v1(p, g(name));
         Sample {
             t: s.server_time,
             viewlocked: ps("viewlocked"),
@@ -388,14 +410,29 @@ impl Rig {
             turret_events: gun.map_or(Vec::new(), |e| {
                 let seq = e.field_i32(p, "eventSequence");
                 ((seq - 4).max(0)..seq)
-                    .map(|i| e.field_i32(p, &format!("events[{}]", i & 3)))
+                    .map(|i| ev_v1(p, e.field_i32(p, &format!("events[{}]", i & 3))))
                     .collect()
             }),
-            turret_ring: [0, 1, 2, 3].map(|i| g(&format!("events[{i}]"))),
+            turret_ring: [0, 1, 2, 3].map(|i| ev(&format!("events[{i}]"))),
             turret_parms: [0, 1, 2, 3].map(|i| g(&format!("eventParms[{i}]"))),
             events: Vec::new(),
             impacts: Vec::new(),
         }
+    }
+}
+
+/// A raw `events[]` slot in 1.1's numbering, as the probe prints a capture's
+/// (`probe::ev_v1`).
+fn ev_v1(p: &Protocol, raw: i32) -> i32 {
+    nearest_v1((p.event_to_v1)(raw))
+}
+
+/// UO's bullet hit as the probe prints it, the small one
+/// (`probe::nearest_v1`); no other UO event reaches this rig.
+fn nearest_v1(event: i32) -> i32 {
+    match event {
+        vcod_common::net::event_ids::EV_UO_BULLET_HIT => EV_BULLET_HIT_SMALL,
+        e => e,
     }
 }
 
@@ -1201,6 +1238,62 @@ const SCRIPT_FIXTURE: &str = concat!(
     "/tests/fixtures/turret/mp_carentan-dm-turret-script.txt"
 );
 
+const FIXTURE_15: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-15.txt"
+);
+const FIXTURE_UO: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-uo.txt"
+);
+const LATE_15: &[i32] = &[];
+const LATE_UO: &[i32] = &[];
+/// [`GAPS`] for the 1.5b capture: the killing round's two rows as on 1.1,
+/// and the target phase's first round, which neither side's body stops.
+const GAPS_15: &[(&str, &str)] = &[
+    (
+        "[target] event t=30000: retail only (174, 52, \"temp\")",
+        PATCH_136,
+    ),
+    (
+        "[target] event t=30000: ours only (174, 42, \"temp\")",
+        PATCH_136,
+    ),
+    (
+        "[target] impact t=30000: retail only 174@[1144.0, 1098.0, 9.0]",
+        PATCH_136,
+    ),
+    (
+        "[target] impact t=30000: ours only 174@[1388.0, 1413.0, 17.0]",
+        PATCH_136,
+    ),
+    (
+        "[target] event t=30100: retail only (187, 47, \"client 0\")",
+        END_FRAME,
+    ),
+    (
+        "[target] impact t=30100: retail only 174@[1515.0, 1610.0, 22.0",
+        KILLING_ROUND,
+    ),
+    ("[target] impact t=30100: ours only 174@[151", KILLING_ROUND),
+];
+/// [`GAPS`] for the UO 1.51b capture: the killing round's two rows.
+const GAPS_UO: &[(&str, &str)] = &[
+    (
+        "[target] event t=29300: retail only (187, 47, \"client 0\")",
+        END_FRAME,
+    ),
+    (
+        "[target] impact t=29300: retail only 173@[1515.0, 1610.0, 22.0",
+        KILLING_ROUND,
+    ),
+    ("[target] impact t=29300: ours only 173@[151", KILLING_ROUND),
+];
+const PATCH_136: &str = "the round leaves on retail's ray (the two impacts sit on one line \
+    from the gun at the view's 1.2 down) and ours stops on mp_carentan's patches 133 and 136 \
+    at (1388 1413 17), which retail's passes through: a world collision question, not the \
+    turret (cod11-turrets.md 14.8)";
+
 /// Cmds that reached retail's server after the frame their stamp puts them
 /// in (12.1): the stand mount's use cmd, whose 24750 is still unmounted and
 /// 24800 mounted and placed, and 30148, whose pitch clamp at 30150 is built
@@ -1246,6 +1339,11 @@ const ANGLES2_EPS: f32 = 0.01;
 /// placement landed 0.31 off the spot; anything bigger is a placement
 /// regression, not that.
 const REBASE_MAX: f32 = 0.5;
+/// The same on 1.5 and UO, whose joins run the `serverinfo` menu first: our
+/// spawn lands a frame before the placement and carries the spawn point's
+/// slide, (-2, -11) units/s, into the fall, ending (-0.6, -3.3) off the
+/// spot, where UO's retail capture ended too and 1.5's did not.
+const REBASE_MAX_15: f32 = 4.0;
 
 fn report() -> bool {
     std::env::var("TURRET_REPORT").is_ok_and(|v| v == "1")
@@ -1292,6 +1390,8 @@ struct RetailCmd {
 }
 
 struct Capture {
+    /// The cmds that reached the server a frame late (see [`LATE`]).
+    late: &'static [i32],
     weapon: String,
     gun: u32,
     cmds: Vec<RetailCmd>,
@@ -1400,6 +1500,7 @@ fn parse(text: &str) -> Capture {
         }
     }
     Capture {
+        late: &[],
         weapon,
         gun,
         cmds,
@@ -1414,13 +1515,24 @@ fn parse(text: &str) -> Capture {
 /// release teleports back to that spot, so ours starts there, to the
 /// fixture's print precision (`docs/research/cod11-turrets.md` 13).
 fn rig(cap: &Capture) -> Option<Rig> {
-    let mut rig = build(&[], &cap.weapon, true)?;
+    rig_on(
+        cap,
+        vcod_common::testing::game_fs_11()?,
+        &PROTOCOL_V1,
+        REBASE_MAX,
+    )
+}
+
+/// [`rig`] on the paks of `fs`, the server speaking `p`, the start rebased
+/// at most `rebase_max` on any axis.
+fn rig_on(cap: &Capture, fs: Pk3Fs, p: &'static Protocol, rebase_max: f32) -> Option<Rig> {
+    let mut rig = build_on(fs, p, &[], &cap.weapon, true)?;
     let at = cap.traces.first().expect("a snapshot").1.origin;
     let mut ours = rig.sample().origin;
     for i in 0..3 {
         let off = ours[i] - at[i];
         assert!(
-            off.abs() <= REBASE_MAX,
+            off.abs() <= rebase_max,
             "the placement put ours {off} off retail's spot on axis {i}: {ours:?} against {at:?}"
         );
         if off.abs() > PRINT_EPS {
@@ -1435,7 +1547,7 @@ fn rig(cap: &Capture) -> Option<Rig> {
 /// The retail snapshot a cmd's effect first shows in.
 fn frame_of(cap: &Capture, st: i32) -> Option<i32> {
     let t = cap.traces.iter().map(|(_, s)| s.t).find(|&t| st < t)?;
-    Some(if LATE.contains(&st) {
+    Some(if cap.late.contains(&st) {
         t + FRAME_MS as i32
     } else {
         t
@@ -1490,8 +1602,8 @@ fn angle_off(a: f32, b: f32) -> f32 {
 /// toggle's off the anims its random spawn point's think and landing played.
 /// The gunner's ring slots are
 /// compared as the drained events, one row per event only one side raised.
-fn diff(cap: &Capture, ours: &[Sample]) -> Vec<String> {
-    let anims = vcod_common::testing::game_fs_11().and_then(|fs| PlayerAnims::load(&fs).ok());
+fn diff(cap: &Capture, ours: &[Sample], fs: &Pk3Fs) -> Vec<String> {
+    let anims = PlayerAnims::load(fs).ok();
     let anim = |wire: i32| {
         let name = anims.as_ref().and_then(|a| a.name(wire)).unwrap_or("?");
         format!("{wire} ({name})")
@@ -1564,9 +1676,11 @@ fn diff(cap: &Capture, ours: &[Sample]) -> Vec<String> {
             );
         }
         let rebased = [0, 1, 2].map(|i| (o.delta_angles[i] - delta0[i]) & 0xffff);
+        // The wire carries 16 bits; a change above them decodes as the
+        // base with a bit set past the width (`msg::above_width`).
         row(
             "delta_angles",
-            format!("{:?}", r.delta_angles),
+            format!("{:?}", r.delta_angles.map(|a| a & 0xffff)),
             format!("{rebased:?}"),
         );
         row(
@@ -1607,20 +1721,20 @@ fn diff(cap: &Capture, ours: &[Sample]) -> Vec<String> {
 
 /// Fails on any row no [`GAPS`] entry names, and on any entry that named no
 /// row, so the list cannot outlive what it excuses.
-fn finish(rows: Vec<String>) {
+fn finish(rows: Vec<String>, gaps: &[(&str, &str)]) {
     let (gapped, real): (Vec<String>, Vec<String>) = rows
         .into_iter()
-        .partition(|r| GAPS.iter().any(|(g, _)| r.contains(g)));
+        .partition(|r| gaps.iter().any(|(g, _)| r.contains(g)));
     if report() {
         for r in &gapped {
-            let why = GAPS.iter().find(|(g, _)| r.contains(g)).unwrap().1;
+            let why = gaps.iter().find(|(g, _)| r.contains(g)).unwrap().1;
             println!("gap: {r}\n     {why}");
         }
         for r in &real {
             println!("{r}");
         }
     }
-    let stale: Vec<&str> = GAPS
+    let stale: Vec<&str> = gaps
         .iter()
         .map(|(g, _)| *g)
         .filter(|g| !gapped.iter().any(|r| r.contains(g)))
@@ -1634,10 +1748,57 @@ fn finish(rows: Vec<String>) {
 
 #[test]
 fn the_mount_sweep_fire_and_release_match_retail_on_mp_carentan() {
-    let cap = parse(&read(FIXTURE));
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let cap = Capture {
+        late: LATE,
+        ..parse(&read(FIXTURE))
+    };
     let Some(mut rig) = rig(&cap) else { return };
     let ours = replay(&mut rig, &cap);
-    finish(diff(&cap, &ours));
+    finish(diff(&cap, &ours, &fs), GAPS);
+}
+
+/// The 1.1 gate's replay of `mp_carentan-dm-turret-15.txt` on a 1.5 install
+/// (turrets doc 14.3): the same probe, cmds and diff on a protocol 6 server.
+#[test]
+fn the_mount_sweep_fire_and_release_match_15b_on_mp_carentan() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    let cap = Capture {
+        late: LATE_15,
+        ..parse(&read(FIXTURE_15))
+    };
+    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V6, REBASE_MAX_15) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let fs = vcod_common::testing::game_fs().unwrap();
+    finish(diff(&cap, &ours, &fs), GAPS_15);
+}
+
+/// The same for `mp_carentan-dm-turret-uo.txt` on a United Offensive
+/// install.
+#[test]
+fn the_mount_sweep_fire_and_release_match_uo_on_mp_carentan() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let cap = Capture {
+        late: LATE_UO,
+        ..parse(&read(FIXTURE_UO))
+    };
+    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V22, REBASE_MAX_15) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let fs = vcod_common::testing::uo_fs().unwrap();
+    finish(diff(&cap, &ours, &fs), GAPS_UO);
 }
 
 /// A `D;` or `K;` line's kind, teams, weapon, damage, means of death and hit
@@ -1661,7 +1822,10 @@ fn damage_key(line: &str) -> Option<String> {
 
 #[test]
 fn the_turret_kill_is_credited_to_the_mg42() {
-    let cap = parse(&read(FIXTURE));
+    let cap = Capture {
+        late: LATE,
+        ..parse(&read(FIXTURE))
+    };
     let Some(mut rig) = rig(&cap) else { return };
     replay(&mut rig, &cap);
     let script = read(SCRIPT_FIXTURE);

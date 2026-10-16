@@ -1216,7 +1216,7 @@ pub fn collapse_traces(events: &[NetchanEvent]) -> Vec<NetchanEvent> {
 /// section 1.8), so a replay that sent `NULL_USERCMD` would be asking for a
 /// putaway on every frame.
 pub fn holding(cl: &NetClient<ClientEnd>) -> UserCmd {
-    let p = &vcod_common::net::protocol::PROTOCOL_V1;
+    let p = cl.protocol();
     UserCmd {
         weapon: cl
             .snapshots()
