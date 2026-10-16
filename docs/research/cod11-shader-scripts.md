@@ -427,6 +427,19 @@ repeating bundle 0 beside a clamped bundle 1 keeps wrapping.
   (`shader.wgsl`). An earlier draft had the s-axis wrong; the corpus-era
   screenshots caught it and it now matches the C.
 
+- VERIFIED, CoDMP.exe 0x514c00 (RB_CalcWaveColor, the `rgbGen wave`
+  case 8 of the colour switch at 0x4ffa60): a table wave is `(base + amp *
+  table[fistp((rate * shaderTime + phase) * 1024) & 1023]) *
+  identityLight` (the float at 0x16c55b0), then clamped to 0 (0x568e64)
+  and 1 (0x568e60) and stored as `fistp(v * 255)` (0x568ec0) in r, g and
+  b, alpha 0xff. The clamp follows the identityLight scale, so with
+  overbright on (identityLight 0.5) a wave of 1.5 draws 0.75 and only
+  past 2 does it saturate.
+- vcod: `stage_params` clamps a table wave below at 0 only and the
+  stage shaders clamp `tint * identityLight` at 1 (`F_TINT_LIGHT`).
+  Before 2026-10-16 the wave was clamped to 1 before the scale, so 1.5
+  drew 0.5.
+
 ### The noise wave
 
 - VERIFIED, CoDMP.exe 0x4dd490 (R_NoiseInit): `srand(0x3e9)` (0x526324
@@ -836,7 +849,7 @@ cross-referenced against BSP materials and the skin names in every
 
 vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
 
-- wave and flap displace in the vertex shader from `StageParams.wave`,
+- wave and flap displace in the vertex shader from their record,
   `sin` in place of the 1024-entry table; flap scales by `uv.x` or `uv.y`.
   A rate of 0 drops the spread term, as retail does.
 - autosprite: at load each quad's vertices take the centre as position,
@@ -851,16 +864,44 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   vertex's side as the one that puts it back where it was seen face on.
 - Deformed props draw two-sided like every prop; a stock autosprite stage
   is additive, so winding does not show.
-- bulge rides `StageParams.bulge` (`[width, height, t * speed]`, `sin` in
-  place of the table), move `StageParams.move_by` (the frame's offset,
+- bulge rides its record (`[width, height, t * speed]`, `sin` in
+  place of the table), move its record (the frame's offset,
   evaluated on the CPU through the table), normal
-  `StageParams.normal_noise` with the noise in `noise.wgsl` (the tables
+  its record with the noise in `noise.wgsl` (the tables
   `shader::NOISE_TABLE` / `NOISE_PERM`, held equal by a test). The normal
   feeds `tcGen environment` and the dlight projection.
-- vcod runs the deforms in a fixed order, wave or flap, bulge, move,
-  where retail runs a shader's records in script order; the displacing
-  ones move along the undeformed normal. The dlight pass runs the same
-  deforms (`deform_pos`), flap included, so it stays depth-equal.
+- VERIFIED, 0x5149b0 (RB_DeformTessGeometry): a loop over the shader's
+  record count (`+0xac`) from record 0 at `+0xb0`, 0x34 bytes apart,
+  switching on each record's deform number; every case works in place on
+  the tess arrays, so a record reads the positions and normals the one
+  before it wrote. VERIFIED, 0x4f9d20: a fourth `deformVertexes` warns
+  `MAX_SHADER_DEFORMS` after reading only its subtype; every stored
+  subtype, the sprites, `projectionShadow`, `text0-7` and `syncNormal`
+  included, takes a record. A bulge or normal short of numbers, a bad
+  flap axis and a `syncNormal` not after a wave store none.
+- VERIFIED, the four stage iterators (Generic 0x500ba0, ATI 0x50b9c0, NV
+  0x50c870, ARB 0x50d970, each by its `--- RB_StageIterator...( %s )`
+  string) call 0x5149b0 first; 0x4b8420 picks one of them into
+  0x16d8890 for the GL path, and FinishShader (0x4fba30, the store at
+  0x4fbdbc) copies it into every shader's iterator pointer except a
+  sky's (shader flag 8, which takes 0x4e84d0, 0x4fbdca). INFERRED: so a model's surfaces, which
+  fill the same tess arrays (0x505580 above), run their shader's deforms
+  as world surfaces do; the deform reads the tess positions, which for
+  a model are its own frame's (the entity's transform rides the GL
+  modelview).
+- vcod: `Shader::deforms` keeps the records in script order, three at
+  most (`MAX_SHADER_DEFORMS`); `StageParams.deform` carries the drawable
+  ones with `deform_kinds` (retail's numbers) and `deform.wgsl`'s
+  `deform_vertex` runs them in order on the position and normal, in the
+  world pass, the dlight pass, the shadow cutouts, the entity pass and
+  the viewmodel. The entity pass deforms the posed model-space vertex
+  before the instance transform; the viewmodel's bones are view space,
+  so there the wave's `x + y + z` and the normal's noise read view-space
+  coordinates (no stock viewmodel skin deforms). The sprites stay
+  load-time encodings (world soups and props only) and hold their slot
+  without a GPU record. Before 2026-10-16 vcod kept one record of each
+  kind in a fixed order (wave or flap, bulge, move) along the undeformed
+  normal, and the entity and viewmodel passes ran none.
 - Inert: syncNormal, projectionShadow, text0-7. None has a stock user.
 
 ### Model skin scripts
@@ -879,9 +920,30 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   its last `@`, and warns "found '/' or '\' after '@'" and returns no
   shader when a slash follows the `@`. When 0x4fc0c0 finds no type or no
   image it returns 0 and 0x4fc5c0 returns the default shader (0x16c4e08).
+- VERIFIED, 0x4fc0c0: after the slash test it looks the type up as a
+  shader named `@` plus the type's directory (`model/` for a skin,
+  `world/` and `2d/` beside it at 0x546c00) and the type (0x4fbe80); on
+  a miss it loads the `.stype` (0x4fbf20) and returns 0 when that fails.
+  It then loads the skin's image (0x4eed80, by the cut name) for every
+  bundle whose image slot holds the `$texturename` marker (`+0x50 ==
+  10`), and returns 0 with "WARNING: shadertype '%s' couldn't load image
+  for '%s'" when one fails. 0x4fc5c0 returns the default shader
+  (0x16c4e08) for any 0.
+- VERIFIED, 0x4fd780 builds that default shader, `<default>`: one stage
+  of the default image (0x16c4d58), state bits 0x100 (depth write, no
+  blend), its rgbGen word (stage `+0x664`) left 0, which the colour
+  switch at 0x4ffa60 takes through its default case: identityLight's
+  byte (0x16c55b4) in all four channels.
 - vcod: `props::skin_script` and `props::skin_type` cut at the first `.`
-  before either test. A missing `.stype` or a slash after the `@` still
-  draws the implicit skin in vcod, not the default shader.
+  before either test; `skin_type` refuses a slash after the `@`.
+  `entity_material::load` draws `shader::default_shader` (the
+  `*default` image under `identityLighting`) for a typed skin whose
+  template is missing, has no stage, or names `$texturename` without the
+  skin's image, and so does a static prop (`prop_skin_draw`). VERIFIED,
+  census (`a_typed_skin_retail_cannot_build_draws_the_default_shader`):
+  the 5171 typed skin slots of the 1012 stock 1.1 xmodels all build, so
+  no stock model draws it. Before 2026-10-16 vcod drew the implicit skin
+  there.
 - VERIFIED, census: 12 skins placed on stock MP maps have a `skins/` block:
   `light_sprite` (autosprite, additive), `lightbulb_on`, `ceilinglight1on`,
   `ind_lamp1_on`, `lantern_on`, `exteriorlamp2_on` (all `rgbGen
@@ -1003,8 +1065,9 @@ vcod (`vcod_common::deform`, `vs_stage` in `shader.wgsl`):
   implicit skin for any skin without an `@`, for snapshot entities and the
   viewmodel alike. A stage image a block names samples through a
   clamp-to-edge sampler when its bundle is `clamp`. The entity and
-  viewmodel shaders run no vertex deform, so a block's autosprite, flap or
-  wave draws undeformed there (no stock MP entity carries one).
+  viewmodel shaders run a block's wave, flap, bulge, move and normal
+  deforms ("Vertex deforms" above); an autosprite there draws undeformed
+  (no stock MP entity carries one).
 
 ### World shader types
 

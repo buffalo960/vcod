@@ -303,7 +303,10 @@ header of the fixture it produced.
   `--probe-weapsel` panzerfaust shooter on 1.1d under
   `client-probes/probe_panzer` (`cod11-combat.md` 13.6), the
   `*-15-turret.bin` pair a spectator following a `--save-turret` gunner
-  on 1.5b under `client-probes/probe_turret` (`cod11-turrets.md` 14.3).
+  on 1.5b under `client-probes/probe_turret` (`cod11-turrets.md` 14.3),
+  the `*-turret-hit.bin` pair a 1.1d `--save-turret` gunner's own
+  snapshots while a `--save-hit` probe shoots him off the gun (same
+  section).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
 - `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms
@@ -335,8 +338,9 @@ header of the fixture it produced.
   beside `COD_VERSION=1.5 tools/run_probe.sh client-probes/probe_itemdrop`.
   `run_probe.sh` takes `COD_VERSION=uo`, but of the modes that pair
   with a `client-probes/` gametype only `--save-combat` beside
-  `probe_uofx`, `--save-turret` beside `probe_turret` (its fixture
-  discarded, for the spectator's capture), `--probe-flame` beside
+  `probe_uofx`, `--save-turret` beside `probe_turret` (its
+  `mp_carentan-dm-turret-uo.txt` committed, as 1.5's `-15.txt`),
+  `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
   `probe_bas` and their `*end` endings have run there. On UO's mp_carentan the

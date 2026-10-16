@@ -20,6 +20,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use vcod_common::static_light::{RegionKeep, Sun};
 
+/// shadow_cut.wgsl with the deforms its staged casters run.
+const SHADOW_CUT_WGSL: &str = concat!(
+    include_str!("shadow_cut.wgsl"),
+    include_str!("noise.wgsl"),
+    include_str!("deform.wgsl")
+);
+
 /// Shadow map side in texels.
 const MAP_SIZE: u32 = 2048;
 /// Half the map's side in world units: 1.5 units a texel.
@@ -1129,7 +1136,10 @@ impl ShadowPass {
             multiview_mask: None,
             cache: None,
         });
-        let cut = device.create_shader_module(wgpu::include_wgsl!("shadow_cut.wgsl"));
+        let cut = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shadow_cut.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(SHADOW_CUT_WGSL.into()),
+        });
         let cut_pipeline = |label, groups: &[Option<&wgpu::BindGroupLayout>], vs, fs| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
@@ -2156,7 +2166,7 @@ mod tests {
         use wgpu::naga;
         for src in [
             include_str!("shadow_cast.wgsl"),
-            include_str!("shadow_cut.wgsl"),
+            SHADOW_CUT_WGSL,
             include_str!("shadow_mask.wgsl"),
         ] {
             let module = naga::front::wgsl::parse_str(src)

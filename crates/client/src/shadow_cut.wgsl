@@ -25,20 +25,13 @@ struct StageParams {
     vec1_s: vec4<f32>,
     vec1_t: vec4<f32>,
     eye_off: vec4<f32>,
-    // deformVertexes wave / flap: [base, amp, phase + t * rate, spread]
-    wave: vec4<f32>,
-    // deformVertexes bulge: [width, height, t * speed, 0]
-    bulge: vec4<f32>,
-    // deformVertexes move: this frame's offset
-    move_by: vec4<f32>,
+    // the deform records and their kinds (deform.wgsl)
+    deform: array<vec4<f32>, 3>,
+    deform_kinds: vec4<u32>,
 };
 @group(2) @binding(0) var<uniform> stage: StageParams;
 
 const F_VERTEX_ALPHA: u32 = 2u;
-const F_DEFORM_WAVE: u32 = 2048u;
-const F_DEFORM_FLAP_S: u32 = 262144u;
-const F_DEFORM_FLAP_T: u32 = 524288u;
-const F_DEFORM_BULGE: u32 = 268435456u;
 const F_AF_GT0: u32 = 16u;
 const F_AF_LT128: u32 = 32u;
 const F_AF_GE128: u32 = 48u;
@@ -79,26 +72,6 @@ fn fs_cut(in: CutOut) {
     }
 }
 
-// shader.wgsl's deform_pos: the flags (mp_ship's and mp_powcamp's flags)
-// cast as they wave
-fn deformed(pos: vec3<f32>, uv: vec2<f32>, normal: vec3<f32>) -> vec3<f32> {
-    var p = pos;
-    if ((stage.flags & (F_DEFORM_WAVE | F_DEFORM_FLAP_S | F_DEFORM_FLAP_T)) != 0u) {
-        var scale = stage.wave.x
-            + stage.wave.y * sin(6.2831853 * (stage.wave.z + (pos.x + pos.y + pos.z) * stage.wave.w));
-        if ((stage.flags & F_DEFORM_FLAP_S) != 0u) {
-            scale *= uv.x;
-        } else if ((stage.flags & F_DEFORM_FLAP_T) != 0u) {
-            scale *= uv.y;
-        }
-        p = p + normal * scale;
-    }
-    if ((stage.flags & F_DEFORM_BULGE) != 0u) {
-        p = p + normal * (sin(uv.x * stage.bulge.x + stage.bulge.z) * stage.bulge.y);
-    }
-    return p + stage.move_by.xyz;
-}
-
 @vertex
 fn vs_cut_stage(
     @location(0) pos: vec3<f32>,
@@ -107,7 +80,8 @@ fn vs_cut_stage(
     @location(4) color: vec4<f32>,
 ) -> CutOut {
     var out: CutOut;
-    out.clip = light_vp * vec4<f32>(deformed(pos, uv, normal), 1.0);
+    // the flags (mp_ship's and mp_powcamp's) cast as they wave
+    out.clip = light_vp * vec4<f32>(deform_vertex(pos, normal, uv).pos, 1.0);
     out.uv = stage.uv0 * vec3<f32>(uv, 1.0);
     out.alpha = select(1.0, color.a, (stage.flags & F_VERTEX_ALPHA) != 0u);
     return out;

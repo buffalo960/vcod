@@ -27,7 +27,7 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, DepthFunc, DlightDraw,
+    AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, Deform, DepthFunc, DlightDraw,
     DrawClass, ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE,
     Shader, ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
     has_animated_tcmods, rgb_wave_value, wave_value,
@@ -901,9 +901,6 @@ pub const STAGE_FLAG_SKY: u32 = 512;
 /// `rgbGen vertex` scales the vertex rgb by identityLight; `exactVertex`
 /// stays raw (RTCW-MP tr_shade.c CGEN_VERTEX vs CGEN_EXACT_VERTEX).
 pub const STAGE_FLAG_VERTEX_RGB_HALF: u32 = 1024;
-/// deformVertexes wave: displace vertices along their normals by
-/// StageParams.wave = [base, amp, phase + t * rate, spread].
-pub const STAGE_FLAG_DEFORM_WAVE: u32 = 2048;
 /// The tint rgb scales by identityLight, which the camera uniform carries:
 /// `identityLighting`, `constLighting` and `wave` (0x4ffa60).
 pub const STAGE_FLAG_TINT_LIGHT: u32 = 4096;
@@ -919,10 +916,6 @@ pub const STAGE_FLAG_BUNDLE1_ENV: u32 = 32768;
 /// adds it, `blend` decals it; neither multiplies (shader doc 3).
 pub const STAGE_FLAG_ENV1_ADD: u32 = 65536;
 pub const STAGE_FLAG_ENV1_DECAL: u32 = 131072;
-/// deformVertexes flap: the wave in StageParams.wave scaled by the base
-/// `s` (or `t`) coordinate (CoDMP.exe 0x5136e0).
-pub const STAGE_FLAG_DEFORM_FLAP_S: u32 = 1 << 18;
-pub const STAGE_FLAG_DEFORM_FLAP_T: u32 = 1 << 19;
 /// The sprite deforms over vertices `vcod_common::deform` encoded at load.
 pub const STAGE_FLAG_AUTOSPRITE: u32 = 1 << 20;
 pub const STAGE_FLAG_AUTOSPRITE2: u32 = 1 << 21;
@@ -938,9 +931,15 @@ pub const STAGE_FLAG_CLAMP_S: u32 = 1 << 24;
 pub const STAGE_FLAG_CLAMP_T: u32 = 1 << 25;
 pub const STAGE_FLAG_CLAMP1_S: u32 = 1 << 26;
 pub const STAGE_FLAG_CLAMP1_T: u32 = 1 << 27;
-/// deformVertexes bulge and normal (StageParams.bulge, .normal_noise).
-pub const STAGE_FLAG_DEFORM_BULGE: u32 = 1 << 28;
-pub const STAGE_FLAG_DEFORM_NORMAL: u32 = 1 << 29;
+
+/// `StageParams::deform_kinds` codes: retail's deform numbers
+/// (CoDMP.exe 0x5149b0's switch), 0 for an empty slot.
+pub const DEFORM_WAVE: u32 = 1;
+pub const DEFORM_FLAP_S: u32 = 2;
+pub const DEFORM_FLAP_T: u32 = 3;
+pub const DEFORM_NORMAL: u32 = 4;
+pub const DEFORM_BULGE: u32 = 6;
+pub const DEFORM_MOVE: u32 = 7;
 
 /// Whether a stage lays its own colour over the frame: no blend, an alpha
 /// or a premultiplied blend. An additive stage adds light and a filter
@@ -959,6 +958,7 @@ fn lays_own_colour(blend: &Option<(BlendFactor, BlendFactor)>) -> bool {
 pub(crate) const WORLD_WGSL: &str = concat!(
     include_str!("shader.wgsl"),
     include_str!("noise.wgsl"),
+    include_str!("deform.wgsl"),
     include_str!("shadow_receive.wgsl"),
     include_str!("tex_samplers.wgsl")
 );
@@ -996,16 +996,13 @@ pub struct StageParams {
     pub(crate) vec1_s: [f32; 4],
     pub(crate) vec1_t: [f32; 4],
     pub(crate) eye_off: [f32; 4],
-    /// deformVertexes wave: [base, amp, phase + t * rate, spread = 1/div];
-    /// the VS displaces along the vertex normal when F_DEFORM_WAVE is set.
-    pub(crate) wave: [f32; 4],
-    /// deformVertexes bulge: [width, height, t * speed, 0] under
-    /// F_DEFORM_BULGE.
-    pub(crate) bulge: [f32; 4],
-    /// deformVertexes move: this frame's offset, added to every vertex.
-    pub(crate) move_by: [f32; 4],
-    /// deformVertexes normal: [amp, t * freq, 0, 0] under F_DEFORM_NORMAL.
-    pub(crate) normal_noise: [f32; 4],
+    /// The shader's deform records in script order, which `deform.wgsl`
+    /// runs one after another: wave and flap `[base, amp, phase + t *
+    /// rate, spread]`, bulge `[width, height, t * speed, 0]`, move this
+    /// frame's offset, normal `[amp, t * freq, 0, 0]`.
+    pub(crate) deform: [[f32; 4]; 3],
+    /// Each record's `DEFORM_*` code; the fourth is padding.
+    pub(crate) deform_kinds: [u32; 4],
 }
 
 const _: () = assert!(std::mem::size_of::<StageParams>() == 240);
@@ -1057,6 +1054,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
     }
 
     let mut rgb = [1.0f32; 3];
+    // a table wave clamps after its identityLight scale (0x514c00), which
+    // the shader applies, so it reaches the shader unclamped above
+    let mut rgb_max = 1.0f32;
     // identityLight (1 / (1 << overbrightBits)) scales the lit gens in the
     // shader; identity, const and exactVertex pass through unscaled
     // (docs/research/cod11-gamma.md, section 5).
@@ -1079,6 +1079,7 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             // the noise glow skips identityLight (0x514c00)
             if w.form != WaveForm::Noise {
                 flags |= STAGE_FLAG_TINT_LIGHT;
+                rgb_max = f32::MAX;
             }
             rgb = [rgb_wave_value(w, t); 3];
         }
@@ -1106,7 +1107,12 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
             [tb0[0], tb0[1], tb1[0], tb1[1]]
         },
         // Retail writes these as colour bytes (Q3's EvalWaveFormClamped).
-        tint: [rgb[0], rgb[1], rgb[2], alpha].map(|c| c.clamp(0.0, 1.0)),
+        tint: [
+            rgb[0].clamp(0.0, rgb_max),
+            rgb[1].clamp(0.0, rgb_max),
+            rgb[2].clamp(0.0, rgb_max),
+            alpha.clamp(0.0, 1.0),
+        ],
         flags,
         uv0_rate: match b0.tcmods.as_slice() {
             [vcod_common::shader::TcMod::Scroll(s, t)] => [*s, *t, 0.0],
@@ -1118,10 +1124,8 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         vec1_s: [0.0; 4],
         vec1_t: [0.0; 4],
         eye_off: [0.0; 4],
-        wave: [0.0; 4],
-        bulge: [0.0; 4],
-        move_by: [0.0; 4],
-        normal_noise: [0.0; 4],
+        deform: [[0.0; 4]; 3],
+        deform_kinds: [0; 4],
     };
     match &b0.tc_gen {
         TcGen::Base => {}
@@ -1148,32 +1152,31 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         }
     }
     // a wave of rate 0 is one phase for every vertex (0x513570, 0x5136e0)
-    let deform = |w: &Wave, spread: f32| {
+    let wave = |w: &Wave, spread: f32| {
         let spread = if w.freq == 0.0 { 0.0 } else { spread };
         [w.base, w.amp, w.phase + t * w.freq, spread]
     };
-    if let Some((w, spread)) = &shader.deform_wave {
-        flags |= STAGE_FLAG_DEFORM_WAVE;
-        p.wave = deform(w, *spread);
-    } else if let Some(f) = &shader.deform_flap {
-        flags |= if f.along_t {
-            STAGE_FLAG_DEFORM_FLAP_T
-        } else {
-            STAGE_FLAG_DEFORM_FLAP_S
-        };
-        p.wave = deform(&f.wave, f.spread);
-    }
-    if let Some(b) = &shader.deform_bulge {
-        flags |= STAGE_FLAG_DEFORM_BULGE;
-        p.bulge = [b.width, b.height, t * b.speed, 0.0];
-    }
-    if let Some((by, w)) = &shader.deform_move {
-        let k = wave_value(w, t);
-        p.move_by = [by[0] * k, by[1] * k, by[2] * k, 0.0];
-    }
-    if let Some(n) = &shader.deform_normal {
-        flags |= STAGE_FLAG_DEFORM_NORMAL;
-        p.normal_noise = [n.amp, t * n.freq, 0.0, 0.0];
+    let records = shader.deforms.iter().filter_map(|d| match d {
+        Deform::Wave { wave: w, spread } => Some((DEFORM_WAVE, wave(w, *spread))),
+        Deform::Flap(f) => Some((
+            if f.along_t {
+                DEFORM_FLAP_T
+            } else {
+                DEFORM_FLAP_S
+            },
+            wave(&f.wave, f.spread),
+        )),
+        Deform::Bulge(b) => Some((DEFORM_BULGE, [b.width, b.height, t * b.speed, 0.0])),
+        Deform::Move { by, wave: w } => {
+            let k = wave_value(w, t);
+            Some((DEFORM_MOVE, [by[0] * k, by[1] * k, by[2] * k, 0.0]))
+        }
+        Deform::Normal(n) => Some((DEFORM_NORMAL, [n.amp, t * n.freq, 0.0, 0.0])),
+        Deform::Other => None,
+    });
+    for (i, (kind, rec)) in records.take(3).enumerate() {
+        p.deform_kinds[i] = kind;
+        p.deform[i] = rec;
     }
     match shader.sprite {
         Some(Sprite::Auto) => flags |= STAGE_FLAG_AUTOSPRITE,
@@ -1393,11 +1396,7 @@ pub(crate) fn stage_animated(sh: &Shader, idx: usize) -> bool {
     let Some(st) = sh.stages.get(idx) else {
         return false;
     };
-    sh.deform_wave.is_some()
-        || sh.deform_flap.is_some()
-        || sh.deform_bulge.is_some()
-        || sh.deform_move.is_some()
-        || sh.deform_normal.is_some()
+    sh.deforms.iter().any(|d| *d != Deform::Other)
         || st.bundles.iter().any(|b| has_animated_tcmods(&b.tcmods))
         || matches!(st.rgb_gen, RgbGen::Wave(_))
         || matches!(st.alpha_gen, AlphaGen::Wave(_))
@@ -3754,8 +3753,7 @@ impl Renderer {
                     Some(m) => self.shader_lib.get(&bsp.materials[m as usize].name),
                     None => prop_scripts[bi - batches.len()].map(|(sh, _)| sh),
                 };
-                let deformed =
-                    script.is_some_and(|sh| sh.deform_wave.is_some() || sh.deform_flap.is_some());
+                let deformed = script.is_some_and(|sh| sh.deforms.iter().any(Deform::moves));
                 let solid_or_cut = |cut| {
                     if cut {
                         ShadowCast::Cut
@@ -6158,7 +6156,12 @@ fn prop_skin_draw(fs: &Pk3Fs, skin: &str) -> PropSkinDraw {
     let Some(sh) =
         crate::entity_material::template(fs, skin, &mut vcod_common::shader::WarnSet::new())
     else {
-        return PropSkinDraw::Opaque;
+        // a typed skin retail cannot build draws its default shader
+        return if crate::entity_material::is_typed_skin(skin) {
+            PropSkinDraw::Stages(Box::new(vcod_common::shader::default_shader()))
+        } else {
+            PropSkinDraw::Opaque
+        };
     };
     if sh.stages.len() > 1 || sh.stages[0].blend.is_some() {
         return PropSkinDraw::Stages(Box::new(crate::entity_material::bind_texture_name(
@@ -7526,6 +7529,8 @@ fn upload_bundle_view(
     let mut img = if path == "$dlight" {
         // engine-generated light blob, never a file on disk (research doc §8)
         assets::dlight_blob()
+    } else if path == vcod_common::shader::DEFAULT_IMAGE {
+        assets::default_image()
     } else if path == "textures/battleship/deckflag_np.tga" {
         // ships in no stock pak; retail binds its default image there too
         assets::white_1x1()
@@ -7920,10 +7925,12 @@ mod tests {
             vec1_s: [0.0, 0.0, 1.0, 0.0],
             vec1_t: [0.0, 0.0, 0.0, 1.0],
             eye_off: [9.0, 8.0, 7.0, 0.0],
-            wave: [1.0, 2.0, 3.0, 4.0],
-            bulge: [5.0, 6.0, 7.0, 0.0],
-            move_by: [1.0, 0.0, 0.0, 0.0],
-            normal_noise: [0.5, 2.0, 0.0, 0.0],
+            deform: [
+                [1.0, 2.0, 3.0, 4.0],
+                [5.0, 6.0, 7.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ],
+            deform_kinds: [DEFORM_WAVE, DEFORM_BULGE, DEFORM_MOVE, 0],
         };
         // slot-shaped write/read, like the UBO dynamic-offset path
         let mut slot = [0u8; std::mem::size_of::<StageParams>()];
@@ -8158,10 +8165,11 @@ mod tests {
         let p = stage_params(&sh, 0, 123.0).unwrap();
         let rv = vcod_common::shader::wave_value(&rgb_wave, 123.0);
         let av = vcod_common::shader::wave_value(&a_wave, 123.0);
-        // the rgb wave clamps to a colour byte and scales by identityLight
-        // in the shader; alpha waves do not
+        // the rgb wave scales by identityLight in the shader, which clamps
+        // after it (0x514c00): 1.5 reaches it whole, to draw 0.75 at an
+        // identityLight of 0.5; alpha waves clamp here
         assert!((rv - 1.5).abs() < 1e-3, "{rv}");
-        assert_eq!(p.tint[..3], [1.0; 3]);
+        assert_eq!(p.tint[..3], [rv; 3]);
         assert!((p.tint[3] - av).abs() < 1e-6 && (av - 0.25).abs() < 1e-6);
         assert_eq!(p.flags, STAGE_FLAG_TINT_LIGHT);
     }
@@ -8171,6 +8179,25 @@ mod tests {
         use vcod_common::shader::{WarnSet, parse_shader, split_blocks};
         let (name, body) = split_blocks(text).into_iter().next().expect("a block");
         parse_shader(&name, &body, &mut WarnSet::new())
+    }
+
+    /// deform.wgsl's kind codes are the ones `stage_params` writes.
+    #[test]
+    fn deform_wgsl_codes_are_the_renderer_ones() {
+        let src = include_str!("deform.wgsl");
+        for (name, code) in [
+            ("DEFORM_WAVE", DEFORM_WAVE),
+            ("DEFORM_FLAP_S", DEFORM_FLAP_S),
+            ("DEFORM_FLAP_T", DEFORM_FLAP_T),
+            ("DEFORM_NORMAL", DEFORM_NORMAL),
+            ("DEFORM_BULGE", DEFORM_BULGE),
+            ("DEFORM_MOVE", DEFORM_MOVE),
+        ] {
+            assert!(
+                src.contains(&format!("const {name}: u32 = {code}u;")),
+                "{name}"
+            );
+        }
     }
 
     /// noise.wgsl spells out the noise tables `deformVertexes normal` reads
@@ -8201,27 +8228,39 @@ mod tests {
         assert_eq!(table, vcod_common::shader::NOISE_TABLE);
     }
 
-    /// bulge, move and normal ride their own StageParams slots and flags.
+    /// The deform records reach the shader in script order, each in its
+    /// slot with retail's deform number (0x5149b0 runs them in order).
     #[test]
-    fn stage_params_carry_bulge_move_and_normal() {
+    fn stage_params_carry_the_deforms_in_script_order() {
         let sh = parsed(
             "t\n{\ndeformVertexes bulge 3 4 5\ndeformVertexes move 0 0 2 square 1 2 0 0\ndeformVertexes normal .5 2\n{\nmap a.tga\n}\n}",
         );
         assert!(stage_animated(&sh, 0));
         let p = stage_params(&sh, 0, 2.0).unwrap();
-        assert_ne!(p.flags & STAGE_FLAG_DEFORM_BULGE, 0);
-        assert_ne!(p.flags & STAGE_FLAG_DEFORM_NORMAL, 0);
-        assert_eq!(p.bulge, [3.0, 4.0, 10.0, 0.0]);
+        assert_eq!(
+            p.deform_kinds,
+            [DEFORM_BULGE, DEFORM_MOVE, DEFORM_NORMAL, 0]
+        );
+        assert_eq!(p.deform[0], [3.0, 4.0, 10.0, 0.0]);
         // square at phase 0 reads +1: 2 * (1 + 2 * 1) along z
-        assert_eq!(p.move_by, [0.0, 0.0, 6.0, 0.0]);
-        assert_eq!(p.normal_noise, [0.5, 4.0, 0.0, 0.0]);
+        assert_eq!(p.deform[1], [0.0, 0.0, 6.0, 0.0]);
+        assert_eq!(p.deform[2], [0.5, 4.0, 0.0, 0.0]);
+        // reordered, the slots follow
+        let sh = parsed(
+            "t\n{\ndeformVertexes normal .5 2\ndeformVertexes wave 64 sin 0 2 0 1\n{\nmap a.tga\n}\n}",
+        );
+        let p = stage_params(&sh, 0, 2.0).unwrap();
+        assert_eq!(p.deform_kinds, [DEFORM_NORMAL, DEFORM_WAVE, 0, 0]);
+        // a sprite holds a record slot but draws through its own flag
+        let sh = parsed(
+            "t\n{\ndeformVertexes autosprite\ndeformVertexes move 0 0 2 square 1 2 0 0\n{\nmap a.tga\n}\n}",
+        );
+        let p = stage_params(&sh, 0, 2.0).unwrap();
+        assert_eq!(p.deform_kinds, [DEFORM_MOVE, 0, 0, 0]);
         let plain = parsed("t\n{\n{\nmap a.tga\n}\n}");
         let p = stage_params(&plain, 0, 2.0).unwrap();
-        assert_eq!(
-            p.flags & (STAGE_FLAG_DEFORM_BULGE | STAGE_FLAG_DEFORM_NORMAL),
-            0
-        );
-        assert_eq!(p.move_by, [0.0; 4]);
+        assert_eq!(p.deform_kinds, [0; 4]);
+        assert!(!stage_animated(&plain, 0));
     }
 
     #[test]
@@ -8239,6 +8278,20 @@ mod tests {
             .collect();
         assert!(tints.iter().all(|v| (0.3..=0.5).contains(v)));
         assert!(tints.iter().any(|v| (v - 0.4).abs() > 0.02), "{tints:?}");
+    }
+
+    /// A table rgbGen wave clamps below at 0 here and above only after the
+    /// shader's identityLight scale; a noise wave, unscaled, clamps here.
+    #[test]
+    fn stage_params_rgb_wave_clamps_after_identity_light() {
+        let low = parsed("t\n{\n{\nmap a.tga\nrgbGen wave sin -1 0.5 0 0\n}\n}");
+        assert_eq!(stage_params(&low, 0, 0.0).unwrap().tint[..3], [0.0; 3]);
+        let high = parsed("t\n{\n{\nmap a.tga\nrgbGen wave sin 3 0 0 0\n}\n}");
+        let p = stage_params(&high, 0, 0.0).unwrap();
+        assert_eq!(p.tint[..3], [3.0; 3]);
+        assert_ne!(p.flags & STAGE_FLAG_TINT_LIGHT, 0);
+        let noise = parsed("t\n{\n{\nmap a.tga\nrgbGen wave noise 3 0 0 1\n}\n}");
+        assert_eq!(stage_params(&noise, 0, 0.0).unwrap().tint[..3], [1.0; 3]);
     }
 
     #[test]
@@ -8510,7 +8563,7 @@ mod tests {
 
     #[test]
     fn stage_params_flag_flap_and_sprites() {
-        // skins/shipflag_np: flap s, the wave riding StageParams.wave
+        // skins/shipflag_np: flap s, the wave riding the first deform record
         let parse = |body: &str| {
             let (name, body) = vcod_common::shader::split_blocks(body)
                 .into_iter()
@@ -8524,18 +8577,14 @@ mod tests {
         };
         let flag = parse("f { cull none deformVertexes flap s 32 sin 4 8 0 .75 { map a.tga } }");
         let p = stage_params(&flag, 0, 2.0).expect("one stage");
-        assert_eq!(p.flags & STAGE_FLAG_DEFORM_FLAP_S, STAGE_FLAG_DEFORM_FLAP_S);
-        assert_eq!(
-            p.flags & (STAGE_FLAG_DEFORM_WAVE | STAGE_FLAG_DEFORM_FLAP_T),
-            0
-        );
-        assert_eq!(p.wave, [4.0, 8.0, 1.5, 1.0 / 32.0]);
+        assert_eq!(p.deform_kinds, [DEFORM_FLAP_S, 0, 0, 0]);
+        assert_eq!(p.deform[0], [4.0, 8.0, 1.5, 1.0 / 32.0]);
         assert!(stage_animated(&flag, 0));
         // a rate of 0 drops the spread (one phase for every vertex)
         let still = parse("f { deformVertexes flap t 32 sin 4 8 .5 0 { map a.tga } }");
         let p = stage_params(&still, 0, 2.0).expect("one stage");
-        assert_eq!(p.flags & STAGE_FLAG_DEFORM_FLAP_T, STAGE_FLAG_DEFORM_FLAP_T);
-        assert_eq!(p.wave, [4.0, 8.0, 0.5, 0.0]);
+        assert_eq!(p.deform_kinds, [DEFORM_FLAP_T, 0, 0, 0]);
+        assert_eq!(p.deform[0], [4.0, 8.0, 0.5, 0.0]);
         // skins/light_sprite: autosprite, and its lightingDiffuse-free stage
         let sprite = parse(
             "s { deformvertexes autosprite { map a.tga blendfunc add rgbGen identityLighting } }",
@@ -8833,6 +8882,11 @@ mod tests {
         assert!(matches!(
             prop_skin_draw(&fs, "kwagon.tga"),
             PropSkinDraw::Opaque
+        ));
+        // a typed skin without its template draws retail's default shader
+        assert!(matches!(
+            prop_skin_draw(&fs, "no_such_type@staffcar.tga"),
+            PropSkinDraw::Stages(sh) if sh.name == "<default>"
         ));
     }
 

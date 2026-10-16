@@ -1647,11 +1647,61 @@ struct FollowFrame {
     replay: bool,
 }
 
-/// OOB argument text, minus a trailing line terminator.
-fn oob_arg(rest: &[u8]) -> String {
-    String::from_utf8_lossy(rest)
-        .trim_end_matches(['\n', '\0'])
-        .to_string()
+/// `Cmd_Argv(n)` of a connectionless packet as `SV_ConnectionlessPacket`
+/// (cod_lnxded 0x808c63c) reads it: `MSG_ReadStringLine` stops at a NUL, a
+/// newline or 1023 bytes and turns `%` and every byte past 127 into `.`,
+/// then `Cmd_TokenizeString` (0x805b398) splits on bytes up to a space,
+/// groups a `"` run, and drops `//` to the end and `/* */`
+/// (docs/research/cod11-server-handshake.md, "The challenge key").
+fn oob_argv(raw: &[u8], n: usize) -> String {
+    let line: Vec<u8> = raw
+        .get(4..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|&&b| b != 0 && b != b'\n')
+        .take(1023)
+        .map(|&b| if b == b'%' || b > 127 { b'.' } else { b })
+        .collect();
+    let comment = |i: usize| matches!(line.get(i..i + 2), Some(b"//" | b"/*"));
+    let mut tokens: Vec<&[u8]> = Vec::new();
+    let mut i = 0;
+    while tokens.len() <= n {
+        while i < line.len() && line[i] <= b' ' {
+            i += 1;
+        }
+        match line.get(i..i + 2) {
+            Some(b"//") => break,
+            Some(b"/*") => {
+                i = line[i + 2..]
+                    .windows(2)
+                    .position(|w| w == b"*/")
+                    .map_or(line.len(), |p| i + 2 + p + 2);
+                continue;
+            }
+            _ => {}
+        }
+        if i >= line.len() {
+            break;
+        }
+        if line[i] == b'"' {
+            let start = i + 1;
+            i = start;
+            while i < line.len() && line[i] != b'"' {
+                i += 1;
+            }
+            tokens.push(&line[start..i]);
+            i += 1;
+        } else {
+            let start = i;
+            while i < line.len() && line[i] > b' ' && line[i] != b'"' && !comment(i) {
+                i += 1;
+            }
+            tokens.push(&line[start..i]);
+        }
+    }
+    tokens
+        .get(n)
+        .map_or_else(String::new, |t| t.iter().map(|&b| char::from(b)).collect())
 }
 
 /// The last script menu `Cmd_MenuResponse_f` (0x486d8) will look up, and the
@@ -1702,26 +1752,6 @@ fn strtol(s: &str) -> i64 {
 }
 
 pub use vcod_common::net::protocol::install_protocol;
-
-/// `Cmd_Argv(1)`. The token goes back out inside an info string, so the info
-/// separators come off it and the length is capped.
-fn challenge_arg(arg: &str) -> String {
-    const MAX: usize = 32;
-    let mut out = String::with_capacity(MAX);
-    for c in arg
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| *c != '\\' && *c != '"')
-    {
-        if out.len() + c.len_utf8() > MAX {
-            break;
-        }
-        out.push(c);
-    }
-    out
-}
 
 /// [`Server::fog_cull`] off the fields, for a caller holding the script.
 fn fog_cull_of(p: &Protocol, configstrings: &[String]) -> Option<f32> {
@@ -2087,18 +2117,18 @@ impl Server {
             return;
         }
         match parse_oob(pkt) {
-            Some((cmd, rest)) => {
+            Some((cmd, _)) => {
                 let cmd = cmd.to_string();
-                self.handle_oob(from, &cmd, rest, pkt, now);
+                self.handle_oob(from, &cmd, pkt, now);
             }
             None => self.handle_client_packet(from, pkt, now),
         }
     }
 
-    /// `connect` re-parses `raw` because its body is compressed; only the
-    /// browser queries read `rest` as text. The queries are rate limited
+    /// `connect` re-parses `raw` because its body is compressed; the browser
+    /// queries tokenize its line (`oob_argv`). The queries are rate limited
     /// before anything is looked at; a limited request is dropped silently.
-    fn handle_oob(&mut self, from: SocketAddr, cmd: &str, rest: &[u8], raw: &[u8], now: Instant) {
+    fn handle_oob(&mut self, from: SocketAddr, cmd: &str, raw: &[u8], now: Instant) {
         match cmd {
             "getinfo" | "getstatus" | "getchallenge" => {
                 if self.limiter.reply_limited(from.ip(), now) {
@@ -2106,8 +2136,8 @@ impl Server {
                     return;
                 }
                 match cmd {
-                    "getinfo" => self.svc_info(from, &oob_arg(rest)),
-                    "getstatus" => self.svc_status(from, &oob_arg(rest)),
+                    "getinfo" => self.svc_info(from, &oob_argv(raw, 1)),
+                    "getstatus" => self.svc_status(from, &oob_argv(raw, 1)),
                     _ => self.svc_get_challenge(from, now),
                 }
             }
@@ -2173,7 +2203,8 @@ impl Server {
     /// `minPing`/`maxPing`/`game` only appear when the matching cvar is set.
     /// The private slots are left out of both counts: `clients` counts the
     /// occupied slots from `sv_privateClients` up, `sv_maxclients` is the
-    /// rest.
+    /// rest. A challenge too long to fit gets no reply: retail's
+    /// `Info_SetValueForKey` drops the level or crashes there.
     fn svc_info(&mut self, from: SocketAddr, challenge: &str) {
         if self.v15() {
             return self.svc_info_v6(from, challenge);
@@ -2185,79 +2216,87 @@ impl Server {
             .skip(private.max(0) as usize)
             .flatten()
             .count();
-        let mut i = Info::new();
-        i.set("challenge", challenge_arg(challenge))
-            .set("protocol", self.proto.version)
-            .set(
+        let mut pairs = vec![
+            ("challenge", challenge.to_string()),
+            ("protocol", self.proto.version.to_string()),
+            (
                 "hostname",
                 self.live_cvar("sv_hostname", &self.cfg.hostname),
-            )
-            .set("mapname", &self.cfg.map)
-            .set("clients", public_clients)
-            .set("sv_maxclients", self.cfg.max_clients as i32 - private)
-            .set("gametype", self.live_gametype())
-            .set("pure", u8::from(self.paks.pure));
+            ),
+            ("mapname", self.cfg.map.clone()),
+            ("clients", public_clients.to_string()),
+            (
+                "sv_maxclients",
+                (self.cfg.max_clients as i32 - private).to_string(),
+            ),
+            ("gametype", self.live_gametype()),
+            ("pure", u8::from(self.paks.pure).to_string()),
+        ];
         // `->integer`, each key only when non-zero (0x808c318, 0x808c344).
         for (key, cvar) in [("minPing", "sv_minPing"), ("maxPing", "sv_maxPing")] {
             let v = self.live_int_cvar(cvar);
             if v != 0 {
-                i.set(key, v);
+                pairs.push((key, v.to_string()));
             }
         }
-        let game = self.live_cvar("fs_game", "");
-        if !game.is_empty() {
-            i.set("game", game);
+        // An empty `fs_game` reads as no key, as `Info_SetValueForKey` has it.
+        pairs.push(("game", self.live_cvar("fs_game", "")));
+        pairs.push((
+            "sv_allowAnonymous",
+            self.live_int_cvar("sv_allowAnonymous").to_string(),
+        ));
+        pairs.push(("pswrd", self.pswrd().to_string()));
+        let mut i = Info::new();
+        if self.info_pairs(&mut i, pairs) {
+            self.send_oob(from, &format!("infoResponse\n{i}"));
         }
-        i.set("sv_allowAnonymous", self.live_int_cvar("sv_allowAnonymous"))
-            .set("pswrd", self.pswrd());
-        self.send_oob(from, &format!("infoResponse\n{i}"));
     }
 
     /// 1.5b's `SVC_Info` (cod_lnxded 1.5b 0x8092a74,
     /// docs/research/cod15-protocol-diff.md, "Server side"): `clients`
     /// counts every slot and `sv_maxclients` gives back the private slots
     /// in use, the zero-valued keys are left out, and five keys follow
-    /// `pswrd`.
+    /// `pswrd`. A pair that does not fit is left out and the rest still go.
     fn svc_info_v6(&mut self, from: SocketAddr, challenge: &str) {
         let private = self.private_clients().max(0) as usize;
         let in_private = self.clients.iter().take(private).flatten().count() as i32;
         let clients = self.client_count() as i32;
         let max = self.cfg.max_clients as i32 - (private as i32 - in_private);
         let mut i = Info::new();
-        i.set("challenge", challenge_arg(challenge))
-            .set("protocol", self.proto.version)
-            .set(
-                "hostname",
-                self.live_cvar("sv_hostname", &self.cfg.hostname),
-            )
-            .set("mapname", &self.cfg.map);
+        i.set_value_for_key("challenge", challenge);
+        i.set_value_for_key("protocol", self.proto.version);
+        i.set_value_for_key(
+            "hostname",
+            self.live_cvar("sv_hostname", &self.cfg.hostname),
+        );
+        i.set_value_for_key("mapname", &self.cfg.map);
         if clients != 0 {
-            i.set("clients", clients);
+            i.set_value_for_key("clients", clients);
         }
         if max > 0 {
-            i.set("sv_maxclients", max);
+            i.set_value_for_key("sv_maxclients", max);
         }
-        i.set("gametype", self.live_gametype());
+        i.set_value_for_key("gametype", self.live_gametype());
         if self.paks.pure {
-            i.set("pure", 1);
+            i.set_value_for_key("pure", 1);
         }
         let int = |sv: &Self, cvar: &str| sv.live_int_cvar(cvar);
         for (key, cvar) in [("minPing", "sv_minPing"), ("maxPing", "sv_maxPing")] {
             let v = int(self, cvar);
             if v != 0 {
-                i.set(key, v);
+                i.set_value_for_key(key, v);
             }
         }
         let game = self.live_cvar("fs_game", "");
         if !game.is_empty() {
-            i.set("game", &game);
+            i.set_value_for_key("game", &game);
         }
         let anon = int(self, "sv_allowAnonymous");
         if anon != 0 {
-            i.set("sv_allowAnonymous", anon);
+            i.set_value_for_key("sv_allowAnonymous", anon);
         }
         if self.pswrd() != 0 {
-            i.set("pswrd", 1);
+            i.set_value_for_key("pswrd", 1);
         }
         // The string, when its `atoi` is non-zero; UO adds its vehicle
         // switches (coduo_lnxded 0x809392e).
@@ -2276,12 +2315,12 @@ impl Server {
         {
             let v = self.live_cvar(cvar, "0");
             if crate::game::builtins::cvar::atoi(&v) != 0 {
-                i.set(key, v);
+                i.set_value_for_key(key, v);
             }
         }
-        i.set("hw", 1)
-            .set("pb", int(self, "sv_punkbuster"))
-            .set("mod", u8::from(self.modded(&game)));
+        i.set_value_for_key("hw", 1);
+        i.set_value_for_key("pb", int(self, "sv_punkbuster"));
+        i.set_value_for_key("mod", u8::from(self.modded(&game)));
         self.send_oob(from, &format!("infoResponse\n{i}"));
     }
 
@@ -2312,10 +2351,10 @@ impl Server {
             return;
         }
         let mut i = self.serverinfo();
-        // `Info_SetValueForKey` removes the key for an empty value.
-        let challenge = challenge_arg(arg);
-        if !challenge.is_empty() {
-            i.set("challenge", challenge);
+        let mut pairs = vec![("challenge", arg.to_string())];
+        pairs.extend(self.demo_keywords(&i));
+        if !self.info_pairs(&mut i, pairs) {
+            return;
         }
         let msg = format!("gameCompleteStatus\n{i}\n{}", self.status_lines());
         for a in to {
@@ -2338,21 +2377,51 @@ impl Server {
         lines
     }
 
+    /// Appends `pairs` through `Info_SetValueForKey`. A pair past
+    /// `MAX_INFO_STRING` is skipped on 1.5 and UO, which warn and go on;
+    /// 1.1's `Com_Error` drops the level (or crashes), so there the reply
+    /// is abandoned and false comes back (cod11-server-handshake.md, "The
+    /// challenge key").
+    fn info_pairs(&self, i: &mut Info, pairs: Vec<(&str, String)>) -> bool {
+        for (key, value) in pairs {
+            if !i.set_value_for_key(key, value) && !self.v15() {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The `demo` keyword `SVC_Status` and `SVC_GameCompleteStatus` add
+    /// after `challenge` when `fs_restrict` is non-zero (0x808bda3,
+    /// 0x808bff3; 1.5b 0x80924c5, UO 0x809336d): `sv_keywords` becomes
+    /// `demo <sv_keywords>`, moved to the end.
+    fn demo_keywords(&self, info: &Info) -> Option<(&'static str, String)> {
+        let restrict = crate::game::builtins::cvar::atof(&self.live_cvar("fs_restrict", ""));
+        (restrict != 0.0).then(|| {
+            let kw = info.get("sv_keywords").unwrap_or("");
+            ("sv_keywords", format!("demo {kw}"))
+        })
+    }
+
     /// `SVC_Status` (0x808bd50; 1.5b 0x8092538 adds `con_disabled` and
     /// `mod`).
     fn svc_status(&mut self, from: SocketAddr, challenge: &str) {
         let mut i = self.serverinfo();
-        i.set("challenge", challenge_arg(challenge));
+        let mut pairs = vec![("challenge", challenge.to_string())];
+        pairs.extend(self.demo_keywords(&i));
         if self.v15() {
             let disabled = self.live_int_cvar("sv_disableClientConsole");
             if disabled != 0 {
-                i.set("con_disabled", disabled);
+                pairs.push(("con_disabled", disabled.to_string()));
             }
-            i.set("pswrd", self.pswrd());
+        }
+        pairs.push(("pswrd", self.pswrd().to_string()));
+        if self.v15() {
             let game = self.live_cvar("fs_game", "");
-            i.set("mod", u8::from(self.modded(&game)));
-        } else {
-            i.set("pswrd", self.pswrd());
+            pairs.push(("mod", u8::from(self.modded(&game)).to_string()));
+        }
+        if !self.info_pairs(&mut i, pairs) {
+            return;
         }
         let lines = self.status_lines();
         self.send_oob(from, &format!("statusResponse\n{i}\n{lines}"));
@@ -3245,8 +3314,9 @@ impl Server {
             vcod_common::pmove::Stance::Stand,
             sim.view_angles(),
         );
+        let rule = crate::game::turret::AimRule::of(rt.host.defs.proto);
         for (turret, stance, view) in &mounts {
-            crate::game::turret::mount_sim(sim, *turret, *stance, *view);
+            crate::game::turret::mount_sim(sim, rule, *turret, *stance, *view);
         }
         !mounts.is_empty()
     }
@@ -8218,11 +8288,12 @@ impl Server {
                 apply_seat_ops(&mut self.clients, rt);
                 // The mount lands inside the use cmd (turrets doc 12.1), so
                 // it reaches the sim before the next cmd's pass runs.
+                let rule = crate::game::turret::AimRule::of(rt.host.defs.proto);
                 for (turret, stance, view) in
                     rt.take_turret_mounts(t.slot, t.origin, t.stance, t.view)
                 {
                     if let Some(sim) = self.clients[t.slot].as_mut().and_then(|c| c.sim.as_mut()) {
-                        crate::game::turret::mount_sim(sim, turret, stance, view);
+                        crate::game::turret::mount_sim(sim, rule, turret, stance, view);
                     }
                 }
             }
@@ -9423,6 +9494,114 @@ mod tests {
         assert_eq!(info_value_for_key(info, "sv_hostname"), Some("vcod test"));
         assert_eq!(info_value_for_key(info, "challenge"), Some("7"));
         assert_eq!(players, "");
+    }
+
+    /// `Cmd_Argv(1)` of a query, against what 1.1d, 1.5b and UO 1.51b all
+    /// echoed as `challenge` (cod11-server-handshake.md, "The challenge
+    /// key"); the info string's own stripping (`;`, `\`) comes after.
+    #[test]
+    fn oob_argv_reads_the_line_as_retail_does() {
+        let cases: [(&[u8], &str); 12] = [
+            (b"getinfo a\xc3\xa9b", "a..b"),
+            (b"getinfo a%b", "a.b"),
+            (b"getinfo a\x7fb", "a\x7fb"),
+            (b"getinfo a\x01b", "a"),
+            (b"getinfo a\nb", "a"),
+            (b"getinfo a\"b", "a"),
+            (b"getinfo \"a b\" c", "a b"),
+            (b"getinfo a//b", "a"),
+            (b"getinfo a/*x*/b", "a"),
+            (b"getinfo /*x*/b", "b"),
+            (b"getinfo \"ab", "ab"),
+            (b"getinfo", ""),
+        ];
+        for (line, arg) in cases {
+            let pkt = [&[0xff; 4][..], line].concat();
+            assert_eq!(oob_argv(&pkt, 1), arg, "{line:?}");
+        }
+    }
+
+    /// No argument, no `challenge` key: retail's `Info_SetValueForKey`
+    /// leaves an empty value out, on every protocol.
+    #[test]
+    fn a_bare_query_sends_no_challenge_key() {
+        let now = Instant::now();
+        for proto in [&PROTOCOL_V1, &PROTOCOL_V6, &PROTOCOL_V22] {
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(proto);
+            for (n, (query, answer)) in
+                [("getinfo", "infoResponse"), ("getstatus", "statusResponse")]
+                    .into_iter()
+                    .enumerate()
+            {
+                sv.handle_packet(addr(10 + n as u16), &oob(query), now);
+                let (_, cmd, rest) = reply(&mut sv);
+                assert_eq!(cmd, answer);
+                let text = String::from_utf8_lossy(&rest);
+                assert!(!text.contains("challenge"), "{} {text}", proto.version);
+            }
+        }
+        let mut sv = Server::new(cfg(), now);
+        sv.handle_packet(addr(5), &oob("getinfo"), now);
+        let (_, _, rest) = reply(&mut sv);
+        assert_eq!(
+            String::from_utf8_lossy(&rest),
+            "\\protocol\\1\\hostname\\vcod test\\mapname\\mp_carentan\\clients\\0\\sv_maxclients\\4\\gametype\\dm\\pure\\0\\sv_allowAnonymous\\0\\pswrd\\0"
+        );
+    }
+
+    /// A challenge that takes the info string past 1024 bytes: 1.1d drops
+    /// its level or crashes, so vcod sends nothing; 1.5b and UO skip each
+    /// pair that no longer fits and answer with the rest.
+    #[test]
+    fn an_overlong_challenge_overflows_as_retail_does() {
+        use vcod_common::net::connectionless::MAX_INFO_STRING;
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.handle_packet(addr(5), &oob("getinfo x"), now);
+        let base = reply(&mut sv).2.len() - "\\challenge\\x".len();
+        let fits = MAX_INFO_STRING - base - "\\challenge\\".len();
+        sv.handle_packet(addr(6), &oob(&format!("getinfo {}", "a".repeat(fits))), now);
+        assert_eq!(reply(&mut sv).2.len(), MAX_INFO_STRING);
+        sv.handle_packet(
+            addr(7),
+            &oob(&format!("getinfo {}", "a".repeat(fits + 1))),
+            now,
+        );
+        assert!(sv.take_outgoing().is_empty());
+
+        let mut sv = v6_server(now);
+        let long = "a".repeat(1000);
+        sv.handle_packet(addr(5), &oob(&format!("getinfo {long}")), now);
+        let (_, _, rest) = reply(&mut sv);
+        assert_eq!(
+            String::from_utf8_lossy(&rest),
+            format!("\\challenge\\{long}\\protocol\\6")
+        );
+        sv.handle_packet(addr(6), &oob(&format!("getstatus {long}")), now);
+        let (_, _, rest) = reply(&mut sv);
+        let text = String::from_utf8_lossy(&rest);
+        assert!(!text.contains("challenge"), "{text}");
+        assert!(text.ends_with("\\pswrd\\0\\mod\\1\n"), "{text}");
+    }
+
+    /// `fs_restrict` puts `demo` in front of `sv_keywords` (empty here) and
+    /// the key after `challenge`; `getinfo` carries no keywords.
+    #[test]
+    fn fs_restrict_adds_the_demo_keyword() {
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_cvar("fs_restrict", "1");
+        sv.handle_packet(addr(5), &oob("getstatus 7"), now);
+        let (_, _, rest) = reply(&mut sv);
+        let text = String::from_utf8_lossy(&rest);
+        assert!(
+            text.ends_with("\\challenge\\7\\sv_keywords\\demo \\pswrd\\0\n"),
+            "{text}"
+        );
+        sv.handle_packet(addr(7), &oob("getinfo 7"), now);
+        let (_, _, rest) = reply(&mut sv);
+        assert!(!String::from_utf8_lossy(&rest).contains("demo"));
     }
 
     fn v6_server(now: Instant) -> Server {
