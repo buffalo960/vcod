@@ -12,15 +12,19 @@ so I dug it out of the binaries.
 
 ![Spectating a public TDM server](docs/screenshots/spectate.jpg)
 
-## Read this first: it's early, and it's janky
+## Read this first: it plays, and it still has opinions
 
 You can play it. Start a server, join it, pick a team, shoot bots or
-friends, plant the bomb, drive a tank in United Offensive. Some evenings it
-feels like Call of Duty. Other evenings a door goes invisible or a rocket
-forgets to explode.
+friends, plant the bomb, drive a tank in United Offensive. Most evenings it
+feels like Call of Duty. Now and then it finds a bug the 2003 game never
+had, and occasionally one it had and I copied on purpose.
 
-- **It's early.** The whole thing is a couple of months old. Expect bugs you'd never see
-  in a 2003 game, and please [report them](#reporting-bugs).
+- **Retail is the referee.** Movement, shots, grenades, collision, snapshots
+  and the handshake are replayed against captures from the real 1.1, 1.5
+  and UO servers, down to the float rounding of each build. When vcod and
+  retail disagree, retail wins and the bytes go into a research doc.
+- **It still has bugs.** Fewer than it used to, and different ones from
+  the 2003 game. Please [report them](#reporting-bugs).
 - **It's a hobby.** I work on it while poking at a 2003 engine is fun. No
   roadmap, no "1.0", no promises.
 - **It needs your copy of the game.** No assets ship here, and none will.
