@@ -906,7 +906,8 @@ The triggers:
   thinks on a fresh sim and matches (`turret_ab`,
   `a_gunner_spawned_off_the_gun_reads_retail_s_origin`). The angles the
   script reads there (1.1d `(0, 0, 0)`, UO `(0, -41, 0)` for a spawn at
-  yaw 319) are `noclass_ab`'s question.
+  yaw 319) are the think's view (cod11-gametypes-re-bel.md 8.6), which the
+  same gate holds too.
 - INFERRED, from the call sites: deleting the turret. `G_FreeEntity` calls
   `G_FreeTurret` (0x66b6f), which releases any gunner and clears the record.
 
