@@ -2744,8 +2744,17 @@ Still different:
 - VERIFIED, vcod measurement (run 3): the first linked frame reads
   `groundEntityNum` 1023. VERIFIED, off both fixtures: retail's reads 177
   (23.2). Fixed since, with the linked arm and the submodel's entity number
-  (23.2); `sd_plant_ab.rs` now compares `groundEntityNum` on every trace but
-  the release window's placed first frame, and allows no row.
+  (23.2); `sd_plant_ab.rs` now compares `groundEntityNum` on every trace and
+  allows no row. VERIFIED, vcod measurement (`sd_plant_ab.rs`, 2026-10-16):
+  the release window's first frame reads 1023 on ours as on retail once the
+  replay leads into it with hold1's last three frames of use, so ours runs
+  that frame's cmds linked, as retail did; replayed straight from the
+  placement it read 177.
+- VERIFIED, vcod measurement (`sd_plant_ab.rs`, 2026-10-16): with
+  `probe_teleport 1` set on ours too, the probe's `unlink` and `setOrigin`
+  of the planter put hold2's last trace at `pm_type` 0, as retail's; the
+  gate compares `pm_type`, the ground entity and the linked hold (to 0 units)
+  on every trace of the plant and the defuse.
 - VERIFIED, vcod measurement (run 3): `velocity` is fractional
   (`183.4, 27.0`). VERIFIED, off the plant fixture: retail's is whole.
   VERIFIED: `PmoveSingle`'s default arm calls `trap_SnapVector` on
