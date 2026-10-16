@@ -442,3 +442,41 @@ Left out of the comparison: the marker's origin. INFERRED, off `bel.gsc`'s
 `spawnPlayer`, before the probe moves it, and follows a running mean of
 where the player stood, so it carries the random spawn pick; the gate
 compares the slot's state, icon, entity and team.
+
+### 8.5 The rest of a client before its first spawn
+
+`client-probes/probe_noclass` logs a client's fields from its connect
+callback, 3 s later with no spawn, and straight after a `spawn`, on 1.1d,
+1.5b and UO 1.51b (`crates/server/tests/fixtures/noclass/`, gated by
+`crates/server/tests/noclass_ab.rs`).
+
+- VERIFIED, all three logs, connect and 3 s on: `classname` "noclass",
+  `targetname` undefined, `model` "", `origin` and `angles` (0, 0, 0),
+  `health` and `maxhealth` 0, `sessionstate` and `sessionteam` "spectator",
+  `score` and `deaths` 0, `statusicon` and `headicon` "", `headiconteam`
+  "none", `spectatorclient` -1, `archivetime` 0, `isAlive` 0, `isPlayer` 1,
+  entity 0, `getentarray("player", "classname")` empty and
+  `getentarray("noclass", "classname")` 1. After the spawn `classname` reads
+  "player" and the two arrays swap; `health` stays 0 (the probe sets none).
+- VERIFIED, 1.1d `game.mp.i386.so`: `ClientConnect` writes
+  `sess.sessionTeam` (`client+0x217c`) 3 at 0x42516 and `sess.sessionState`
+  (`client+0x20d0`) 2 at 0x42520. The `sessionteam` getter (0x418fc) maps
+  0, 1, 2, 3 to `none`, `axis`, `allies`, `spectator` and pushes nothing for
+  any other value.
+- VERIFIED, the probe client's snapshots on all three: `ps.origin` reads
+  (0, 0, 0) on every snapshot until the spawn. INFERRED, off `ClientBegin`
+  (0x42f88), which writes only the connected state, calls `CalculateRanks`
+  and notifies `begin`: nothing between the zeroing in `ClientConnect` and
+  a script's `spawn` places the client.
+- VERIFIED, the logs after the spawn: `origin` (992, -744, -3.09) on 1.1d
+  and (992, -744, -4.01) on 1.5b and UO; `angles` (0, 0, 0) on 1.1d and
+  (0, -180, 0) on 1.5b and UO, where the spot's are (0, 180, 0). Ours reads
+  the spot's origin and angles. The origin is the spawn's think
+  (`specspawn_ab.rs`); the angles are unexplained. Both are the gate's GAPS.
+
+What ours got wrong: `sessionteam` read undefined until a script wrote it,
+and `enter_world` parked the client at the map's first spawn with that
+spot's view, which the script read as `origin` and the client as
+`ps.origin`. A client now enters at the origin with `delta_angles` 0 under
+a game module; a server with no scripts still parks it at the map's spawn,
+since nothing would ever spawn it.

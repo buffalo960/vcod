@@ -348,6 +348,9 @@ pub struct GameHost {
     /// Each client's last usercmd buttons, mirrored in by `Server` before
     /// the frame, for `useButtonPressed`.
     pub client_buttons: Vec<u8>,
+    /// Each client's last usercmd, mirrored in beside `client_buttons`:
+    /// what the `spawn` builtin's think runs on 1.5 and UO.
+    pub client_last_cmd: Vec<vcod_common::net::msg::UserCmd>,
     /// 1.5's `allowSpectateTeam` mask (`gclient+0x2174`): bit `1 << team`
     /// refuses a follow of that team, `1 << 4` free flight. Session state:
     /// a spawn keeps it. `Server` reads it for the spectator rules.
@@ -1177,6 +1180,7 @@ impl GameHost {
             client_complaints: vec![crate::game::vote::Complaint::default(); MAX_CLIENTS],
             complaint_drop: None,
             client_buttons: vec![0; MAX_CLIENTS],
+            client_last_cmd: vec![vcod_common::net::msg::NULL_USERCMD; MAX_CLIENTS],
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
             client_stance: vec![vcod_common::pmove::Stance::Stand; MAX_CLIENTS],

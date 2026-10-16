@@ -437,7 +437,7 @@ impl ObjectTable {
         // gametype write `self.deaths++` and `attacker.score++` on a client
         // that has scored nothing yet. The string and object fields keep
         // their undefined reading: those have custom getters, and what each
-        // returns before it is written is unmeasured, but for one.
+        // returns before it is written is unmeasured, but for two.
         // `sessionstate` reads "spectator" from the first frame of a fresh
         // connect, before any script wrote it (an sd.gsc instrumented to log
         // it right after `waittill("begin")` printed `spectator` on every
@@ -450,6 +450,9 @@ impl ObjectTable {
             .iter()
             .map(|f| match (f.name, f.ty) {
                 ("sessionstate", _) => Value::String(cx.intern_exact("spectator")),
+                // `ClientConnect` writes `sessionTeam` 3 (0x42516), which
+                // the getter (0x418fc) reads as "spectator".
+                ("sessionteam", _) => Value::String(cx.intern_exact("spectator")),
                 // `ClientConnect` writes -1 after the zeroing (0x42534).
                 ("spectatorclient", _) => Value::Int(-1),
                 (_, crate::game::fields::FieldType::Int) => Value::Int(0),
