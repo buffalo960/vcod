@@ -551,8 +551,33 @@ starts the tracer at the gun's own `tag_flash` (`cod11-events-and-fx.md`
 names the gun (1.5b). vcod-server writes the gun's number on a turret
 round's impacts (`TurretShot::gun`; `turret_ab`'s
 `a_turret_rounds_impacts_name_the_gun`); the flesh copy keeps the gunner,
-`finishPlayerDamage`'s attacker. Not done: ours still passes the gunner,
-not the gun, as the round's trace pass entity.
+`finishPlayerDamage`'s attacker.
+
+VERIFIED, the round's pass entity: `Bullet_Fire` hands its fifth argument
+(the gun) to `Bullet_Fire_Extended` as the first (1.1d 0x691b3, 1.5b
+0x6dfeb, UO 0x7a90f), and `Bullet_Fire_Extended` passes that entity's
+number to `trap_LocationalTrace` (1.1d 0x68903..0x68912, 1.5b 0x6e093,
+UO 0x7a9c7). VERIFIED, the engine's pass rule (`cod_lnxded` 1.1d
+`SV_ClipMoveToEntity` 0x8091099..0x80910bf): an entity is skipped when it
+is the pass entity, when its `r.ownerNum` is the pass entity, or when its
+`r.ownerNum` is the pass entity's own owner, read at 0x809184c and turned
+into -1 for 0x3ff at 0x809185f. VERIFIED, `turret_use` stores the
+gunner's number into the gun's `r.ownerNum` (1.1d 0x52ac4 at `+0x14c`);
+INFERRED, 1.5b 0x53008 (`+0x150`) and UO 0x5c955 (`+0x154`) are the same
+store, the field moved by the larger entity header. INFERRED, from those
+three: a manned gun's round skips the gun and whatever the gunner owns,
+as the gunner's own pass did, and does not skip the gunner. INFERRED: the
+gun never clips a round either way, since its `r.contents` 0x200004
+(section 3) shares no bit with the mask 0x2802031, so the gunner's own
+body is the only thing the choice decides. vcod-server passes the gun
+(`TurretShot::pass`). Measured in process only: on mp_carentan's 855 gun
+swapped for the stand, duck and prone weapon files, a round at each arc
+corner and at the centre never meets the gunner (`turret_ab`'s
+`a_gunner_never_meets_his_own_round`); the muzzle sits
+`|tag_flash - tag_player|` along the view, ahead of his bones. VERIFIED
+(capture): the fire and target phases of the 1.1d, 1.5b and UO turret
+fixtures carry no pain event on the gunner. Not measured on retail: a
+placement that puts the gunner's body in front of that point.
 
 VERIFIED, absence in 0x51488..0x53400: no operand at `+0x3ec`, `+0x3f8` or
 `+0x3fc`, no read of any ammo or clip array, no `overheat` string anywhere in
