@@ -2609,21 +2609,30 @@ restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
 
 ### Gaps
 
-- **bas `hud`.** Retail's `map_restart` recompiles the scripts, about 850 ms
-  of wall time, and catches the frames up before its first snapshot
-  (level start 23300, first snapshot 24150), so a new base health bar's
-  first half second at full width (`setShader(..., 32, 4)` before the 0.5 s
-  update writes 31) never reaches a client (VERIFIED, the capture's times;
-  cod11-map-cycle.md 4.7). The gate ticks with no hitch.
+- **bas `hud`**, closed 2026-10-17. Retail's `map_restart` recompiles the
+  scripts, about 850 ms of wall time, and catches the frames up before its
+  first snapshot (level start 23300, first snapshot 24150), so a new base
+  health bar's first half second at full width (`setShader(..., 32, 4)`
+  before the 0.5 s update writes 31) never reaches a client (VERIFIED, the
+  capture's times; cod11-map-cycle.md 4.7). INFERRED, off 4.7's frame
+  loop: that is the host's time, not a rule of the engine. `gametypes_ab` now reads each restart's and each
+  in-level stall's length off the capture (`RetailClock`) and runs ours'
+  owed frames back to back before one snapshot, as retail's frame loop
+  does, and the bar's 32 is gone from ours too.
 - **bas `players`**, closed 2026-10-16. The probes stand 8500 units apart
   on mp_foy's open ground under a 500..5500 cull fog, and retail never
   sends either the other: the snapshot builder's fog cull
   (`cod15-protocol-diff.md` 15). vcod-server applies it and the view
   matches.
-- **`basend` `hud`**: the same gap as `bas`, at both restarts (the bar's
-  32).
-- **A restart's `d 14`**: vcod holds the level start time at `0` and sends
-  no `d 14` (cod11-map-cycle.md 4.5); no view reads slot 14.
+- **`basend` `hud`**, closed 2026-10-17: the same as `bas` at both
+  restarts, plus a 1.6 s stall of retail's host mid-plant (snapshots
+  98250 then 99850 on both probes, wall clocks 1.6 s apart; VERIFIED, the
+  captures), which cost the blinking bomb icon one cycle. The same replay closes it.
+- **A restart's `d 14`**, closed 2026-10-17: the burst carries
+  `SP_worldspawn`'s level start, the fog and the ambient as retail's does
+  (cod11-map-cycle.md 4.5). VERIFIED, retail's burst at mp_foy's first
+  restart (`mp_foy-bas-attacker-uo.txt`, `ms=19467`): `d 14 23300`, `d 13`
+  with the fog, `d 3 n\ambient_mp_foy\t\23300`, then `n`.
 - Not measured: `doDamage` on a client; a time limit; a map rotation that
   names another map; `ctf`'s flag returned by a defender's touch.
 

@@ -95,19 +95,7 @@ const SCORE_PERIOD_MS: i64 = 2000;
 /// Views a run is known to differ from retail in, as `(gametype, role, view,
 /// why)`. An entry suppresses that view's comparison and asserts it still
 /// differs, so a gap that starts matching fails and has to be deleted.
-const GAPS: &[(&str, &str, &str, &str)] = &[
-    ("bas", "attacker", "hud", RESTART_HITCH),
-    ("bas", "defender", "hud", RESTART_HITCH),
-    ("basend", "attacker", "hud", RESTART_HITCH),
-    ("basend", "defender", "hud", RESTART_HITCH),
-];
-
-/// Retail's `map_restart` recompiles the scripts in about 850 ms of wall
-/// time and catches the frames up before its first snapshot, so a new base
-/// health bar's half second at full width (32 before the first 31) never
-/// reaches a client; the gate's server ticks with no hitch (coduo-diff.md
-/// 22).
-const RESTART_HITCH: &str = "retail's restart hitch hides the bar's first half second";
+const GAPS: &[(&str, &str, &str, &str)] = &[];
 
 fn report() -> bool {
     std::env::var("GAMETYPES_REPORT").is_ok_and(|v| v == "1")
@@ -257,6 +245,7 @@ fn run_ours(
     probe: &str,
     teams: [&'static str; 2],
     secs: u64,
+    clock: &RetailClock,
 ) -> Option<([Vec<String>; 2], Vec<String>)> {
     let fs = if setup.uo {
         vcod_common::testing::uo_fs()?
@@ -282,6 +271,11 @@ fn run_ours(
     let mut drained = 0usize;
     let joins = setup.joins;
     let frames = (secs * 1000 + joins[1]) / FRAME_MS;
+    let mut server_id = sv.server_id();
+    // Ours' level count and level start, the anchor a retail stall's time is
+    // read against.
+    let (mut level, mut level_start) = (0usize, 0i32);
+    let mut stalls = clock.stalls.iter().peekable();
     for _ in 0..frames {
         now += Duration::from_millis(FRAME_MS);
         let t = now.duration_since(start).as_millis() as u64;
@@ -297,7 +291,30 @@ fn run_ours(
                 sv.handle_packet(p.addr, &pkt, now);
             }
         }
-        sv.tick(now);
+        // Retail's host time, replayed ([`RetailClock`]): the console runs
+        // first, and the frames a restart or a stall owes run back to back
+        // before one snapshot.
+        sv.drain_console(now);
+        let mut owed = 0u64;
+        if sv.server_id() != server_id {
+            if sv.server_id() & 0xf0 == server_id & 0xf0 {
+                owed = clock.restarts.get(level).copied().unwrap_or(0);
+                level += 1;
+                level_start = sv
+                    .configstring(if setup.uo { 14 } else { 13 })
+                    .parse()
+                    .expect("the level start");
+            }
+            server_id = sv.server_id();
+        } else if let Some(&&(at_level, after, ms)) = stalls.peek()
+            && at_level == level
+            && i64::from(sv.game_time_ms() - level_start) >= after
+        {
+            stalls.next();
+            owed = ms;
+        }
+        now += Duration::from_millis(owed);
+        sv.tick_frames(now, 1 + (owed / FRAME_MS) as u32);
         for (to, pkt) in sv.take_outgoing() {
             if let Some(p) = probes.iter().find(|p| p.addr == to) {
                 p.q.borrow_mut().to_client.push_back(pkt);
@@ -321,6 +338,64 @@ fn run_ours(
     );
     let mut it = probes.into_iter().map(|p| p.cap.lines);
     Some(([it.next().unwrap(), it.next().unwrap()], log))
+}
+
+/// Retail's host time, read off a role's capture, for ours to replay in its
+/// simulated clock. Retail's frame loop catches up the frames a slow
+/// `Cbuf_Execute` owes and sends one snapshot after them (cod11-map-cycle.md
+/// 4.7), so how long its host took shows in which snapshots a client got.
+struct RetailClock {
+    /// Each restart's time past a restart that owes no frame: the first
+    /// snapshot after the burst's level start (configstring 13, UO's 14)
+    /// less that start and the 350 ms of the settle frames and one frame.
+    restarts: Vec<u64>,
+    /// Each stall inside a level: the level's index (restarts before it),
+    /// the last snapshot before it as ms past that level's start, and the
+    /// ms owed past one frame. A stall is two consecutive snapshots more
+    /// than 1100 ms apart, which the capture's one trace a second rules out
+    /// otherwise.
+    stalls: Vec<(usize, i64, u64)>,
+}
+
+fn retail_clock(setup: &Setup, gametype: &str, role: &str) -> RetailClock {
+    let slot = if setup.uo { 14 } else { 13 };
+    let lines = read_lines(&format!(
+        "{FIXTURES}/{}-{gametype}-{role}{}.txt",
+        setup.map,
+        setup.tag()
+    ));
+    let prefix = format!("d {slot} ");
+    let mut clock = RetailClock {
+        restarts: Vec::new(),
+        stalls: Vec::new(),
+    };
+    let mut start = 0i64;
+    let mut restarted = false;
+    let mut last: Option<i64> = None;
+    for line in &lines {
+        if let Some(t) = cmd_text(line).and_then(|c| c.strip_prefix(&prefix)) {
+            start = t.parse().expect("a level start");
+            restarted = true;
+        } else if line.starts_with("!trace ")
+            && let Some(t) = field(line, "serverTime")
+        {
+            let at: i64 = t.parse().expect("a serverTime");
+            if std::mem::take(&mut restarted) {
+                clock
+                    .restarts
+                    .push(u64::try_from(at - start - 350).unwrap_or(0));
+            } else if let Some(prev) = last
+                && at - prev > 1100
+            {
+                let level = clock.restarts.len();
+                clock
+                    .stalls
+                    .push((level, prev - start, (at - prev - 50) as u64));
+            }
+            last = Some(at);
+        }
+    }
+    clock
 }
 
 // ------------------------------------------------------------------ views
@@ -733,7 +808,8 @@ fn compare(
 
 #[test]
 fn retrieval_matches_retail() {
-    let Some((ours, log)) = run_ours(&V1, "probe_re", ["allies", "axis"], 130) else {
+    let clock = retail_clock(&V1, "re", "attacker");
+    let Some((ours, log)) = run_ours(&V1, "probe_re", ["allies", "axis"], 130, &clock) else {
         eprintln!("COD_DIR unset: skipping");
         return;
     };
@@ -742,7 +818,8 @@ fn retrieval_matches_retail() {
 
 #[test]
 fn behind_enemy_lines_matches_retail() {
-    let Some((ours, log)) = run_ours(&V1, "probe_bel", ["axis", "axis"], 130) else {
+    let clock = retail_clock(&V1, "bel", "first");
+    let Some((ours, log)) = run_ours(&V1, "probe_bel", ["axis", "axis"], 130, &clock) else {
         eprintln!("COD_DIR unset: skipping");
         return;
     };
@@ -753,7 +830,8 @@ fn behind_enemy_lines_matches_retail() {
 /// `end_ms` of the first probe's clock.
 fn uo_gametype(setup: &Setup, gametype: &str, secs: u64, end_ms: i64) {
     let probe = format!("probe_{gametype}");
-    let Some((ours, log)) = run_ours(setup, &probe, ["allies", "axis"], secs) else {
+    let clock = retail_clock(setup, gametype, "attacker");
+    let Some((ours, log)) = run_ours(setup, &probe, ["allies", "axis"], secs, &clock) else {
         eprintln!("COD_DIR not at a UO install: skipping");
         return;
     };

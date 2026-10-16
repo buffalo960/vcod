@@ -228,6 +228,16 @@ every snapshot whose HUD, objective block, roster or entities moved
 `-defender.txt` and the server's `games_mp.log` as `-re-log.txt`;
 `crates/server/tests/gametypes_ab.rs` replays the same probe on ours with
 two clients through the same recorder and compares them view by view.
+Ours ticks in simulated time, so the gate hands it retail's host time off
+the first role's capture (`RetailClock`): each restart's first snapshot
+past the 350 ms a restart owing no frame takes, and each in-level stall
+(two snapshots more than 1100 ms apart), run as owed frames back to back
+before one snapshot, the way retail's frame loop catches up
+(cod11-map-cycle.md 4.7). VERIFIED, the `re` attacker capture: the three
+restarts' first snapshots came 450, 1350 and 850 ms after their level
+starts (13850, 91450, 106600), so 100, 1000 and 500 ms owed; no view
+moved with them. The UO `bas` runs are where it shows (coduo-diff.md 22,
+"Gaps").
 
 The script, after the match-start restart: round 1 puts the attacker on the
 objective's spot (`setOrigin(trigger.origin)`, `setPlayerAngles((85, 0,
