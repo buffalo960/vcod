@@ -95,6 +95,10 @@ pub struct NavGraph {
     /// included): an unreachable goal fails before any search. A stock map
     /// has 1 to 13 components.
     reach: Vec<Vec<u64>>,
+    /// The largest strongly connected component with the [`Self::risky`]
+    /// edges left out: a roam from inside it never ends where only a risky
+    /// edge leads ([`Self::roam_from`]).
+    safe: Vec<bool>,
     /// The world's ladders ([`ladders`]), for the build.
     ladder_boxes: Vec<(Vec3, Vec3)>,
     /// The movement rules the walks proved the edges under.
@@ -152,6 +156,7 @@ impl NavGraph {
             comp: Vec::new(),
             members: Vec::new(),
             reach: Vec::new(),
+            safe: Vec::new(),
             ladder_boxes: ladders(world),
             rules: RULES.get(),
         };
@@ -426,6 +431,16 @@ impl NavGraph {
 
     fn index_components(&mut self) {
         self.comp = self.components();
+        let safe = self.components_by(|a, b| !self.risky.contains(&(a, b)));
+        let mut sizes = HashMap::new();
+        for &c in &safe {
+            *sizes.entry(c).or_insert(0usize) += 1;
+        }
+        let largest = sizes
+            .into_iter()
+            .max_by_key(|&(c, k)| (k, c))
+            .map(|(c, _)| c);
+        self.safe = safe.iter().map(|&c| Some(c) == largest).collect();
         let count = self.comp.iter().max().map_or(0, |&c| c as usize + 1);
         self.members = vec![Vec::new(); count];
         for (n, &c) in self.comp.iter().enumerate() {
@@ -971,7 +986,18 @@ impl NavGraph {
     /// Each node's strongly connected component, numbered from 0 (Kosaraju,
     /// iterative). Two nodes share a number when each reaches the other.
     pub fn components(&self) -> Vec<u32> {
+        self.components_by(|_, _| true)
+    }
+
+    /// [`Self::components`] over only the edges `keep` passes.
+    fn components_by(&self, keep: impl Fn(u32, u32) -> bool) -> Vec<u32> {
         let n = self.nodes.len();
+        let edges: Vec<Vec<u32>> = self
+            .edges
+            .iter()
+            .enumerate()
+            .map(|(a, out)| out.iter().copied().filter(|&b| keep(a as u32, b)).collect())
+            .collect();
         // Pass 1: finish order of a DFS over the forward edges.
         let mut order = Vec::with_capacity(n);
         let mut seen = vec![false; n];
@@ -982,7 +1008,7 @@ impl NavGraph {
             seen[root] = true;
             let mut stack = vec![(root as u32, 0usize)];
             while let Some((v, i)) = stack.last_mut() {
-                if let Some(&w) = self.edges[*v as usize].get(*i) {
+                if let Some(&w) = edges[*v as usize].get(*i) {
                     *i += 1;
                     if !seen[w as usize] {
                         seen[w as usize] = true;
@@ -996,7 +1022,7 @@ impl NavGraph {
         }
         // Pass 2: flood the reversed edges in reverse finish order.
         let mut back = vec![Vec::new(); n];
-        for (a, out) in self.edges.iter().enumerate() {
+        for (a, out) in edges.iter().enumerate() {
             for &b in out {
                 back[b as usize].push(a as u32);
             }
@@ -1037,6 +1063,7 @@ impl NavGraph {
             comp: Vec::new(),
             members: Vec::new(),
             reach: Vec::new(),
+            safe: Vec::new(),
             ladder_boxes: Vec::new(),
             rules: MoveRules::V1_1,
         };
@@ -2621,13 +2648,14 @@ impl NavGraph {
     /// A roam destination: of a handful of random nodes in
     /// [`Self::roam_pool`] of node `start`, which stands at `from`, the
     /// first at least [`ROAM_MIN`] away, else the farthest; never one of
-    /// [`Self::perches`].
+    /// [`Self::perches`], nor, from a start in [`Self::safe`], one outside
+    /// it.
     fn roam_from(&self, start: u32, from: Vec3, rand: &mut dyn FnMut() -> i32) -> Option<u32> {
         let pool = self.roam_pool(start)?;
         let mut best: Option<(f32, u32)> = None;
         for _ in 0..8 {
             let n = pool[rand() as usize % pool.len()];
-            if self.perches.contains(&n) {
+            if self.perches.contains(&n) || (self.safe[start as usize] && !self.safe[n as usize]) {
                 continue;
             }
             let d = self.nodes[n as usize].distance(from);
@@ -5475,6 +5503,38 @@ mod tests {
             assert!(g.perches.contains(&node(rail)), "{rail:?}");
         }
         assert!(!g.perches.contains(&node([4963.9, 35.5, 1219.125])));
+    }
+
+    /// A roam from the graph's safe part never ends where only a risky
+    /// edge leads: mp_ship's ledge at (3686, -354, 400), narrow over the
+    /// hold at 92, is reached only by the risky back down from (3647, -353,
+    /// 611), and three bots that roamed to it on seeds 2305-4607 missed it
+    /// and died. A start already past such an edge roams as before.
+    #[test]
+    fn a_roam_never_ends_where_only_a_risky_edge_leads() {
+        let nodes = (0..3)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1], vec![0, 2], vec![1]]);
+        g.risky.insert((1, 2));
+        g.index_components();
+        let mut picks = [2, 1].into_iter();
+        assert_eq!(
+            g.roam_from(0, Vec3::ZERO, &mut || picks.next().unwrap_or(0)),
+            Some(1)
+        );
+        let mut picks = [0].into_iter();
+        assert_eq!(
+            g.roam_from(2, Vec3::ZERO, &mut || picks.next().unwrap_or(0)),
+            Some(0)
+        );
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let node = |p: [f32; 3]| g.nearest(p).unwrap();
+        assert!(!g.safe[node([3647.6, -352.0, 400.125]) as usize]);
+        assert!(g.safe[node([3647.0, -352.9, 611.1]) as usize]);
     }
 
     fn map_world(map: &str) -> Option<crate::world::World> {
