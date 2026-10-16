@@ -202,13 +202,7 @@ fn family(name: &str) -> &str {
 
 /// Fields retail sets on a player entity that we do not, each with the reason.
 /// Empty is the goal; the guard below fails on one that starts matching.
-const PLAYER_GAPS: &[(&str, &str)] = &[(
-    "eventParms",
-    "the parms of the event ring. The ring itself travels now, but every \
-     event a walking player raises is a footstep, and a movement event's \
-     parm is 0 (`pmove::PmEvent`); the putaway a stance change starts is the \
-     first with a parm, and this capture's player never changes stance",
-)];
+const PLAYER_GAPS: &[(&str, &str)] = &[];
 
 /// Every field retail sets on a moving player, against ours. The capture is
 /// one probe watching another on the retail server
@@ -253,11 +247,10 @@ fn a_player_entity_carries_the_fields_retail_sets() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    // Which families we carry: any axis set covers the family.
-    let ours_has: BTreeSet<&str> = p
-        .entity_fields
+    // Which families we carry in any sample: any axis set covers the family.
+    let ours_has: BTreeSet<&str> = ours
         .iter()
-        .zip(&ours.fields)
+        .flat_map(|e| p.entity_fields.iter().zip(&e.fields))
         .filter(|(_, v)| **v != 0)
         .map(|(f, _)| family(f.name))
         .collect();
@@ -293,7 +286,7 @@ fn a_player_entity_carries_the_fields_retail_sets() {
 /// One client, joined, walking, and the entity another client would be sent
 /// about it. Walking matters: a standing player's velocity and trajectory
 /// fields are legitimately zero and would read as missing.
-fn a_moving_player() -> Option<EntityState> {
+fn a_moving_player() -> Option<Vec<EntityState>> {
     let fs = vcod_common::testing::game_fs()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp_bytes = fs.read(&bsp_path).expect("read the bsp");
@@ -330,8 +323,9 @@ fn a_moving_player() -> Option<EntityState> {
     // a client can end up pinned and stand still whatever it presses. Turn
     // an eighth at a time until the sim actually carries it somewhere.
     let mut latest = None;
+    let mut walking = vcod_common::net::msg::NULL_USERCMD;
     for turn in 0..8 {
-        let walking = vcod_common::net::msg::UserCmd {
+        walking = vcod_common::net::msg::UserCmd {
             forward: 127,
             right: 127,
             // Odd multiples of 22.5 degrees, so no turn leaves the body
@@ -358,7 +352,31 @@ fn a_moving_player() -> Option<EntityState> {
             break;
         }
     }
-    latest
+    let mut samples: Vec<EntityState> = latest.into_iter().collect();
+    // Then one jump, as retail's captured player dropped off a kerb: a
+    // landing is the first event a walking player raises with a parm (the
+    // view bob), and footsteps push it out of the four-slot ring, so the
+    // second sample is the first snapshot that carries it. Retail's side is
+    // a union over samples too.
+    let has_parm =
+        |e: &EntityState| (0..4).any(|i| e.field_i32(p, &format!("eventParms[{i}]")) != 0);
+    for frame in 0..40 {
+        now += Duration::from_millis(50);
+        let cmd = vcod_common::net::msg::UserCmd {
+            up: if frame < 2 { 127 } else { 0 },
+            ..walking
+        };
+        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        cb.send_frame(&cmd);
+        common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
+        if let Some(e) = ca.snapshots().newest()?.entities.get(&(nb as u32))
+            && has_parm(e)
+        {
+            samples.push(e.clone());
+            break;
+        }
+    }
+    (!samples.is_empty()).then_some(samples)
 }
 
 /// The body a client is drawn with rides the roster, not the entity: without
@@ -387,7 +405,7 @@ fn a_joined_client_carries_a_body_model_in_the_roster() {
 /// walks, so its `legsAnim` index must be non-zero.
 #[test]
 fn a_player_entity_carries_the_animation_it_is_playing() {
-    let Some(e) = a_moving_player() else {
+    let Some(e) = a_moving_player().map(|s| s[0].clone()) else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
