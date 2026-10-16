@@ -528,7 +528,14 @@ and the zombie half of `Server::drop_client`.
   Q3's `rcon_password` does not exist. Cvar names fold case, so
   `+set rconpassword x` works. VERIFIED.
 - The whole packet is tokenized; argv 1 is the password, argv 2 on the
-  command. INFERRED from the `Cmd_Argv` calls.
+  command. INFERRED from the `Cmd_Argv` calls. The line is the one every
+  query reads (`MSG_ReadStringLine`, `Cmd_TokenizeString`, "The challenge
+  key"), so a comment is gone before the rebuild below. VERIFIED live on
+  1.1d, 1.5b and UO 1.51b (2026-10-16): `set vc_t "a//b"` read back as
+  `"vc_t" is:"a^7"`, since the rebuilt `set vc_t a//b ` is tokenized again;
+  `set vc_t "a b//c"` as `a b//c` (requoted, and a quoted `//` is no
+  comment); `set vc_t a/*/b` as `a b`. Chat over rcon in
+  `docs/research/cod11-chat.md` section 1.
 - Rate limit: one request per 500 ms server-wide, whatever the password or
   source. A request arriving within 499 ms of the last answered one is
   dropped with no reply, and a dropped request does not restart the window.
@@ -1219,6 +1226,16 @@ VERIFIED (captures).
   is a `Com_Error`. VERIFIED (decompile of 0x80827d4). There is no length
   cap of its own short of the string's: a 200, 600 and 750 byte challenge
   came back whole. VERIFIED.
+- `Cvar_InfoString` (0x806fc30), the serverinfo `getstatus` and
+  configstring 0 carry, puts each cvar through the same 0x80827d4, and
+  `Cvar_InfoString_Big` (0x806fc84, the systeminfo) through 0x80829e8,
+  which strips the same three bytes into an 8 KB string. VERIFIED
+  (decompile). So a cvar value keeps `;` and `\` and only the info string
+  loses them: VERIFIED live, rcon `sv_hostname a;b\c` came back
+  `\sv_hostname\abc` in 1.1d's `getstatus` and `\hostname\abc` in
+  1.5b's and UO 1.51b's `getinfo`, and `sv_hostname "x y;z"` as
+  `\hostname\x yz` in 1.1d's `getinfo`. vcod's `Info::set`
+  strips the same way (it used to refuse a value with a `\`).
 - The string's limit is 1024 bytes (`> 0x400` at the end of 0x80827d4).
   1.1d's `infoResponse` on mp_carentan holds 123 bytes beside
   `\challenge\`, so an 890-byte challenge (exactly 1024) was answered and
