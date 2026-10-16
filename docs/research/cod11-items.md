@@ -1023,7 +1023,8 @@ than the gate.
 
 `crates/server/tests/pickup_ab.rs` replays section 12's capture against
 vcod: the probe as the gametype under the recipe's `probe_teleport 1` and
-`scr_allow_fg42 1`, the capture's cmds on retail's clock, the view each
+`scr_allow_fg42 1`, the capture's cmds on retail's clock at their own
+stamps (13.5), the view each
 retail snapshot reports, and a diff of the weapon, the cursor hint, the
 item and weapon events and the origin per snapshot, the inventory, the
 pickup events, the commands and the items per phase, and the script log's
@@ -1099,9 +1100,10 @@ both it and the `a 6` line are logged at ms 2357, the 29300 trace's; retail's
 putaway 156 is on the 29350 snapshot. INFERRED: the probe built that cmd
 after reading the `a 6` the 29300 snapshot's packet carried, so retail ran
 it in the next frame. The replay's `(t, t + 50]` grid put it in the 29300
-frame, where only the deferred pickup had kept the switch from starting; the
-replay now holds a weapon byte that answers the frame's own `a N` back one
-frame.
+frame, where only the deferred pickup had kept the switch from starting.
+Since 2026-10-16 the replay runs a cmd stamped on a snapshot's time in the
+frame after it (13.5), which puts this one in the 29350 frame with no rule
+of its own.
 
 ### 13.3 The cursor hint on the locked drop
 
@@ -1164,9 +1166,10 @@ none of it is fixed here:
   vcod's own traces of mp_carentan at those two points: both are terrain
   (triangles 501 and 2526), and a player box traced down stops at 31.494 and
   -23.875. INFERRED: ours rests where its trace stops and retail about
-  0.2 units higher. The gate allows 0.5 per snapshot and never flagged it.
+  0.2 units higher. The gate allowed 0.5 per snapshot and never flagged it.
   Retail's first-spot `y` also reads -821.9 where ours stays at -822.0.
-  Ruling: open, outside item pickup (pmove/collision).
+  Ruling: the second spot is closed by 13.5, a replay artefact rather than
+  pmove; the first is open, its fall never captured.
 - The `aim` phase's view: retail aims at (87.9, -90) and ours at (90, 69.1).
   INFERRED: ours stands exactly on the item's `x` and `y`, so the aim at it
   is straight down with a yaw read off rounding noise; a consequence of the
@@ -1176,13 +1179,57 @@ none of it is fixed here:
 - The census: retail's `PROBE item` lines carry `getTime()` 1050, ours 1000.
   VERIFIED, `crates/server/tests/fixtures/movers/mp_pavlov-dm-movers.txt`:
   retail's `PROBE time0` after the same `wait 1` from `main` also reads
-  1050. The gate compares the census by name only. Ruling: open, outside item
-  pickup (level clock).
+  1050. The gate compared the census by name only. Ruling: closed. VERIFIED,
+  the gate on vcod 2026-10-16: ours logs every census line as retail does,
+  `getTime()` 1050 and origin included (the script clock's `wait` from
+  `Callback_StartGameType`, AGENTS.md), and the gate now compares the whole
+  line.
 - Retail's log carries `PROBE other 0 noclass 23650`, the probe's own slot
   seen before its first spawn (12.6); ours has none. VERIFIED,
   `crates/server/src/game/entity.rs`: ours gives a client `classname`
   "player" from the moment the slot exists. Ruling: open, outside item pickup
   (client entity).
+
+### 13.5 Which frame runs a cmd
+
+VERIFIED, the client fixture: the probe client sends three cmds a frame,
+stamped on a snapshot's `serverTime` and 16 and 32 ms past it (31300,
+31316, 31332, 31350 ...), and logs each `!cmd` before the `!trace` read in
+the same pass. VERIFIED, the second teleport (`setOrigin` to the fg42 at z
+-22.83, the 31300 snapshot at -21.8): the 31350 snapshot reads z -22.8 and
+every snapshot from 31400 on -23.7, where `mp_carentan` terrain triangle
+2526 is flat at z -24 and a player capsule traced onto it stops at -23.875
+(vcod's trace).
+
+INFERRED, from those numbers and the 1.1 pmove's integer velocity snap:
+the 31350 frame ran the cmds stamped 31300, 31316 and 31332 (18, 16 and
+16 ms: a fall of 0.13, 0.33 and 0.53 to -22.82), and the 31400 frame's
+first cmd, stamped 31350, fell 0.85 to -23.67, inside the quarter unit the
+closing ground trace reaches above the face, so the player stood there
+with no further fall. A frame that ran the cmds stamped in `(t - 50, t]`
+falls 16, 16 and 18 ms instead, ends the next frame's second cmd past the
+face, and rests at -23.875: what the gate's old grid (two 25 ms cmds a
+frame) read too.
+
+`crates/server/tests/pickup_ab.rs` therefore runs, for the frame paired
+with retail's snapshot at `t`, every capture cmd stamped in `[t - 50, t)`
+at its own offset past the last frame's time. VERIFIED, the gate on vcod:
+the 31350 snapshot reads -22.824 and every one from 31400 on -23.674, each
+within 0.03 of retail's printed tenth, and the weapon byte stamped 29300
+(13.2) lands in the 29350 frame by the same rule. The gate holds the origin
+to 0.1 from the second teleport on, and the old grid fails that at 31350
+and from 31400 on.
+
+The first spot is left at 0.5. VERIFIED, the client fixture: the capture
+opens at 26950 with the player already resting at (468.0, -821.9, 31.7) on
+terrain triangle 501 (normal z 0.99985, tilted toward -y), and no cmd of the
+spawn's fall is recorded. VERIFIED, vcod's pmove from the teleport point
+(468, -822, 33.53) on 18, 16 and 16 ms cmds: the fourth cmd ends at 31.69
+on the ground, and the next slides the player 0.014 toward -y and down to
+31.494, where it stays. INFERRED: retail's 31.7 matches the end of that
+fourth cmd; its `y` 0.1 toward +y, up the slope, matches no cmd pattern
+tried. Ruling: open, the spawn's cmds unknown; the gate's 0.5 there covers
+it and nothing else.
 
 ## 14. Flight, landing, nodrop and respawn
 
