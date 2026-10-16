@@ -213,23 +213,10 @@ pub struct Shader {
     pub nomipmaps: bool,
     pub sky: Option<SkyParms>,
     pub sunfile: Option<String>,
-    /// `deformVertexes wave <div> <func> <base> <amp> <phase> <rate>` — the
-    /// ocean-swell form. Vertices displace along their normals by
-    /// `base + amp * sin(2pi * (phase + t * rate + (x+y+z)/div))`
-    /// (RTCW-MP tr_shade_calc.c RB_CalcDeformVertexes); stored as
-    /// (wave, spread = 1/div).
-    pub deform_wave: Option<(Wave, f32)>,
-    /// `deformVertexes flap <s|x|t|y> <div> <func> <base> <amp> <phase>
-    /// <rate>`: the wave above scaled by the vertex's base `s` (or `t`), so
-    /// a flag's hoist edge (s = 0) holds still (CoDMP.exe 0x5136e0).
-    pub deform_flap: Option<Flap>,
-    /// `deformVertexes bulge <width> <height> <speed>` (0x513ad0).
-    pub deform_bulge: Option<Bulge>,
-    /// `deformVertexes move <x> <y> <z> <func> <base> <amp> <phase> <rate>`:
-    /// every vertex moves along the vector by the wave (0x513b70).
-    pub deform_move: Option<([f32; 3], Wave)>,
-    /// `deformVertexes normal <amplitude> <frequency>` (0x513990).
-    pub deform_normal: Option<DeformNormal>,
+    /// The shader's `deformVertexes` records in script order, at most
+    /// [`MAX_SHADER_DEFORMS`]; the runtime runs them one after another on
+    /// the same vertices (CoDMP.exe 0x5149b0; shader doc 8).
+    pub deforms: Vec<Deform>,
     /// `deformVertexes autosprite` / `autosprite2`: camera-facing quads
     /// (0x514080 / 0x514330; shader doc 8).
     pub sprite: Option<Sprite>,
@@ -238,6 +225,43 @@ pub struct Shader {
     /// up axes in the world, so `tcGen environment` reflects in the model's
     /// frame on world-baked vertices (shader doc 8, "Static props").
     pub model_axes: Option<[[f32; 3]; 2]>,
+}
+
+/// Retail's deform record cap (`MAX_SHADER_DEFORMS`, CoDMP.exe 0x4f9d20).
+pub const MAX_SHADER_DEFORMS: usize = 3;
+
+/// One `deformVertexes` record (CoDMP.exe 0x4f9d20's 0x34-byte records).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Deform {
+    /// `wave <div> <func> <base> <amp> <phase> <rate>`, the ocean swell:
+    /// along the normal by `base + amp * sin(2pi * (phase + t * rate +
+    /// (x+y+z) * spread))` (0x513570); `spread` is 1/div.
+    Wave { wave: Wave, spread: f32 },
+    /// `flap <s|x|t|y> <div> <func> <base> <amp> <phase> <rate>`: the
+    /// wave above scaled by the vertex's base `s` (or `t`), so a flag's
+    /// hoist edge (s = 0) holds still (0x5136e0).
+    Flap(Flap),
+    /// `bulge <width> <height> <speed>` (0x513ad0).
+    Bulge(Bulge),
+    /// `move <x> <y> <z> <func> <base> <amp> <phase> <rate>`: every vertex
+    /// moves along the vector by the wave (0x513b70).
+    Move { by: [f32; 3], wave: Wave },
+    /// `normal <amplitude> <frequency>` (0x513990).
+    Normal(DeformNormal),
+    /// A record vcod draws some other way or not at all: `autosprite`,
+    /// `autosprite2` (see [`Shader::sprite`]), `projectionShadow`,
+    /// `text0`-`text7`, `syncNormal`. It still takes one of the three slots.
+    Other,
+}
+
+impl Deform {
+    /// Whether the record moves vertex positions.
+    pub fn moves(&self) -> bool {
+        matches!(
+            self,
+            Deform::Wave { .. } | Deform::Flap(_) | Deform::Bulge(_) | Deform::Move { .. }
+        )
+    }
 }
 
 /// A `deformVertexes flap`: `along_t` for the `t`/`y` axis (deform 3),
@@ -703,6 +727,37 @@ impl Shader {
             bias: self.depth_bias().is_some(),
             two_sided: self.two_sided,
         })
+    }
+}
+
+/// The engine's default image (`*default`, `R_CreateDefaultImage` 0x4f0380);
+/// renderers bind `assets::default_image` for it.
+pub const DEFAULT_IMAGE: &str = "*default";
+
+/// Retail's `<default>` shader (CoDMP.exe 0x4fd780): one opaque stage of
+/// `*default` that writes depth, its rgbGen left 0, which 0x4ffa60's default
+/// case fills with identityLight. `R_FindShader` returns it for a skin it
+/// cannot build (shader doc 8, "Model skin scripts").
+pub fn default_shader() -> Shader {
+    Shader {
+        name: "<default>".to_string(),
+        stages: vec![Stage {
+            bundles: vec![Bundle {
+                image: ImageRef::Path(DEFAULT_IMAGE.to_string()),
+                anim: None,
+                clamp: Clamp::NONE,
+                tcmods: Vec::new(),
+                tc_gen: TcGen::Base,
+                env: TexEnv::Modulate,
+            }],
+            blend: None,
+            depth_write: None,
+            alpha_func: None,
+            depth_func: DepthFunc::LessEqual,
+            rgb_gen: RgbGen::IdentityLighting,
+            alpha_gen: AlphaGen::Identity,
+        }],
+        ..Default::default()
     }
 }
 
@@ -1750,24 +1805,32 @@ fn top_token(
         "deformvertexes" => {
             // The 1.1 parser (CoDMP.exe 0x4f9d20, shader doc 8) accepts
             // projectionShadow, autosprite, autosprite2, text0-7, bulge,
-            // wave, flap, normal, syncNormal and move. vcod draws all but
-            // projectionShadow, text0-7 and syncNormal, which have no stock
-            // user and consume their args inertly.
+            // wave, flap, normal, syncNormal and move, three records at
+            // most. vcod draws all but projectionShadow, text0-7 and
+            // syncNormal, which have no stock user and hold their slot
+            // inertly.
             let kind = args.first().map(|t| t.to_ascii_lowercase());
+            if kind.is_some() && sh.deforms.len() == MAX_SHADER_DEFORMS {
+                warns.warn_once(sname, "MAX_SHADER_DEFORMS");
+                return until_keyword(args);
+            }
             let spread = |t: Option<&&str>| match t.map(|t| fnum(t)) {
                 Some(d) if d != 0.0 => 1.0 / d,
                 // retail warns "illegal div value of 0" and stores 100
                 _ => 100.0,
             };
-            match kind.as_deref() {
+            let (record, used) = match kind.as_deref() {
                 Some("wave") => match parse_wave(args.get(2..).unwrap_or(&[])) {
-                    Some(w) => {
-                        sh.deform_wave = Some((w, spread(args.get(1))));
-                        7.min(args.len())
-                    }
+                    Some(wave) => (
+                        Some(Deform::Wave {
+                            wave,
+                            spread: spread(args.get(1)),
+                        }),
+                        7.min(args.len()),
+                    ),
                     None => {
                         warns.warn_once(sname, "unknown deformVertexes wave form");
-                        until_keyword(args)
+                        (Some(Deform::Other), until_keyword(args))
                     }
                 },
                 Some("flap") => {
@@ -1778,41 +1841,42 @@ fn top_token(
                         _ => None,
                     };
                     match (along_t, parse_wave(args.get(3..).unwrap_or(&[]))) {
-                        (Some(along_t), Some(wave)) => {
-                            sh.deform_flap = Some(Flap {
+                        (Some(along_t), Some(wave)) => (
+                            Some(Deform::Flap(Flap {
                                 along_t,
                                 wave,
                                 spread: spread(args.get(2)),
-                            });
-                            8.min(args.len())
-                        }
+                            })),
+                            8.min(args.len()),
+                        ),
                         _ => {
                             warns.warn_once(sname, "bad deformVertexes flap");
-                            until_keyword(args)
+                            (None, until_keyword(args))
                         }
                     }
                 }
                 Some("autosprite") => {
                     sh.sprite = Some(Sprite::Auto);
-                    1
+                    (Some(Deform::Other), 1)
                 }
                 Some("autosprite2") => {
                     sh.sprite = Some(Sprite::Auto2);
-                    1
+                    (Some(Deform::Other), 1)
                 }
                 // width height speed (deform 6, record +0x28..+0x30)
                 Some("bulge") => {
                     let n = until_keyword(args);
                     if n < 4 {
                         warns.warn_once(sname, "missing deformVertexes bulge parm");
-                        return n;
+                        (None, n)
+                    } else {
+                        let b = Bulge {
+                            width: fnum(args[1]),
+                            height: fnum(args[2]),
+                            speed: fnum(args[3]),
+                        };
+                        (Some(Deform::Bulge(b)), 4)
                     }
-                    sh.deform_bulge = Some(Bulge {
-                        width: fnum(args[1]),
-                        height: fnum(args[2]),
-                        speed: fnum(args[3]),
-                    });
-                    4
                 }
                 // x y z, then the wave (deform 7)
                 Some("move") => {
@@ -1820,12 +1884,11 @@ fn top_token(
                     match parse_wave(args.get(4..n).unwrap_or(&[])) {
                         Some(wave) if n >= 5 => {
                             let by = [fnum(args[1]), fnum(args[2]), fnum(args[3])];
-                            sh.deform_move = Some((by, wave));
-                            9.min(n)
+                            (Some(Deform::Move { by, wave }), 9.min(n))
                         }
                         _ => {
                             warns.warn_once(sname, "bad deformVertexes move");
-                            n
+                            (None, n)
                         }
                     }
                 }
@@ -1834,16 +1897,33 @@ fn top_token(
                     let n = until_keyword(args);
                     if n < 3 {
                         warns.warn_once(sname, "missing deformVertexes parm");
-                        return n;
+                        (None, n)
+                    } else {
+                        let d = DeformNormal {
+                            amp: fnum(args[1]),
+                            freq: fnum(args[2]),
+                        };
+                        (Some(Deform::Normal(d)), 3)
                     }
-                    sh.deform_normal = Some(DeformNormal {
-                        amp: fnum(args[1]),
-                        freq: fnum(args[2]),
-                    });
-                    3
                 }
-                _ => until_keyword(args),
-            }
+                // a copy of the wave before it, its amplitude scaled
+                Some("syncnormal") => {
+                    let n = until_keyword(args);
+                    let after_wave = matches!(sh.deforms.last(), Some(Deform::Wave { .. }));
+                    (after_wave.then_some(Deform::Other).filter(|_| n >= 2), n)
+                }
+                Some("projectionshadow") => (Some(Deform::Other), 1),
+                Some(k)
+                    if k.len() == 5
+                        && k.starts_with("text")
+                        && (b'0'..=b'7').contains(&k.as_bytes()[4]) =>
+                {
+                    (Some(Deform::Other), 1)
+                }
+                _ => (None, until_keyword(args)),
+            };
+            sh.deforms.extend(record);
+            used
         }
         "skyfogvars" | "waterfogvars" | "fogvars" | "entitymergable" => until_keyword(args),
         // the rest of the line skipped, as CoDMP.exe 0x4fa950 does for each
@@ -3465,7 +3545,10 @@ textures/sfx/test_water
             first_block("t { deformVertexes wave 1600 sin 16 16 0 .25 { map a.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        let (wv, spread) = sh.deform_wave.expect("ocean wave parsed");
+        let [Deform::Wave { wave: wv, spread }] = sh.deforms.as_slice() else {
+            panic!("ocean wave parsed: {:?}", sh.deforms);
+        };
+        let (wv, spread) = (wv.clone(), *spread);
         assert_eq!(wv.form, WaveForm::Sin);
         assert_eq!(
             (wv.base, wv.amp, wv.phase, wv.freq),
@@ -3482,35 +3565,42 @@ textures/sfx/test_water
         );
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
+        let [
+            Deform::Bulge(bulge),
+            Deform::Move { by, wave },
+            Deform::Normal(normal),
+        ] = sh.deforms.as_slice()
+        else {
+            panic!("bulge, move, normal in order: {:?}", sh.deforms);
+        };
         assert_eq!(
-            sh.deform_bulge,
-            Some(Bulge {
+            *bulge,
+            Bulge {
                 width: 3.0,
                 height: 4.0,
                 speed: 5.0
-            })
+            }
         );
-        let (by, wave) = sh.deform_move.clone().expect("move parsed");
+        let (by, wave) = (*by, wave.clone());
         assert_eq!(by, [0.0, 0.0, 2.0]);
         assert_eq!(
             (wave.form, wave.base, wave.amp, wave.phase, wave.freq),
             (WaveForm::Sin, 1.0, 2.0, 0.5, 0.25)
         );
         assert_eq!(
-            sh.deform_normal,
-            Some(DeformNormal {
+            *normal,
+            DeformNormal {
                 amp: 0.5,
                 freq: 2.0
-            })
+            }
         );
-        assert!(sh.deform_wave.is_none());
         assert!(w.is_empty(), "args consumed cleanly");
         // short ones warn as retail does and deform nothing
         let (name, body) =
             first_block("t { deformVertexes bulge 3 4\ndeformVertexes normal 1 { map a.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert!(sh.deform_bulge.is_none() && sh.deform_normal.is_none());
+        assert!(sh.deforms.is_empty());
         assert!(w.fired(&name, "missing deformVertexes bulge parm"));
         assert!(w.fired(&name, "missing deformVertexes parm"));
     }
@@ -3522,7 +3612,9 @@ textures/sfx/test_water
             first_block("t { cull none deformVertexes flap s 32 sin 4 8 0 .75 { map a.tga } }");
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        let flap = sh.deform_flap.expect("flap parsed");
+        let [Deform::Flap(flap)] = sh.deforms.as_slice() else {
+            panic!("flap parsed: {:?}", sh.deforms);
+        };
         assert!(!flap.along_t);
         assert_eq!(
             (
@@ -3538,7 +3630,9 @@ textures/sfx/test_water
         // the parser maps y with t and x with s
         let (name, body) = first_block("t { deformVertexes flap y 0 sin 1 2 0 1 { map a.tga } }");
         let sh = parse_shader(&name, &body, &mut WarnSet::new());
-        let flap = sh.deform_flap.expect("flap parsed");
+        let [Deform::Flap(flap)] = sh.deforms.as_slice() else {
+            panic!("flap parsed: {:?}", sh.deforms);
+        };
         assert!(flap.along_t);
         assert_eq!(flap.spread, 100.0, "div 0 stores 100");
         // skins/light_sprite and skins/searchlight_beam, either case
@@ -3555,8 +3649,40 @@ textures/sfx/test_water
         );
         let mut w = WarnSet::new();
         let sh = parse_shader(&name, &body, &mut w);
-        assert!(sh.deform_wave.is_some() && sh.sprite.is_none());
+        assert!(matches!(
+            sh.deforms.as_slice(),
+            [Deform::Wave { .. }, Deform::Other]
+        ));
+        assert!(sh.sprite.is_none());
         assert!(!w.fired(&name, "unknown token"));
+    }
+
+    /// Records keep script order, a sprite or an inert one holds a slot, and
+    /// a fourth warns `MAX_SHADER_DEFORMS` and is dropped (0x4f9d20).
+    #[test]
+    fn deforms_keep_script_order_up_to_three() {
+        let (name, body) = first_block(
+            "t { deformVertexes move 0 0 1 sin 0 1 0 1\ndeformVertexes autosprite\ndeformVertexes wave 64 sin 0 2 0 1\ndeformVertexes normal 1 1 { map a.tga } }",
+        );
+        let mut w = WarnSet::new();
+        let sh = parse_shader(&name, &body, &mut w);
+        assert!(matches!(
+            sh.deforms.as_slice(),
+            [Deform::Move { .. }, Deform::Other, Deform::Wave { .. }]
+        ));
+        assert_eq!(sh.sprite, Some(Sprite::Auto));
+        assert!(w.fired(&name, "MAX_SHADER_DEFORMS"));
+        assert!(
+            !w.fired(&name, "unknown token"),
+            "the fourth's args consumed"
+        );
+        assert_eq!(sh.stages.len(), 1);
+        // a syncNormal off a wave takes a slot; one with nothing before it none
+        let (name, body) = first_block(
+            "t { deformVertexes syncNormal 0.5\ndeformVertexes bulge 1 2 3 { map a.tga } }",
+        );
+        let sh = parse_shader(&name, &body, &mut WarnSet::new());
+        assert!(matches!(sh.deforms.as_slice(), [Deform::Bulge(_)]));
     }
 
     #[test]
