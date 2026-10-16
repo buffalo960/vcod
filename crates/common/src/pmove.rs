@@ -1567,11 +1567,33 @@ fn walking_flag(ps: &PlayerState, input: &PmInput) -> bool {
 
 /// The default arm's tail ahead of the snap (0x34398-0x3443d): a frame that
 /// moved the player less than half what its velocity says takes the move
-/// itself, over the frame time, as the velocity.
+/// itself, over the frame time, as the velocity. Both sides stay on the x87
+/// stack: a fall from rest moves exactly half its end velocity, and which
+/// way that tie goes rides the last bits of the origin (cod11-mantle.md,
+/// "The tail of the default arm").
 fn clamp_velocity_to_move(ps: &mut PlayerState, dt: f32) {
-    let moved = ps.origin - ps.move_start;
-    if ps.velocity.length_squared() * 0.25 > moved.length_squared() / (dt * dt) {
-        ps.velocity = moved / dt;
+    if ps.rules.v15() {
+        // 1.5b's and UO's stored floats break the tie elsewhere: a fall
+        // from rest kept its velocity at every measured height but one,
+        // which f32 here misses (cod11-gametypes-re-bel.md 8.5).
+        let moved = ps.origin - ps.move_start;
+        if ps.velocity.length_squared() * 0.25 > moved.length_squared() / (dt * dt) {
+            ps.velocity = moved / dt;
+        }
+        return;
+    }
+    let moved = ps.origin.as_dvec3() - ps.move_start.as_dvec3();
+    let ft = f64::from(dt);
+    let ratio = ((moved.x * moved.x + moved.y * moved.y) + moved.z * moved.z) / (ft * ft);
+    let v = ps.velocity.as_dvec3();
+    if ((v.y * v.y + v.x * v.x) + v.z * v.z) * 0.25 > ratio {
+        // x off the stack, y and z off their stored floats.
+        let inv = 1.0 / ft;
+        ps.velocity = Vec3::new(
+            (moved.x * inv) as f32,
+            (inv * f64::from(moved.y as f32)) as f32,
+            (inv * f64::from(moved.z as f32)) as f32,
+        );
     }
 }
 
@@ -5928,6 +5950,36 @@ mod tests {
         ps.velocity = Vec3::new(300.0, 0.0, 40.0);
         clamp_velocity_to_move(&mut ps, 0.008);
         assert!(ps.velocity.abs_diff_eq(Vec3::new(125.0, 0.0, 0.0), 1e-3));
+    }
+
+    /// A fall from rest moves exactly half its end velocity, and 1.1d's
+    /// stack keeps the tie or takes the move by the origin's last bits:
+    /// `probe_spawnview`'s 66 + 34 ms spawn thinks on mp_carentan
+    /// (cod11-gametypes-re-bel.md 8.5) fell 3.0888 from these heights and
+    /// 4.0068 from the rest, and 1.5b never took the move but at -2.
+    #[test]
+    fn a_fall_from_rest_ties_the_tail_by_the_start_height() {
+        let w = crate::collision::synthetic_world(
+            &[("textures/test/solid", crate::collision::CONTENTS_SOLID, 0)],
+            &[(0, [-64.0, -64.0, -1100.0], [64.0, 64.0, -1000.0])],
+        );
+        let w = MoveWorld::bare(&w);
+        let fall = |z: f32, rules: MoveRules| {
+            let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, z), 0.0);
+            ps.rules = rules;
+            pmove(&mut ps, &PmInput::default(), &w, 0.066, &[]);
+            pmove(&mut ps, &PmInput::default(), &w, 0.034, &[]);
+            ((z - ps.origin.z) * 10000.0).round() / 10000.0
+        };
+        for z in [-2.0, -1.0, 0.0, 1.0, 2.0, 4.0] {
+            assert_eq!(fall(z, MoveRules::V1_1), 3.0888, "1.1 from {z}");
+        }
+        for z in [-4.0, 8.0, 16.0, 100.0] {
+            assert_eq!(fall(z, MoveRules::V1_1), 4.0068, "1.1 from {z}");
+        }
+        for z in [-4.0, -1.0, 0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 100.0] {
+            assert_eq!(fall(z, MoveRules::V1_5), 4.0068, "1.5 from {z}");
+        }
     }
 
     /// At 8 ms a frame's gravity is 6.4 and the snap keeps 6 of it, so a

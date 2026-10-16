@@ -123,6 +123,17 @@ frame time into all three velocity components. INFERRED, off the `jne` at
 frame that moved less than half what its velocity says leaves with the
 displacement's own rate as its velocity.
 
+VERIFIED, same range: the displacement's x stays on the stack while y and
+z are also stored as floats (0x343a9, 0x343b7, 0x343d1), the squares, sums
+and the division by `frametime` squared never leave the stack, and the
+stores multiply by `1 / frametime` computed there (0x34410-0x3443a): x off
+the stack, y and z off their stored floats. VERIFIED, live
+(cod11-gametypes-re-bel.md 8.6): a fall from rest, which moves exactly half
+its end velocity, takes the move at some start heights and not at others.
+INFERRED: the tie goes by the last bits of the origin, so vcod
+(`pmove::clamp_velocity_to_move`) evaluates both sides in `f64`; in `f32`
+it never took the move from rest.
+
 VERIFIED: 0x34443-0x34451 push `ps+0x20`, `ps.velocity`, and call
 `trap_SnapVector` (0x63c04, relocation at 0x34452), which passes syscall 0x3a
 through the engine's pointer (0x63c11). VERIFIED, in `cod_lnxded`: the game
