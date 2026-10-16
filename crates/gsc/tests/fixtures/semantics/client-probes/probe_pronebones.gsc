@@ -11,6 +11,10 @@
 //	PROBE bone <time> <entity number> <tag> <origin>
 //	PROBE body <time> <entity number> <origin>
 //
+//	He is put there twice, a second apart, so the second drop starts at
+//	rest and the airborne prone body it leaves (cod15-movement.md 4)
+//	repeats.
+//
 //	Spots: `brecourt` (mp_brecourt) is probe_scriptmodel's prone target,
 //	96 out from the site, facing back at 270; `mound` (mp_carentan) is
 //	probe_prone's ~19 degree terrain mound at 270; `flat` (mp_carentan) is
@@ -71,9 +75,24 @@ try_place(spot)
 	if (isdefined(self.probe_placed))
 		return;
 	self.probe_placed = 1;
-	self setorigin(spot.origin);
-	self setplayerangles((0, spot.yaw, 0));
-	logPrint("PROBE place " + getTime() + " " + self getEntityNumber() + " " + spot.origin + " " + spot.yaw + "\n");
+	self thread place(spot);
+}
+
+//	Placed twice, a second apart: the first placement keeps whatever
+//	velocity the spawn left, and the second drops a body at rest.
+place(spot)
+{
+	self endon("disconnect");
+	for (i = 0; i < 2; i++)
+	{
+		if (i)
+			wait 1;
+		if (self.sessionstate != "playing")
+			return;
+		self setorigin(spot.origin);
+		self setplayerangles((0, spot.yaw, 0));
+		logPrint("PROBE place " + getTime() + " " + self getEntityNumber() + " " + spot.origin + " " + spot.yaw + "\n");
+	}
 	self thread log_bones();
 	if (getcvarint("probe_hold"))
 		self thread hold(spot);

@@ -10732,13 +10732,23 @@ impl FallProbe {
         if i("pm_type") == 6 {
             key.extend([i("origin[0]"), i("origin[1]"), i("origin[2]")]);
         }
+        // and a prone body's bend, printed once it is non-zero
+        let bend = ["fTorsoHeight", "fTorsoPitch", "fWaistPitch"].map(i);
+        key.extend(bend);
+        let heading = i("proneDirection");
         if self.last.as_ref() == Some(&key) {
             return;
         }
         self.last = Some(key);
+        let bend = if bend == [0; 3] {
+            String::new()
+        } else {
+            let [h, p, w] = bend.map(|b| f32::from_bits(b as u32));
+            format!(" prone={h},{p},{w} dir={}", f32::from_bits(heading as u32))
+        };
         println!(
             "FALL t={} ct={} origin={:.3},{:.3},{:.3} vel={},{},{} ground={} pm_type={} pm_flags=0x{:x} pm_time={} \
-health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]",
+health={} seq={} events=[{},{},{},{}] parms=[{},{},{},{}]{bend}",
             snap.server_time,
             i("commandTime"),
             f("origin[0]"),
