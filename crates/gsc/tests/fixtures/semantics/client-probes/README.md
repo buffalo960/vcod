@@ -360,6 +360,26 @@ gated by `crates/server/tests/pronepose_ab.rs`. Against ours:
 crates/gsc/tests/fixtures/semantics/client-probes/probe_pronebones.gsc --set
 probe_spot=mound`.
 
+## probe_specspawn
+
+A spectator's spawn think. From 3 s in, every 2 s, each spectator is
+`spawn`ed again as a spectator at (-224 60 200) over mp_carentan's mound,
+facing 0, and his origin is logged straight after the builtin returns
+(`PROBE spec`) and a frame later (`PROBE next`). The client half is
+`--probe-edge spec-fly`, which holds forward from the join on and prints
+every snapshot's origin as `EDGE origin`.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=18 \
+    tools/run_probe.sh client-probes/probe_specspawn mp_carentan
+# second shell, about 4 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge spec-fly --probe-secs 10
+```
+
+The fixtures are `crates/server/tests/fixtures/specspawn/mp_carentan*.txt`,
+the `PROBE` lines and the probe's `EDGE origin` lines on the spawn frames,
+gated by `crates/server/tests/specspawn_ab.rs`.
+
 ## probe_pronedrop
 
 The airborne prone refusal's server half. Under `probe_teleport 1` it lifts

@@ -937,6 +937,17 @@ impl PlayerState {
         self.view_height_cur
     }
 
+    /// A body at rest in `stance`: the flags, the eye and the eye's last
+    /// target all agree, as after a stance change whose legs have run.
+    pub fn settle_stance(&mut self, stance: Stance) {
+        self.stance = stance;
+        self.ducked = stance == Stance::Crouch;
+        self.view_height_cur = stance.view_height();
+        self.view_lerp_target = stance.view_height();
+        self.view_target = stance.view_height();
+        self.view_lerp_ms = None;
+    }
+
     /// Whether the eye has caught up with the stance it is easing towards.
     pub fn view_height_settled(&self) -> bool {
         (self.view_height_cur - self.stance.view_height()).abs() < 0.01

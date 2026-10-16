@@ -2237,11 +2237,11 @@ mod tests {
         let mut b = new_for_test([0.0, 0.0, 0.0], 180.0);
         b.assembly = stock_assembly();
         b.ps.on_ground = true;
-        b.ps.stance = vcod_common::pmove::Stance::Crouch;
+        b.ps.settle_stance(vcod_common::pmove::Stance::Crouch);
         let idle = vcod_common::net::msg::NULL_USERCMD;
         b.update_anims(&inputs, &idle, (0, 0), &[], &mut 1u64);
         settle(&mut b);
-        b.ps.stance = vcod_common::pmove::Stance::Stand;
+        b.ps.settle_stance(vcod_common::pmove::Stance::Stand);
         b.update_anims(&inputs, &idle, (50, 50), &[], &mut 1u64);
         let body = b.hit_body(1).expect("a live body");
         assert_eq!(

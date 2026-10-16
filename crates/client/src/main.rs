@@ -502,7 +502,9 @@ struct Args {
     /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
     /// drop), `zombie` (a disconnect before entering the world),
     /// `zombie-active` (one after), `lean-fly` (the lean bits on a
-    /// spectator's flight) and `watch` (the entity list as it changes).
+    /// spectator's flight), `spec-fly` (forward held, every origin printed,
+    /// beside `client-probes/probe_specspawn`) and `watch` (the entity list
+    /// as it changes).
     /// Prints `EDGE` lines; writes no fixture (`edge_probe.rs`).
     #[arg(long, value_enum)]
     probe_edge: Option<edge_probe::EdgeMode>,
