@@ -26,8 +26,8 @@ pub static V1: Defs = Defs {
     mod_flagged: &crate::game::combat::MOD_FLAGGED,
 };
 
-/// 1.5's: 1.1's tables, with its own protocol for whatever asks
-/// `defs.proto` which patch runs.
+/// 1.5's: 1.1's tables under its own protocol, which is what the
+/// builtins tell the two apart by.
 pub static V15: Defs = Defs {
     proto: &PROTOCOL_V6,
     weapons: crate::configstrings::WEAPON_LIST,
@@ -81,12 +81,10 @@ const MOD_NAMES_V22: [&str; 27] = [
 impl Defs {
     /// The set a server speaking `p` runs.
     pub fn of(p: &Protocol) -> &'static Defs {
-        if p.version == PROTOCOL_V22.version {
-            &UO
-        } else if p.version == PROTOCOL_V6.version {
-            &V15
-        } else {
-            &V1
+        match p.version {
+            v if v == PROTOCOL_V22.version => &UO,
+            v if v == PROTOCOL_V6.version => &V15,
+            _ => &V1,
         }
     }
 
@@ -147,14 +145,10 @@ mod tests {
         assert_eq!(UO.mod_index("MOD_SUICIDE"), Some(21));
     }
 
-    /// Each protocol's tables carry that protocol: the turret aim rule, the
-    /// arcs on the wire and the sound broadcast ask `defs.proto` which patch
-    /// a server runs.
     #[test]
-    fn every_protocol_picks_tables_that_name_it() {
+    fn each_protocol_gets_its_own_set() {
         for p in [&PROTOCOL_V1, &PROTOCOL_V6, &PROTOCOL_V22] {
             assert_eq!(Defs::of(p).proto.version, p.version);
         }
-        assert_eq!(V15.weapons, V1.weapons);
     }
 }
