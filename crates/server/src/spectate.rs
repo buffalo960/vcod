@@ -1349,11 +1349,33 @@ impl ClientSim {
         // (@0x326f1), which is why prone moves through `walkprone`.
         // 1.5's and UO's `PM_Footsteps` take the stance off the stepped eye
         // target (`PM_GetEffectiveStance`, called at 1.5 0x24c46), so a
-        // lie-down plays the crouch through its first leg.
-        let stance = if self.ps.rules.v15() {
-            self.ps.effective_stance()
-        } else {
-            self.ps.stance
+        // lie-down plays the crouch through its first leg. 1.1's (0x322c8)
+        // picks the move clips off its inline effective stance
+        // (0x32340..0x3239a) but the idles off `viewHeightLerpTarget` alone
+        // (0x324c8, 0x3284b), so its lie-down idles crouched for the first
+        // leg too (player-model-anim-system.md, "How retail picks the
+        // movetype").
+        let (stance, idle_stance) = match self.ps.rules {
+            pmove::MoveRules::V1_1 => {
+                let t = self.ps.view_lerp_target;
+                let idle = if t == pmove::VIEW_PRONE {
+                    pmove::Stance::Prone
+                } else if t == pmove::VIEW_CROUCH {
+                    pmove::Stance::Crouch
+                } else {
+                    pmove::Stance::Stand
+                };
+                (self.ps.effective_stance(), idle)
+            }
+            pmove::MoveRules::V1_5 | pmove::MoveRules::Uo => {
+                let s = self.ps.effective_stance();
+                (s, s)
+            }
+        };
+        let idle = match idle_stance {
+            pmove::Stance::Prone => Movetype::IdleProne,
+            pmove::Stance::Crouch => Movetype::IdleCr,
+            pmove::Stance::Stand => Movetype::Idle,
         };
         let movetype = match (stance, moving, back) {
             // Retail's 0x322c8 takes the stance straight off `eFlags & 0xC000`
@@ -1361,27 +1383,28 @@ impl ClientSim {
             // speed test: a stand gun always plays `idle` however the
             // gunner's residual velocity from before the mount reads
             // (turrets doc, section 10).
-            _ if self.mounted_on.is_some() || linked_idle => match stance {
-                pmove::Stance::Prone => Movetype::IdleProne,
-                pmove::Stance::Crouch => Movetype::IdleCr,
-                pmove::Stance::Stand => Movetype::Idle,
+            // 1.1's mounted arm reads `pm_flags` 0x1 and 0x2 (0x3230a).
+            _ if self.mounted_on.is_some() || linked_idle => match self.ps.rules {
+                pmove::MoveRules::V1_1 => match self.ps.stance {
+                    pmove::Stance::Prone => Movetype::IdleProne,
+                    pmove::Stance::Crouch => Movetype::IdleCr,
+                    pmove::Stance::Stand => Movetype::Idle,
+                },
+                _ => idle,
             },
             // A climber is off the ground and still selects: retail's ladder
             // flag bypasses the airborne early-out (@0x323af).
             _ if self.ps.on_ladder && self.ps.velocity.z >= 0.0 => Movetype::ClimbUp,
             _ if self.ps.on_ladder => Movetype::ClimbDown,
-            (pmove::Stance::Prone, false, _) => Movetype::IdleProne,
+            (_, false, _) => idle,
             // Retail selects the move clip and then, with no move key and
             // the body slowing under 120, the idle over it; standing takes
             // that idle only when the move clip found no clause.
-            (pmove::Stance::Prone, true, _) if stopping => Movetype::IdleProne,
-            (pmove::Stance::Crouch, true, _) if stopping => Movetype::IdleCr,
+            _ if stopping && idle != Movetype::Idle => idle,
             (pmove::Stance::Prone, true, true) => Movetype::WalkProneBk,
             (pmove::Stance::Prone, true, false) => Movetype::WalkProne,
-            (pmove::Stance::Crouch, false, _) => Movetype::IdleCr,
             (pmove::Stance::Crouch, true, true) => Movetype::RunCrBk,
             (pmove::Stance::Crouch, true, false) => Movetype::RunCr,
-            (pmove::Stance::Stand, false, _) => Movetype::Idle,
             (pmove::Stance::Stand, true, true) => Movetype::RunBk,
             (pmove::Stance::Stand, true, false) => Movetype::Run,
         };
@@ -2761,7 +2784,7 @@ mod tests {
         for (label, weapon, class, stance, back, forward, right, want) in cases {
             let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
             sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
-            sim.ps.stance = *stance;
+            sim.ps.settle_stance(*stance);
             sim.ps.on_ground = true;
             sim.ps.backwards_run = *back;
             sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
@@ -2957,6 +2980,42 @@ mod tests {
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_climbdown"));
     }
 
+    /// 1.1's `PM_Footsteps` idles off `viewHeightLerpTarget` (0x324c8) and
+    /// moves off the effective stance (0x32340): a lie-down from standing
+    /// idles crouched through the eye's first leg and crawls if it moves.
+    #[test]
+    fn a_11_lie_down_idles_crouched_through_the_first_leg() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let anims = vcod_common::animtree::PlayerAnims::load(&fs).expect("the player anims");
+        let inputs = AnimInputs {
+            anims: &anims,
+            weapon: "m1carbine_mp",
+            weapon_class: "rifle",
+        };
+        let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.ps.settle_stance(pmove::Stance::Stand);
+        sim.ps.stance = pmove::Stance::Prone;
+        sim.ps.view_lerp_target = pmove::VIEW_CROUCH;
+        sim.ps.view_lerp_down = true;
+        sim.ps.on_ground = true;
+        sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
+        assert_eq!(sim.movetype, vcod_common::animscript::Movetype::IdleCr);
+        sim.ps.velocity = Vec3::new(60.0, 0.0, 0.0);
+        let fwd = UserCmd {
+            forward: 127,
+            ..NULL_USERCMD
+        };
+        sim.update_anims(&inputs, &fwd, (1050, 1050), &[], &mut 1u64);
+        assert_eq!(sim.movetype, vcod_common::animscript::Movetype::WalkProne);
+        sim.ps.velocity = Vec3::ZERO;
+        sim.ps.view_lerp_target = pmove::VIEW_PRONE;
+        sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
+        assert_eq!(sim.movetype, vcod_common::animscript::Movetype::IdleProne);
+    }
+
     /// The backpedal latch picks the event as well as the movetype: retail's
     /// `jumpbk` block gates its first clause on the crouched and prone
     /// movetypes, which is the only place the two events differ for a
@@ -2978,7 +3037,7 @@ mod tests {
         };
         let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
-        sim.ps.stance = pmove::Stance::Crouch;
+        sim.ps.settle_stance(pmove::Stance::Crouch);
         sim.ps.backwards_run = true;
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);

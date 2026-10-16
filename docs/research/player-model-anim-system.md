@@ -251,6 +251,30 @@ the first crouched snapshot after the back key is released reads index 111,
 playing (no change) or flips the toggle a second time back. vcod:
 `ANIM_STOP_SPEED` in `crates/server/src/spectate.rs`.
 
+**The stance.** VERIFIED: the move dispatch's stance (`ebp-0x20`) is
+computed at 0x32340..0x3239a: prone when `pm_flags` 0x1 is set, when
+`ps+0xd8` equals `ps+0x33c`, or when `ps+0xd4` is non-zero, `ps+0xd8`
+equals `ps+0x340` and `ps+0xdc` is 0; crouched when `pm_flags` 0x2 is set
+or `ps+0xd4` is non-zero with `ps+0xd8` equal to `ps+0x340`; standing
+otherwise. VERIFIED: both idle arms (0x324c1..0x324f4 under 10 u/s,
+0x32847..0x32871 at the stop) compare `ps+0xd8` with `ps+0x33c` and
+`ps+0x340` and read no `pm_flags` bit: `idleprone` on the first, `idlecr`
+on the second, `idle` otherwise. VERIFIED: the mounted arm (0x3230a) reads
+`pm_flags` 0x1 and 0x2. INFERRED: `ps+0xd8` is `viewHeightLerpTarget`,
+`ps+0xd4` `viewHeightLerpTime`, `ps+0xdc` `viewHeightLerpDown` and
+`ps+0x33c`/`0x340` the prone and crouch eye heights, the same test
+`PM_GetEffectiveStance` (0x34554) makes, so a lie-down from standing idles
+crouched through the eye's first leg (the leg's target is the crouch) and
+prone only once the second leg starts. VERIFIED, live (retail 1.1d,
+2026-10-16, `crates/server/tests/fixtures/pronebones/mp_brecourt-spawn315.txt`):
+the first grounded snapshot of a lie-down, `pm_flags` 0x40001, reads
+`legsAnim` 107 (`pb_crouch_alert_unarmed`) and the next one 556 (44,
+`pb_prone_aim_pistol`). vcod: `ClientSim::update_anims` picks 1.1's idles
+off `view_lerp_target` and its move clips off `effective_stance`;
+`pronepose_ab`'s `a_spawn_lies_down_on_its_own_yaw_like_retail` holds the
+bones. 1.5 and UO take every arm off the stepped eye target
+(cod15-movement.md 4, "The spawn's lie-down").
+
 **The strafe condition.** VERIFIED: condition 8 is written between 0x32504 and
 0x325b5. The block loads `forwardmove` at 0x32504 and `rightmove` at 0x32568,
 and reaches the update call at 0x325b0 from three places, pushing condition 8
