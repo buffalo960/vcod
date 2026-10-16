@@ -598,7 +598,7 @@ weapon-change check when `upmove`, `wbuttons` or the byte itself moves;
 weapon and not an animscript clause, and there is nothing left here to
 explain.
 
-### Prone fire, measured on one map of two
+### Prone fire, taken on one map and refused on the other
 
 VERIFIED: carentan's `prone_fire` step reads `legsAnim` 557 (index 45,
 `pb_prone_aim`) and `torsoAnim` 224 `pt_prone_shoot` across its three shots.
@@ -608,11 +608,26 @@ VERIFIED: pavlov's same step reads `legsAnim` 634 (index 122, the standing
 idle) and the standing shoot pose 253 throughout. INFERRED: the prone was
 refused there and the step recorded a standing shot under a prone label, so its
 253 is not prone evidence. VERIFIED: the crouch was taken at that same spot one
-step earlier (`legsAnim` 111). UNVERIFIED: why the prone is refused on one map
-and taken on the other; the `advance` step walks first, steered by the stall
-response, so neither run stands where its spawn was. VERIFIED: 230
-`pt_reload_prone_rifle` appears in neither capture, since neither reload ran
-prone.
+step earlier (`legsAnim` 111). VERIFIED: 230 `pt_reload_prone_rifle` appears
+in neither capture, since neither reload ran prone.
+
+VERIFIED: both captures' settled field lines turn the view during the still
+`idle` step after the walk while every `!input` line records yaw 0: pavlov's
+`viewangles[1]` reads -135 after `advance` and 90 from `idle` on at
+(-7440.875, 10399.125, 309.23), carentan's 0 and then -90 at (-233.41,
+1684.30, -7.87), 40 units from where its walk ended. INFERRED: that is the
+probe's stall turn, which rode past the walk until 5233cc3, a week after both
+captures. INFERRED: facing 90 on pavlov the body has a wall 15 units behind
+it. vcod's `BG_CheckProneValid` port (`pmove::check_prone`, 0x2d428) meets it
+at fraction 1/6 of the sweep 24 up behind the facing, a reach of 15 against
+the 17 (`HALF_WIDTH + 2`) it needs, and refuses at every yaw from 80 to 100;
+facing -135 it takes the prone. So the refusal is the spot and the facing,
+not the map.
+
+As implemented: `playerstate_combat_ab` starts the step after such a turn at
+retail's settled origin and yaw (`Step::place`), and compares `prone_fire` on
+both maps like every other step: ours lies down on carentan and stays
+standing on pavlov, as retail did.
 
 ### Neither counter in `!observed` counts shots
 
