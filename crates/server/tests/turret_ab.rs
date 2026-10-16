@@ -156,19 +156,25 @@ fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Ri
         cvars,
         weapon,
         gunner_second,
+        None,
     )
 }
 
-/// [`build`] on the paks of `fs`, the server speaking `p`.
+/// [`build`] on the paks of `fs`, the server speaking `p`; `gun_info`
+/// swaps the map's stand guns for that weapon file.
 fn build_on(
     fs: Pk3Fs,
     p: &'static Protocol,
     cvars: &[(&str, &str)],
     weapon: &str,
     gunner_second: bool,
+    gun_info: Option<&str>,
 ) -> Option<Rig> {
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
-    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    if let Some(info) = gun_info {
+        bsp.entities = bsp.entities.replace("mg42_bipod_stand_mp", info);
+    }
     let fs = Rc::new(fs);
     let mut now = Instant::now();
     let mut sv = Server::new(common::cfg(MAP, "probe_turret"), now);
@@ -1538,7 +1544,7 @@ fn rig(cap: &Capture) -> Option<Rig> {
 /// [`rig`] on the paks of `fs`, the server speaking `p`, the start rebased
 /// at most `rebase_max` on any axis.
 fn rig_on(cap: &Capture, fs: Pk3Fs, p: &'static Protocol, rebase_max: f32) -> Option<Rig> {
-    let mut rig = build_on(fs, p, &[], &cap.weapon, true)?;
+    let mut rig = build_on(fs, p, &[], &cap.weapon, true, None)?;
     let at = cap.traces.first().expect("a snapshot").1.origin;
     let mut ours = rig.sample().origin;
     for i in 0..3 {
@@ -1874,7 +1880,7 @@ fn a_15_match_timeout_holds_the_gunner_where_he_stands() {
         ("g_timeoutRecovery", "500"),
         ("g_timeoutBank", "180000"),
     ];
-    let mut rig = build_on(fs, &PROTOCOL_V6, &cvars, "m1carbine_mp", false).unwrap();
+    let mut rig = build_on(fs, &PROTOCOL_V6, &cvars, "m1carbine_mp", false, None).unwrap();
     rig.tap(BUTTON_USE);
     let placed = rig.hold(5);
     assert_eq!(placed.e_flags & 0xC000, 0xC000, "mounted");
@@ -1986,5 +1992,50 @@ fn the_1_5_and_uo_barrels_follow_the_clamped_view() {
         assert!(mounted > 100, "{file}: {mounted} mounted snapshots");
         assert!(past_arc > 10, "{file}: the view never ran past an arc");
         assert!(stepped > 0, "{file}: 1.1's rule never differed");
+    }
+}
+
+/// The round's pass entity is the gun, not the gunner (turrets doc 6.3), so
+/// nothing but the muzzle's lead keeps a gunner out of his own line. At the
+/// corners and the middle of the stand, duck and prone guns' arcs he never
+/// takes his own round.
+#[test]
+fn a_gunner_never_meets_his_own_round() {
+    for info in [
+        "mg42_bipod_stand_mp",
+        "mg42_bipod_duck_mp",
+        "mg42_bipod_prone_mp",
+    ] {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            return;
+        };
+        let mut rig = build_on(fs, &PROTOCOL_V1, &[], "m1carbine_mp", false, Some(info)).unwrap();
+        rig.tap(BUTTON_USE);
+        assert_eq!(
+            rig.hold(1).viewlocked_ent,
+            rig.gun as i32,
+            "{info}: mounted"
+        );
+        let yaw = rig.gun_yaw();
+        for (pitch, turn) in [
+            (0.0, 0.0),
+            (-40.0, -45.0),
+            (-40.0, 45.0),
+            (40.0, -45.0),
+            (40.0, 45.0),
+        ] {
+            for _ in 0..4 {
+                rig.look([pitch, yaw + turn]);
+            }
+            let h = rig.still();
+            let fire = UserCmd {
+                buttons: h.buttons | BUTTON_ATTACK,
+                ..h
+            };
+            assert_eq!(rig.frame([fire, fire]).viewlocked, 2, "{info}: fired");
+            rig.hold(1);
+            let health = rig.gunner.snapshots().newest().unwrap().ps.health();
+            assert_eq!(health, 100, "{info}: pitch {pitch} turn {turn}");
+        }
     }
 }

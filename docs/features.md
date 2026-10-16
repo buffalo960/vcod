@@ -141,7 +141,8 @@ something, the bullet links it.
   brass and script effects (the S&D bomb, the bombzone exploders, mines,
   `playLoopedFx`, `playFxOnTag`) come off the same events retail reads.
   Tracers start at the shooter's posed muzzle tag (a mounted gun's own,
-  a gunner's stance point), on 1.1, 1.5 and UO alike.
+  a gunner's stance point), on 1.1, 1.5 and UO alike, and so does another
+  body's fire sound, carried along with it.
 - **Plays.** Move, jump, crouch, prone, lean, fire, aim down the sight,
   reload, melee, use, switch weapons, on retail's default binds. A usercmd
   is built every 8 ms, like a 125 fps retail client, and they go out at
@@ -308,7 +309,8 @@ something, the bullet links it.
   objectives.
 - Mounted MG42s: mount, aim inside the arc (1.1's 15-degree step and
   view snap, 1.5's and UO's plain clamp), fire, dismount; 1.1d, 1.5b and
-  UO captures replayed against ours.
+  UO captures replayed against ours. A round passes the gun, as retail's
+  does, not the gunner.
 - Map triggers, script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
