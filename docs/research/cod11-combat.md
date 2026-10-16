@@ -4340,6 +4340,20 @@ INFERRED: the ordering and the conditions in it.
   floor. vcod runs the snap through the same body, script model and world
   trace as the move (`Missile::full_trace`); before 2026-10-16 it traced
   the world only.
+- VERIFIED, `game.mp.i386.so` 1.5b: after the snap's `G_MissileTrace`
+  (call at 0x54fe0) the snap applies only when the fraction is below 1.0
+  and `tr.entityNum` is 0x3fe (`cmpw $0x3fe` at 0x54ffe); VERIFIED, UO
+  `game.mp.uo.i386.so`: the same compare at 0x5f44d. VERIFIED, 1.1d:
+  nothing between the fraction test after the call at 0x542a4 and the
+  store. So 1.5 and UO snap a missile down onto the world only, never onto
+  a body, a script model or a brush entity. VERIFIED, live (retail 1.5b,
+  2026-10-16, `mp_carentan-scriptmodel-prone-rest-1.5.txt`): the frag that
+  strikes the prone target's back takes the strike point itself as its
+  base, z -10.667, on the move's chord. INFERRED, from the frames of
+  `mp_carentan-scriptmodel-prone.txt` (1.1d): its strike at z -4.74 sits
+  1.49 above the chord between the frames either side. vcod keys the test on `Missile::falls`
+  (`the_15_ground_snap_takes_the_world_only`); before 2026-10-16 its 1.5
+  frag sat 1.5 above his back.
 - INFERRED, and the trap an implementer walks into: the trace struct 12.3
   reads is the downward one whenever that second trace ran, so a frame whose
   move trace hit a wall but whose downward trace found no floor within 1.5
@@ -4584,10 +4598,14 @@ missile's own trace (`a_frag_left_hanging_falls_on_15_and_uo_only`). Ours'
 1.5 throw now leaves from 1.5's muzzle (2.1), but this capture is not
 replayed: its thrower's feet sat at a height ours' never settles at.
 `mp_carentan-scriptmodel-throw-1.5.txt` replays the prone part instead
-(`a_frag_leaves_15s_untruncated_muzzle`); there retail's first frag rests
-on the prone back (z -16.94) before it falls, while ours' strikes him 1.6
-higher on its first contact and drops straight to the floor, so only the
-final ground (1022) agrees.
+(`a_frag_leaves_15s_untruncated_muzzle`), and
+`mp_carentan-scriptmodel-prone-rest-1.5.txt`, which logs the target's
+prone body too, holds the rest on him: retail's frag strikes his back at
+(1455.86, 2695.97, -10.67) and rests on it at (1469.11, 2713.16, -16.47);
+vcod's within 0.12 of each (`a_frag_rests_on_a_prone_players_back_on_15`).
+Before 2026-10-16 vcod's struck him 1.5 higher and dropped to the floor:
+its ground snap lifted the frag onto his bones (12.2), and its target
+kept another airborne prone body than retail's (cod15-movement.md 4).
 
 ---
 

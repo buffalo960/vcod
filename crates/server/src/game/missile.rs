@@ -72,7 +72,8 @@ const WATER_SURF_TYPE: i32 = 0x14;
 // event and are gone on the next (entity 176, serverTime 225150 to 225450).
 use crate::game::temp_entity::EVENT_VALID_MS;
 /// United Offensive's `G_BounceMissile` (game.mp.uo 0x5d6e5) scales the
-/// whole reflected velocity, 0.4 off a surface and 0.1 in water, where 1.1
+/// whole reflected velocity, 0.4 off a surface and 0.1 in water or off a
+/// body, where 1.1
 /// splits it into a tangential and a normal part (docs/research/coduo-diff.md
 /// 21).
 const UO_BOUNCE: f32 = 0.4;
@@ -628,10 +629,11 @@ impl Missile {
             .unwrap_or_else(|| world.entity_num(&tr));
         if self.uo {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
-            // takes damage with no event, and its bounce damps only in
-            // water.
+            // takes damage with no event, and its bounce keeps a tenth in
+            // water and off a body (`tr.contents & 0x2000000`, 0x5d841).
             let quiet = player.is_some() || (model.is_some() && model_takes_damage);
-            let loud = self.bounce(prev_ms, now_ms, &tr, ground, in_water) && !quiet;
+            let soft = in_water || player.is_some();
+            let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
                 return Stepped::Bounced;

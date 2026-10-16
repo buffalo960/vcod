@@ -781,13 +781,16 @@ fn a_frag_leaves_15s_untruncated_muzzle() {
 /// How far ours' frag may strike and rest off retail's on 1.5's prone
 /// back: the throws leave 0.11 apart (the throwers slide differently).
 const PRONE_15_NEAR: f32 = 0.25;
+/// [`PRONE_15_NEAR`] on UO, whose thrower stays on the site where ours
+/// slides 0.35 off it.
+const PRONE_UO_NEAR: f32 = 0.5;
 
 /// mp_carentan on 1.5b, the target lying still with the body his drop
 /// left (cod15-movement.md 4, "The airborne prone body"): the first frag
 /// strikes his back and comes to rest on it, his number its ground, each
 /// within [`PRONE_15_NEAR`] of retail's, not snapped 1.5 up onto his bones
-/// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall
-/// test, which drops it to the floor (12.6). The second rests on the floor.
+/// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
+/// which drops it to the floor (12.6). The second rests on the floor.
 /// Runs only with `COD_DIR` at a 1.5 install.
 #[test]
 fn a_frag_rests_on_a_prone_players_back_on_15() {
@@ -797,7 +800,37 @@ fn a_frag_rests_on_a_prone_players_back_on_15() {
     if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
         return;
     }
-    let fixture = include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5.txt");
+    prone_back_gate(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5.txt"),
+        true,
+        PRONE_15_NEAR,
+    );
+}
+
+/// [`a_frag_rests_on_a_prone_players_back_on_15`] on United Offensive
+/// 1.51b: the frag strikes his back on retail's spot and, its bounce off a
+/// body keeping a tenth of the reflection (coduo-diff.md 21), strikes him
+/// again lower down and slides off to the floor without resting on him. Runs only with `COD_DIR` at a UO
+/// install.
+#[test]
+fn a_frag_strikes_a_prone_players_back_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    prone_back_gate(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo.txt"),
+        false,
+        PRONE_UO_NEAR,
+    );
+}
+
+/// The prone part on `fs`'s install against `fixture`: the first frag's
+/// first strike on the target (his number its ground), with `rests` its
+/// first rest on him, and its first four bases, each within `near` of
+/// retail's; both frags end on the floor.
+fn prone_back_gate(fs: vcod_common::pk3::Pk3Fs, fixture: &str, rests: bool, near: f32) {
     let ours = ours_pair_in(fs, "mp_carentan", "prone", true, 12_000, Some(225.0));
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
     report(&retail, &ours);
@@ -806,7 +839,6 @@ fn a_frag_rests_on_a_prone_players_back_on_15() {
         eprintln!("retail {r:?}\nours   {o:?}");
     }
     assert_eq!((r.len(), o.len()), (2, 2), "{o:?}");
-    // The first contact with his back, and the first rest on it.
     let on_him = |v: &[MissileRow], rest: bool| {
         v.iter()
             .find(|g| g.2 == 0 && (g.0 == 0) == rest)
@@ -814,13 +846,38 @@ fn a_frag_rests_on_a_prone_players_back_on_15() {
     };
     for rest in [false, true] {
         let (rb, ob) = (on_him(&r[0], rest), on_him(&o[0], rest));
-        let (Some(rb), Some(ob)) = (rb, ob) else {
-            panic!("rest {rest}: retail {rb:?}, ours {ob:?}: {:?}", o[0]);
-        };
-        let off = (0..3).map(|i| (rb[i] - ob[i]).abs()).fold(0.0, f32::max);
+        if !rest || rests {
+            let (Some(rb), Some(ob)) = (rb, ob) else {
+                panic!("rest {rest}: retail {rb:?}, ours {ob:?}: {:?}", o[0]);
+            };
+            let off = (0..3).map(|i| (rb[i] - ob[i]).abs()).fold(0.0, f32::max);
+            assert!(
+                off <= near,
+                "rest {rest}: retail {rb:?}, ours {ob:?}, {off} off"
+            );
+        } else {
+            assert_eq!((rb, ob), (None, None), "a rest on him");
+        }
+    }
+    // The first frag's first four bases: the throw, the strike on him, then
+    // the rest on him (1.5) or the second strike lower down (UO), then the
+    // next.
+    let bases = |v: &[MissileRow]| {
+        let mut out: Vec<[f32; 3]> = Vec::new();
+        for g in v {
+            if out.last() != Some(&g.1) {
+                out.push(g.1);
+            }
+        }
+        out.truncate(4);
+        out
+    };
+    let (rb, ob) = (bases(&r[0]), bases(&o[0]));
+    assert_eq!(rb.len(), ob.len());
+    for (a, b) in rb.iter().zip(&ob) {
         assert!(
-            off <= PRONE_NEAR,
-            "rest {rest}: retail {rb:?}, ours {ob:?}, {off} off"
+            (0..3).all(|i| (a[i] - b[i]).abs() <= near),
+            "retail {rb:?}\nours   {ob:?}"
         );
     }
     for g in 0..2 {

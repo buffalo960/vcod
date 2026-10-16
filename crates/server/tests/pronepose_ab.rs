@@ -137,9 +137,9 @@ fn pose(lines: &[String]) -> ([f32; 3], Vec<Vec<(String, [f32; 3])>>) {
 fn retail_body(fixture: &str) -> [f32; 3] {
     fixture
         .lines()
+        .rev()
         .filter(|l| l.starts_with("FALL "))
-        .filter_map(|l| l.split_once(" prone=")?.1.split(' ').next())
-        .last()
+        .find_map(|l| l.split_once(" prone=")?.1.split(' ').next())
         .map_or([0.0; 3], |v| {
             let v: Vec<f32> = v.split(',').map(|x| x.parse().unwrap()).collect();
             [v[0], v[1], v[2]]

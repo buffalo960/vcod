@@ -440,7 +440,8 @@ files):
   missile contact logged): over seeds 1 to 19 odd, 3 of 15 frag kills.
   One frag struck a teammate's body 25 units in front of the hand and
   came straight back past the thrower (a stock frag bounces off a live
-  player, and a UO bounce damps only in water); in two the enemy had
+  player, and vcod's UO bounce then damped only in water; since
+  2026-10-16 it keeps a tenth off a body, coduo-diff.md 21); in two the enemy had
   closed to 77 and 105 units during the hold. Over seeds 21 to 39 odd
   more: lobs from an upper floor into its ceiling or a window frame that
   dropped the frag at the thrower's feet, a short throw that rolled back,
