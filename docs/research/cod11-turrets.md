@@ -1516,22 +1516,26 @@ What it lets through, each a `GAPS` line in the gate:
 
 - The kill snapshot, 34950: VERIFIED (12.5), retail's carries the victim's
   entity with the `EV_PAIN` (parm 47) the round before raised; INFERRED
-  (12.5), copied in the victim's own `ClientEndFrame` ahead of the gunner's. Ours builds entity states at the
-  snapshot and a dead client has none (`cod11-combat.md` 5.4), so that pain
-  never reaches the gunner.
-- The killing round's impact at 34950 lands about 4 units nearer the gun
-  along the ray than retail's: ours (1517, 1612), VERIFIED retail (1514,
-  1609) at fixture line 1068. The wounding round's at 34900 enters a
-  truncation step off retail's (ours 1517, 1611; retail 1518, 1612 at
-  line 1057). It moves with the spawns: ours read (1517, 1611), then
-  (1518, 1611) once the spawn's own think ran each client up to the frame's
-  clock, and (1517, 1611) again once that think's move picked the idle on
-  the spawn frame (`cod11-spectator-follow.md` 13). INFERRED: the pose the
-  round meets is the idle's phase, which runs from each side's own join. The
-  gate's legs toggle is compared as its change from the first sample for
-  the same reason. The victim was
-  knocked back by the round before, and neither half of the capture carries
-  its origin, so whether the knockback or the pose differs is open.
+  (12.5), copied in the victim's own `ClientEndFrame` ahead of the gunner's.
+  Closed 2026-10-17, VERIFIED, vcod measurement: `turret_ab` matches the
+  kill snapshot's events on all three captures (1.1, 1.5, UO) once a
+  client's entity goes out as its own end frame copied it (13.3).
+- The wounding round's impact at 34900 enters a truncation step off
+  retail's (ours 1517, 1611; VERIFIED retail 1518, 1612 at line 1057). It
+  moves with the spawns: ours read (1517, 1611), then (1518, 1611) once the
+  spawn's own think ran each client up to the frame's clock, and (1517,
+  1611) again once that think's move picked the idle on the spawn frame
+  (`cod11-spectator-follow.md` 13). INFERRED: the pose the round meets is
+  the idle's phase, which runs from each side's own join. VERIFIED,
+  `mp_carentan-dm-turret-victim.txt` line 1080: a second retail run of the
+  same recipe put that round at (1517, 1611), ours. The gate's legs toggle
+  is compared as its change from the first sample for the same reason.
+- The killing round's impact at 34950: ours (1515, 1610), VERIFIED retail
+  (1514, 1609) at fixture line 1068. The target the round before knocked
+  back has moved for however much of its own cmd clock retail's frame ran,
+  and the target is the other client, whose clock this capture does not
+  carry. 13.3 measures it, and the replay that follows it matches the
+  round. The row stays in this capture's gate for want of that clock.
 - The crouch release's one-unit drop: at 38900 ours reads grounded 0.2 above
   the floor (z -23.66), where VERIFIED (fixture lines 1431 and 1436) retail reads
   `groundEntityNum` 1023 at the same printed height and 1022 at -23.9 on the
@@ -1685,6 +1689,63 @@ one-tick lock-to-placement gap is not a seventh: 13.1 already named its
 cause (a tick with no cmd to run) as the half of the old two-tick gap the
 round split does not touch, and this run is that half on its own, not a
 regression from it.
+
+### 13.3 The target's clock
+
+`--save-turret` writes a `!victim` line per fire and target snapshot: the
+other player's `pos.trTime`, `pos.trBase`, `pos.trDelta`, legs and torso
+anims, `eFlags`, `solid` and `eventSequence`. Three runs of the 13.1
+recipe on 2026-10-17 carry it: `mp_carentan-dm-turret-victim.txt` (1.1d),
+`-victim-15.txt` (1.5b) and `-victim-uo.txt` (UO 1.51b), each a
+`--capture-tag` run beside the `--probe-team axis` client.
+
+- VERIFIED, `-victim.txt` lines 1078 and 1089: the target's `pos.trTime`
+  reads 31932 on the wounding snapshot (31950) and 31998 on the kill
+  snapshot (32000), so retail's kill frame ran 66 ms of the target's cmds,
+  not 50; every earlier target snapshot reads its time less 18. Line 1089:
+  `trBase` (1512, 1600, -31), three units back along the ray from the
+  (1515, 1603) of every earlier line, `trDelta` (-30, -33, 0), `legsAnim`
+  94 (`pb_combatrun_forward_loop`) and `solid` 0. The kill's impact
+  (line 1092) is (1514, 1609), the first capture's to the unit.
+- VERIFIED, `-victim-15.txt` lines 1065 and 1076 and `-victim-uo.txt` lines
+  1021 and 1031: there the kill frame ran 50 ms of the target's cmds,
+  `trBase` (1513, 1601), `trDelta` (-36, -40, 0), the run anim, `solid` 0.
+  1.5b's kill impact (line 1079) is (1516, 1611), which is where ours put
+  the first 1.5 capture's.
+- VERIFIED, all three wound snapshots: `trDelta` reads (0, 0, 0) on the
+  snapshot of the round that knocked the target back, and the knockback
+  shows only on the next. INFERRED: the entity state is the copy the
+  target's own `ClientEndFrame` made (`BG_PlayerStateToEntityState`, combat
+  doc 5.4), ahead of the gunner's turn, and `finishPlayerDamage`'s velocity
+  goes into the playerstate only. The kill snapshot's `solid` 0 is
+  `player_die`'s relink as a corpse (combat doc 5.1, step 13).
+
+vcod: `ClientSim::end_frame_entity` keeps the entity state each client's
+own end-frame turn built, and the frame's snapshots send that copy; a client
+a higher slot killed after its turn still goes out on it, `solid` 0. The
+rig's target sends three cmds a frame, as the net probe does, or on a
+`-victim` capture the cmds its `pos.trTime` names, one every 16 ms back to
+the last snapshot's (INFERRED, the probe's `--probe-cmd-ms`).
+`turret_ab`'s three `the_victim_capture_matches_*` gates diff the fire and
+target phases of those captures, the target's entity included: on 1.1 they
+match with no row, the killing round too, and 1.5 and UO each keep one
+impact a truncation step off along the same ray with the target's entity
+matching to the unit (the wound on 1.5, the kill on UO; the idle phase,
+as the wounding round in 13.1).
+
+What the victim captures show outside the target phases, open:
+
+- 1.1d, the refused phase from 37050: ours 0.2 units short in x after the
+  drop off the sandbags, 0.256 at 37350, past the gate's 0.25.
+- 1.5b, the strafe: VERIFIED, `-victim-15.txt` at 33900, retail steps onto
+  the sandbags with `EV_STEP_VIEW` parm 139 where ours raises 142, and every
+  origin after it is off by up to 3 units. The 1.1 fix
+  (`cod11-mantle.md`, "The step-up stops a unit short") does not cover
+  1.5's step.
+- 1.5b and UO, the sweep: a snapshot each where retail's view lags ours by
+  one 2-degree step (1.5 at 20000, 23550 and 23750, UO at 20650 and 25150),
+  late cmds as 12.1's, which those gates would need listed; and UO's strafe
+  at 34800, 2 units off.
 
 ## 14. The client
 
@@ -2192,7 +2253,9 @@ protocol 6 server over a 1.5 `main/` and a protocol 22 one over UO's
   `msg::above_width`); the diff compares the low 16 bits.
 
 Rows left, each in the gate's `GAPS_15` / `GAPS_UO`: the killing round's
-two (13.1's `END_FRAME` and `KILLING_ROUND`). VERIFIED live: the target
+impact (13.1's `KILLING_ROUND`; 13.3 measures the target's clock that
+decides it). The kill snapshot's `EV_PAIN` row closed with 13.3's end-frame
+copy. VERIFIED live: the target
 phase's first round on 1.5, at 30000, lands at (1144 1098 9), on the
 gun's ray at the view's 1.2 degrees down, where ours used to stop at
 (1388 1413 17) on lump 24 patches 136 and 133. VERIFIED, retail

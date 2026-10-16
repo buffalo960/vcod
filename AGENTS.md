@@ -344,7 +344,8 @@ header of the fixture it produced.
   `run_probe.sh` takes `COD_VERSION=uo`, but of the modes that pair
   with a `client-probes/` gametype only `--save-combat` beside
   `probe_uofx`, `--save-turret` beside `probe_turret` (its
-  `mp_carentan-dm-turret-uo.txt` committed, as 1.5's `-15.txt`),
+  `mp_carentan-dm-turret-uo.txt` committed, as 1.5's `-15.txt`, and
+  `-victim-uo.txt`, which logs the target's entity),
   `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
@@ -492,6 +493,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   icon and script menu scan from 0, localized strings and shaders from 1.
 - A player's wire `solid` is packed at link time (after each cmd's move, at
   spawn), never at end frame.
+- A client's entity goes out as its own end-frame turn copied it
+  (`ClientSim::end_frame_entity`): a higher slot's turret round after that
+  turn shows its knockback a snapshot later, and a victim it kills is still
+  sent that frame (`cod11-turrets.md` 13.3).
 - The netchan scramble keeps `%`. The server reads client commands with the
   server-side string reader; the client reader's `%` mapping garbles every
   later message after a chat line containing one.

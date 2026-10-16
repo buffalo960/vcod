@@ -7765,12 +7765,17 @@ impl Server {
                 rt.set_client_body(slot, sim.hit_body(slot));
                 rt.set_client_dobj(slot, sim.dobj(slot));
                 rt.apply_turret_releases(slot, sim);
-                let Some(shot) = rt.turret_think_client(
+                let shot = rt.turret_think_client(
                     slot,
                     sim,
                     buttons & vcod_common::net::msg::BUTTON_ATTACK != 0,
                     self.anims.as_deref().map(|a| (a, &mut self.hit_rigs)),
-                ) else {
+                );
+                sim.end_frame_entity = sim.linked().then(|| {
+                    let e = sim.to_entity(self.proto, slot, c.last_processed_st);
+                    (self.sv_time_ms, e)
+                });
+                let Some(shot) = shot else {
                     continue;
                 };
                 self.bot_noises.push(crate::bots::Noise {
@@ -8951,11 +8956,31 @@ impl Server {
                 let hidden = sim
                     .seat
                     .is_some_and(|s| crate::game::vehicle::seat::hidden_rider(s.kind, s.pos));
-                if sim.linked() && !hidden {
+                // The state this frame's own end frame copied, which a
+                // higher slot's turret round after it changes only in the
+                // playerstate: its knockback, and a death, which still goes
+                // out that frame, `player_die`'s relink as a corpse clearing
+                // `solid` (combat doc 5.1 step 13, 5.4; turrets doc 13.1).
+                let copied = sim
+                    .end_frame_entity
+                    .as_ref()
+                    .filter(|(t, _)| *t == self.sv_time_ms)
+                    .map(|(_, e)| e.clone());
+                if hidden {
+                    None
+                } else if sim.linked() {
                     Some((
                         i as u32,
-                        sim.to_entity(self.proto, i, c.as_ref()?.last_processed_st),
+                        copied.unwrap_or_else(|| {
+                            sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
+                        }),
                     ))
+                } else if sim.dead {
+                    let mut e = copied?;
+                    if let Some(f) = msg::EntityState::field_index(self.proto, "solid") {
+                        e.fields[f] = 0;
+                    }
+                    Some((i as u32, e))
                 } else {
                     None
                 }
