@@ -625,7 +625,7 @@ The leaf walk's cost (2026-10-16). Since the capsule leaf gating
 (bsp-ibsp59-format.md, "The leaf walk") a sweep that meets a model-0
 patch's box is clipped again in retail's leaf order, which cost
 `mp_ship` most: 845 000 of its build's 11.4 million world traces meet a
-patch. Three changes, none moving a trace: each leaf listing carries its
+patch. Two changes, neither moving a trace: each leaf listing carries its
 prim's box and one clear of the sweep cut at the fraction is passed over
 (it was clipped in full: 14.1 million patch clips on `mp_ship`, 2.0
 million after), and the BVH walk after the leaf walk enters only the
