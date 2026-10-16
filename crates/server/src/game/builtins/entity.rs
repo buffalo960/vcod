@@ -242,8 +242,13 @@ fn client_spawn(
     let classname = cx.intern_folded("classname");
     let player = Value::String(cx.intern_exact("player"));
     host.set_field(cx, id, classname, player)?;
+    // `ClientSpawn`'s own `ClientThink_real` runs before the builtin returns,
+    // so the spawning thread reads the origin the think left. The sim moves
+    // in the frame's spawn pass (`Server`); this is the same think on a
+    // fresh sim, for script and the link.
+    let moved = spawn_think_origin(host, slot, mode, origin, angles[1]);
     let origin_field = cx.intern_folded("origin");
-    host.set_field(cx, id, origin_field, Value::Vector(origin))?;
+    host.set_field(cx, id, origin_field, Value::Vector(moved))?;
     let angles_field = cx.intern_folded("angles");
     host.set_field(cx, id, angles_field, Value::Vector(angles))?;
 
@@ -275,7 +280,7 @@ fn client_spawn(
         0
     };
     let playing = mode == SpawnMode::Player;
-    host.link_client(slot, origin, host.client_box(slot), contents, playing);
+    host.link_client(slot, moved, host.client_box(slot), contents, playing);
     host.client_spawns.push(SpawnRequest {
         slot,
         origin,
@@ -283,6 +288,35 @@ fn client_spawn(
         mode,
     });
     Ok(Value::Undefined)
+}
+
+/// Where `ClientSpawn`'s think on the client's last cmd leaves a spawn at
+/// `origin` (1.5b 0x3cf35, UO 0x45409; 1.1d's null cmd): the arms of
+/// `Server`'s spawn pass on a fresh sim. The spot itself with no world.
+fn spawn_think_origin(
+    host: &GameHost,
+    slot: usize,
+    mode: SpawnMode,
+    origin: [f32; 3],
+    yaw_deg: f32,
+) -> [f32; 3] {
+    let Some(world) = host.world.as_ref() else {
+        return origin;
+    };
+    let last = host.client_last_cmd[slot];
+    let mut sim = crate::spectate::ClientSim::spectator(origin, yaw_deg, last.angles);
+    sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(host.defs.proto);
+    match mode {
+        SpawnMode::Player => sim.become_player(origin, yaw_deg, last.angles),
+        SpawnMode::Spectator => sim.become_spectator(origin, yaw_deg, last.angles),
+        SpawnMode::Intermission => return origin,
+    }
+    let think = sim.spawn_cmd(&last, host.level_time_ms);
+    sim.spawn_move(
+        vcod_common::movetrace::MoveWorld::bare(&world.collision),
+        &think,
+    );
+    sim.origin()
 }
 
 /// `spawn(classname, origin [, spawnflags])` (0x5d268): a live entity with

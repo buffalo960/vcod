@@ -327,9 +327,14 @@ holding forward, `spawn`ed again as a spectator at (-224, 60, 200) facing
 0, reads (-200.402, 60, 200) in the spawn frame's snapshot on 1.5 and UO
 (100 ms of flight on his last cmd, five spawns each) and (-224, 60, 200) on
 1.1. The script's own read of `self.origin` straight after the `spawn`
-gives the same. vcod's `spawn` runs the think in the frame's op pass, so
-a script reading the origin in the spawning thread sees the spot there
-(`specspawn_ab`'s GAP).
+gives the same. INFERRED from the call order above: `ClientThink_real`
+returns inside `ClientSpawn`, which the builtin (1.1d 0x455cc) calls before
+it returns to the script.
+
+vcod: the sim moves in the frame's spawn pass, after the spawning thread,
+so the `spawn` builtin runs the same think on a fresh sim (the client's
+last cmd mirrored into `GameHost::client_last_cmd`) and writes and links
+that origin; `specspawn_ab` holds the `PROBE spec` lines to retail's.
 
 vcod: `ClientSim::spawn_cmd` runs the client's last cmd under 1.5's and
 UO's rules, a 1.5 spawn starts with the body on the ground, and

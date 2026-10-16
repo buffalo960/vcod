@@ -7016,6 +7016,7 @@ impl Server {
                         slot,
                         moved[slot].last_buttons.unwrap_or(c.last_cmd.buttons),
                     );
+                    rt.set_client_last_cmd(slot, c.last_cmd);
                 }
             }
             // The client commands the packet pass queued, on this frame's
