@@ -4415,11 +4415,16 @@ rests on him at (1459.67, 2702.32, -1.35), 22.5 above his origin, with
 `groundEntityNum` 0. The second frag, thrown with him moved off, rests on
 the floor with 1022. VERIFIED, live, mp_brecourt (fixture
 `mp_brecourt-scriptmodel-prone.txt`): 0 on him on a slope, 1022 on the
-terrain. vcod writes the struck entity (the player, the script model, or
+terrain. VERIFIED, live, mp_brecourt with the target lying still (fixture
+`mp_brecourt-scriptmodel-prone-rest.txt`; the older capture dropped him
+onto the grade every frame, player-model-anim-system.md, "The prone body
+on a grade"): the first frag strikes his back with 0, bounces on with
+1023 and rests on him at (1657.12, 817.81, -80.92) with 0. vcod writes the struck entity (the player, the script model, or
 `CollisionWorld::entity_num`); before 2026-10-16 it wrote 1022 whatever
 was hit. `scriptmodel_ab`'s prone gates hold both throws: every frame
 within a unit of retail's on carentan (his prone pose strikes half a unit
-off retail's) and each frag's resting ground. INFERRED: 1.1 never reads a
+off retail's) and on the brecourt retake, each frag's resting ground, and
+the brecourt retake's rests within a unit. INFERRED: 1.1 never reads a
 missile's `groundEntityNum` again (12.6), so on 1.1 it changes the wire
 field only.
 
