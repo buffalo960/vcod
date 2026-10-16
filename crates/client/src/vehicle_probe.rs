@@ -511,7 +511,8 @@ impl VehicleProbe {
             .map_or(0, |t| now.saturating_duration_since(t).as_millis())
     }
 
-    /// A `VEH` line per vehicle and per player, once per snapshot.
+    /// A `VEH` line per vehicle, per player and per missile, once per
+    /// snapshot.
     pub fn report(&mut self, s: &Snapshot, p: &Protocol) {
         if self.last_snap == Some(s.message_num) {
             return;
@@ -579,6 +580,22 @@ impl VehicleProbe {
                     i("eFlags"),
                     i("eventSequence"),
                 );
+            } else if i("eType") == ET_MISSILE {
+                // The base's bits, for a rest height to the last bit.
+                println!(
+                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} bits {:#x} {:#x} {:#x} \
+                     ground {} weapon {}",
+                    s.server_time,
+                    i("pos.trType"),
+                    f("pos.trBase[0]"),
+                    f("pos.trBase[1]"),
+                    f("pos.trBase[2]"),
+                    i("pos.trBase[0]"),
+                    i("pos.trBase[1]"),
+                    i("pos.trBase[2]"),
+                    i("groundEntityNum"),
+                    i("weapon"),
+                );
             } else if i("eFlags") & seated != 0 || i("eType") == vcod_common::net::flags::ET_PLAYER
             {
                 println!(
@@ -602,6 +619,8 @@ impl VehicleProbe {
         }
     }
 }
+
+const ET_MISSILE: i32 = 4;
 
 /// ANGLE2SHORT: the wire's 16 bits over a full turn.
 fn deg_to_short(deg: f32) -> i32 {

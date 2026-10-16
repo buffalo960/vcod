@@ -50,6 +50,14 @@
 //
 //	PROBE rest <time> <entity number> <origin>
 //
+//	prone: the grenade part's thrower with no barrel, the target (a
+//	`--probe-fall --probe-fall-prone <site yaw + 180>` probe) lying 96 out
+//	facing back, the aim on his back, 20 past and 8 above his origin
+//	(his body lies behind his origin, away from the thrower). Once the first
+//	grenade rests the target is moved 96 behind the thrower, so the second
+//	lands where he lay. Each rest is logged as in the blast part; the
+//	missiles' `groundEntityNum` rides the thrower's `VEH missile` lines.
+//
 //	PROBE site <time> <allies spot> <axis spot> <yaw>
 //	PROBE rphase <time> <phase> [<origin>]
 //	PROBE gren <time> <entity number> <origin>
@@ -292,8 +300,13 @@ pair_part(part)
 	}
 	logPrint("PROBE site " + gettime() + " " + site.a + " " + site.b + " " + site.yaw + "\n");
 	fwd = site.fwd;
-	throwing = part == "grenade" || part == "blast";
-	if (throwing)
+	throwing = part == "grenade" || part == "blast" || part == "prone";
+	if (part == "prone")
+	{
+		tpos = site.a + (fwd[0] * 96, fwd[1] * 96, 0);
+		at = tpos + (fwd[0] * 20, fwd[1] * 20, 8);
+	}
+	else if (throwing)
 	{
 		bpos = site.a + (fwd[0] * 64, fwd[1] * 64, 0);
 		tpos = site.a + (fwd[0] * 160, fwd[1] * 160, 0);
@@ -324,12 +337,26 @@ pair_part(part)
 			if (!isdefined(placed))
 			{
 				placed = now;
-				if (part != "blast")
+				if (part == "grenade" || part == "rounds")
 				{
 					model = spawn("script_model", ground_at(bpos));
 					model setmodel("xmodel/barrel_black1");
 					logPrint("PROBE rphase " + now + " shown " + model.origin + "\n");
 				}
+			}
+			if (part == "prone")
+			{
+				gs = getentarray("grenade", "classname");
+				if (!gs.size)
+					last = undefined;
+				else if (isdefined(last) && gs[0].origin == last && rested != gs[0] getEntityNumber())
+				{
+					rested = gs[0] getEntityNumber();
+					logPrint("PROBE rest " + now + " " + rested + " " + gs[0].origin + "\n");
+					tpos = ground_at(site.a - (fwd[0] * 96, fwd[1] * 96, 0)) + (0, 0, 0.125);
+				}
+				else if (gs.size)
+					last = gs[0].origin;
 			}
 			if (part == "blast")
 			{
