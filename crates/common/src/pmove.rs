@@ -1573,12 +1573,18 @@ fn walking_flag(ps: &PlayerState, input: &PmInput) -> bool {
 /// "The tail of the default arm").
 fn clamp_velocity_to_move(ps: &mut PlayerState, dt: f32) {
     if ps.rules.v15() {
-        // 1.5b's and UO's stored floats break the tie elsewhere: a fall
-        // from rest kept its velocity at every measured height but one,
-        // which f32 here misses (cod11-gametypes-re-bel.md 8.5).
-        let moved = ps.origin - ps.move_start;
-        if ps.velocity.length_squared() * 0.25 > moved.length_squared() / (dt * dt) {
-            ps.velocity = moved / dt;
+        // 1.5b's tail (0x288ad-0x289e3) stores the displacement, the rate
+        // and the squared speed as floats; only the sums, the divide and
+        // `1 / frametime` stay on the stack (cod15-movement.md 7).
+        let moved = (ps.origin - ps.move_start).as_dvec3();
+        let ft = f64::from(dt);
+        let ratio =
+            (((moved.x * moved.x + moved.y * moved.y) + moved.z * moved.z) / (ft * ft)) as f32;
+        let v = ps.velocity.as_dvec3();
+        let speed2 = ((v.x * v.x + v.y * v.y) + v.z * v.z) as f32;
+        if f64::from(speed2) * 0.25 > f64::from(ratio) {
+            let inv = 1.0 / ft;
+            ps.velocity = (moved * inv).as_vec3();
         }
         return;
     }
@@ -3924,8 +3930,13 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
     if gravity {
         // The x87 keeps `v - g * frametime` unrounded into the average and
         // rounds each store once (0x34811-0x34838).
-        let end_z = f64::from(ps.velocity.z) - f64::from(GRAVITY) * f64::from(dt);
+        let mut end_z = f64::from(ps.velocity.z) - f64::from(GRAVITY) * f64::from(dt);
         end_velocity.z = end_z as f32;
+        if ps.rules.v15() {
+            // 1.5b stores it first (0x28e34) and averages the float
+            // (cod15-movement.md 7).
+            end_z = f64::from(end_velocity.z);
+        }
         primal.z = end_velocity.z;
         ps.velocity.z = ((end_z + f64::from(ps.velocity.z)) * 0.5) as f32;
         if let Some(n) = ground {
@@ -5956,21 +5967,28 @@ mod tests {
     /// stack keeps the tie or takes the move by the origin's last bits:
     /// `probe_spawnview`'s 66 + 34 ms spawn thinks on mp_carentan
     /// (cod11-gametypes-re-bel.md 8.5) fell 3.0888 from these heights and
-    /// 4.0068 from the rest, and 1.5b never took the move but at -2.
+    /// 4.0068 from the rest, and 1.5b's stored floats took it only at -2
+    /// and ended the fall from 4 at -0.00680161 (cod15-movement.md 7).
     #[test]
     fn a_fall_from_rest_ties_the_tail_by_the_start_height() {
-        let w = crate::collision::synthetic_world(
+        let world = crate::collision::synthetic_world(
             &[("textures/test/solid", crate::collision::CONTENTS_SOLID, 0)],
             &[(0, [-64.0, -64.0, -1100.0], [64.0, 64.0, -1000.0])],
         );
-        let w = MoveWorld::bare(&w);
-        let fall = |z: f32, rules: MoveRules| {
+        let w = MoveWorld::bare(&world);
+        let end = |z: f32, rules: MoveRules| {
+            world.set_arith(if rules.v15() {
+                crate::patch::Arith::Stored
+            } else {
+                crate::patch::Arith::Kept
+            });
             let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, z), 0.0);
             ps.rules = rules;
             pmove(&mut ps, &PmInput::default(), &w, 0.066, &[]);
             pmove(&mut ps, &PmInput::default(), &w, 0.034, &[]);
-            ((z - ps.origin.z) * 10000.0).round() / 10000.0
+            ps.origin.z
         };
+        let fall = |z: f32, rules: MoveRules| ((z - end(z, rules)) * 10000.0).round() / 10000.0;
         for z in [-2.0, -1.0, 0.0, 1.0, 2.0, 4.0] {
             assert_eq!(fall(z, MoveRules::V1_1), 3.0888, "1.1 from {z}");
         }
@@ -5980,6 +5998,8 @@ mod tests {
         for z in [-4.0, -1.0, 0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 100.0] {
             assert_eq!(fall(z, MoveRules::V1_5), 4.0068, "1.5 from {z}");
         }
+        assert_eq!(fall(-2.0, MoveRules::V1_5), 3.0888);
+        assert_eq!((end(4.0, MoveRules::V1_5) * 1e8).round(), -680161.0);
     }
 
     /// At 8 ms a frame's gravity is 6.4 and the snap keeps 6 of it, so a

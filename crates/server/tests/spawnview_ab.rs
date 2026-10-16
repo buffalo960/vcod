@@ -20,13 +20,6 @@ use vcod_common::net::protocol::PROTOCOL_V6;
 const SCRIPT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_spawnview.gsc");
 
-/// 1.5b and UO only, each the last bits of their build's stored floats
-/// (cod11-gametypes-re-bel.md 8.5): a fall from 2 under the spot took the
-/// move as its velocity there (3.0888 down), which neither 1.1d's stack
-/// arithmetic nor ours reproduces, and a fall from 4 over it ends at
-/// -0.00680161 where ours ends at -0.00679874.
-const GAPS_15: &[&str] = &["PROBE drop -2 origin ", "PROBE drop 4 origin "];
-
 /// The probe's lines less the `next` ones, which ride the probe client's
 /// own cmds. Off 1.1 the spawn's think runs the client's last cmd, whose
 /// keys moved retail's body sideways, so an origin keeps only its z there.
@@ -34,7 +27,6 @@ fn probe_lines<'a>(lines: impl Iterator<Item = &'a str>, v15: bool) -> Vec<Strin
     lines
         .map(str::trim_end)
         .filter(|l| l.starts_with("PROBE ") && !l.contains(" next "))
-        .filter(|l| !v15 || !GAPS_15.iter().any(|g| l.starts_with(g)))
         .map(|l| match l.split_once(" origin ") {
             Some((head, xyz)) if v15 => {
                 format!("{head} origin z {}", xyz.rsplit(' ').next().unwrap())

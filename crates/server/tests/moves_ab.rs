@@ -28,6 +28,7 @@ use vcod_common::collision::CollisionWorld;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
+use vcod_common::patch::Arith;
 use vcod_common::pmove::predict::{self, Predicted};
 use vcod_common::pmove::{MoveRules, Stance};
 use vcod_common::weapon::WeaponDef;
@@ -302,6 +303,11 @@ fn replay(
             _ => None,
         })
         .collect();
+    world.set_arith(if rules.v15() {
+        Arith::Stored
+    } else {
+        Arith::Kept
+    });
     let mw = MoveWorld::bare(world);
     let mut report = Report {
         compared: 0,
@@ -437,16 +443,14 @@ const SPRINGFIELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-1.1.txt";
 const SPRINGFIELD_HELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-held-1.1.txt";
 
 /// Fields a capture's replay may miss, with how many snapshots and why.
-/// - `velocity` on 1.5: one frame past a jump's apex where retail keeps the
-///   fall and vcod takes the move as the velocity, the frame's travel within
-///   an ulp of half its speed (`clamp_velocity_to_move`).
+/// The 1.5 captures replay under 1.5b's stored arithmetic
+/// (cod15-movement.md 7).
 /// - The 1.1 turns capture at ct 37293-37444: the prone body, crawled back
 ///   onto the kerb's edge, slides off it airborne; retail gains 3 units a
 ///   second more along the slide than ours over three snapshots, and the
 ///   step phase follows a tick off. 1.1's own slide off an edge, not the
 ///   turn; the 1.5 run of the same script never left the ground there.
 const GAPS: &[(&str, &str, usize)] = &[
-    (MOVES_1_5, "velocity", 1),
     (TURNS_1_1, "velocity", 3),
     (TURNS_1_1, "origin.xy", 2),
     (TURNS_1_1, "bobCycle", 1),

@@ -450,6 +450,48 @@ probes' 16 ms holds.
 - `PM_Weapon`'s other states, the ADS flag, the walking flag and the spread
   are 1.1's (side-by-side decompile, INFERRED).
 
+## 7. Stored floats
+
+1.5b's and UO's modules store every float variable where 1.1d's keep the
+x87 stack, so a fall's last bits differ between the builds. Three stores
+reach a player's origin and velocity. Addresses: 1.5b `game.mp.i386.so`
+and `cod_lnxded`, UO `game.mp.uo.i386.so` and `coduo_lnxded`.
+
+- `PM_SlideMove`'s gravity (1.5b 0x28e20-0x28e5f, UO 0x2e714-0x2e753):
+  `velocity[2] - gravity * frametime` is stored (0x28e34, UO 0x2e728)
+  before `(velocity[2] + end) * 0.5` reads it back. 1.1d averages the
+  unrounded end (`cod11-mantle.md`, "Frame flow"). VERIFIED.
+- The tail of the default arm (1.5b 0x288ad-0x289e3, UO 0x2e072 on): the
+  displacement's three components are stored (0x288b3, 0x288cc, 0x288e5),
+  the rate `|d|^2 / frametime^2` is stored (0x28912) and so is the squared
+  speed (0x28967); the speed times 0.25 (rodata 0x75ae0) is compared with
+  the stored rate, and each new component is `(1.0 / frametime) * d`
+  computed on the stack (0x28993-0x289e3). 1.1d keeps x on the stack and
+  never stores the rate or the speed (`cod11-mantle.md`, "The tail of the
+  default arm"). VERIFIED.
+- `CM_BoxTrace`'s end point (1.5b 0x805aba1, UO 0x805a9d5): the shifted
+  end is stored (0x805acdd, UO 0x805ab11) before the delta is taken from
+  it, where 1.1d's 0x8056310 keeps it on the stack; the end point is still
+  `start + fraction * delta` rounded once (0x805b2xx). VERIFIED. On a clear
+  fall the end point is therefore not 1.1d's in the last bit.
+
+VERIFIED, `spawnview_ab` against the 1.5b and UO logs
+(`cod11-gametypes-re-bel.md` 8.6): with the three in, a spawn think from
+2 under the spot takes the move (3.0888) and one from 4 over it ends at
+-0.00680161, both as retail, and the other heights stay right. Before,
+vcod's tail ran in `f32` throughout and its trace ended where 1.1d's does.
+VERIFIED, `moves_ab`: the 1.5 moves capture's one `velocity` miss, a frame
+past a jump's apex, goes with them once its replay world runs
+`Arith::Stored`.
+
+vcod: `pmove::clamp_velocity_to_move` and `slide_move`'s gravity take the
+stores under `MoveRules::v15()`; `collision::cm_endpos` takes the stored
+end under `Arith::Stored`, which the server sets on protocols 6 and 22 and
+the client's live world, `play::replay` and `play::loopback` set off the
+connection's protocol (`Arith::for_protocol`), so the predictor computes
+what a Linux 1.5b or UO server does. INFERRED: a Windows server's or
+cgame's arithmetic is MSVC's and was not read.
+
 ## Unchanged
 
 Every `pm_*` tunable (1.5 rodata 0x75624-0x75664 against 1.1's

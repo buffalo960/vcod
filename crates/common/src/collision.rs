@@ -174,13 +174,21 @@ pub enum Pusher {
 /// the start stored as a float (0x80563d1-0x8056420), and the end point
 /// `start + fraction * delta` off the unshifted start, rounded once
 /// (0x8056887-0x80568c4). On a clear trace that is not `end` in the last
-/// bit (docs/research/cod11-player-clip.md 8.9).
-pub fn cm_endpos(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, fraction: f32) -> Vec3 {
+/// bit (docs/research/cod11-player-clip.md 8.9). 1.5b's (0x805aba1) also
+/// stores the shifted end (0x805acdd), under [`Arith::Stored`].
+pub fn cm_endpos(
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+    fraction: f32,
+    arith: Arith,
+) -> Vec3 {
     let off = (mins + maxs) * 0.5;
     let f = f64::from(fraction);
     let axis = |s: f32, e: f32, o: f32| {
         let shifted = s + o;
-        let delta = (f64::from(e) + f64::from(o) - f64::from(shifted)) as f32;
+        let delta = (arith.var(f64::from(e) + f64::from(o)) - f64::from(shifted)) as f32;
         (f64::from(s) + f * f64::from(delta)) as f32
     };
     Vec3::new(
@@ -2304,7 +2312,7 @@ impl CollisionWorld {
             skip_copy,
             &mut trace,
         );
-        trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction);
+        trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction, self.arith());
         trace
     }
 
@@ -4012,7 +4020,7 @@ mod tests {
                 }
             }
         }
-        trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction);
+        trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction, Arith::Kept);
         trace
     }
 

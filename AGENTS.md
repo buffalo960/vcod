@@ -587,8 +587,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   clip (`coduo-vehicles.md` 12, the second shove), patches are built
   with cracks along other facet seams, which a round slips through, and
   the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
-  collision on 1.5 and UO"), and so does the patch capsule arm. A 1.5 or UO server sets
-  `CollisionWorld::set_arith(Arith::Stored)`.
+  collision on 1.5 and UO"), and so does the patch capsule arm; pmove's fall stores its gravity,
+  its tail and the trace's end point (`cod15-movement.md` 7). A 1.5 or
+  UO server, and the client on one, sets
+  `CollisionWorld::set_arith(Arith::for_protocol(..))`; a replay world
+  in a test sets it too.
 - A sweep, point or capsule, that meets a model-0 patch is clipped again
   in retail's BSP leaf order (`leafwalk.rs`): a patch clips only from a
   leaf on the path that lists it (mp_carentan's 69, 109, 283 and 284 are
