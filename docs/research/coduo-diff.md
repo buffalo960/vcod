@@ -2230,6 +2230,12 @@ carriers against the section 19 captures.
   nothing (VERIFIED decompile; the capture's 21 rounds into the world
   carry 0x80 and no impact). On a player hit vcod rolls the tracer
   (the turret's `hmg` takes 0.7: the capture's 83 of 127).
+- **Aim.** The manned aim (0x6b950) clamps the view off the gun into the
+  arcs with no 15-degree step and no `SetClientViewAngle`, and no UO
+  turret path writes `viewlocked` (VERIFIED decompile; live in
+  `fixtures/turret/mp_carentan-dm-turret-uo.txt`, `cod11-turrets.md`
+  14.3). vcod-server aimed with 1.1's step and snap and sent `viewlocked`
+  1 and 2 until `turret::AimRule`.
 - **Heat.** A round adds `fireHeat` (rec +0x40; 0.02 on
   `mg42_bipod_stand_mp`); `turret_think` (0x5c1f2), every frame on every
   gun, sets the latch (rec +0x44), raises `EV_OVERHEATING` (208), notifies
