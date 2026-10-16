@@ -169,6 +169,7 @@ impl<'a> Client<'a> {
         let no_flash = HashMap::new();
         let ctx = ResolveCtx {
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &no_flash,
             view_flash: Some(self.weapons),
             view_body: registry::view_body(newest.ps.field_i32(p, "pm_flags"), ps_client),
@@ -184,6 +185,7 @@ impl<'a> Client<'a> {
             sounds: p.cs.sounds(),
             weapon_sounds: &self.sounds,
             muzzles: &muzzles,
+            shot_fallbacks: &HashMap::new(),
             listener_pos: Vec3::ZERO,
             ps_entity: cues::ps_entity(ps_client),
             uo: p.version == PROTOCOL_V22.version,
@@ -713,4 +715,39 @@ fn a_followed_1_5_gunner_sees_down_the_gun() {
     assert!(mounted > 100, "{mounted}");
     assert!(held > 0, "the view never ran past an arc");
     assert!(firing > 50, "{firing}");
+}
+
+/// The followed gunner's rounds in `*-15-turret.bin` (1.5b): every world
+/// impact names the gun (298), `Bullet_Fire`'s inflictor, never the gunner
+/// (cod11-turrets.md 6.3), so a client watching from elsewhere draws the
+/// tracer off the gun's own `tag_flash` (1.5 cgame 0x3003ab90).
+#[test]
+fn a_1_5_turret_rounds_impacts_name_the_gun() {
+    use vcod_common::net::flags::ET_TURRET;
+    use vcod_common::net::protocol::PROTOCOL_V6;
+    let p = &PROTOCOL_V6;
+    let mut tracker = EventTracker::new();
+    let mut hits = 0;
+    for f in vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-15-turret.bin",
+        "net/snapshots-15-turret.bin",
+    ) {
+        for ev in tracker.drain(&f.snapshot, p) {
+            if matches!(
+                ev.event,
+                registry::EV_BULLET_HIT_SMALL | registry::EV_BULLET_HIT_LARGE
+            ) {
+                let gun = &f.snapshot.entities[&ev.other_entity_num];
+                assert_eq!(
+                    gun.field_i32(p, "eType"),
+                    ET_TURRET,
+                    "t {}",
+                    f.snapshot.server_time
+                );
+                hits += 1;
+            }
+        }
+    }
+    assert!(hits > 100, "{hits}");
 }

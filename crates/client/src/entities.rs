@@ -1004,9 +1004,13 @@ fn load_clip(
 pub struct BuiltScene {
     pub instances: Vec<DynamicModelInstance>,
     /// Per player entity number: world-space muzzle position and forward, from
-    /// the held weapon's `tag_flash` (fallback `tag_weapon_right`). Only
-    /// entities that drew a held weapon this frame.
+    /// the held weapon's `tag_flash`. Only entities that drew a held weapon
+    /// with that tag this frame.
     pub muzzles: HashMap<u32, (Vec3, Vec3)>,
+    /// Per drawn player body with no `tag_flash`: where `CG_CalcMuzzlePoint`
+    /// starts its tracers instead ([`crate::fx::registry::muzzle_fallback`]).
+    /// It plays no flash there.
+    pub shot_fallbacks: HashMap<u32, Vec3>,
     /// Per player entity number: the held weapon's `tag_brass` and its
     /// forward, world space, where `CG_EjectBrass` plays the spent case.
     pub brass: HashMap<u32, (Vec3, Vec3)>,
@@ -1270,6 +1274,7 @@ pub fn build_instances(
 
     let mut out = Vec::new();
     let mut muzzles: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
+    let mut shot_fallbacks: HashMap<u32, Vec3> = HashMap::new();
     let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
@@ -1421,7 +1426,6 @@ pub fn build_instances(
             continue; // never feed a NaN transform to the GPU
         }
         let mut rot = model_rotation(&visual, angles);
-        let mut yaw = angles.y;
         // A gunner stands and turns where its gun puts it, traced down.
         let snap_pos = pos;
         let placed = match (&visual, anims) {
@@ -1450,8 +1454,7 @@ pub fn build_instances(
         if let Some(g) = placed.as_ref().filter(|g| g.origin.is_finite()) {
             // Yaw only, as every player draws; a stock gun stands level.
             pos = g.origin;
-            yaw = g.yaw();
-            rot = Quat::from_rotation_z(yaw.to_radians());
+            rot = Quat::from_rotation_z(g.yaw().to_radians());
         }
         // A seated player draws at its seat as its vehicle is posed this
         // frame, turned with the seat (cgame 0x30032fe0), or not at all.
@@ -1470,9 +1473,7 @@ pub fn build_instances(
             if let Some((at, r, seat)) =
                 rider_frame(&rig.skeleton, v, surf_type, ent.field_i32(p, "weapon"))
             {
-                let fwd = r * Vec3::X;
                 pos = at;
-                yaw = fwd.y.atan2(fwd.x).to_degrees();
                 rot = r;
                 rider = Some(seat);
             }
@@ -1694,37 +1695,48 @@ pub fn build_instances(
                     heads.insert(num, transform.transform_point3(local));
                 }
 
-                // Prefer the weapon's `tag_flash`; fall back to the
-                // `tag_weapon_right` graft point with the entity yaw as forward.
-                if held_weapon.is_some() {
-                    let muzzle = assembly
-                        .skeleton
-                        .bone_index("tag_flash")
-                        .map(|bi| st.pose.bone_world(&assembly.skeleton, bi))
-                        .or_else(|| {
-                            assembly.skeleton.bone_index("tag_weapon_right").map(|bi| {
-                                let (pos, _) = st.pose.bone_world(&assembly.skeleton, bi);
-                                (pos, Quat::from_rotation_z(yaw.to_radians()))
-                            })
-                        });
-                    if let Some((local_pos, local_rot)) = muzzle {
+                // The weapon's `tag_flash`. A body without one (a gunner,
+                // whose weapon is not drawn) flashes nothing and starts its
+                // tracers at the stance point (`CG_CalcMuzzlePoint`).
+                let flash_tag = held_weapon
+                    .as_ref()
+                    .and_then(|_| assembly.skeleton.bone_index("tag_flash"));
+                match flash_tag {
+                    Some(bi) => {
+                        let (local_pos, local_rot) = st.pose.bone_world(&assembly.skeleton, bi);
                         // Tags point +X forward (docs/research/xmodel-v14-format.md,
-                        // "Model space and the view basis"). Flip to -X if a
-                        // visual check shows the flash pointing backwards.
+                        // "Model space and the view basis").
                         let world_pos = transform.transform_point3(local_pos);
                         let world_dir = transform.transform_vector3(local_rot * Vec3::X);
                         muzzles.insert(num, (world_pos, world_dir));
                     }
-                    if let Some(bi) = assembly.skeleton.bone_index("tag_brass") {
-                        let (local_pos, local_rot) = st.pose.bone_world(&assembly.skeleton, bi);
-                        brass.insert(
+                    None if etype == ET_PLAYER && num < MAX_CLIENTS => {
+                        let tr_base = Vec3::new(
+                            ent.field_f32(p, "pos.trBase[0]"),
+                            ent.field_f32(p, "pos.trBase[1]"),
+                            ent.field_f32(p, "pos.trBase[2]"),
+                        );
+                        shot_fallbacks.insert(
                             num,
-                            (
-                                transform.transform_point3(local_pos),
-                                transform.transform_vector3(local_rot * Vec3::X),
+                            crate::fx::registry::muzzle_fallback(
+                                tr_base,
+                                ent.field_i32(p, "eFlags"),
                             ),
                         );
                     }
+                    None => {}
+                }
+                if held_weapon.is_some()
+                    && let Some(bi) = assembly.skeleton.bone_index("tag_brass")
+                {
+                    let (local_pos, local_rot) = st.pose.bone_world(&assembly.skeleton, bi);
+                    brass.insert(
+                        num,
+                        (
+                            transform.transform_point3(local_pos),
+                            transform.transform_vector3(local_rot * Vec3::X),
+                        ),
+                    );
                 }
 
                 for (m, &handle) in assembly.handles.iter().enumerate() {
@@ -2060,6 +2072,7 @@ pub fn build_instances(
     BuiltScene {
         instances: out,
         muzzles,
+        shot_fallbacks,
         brass,
         weapon_flash,
         entity_pos,

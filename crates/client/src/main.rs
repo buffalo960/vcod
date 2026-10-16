@@ -4123,6 +4123,8 @@ impl ApplicationHandler for App {
                                     let mut muzzles: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
                                     // Per-shooter `tag_brass`, for spent cases.
                                     let mut brass: HashMap<u32, (Vec3, Vec3)> = HashMap::new();
+                                    // Bodies with no muzzle tag, where their tracers start.
+                                    let mut shot_fallbacks: HashMap<u32, Vec3> = HashMap::new();
                                     let mut weapon_flash: HashMap<i32, String> = HashMap::new();
                                     let mut entity_pos: HashMap<u32, Vec3> = HashMap::new();
                                     let mut vehicle_angles: HashMap<u32, [f32; 3]> = HashMap::new();
@@ -4221,6 +4223,7 @@ impl ApplicationHandler for App {
                                         self.build_ms = t0.elapsed().as_secs_f32() * 1000.0;
                                         instances = built.instances;
                                         muzzles = built.muzzles;
+                                        shot_fallbacks = built.shot_fallbacks;
                                         brass = built.brass;
                                         weapon_flash = built.weapon_flash;
                                         entity_pos = built.entity_pos;
@@ -5007,6 +5010,7 @@ impl ApplicationHandler for App {
                                             cs: &p.cs,
                                             blood,
                                             muzzles: &muzzles,
+                                            shot_fallbacks: &shot_fallbacks,
                                             weapon_flash: &weapon_flash,
                                             view_flash: vm.is_some().then_some(weapons.as_slice()),
                                             view_body: fx::registry::view_body(
@@ -5196,6 +5200,7 @@ impl ApplicationHandler for App {
                                                 &ev,
                                                 net.configstrings(),
                                                 muzzles,
+                                                ctx.shot_fallbacks,
                                             );
                                             for r in fx::registry::resolve(&ev, &ctx) {
                                                 match r {
@@ -5646,6 +5651,7 @@ impl ApplicationHandler for App {
                                 },
                                 configstrings,
                                 &HashMap::new(),
+                                &HashMap::new(),
                             );
                         }
                         input.jump = false; // Q3: a held jump doesn't autohop
@@ -5752,6 +5758,7 @@ impl ApplicationHandler for App {
                                     },
                                     configstrings,
                                     &HashMap::new(),
+                                    &HashMap::new(),
                                 );
                             }
                             if out.fired {
@@ -5778,6 +5785,7 @@ impl ApplicationHandler for App {
                                         cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
                                         blood: true,
                                         muzzles: &muzzles,
+                                        shot_fallbacks: &HashMap::new(),
                                         weapon_flash: &HashMap::new(),
                                         view_flash: None,
                                         view_body: None,
@@ -6219,6 +6227,7 @@ mod tests {
             cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
             blood: true,
             muzzles: &HashMap::new(),
+            shot_fallbacks: &HashMap::new(),
             weapon_flash: &HashMap::new(),
             view_flash: None,
             view_body: None,
