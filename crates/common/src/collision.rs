@@ -2391,6 +2391,10 @@ impl CollisionWorld {
         self.trace_node(0, &mut walk, true, trace);
         if walk.logged <= LEAF_LOG && !two_walks() {
             for &leaf in &walk.leaves[..walk.logged] {
+                // A met patch throws this pass away.
+                if walk.patch_met.get() {
+                    break;
+                }
                 self.clip_leaf(leaf, &walk, false, trace);
             }
         } else {
@@ -2589,6 +2593,7 @@ impl CollisionWorld {
                         && patch_meets(sw.start, sw.end, sw.capsule, patch, stored)
                     {
                         walk.patch_met.set(true);
+                        return;
                     }
                 }
                 prim => self.clip_prim(prim, sw, trace),

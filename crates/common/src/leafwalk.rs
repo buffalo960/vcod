@@ -171,15 +171,37 @@ impl LeafWalk {
         mut visit: impl FnMut(u32, f32) -> f32,
     ) {
         let mut stack = vec![(0i32, 0.0f32, 1.0f32, start, end)];
-        while let Some((num, p1f, p2f, p1, p2)) = stack.pop() {
+        while let Some((mut num, p1f, p2f, p1, p2)) = stack.pop() {
             if fraction <= p1f {
                 continue;
             }
-            if num < 0 {
+            // An axial node the sweep stays on one side of passes it
+            // straight to that child, without the stack.
+            let node = loop {
+                if num < 0 {
+                    break None;
+                }
+                let node = &self.nodes[num as usize];
+                if node.kind < 3 {
+                    let k = node.kind as usize;
+                    let d = f64::from(node.dist);
+                    let (t1, t2) = (f64::from(p1[k]) - d, f64::from(p2[k]) - d);
+                    let offset = f64::from(extents[k]);
+                    if t1 >= offset + 1.0 && t2 >= offset + 1.0 {
+                        num = node.children[0];
+                        continue;
+                    }
+                    if t1 < -offset - 1.0 && t2 < -offset - 1.0 {
+                        num = node.children[1];
+                        continue;
+                    }
+                }
+                break Some(node);
+            };
+            let Some(node) = node else {
                 fraction = visit((-(num + 1)) as u32, p1f);
                 continue;
-            }
-            let node = &self.nodes[num as usize];
+            };
             let d = f64::from(node.dist);
             let (t1, t2, offset) = if node.kind < 3 {
                 let k = node.kind as usize;
