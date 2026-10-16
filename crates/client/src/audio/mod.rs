@@ -841,10 +841,7 @@ impl AudioSystem {
     /// The listener distance United Offensive's pick weighs `lod` by: -1 for
     /// an emitter at the origin (`CoDUOMP.exe` 0x438300).
     fn lod_distance(&self, source: Source) -> f32 {
-        let pos = match source {
-            Source::Point(p) => p,
-            Source::Entity { pos, .. } => pos,
-        };
+        let pos = source.pos();
         if pos == Vec3::ZERO {
             -1.0
         } else {
@@ -937,10 +934,7 @@ impl AudioSystem {
         count_cull: bool,
         menu: bool,
     ) -> Option<VoiceId> {
-        let emitter = match cue.source {
-            Source::Point(p) => p,
-            Source::Entity { pos, .. } => pos,
-        };
+        let emitter = cue.source.pos();
         // A NaN origin passes every distance test, and a NaN pan poisons
         // kira's mix for good.
         if !emitter.is_finite() {

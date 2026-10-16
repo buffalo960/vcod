@@ -212,7 +212,11 @@ way out (`flags::pm_flags_v1_to_v6`, section 13).
   `tag_flash`, and the ridden body's at its unbobbed eye plus lean, with
   no counterpart of the server's untruncated, bobbed `CalcMuzzlePoint`
   (VERIFIED, `cod11-events-and-fx.md` 6). A turret round's impact names
-  the gun (live capture, VERIFIED, `cod11-turrets.md` 6.3).
+  the gun (live capture, VERIFIED, `cod11-turrets.md` 6.3), and its trace
+  passes the gun, not the gunner (`Bullet_Fire` 0x6dfeb, VERIFIED, same
+  section). `CG_FireWeapon` (0x3003a2a0) starts the fire sound at the
+  shooter's `tag_flash`, as 1.1's (0x30038b70) and UO's (0x30047d20) do
+  (`cod11-sound-system.md` 8, VERIFIED).
 - Events: the `EV_*` name tables of 1.1 and 1.5 `cgame_mp_x86.dll` (202
   entries) and `game_mp_x86.dll` are identical (`evtab.py`, VERIFIED), so no
   event id needs remapping.

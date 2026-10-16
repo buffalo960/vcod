@@ -94,6 +94,9 @@ struct Voice {
     protected: bool,
     /// `started + duration_ms`; `None` when the length is unknown.
     ends_at: Option<Instant>,
+    /// A `Source::Tag`'s start off its entity's drawn position, taken on
+    /// the first update that knows the entity.
+    offset: Option<Vec3>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +119,7 @@ pub struct VoiceTable {
 /// [`ENTITYNUM_WORLD`].
 fn entity_of(source: &Source) -> u32 {
     match source {
-        Source::Entity { num, .. } => *num,
+        Source::Entity { num, .. } | Source::Tag { num, .. } => *num,
         Source::Point(_) => ENTITYNUM_WORLD,
     }
 }
@@ -211,6 +214,7 @@ impl VoiceTable {
             streamed: v.streamed,
             protected: v.protected,
             ends_at,
+            offset: None,
         });
         Ok(Admitted::Started {
             id,
@@ -287,13 +291,7 @@ impl VoiceTable {
         self.voices
             .iter()
             .filter(|v| v.spatial)
-            .map(|v| {
-                let p = match v.source {
-                    Source::Point(p) => p,
-                    Source::Entity { pos, .. } => pos,
-                };
-                (v.id, p)
-            })
+            .map(|v| (v.id, v.source.pos()))
             .collect()
     }
 
@@ -319,16 +317,21 @@ impl VoiceTable {
         for v in &mut self.voices {
             // Unconditional so a 2D voice's tracked position stays current
             // too.
-            if let Source::Entity { num, pos } = &mut v.source
-                && let Some(p) = entity_pos.get(num)
-            {
-                *pos = *p;
+            match &mut v.source {
+                Source::Entity { num, pos } => {
+                    if let Some(p) = entity_pos.get(num) {
+                        *pos = *p;
+                    }
+                }
+                Source::Tag { num, pos } => {
+                    if let Some(&p) = entity_pos.get(num) {
+                        *pos = p + *v.offset.get_or_insert(*pos - p);
+                    }
+                }
+                Source::Point(_) => {}
             }
             let (spatial_scale, pan_v) = if v.spatial {
-                let p = match v.source {
-                    Source::Point(p) => p,
-                    Source::Entity { pos, .. } => pos,
-                };
+                let p = v.source.pos();
                 (
                     falloff(p.distance(listener.pos), v.dist.0, v.dist.1)
                         * occlusion.get(&v.id).copied().unwrap_or(1.0),
@@ -470,6 +473,24 @@ mod tests {
         // Entity gone from the map: keeps its last position.
         let ups = t.update(&l, &HashMap::new(), &HashMap::new(), 1.0);
         assert!((get_from(&ups, e).pan + 1.0).abs() < 1e-5);
+    }
+
+    /// A tag voice keeps its start's offset off the entity as the entity
+    /// moves, and holds still once the entity leaves the map.
+    #[test]
+    fn a_tag_voice_follows_its_entity_at_the_start_offset() {
+        let mut t = VoiceTable::new();
+        let l = Listener::default();
+        let tag = Vec3::new(30.0, 0.0, 60.0);
+        let id = put(&mut t, nv(Source::Tag { num: 4, pos: tag }, Channel::Auto));
+        let mut pos = HashMap::from([(4u32, Vec3::new(10.0, 0.0, 0.0))]);
+        t.update(&l, &pos, &HashMap::new(), 1.0);
+        assert_eq!(t.source(id).unwrap().pos(), tag);
+        pos.insert(4, Vec3::new(110.0, 50.0, 0.0));
+        t.update(&l, &pos, &HashMap::new(), 1.0);
+        assert_eq!(t.source(id).unwrap().pos(), Vec3::new(130.0, 50.0, 60.0));
+        t.update(&l, &HashMap::new(), &HashMap::new(), 1.0);
+        assert_eq!(t.source(id).unwrap().pos(), Vec3::new(130.0, 50.0, 60.0));
     }
 
     fn get_from(ups: &[VoiceUpdate], id: VoiceId) -> &VoiceUpdate {
