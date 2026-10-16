@@ -135,13 +135,14 @@ fn entity_source(ev: &GameEvent, ctx: &CueCtx) -> Source {
 }
 
 /// `CG_FireWeapon`'s sound origin (1.1 0x30038b70, 1.5 0x3003a2a0, UO
-/// 0x30047d20): another entity's world `tag_flash`, else its position. The
-/// own body's is its viewmodel's `tag_flash`, which sits at the listener.
+/// 0x30047d20): another entity's world `tag_flash`, the ridden body's
+/// viewmodel `tag_flash` (the muzzle map keys the view's under both
+/// `u32::MAX` and the ridden number), else the entity's position.
 fn fire_source(ev: &GameEvent, ctx: &CueCtx) -> Source {
     let own = ev.entity_num == u32::MAX || ev.entity_num == ctx.ps_entity;
-    match ctx.muzzles.get(&ev.entity_num).filter(|_| !own) {
+    match ctx.muzzles.get(&ev.entity_num) {
         Some(&(pos, _)) => Source::Tag {
-            num: ev.entity_num,
+            num: if own { ctx.ps_entity } else { ev.entity_num },
             pos,
         },
         None => entity_source(ev, ctx),
@@ -595,8 +596,8 @@ mod tests {
     }
 
     /// `CG_FireWeapon` starts the sound at the shooter's world `tag_flash`
-    /// (1.1 0x30038c9d, 1.5 0x3003a2a0); the ridden body's stays at the
-    /// listener, its viewmodel's tag.
+    /// (1.1 0x30038c9d, 1.5 0x3003a2a0), the ridden body's at its
+    /// viewmodel's (0x30038c55), on the ridden entity either way.
     #[test]
     fn fire_starts_at_the_shooters_flash_tag() {
         let cs = vec![];
@@ -614,8 +615,19 @@ mod tests {
         e.weapon = 3;
         let cues = resolve(&e, &ctx(&cs, &ws, &mz));
         assert_eq!(cues[0].source, Source::Tag { num: 5, pos: flash });
-        e.entity_num = 2;
-        let cues = resolve(&e, &ctx(&cs, &ws, &mz));
+        let view = Vec3::new(1.0, 2.0, 3.0);
+        let mz = HashMap::from([
+            (5, (flash, Vec3::X)),
+            (2, (view, Vec3::X)),
+            (u32::MAX, (view, Vec3::X)),
+        ]);
+        for num in [2, u32::MAX] {
+            e.entity_num = num;
+            let cues = resolve(&e, &ctx(&cs, &ws, &mz));
+            assert_eq!(cues[0].source, Source::Tag { num: 2, pos: view });
+        }
+        // Under a scope the view keys no muzzle: the listener.
+        let cues = resolve(&e, &ctx(&cs, &ws, &HashMap::new()));
         assert!(matches!(cues[0].source, Source::Entity { num: 2, .. }));
     }
 

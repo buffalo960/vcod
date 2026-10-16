@@ -763,17 +763,26 @@ The start is entity-tracked (section 3): the engine keeps it as an
 offset in the frame cgame `vmMain` 13 returns. VERIFIED, 0x30020320
 (1.1): it copies three floats at `0x3020dd78 + 0x228 * entnum` as the
 origin, has 0x3003a790 build the axis from the three floats after them,
-and negates axis[1]. INFERRED: those are the centity's drawn origin and
-angles, so the offset turns with the body.
+and negates axis[1]. VERIFIED: 0x3020dd78 is `cg_entities` (0x3020db80) plus
+0x1f8, `lerpOrigin`, and the three floats after it are `lerpAngles`
+(+0x204), the fields `vmMain` 12 (0x30020260) reads
+(`cod11-events-and-fx.md` 6). INFERRED: the engine takes the offset with
+the axis it was handed and rebuilds the position with the current one
+(section 3), so the offset turns with the body's `lerpAngles`: for a
+player, its view angles, pitch included.
 
 vcod: `audio::cues` starts another body's fire sound as a
 `Source::Tag` at its posed `tag_flash` (`BuiltScene::muzzles`, the gun's
 own for a turret), else at the event's position, on all three
-protocols. `VoiceTable::update` carries a tag voice at the offset it
-started at off its entity's drawn position. Two gaps: the offset is not
-turned with the entity's angles, and the own body's sound stays on the
-listener, not on the viewmodel's tag, which is inside `dist_min` and
-ahead of the view, so its gain and pan are the same.
+protocols. The ridden body's starts on its own number at the viewmodel's
+`tag_flash` (the muzzle map's view entry), or at the listener under a
+scope, where the view keys no muzzle. `VoiceTable::update` keeps a tag
+voice's start as an offset in its entity's frame: `AnglesToAxis` of
+`BuiltScene::entity_angles` (the interpolated angles, not the yaw a
+player draws with), and the view's basis for the ridden body, whose
+position is the listener's. One gap: retail's ridden body sits at its
+predicted origin, ours at the eye; the offset moves with either, so the
+voice lands in the same place.
 
 ### `projectileSound`
 
