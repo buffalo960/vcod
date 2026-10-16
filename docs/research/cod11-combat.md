@@ -4271,6 +4271,14 @@ INFERRED: the ordering and the conditions in it.
   moves by the same delta. INFERRED: that is a per-frame snap that keeps a
   rolling grenade on the floor, since it runs on a frame that hit nothing at
   all as well as on one that hit a floor.
+- VERIFIED, `game.mp.i386.so` read with `tools/re/annotate_func.py`: the
+  snap's trace (the call at 0x542a4) pushes `bulletPriorityMap` (0x54285),
+  `r.ownerNum` and `ent->clipmask` like the move trace, so it scores a
+  player's posed bones too. VERIFIED, live (12.4, "Resting on a player"):
+  a frag on a prone player's back snaps to his bones, not past them to the
+  floor. vcod runs the snap through the same body, script model and world
+  trace as the move (`Missile::full_trace`); before 2026-10-16 it traced
+  the world only.
 - INFERRED, and the trap an implementer walks into: the trace struct 12.3
   reads is the downward one whenever that second trace ran, so a frame whose
   move trace hit a wall but whose downward trace found no floor within 1.5
@@ -4395,6 +4403,26 @@ segment scores the posed bones under `bulletPriorityMap` (3.1), the
 `trace_t` normal is the struck box face's (3.2, `+16`), and that normal is
 what the soft damping above reflects about.
 
+**Resting on a player.** VERIFIED, `game.mp.i386.so`: the
+`groundEntityNum` store at 0x5388a takes the word at `tr+0x28`
+(`tr.entityNum`), behind the `tr.normal[2] > 0.7` test at 0x53879.
+VERIFIED, live (retail 1.1d, mp_carentan, 2026-10-16,
+`probe_scriptmodel`'s prone part, fixture
+`crates/server/tests/fixtures/scriptmodel/mp_carentan-scriptmodel-prone.txt`):
+a frag thrown onto a prone player's back, 20 past his origin, bounces once
+with `groundEntityNum` 0 (his number) on the wire, flies on with 1023, and
+rests on him at (1459.67, 2702.32, -1.35), 22.5 above his origin, with
+`groundEntityNum` 0. The second frag, thrown with him moved off, rests on
+the floor with 1022. VERIFIED, live, mp_brecourt (fixture
+`mp_brecourt-scriptmodel-prone.txt`): 0 on him on a slope, 1022 on the
+terrain. vcod writes the struck entity (the player, the script model, or
+`CollisionWorld::entity_num`); before 2026-10-16 it wrote 1022 whatever
+was hit. `scriptmodel_ab`'s prone gates hold both throws: every frame
+within a unit of retail's on carentan (his prone pose strikes half a unit
+off retail's) and each frag's resting ground. INFERRED: 1.1 never reads a
+missile's `groundEntityNum` again (12.6), so on 1.1 it changes the wire
+field only.
+
 vcod: the move trace (`game::missile`) runs `combat::trace_bodies_faced`
 on every live body but the owner's while it passes, with the bone trace's
 struck face as the normal (`bonetrace::BoneHit::normal`, the entry face's
@@ -4402,6 +4430,93 @@ axis turned by the bone and the body). Before 2026-10-16 it stopped a
 missile on the link box and reflected it straight back, 25 units short of
 retail's strike. `scriptmodel_ab`'s grenade gate holds every frame of the
 throw to 0.1.
+
+### 12.5 The point trace against terrain
+
+VERIFIED, `cod_lnxded` 1.1d: a point trace (`traceWork+0xc0`, Q3's
+`isPoint`, set) clips a terrain or patch partition in 0x8052894, called
+from 0x80536e4 (the trace) and 0x80537d8 (a copy of the trace work with
+the fraction reset to 1). Per triangle record (0x48 bytes from the
+partition's `+4`: normal at `+0`, dist `+0xc`, the two barycentric planes
+`+0x10`/`+0x1c` and `+0x20`/`+0x2c`), against the trace work's float
+start (`+0`), end (`+0xc`) and delta (`+0x18`). VERIFIED: the offsets,
+constants and addresses in the list below. INFERRED: its order and every
+"skipped unless" in it, which are branch conditions.
+
+- `d2 = DotProduct(end, normal) - dist`; the triangle is skipped unless
+  `d2 < 0`.
+- `d1 = DotProduct(start, normal) - dist`; skipped unless `d1 > 0`.
+- `f = (d1 - 0.125) / (d1 - d2)` (0x80cd2f8, 0.125); skipped unless
+  `f < trace.fraction` (`+0xc4`).
+- `p = start + delta * (d1 / (d1 - d2))`; `a = DotProduct(p, u) - ud`,
+  skipped below -0.001 (0x80cd2fc) or above 1.001 (0x80cd300); `b` the
+  same off the second plane, skipped below -0.001 or when `a + b` is above
+  1.001.
+- `trace.fraction` takes `f` (`fstps` at 0x80529fb) and `trace.normal`
+  the record's normal (0x8052a04-0x8052a15).
+
+VERIFIED: nothing between the loads and that `fstps` stores to memory, so
+every distance, the fraction, the hit point and both barycentrics stay on
+the x87 stack at 64-bit precision; the products are summed `(x + y) + z`;
+`f` is not clamped at 0. VERIFIED: the records are the capsule clip's,
+`PlaneFromPoints` (0x8064fec) called on the triangle's first, second and
+third point (0x80520e6-0x805213e), `dist` the first point's dot with the
+stored normal (0x80650c5). United Offensive's point clip
+(coduo-vehicles.md 12) rounds each of those steps to a float.
+
+vcod: `Terrain::point_clip` is 0x8052894 in `f64`, which an exact
+64-bit-mantissa emulation of the routine matched on every terrain trace of
+the mp_brecourt run below (`the_point_clip_rounds_only_the_fraction_it_stores`
+pins one case). Before 2026-10-16 a 1.1 point trace clipped terrain as a
+static model triangle (`clip_segment_model`: a normal recomputed from the
+corners and distances off a corner), about 20 float steps off in the
+fraction. VERIFIED, live (retail 1.1d, mp_brecourt, 2026-10-16, fixture
+`mp_brecourt-scriptmodel-prone.txt`): the prone part's second frag
+bounces down the field's terrain and rolls to rest on it; ours lands every
+contact on retail's snapshot with retail's `groundEntityNum`, every
+`trBase` within 0.001 (`a_frag_rolls_down_terrain_like_retail`).
+INFERRED: the 2 or 3 float steps left from the second contact come from
+`G_BounceMissile` and the trajectory, which vcod computes in `f32` where
+retail keeps the x87 stack; the old clip was no closer (3 steps off in the
+first contact's `trBase.y` where the port is 2).
+
+### 12.6 1.5's and UO's fall test
+
+VERIFIED, `game.mp.i386.so` 1.5b, read with `tools/re/annotate_func.py`:
+`G_RunMissile` (0x54abd) opens with a test 1.1's has not. When
+`s.pos.trType` (`+0xc`) is 0 and `s.groundEntityNum` (`+0x7c`) is not
+0x3fe (the world), `G_MissileTrace` runs from `r.currentOrigin` (`+0x138`)
+to 1.5 below it (0x7b1d0) with `r.ownerNum` (`+0x150`) and `clipmask`
+(`+0x198`). INFERRED: when that fraction is exactly 1.0 (0x7b1d4), `s.pos`
+takes `trType` 5 (`TR_GRAVITY`), `trTime` `level.time`, `trDuration` 0,
+`trBase` the current origin and `trDelta` 0 (0x7b1d8), and the frame goes
+on to the move. VERIFIED, `game.mp.uo.i386.so`: UO's `G_RunMissile` opens
+with the same compare against 0x3fe and the same store of 5 into
+`trType`, around its `G_MissileTrace` call at 0x5ef16. VERIFIED: 1.1's
+`G_RunMissile` (0x53fcc) begins at `BG_EvaluateTrajectory` and has no
+such test (12.1).
+
+VERIFIED, `game.mp.i386.so` 1.5b: `G_MissileTrace` (0x54a18) is
+`trap_LocationalTrace` with `bulletPriorityMap`, read through the GOT slot
+0x899c4 (`R_386_GLOB_DAT bulletPriorityMap`) at 0x54a2a. INFERRED: on a
+start-solid trace it zeroes the fraction and sets the normal to the
+normalized `start - end` (0x54a5e-0x54ab0). VERIFIED: every trace in 1.5's
+`G_RunMissile` calls it (0x54b56, 0x54cf8, 0x54d32, 0x54e40, 0x54eea,
+0x54fe0), so 1.5 scores posed bones under the same map 1.1 does.
+
+VERIFIED, live (retail 1.5b, mp_carentan, 2026-10-16, the prone part,
+fixture `mp_carentan-scriptmodel-prone-1.5.txt`): the first frag strikes
+the prone target (`groundEntityNum` 0 on the bounce) and rests on his back
+with 0; the snapshot after the script moves him it reads `trType` 5 with
+its base unchanged and ground still 0, and it falls to the floor and rests
+there with 1022. The same capture's throws leave from z 36.148 where
+1.1's leave from 37.0 on the same spot (1.1 truncates the muzzle point,
+2.1; what 1.5 does instead is not read).
+
+vcod: `Missile::falls`, set for 1.5 and UO, runs the test through the
+missile's own trace (`a_frag_left_hanging_falls_on_15_and_uo_only`). The
+1.5 capture is not replayed: ours' throw leaves from 1.1's muzzle point and
+passes over the body.
 
 ---
 

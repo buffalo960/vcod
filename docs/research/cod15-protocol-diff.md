@@ -713,6 +713,16 @@ come back. One difference showed instead: the dead playerstate's
 `weaponstate` reads 0 on 1.5b and 1 on `vcod-server` in 1.5 mode (both 0
 on 1.1).
 
+### Missiles
+
+1.5b's `G_RunMissile` sends every trace through `G_MissileTrace`
+(0x54a18), `trap_LocationalTrace` under `bulletPriorityMap` as 1.1's
+traces are, and opens with a fall test 1.1 lacks: a resting missile whose
+ground is not the world falls once nothing is 1.5 below it. Addresses and
+the live capture are in `cod11-combat.md` 12.6. VERIFIED there, live: the
+throw leaves from z 36.148 where 1.1's leaves from 37.0 on the same spot;
+vcod's 1.5 throw still takes 1.1's truncated muzzle point.
+
 ### Not modelled
 
 - The vote kinds the new `g_allowVote*` rows gate: vcod-server has no

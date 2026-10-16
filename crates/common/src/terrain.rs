@@ -179,11 +179,12 @@ impl PointPlanes {
     }
 }
 
-/// `coduo_lnxded`'s point clip's barycentric bounds (0x80dc91c, 0x80dc920).
-const BARY_LO_V22: f32 = f32::from_bits(0xba83_126f);
-const BARY_HI_V22: f32 = f32::from_bits(0x3f80_20c5);
-/// Its pad off the face (0x80dc918).
-const SURFACE_CLIP_V22: f32 = 0.125;
+/// The point clip's barycentric bounds (`cod_lnxded` 0x80cd2fc, 0x80cd300;
+/// `coduo_lnxded` 0x80dc91c, 0x80dc920).
+const BARY_LO: f32 = f32::from_bits(0xba83_126f);
+const BARY_HI: f32 = f32::from_bits(0x3f80_20c5);
+/// Its pad off the face (`cod_lnxded` 0x80cd2f8, `coduo_lnxded` 0x80dc918).
+const POINT_CLIP_PAD: f32 = 0.125;
 
 /// An edge's record (0x38 bytes): its first point, a frame whose `w` runs
 /// along the edge, and its length.
@@ -820,8 +821,55 @@ impl Terrain {
         Sweep::Hit(t, normal)
     }
 
-    pub(crate) fn degenerate(&self, tri: u32) -> bool {
-        self.tris[tri as usize].degenerate
+    /// 1.1's point trace against one partition's faces (`cod_lnxded`
+    /// 0x8052894), below `fraction`: the nearest face the segment enters
+    /// from the front, as fraction, normal and triangle. It reads the
+    /// triangle's record and keeps every intermediate on the x87 stack,
+    /// rounding only the fraction it stores.
+    pub(crate) fn point_clip(
+        &self,
+        part: &TerrainPart,
+        start: [f32; 3],
+        end: [f32; 3],
+        mut fraction: f32,
+    ) -> Option<(f32, [f32; 3], u32)> {
+        // `CM_BoxTrace` stores the delta as a float.
+        let delta: [f32; 3] = std::array::from_fn(|i| end[i] - start[i]);
+        let mut best = None;
+        for t in part.first..part.first + part.count {
+            let tri = &self.tris[t as usize];
+            if tri.degenerate {
+                continue;
+            }
+            let d2 = dot3(end, tri.normal) - d(tri.dist);
+            if d2 >= 0.0 {
+                continue;
+            }
+            let d1 = dot3(start, tri.normal) - d(tri.dist);
+            if d1 <= 0.0 {
+                continue;
+            }
+            let f = (d1 - d(POINT_CLIP_PAD)) / (d1 - d2);
+            if f >= d(fraction) {
+                continue;
+            }
+            let k = d1 / (d1 - d2);
+            let p: [f64; 3] = std::array::from_fn(|i| d(start[i]) + d(delta[i]) * k);
+            let bary = |n: [f32; 3], dist: f32| {
+                (p[0] * d(n[0]) + p[1] * d(n[1])) + p[2] * d(n[2]) - d(dist)
+            };
+            let a = bary(tri.u, tri.ud);
+            if a < d(BARY_LO) || a > d(BARY_HI) {
+                continue;
+            }
+            let b = bary(tri.v, tri.vd);
+            if b < d(BARY_LO) || a + b > d(BARY_HI) {
+                continue;
+            }
+            fraction = r(f);
+            best = Some((fraction, tri.normal, t));
+        }
+        best
     }
 
     /// United Offensive's point trace against one partition's faces
@@ -854,18 +902,18 @@ impl Terrain {
             if d1 <= 0.0 {
                 continue;
             }
-            let f = r((d(d1) - d(SURFACE_CLIP_V22)) / (d(d1) - d(d2)));
+            let f = r((d(d1) - d(POINT_CLIP_PAD)) / (d(d1) - d(d2)));
             if f >= fraction {
                 continue;
             }
             let k = r(d(d1) / (d(d1) - d(d2)));
             let p: [f32; 3] = std::array::from_fn(|i| r(d(delta[i]) * d(k) + d(start[i])));
             let a = r(dot3(p, pl.u) - d(pl.ud));
-            if a < BARY_LO_V22 || a > BARY_HI_V22 {
+            if a < BARY_LO || a > BARY_HI {
                 continue;
             }
             let b = r(dot3(p, pl.v) - d(pl.vd));
-            if b < BARY_LO_V22 || d(a) + d(b) > d(BARY_HI_V22) {
+            if b < BARY_LO || d(a) + d(b) > d(BARY_HI) {
                 continue;
             }
             fraction = f;
@@ -977,6 +1025,30 @@ mod tests {
             }
         }
         assert!(hits > 400, "too few hits to trust the check: {hits}");
+    }
+
+    /// 1.1's point clip off a sloped face's record: the distances off the
+    /// stored float `dist` and the fraction kept on the x87 stack until the
+    /// store. The pinned bits are an exact 64-bit-mantissa emulation of
+    /// 0x8052894's arithmetic on this record; rounding every step to a float
+    /// gives 0x3ec60d75 instead.
+    #[test]
+    fn the_point_clip_rounds_only_the_fraction_it_stores() {
+        let points = [
+            [1600.0, 1000.0, -97.25],
+            [1600.0, 1064.0, -99.5],
+            [1664.0, 1064.0, -101.75],
+            [1664.0, 1000.0, -99.0],
+        ];
+        let mut t = Terrain::default();
+        t.add_partition(&points, &[[0, 1, 2], [0, 2, 3]]);
+        let s = [1659.2268f32, 1006.322, -97.61637];
+        let e = [1659.2722f32, 1039.1312, -102.645584];
+        let (f, normal, tri) = t.point_clip(&t.parts[0], s, e, 1.0).unwrap();
+        assert_eq!(f.to_bits(), 0x3ec6_0d85);
+        assert_eq!(normal, t.tris[tri as usize].normal);
+        // A trace already stopped short of the face keeps its fraction.
+        assert!(t.point_clip(&t.parts[0], s, e, 0.3).is_none());
     }
 
     #[test]
