@@ -4467,6 +4467,36 @@ ordering and every condition in it.
   INFERRED: the caller reads that as "was this bounce loud enough to hear",
   since the only thing it gates is the bounce event (13.2).
 
+**1.5 and United Offensive.** VERIFIED, `game.mp.i386.so` 1.5b
+(`G_BounceMissile` 0x53d71, GOT 0x88d98): with `s.eFlags & 0x02000000`
+set and neither the water nor the body test true, both arms of the
+`0x01000000` test scale the whole reflected `s.pos.trDelta` by 0.5
+(`flds -0xdbec(%ebx)`, .rodata 0x7b1ac, at 0x53f31 and 0x53f6f); the soft
+arm keeps 1.1's 0.125 (0x7b1a8), and the reflection's -2.0 (0x7b198), the
+0.7 ground test (0x7b1a0, a double), the rest speed 20.0 (0x7b1b0), the
+0.1 nudge (0x7b1b4) and the 100.0 event gate (0x7b1bc) are 1.1's. 1.5
+has no tangential and normal split. United Offensive scales the same way
+by 0.4 and 0.1 (coduo-diff.md 21, "Missiles"). VERIFIED, live (retail
+1.5b, mp_carentan, 2026-10-16, `mp_carentan-scriptmodel-prone-rest-1.5.txt`
+and `mp_carentan-scriptmodel-prone-1.5.txt`): the frag that falls off the
+prone target (12.6) strikes the floor at z -22.375 and is airborne two
+snapshots before it bounces again and rests, a rise of 1.0 at the first
+(40 units/s off the 80 it struck at); the second frag's floor and wall
+bounces land on the same snapshots. vcod took 1.1's split before
+2026-10-16: the fallen frag rose 0.21 (24 units/s), rested a snapshot
+early, and the second frag's rebound off the wall reached z -16.84 where
+retail's reached -2.64. `Missile::bounce` scales by `BOUNCE_15`;
+`a_frag_rests_on_a_prone_players_back_on_15` now holds every snapshot of
+both frags to retail's `trType` and ground, each base within 0.3.
+
+INFERRED: the body test reads the struck entity's contents, not whether
+it is a player, so a script model a script `setContents`es to 0x2000000
+takes the soft scale too. VERIFIED, `tools/re/dump_builtins.py`: the
+method exists on all three (1.1d 0x5dcec, 1.5b 0x5dc3c, UO 0x696b9); no
+stock script passes it more than 1 (coduo-diff.md 21). vcod reads the
+struck model's link contents (`PlacedModel::body`); its bounce stays
+silent only in water and off a player, as before.
+
 **The bounce off a player.** VERIFIED, `game.mp.i386.so`, read with
 `tools/re/annotate_func.py`: `G_RunMissile` pushes `bulletPriorityMap` on
 both arms of the move trace (0x54095 and 0x540a7, the call at 0x540c6) and

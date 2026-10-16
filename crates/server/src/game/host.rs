@@ -1099,6 +1099,11 @@ impl GameHost {
                 tris,
                 owner: None,
                 takes_damage: self.script_takedamage.contains(&id),
+                body: self
+                    .ents
+                    .get(id)
+                    .and_then(|e| e.link.as_ref())
+                    .is_some_and(|l| l.contents & 0x200_0000 != 0),
             });
         }
         out
