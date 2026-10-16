@@ -5051,22 +5051,88 @@ mod tests {
         let Some(fs) = crate::testing::game_fs() else {
             return;
         };
-        let text = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/patch/leafgate.txt"
+        assert_eq!(check_leaf_fixture(&fs, "leafgate.txt"), 23);
+    }
+
+    /// Retail UO's `bulletTrace` and a falling weapon item straight down
+    /// over terrain partitions no leaf lists
+    /// (`tests/fixtures/patch/terrainleaf-uo.txt`): neither clips them, as
+    /// neither clips an unlisted patch. No stock 1.1 map has such a
+    /// partition with a triangle (`unlisted_lump_24_on_stock_1_1_maps`).
+    #[test]
+    fn unlisted_terrain_never_clips() {
+        let Some(fs) = crate::testing::uo_fs() else {
+            return;
+        };
+        assert_eq!(check_leaf_fixture(&fs, "terrainleaf-uo.txt"), 12);
+    }
+
+    /// Every model-0 lump-24 partition no leaf lists on the stock 1.1
+    /// maps: mp_brecourt's terrain record 385 (five points, no triangle)
+    /// and mp_carentan's four patches.
+    #[test]
+    fn unlisted_lump_24_on_stock_1_1_maps() {
+        let Some(fs) = crate::testing::game_fs_11() else {
+            return;
+        };
+        let mut found = Vec::new();
+        for map in [
+            "mp_brecourt",
+            "mp_carentan",
+            "mp_chateau",
+            "mp_dawnville",
+            "mp_depot",
+            "mp_harbor",
+            "mp_hurtgen",
+            "mp_pavlov",
+            "mp_powcamp",
+            "mp_railyard",
+            "mp_rocket",
+            "mp_ship",
+        ] {
+            let bsp = crate::bsp::parse(&fs.read(&format!("maps/mp/{map}.bsp")).unwrap()).unwrap();
+            let listed = LeafWalk::listed(&bsp).unwrap();
+            let (terrain, patches) = partition_owners(&bsp);
+            for (i, t) in bsp.terrain.iter().enumerate() {
+                if terrain[i] == 0 && !listed.terrain[i] {
+                    found.push(format!("{map} terrain {i} indices {}", t.index_count));
+                }
+            }
+            for (i, (&owner, &on)) in patches.iter().zip(&listed.patches).enumerate() {
+                if owner == 0 && !on {
+                    found.push(format!("{map} patch {i}"));
+                }
+            }
+        }
+        assert_eq!(
+            found,
+            [
+                "mp_brecourt terrain 385 indices 0",
+                "mp_carentan patch 69",
+                "mp_carentan patch 109",
+                "mp_carentan patch 283",
+                "mp_carentan patch 284",
+            ]
+        );
+    }
+
+    /// Replays a `tests/fixtures/patch/` file of retail point and item
+    /// traces straight down on ours; the number of lines checked.
+    fn check_leaf_fixture(fs: &crate::pk3::Pk3Fs, file: &str) -> usize {
+        let text = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/patch/{file}",
+            env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap();
         let mut worlds = std::collections::HashMap::new();
         let mut checked = 0;
         for line in text.lines().filter(|l| !l.starts_with('#')) {
             let w: Vec<&str> = line.split(' ').collect();
-            let Some(data) = fs.read(&format!("maps/mp/{}.bsp", w[0])) else {
-                return;
-            };
+            let data = fs.read(&format!("maps/mp/{}.bsp", w[0])).unwrap();
             let world = worlds.entry(w[0]).or_insert_with(|| {
                 let bsp = crate::bsp::parse(&data).unwrap();
                 let world =
-                    CollisionWorld::build(&bsp, &crate::props::collision_tris(&fs, &bsp.entities));
+                    CollisionWorld::build(&bsp, &crate::props::collision_tris(fs, &bsp.entities));
                 world.unlink_script_brushes(&bsp.entities, "dm");
                 // mp_ship.gsc deletes the docks outside `re`.
                 for block in crate::bsp::entity_blocks(&bsp.entities) {
@@ -5106,6 +5172,6 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 23);
+        checked
     }
 }
