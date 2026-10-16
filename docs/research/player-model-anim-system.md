@@ -83,6 +83,14 @@ One skeleton, two anims, one tree. `pt_*` clips key only the upper body (spine u
 
 Inputs are all transmitted in entityState: `fTorsoPitch` (232), `fWaistPitch` (236), `fTorsoHeight` (228), `leanf` (212), `animMovetype` (224, 4 bits).
 
+### The prone body on a grade
+
+VERIFIED, live (retail 1.1d, 2026-10-16, `client-probes/probe_pronebones`, fixtures in `crates/server/tests/fixtures/pronebones/`): a prone client facing downhill on mp_carentan's ~19 degree mound (-224, 60) has his pelvis at (5.92, 24.36, -0.03) off his origin and his feet about 10 under it, where on flat ground the pelvis sits 6.27 above the origin. vcod's server pose puts all eight logged bones (pelvis, spine2, neck, head, both hands, both feet) within 0.03 of retail's offsets on the mound, on flat ground on mp_carentan and on mp_brecourt's field at (1659, 781). With the slope terms zeroed, the mound's pelvis lands 5.8 too high. The bones are read through a `script_origin` linked to each tag, which shows the pose a frame late, so a still body is what the probe measures.
+
+VERIFIED, same runs: where the body settles is set by the fall from `setorigin`'s raised unit (cod11-player-clip.md 8.9), not by the pose. The drop lands anywhere inside the ground trace's quarter unit (retail read -23.77 and -23.87 on the same flat spot in two runs). On the brecourt grade it slides up to a unit sideways, and two retail runs slid it differently.
+
+VERIFIED, `probe_scriptmodel`'s prone part on mp_brecourt: before 2026-10-16 the part held its target with `distance(origin, tpos) > 0.5`, z included. On the field he settles 1.33 under `tpos`, so every frame he was put back a unit above it and dropped onto the grade again: pm_flags prone throughout, origin cycling between -101.76 and -104.09, on retail and on vcod alike. The frag met him at whatever height that cycle and the cmd timing gave, which is how a frag came to rest 13 units off retail's spot. Held across the ground only, retail's first frag rests at (1657.12, 817.81, -80.92) and vcod's within 0.12 of it (`scriptmodel_ab::a_frag_rests_on_a_prone_players_back_on_a_grade`).
+
 ## The animscript: which index the server picks
 
 The server picks `legsAnim`/`torsoAnim` by running `mp/playeranim.script`
