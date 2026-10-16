@@ -48,6 +48,9 @@ pub fn parse_connect(packet: &[u8]) -> anyhow::Result<String> {
     Ok(s[..end].iter().map(|&b| b as char).collect())
 }
 
+/// `MAX_INFO_STRING`: what `Info_SetValueForKey` lets an info string grow to.
+pub const MAX_INFO_STRING: usize = 1024;
+
 /// `Info_SetValueForKey` as a builder: insertion order, a repeated key replaces
 /// in place. A `\` in a key or value refuses the pair, as the C does; values
 /// arrive from the network (a `getinfo` argument).
@@ -72,6 +75,39 @@ impl Info {
             None => self.pairs.push((key.to_string(), value)),
         }
         self
+    }
+
+    /// The engine's own `Info_SetValueForKey` (cod_lnxded 0x80827d4; 1.5b
+    /// and UO behave the same): the value loses every `\`, `;` and `"`,
+    /// the key comes out and goes back on the end, an empty value leaves it
+    /// out, and a pair that would take the string past `MAX_INFO_STRING`
+    /// is refused, returning false (docs/research/cod11-server-handshake.md,
+    /// "The challenge key"). The key is a constant of the caller's.
+    pub fn set_value_for_key(&mut self, key: &str, value: impl std::fmt::Display) -> bool {
+        let value: String = value
+            .to_string()
+            .chars()
+            .filter(|c| !matches!(c, '\\' | ';' | '"'))
+            .collect();
+        self.pairs.retain(|(k, _)| k != key);
+        if value.is_empty() {
+            return true;
+        }
+        if self.len() + 2 + key.len() + value.len() > MAX_INFO_STRING {
+            log::warn!("Info string length exceeded: {key:?}");
+            return false;
+        }
+        self.pairs.push((key.to_string(), value));
+        true
+    }
+
+    /// The length of the string `Display` writes.
+    pub fn len(&self) -> usize {
+        self.pairs.iter().map(|(k, v)| 2 + k.len() + v.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -162,6 +198,26 @@ mod tests {
         assert_eq!(parse_connect(&build_connect(ui)).unwrap(), ui);
         assert!(parse_connect(&build_oob("getinfo")).is_err());
         assert!(parse_connect(b"\xff\xff\xff\xffconnect ").is_err());
+    }
+
+    /// The engine's setter: separators stripped, the key moved to the end,
+    /// an empty value removing it, and nothing past 1024 bytes.
+    #[test]
+    fn set_value_for_key_strips_moves_and_caps() {
+        let mut i = Info::new();
+        i.set("sv_keywords", "ctf").set("protocol", 1);
+        assert!(i.set_value_for_key("challenge", "a\\b;c\"d"));
+        assert!(i.set_value_for_key("sv_keywords", "demo ctf"));
+        assert_eq!(
+            i.to_string(),
+            "\\protocol\\1\\challenge\\abcd\\sv_keywords\\demo ctf"
+        );
+        assert!(i.set_value_for_key("challenge", ""));
+        assert_eq!(i.get("challenge"), None);
+        let room = MAX_INFO_STRING - i.len() - "\\k\\".len();
+        assert!(!i.set_value_for_key("k", "x".repeat(room + 1)));
+        assert!(i.set_value_for_key("k", "x".repeat(room)));
+        assert_eq!(i.to_string().len(), MAX_INFO_STRING);
     }
 
     #[test]

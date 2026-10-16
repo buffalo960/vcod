@@ -299,7 +299,8 @@ something, the bullet links it.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
-  zombie slots and retail-measured pings.
+  zombie slots and retail-measured pings. `getinfo` and `getstatus` answer
+  byte for byte as the three retail servers do, odd challenges included.
 - Votes (`callvote`, `vote`) with retail's kinds, refusals, configstrings,
   pass rule, 30 s timeout and 3 s delay before the command runs: 1.1's
   seven kinds under `g_allowVote`, 1.5's twelve under their own
