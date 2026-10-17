@@ -322,7 +322,10 @@ header of the fixture it produced.
   (`tests/common::ProbeHold`) only a frame's first cmd takes the gsc's
   view. `--probe-uo-weapon aim` (`ProbeHold::aim`) sends every cmd at the
   snapshot's view, which a gsc steers round for round: measure with that
-  (`coduo-vehicles.md` 13).
+  (`coduo-vehicles.md` 13). `--probe-uo-weapon direct` does the same and
+  takes its buttons, lean and stance from the gsc's `iPrintLn("PROBE_IN
+  ...")` lines, so a phase starts on the server's clock
+  (`client-probes/probe_leanhit`).
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
@@ -667,6 +670,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   rests on a player's posed bones with his number as its ground. 1.5 and
   UO drop a resting missile whose ground is not the world once nothing is
   under it (`Missile::falls`, combat doc 12.6); 1.1 leaves it hanging.
+- A player's head model and his helmet each carry a `bip01 head` box,
+  and the trace scores both: the grafted skeleton keeps an attachment's
+  second box on a merged bone as a box-only child (combat doc 3.6). A
+  standing body's torso yaw stays where his spawn left it until he moves,
+  fires or goes prone (16.4), so a hit-pose capture swings it first.
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
