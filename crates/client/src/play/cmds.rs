@@ -16,16 +16,22 @@ pub const CMD_BACKUP: usize = 64;
 /// at multiples of [`CMD_MS`] since the last call; a small backward step in
 /// the estimate (`NetClient::server_clock_ms` re-anchoring on a
 /// snapshot) is absorbed by waiting rather than re-ticking, and a step of a
-/// second or more (a new gamestate) restarts the clock instead.
+/// second or more (a new gamestate) restarts the clock instead. A frame that
+/// owes more than [`MAX_FRAME_MS`] (a hitch, the clock's RESET or a big FAST
+/// adjust) builds one cmd at its newest tick, as retail's one cmd a frame
+/// would (docs/protocol-1.1.md, "The client's clock").
 #[derive(Default)]
 pub struct CmdClock {
     last: Option<i32>,
 }
 
+/// `CL_CreateNewCommands`' `frame_msec` clamp (CoDMP.exe 0x40b8d0); past it
+/// a frame's ticks collapse into one cmd.
+pub const MAX_FRAME_MS: i32 = 200;
+
 impl CmdClock {
     /// The server times of the cmds to build now, oldest first. First call
-    /// (or a restart) returns `[server_now]`; capped at [`MAX_MOVE_CMDS`],
-    /// keeping the most recent ticks when a hitch produced more.
+    /// (or a restart) returns `[server_now]`.
     pub fn due(&mut self, server_now: i32) -> Vec<i32> {
         let Some(last) = self.last else {
             self.last = Some(server_now);
@@ -42,10 +48,12 @@ impl CmdClock {
         if k_max == 0 {
             return Vec::new();
         }
-        self.last = Some(last + CMD_MS * k_max);
-        let count = (k_max as usize).min(MAX_MOVE_CMDS);
-        let start_k = k_max - count as i32 + 1;
-        (start_k..=k_max).map(|k| last + CMD_MS * k).collect()
+        let newest = last + CMD_MS * k_max;
+        self.last = Some(newest);
+        if CMD_MS * k_max > MAX_FRAME_MS {
+            return vec![newest];
+        }
+        (1..=k_max).map(|k| last + CMD_MS * k).collect()
     }
 
     pub fn reset(&mut self) {
@@ -140,10 +148,21 @@ mod tests {
     fn ticks_are_strictly_increasing() {
         let mut c = CmdClock::default();
         c.due(0);
-        let t = c.due(10_000);
-        assert_eq!(t.len(), MAX_MOVE_CMDS);
+        let t = c.due(MAX_FRAME_MS + 3);
+        assert_eq!(t.len(), (MAX_FRAME_MS / CMD_MS) as usize);
         assert!(t.windows(2).all(|w| w[0] < w[1]));
-        assert_eq!(*t.last().unwrap(), 10_000 - 10_000 % CMD_MS);
+        assert_eq!(*t.last().unwrap(), MAX_FRAME_MS);
+    }
+
+    /// A forward jump (the clock's RESET, a hitch) builds one cmd, not a
+    /// packet's worth of ticks.
+    #[test]
+    fn a_forward_jump_builds_one_cmd() {
+        let mut c = CmdClock::default();
+        c.due(0);
+        assert_eq!(c.due(10_003), vec![10_000]);
+        assert_eq!(c.due(10_017), vec![10_008, 10_016]);
+        assert_eq!(c.due(10_016 + MAX_FRAME_MS + 8).len(), 1);
     }
 
     #[test]
