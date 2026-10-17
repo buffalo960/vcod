@@ -360,6 +360,16 @@ decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
 - VERIFIED: `CL_InitCGame` (after the `"CL_InitCGame: %5.2f seconds\n"`
   print) empties the game, bold and third message windows, so a new
   gamestate drops every kill line.
+- VERIFIED: `CL_GetServerCommand`'s `n` case (1.1 `CoDMP.exe` 0x4017c3,
+  index 10 of the byte table at 0x401824 off `'d'`, jump table 0x401808)
+  calls 0x4087b0, which zeroes the rings of the game window (0x142efcc)
+  and window 2 (0x142f050), then zeroes window 3 (0x142f0d4) itself
+  before the cgame sees the command. The switch at 0x408c90 maps window
+  0 to 0x142f5a8, 1 to 0x142efcc, 2 to 0x142f050 and 3 to 0x142f0d4.
+  VERIFIED: 1.5's (`CoDMP.exe` 0x401620, calling 0x408ce0) and UO's
+  (`CoDUOMP.exe` 0x401630, calling 0x409340) take `B` and `n` into the
+  same case. So a `map_restart` empties the game and bold windows, kill
+  lines included. vcod: `Hud::on_map_restart`.
 
 vcod: `Hud::on_game_event` builds a `messages::KillLine` and pushes it into
 the game message window; `messages::kill_line` draws it. There is no

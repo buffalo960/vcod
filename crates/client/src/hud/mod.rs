@@ -271,7 +271,11 @@ impl Hud {
     /// centre print, the complaint and the vote lines, the weapon strip's
     /// slot scales and clock, the hit icons and flash, a held scoreboard;
     /// and `cg.mapRestart`, so the next snapshot runs the respawn reset.
+    /// The engine's own `n`/`B` case empties the message windows first
+    /// (cod11-hud-protocol.md 1.1).
     fn on_map_restart(&mut self, now: f32) {
+        self.game_messages.clear();
+        self.bold_messages.clear();
         self.center_print.clear();
         self.complaint.clear();
         self.vote.on_map_restart();
@@ -1438,6 +1442,26 @@ mod tests {
         assert!(hud.game_messages.is_empty());
         assert!(hud.scoreboard.rows_for_team(0).is_empty());
         assert!(!hud.chat.is_empty());
+    }
+
+    /// `n` and `B` empty both message windows, kill lines included.
+    #[test]
+    fn a_restart_empties_the_message_windows() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = Hud::new(&fs).expect("hud");
+        let loc = Localized::default();
+        for restart in ["n", "B"] {
+            let cmd =
+                |t: &[&str]| NetEvent::ServerCommand(t.iter().map(|s| s.to_string()).collect());
+            hud.on_net_event(&cmd(&["e", "hello"]), 1.0, &loc);
+            hud.on_net_event(&cmd(&["c", "round"]), 1.0, &loc);
+            assert!(!hud.game_messages.is_empty() && !hud.bold_messages.is_empty());
+            hud.on_net_event(&cmd(&[restart]), 1.1, &loc);
+            assert!(hud.game_messages.is_empty(), "{restart}");
+            assert!(hud.bold_messages.is_empty(), "{restart}");
+        }
     }
 
     /// An obituary becomes a kill line in the game message window, names
