@@ -1344,7 +1344,6 @@ fn main() -> Result<()> {
         mod_dir: args.mod_dir.clone(),
         fs_game: None,
         fs_pure: None,
-        user_fs_game: None,
         connect_addr: args.connect.clone(),
         team: args.team.clone(),
         weapon: args.weapon.clone(),
@@ -2025,12 +2024,11 @@ struct App {
     /// Where downloads land and the pk3 path reopens from.
     game_dir: std::path::PathBuf,
     mod_dir: String,
-    /// The connection's systeminfo `fs_game`, layered over `mod_dir`.
+    /// The `fs_game` the search path was last opened with, layered over
+    /// `mod_dir`; the cvar ([`App::fs_game_cvar`]) is what it follows.
     fs_game: Option<String>,
     /// A pure server's `sv_paks`: only paks with these checksums load.
     fs_pure: Option<Vec<i32>>,
-    /// The mod the Mods menu picked, the search path between servers.
-    user_fs_game: Option<String>,
     /// The last server connected to: the connecting screen's text and what
     /// `reconnect` reconnects to.
     connect_addr: Option<String>,
@@ -2442,6 +2440,7 @@ impl App {
             self.disconnect(None);
         }
         self.server_process = None;
+        let player_mod = self.fs_game_cvar();
         let shell = &self.shell;
         let launched = (|| {
             let exe = create::server_exe()?;
@@ -2450,7 +2449,7 @@ impl App {
             let dirs = (
                 self.game_dir.as_path(),
                 self.mod_dir.as_str(),
-                self.user_fs_game.as_deref(),
+                player_mod.as_deref(),
                 self.fs.vanilla(),
             );
             let args = create::server_args(req, port, dirs, &value);
@@ -2803,7 +2802,7 @@ impl App {
                     // A Mods pick the listen server refused takes effect now
                     // (`FS_Restart` on a modified `fs_game`, 0x40fd66).
                     if !matches!(self.mode, Mode::Online { .. }) {
-                        self.switch_fs_game(self.user_fs_game.clone());
+                        self.switch_fs_game(self.fs_game_cvar());
                     }
                     self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
@@ -2937,7 +2936,7 @@ impl App {
         let mut dirs: Vec<_> = self
             .fs_game
             .iter()
-            .chain(&self.user_fs_game)
+            .chain(&self.fs_game_cvar())
             .map(|g| self.game_dir.join(g))
             .chain([base])
             .map(|d| d.join("demos"))
@@ -3094,12 +3093,17 @@ impl App {
         self.enter_menu(reason.as_deref());
     }
 
-    /// Back to the player's own search path after a server's `fs_game` or
-    /// pure list. Retail keeps a server's mod until the next systeminfo names
-    /// another; vcod drops it with the connection
-    /// (docs/research/cod11-front-end.md, section 16).
+    /// Off a server's pure list at a disconnect. `CL_Disconnect` leaves
+    /// the `fs_game` cvar, so a server's mod stays until a systeminfo or the
+    /// Mods menu names another (docs/research/cod11-front-end.md, section 16).
     fn leave_fs_game(&mut self) {
-        self.switch_fs_game(self.user_fs_game.clone());
+        self.switch_fs_game(self.fs_game_cvar());
+    }
+
+    /// The `fs_game` cvar as the directory to layer over `mod_dir`: the
+    /// Mods menu's pick or the last systeminfo's, whichever forced it last.
+    fn fs_game_cvar(&self) -> Option<String> {
+        net::download::mod_dir(self.shell.cvar("fs_game").unwrap_or(""), &self.mod_dir)
     }
 
     /// Reopens the search path over `game` (no pure list) and rebuilds the
@@ -3164,7 +3168,7 @@ impl App {
     /// docs/research/cod11-front-end.md section 17).
     fn run_mod(&mut self, game: Option<String>) {
         log::info!("fs_game {}", game.as_deref().unwrap_or("(none)"));
-        self.user_fs_game = game.clone();
+        self.shell.force("fs_game", game.as_deref().unwrap_or(""));
         // `RunMod` sets `fs_game` before the `vid_restart` that refuses, so
         // the pick waits for the next restart or the end of the game.
         if self.refuse_vid_restart() {
@@ -4181,20 +4185,22 @@ impl ApplicationHandler for App {
                             cmd_clock.reset();
                             ring.clear();
                             predictor.reset();
-                            // `CL_SystemInfoChanged` sets `fs_game` and the
-                            // pure list, and the gamestate parse restarts the
+                            // `CL_SystemInfoChanged` forced the `fs_game` cvar
+                            // (`system_info_changed` above) and sets the pure
+                            // list, and the gamestate parse restarts the
                             // search path when either changed
                             // (docs/research/cod11-front-end.md, section 16).
                             // A server with no `fs_game` sends no key, which
-                            // leaves the player's own mod in place.
-                            // A demo's systeminfo sets neither
-                            // (CoDMP.exe 0x415eb0).
+                            // leaves the cvar as it was. A demo's systeminfo
+                            // sets neither (CoDMP.exe 0x415eb0).
                             let (game, pure) = if net.is_demo() {
                                 (self.fs_game.clone(), self.fs_pure.clone())
                             } else {
                                 (
-                                    net::download::fs_game(net.configstring(1), &self.mod_dir)
-                                        .or_else(|| self.user_fs_game.clone()),
+                                    net::download::mod_dir(
+                                        self.shell.cvar("fs_game").unwrap_or(""),
+                                        &self.mod_dir,
+                                    ),
                                     net::download::pure_paks(net.configstring(1)),
                                 )
                             };

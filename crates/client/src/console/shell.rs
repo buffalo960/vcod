@@ -81,12 +81,15 @@ pub struct Cvar {
     pub cheat: bool,
     pub latch: bool,
     pub rom: bool,
+    pub init: bool,
     pub latched: Option<String>,
 }
 
 /// Retail's cvar flag bits (docs/research/cod11-console.md, section 5).
 const ARCHIVE: u32 = 0x1;
 const USERINFO: u32 = 0x2;
+/// `CVAR_INIT`: only the command line or a forced set moves it.
+const INIT: u32 = 0x10;
 const LATCH: u32 = 0x20;
 const ROM: u32 = 0x40;
 const CHEAT: u32 = 0x200;
@@ -490,6 +493,10 @@ impl Shell {
         // vcod-only: 1 under `--vanilla`, the stock paks alone on the
         // search path (Pk3Fs::vanilla).
         s.register("vc_vanilla", "0", ROM);
+        // CoDMP.exe 0x42cdb0: "", CVAR_SYSTEMINFO | CVAR_INIT. The player's
+        // mod and a server's systeminfo both force it; a disconnect leaves
+        // it (docs/research/cod11-front-end.md, section 16).
+        s.register("fs_game", "", INIT);
         for (key, cmd) in DEFAULT_BINDS {
             s.binds.insert(key.to_string(), cmd.to_string());
         }
@@ -508,6 +515,7 @@ impl Shell {
                 cheat: flags & CHEAT != 0,
                 latch: flags & LATCH != 0,
                 rom: flags & ROM != 0,
+                init: flags & INIT != 0,
                 latched: None,
             },
         );
@@ -557,6 +565,7 @@ impl Shell {
             cheat: false,
             latch: false,
             rom: false,
+            init: false,
             latched: None,
         });
         c.latched = None;
@@ -570,6 +579,14 @@ impl Shell {
         if c.archive {
             out.push(Effect::SaveConfig);
         }
+    }
+
+    /// `Cvar_Set` (`Cvar_Set2` with `force`), as the UI's `RunMod` sets
+    /// `fs_game`. Returns what the set asks of the caller.
+    pub fn force(&mut self, name: &str, value: &str) -> Vec<Effect> {
+        let mut out = Vec::new();
+        self.set_forced(name, value, &mut out);
+        out
     }
 
     /// `sv_cheats` as `Cvar_Set2` reads it: its integer value.
@@ -944,10 +961,15 @@ impl Shell {
             cheat: false,
             latch: false,
             rom: false,
+            init: false,
             latched: None,
         });
         if c.rom {
             out.push(Effect::Print(format!("{} is read only.", c.name)));
+            return;
+        }
+        if c.init {
+            out.push(Effect::Print(format!("{} is write protected.", c.name)));
             return;
         }
         if c.cheat && !cheats && c.value != value {
@@ -1463,6 +1485,25 @@ mod tests {
 
     /// `CL_SystemInfoChanged` forces every key: read-only, cheat and
     /// latched cvars too, and keys the client never registered.
+    /// `fs_game` is `CVAR_INIT`: the console cannot set it, the Mods
+    /// menu's forced set and a systeminfo can, and a systeminfo without the
+    /// key leaves it.
+    #[test]
+    fn fs_game_moves_only_by_force() {
+        let mut s = Shell::new();
+        assert_eq!(
+            s.execute("set fs_game x"),
+            [Effect::Print("fs_game is write protected.".into())]
+        );
+        assert!(s.force("fs_game", "uo").is_empty());
+        assert_eq!(s.cvar("fs_game"), Some("uo"));
+        s.apply_systeminfo(r"\fs_game\genesis");
+        assert_eq!(s.cvar("fs_game"), Some("genesis"));
+        s.apply_systeminfo(r"\sv_serverid\3");
+        assert_eq!(s.cvar("fs_game"), Some("genesis"));
+        assert!(!s.config_text().contains("fs_game"));
+    }
+
     #[test]
     fn the_systeminfo_forces_every_key() {
         let mut s = Shell::new();

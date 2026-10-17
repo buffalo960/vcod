@@ -84,8 +84,13 @@ pub fn safe_rel_path(name: &str, dirs: &[&str]) -> Option<PathBuf> {
 /// client (docs/research/cod11-front-end.md, section 16). `None` when unset,
 /// when it names `base` itself, or when it is not a plain directory name.
 pub fn fs_game(systeminfo: &str, base: &str) -> Option<String> {
-    let v = super::info_value_for_key(systeminfo, "fs_game")?;
-    (safe_name(v) && !v.eq_ignore_ascii_case(base)).then(|| v.to_string())
+    mod_dir(super::info_value_for_key(systeminfo, "fs_game")?, base)
+}
+
+/// An `fs_game` value as the directory layered over `base`: `None` when
+/// empty, `base` itself, or not a plain directory name.
+pub fn mod_dir(value: &str, base: &str) -> Option<String> {
+    (safe_name(value) && !value.eq_ignore_ascii_case(base)).then(|| value.to_string())
 }
 
 /// One `sv_referencedPakNames` entry with its `sv_referencedPaks` checksum
