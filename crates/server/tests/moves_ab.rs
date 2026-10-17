@@ -834,21 +834,13 @@ fn the_predictor_replays_uo_mounts_and_cook() {
 }
 
 /// Fields the mount and cook captures' replays may miss, per capture.
-/// - `aimSpreadScale` on the stand and mount captures' first pair: the
-///   probe's teleport set the first snapshot's view (0) and `delta_angles`
-///   after the client's last uncaptured cmd, so [`base_cmd`] cannot rebuild
-///   that cmd's yaw, and the first cmd's turn term reads against the wrong
-///   one. Retail's start is not on the wire; it needs a capture logged from
-///   before the teleport.
-/// - The trigger_mount's two deploys (ct 23991, 39483): the server's own
-///   `pointcontents` sees the trigger's 0x400000 and deploys crouched, so
+/// - The trigger_mount's two deploys (the first at ct 21042): the server's
+///   own `pointcontents` sees the trigger's 0x400000 and deploys crouched, so
 ///   it never asks `G_CheckPointInsideTriggerMount` and sends hint 7 with
 ///   `serverCursorHintVal` 0, which the predictor (and, by the same code,
 ///   the retail cgame) reads as a standing mount. The next snapshot puts
 ///   the stance right (coduo-movement.md, 11).
 const UOFOOT_GAPS: &[(&str, &str, usize)] = &[
-    ("uofoot-stand", "aimSpreadScale", 1),
-    ("uofoot-mount", "aimSpreadScale", 1),
     ("mount", "ducked", 2),
     ("mount", "stance", 2),
     ("mount", "viewHeightCurrent", 2),

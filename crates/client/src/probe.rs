@@ -1168,11 +1168,8 @@ pub fn probe(
                 shock.record(now, c);
             }
         }
-        if save_slope
-            && slope_capture.recording()
-            && let Some(c) = sent
-        {
-            slope_capture.cmds.push(c);
+        if save_slope && let Some(c) = sent {
+            slope_capture.sent(c);
         }
 
         // Retail sends the `b` scoreboard only in answer to `score`, so the
@@ -6896,11 +6893,27 @@ struct SlopeCapture {
     cmds: Vec<net::msg::UserCmd>,
     /// `(index into cmds at which the snapshot arrived, the line)`.
     snaps: Vec<(usize, String)>,
+    /// The last cmds sent before the first snapshot was logged, which go
+    /// in ahead of it: the one its `commandTime` names is the replay's
+    /// base for the first pair (a teleport's view and `delta_angles` hide
+    /// its angles).
+    before: std::collections::VecDeque<net::msg::UserCmd>,
 }
 
 impl SlopeCapture {
     fn recording(&self) -> bool {
         !self.snaps.is_empty()
+    }
+
+    fn sent(&mut self, c: net::msg::UserCmd) {
+        if self.recording() {
+            self.cmds.push(c);
+        } else {
+            if self.before.len() == 8 {
+                self.before.pop_front();
+            }
+            self.before.push_back(c);
+        }
     }
 
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
@@ -7026,6 +7039,9 @@ impl SlopeCapture {
             slots(&snap.ps.arrays.ammo),
             slots(&snap.ps.arrays.ammoclip)
         );
+        if self.snaps.is_empty() {
+            self.cmds.extend(self.before.drain(..));
+        }
         self.snaps.push((self.cmds.len(), line));
     }
 }
@@ -7138,7 +7154,7 @@ fn write_slope_fixture(
     out.push_str(
         "# every non-zero netfield as decoded (pm_flags in 1.1's layout), ammo and clip\n",
     );
-    out.push_str("# the non-zero slots.\n");
+    out.push_str("# the non-zero slots. The cmds ahead of the first !snap went out before it.\n");
     out.push_str(&format!("# cmd_ms {cmd_ms}\n"));
     // The weapon list a replay loads its defs by, where it is not 1.1's.
     if protocol.version == 22 {
