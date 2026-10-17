@@ -7836,8 +7836,8 @@ vieworg) * fWeaponPosFrac` into `0x3020cb88`-`0x3020cb90` for an
 `aimDownSight` weapon with the fraction non-zero, zero otherwise. 17.5
 has the landing term between the two.
 
-vcod: `pmove::aim::GunMove` is `0x300362c0` (`SPEED_RUN` standing in for
-`ps->speed`, as in the tilt; no `cg_gun_*` cvars). `hud::scope::GunAim`
+vcod: `pmove::aim::GunMove` is `0x300362c0` (`PlayerState::speed`, the
+wire's `ps->speed`, as in the tilt; no `cg_gun_*` cvars). `hud::scope::GunAim`
 steps the sway, the angles and the movement term once a frame, called by
 `Hud::step_gun` after the view is final and before the view weapon is
 posed (not on pm_type 4 or 5, dead or on a mounted gun; vcod has no
