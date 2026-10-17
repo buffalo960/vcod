@@ -673,18 +673,27 @@ pub fn replay_as(
     // `place_client` leaves there is cancelled unless the capture's own yaw
     // is offset by it. A capture's `!input yaw` is relative to the facing its
     // header records.
+    //
+    // A header yaw is a wire view, an exact short printed as degrees, and
+    // `* 65536 / 360` lands a hair either side of that short: truncated, a
+    // negative one (-138.0048, short 40413) became 40414. Round it, and hand
+    // `place_client`, which truncates as `ANGLE2SHORT` does, the short's
+    // midpoint.
+    let short_of = |yaw: f32| (yaw * 65536.0 / 360.0).round() as i32 & 0xffff;
     let mut yaw_short = 0;
     let put = |sv: &mut vcod_server::Server,
                cl: &mut vcod_common::net::NetClient<ClientEnd>,
                now: &mut Instant,
                (origin, yaw): ([f32; 3], f32)| {
-        sv.place_client(0, origin, yaw);
+        let short = short_of(yaw);
+        sv.place_client(0, origin, (short as f32 + 0.5) * 360.0 / 65536.0);
+        let yaw = short as f32 * 360.0 / 65536.0;
         // The client subtracts the `delta_angles` of the snapshot it last
         // saw, so until the placed spawn's has reached it the view it asks
         // for is built against the old one. The capture's own client had
         // three seconds of that; a few frames is enough to converge.
         let settle = UserCmd {
-            angles: [0, (yaw * 65536.0 / 360.0) as i32, 0],
+            angles: [0, short_of(yaw), 0],
             ..NULL_USERCMD
         };
         for _ in 0..4 {
@@ -695,14 +704,14 @@ pub fn replay_as(
     };
     if let Some(place) = place {
         put(&mut sv, &mut cl, &mut now, place);
-        yaw_short = (place.1 * 65536.0 / 360.0) as i32;
+        yaw_short = short_of(place.1);
     }
     let p = proto;
     let mut out = Vec::new();
     for step in steps {
         if let Some(place) = step.place {
             put(&mut sv, &mut cl, &mut now, place);
-            yaw_short = (place.1 * 65536.0 / 360.0) as i32;
+            yaw_short = short_of(place.1);
         }
         let mut samples = Vec::new();
         // The held input, carrying the weapon byte the probe sent: a byte that
