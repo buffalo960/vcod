@@ -667,7 +667,15 @@ The gsc's `PROBE` lines of each run go to
 `-bump-overlap-spectator-script.txt` beside the walker fixtures, with the
 target's own push lines (`BUMPT`, its stdout) appended as comments.
 
-All six files are retail evidence. A walker run against `vcod-server`
+The wall capture adds `+set probe_bump_spot wall` to the overlap run and
+tags the walker `overlap-wall`: the gsc puts the target at (144 448 0.25)
+and the walker 200 behind, 8.875 short of a +y wall, so the first push
+drives the walker into it and the second, once it has walked into the
+corner with a +x wall, into both (`docs/research/cod11-player-clip.md`
+10.4). Its files are `-bump-overlap-wall-walker.txt` and
+`-bump-overlap-wall-script.txt`.
+
+All eight files are retail evidence. A walker run against `vcod-server`
 overwrites the untagged one and refuses the tagged ones without
 `--overwrite-fixture`: move them to `tmp/` and `git checkout` the fixture
 directory after.
@@ -2127,6 +2135,27 @@ vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:<p> --probe-team
 
 The fixtures are `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-moveshot-*.txt`
 (walk on 1.5b and UO, bipod on UO), gated by `crates/server/tests/moveshot_ab.rs`.
+## probe_patchwalk
+
+Player movement against mp_carentan's lump 24 patches
+(`docs/research/bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO").
+Under `probe_teleport 1` puts every playing client beside a patch, facing
+it: `probe_spot pole` (patch 4, yaw 45), `pillar` (patch 11 on terrain,
+yaw 0) or `kerb` (the posts round the square, patch 98, yaw 180). The
+client runs `--save-slope --probe-patchwalk <yaw>`: into the patch, along
+it both ways, at it turned 30 degrees, a running jump, crouched along it,
+a crawl into and along it and a stand. Run on each server, one at a time:
+
+```
+[COD_VERSION=1.5|uo] PORT=<p> COD_DIR=<install> SECS=52 tools/run_probe.sh client-probes/probe_patchwalk mp_carentan +set probe_teleport 1 +set probe_spot pole
+# second shell, about 12 s later (45 pole, 0 pillar, 180 kerb; on UO add --game-dir <uo install> --mod-dir uo):
+vcod --net-probe 127.0.0.1:<p> --save-slope --probe-patchwalk=45 --probe-cmd-ms 8 --capture-tag patchwalk-pole-1.1 --probe-secs 34
+```
+
+The nine captures are
+`crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-patchwalk-<spot>-<1.1|1.5|uo>.txt`,
+which `moves_ab.rs`'s `the_predictor_replays_walks_against_patches`
+replays under each build's rules.
 
 ## probe_dyingpose
 

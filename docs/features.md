@@ -26,7 +26,9 @@ something, the bullet links it.
   prone, stepping, leaning, wall sliding.
 - Seven weapons with their own viewmodels, animations, sounds and reserve
   ammo. Hitscan shots with per-surface impacts and tracers.
-- Footsteps on retail's cadence per surface; the landing sound scales with
+- Footsteps on retail's cadence per surface, a body standing across two
+  floor brushes stepping on the one retail's leaf walk reaches first; the
+  landing sound scales with
   fall speed.
 
 ### Client
@@ -317,8 +319,8 @@ something, the bullet links it.
 - Bullets trace the world, players, static props and script models,
   through the stock damage callback with per-bone hit locations. Rifle
   rounds go through players, every round goes through glass. Curved
-  patches, terrain and brushes clip a round in the arithmetic of each
-  patch's server build, and a patch only from the BSP leaves that list
+  patches, terrain and brushes clip a round or a moving player in the
+  arithmetic of each patch's server build, and a patch only from the BSP leaves that list
   it, in retail's leaf order, so a round, an item or a player slips
   through the seams retail's does. A submodel's patches and terrain clip
   only while its entity is linked. Shots,

@@ -616,6 +616,11 @@ first everywhere.
   `BaseAssault_bomb_countdown` (3586-3664) blows after `scr_bas_bombtime`
   with a 1000-damage `radiusDamage` on every player within 500 units,
   and kills the base.
+- VERIFIED (`bas.gsc` 330-345): `scr_bas_planttime` 15,
+  `scr_bas_defusetime` 10 and `scr_bas_bombtime` 60 by default.
+  INFERRED (`BaseAssault_bomb_countdown`, 3591-3598, loop body): the
+  base's `countdowntime` starts at the bomb time and drops by one after
+  each `wait 1`, so it reads the whole seconds left on a charge.
 - VERIFIED (mp_foy's entity lump, and the same on mp_italy, mp_kursk,
   mp_ponyri and mp_rhinevalley by the charges' heights): each base's
   charge sits in a room under the bunker, 176 units under the base's
@@ -650,10 +655,21 @@ first everywhere.
   breached one with no charge on it is planted: walk within 112 of the
   objective model, rest the view on the trigger's middle, hold use
   15.5 s (S&D's defuse, section 3, with its reach and hold as
-  parameters). A charged one is guarded from outside the blast, 520 to
-  670 units off. A defender guards its own bases by rank and defuses a
-  charge on one (10.5 s), and so does an attacker within 2000 units of
-  it. A standing base is breached with rockets (below); bots ride no
+  parameters). A charged one is guarded from within 250 units of the
+  charge, in its room or the bunker over it, the way any defuser has to
+  come, while `countdowntime` reads more than 20 s; then from outside the
+  blast, 520 to 670 units off, the bot leaving the room by the graph's
+  flee (`Goal::Away`). Guarded from outside the blast all along, every
+  plant was defused unseen once each side had a defender. Any bot inside
+  the 500-unit blast of a charge about to go (its own side's in the last
+  20 s, the other side's once a defuse could no longer finish) flees it
+  before anything else but a live frag, fight or no fight. A defender
+  keeps the charge room of a breached base of its side's, the only way
+  a plant comes; with none breached it attacks with the rest, since a
+  standing base needs no guard. Each side defuses a charge on one of its
+  bases (10.5 s): a defender, and an attacker within 2000 units of it.
+  An attacker goes for the next of the other side's bases after each of
+  its deaths, off the defender that killed it. A standing base is breached with rockets (below); bots ride no
   tank.
 - **The breach.** An attacker with no loaded rocket launcher in hand
   (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve) walks
@@ -673,7 +689,17 @@ first everywhere.
   the live check (`Server::breach_shot`, from its own muzzle, 400 to 1500
   off) finds a shot, it stops, draws the launcher, rests the view on the
   aim, fires and reloads, until the launcher is dry; then it fetches
-  another. A visible enemy comes first with shoot on.
+  another. A visible enemy comes first with shoot on. No rocket goes at
+  a player: with an enemy in sight the gun, else the pistol, comes out
+  over the launcher, and the breach draws it again. A 320-unit floor on
+  the range still left a bot killed by its own splash in most four-bot
+  rounds. Nor does a breach rocket go while another player's box
+  crosses its line, or where it would burst within 320 units of the
+  muzzle (`BREACH_CLEAR`; the base's mesh reaches toward the shooter).
+  A bot with both its weapons spent draws the gun it still has; one
+  with no round anywhere uses `kill` after 10 s, and a launcher the body
+  has come no 32 units nearer in 20 s (a node over it, or a tap that
+  takes nothing) is passed over for a minute.
 - The way into a breached base opens only when its walls go, after the
   graph was built. The server builds the graph without the `rubble`
   brushes (`World::rubble`; out of the way except over a dead base) and
@@ -731,3 +757,17 @@ dying on the way. Before the reload fix (`cod11-combat.md`, the reload begin in 
 fired one rocket and stood for good on a launcher that never reloaded;
 before the shell direct hit (missiles2) a rocket struck the base's
 model and took it nothing.
+
+VERIFIED (measured, ours, 2026-10-17, same setup, the rules above):
+gate `four_shooting_uo_bots_end_a_bas_round`, four bots shooting, over
+`BOTS_SEED` 1 to 23 odd (the seed is made odd, so 1 to 8 is four
+runs), the round over by its bases on every seed, at ticks 11059 to
+29459 (9 to 25 min; seed 7 at 21539), four to five bases gone off and
+none to four defuses a round; seed 17 also had a bot killed by its own
+breach rocket, which the sighted spread (4 degrees) still carries into cover
+by the stand now and then. The two-bot gate, shoot off: over at tick
+12099, five gone off, none defused.
+With the planter's guard alone (8 s, outside-the-blast before), one
+seed in eight ended; the rest stalled on defuses, a bot standing at a
+launcher it could not take, a dry defender, or a bot killing itself
+with its own rocket.

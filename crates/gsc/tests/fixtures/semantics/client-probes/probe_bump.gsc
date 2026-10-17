@@ -14,9 +14,13 @@ main()
 }
 
 //	The target's feet. The floor is flat brush from 280 units behind it to 360
-//	in front and 70 either side.
+//	in front and 70 either side. Under probe_bump_spot wall the walker's spot,
+//	200 behind, stands 8.875 short of a +y wall, so StuckInClient's push
+//	drives it into the wall (cod11-player-clip.md 10.4).
 bump_spot()
 {
+	if (getcvar("probe_bump_spot") == "wall")
+		return (144, 448, 0.25);
 	return (1132, -376, -151.875);
 }
 

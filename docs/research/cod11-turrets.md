@@ -1818,8 +1818,8 @@ snapshots that carry its entity.
 - vcod measurement: on UO the wound matches and the kill enters at x
   1513.0006 against retail's 1512 after truncation, with the target's
   entity and playerstate matching retail's at the kill. `GAPS_SPAWN_UO`
-  names the row. It is not the trace's arithmetic (13.5): the posed
-  bones sit up to 0.05 units off retail's.
+  names the row. It is the pose, not the trace's arithmetic (13.5): UO's
+  target idles a frame ahead of ours (13.6).
 - VERIFIED, the gunner's own cmds, read off each snapshot's view: a cmd
   stamped a ms past the snapshot time and followed by one stamped a ms
   below it runs before that snapshot (1.1d 21551, UO 22101 and 22551), and
@@ -1865,9 +1865,77 @@ whole part by halving steps (`whole`), each subtraction exact.
   Moving our pose clock 1 to 40 ms either way moves the kill's entry
   further from retail's, never onto it. INFERRED: the difference is in
   the pose's inputs on 1.5's and UO's eased controllers or the clip blend,
-  not in the clock. UO has no `getTagOrigin` (coduo-vehicles.md), so no
-  script can log the bones there. The hit point is the only reading of
-  the pose a UO capture gives.
+  not in the clock. No script builtin reads a bone on 1.1d, 1.5b or UO
+  (VERIFIED, `strings`: none of the three game modules names a `getTagOrigin`), and a linked
+  marker reads the pose a frame late. A grid of traces in the damage
+  callback reads the pose the round met (13.6).
+
+### 13.6 The pose a round meets: hit grids
+
+Three more runs of the recipe on 2026-10-17 set `probe_hitgrid 1`:
+inside the damage callback, before the stock callback lands the hit,
+`probe_turret.gsc` casts a 9 by 9 grid of `bulletTrace`s (hitCharacters
+on) along the round, 1.5 units apart across it and centred on its point,
+and logs each cell's distance to the body as `fine1` prints it. The
+callback runs inside the round's delivery, so the grid reads the pose the
+round met. The runs are `mp_carentan-dm-turret-hitgrid.txt` (1.1d),
+`-hitgrid-15.txt` (1.5b) and `-hitgrid-uo.txt` (UO 1.51b), each with its
+`-script.txt` and `-target.txt` (recipe in the `-script` headers, ports
+32752). In each the wound lands on the target's idle and the kill on the
+next frame, the first of the knockback (legs 157 on that frame's end
+frame, at weight 0).
+
+- vcod measurement, before the fix below (`TURRET_REPORT=1`): on 1.5b
+  every cell of both grids sits within 0.08 of retail's along its ray, most
+  within 0.002. On 1.1d the same, but for the cells on the head model's
+  own `bip01 head` box, all 0.118 further on ours. On UO the wound's cells
+  ran 0.25 to -0.25 across the grid, a turn of the torso of about 2.5
+  degrees, and the kill's entry sat 0.63 nearer the gun.
+- vcod measurement: moving ours' pose clock 50 ms later put every UO wound
+  cell on retail's to 0.004; 50 ms earlier or later on 1.1d or 1.5b moved
+  theirs off by up to 0.5. So UO's idle on the target runs a frame ahead
+  of ours, and 1.1d's and 1.5b's do not. Starting only the target's first
+  legs clip after his spawn a frame early (its clock at the spawn frame's
+  `level.time` less a frame) puts the UO wound's cells within 0.004 and
+  the kill's within 0.031; the `-hitfine-uo` capture's points within
+  0.0001 and 0.004; and the `-spawn-uo` kill on retail's 1512.
+- VERIFIED, `game.mp.uo.i386.so` `ClientSpawn` (0x54df4): after the
+  `gclient_t` memset it runs `ClientEndFrame` (whose `G_UpdateClientInfo`,
+  0x52c81, frees and rebuilds the DObj when the models change, then runs
+  `BG_PlayerAnimation`), then `ClientThink_real` on the last cmd, then
+  `BG_PlayerStateToEntityState`. 1.5b's (0x4c9a8) runs the same three.
+  VERIFIED, the legs setter (UO 0x2ce5f): a still clip gets no
+  `XAnimSetTime`; only a movement clip whose weight reads 0 does. INFERRED:
+  the node's time runs from wherever the tree started it, so on UO the
+  idle's clock starts with the DObj the spawn builds, a frame before the
+  idle takes weight; why 1.5b, with the same `ClientSpawn`, does not is not
+  read.
+- vcod measurement: that shift does not hold elsewhere. In
+  `vehicle_armor_ab` (UO, mp_cassino) both clients spawn the same way, on
+  idle 697 at 19350, and with the shift two of its silhouette gates fail
+  (one cell 0.28 off, one ray missing the gunner) where without it they
+  pass. So the rule that puts the turret target's idle a frame ahead is
+  not this one. INFERRED candidates, unchecked: the turret target's fall
+  from the placement (40 units, airborne for 300 ms) or its join a second
+  before the spawn. Not ported; the UO rows stay in `GAPS_SPAWN_UO`,
+  `GAPS_HITFINE_UO` and `GAPS_HITGRID_UO`, each naming this section.
+- VERIFIED, the 1.1d head cells: `xmodelalias/head_axis.gsc` names twenty
+  heads, `basehead_axis_a_01..10` on `xmodelparts/basehead_axis11` and
+  `basehead_axis_b_01..10` on `basehead_axis21`, and the character script
+  attaches a random one. Ours drew a `b` head where retail's grid reads
+  `basehead_axis11`'s boxes: with an `a` head every head cell matches to
+  0.002. `probe_turret.gsc` now logs the target's attachments at each
+  placement (`PROBE models`), and `probe_head <model>` swaps his head
+  first, which the 1.1d gate sets.
+- vcod measurement: on 1.1d (with the head pinned) and 1.5b every grid
+  cell sits within 0.08 of retail's and every hit point within 0.002, and
+  so does UO's with the shift above in place. The kill frame's cells read
+  0.001 to 0.08 off where the wound's read under 0.004 on every server.
+  INFERRED: a small difference on the knockback's first frame, the same on
+  all three; not found.
+- vcod: `turret_ab`'s `hit_gate` replays each capture as `spawn_gate` does
+  and holds the target's playerstate, each hit's point (0.02) and each grid
+  cell (0.1) to retail's; the gunner's own rows are the `-spawn` gates'.
 
 ## 14. The client
 

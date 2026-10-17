@@ -4838,7 +4838,20 @@ impl Server {
         let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
         let world = &self.world.as_ref()?.collision;
         let muzzle = crate::game::combat::muzzle_point(&sim.ps);
-        breach_aim(world, models, muzzle, at.into())
+        let spot = breach_aim(world, models, muzzle, at.into())?;
+        // A body on the way bursts the rocket there, on the shooter as
+        // often as not: no shot while any other player's box crosses the
+        // line.
+        let bodies: Vec<(glam::Vec3, glam::Vec3)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != slot)
+            .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
+            .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
+            .collect();
+        (!crate::bots::friend_in_line(muzzle, spot.into(), &bodies)).then_some(spot)
     }
 
     /// The script models within [`BREACH_MODEL_NEAR`] of a `bas` base, on
@@ -4967,7 +4980,19 @@ impl Server {
                 })
             })
             .fold(0u64, |m, i| m | 1 << i);
-        let rocket = held(&|d| d.weapon_class == "rocketlauncher").filter(|r| loaded >> r & 1 == 1);
+        // The one in hand first: with two launchers carried, the other
+        // read as the rocket and the one in hand fired at players.
+        let rocket = def
+            .is_some_and(|d| d.weapon_class == "rocketlauncher")
+            .then_some(sim.ps.weapon)
+            .or_else(|| held(&|d| d.weapon_class == "rocketlauncher"))
+            .filter(|r| loaded >> r & 1 == 1);
+        let gun = (1u8..64).find(|&i| {
+            loaded >> i & 1 == 1
+                && weapons
+                    .get(i as usize)
+                    .is_some_and(|d| d.weapon_type == "bullet" && d.weapon_slot != "pistol")
+        });
         Some(crate::bots::BotView {
             origin: sim.ps.origin.into(),
             eye_height: sim.ps.view_height(),
@@ -5068,6 +5093,7 @@ impl Server {
             unpin: None,
             pistol,
             rocket,
+            gun,
             reload_ms,
             draw_ms,
             loaded,
@@ -5225,6 +5251,7 @@ impl Server {
                         ours: b.team == team,
                         breached: b.breached,
                         planted: b.planted,
+                        blows_in: b.blows_in,
                         charge: b.charge.map(|(bounds, model)| BombView {
                             origin: model,
                             aim: mid(bounds),
@@ -9948,7 +9975,7 @@ fn breach_aim(
     muzzle: glam::Vec3,
     base: glam::Vec3,
 ) -> Option<[f32; 3]> {
-    use crate::bots::{BREACH_MIN, BREACH_NEAR, BREACH_RANGE};
+    use crate::bots::{BREACH_CLEAR, BREACH_MIN, BREACH_NEAR, BREACH_RANGE};
     let d = muzzle.distance(base);
     if !(BREACH_MIN..=BREACH_RANGE).contains(&d) {
         return None;
@@ -9970,10 +9997,13 @@ fn breach_aim(
             }
         }
         let burst = muzzle + (end - muzzle) * best.0;
-        let ok = match best.1 {
-            Some(o) => o == base,
-            None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
-        };
+        // The base's mesh reaches out toward the shooter: a strike on it
+        // inside the rocket's own splash took the shooter too.
+        let ok = burst.distance(muzzle) >= BREACH_CLEAR
+            && match best.1 {
+                Some(o) => o == base,
+                None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
+            };
         ok.then_some(spot.into())
     })
 }

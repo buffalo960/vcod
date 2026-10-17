@@ -622,3 +622,144 @@ fn ours_does_not_push_beside_a_spectator_in_slot_0() {
         );
     }
 }
+
+// ---------------------------------------------------------------- the wall
+
+const WALL: &str = "mp_carentan-dm-bump-overlap-wall-walker.txt";
+
+/// One walker snapshot of the wall capture: what the rebase starts from.
+struct WallSnap {
+    ct: i32,
+    origin: Vec3,
+    vel: Vec3,
+    on_ground: bool,
+    pm_flags: i32,
+    pm_time: i32,
+}
+
+fn wall_capture() -> (Vec<UserCmd>, Vec<WallSnap>) {
+    let text = fixture(WALL);
+    let mut cmds = Vec::new();
+    let mut snaps = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("!cmd ") {
+            let kv = kv(rest);
+            let n = |k: &str| kv[k].parse::<i32>().unwrap();
+            let a: Vec<i32> = kv["angles"]
+                .split(',')
+                .map(|x| x.parse().unwrap())
+                .collect();
+            cmds.push(UserCmd {
+                server_time: n("st"),
+                buttons: n("buttons") as u8,
+                wbuttons: n("wbuttons") as u8,
+                weapon: n("weapon") as u8,
+                angles: [a[0], a[1], a[2]],
+                forward: n("forward") as i8,
+                right: n("right") as i8,
+                up: n("up") as i8,
+                ..NULL_USERCMD
+            });
+        } else if let Some(rest) = line.strip_prefix("!snap ") {
+            let kv = kv(rest);
+            snaps.push(WallSnap {
+                ct: kv["ct"].parse().unwrap(),
+                origin: vec3(kv["origin"]),
+                vel: vec3(kv["vel"]),
+                on_ground: kv["ground"] != "1023",
+                pm_flags: kv["pm_flags"].parse().unwrap(),
+                pm_time: kv["pm_time"].parse().unwrap(),
+            });
+        }
+    }
+    (cmds, snaps)
+}
+
+/// `StuckInClient`'s push into a wall (cod11-player-clip.md 10.4): the
+/// walker, pushed at 190 into the +y wall beside it, slides along it under
+/// 0x100, and pushed again into the corner it walked into, stops dead.
+/// Each snapshot pair the push did not write between is replayed through
+/// our pmove from retail's state, cmd for cmd, and the origin, velocity and
+/// timer compared with the next snapshot. The push direction is
+/// `rand()`'s, so this half replays pmove only; the push itself is the
+/// gates above. Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn a_pushed_player_slides_along_a_wall_as_retail_does() {
+    use vcod_common::collision::CollisionWorld;
+    use vcod_common::movetrace::MoveWorld;
+    use vcod_common::pmove::cmd::{self, EventRing};
+    use vcod_common::pmove::{PMF_TIME_KNOCKBACK, PlayerState};
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let cs7 = include_str!("fixtures/configstrings/mp_carentan-dm.txt")
+        .lines()
+        .find_map(|l| l.strip_prefix("7 "))
+        .expect("configstring 7");
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
+    let bsp_path = fs.resolve_map("mp_carentan").unwrap();
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let world = CollisionWorld::build(
+        &bsp,
+        &vcod_common::props::collision_tris(&fs, &bsp.entities),
+    );
+    world.unlink_script_brushes(&bsp.entities, "dm");
+    let mw = MoveWorld::bare(&world);
+    let (cmds, snaps) = wall_capture();
+    let (mut compared, mut pushed, mut held) = (0, 0, 0);
+    let mut bad = Vec::new();
+    for pair in snaps.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        let elapsed = b.ct - a.ct;
+        // A push between the two writes `pm_time` 300 over pmove's count.
+        let untouched = elapsed > 0
+            && a.pm_time >= b.pm_time
+            && (b.pm_time == 0 || a.pm_time - b.pm_time == elapsed);
+        if !untouched {
+            continue;
+        }
+        let mut ps = PlayerState::spawn(a.origin, 0.0);
+        ps.velocity = a.vel;
+        ps.on_ground = a.on_ground;
+        ps.knockback_ms = a.pm_time as f32;
+        ps.knockback_flags = a.pm_flags & PMF_TIME_KNOCKBACK;
+        ps.weapon = 12;
+        ps.weapons_held = 1 << 12;
+        let mut last = a.ct;
+        for c in cmds
+            .iter()
+            .filter(|c| c.server_time > a.ct && c.server_time <= b.ct)
+        {
+            // The walker faces +x: its delta_angles undo the cmd's yaw.
+            let mut da = [0, (-c.angles[1]).rem_euclid(65536), 0];
+            let mut ring = EventRing::default();
+            cmd::chop(last, c, |step, dt| {
+                cmd::player_step(&mut ps, &mut da, &mut ring, step, dt, &mw, &weapons);
+                ps.jump_latched
+            });
+            last = c.server_time;
+        }
+        if last != b.ct {
+            continue;
+        }
+        compared += 1;
+        if a.pm_flags & PMF_TIME_KNOCKBACK != 0 {
+            pushed += 1;
+            if a.vel.y > 0.0 && b.origin.y > 456.8 {
+                held += 1;
+            }
+        }
+        let off = (ps.origin - b.origin).abs().max_element();
+        let voff = (ps.velocity - b.vel).abs().max_element();
+        if off > 0.01 || voff > 1.0 || ps.knockback_ms as i32 != b.pm_time {
+            bad.push(format!(
+                "ct {}: ours {} {} {} retail {} {} {}",
+                b.ct, ps.origin, ps.velocity, ps.knockback_ms, b.origin, b.vel, b.pm_time
+            ));
+        }
+    }
+    println!("{compared} snapshots compared, {pushed} under the push, {held} along the wall");
+    assert!(pushed >= 12, "only {pushed} pushed snapshots");
+    assert!(held >= 4, "only {held} along the wall");
+    assert!(bad.is_empty(), "{bad:#?}");
+}

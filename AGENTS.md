@@ -623,7 +623,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   in no list and never clip; mp_railyard's 120 is missing from leaves its
   facets cross), and a point tests its unpushed fraction against the
   trace's, so a brush or patch from an earlier leaf can keep it out
-  (`bsp-ibsp59-format.md`, "The leaf walk").
+  (`bsp-ibsp59-format.md`, "The leaf walk"). So is a capsule that meets
+  two model-0 brushes at one fraction: the first in leaf order names the
+  surface a body standing on both steps on.
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
@@ -737,6 +739,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   first entity pass more than 300 ms past its event (combat doc 14.7,
   "Entity numbers"). Engine notifies raised in the entity pass (`movedone`)
   wake their waiters on the next frame's threads.
+- A body's head is a random draw from `xmodelalias/head_*`, and the `a`
+  and `b` heads' boxes differ: a gate that reads head cells pins it
+  (`probe_turret`'s `probe_head`, `cod11-turrets.md` 13.6).
 - A `clipOnly` weapon (the frag) has no reserve entry on the wire.
 - An item's `count` of 0 means unset; a drop writes -1 for empty.
 - A `trigger_lookat` is never touched; it fires off `ClientEndFrame`'s aim

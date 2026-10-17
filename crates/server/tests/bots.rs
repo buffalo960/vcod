@@ -921,24 +921,63 @@ fn uo_bots_leave_their_walled_in_spawns() {
 /// shooting: each, a lone attacker, fetches rocket launchers, breaches the
 /// other side's bases from a stand with a shot at them, plants and sees
 /// the charge off, until one side has no base left (bot-objectives.md
-/// 7.2). With a defender a side every plant is defused. Bases take three direct
-/// rockets here (`scr_bas_basehealth 3000`); the stock 24500 is 25, and
-/// the round runs half an hour. Needs `COD_DIR` at a UO install.
+/// 7.2). Bases take three direct rockets here (`scr_bas_basehealth 3000`);
+/// the stock 24500 is 25, and the round runs half an hour. Needs `COD_DIR`
+/// at a UO install.
 #[test]
 #[ignore = "builds mp_foy's UO graph and its rebuilds, runs 2 bots for up to 29 min of game time, ~4 min in release; run with --ignored"]
 fn uo_bots_breach_bases_until_a_bas_round_ends() {
+    bas_round(2, false);
+}
+
+/// Four bots, two a side, shooting: an attacker and a defender each. The
+/// planter holds its charge's room against the defuse and clears the blast
+/// before it goes, and no bot fires a rocket at an enemy close enough to
+/// take it too (bot-objectives.md 7.2). Needs `COD_DIR` at a UO install.
+#[test]
+#[ignore = "builds mp_foy's UO graph and its rebuilds, runs 4 bots for up to 29 min of game time; run with --ignored"]
+fn four_shooting_uo_bots_end_a_bas_round() {
+    let sv = bas_round(4, true);
+    let Some(sv) = sv else { return };
+    for k in kills(&sv) {
+        let (weapon, mod_) = (&k[8], &k[10]);
+        let rocket = ["bazooka", "panzerschreck", "panzerfaust"]
+            .iter()
+            .any(|r| weapon.contains(r));
+        // UO's lines can log 0 for both numbers; the names tell.
+        assert!(
+            !(k[1] == k[5] && k[3] == k[7] && rocket),
+            "a bot's own rocket killed it ({mod_}): {k:?}"
+        );
+    }
+}
+
+/// The script log's kills: victim guid, num, team, name, attacker guid,
+/// num, team, name, weapon, damage, means of death, hit location.
+fn kills(sv: &vcod_server::Server) -> Vec<Vec<String>> {
+    sv.script_log()
+        .iter()
+        .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+        .map(|k| k.split(';').map(str::to_string).collect())
+        .collect()
+}
+
+/// `bots` bots play mp_foy's bas round, seed 7 (`BOTS_SEED`; the seed is
+/// made odd), three rockets a base; the
+/// round has to end on its bases. `None` without a UO install.
+fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         eprintln!("COD_DIR has no uo/: skipping");
-        return;
+        return None;
     };
     let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_foy").unwrap()).unwrap())
         .expect("parse the bsp");
     let mut now = Instant::now();
-    let mut cfg = cfg(2, false, "bas");
+    let mut cfg = cfg(bots, shoot, "bas");
     cfg.map = "mp_foy".into();
     let mut sv = vcod_server::Server::new(cfg, now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
-    sv.test_seed_rng(7);
+    sv.test_seed_rng(std::env::var("BOTS_SEED").map_or(7, |v| v.parse().expect("BOTS_SEED")));
     sv.set_cvar("scr_bas_basehealth", "3000");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -950,8 +989,50 @@ fn uo_bots_breach_bases_until_a_bas_round_ends() {
     };
     let mut first = None;
     let mut end = None;
+    // `BAS_TRACE=1`: the bots and the bases every 5 s, and each `A;` line.
+    let trace = std::env::var_os("BAS_TRACE").is_some();
+    let mut logged = 0;
     for tick in 0..BAS_ROUND_TICKS {
         run(&mut sv, &mut now, 1);
+        if trace {
+            let log = sv.script_log();
+            // A restart starts a new log.
+            if log.len() < logged {
+                logged = 0;
+            }
+            for l in &log[logged..] {
+                if l.contains("A;") || l.contains("K;") {
+                    eprintln!("{tick}: {}", l.trim_end());
+                }
+            }
+            logged = log.len();
+            if tick % 100 == 0 {
+                for slot in sv.bot_slots() {
+                    let team = sv.bot_team(slot);
+                    if let Some(b) = sv.bot_body(slot) {
+                        eprintln!(
+                            "{tick}: bot {slot} team {team} at {:?} dead {} hp {}",
+                            b.origin.map(|v| v as i32),
+                            b.dead,
+                            b.health
+                        );
+                    }
+                }
+                if let Some(vcod_server::game::script::UoObjectives::Bas(bases)) = sv.bot_uo() {
+                    for b in bases {
+                        eprintln!(
+                            "{tick}: base team {} at {:?} breached {} planted {} blows_in {:?} charge {:?}",
+                            b.team,
+                            b.at.map(|v| v as i32),
+                            b.breached,
+                            b.planted,
+                            b.blows_in,
+                            b.charge.map(|c| c.1.map(|v| v as i32))
+                        );
+                    }
+                }
+            }
+        }
         if first.is_none() && count(&sv, "bas_breached") > 0 {
             first = Some(tick);
         }
@@ -962,10 +1043,13 @@ fn uo_bots_breach_bases_until_a_bas_round_ends() {
         }
     }
     eprintln!(
-        "first breach at tick {first:?}, round over at {end:?}: {} breached, {} destroyed, {} defused",
+        "{bots} bots, shoot {shoot}: first breach at tick {first:?}, round over at {end:?}: \
+         {} breached, {} planted, {} destroyed, {} defused, {} kills",
         count(&sv, "bas_breached"),
+        count(&sv, "bas_planted"),
         count(&sv, "bas_destroyed"),
         count(&sv, "bas_defused"),
+        kills(&sv).len(),
     );
     assert!(
         first.is_some_and(|t| t < BAS_BREACH_TICKS),
@@ -978,6 +1062,7 @@ fn uo_bots_breach_bases_until_a_bas_round_ends() {
         "the round ended on its clock"
     );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    Some(sv)
 }
 
 /// `scr_bas_roundlength` is 30 minutes; the round ends by then whatever

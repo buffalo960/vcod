@@ -2363,10 +2363,41 @@ What the run showed, VERIFIED against ours by `crates/server/tests/leanhit_ab.rs
 
 Left open: 52 of about 1000 cells, all on standing or crouched bodies,
 sit 0.5 to 3 units off (one 8.6) or hit where the other misses, at the
-edges of arm, hand and head boxes (`leanhit_ab::CELL_GAPS`). INFERRED: a
-small pose difference in the arms and head the grid's edge cells magnify;
-the idle clip's phase is not it (ours with the target joined 50 ms later
-reads 7 cells apart from itself).
+edges of arm, hand and head boxes (`leanhit_ab::CELL_GAPS`).
+
+What the 52 are, measured 2026-10-17 (vcod measurement, `leanhit_ab` with
+every cell counted, not only those past 0.5):
+
+- They are the pose's clock. The prone phases match to 0.0002 (median
+  cell) and the standing ones read 0.13 off, every cell, not only the
+  edges; the 52 are the edge cells that magnify it. With ours' target
+  pose a frame earlier (its clips' clock 50 ms back) the standing medians
+  drop to 0.02 and the cells past 0.5 from 52 to 32. Neither the boxes,
+  the controllers (all 0 on a standing body), the head draw (an `a` head
+  in place of ours' `b` one makes it worse, 55) nor slerp against
+  retail's lerp of the keys (0.01 in total) is it.
+- A second 1.1d run of the probe (ports 32751) kept both clients' stdout:
+  the shooter's `VEH rider` lines carry the target's `legsAnim` on every
+  snapshot. Its stance changes land on the same frames on ours, our join
+  set to match (crouch 15200, stand 15600, crouch 29200, prone 38350,
+  crouch 48500, stand 48900), and still the standing cells read 0.13 to
+  0.26 off. With every legs clip ours sets at an end frame starting its
+  clock a frame later, 0.01 to 0.04, and the cells past 0.5 drop from 57
+  to 27; the same shift on UO's run of the probe (ports 32753) helps its
+  standing phases alike.
+- VERIFIED, UO's legs setter (`game.mp.uo.i386.so` 0x2ce5f): a still clip
+  gets no `XAnimSetTime`, only a movement clip whose weight reads 0 does;
+  the old clip's `XAnimClearGoalWeight` and the new one's
+  `XAnimSetCompleteGoalWeight` set weights only. INFERRED: a clip that
+  blends in from no weight starts its clock a frame after the end frame
+  that set it, when its node first has weight; one set at full weight does
+  not (a spawn's idle, `cod11-turrets.md` 13.6, matches to 0.001 with no
+  shift on 1.1d). Not ported: it moves every blended clip on every patch,
+  and the 0.01 to 0.04 still left on standing cells, where prone reads
+  0.0002, says the rule is not whole yet.
+- UO's run of the probe also reads its leaning phases 0.4 to 12 units off
+  (prone leaning worst) where 1.1d's match: the `Split::Later` lean terms
+  (16.4), unmeasured until now. Not gated.
 
 ---
 

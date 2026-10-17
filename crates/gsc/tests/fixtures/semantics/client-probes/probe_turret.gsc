@@ -5,6 +5,10 @@
 
 main()
 {
+	//	Only a replay sets it before the load (run_probe.sh's +sets land
+	//	after +map); a model attached past the bootstrap must be precached.
+	if (getcvar("probe_head") != "")
+		precacheModel(getcvar("probe_head"));
 	thread log_turrets();
 	thread watch_teleports();
 	thread watch_delete();
@@ -100,9 +104,50 @@ try_place(gun)
 		yaw = gun.angles[1] + 180;
 	}
 	self.probe_spot = spot;
+	if (self.pers["team"] == "axis")
+		self swap_head();
 	self setorigin(spot);
 	self setplayerangles((0, yaw, 0));
 	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + " " + getTime() + "\n");
+}
+
+//	The head is a random draw from the team's alias (`xmodelalias/head_*`),
+//	and its hit boxes differ between head families. Every placement logs
+//	the target's attachments; `probe_head <model>` swaps his head for that
+//	one first, so a replay can wear the head a capture's hits read
+//	(cod11-turrets.md 13.6):
+//
+//	PROBE models <entity number> <model>...
+swap_head()
+{
+	want = getcvar("probe_head");
+	n = self getattachsize();
+	if (want != "" && n > 0)
+	{
+		//	The head is the character script's first attachment: all of
+		//	them come off and go back in order, the first swapped.
+		models = [];
+		tags = [];
+		for (i = 0; i < n; i++)
+		{
+			models[i] = self getattachmodelname(i);
+			tags[i] = self getattachtagname(i);
+		}
+		self detachall();
+		models[0] = want;
+		for (i = 0; i < n; i++)
+		{
+			if (tags[i] == "")
+				self attach(models[i]);
+			else
+				self attach(models[i], tags[i]);
+		}
+	}
+	line = "PROBE models " + self getEntityNumber();
+	n = self getattachsize();
+	for (i = 0; i < n; i++)
+		line = line + " " + self getattachmodelname(i);
+	logPrint(line + "\n");
 }
 
 //	With `probe_pose 1`: which pose a turret round meets on a body whose own
@@ -140,7 +185,39 @@ watch_hitlog()
 hitlog_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
 {
 	logPrint("PROBE hitfine " + gettime() + " " + self getEntityNumber() + " " + sHitLoc + " " + iDamage + " " + fine(vPoint) + " " + fine(vDir) + "\n");
+	if (getcvar("probe_hitgrid") == "1")
+		self hitgrid(vPoint, vDir);
 	self [[level.probe_hit_next]](eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
+}
+
+//	With `probe_hitgrid 1` as well: inside the damage callback, so on the
+//	pose the round met (the frame's first pose of the body, cod11-combat.md
+//	3), a 9 by 9 grid of `bulletTrace`s (hitCharacters on) along the
+//	round's direction, 1.5 units apart across it and centred on its point,
+//	each from 48 before the point to 48 past it. A cell is the distance to
+//	where the ray stopped on this body, as fine1 prints it, or `-`:
+//
+//	PROBE hitgrid <time> <entity number> <row> <cell>...
+hitgrid(point, dir)
+{
+	//	The engine has no vectorcross: right is dir x (0, 0, 1), up right x dir.
+	right = vectornormalize((dir[1], 0 - dir[0], 0));
+	up = (right[1] * dir[2], 0 - right[0] * dir[2], right[0] * dir[1] - right[1] * dir[0]);
+	for (i = -4; i <= 4; i++)
+	{
+		line = "PROBE hitgrid " + gettime() + " " + self getEntityNumber() + " " + i;
+		for (j = -4; j <= 4; j++)
+		{
+			c = point + (right[0] * j * 1.5 + up[0] * i * 1.5, right[1] * j * 1.5 + up[1] * i * 1.5, right[2] * j * 1.5 + up[2] * i * 1.5);
+			start = c - (dir[0] * 48, dir[1] * 48, dir[2] * 48);
+			tr = bullettrace(start, c + (dir[0] * 48, dir[1] * 48, dir[2] * 48), true, undefined);
+			if (!isdefined(tr["entity"]) || tr["entity"] != self || tr["fraction"] >= 1)
+				line = line + " -";
+			else
+				line = line + " " + fine1(tr["fraction"] * 96);
+		}
+		logPrint(line + "\n");
+	}
 }
 
 fine(v)

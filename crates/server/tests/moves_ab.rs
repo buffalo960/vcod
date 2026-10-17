@@ -20,7 +20,8 @@
 //!
 //! `MOVES_REPORT=1` prints every miss, `MOVES_TRACE=<commandTime>` the
 //! prediction cmd by cmd up to that snapshot, `MOVES_EXACT=1` how many
-//! snapshots' origins match retail's to the bit.
+//! snapshots' origins match retail's to the bit, and `MOVES_INEXACT=1`
+//! each one that does not.
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
@@ -358,8 +359,9 @@ fn replay(
             predict::run_cmd(&mut pred, c, &mw, weapons);
             if trace {
                 println!(
-                    "  st {} origin {} vel {} ground {} pm_time {} bob {} yaw {} pdir {} da {:?} spread {}",
+                    "  st {} sf {:#x} origin {} vel {} ground {} pm_time {} bob {} yaw {} pdir {} da {:?} spread {}",
                     c.server_time,
+                    pred.ps.ground_surface_flags,
                     pred.ps.origin,
                     pred.ps.velocity,
                     pred.ps.on_ground,
@@ -379,6 +381,16 @@ fn replay(
         report.compared += 1;
         if pred.ps.origin == to.ps.origin {
             report.exact += 1;
+        } else if std::env::var_os("MOVES_INEXACT").is_some() {
+            println!(
+                "inexact ct {} ours {} retail {} d {} vel {} ground {}",
+                to.command_time,
+                pred.ps.origin,
+                to.ps.origin,
+                pred.ps.origin - to.ps.origin,
+                to.ps.velocity,
+                to.ps.on_ground
+            );
         }
         let mut bad = compare(&pred, &to);
         // UO's new events by id, both rings in 1.1's numbering: the spoon, the throw,
@@ -934,3 +946,100 @@ const UOFOOT_GAPS: &[(&str, &str, usize)] = &[
     ("mount", "viewHeightLerpTime", 2),
     ("mount", "viewHeightTarget", 2),
 ];
+
+/// Runs at, along and over mp_carentan's patches (`--probe-patchwalk`,
+/// `patchwalk_script` in `crates/client/src/probe.rs`, `client-probes/
+/// probe_patchwalk`): a pole (patch 4), a pillar on terrain (11) and the
+/// row of posts round the square (97, 98, 133, 136 and their neighbours),
+/// on each server build, replayed under that build's rules and patch
+/// arithmetic (bsp-ibsp59-format.md, "Patch collision on 1.5 and UO").
+/// The 1.1 and 1.5 runs need `COD_DIR` at the 1.1 install, as the moves
+/// gate does; the UO ones at a UO install.
+const PATCHWALK: [(&str, &Protocol, MoveRules); 9] = [
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-pole-1.1.txt",
+        &PROTOCOL_V1,
+        MoveRules::V1_1,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-pillar-1.1.txt",
+        &PROTOCOL_V1,
+        MoveRules::V1_1,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-kerb-1.1.txt",
+        &PROTOCOL_V1,
+        MoveRules::V1_1,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-pole-1.5.txt",
+        &PROTOCOL_V6,
+        MoveRules::V1_5,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-pillar-1.5.txt",
+        &PROTOCOL_V6,
+        MoveRules::V1_5,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-kerb-1.5.txt",
+        &PROTOCOL_V6,
+        MoveRules::V1_5,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-pole-uo.txt",
+        &PROTOCOL_V22,
+        MoveRules::Uo,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-pillar-uo.txt",
+        &PROTOCOL_V22,
+        MoveRules::Uo,
+    ),
+    (
+        "mp_carentan-dm-slope-8ms-patchwalk-kerb-uo.txt",
+        &PROTOCOL_V22,
+        MoveRules::Uo,
+    ),
+];
+
+#[test]
+fn the_predictor_replays_walks_against_patches() {
+    let mut failures = Vec::new();
+    for (file, p, rules) in PATCHWALK {
+        let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{file}")).unwrap();
+        let setup = if rules == MoveRules::Uo {
+            uo_setup(&text, "mp_carentan")
+        } else if vcod_common::testing::game_fs_11().is_some() {
+            setup()
+        } else {
+            None
+        };
+        let Some((world, weapons)) = setup else {
+            continue;
+        };
+        let r = replay(p, rules, &parse(p, &text), &world, &weapons);
+        print(file, &r);
+        assert!(r.compared > 300, "{file}: only {} snapshots", r.compared);
+        let gaps = if file.ends_with("pillar-uo.txt") {
+            PILLAR_UO_GAPS
+        } else {
+            &[]
+        };
+        failures.extend(over(&r, gaps).into_iter().map(|f| format!("{file}: {f}")));
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The pillar run's crawl along the brick wall at (956.9, 600) on UO:
+/// from ct 34625 retail refuses every cmd past y 599.77 (the body put back,
+/// velocity 0) where 1.1d and 1.5b crawl on to 600.34 and ours, under
+/// either rules, to 600.24; the 16 snapshots after are rebased on that
+/// refusal, and the bob runs one step apart on 12. No patch is near: the
+/// legs sweep meets the clip brushes behind (971, 974, 975). UO's
+/// `BG_CheckProneValid` (game.mp.uo 0x2162c) adds a water bit to the mask
+/// (0x810031), skips the steep test on a water hit and refuses a chest
+/// sample more than 24 off the origin; none of those fires on this dry,
+/// flat floor, and its mask on our check moves nothing. The refusing test
+/// is not found yet (coduo-movement.md, "The prone check").
+const PILLAR_UO_GAPS: &[(&str, usize)] = &[("origin.xy", 16), ("velocity", 5), ("bobCycle", 12)];
