@@ -1132,10 +1132,31 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   cone and `EV_PAIN` 100. The tank captures' main gun shots read this on
   the driver: `damageCount` 44 on the seats capture, 30 on the drive
   (VERIFIED, capture). vcod-server queues the same feedback
-  (`SimOp::VehiclePain`) and matches the event, its parm and
-  `damageEvent`; its splash on the hull charged 43 and 38, so the counts
-  stay one and eight off (VERIFIED, `vehicle_ab` replay). Where the
-  amount parts is open: retail logs no `damage` notify in those runs. The scale
+  (`SimOp::VehiclePain`) and matches the event, its parm,
+  `damageEvent` and both counts (VERIFIED, `vehicle_ab` replay). It
+  charged 43 and 38 until the splash took retail's measure, below.
+- **A blast on a hull.** `G_RadiusDamage` (game.mp.uo 0x5098b) measures
+  an entity with `r.bmodel` (+0x104) to its `r.absmin`/`r.absmax`
+  (+0x124, +0x130) on each axis, and one that also has a vehicle record
+  (+0x164) to that box drawn in by three quarters of `r.mins`/`r.maxs`
+  (+0x108, +0x114): `absmin - 0.75 mins` to `absmax - 0.75 maxs`
+  (VERIFIED decompile). `VEH_SetupCollmap`'s `SetBrushModel` makes a paired vehicle a brush
+  model, so UO's `SV_LinkEntity` (`coduo_lnxded` 0x8099dee) files it,
+  once any angle is set, under a cube of `RadiusFromBounds` (0x806a0c3)
+  of the collmap's bounds about `r.currentOrigin`, grown a unit
+  (VERIFIED decompile). `CanDamage` probes about the box's middle, the origin. The direction
+  `G_Damage` gets is `r.currentOrigin` less the blast lifted 24, which
+  it normalizes for the `damage` notify and the pain's jolt (VERIFIED
+  decompile, 0x5098b and 0x4fedb). `Scr_Vehicle_DamageScale` (0x8ccad)
+  measures the point against the record's physics pose (`rec+0xb8`, its
+  angles at `rec+0xd0`) through `AnglesToAxis` of all three angles, the
+  hull's pitch and roll included (VERIFIED decompile). vcod links a
+  paired vehicle as a brush model (`LinkKind::Vehicle`), measures the
+  blast as above (`EntityVictim::vehicle_link`) and scales on the
+  record's pose; on the two tank captures the own shell's splash then
+  charges 189 x 0.233 = 44 and 134 x 0.231 = 30, retail's counts
+  (VERIFIED, `vehicle_ab` replay). Measured axially on the file's box
+  from the origin it charged 43 and 38. The scale
   times the damage is truncated (`fistp` under a 0xc00 control word,
   0x4ffbf..0x4ffd1) and a result under 1 is lifted to 1 (VERIFIED
   disassembly; the jeep's rear 18.75 reads 18 in the hits capture below).
@@ -1322,21 +1343,46 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   torso clip loops over 9 s and its phase follows the seat change's
   timing (INFERRED, replay). Retail's target joined 18 s into the level
   and took the first seat at 29350 (VERIFIED, fixture); the replay used
-  to join at once and seat at 12750. Run alone 16.6 s first, ours seats
-  at 29350 and changes seat at retail's times to the frame, and the
-  passenger's 30 cells all meet him, 26 within a quarter unit and four
-  up to 0.57 off (VERIFIED, replay). What still parts those four is
-  open. `vehicle_ab`'s
+  to join at once and seat at 12750. Every retail fixture boards 10 050
+  ms after the target's placement and changes seat 12 000 or 12 050 apart
+  (VERIFIED, the six `*-armor*-uo.txt` and `*-silhouette-uo.txt`
+  fixtures); the replay's target now boards 10 050 after its placement
+  and, in the silhouette runs, joins late enough to be placed on
+  retail's level time and changes seat at the fixture's own times
+  (`schedule_of`). `vehicle_ab`'s
   `the_jeep_seats_replay_on_ours` compares `torsoAnim` through the seat
   capture; ours releases the fire anim 100 ms after retail (two
-  snapshots), the one torso gap. The Panzer driver is not compared: on
-  retail's level times 62 of his 90 cells stop more than a quarter unit
-  off retail's, up to 6.4, and six meet him on one side only (17.5 and
-  11 on the old timing) (VERIFIED, replay); no clause of
-  `playeranim.script` names a tank's driver. `vehicle_armor_ab`'s
-  silhouette tests run on retail's level times and compare the jeep's
-  driver and gunner and the tank's gunner ray for ray within a quarter
-  unit, and the passenger within 0.6.
+  snapshots), the one torso gap.
+  - **The tank driver.** No clause of `playeranim.script` names a tank's
+    driver, and none is needed: his legs play `pb_stand_alert` (185, the
+    wire's 697 with the toggle) on retail and ours alike, the on-foot
+    idle carried into the seat (VERIFIED, the tank seats capture's
+    `legsAnim`, section 8; `vehicle_ab`). What parted his cells was the
+    turret. The profile 2.7 s after the boarding catches the turret
+    still swinging onto the driver's view at 30 degrees a second, and
+    most of the rays that pass the driver meet the turret. Ours boarded
+    one frame early, 29300 against retail's 29350, so its turret was one
+    think (1.5 degrees) further round, and the cells stopped up to 6.4
+    off. Started one think later, every one of the stint's 88 cells
+    matches retail's to 0.01 (VERIFIED, replay); with the boarding on
+    retail's frame they do too.
+  - **Back from the gunner's seat.** On retail the tank driver's second
+    stint (phase 3, after the gunner's) does not repeat his first: the
+    rider cells stand up to 1.1 units apart, growing with the height
+    above the origin, a tilt of about 0.65 degrees, with the same seat
+    origin, view and vehicle angles (VERIFIED, fixture). Ours moves the
+    same way by about half: 11 of 84 cells stop up to 0.65 off retail's
+    and one meets one side only. The jeep passenger's stint, also the
+    one after the gunner's seat, is the one jeep stint off retail's (4 of
+    30 cells, up to 0.57). What the gunner's seat leaves on the body is
+    open. UO's anim setter (`game.mp.uo` 0x1ce5f) passes
+    `XAnimSetCompleteGoalWeight` a last argument of 0 for the channel
+    record at `ci+0x380` and 1 for the other, and sets a looping movement
+    clip's time only when its node's weight reads 0.0 (0xa95ec) (VERIFIED
+    decompile); which state the gunner's seat leaves is not traced.
+  `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
+  within a quarter unit, the two stints after the gunner's seat within
+  0.6 and 0.7 (`SILHOUETTE_GAPS`).
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
   the given inflictor, else the attacker; when that is the attacker, a
   client whose entity `eFlags` has 0x100000 and whose `vehPos`
@@ -1435,9 +1481,9 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   (VERIFIED, replay). Gaps: the probe's view past
   the seat pitch clamp, where the per-cmd push runs a snapshot apart from
   the rebase (the clamp itself is `moves_ab`'s), and the cone there and at
-  each seat change, whose turn term reads the rebased cmd angles' jump;
-  the driver's feedback count from the tank's own shell (13, "The
-  driver's feedback"). `delta_angles` is not compared: its absolute value
+  each seat change, whose turn term reads the rebased cmd angles' jump.
+  The driver's feedback from the tank's own shell matches (13, "A blast
+  on a hull"). `delta_angles` is not compared: its absolute value
   rides the replaying client's own cmd angles. The jeep driver's legs
   in the four snapshots after the exit read `pb_stand_alert` (185) on
   retail, airborne: UO's `PM_Footsteps` (0x297e4) returns early for an
