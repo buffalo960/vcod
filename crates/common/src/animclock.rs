@@ -712,6 +712,35 @@ mod tests {
         assert!((w.legs - 0.51).abs() < 1e-6, "{w:?}");
     }
 
+    /// 1.5's and UO's setter: a legs change into a crouch opens a 400 ms
+    /// window, and a fire anim the torso starts inside it blends in over
+    /// what is left of it instead of its own 30 ms (UO 0x2ce5f).
+    #[test]
+    fn a_crouch_stretches_the_next_blends_to_400_ms() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let (stand, crouch) = (
+            anims.wire_of("pb_stand_alert").unwrap(),
+            anims.wire_of("pb_crouch_alert").unwrap(),
+        );
+        let fire = event_anim(&anims, "fireweapon", true);
+        let at = |t| Times::end_frame(t);
+        let weight = |c: &ChannelClock, t| c.layers(t).last().unwrap().weight;
+        let (mut legs, mut torso, mut window) =
+            (ChannelClock::default(), ChannelClock::default(), 0);
+        legs.update_windowed(&anims, true, stand, &seen(0.0, 0), at(1000), &mut window);
+        legs.update_windowed(&anims, true, crouch, &seen(0.0, 0), at(2000), &mut window);
+        assert_eq!(window, 2400);
+        torso.update_windowed(&anims, false, fire, &seen(0.0, 0), at(2100), &mut window);
+        assert!((weight(&torso, 2250) - 0.5).abs() < 1e-6);
+        // 1.1's setter keeps the fire anim's own blend.
+        let mut plain = ChannelClock::default();
+        plain.update(&anims, false, fire, &seen(0.0, 0), at(2100));
+        assert_eq!(weight(&plain, 2130), 1.0);
+    }
+
     /// A `FIREWEAPON` anim carries its own 30 ms blend (0x2888d).
     #[test]
     fn a_fire_anim_blends_in_over_30_ms() {
