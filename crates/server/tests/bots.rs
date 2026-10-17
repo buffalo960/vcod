@@ -832,3 +832,65 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
+
+/// United Offensive's walled-in spawns: mp_cassino's allied upper floor at
+/// (180, 1150, 208), whose way down is a window sill 240 over the street,
+/// and mp_streets' allied rooms at (-260, -6900, 8), left by a window
+/// whose sill a standing body fits on only off every lattice line. A bot
+/// placed in each leaves within 30 s of game time (bot-navigation.md, "Other rules"). Needs `COD_DIR` at a
+/// UO install.
+#[test]
+#[ignore = "builds mp_cassino's and mp_streets' UO graphs and runs a bot in each, ~8 s in release; run with --ignored"]
+fn uo_bots_leave_their_walled_in_spawns() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fs = Rc::new(fs);
+    // A map, a spot, and the box the bot has to leave.
+    type Case = (&'static str, [f32; 3], [f32; 3], [f32; 3]);
+    let cases: [Case; 2] = [
+        (
+            "mp_cassino",
+            [180.0, 1150.0, 224.0],
+            [130.0, 990.0, 190.0],
+            [240.0, 1350.0, 300.0],
+        ),
+        (
+            "mp_streets",
+            [-230.0, -6860.0, 24.0],
+            [-370.0, -7080.0, 0.0],
+            [-155.0, -6780.0, 100.0],
+        ),
+    ];
+    for (map, spot, lo, hi) in cases {
+        let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map(map).unwrap()).unwrap())
+            .expect("parse the bsp");
+        let mut now = Instant::now();
+        let mut cfg = cfg(1, false, "tdm");
+        cfg.map = map.into();
+        let mut sv = vcod_server::Server::new(cfg, now);
+        sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+        sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs.clone()).expect("load the scripts");
+        let slot = (0..400)
+            .find_map(|_| {
+                run(&mut sv, &mut now, 1);
+                sv.bot_slots()
+                    .into_iter()
+                    .find(|s| sv.bot_body(*s).is_some_and(|b| b.playing))
+            })
+            .expect("the bot plays");
+        sv.place_client(slot, spot, 0.0);
+        let inside = |p: [f32; 3]| (0..3).all(|i| p[i] > lo[i] && p[i] < hi[i]);
+        let out = (0..600).any(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_body(slot)
+                .is_some_and(|b| b.playing && !inside(b.origin))
+        });
+        assert!(
+            out,
+            "{map}: from {spot:?} still in at {:?}",
+            sv.bot_body(slot).map(|b| b.origin)
+        );
+    }
+}
