@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
-use vcod_common::net::{NetClient, NetEvent, Transport};
+use vcod_common::net::{NetClient, NetEvent, NetState, Transport};
 use vcod_server::Server;
 
 pub const ADDR: SocketAddr =
@@ -193,15 +193,51 @@ pub fn join_pair_logged(
     a: (&str, &str),
     b: (&str, &str),
 ) -> (NetClient<ClientEnd>, NetClient<ClientEnd>, Join, Join) {
+    join_pair_stamped(sv, qa, qb, now, a, b, &[])
+}
+
+/// [`join_pair_logged`] with client `a`'s cmds, once it is in the game,
+/// stamped `stamps_a` (a retail client's, on a server whose clock runs on
+/// retail's level time): each frame sends those past its last and before
+/// the frame's time. Empty, every client sends one cmd a frame on its own
+/// clock.
+pub fn join_pair_stamped(
+    sv: &mut Server,
+    qa: &Rc<RefCell<Queues>>,
+    qb: &Rc<RefCell<Queues>>,
+    now: &mut Instant,
+    a: (&str, &str),
+    b: (&str, &str),
+    stamps_a: &[i32],
+) -> (NetClient<ClientEnd>, NetClient<ClientEnd>, Join, Join) {
     // Distinct qports: the server keys a peer by ip and qport, so two clients
     // sharing one read as a single client reconnecting and the second is
     // refused. A real client is one per process and gets this for free.
     let mut ca = NetClient::start_with_qport(ClientEnd(qa.clone()), *now, 0x2001);
     let mut cb = NetClient::start_with_qport(ClientEnd(qb.clone()), *now, 0x2002);
     let (mut ja, mut jb) = (Join::new(a.0, a.1), Join::new(b.0, b.1));
+    let mut last_a = i32::MIN;
     for _ in 0..600 {
         *now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        match ca.snapshots().newest().filter(|_| !stamps_a.is_empty()) {
+            Some(snap) if ca.state() == NetState::Active => {
+                let end = snap.server_time + FRAME_MS as i32;
+                let cmds = stamped(
+                    &ca,
+                    &vcod_common::net::msg::NULL_USERCMD,
+                    stamps_a,
+                    last_a,
+                    end,
+                );
+                if let Some(c) = cmds.last() {
+                    last_a = c.server_time;
+                }
+                ca.send_cmds(&cmds);
+            }
+            _ => {
+                ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+            }
+        }
         cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
         let (ea, eb) = step_pair(sv, (qa, &mut ca), (qb, &mut cb), *now);
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
@@ -218,6 +254,34 @@ pub fn join_pair_logged(
         }
     }
     (ca, cb, ja, jb)
+}
+
+/// `cmd` once for every stamp in `stamps` past `after` and before `end`, in
+/// order, its view rebased on the newest snapshot's `delta_angles` as
+/// `send_frame` does.
+pub fn stamped(
+    cl: &NetClient<ClientEnd>,
+    cmd: &UserCmd,
+    stamps: &[i32],
+    after: i32,
+    end: i32,
+) -> Vec<UserCmd> {
+    let p = cl.protocol();
+    let da = cl.snapshots().newest().map_or([0; 3], |s| {
+        [0, 1, 2].map(|i| s.ps.field_i32(p, &format!("delta_angles[{i}]")))
+    });
+    let mut last = after;
+    let mut out = Vec::new();
+    for &st in stamps {
+        if st > last && st < end {
+            let mut c = *cmd;
+            c.server_time = st;
+            c.angles = [0, 1, 2].map(|i| (cmd.angles[i] - da[i]) & 0xffff);
+            out.push(c);
+            last = st;
+        }
+    }
+    out
 }
 
 /// Three clients through the stock menus, as [`join_pair`] does two, at

@@ -1535,7 +1535,8 @@ What it lets through, each a `GAPS` line in the gate:
   back has moved for however much of its own cmd clock retail's frame ran,
   and the target is the other client, whose clock this capture does not
   carry. 13.3 measures it, and the replay that follows it matches the
-  round. The row stays in this capture's gate for want of that clock.
+  round. The row stays in this capture's gate for want of that clock;
+  13.4 closes it on a capture that logs it.
 - The crouch release's one-unit drop: at 38900 ours reads grounded 0.2 above
   the floor (z -23.66), where VERIFIED (fixture lines 1431 and 1436) retail reads
   `groundEntityNum` 1023 at the same printed height and 1022 at -23.9 on the
@@ -1771,6 +1772,62 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
   the snapshots, not read from 1.1d's `PM_AirMove`). The fixture prints
   origins to 0.1, so the 0.256 at 37350 is that drift where the print
   rounds it past the gate's 0.25; `GAPS_VICTIM` names that row.
+
+### 13.4 The target's spawn and cmds
+
+Three more runs of the recipe on 2026-10-17, each a `--capture-tag` run
+whose target is `--probe-team axis --probe-fall` (its stdout logs every cmd
+stamp it sent, `CMDS`, and its own playerstate, `FALL`) and whose gsc
+appends `getTime()` to each `PROBE place` line:
+`mp_carentan-dm-turret-spawn.txt` (1.1d), `-spawn-15.txt` (1.5b) and
+`-spawn-uo.txt` (UO 1.51b), each with a `-script.txt` (the server log) and
+a `-target.txt` (the target's `CMDS` and `FALL` lines) beside it.
+
+- VERIFIED, `-spawn-target.txt` lines 9-10: the target reads `pm_type` 4
+  and health 0 at 11400 and stands at the placed spot with health 100 at
+  11500, the time `-spawn-script.txt` line 24 gives the placement; `FALL`
+  prints on every health change, so the spawn and the placement share the
+  frame. The same holds at 12250 on 1.5b and 11850 on UO (their lines 9-10
+  and 24).
+- VERIFIED, `-spawn-target.txt` lines 11-18: the target falls from the
+  placement on its own 16-17 ms cmds, lands at `commandTime` 11832 with
+  `legsAnim` 99 (the `land` event's anim, `player-model-anim-system.md`) at 11850, and idles (634) by 11950.
+  vcod measurement: our join's 50 ms cmds landed it at 11850 with no land
+  anim, so its idle ran from another time than retail's.
+- VERIFIED, lines 37-38: the wound shows on 30150 (`pm_time` 50,
+  `pm_flags` 0x200, health 47) and the kill on 30200, 30 ms of the
+  target's cmds later (`pm_time` 20). The kill frame ran 49 ms on UO
+  (`-spawn-uo-target.txt` line 37, `pm_time` 1) and 48 on 1.5b
+  (`-spawn-15-target.txt` line 36, `pm_time` 2).
+
+vcod: `turret_ab`'s `rig_aligned` runs our server alone until the target's
+placement lands on retail's `PROBE place` time, sends the target's cmds at
+the stamps its `CMDS` lines list from its join on (`common::join_pair_stamped`,
+`Rig::target_cmds`), holds until our clock is retail's, and from there
+replays every frame at the level time of the retail snapshot it pairs
+with, the gunner's cmds on their own stamps. `spawn_gate` diffs every
+phase and the target's playerstate against its `FALL` lines on the
+snapshots that carry its entity.
+
+- vcod measurement: on 1.1d and 1.5b every row matches, the wounding and
+  the killing rounds' impacts included, which the earlier captures keep as
+  `ENTRY_POINT` and `KILLING_ROUND` rows for want of the spawn time and
+  the stamps. Before the target's stamps were replayed the 1.1d kill was
+  (1516, 1612) against retail's (1516, 1611); our entry point was 1612.054
+  in y.
+- vcod measurement: on UO the wound matches and the kill enters at x
+  1513.0006 against retail's 1512 after truncation, with the target's
+  entity and playerstate matching retail's at the kill. INFERRED: a
+  thousandth of a unit is the size of what UO's stored floats move
+  (`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO"), and
+  `bonetrace.rs` ports none of it; `GAPS_SPAWN_UO` names the row.
+- VERIFIED, the gunner's own cmds, read off each snapshot's view: a cmd
+  stamped a ms past the snapshot time and followed by one stamped a ms
+  below it runs before that snapshot (1.1d 21551, UO 22101 and 22551), and
+  the one below never shows; 1.5b's 21184 and 21234 and UO's strafe 36284
+  reach the server a frame late. The gates list them (`EARLY_SPAWN*`,
+  `LATE_SPAWN*`). UO's 36284 matches only with its own stamp kept, which
+  the stamped replay does and the older gates' re-stamped one does not.
 
 ## 14. The client
 
