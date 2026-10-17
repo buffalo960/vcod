@@ -3745,37 +3745,30 @@ impl ApplicationHandler for App {
                         join,
                     } => {
                         let mut vm = None;
-                        // `timedemo` counts the frames drawn once the first
-                        // snapshot is in; `cl_freezeDemo` holds the time.
-                        let demo_clock = play::clock::DemoClock {
-                            freeze: self.shell.cvar_f32("cl_freezeDemo") != 0.0,
-                            timedemo_frames: match &*phase {
-                                Phase::Live(live)
-                                    if net.is_demo()
-                                        && live.clock.started()
-                                        && self.shell.cvar_f32("timedemo") != 0.0 =>
-                                {
-                                    Some(self.timedemo.step(local_ms as i32))
-                                }
-                                _ => None,
-                            },
-                        };
                         // A demo is read up to the clock (`CL_SetCGameTime`,
                         // CoDMP.exe 0x404d60), nothing while a map loads.
+                        let mut demo_clock = play::clock::DemoClock::default();
                         let events = if net.is_demo() {
-                            let until = match &*phase {
-                                Phase::Live(live) => Some(
-                                    live.clock
-                                        .time_at(
-                                            local_ms as i32,
-                                            self.shell.cvar_f32("cl_timeNudge") as i32,
-                                            demo_clock,
-                                        )
-                                        .unwrap_or(i32::MIN),
-                                ),
-                                _ => None,
+                            let knobs = play::demos::DemoKnobs {
+                                freeze: self.shell.cvar_f32("cl_freezeDemo") != 0.0,
+                                timedemo: self.shell.cvar_f32("timedemo") != 0.0,
+                                nudge: self.shell.cvar_f32("cl_timeNudge") as i32,
                             };
-                            net.pump_demo(now, until)
+                            match &mut *phase {
+                                Phase::Live(live) => {
+                                    let (events, how) = play::demos::read_frame(
+                                        net,
+                                        &mut live.clock,
+                                        &mut self.timedemo,
+                                        now,
+                                        local_ms as i32,
+                                        knobs,
+                                    );
+                                    demo_clock = how;
+                                    events
+                                }
+                                _ => net.pump_demo(now, None),
+                            }
                         } else {
                             net.pump()
                         };
