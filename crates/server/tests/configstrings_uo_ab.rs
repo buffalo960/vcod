@@ -82,6 +82,29 @@ fn server_with(
     sets: &[(&str, &str)],
     clock_ms: i32,
 ) -> vcod_server::server::Server {
+    server_at(fs, map, gametype, frames, sets, clock_ms, None, false)
+}
+
+/// [`server_with`] with the worldspawn carrying `message` when given and,
+/// with `replay`, the sets run again as console lines after the load, as
+/// retail's command line runs a `+set` placed after `+map`.
+#[allow(clippy::too_many_arguments)]
+fn server_at(
+    mut fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    gametype: &str,
+    frames: u32,
+    sets: &[(&str, &str)],
+    clock_ms: i32,
+    message: Option<&str>,
+    replay: bool,
+) -> vcod_server::server::Server {
+    if let Some(m) = message {
+        let path = fs.resolve_map(map).expect("map in the mounted paks");
+        let bsp = fs.read(&path).unwrap();
+        let bsp = vcod_common::testing::bsp_with_worldspawn_key(&bsp, "message", m);
+        fs.overlay(&path, bsp);
+    }
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
     let cfg = vcod_server::ServerConfig {
@@ -104,6 +127,12 @@ fn server_with(
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
+    if replay {
+        for (k, v) in sets {
+            sv.push_console(&format!("set {k} \"{v}\""));
+        }
+        sv.drain_console(start);
+    }
     for i in 1..=frames {
         sv.tick(start + std::time::Duration::from_millis(50 * u64::from(i)));
     }
@@ -175,6 +204,54 @@ fn the_configstring_tables_match_uo_s_gametypes() {
             &format!("{map} {gametype}"),
         );
     }
+}
+
+/// The `+set`s and worldspawn key `mp_cassino-dm-motd-uo.txt` was captured
+/// under (its header has the recipe; configstrings_ab.rs has the 1.1 pair).
+const MOTD_SETS: &[(&str, &str)] = &[
+    ("g_motd", "Welcome to vcod"),
+    ("scr_motd", "scr motd text"),
+    ("sv_hostname", "vcod motd host"),
+    ("scr_allow_vote", "0"),
+    ("sv_privateClients", "2"),
+];
+const MOTD_MESSAGE: &str = "vcod worldspawn message";
+
+/// Every cvar-backed slot a `+set` reaches, non-empty, and 4 from a
+/// worldspawn `message`: 0's hostname and private slots, 15 `g_motd`
+/// (UO's motd slot, cod11-map-cycle.md 4.5) and the mirror's `ui_motd`,
+/// which carries `scr_motd` (225/353). 1, which lists the capture's extra
+/// pak, stays out.
+#[test]
+fn the_configstring_table_matches_uo_with_a_motd_and_a_message() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let mut retail = retail_txt("mp_cassino", "dm-motd");
+    for (i, v) in [(4, MOTD_MESSAGE), (15, "Welcome to vcod")] {
+        assert_eq!(
+            retail.get(&i).map(String::as_str),
+            Some(v),
+            "fixture cs[{i}]"
+        );
+    }
+    let sv = server_at(
+        fs,
+        "mp_cassino",
+        "dm",
+        1,
+        MOTD_SETS,
+        0,
+        Some(MOTD_MESSAGE),
+        true,
+    );
+    let mut ours: BTreeMap<usize, String> = (0..2048)
+        .filter(|i| !sv.configstring(*i).is_empty())
+        .map(|i| (i, sv.configstring(i).to_string()))
+        .collect();
+    retail.remove(&1);
+    ours.remove(&1);
+    check(retail, ours, "mp_cassino dm motd");
 }
 
 /// A pure server's systeminfo, all four pak lists in it and 1318 and 1351

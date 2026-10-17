@@ -67,14 +67,41 @@ fn ours(
     fs: vcod_common::pk3::Pk3Fs,
     frames: u32,
 ) -> BTreeMap<usize, String> {
+    ours_with(map, gametype, fs, frames, &[], None, &[])
+}
+
+/// [`ours`] with `+set`s ahead of the load and, when `message` is given,
+/// the map's worldspawn carrying that `message` key. `console` lines run
+/// after the load, ahead of the frames.
+fn ours_with(
+    map: &str,
+    gametype: &str,
+    fs: vcod_common::pk3::Pk3Fs,
+    frames: u32,
+    sets: &[(&str, &str)],
+    message: Option<&str>,
+    console: &[String],
+) -> BTreeMap<usize, String> {
+    let mut fs = fs;
+    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
+    let mut bsp_bytes = fs.read(&bsp_path).expect("read the bsp");
+    if let Some(m) = message {
+        bsp_bytes = vcod_common::testing::bsp_with_worldspawn_key(&bsp_bytes, "message", m);
+        fs.overlay(&bsp_path, bsp_bytes.clone());
+    }
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
     let mut sv = vcod_server::server::Server::new(cfg(map, gametype), start);
-    let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
-    let bsp_bytes = fs.read(&bsp_path).expect("read the bsp");
+    for (k, v) in sets {
+        sv.set_cvar(k, v);
+    }
     let bsp = vcod_common::bsp::parse(&bsp_bytes).expect("parse the bsp");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
+    for line in console {
+        sv.push_console(line);
+    }
+    sv.drain_console(start);
     for i in 1..=frames {
         sv.tick(start + std::time::Duration::from_millis(50 * u64::from(i)));
     }
@@ -94,7 +121,17 @@ fn check_after(map: &str, gametype: &str, frames: u32) {
     };
     let retail = retail(map, gametype);
     let ours = ours(map, gametype, fs, frames);
-    let skip = |i: usize| STRUCTURAL_SKIP.contains(&i) || GAPS.iter().any(|(g, _)| *g == i);
+    diff(map, gametype, &retail, &ours, STRUCTURAL_SKIP);
+}
+
+fn diff(
+    map: &str,
+    gametype: &str,
+    retail: &BTreeMap<usize, String>,
+    ours: &BTreeMap<usize, String>,
+    structural: &[usize],
+) {
+    let skip = |i: usize| structural.contains(&i) || GAPS.iter().any(|(g, _)| *g == i);
 
     let mut diffs = Vec::new();
     let mut slots: Vec<usize> = retail.keys().chain(ours.keys()).copied().collect();
@@ -164,4 +201,54 @@ fn the_configstring_table_matches_retail_on_mp_chateau_re() {
 #[test]
 fn the_configstring_table_matches_retail_on_mp_brecourt_bel() {
     check_after("mp_brecourt", "bel", 2);
+}
+
+/// The `+set`s and worldspawn key `mp_carentan-dm-motd.txt` was captured
+/// under (its header has the recipe). The 1.5 and UO gates repeat them.
+const MOTD_SETS: &[(&str, &str)] = &[
+    ("g_motd", "Welcome to vcod"),
+    ("scr_motd", "scr motd text"),
+    ("sv_hostname", "vcod motd host"),
+    ("scr_allow_vote", "0"),
+    ("sv_privateClients", "2"),
+];
+const MOTD_MESSAGE: &str = "vcod worldspawn message";
+
+/// Every cvar-backed slot a `+set` reaches, non-empty: 0's hostname and
+/// private slots, 4 the worldspawn `message`, 14 `g_motd`, and the mirror's
+/// `scr_allow_vote` and `scr_motd` values (cod11-map-cycle.md 4.5,
+/// cod11-hud-protocol.md). Only 1, the pak lists, stays out.
+#[test]
+fn the_configstring_table_matches_retail_with_a_motd_and_a_message() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let retail = retail("mp_carentan", "dm-motd");
+    for (i, v) in [(4, MOTD_MESSAGE), (14, "Welcome to vcod")] {
+        assert_eq!(
+            retail.get(&i).map(String::as_str),
+            Some(v),
+            "fixture cs[{i}]"
+        );
+    }
+    // Retail's command line ran the `+set`s twice: before the load
+    // (`Com_StartupVariable`, which is how 14 holds the motd) and again
+    // after `+map`, where `run_server.sh` puts them, which is how the
+    // mirror's `scr_allow_vote` reads 0 over `dm.gsc`'s
+    // `setCvar("scr_allow_vote", level.allowvote)`. One frame rebuilds the
+    // mirror.
+    let replay: Vec<String> = MOTD_SETS
+        .iter()
+        .map(|(k, v)| format!("set {k} \"{v}\""))
+        .collect();
+    let ours = ours_with(
+        "mp_carentan",
+        "dm",
+        fs,
+        1,
+        MOTD_SETS,
+        Some(MOTD_MESSAGE),
+        &replay,
+    );
+    diff("mp_carentan", "dm-motd", &retail, &ours, &[1]);
 }
