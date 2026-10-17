@@ -133,7 +133,8 @@ check.
   through `Server::with_seed`. Tests that depend on spawn picks rely on that.
   Under `new` every level's script draws start from `RNG_SEED` again; under
   `with_seed` each load steps a fresh seed, as retail's `G_InitGame` does
-  (`cod11-map-cycle.md` 4.8).
+  (`cod11-map-cycle.md` 4.8). `gametypes_ab` runs `with_seed` and replays
+  retail's spawn picks through `Server::pin_spawns`.
 - Comments: one line where the code doesn't explain itself (an invariant, a
   unit or sign convention, a workaround and what it works around). Facts that
   live in a doc stay there; the comment is the pointer.
@@ -359,7 +360,7 @@ header of the fixture it produced.
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
   `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
-  `probe_hqtime` and `probe_bastime` have run there. On UO's mp_carentan the
+  `probe_hqtime`, `probe_bastime` and `probe_domtime` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates

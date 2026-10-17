@@ -9,7 +9,13 @@
 //! map ends"), and the clock ends: `ctf`'s round clock and time limit with
 //! a defender's flag return and a rotation to mp_foy (`probe_ctftime`),
 //! `tdm`'s killcam and time limit (`probe_tdmend`), `hq`'s time limit
-//! (`probe_hqtime`) and `bas`'s round clock (`probe_bastime`).
+//! (`probe_hqtime`), `bas`'s round clock (`probe_bastime`) and `dom`'s
+//! round clock and time limit (`probe_domtime`).
+//!
+//! Retail seeds the script's draws from the wall clock at every level
+//! (cod11-map-cycle.md 4.8), so ours runs a seed stepped per level too and
+//! replays retail's spawn picks off the captures ([`retail_spawns`]); no
+//! view may depend on ours' own draws.
 //!
 //! Each run is stock `re.gsc` or `bel.gsc` under a gsc probe
 //! (`client-probes/probe_re.gsc`, `probe_bel.gsc`) that places the players,
@@ -249,6 +255,7 @@ fn run_ours(
     teams: [&'static str; 2],
     secs: u64,
     clock: &RetailClock,
+    roles: [&str; 2],
 ) -> Option<([Vec<String>; 2], Vec<String>)> {
     let fs = if setup.uo {
         vcod_common::testing::uo_fs()?
@@ -259,7 +266,16 @@ fn run_ours(
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = Server::new(common::cfg(map, probe), now);
+    // A seed stepped at every load, as retail's clock-seeded `G_InitGame`
+    // draws are (map-cycle doc 4.8); the spawn picks they feed are retail's
+    // own, replayed.
+    let mut sv = Server::with_seed(common::cfg(map, probe), now, SEED);
+    let gametype = probe.strip_prefix("probe_").unwrap_or(probe);
+    sv.pin_spawns(
+        roles
+            .map(|r| retail_spawns(setup, gametype, r, &fs))
+            .to_vec(),
+    );
     if setup.uo {
         sv.set_protocol(&PROTOCOL_V22);
     }
@@ -341,6 +357,102 @@ fn run_ours(
     );
     let mut it = probes.into_iter().map(|p| p.cap.lines);
     Some(([it.next().unwrap(), it.next().unwrap()], log))
+}
+
+/// The gate's server seed. Nothing compared may depend on it: every draw a
+/// view reads is either replayed from retail ([`retail_spawns`]) or dropped
+/// from the view (hq's radio origin).
+const SEED: u64 = 0x5eed_d0c1;
+
+/// A spawn point's `(origin, angles)`, `None` for ours' own pick.
+type SpawnPin = Option<([f32; 3], [f32; 3])>;
+
+/// Where retail spawned a role's player into play, each time, in order: the
+/// map's spawn point under the first playing snapshot (`pm_type` 0, or 1
+/// linked) of each life, after a non-playing snapshot or a gamestate or
+/// restart, with that point's angles; a killcam's run is not a life. `None`
+/// where no point is under it: the probe moved the body before any snapshot
+/// showed the pick, so retail never sent it and ours' own stands. Retail's
+/// script draws come from a wall-clock seed (map-cycle doc 4.8), so ours
+/// replays the picks rather than its own draws.
+fn retail_spawns(
+    setup: &Setup,
+    gametype: &str,
+    role: &str,
+    fs: &vcod_common::pk3::Pk3Fs,
+) -> Vec<SpawnPin> {
+    let lines = read_lines(&format!(
+        "{FIXTURES}/{}-{gametype}-{role}{}.txt",
+        setup.map,
+        setup.tag()
+    ));
+    // Each life: its first playing trace's spawn point, and whether any of
+    // its traces is a killcam, whose playerstate is the killer's archived one.
+    let mut lives: Vec<(SpawnPin, bool)> = Vec::new();
+    let mut points = Vec::new();
+    let mut playing = false;
+    for line in &lines {
+        if line.starts_with("!gamestate") {
+            points = spawn_points(fs, field(line, "mapname").expect("a mapname"));
+        }
+        if line.starts_with("!gamestate") || matches!(cmd_text(line), Some("n" | "B")) {
+            playing = false;
+            continue;
+        }
+        if !line.starts_with("!trace ") {
+            continue;
+        }
+        let now = matches!(field(line, "pm_type"), Some("0" | "1"));
+        if now && !playing {
+            let at: Vec<f32> = field(line, "origin")
+                .expect("a trace origin")
+                .split(',')
+                .map(|v| v.parse().expect("a coordinate"))
+                .collect();
+            // A spawn point sits over the floor the body falls to, and two
+            // gametypes' points can share a spot at different heights: the
+            // lowest one over the body is its own.
+            let pick = points
+                .iter()
+                .filter(|(p, _)| {
+                    (p[0] - at[0]).hypot(p[1] - at[1]) < 2.0
+                        && (-2.0..128.0).contains(&(p[2] - at[2]))
+                })
+                .min_by(|a, b| a.0[2].total_cmp(&b.0[2]));
+            lives.push((pick.copied(), false));
+        }
+        if now && field(line, "hud").is_some_and(|h| h.contains("MPSCRIPT_KILLCAM")) {
+            lives.last_mut().expect("a life").1 = true;
+        }
+        playing = now;
+    }
+    lives
+        .into_iter()
+        .filter(|(.., killcam)| !killcam)
+        .map(|(pick, ..)| pick)
+        .collect()
+}
+
+/// A map's `mp_*spawn*` entities as `(origin, angles)`.
+fn spawn_points(fs: &vcod_common::pk3::Pk3Fs, map: &str) -> Vec<([f32; 3], [f32; 3])> {
+    let path = fs.resolve_map(map).expect("map in the mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&path).unwrap()).unwrap();
+    vcod_common::bsp::entity_blocks(&bsp.entities)
+        .iter()
+        .filter(|e| {
+            e.get("classname")
+                .is_some_and(|c| c.starts_with("mp_") && c.contains("spawn"))
+        })
+        .filter_map(|e| {
+            let origin = vcod_common::bsp::parse_vec3(e.get("origin")?)?;
+            let angles = match (e.get("angles"), e.get("angle")) {
+                (Some(a), _) => vcod_common::bsp::parse_vec3(a)?,
+                (None, Some(y)) => [0.0, y.parse().ok()?, 0.0],
+                (None, None) => [0.0; 3],
+            };
+            Some((origin, angles))
+        })
+        .collect()
 }
 
 /// Retail's host time, read off a role's capture, for ours to replay in its
@@ -812,21 +924,24 @@ fn compare(
 #[test]
 fn retrieval_matches_retail() {
     let clock = retail_clock(&V1, "re", "attacker");
-    let Some((ours, log)) = run_ours(&V1, "probe_re", ["allies", "axis"], 130, &clock) else {
+    let roles = ["attacker", "defender"];
+    let Some((ours, log)) = run_ours(&V1, "probe_re", ["allies", "axis"], 130, &clock, roles)
+    else {
         eprintln!("COD_DIR unset: skipping");
         return;
     };
-    compare(&V1, "re", ["attacker", "defender"], ours, log, 125_000);
+    compare(&V1, "re", roles, ours, log, 125_000);
 }
 
 #[test]
 fn behind_enemy_lines_matches_retail() {
     let clock = retail_clock(&V1, "bel", "first");
-    let Some((ours, log)) = run_ours(&V1, "probe_bel", ["axis", "axis"], 130, &clock) else {
+    let roles = ["first", "second"];
+    let Some((ours, log)) = run_ours(&V1, "probe_bel", ["axis", "axis"], 130, &clock, roles) else {
         eprintln!("COD_DIR unset: skipping");
         return;
     };
-    compare(&V1, "bel", ["first", "second"], ours, log, 125_000);
+    compare(&V1, "bel", roles, ours, log, 125_000);
 }
 
 /// One UO gametype under its probe, allies first, then axis, compared up to
@@ -834,11 +949,12 @@ fn behind_enemy_lines_matches_retail() {
 fn uo_gametype(setup: &Setup, gametype: &str, secs: u64, end_ms: i64) {
     let probe = format!("probe_{gametype}");
     let clock = retail_clock(setup, gametype, "attacker");
-    let Some((ours, log)) = run_ours(setup, &probe, ["allies", "axis"], secs, &clock) else {
+    let roles = ["attacker", "defender"];
+    let Some((ours, log)) = run_ours(setup, &probe, ["allies", "axis"], secs, &clock, roles) else {
         eprintln!("COD_DIR not at a UO install: skipping");
         return;
     };
-    compare(setup, gametype, ["attacker", "defender"], ours, log, end_ms);
+    compare(setup, gametype, roles, ours, log, end_ms);
 }
 
 #[test]
@@ -905,4 +1021,9 @@ fn uo_base_assault_round_clock_and_round_limit_match_retail() {
 #[test]
 fn uo_headquarters_time_limit_matches_retail() {
     uo_gametype(&UO, "hqtime", 50, 45_000);
+}
+
+#[test]
+fn uo_domination_round_clock_and_time_limit_match_retail() {
+    uo_gametype(&UO, "domtime", 100, 95_000);
 }

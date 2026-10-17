@@ -90,6 +90,9 @@ pub struct Carry {
     /// every level, restarts included (map-cycle doc 4.8); `None` takes
     /// [`crate::game::host::RNG_SEED`].
     pub seed: Option<u64>,
+    /// A test's replay of another server's spawn picks
+    /// ([`crate::game::host::SpawnPins`]), handed to every level.
+    pub spawn_pins: Option<crate::game::host::SpawnPins>,
 }
 
 /// The two closures a level loaded, compiled, before any of it ran.
@@ -363,6 +366,7 @@ impl ScriptRuntime {
         if let Some(seed) = carry.seed {
             host.rng = seed | 1;
         }
+        host.spawn_pins = carry.spawn_pins;
         if let Some(items) = carry.items {
             host.items = items;
         }
@@ -2278,6 +2282,7 @@ impl ScriptRuntime {
             map: self.map.clone(),
             scripts: self.scripts.clone(),
             seed: None,
+            spawn_pins: None,
         }
     }
 
