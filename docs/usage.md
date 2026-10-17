@@ -179,7 +179,7 @@ held; `m_forward`, and `m_side` under `+strafe`), `cg_fov`
 (25000; retail's first-run 5000 starves snapshots), `snaps`,
 `scr_conspeed`, `mss_volume`, `r_mode` / `r_fullscreen` (applied at start
 and by `vid_restart`, which also reloads the menus closed), `com_maxfps`
-(85, retail's frame cap, `timedemo` included; 0 lifts it),
+(retail's frame cap, `timedemo` included: `1000 / com_maxfps` whole ms a frame; vcod defaults to 0, no cap past vsync, where retail defaults to 85, about 90 fps),
 `password` and the browser's `ui_netSource`,
 `ui_joinGametype` and `ui_browserShow*`. `exec <file>` runs a config from the paks or `main/`,
 and `ui_load` reloads the menus off the list `ui_menuFiles` names.

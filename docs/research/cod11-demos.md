@@ -175,7 +175,9 @@ handle `0x15f706c` is read only by `CL_SetCGameTime` and
 `0x43c580`) make the same test and register `com_maxfps` `"85"`, flag 1
 (VERIFIED, the default strings at `0x5a1a6c` and `0x59821c`). So a
 retail `timedemo` runs at most about 90 frames a second by default, and
-a `com_maxfps` over 1000 waits not at all.
+a `com_maxfps` over 1000 waits not at all. vcod registers it `"0"`
+instead of `"85"` so a high-refresh screen under vsync is not held near
+90 fps; `com_maxfps 85` restores retail's pacing.
 
 `CL_AdjustTimeDelta` (`0x404bf0`) returns at once while a demo plays
 (VERIFIED, its first compare on `0x15ef004`), so the delta set by the
@@ -234,8 +236,8 @@ to the first gamestate, nothing while the map loads, then
 message a frame) until a snapshot seeds the clock, and in that frame and
 every later one while the newest snapshot is no later than the frame's
 time (`ServerClock::time_at`, one snapshot past the drawn time),
-breaking at a gamestate. Its frames are paced by `com_maxfps` ("85",
-archived) as `Com_Frame`'s are. The clock runs `ServerClock::update_demo`,
+breaking at a gamestate. Its frames are paced by `com_maxfps` (archived;
+"0" in vcod, "85" on retail) as `Com_Frame`'s are. The clock runs `ServerClock::update_demo`,
 which never adjusts, holds under `cl_freezeDemo` and steps 50 ms a frame
 under `timedemo` (`play::demos::TimeDemo` keeps the count for the whole
 demo). It answers no script menu, sends nothing, and on the demo's end
