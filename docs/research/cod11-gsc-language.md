@@ -853,7 +853,11 @@ vcod: `engine_notifies` holds what retail notifies on the spot and
 `trigger_fires` the queue; `ScriptRuntime::run_threads` raises the first at
 the top of the script frame and `ScriptRuntime::trigger_rounds` hands out
 the second. The full-queue arm is not modelled. Gate:
-`crates/server/tests/touchorder_ab.rs`.
+`crates/server/tests/touchorder_ab.rs`. A notify raised between frames, where the
+entity may be gone by the frame (`ClientDisconnect`'s `menuresponse`),
+goes through `Vm::notify_for_frame` instead, which wakes the waiters at
+once and parks them for the next frame's pass
+(`cod11-server-handshake.md`, "When the game hears a drop").
 
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe
