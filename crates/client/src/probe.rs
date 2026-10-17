@@ -7033,8 +7033,32 @@ impl SlopeCapture {
                 format!(" veh={}", fields.join(","))
             })
             .unwrap_or_default();
+        // Every bullet-impact temp entity on the snapshot, `num:x,y,z`
+        // `;`-separated: where the probe's own rounds struck. One impact
+        // rides several snapshots.
+        let impacts: Vec<String> = snap
+            .entities
+            .iter()
+            .filter(|(_, e)| {
+                p.event_of(e.field_i32(p, "eType"))
+                    .map(nearest_v1)
+                    .is_some_and(|ev| {
+                        ev == net::event_ids::EV_BULLET_HIT_SMALL
+                            || ev == net::event_ids::EV_BULLET_HIT_LARGE
+                    })
+            })
+            .map(|(num, e)| {
+                let at = vcod_common::net::trajectory::Trajectory::read(e, p, "pos").base;
+                format!("{num}:{},{},{}", at.x, at.y, at.z)
+            })
+            .collect();
+        let imp = if impacts.is_empty() {
+            String::new()
+        } else {
+            format!(" imp={}", impacts.join(";"))
+        };
         let line = format!(
-            "{line}{vang}{veh} wire={} ammo={} clip={}",
+            "{line}{vang}{veh}{imp} wire={} ammo={} clip={}",
             wire.join(","),
             slots(&snap.ps.arrays.ammo),
             slots(&snap.ps.arrays.ammoclip)
@@ -7155,6 +7179,8 @@ fn write_slope_fixture(
         "# every non-zero netfield as decoded (pm_flags in 1.1's layout), ammo and clip\n",
     );
     out.push_str("# the non-zero slots. The cmds ahead of the first !snap went out before it.\n");
+    out.push_str("# imp, where present, is every bullet-impact temp entity the snapshot carried\n");
+    out.push_str("# as entnum:x,y,z, ;-separated; one impact rides several snapshots.\n");
     out.push_str(&format!("# cmd_ms {cmd_ms}\n"));
     // The weapon list a replay loads its defs by, where it is not 1.1's.
     if protocol.version == 22 {

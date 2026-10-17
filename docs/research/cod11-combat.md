@@ -6110,7 +6110,9 @@ condition. The output starts at zero and each term adds.
   spring, so on a server it reads zero for the whole of a life and the
   helper adds nothing; the kick a retail client sees after its own shot is
   the cgame's copy of the same state and never reaches the server's aim
-  (15.7).
+  (15.7). VERIFIED, a capture: a 1.1d sighted burst with the kick ranges
+  pinned strikes one spot. 1.5b's and UO's servers do kick it
+  (`cod15-movement.md` 6, "The server's gun kick").
 - Last, `out[0] = AngleSubtract(out[0], frame+0x44)` and `out[1] =
   AngleSubtract(out[1], frame+0x48)`, the sway angles of 15.3.
 
@@ -6236,7 +6238,8 @@ length before the 66 ms chop, off the view the previous cmd left, and keeps
 the state and the damage kick (`end_frame` now computes section 6's step 6
 angles as well as the bytes); `Attack::Shot`, `Swing` and `Throw` carry the
 aim, and `bullet_fire`, `melee_fire` and `throw_velocity` fire along it.
-Left out on purpose: the gun-kick spring (zero on a server), `eFlags 0xc000`
+Left out on purpose: the gun-kick spring on 1.1 (zero on its server; 1.5
+and UO kick it, `cod15-movement.md` 6), `eFlags 0xc000`
 (no mounted MG), and the shellshock scale (client-side).
 
 ### 15.7 The fire recoil: the view kick and the gun kick
@@ -6421,8 +6424,8 @@ the fire draw and the RNG, and steps the spring
 `OnlineView::frame`; `PlayInput::cmd_angles` adds the kick to the cmd and
 the drawn view, truncating the kick's units on their own (at most one unit
 off retail's single truncation). The gun kick turns the viewmodel about the
-eye and reaches the scope through `AimInput::gun_kick`; the server passes
-zero. The drawn view takes its roll from the cmd angles plus
+eye and reaches the scope through `AimInput::gun_kick`; a 1.1 server
+passes zero, a 1.5 or UO one its own spring (`cod15-movement.md` 6). The drawn view takes its roll from the cmd angles plus
 `delta_angles` (`own_view` in `crates/client/src/main.rs`), as the
 predicted `viewangles[2]`; a mounted gun's view keeps roll 0.
 `OnlineView::track_spawn` clears the kick on a new `(clientNum, stats[5])`

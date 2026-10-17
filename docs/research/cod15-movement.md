@@ -429,7 +429,7 @@ probes' 16 ms holds.
   `G_PlayerEvent` (0x3b2e4) on fire events, into `gclient` past the
   playerstate: a server-side aim offset with the server's RNG, nothing on
   the wire, nothing to predict. The cgame's own view kick is 1.1's.
-  The call VERIFIED. The effect INFERRED.
+  VERIFIED, by a capture; the section below has the reads.
 - Bob: the cvars are `cg_bobAmplitudeStanding` 0.007, `cg_bobAmplitudeDucked`
   0.0075, `cg_bobAmplitudeProne` 0.03 and `cg_bobMax` 8; `bg_bob*` are the
   C variables behind them. VERIFIED. 1.1's cgame already registers the
@@ -449,6 +449,58 @@ probes' 16 ms holds.
   plus 8 (cgame 1.1 0x30032de5). VERIFIED.
 - `PM_Weapon`'s other states, the ADS flag, the walking flag and the spread
   are 1.1's (side-by-side decompile, INFERRED).
+
+### The server's gun kick
+
+1.1d's game module never kicks the gun-kick spring of `cod11-combat.md`
+15.2, so a 1.1 server's aim block adds nothing for it. 1.5b's does, and
+so does United Offensive's (both VERIFIED by the captures below).
+
+- `BG_PlayerStateToEntityState` (1.5b 0x1c449, which `ClientThink_real`,
+  0x39116, calls after `Pmove` and `ClientEndFrame`, 0x3ab2a, calls again)
+  hands every event from `entityEventSequence` to `eventSequence` to
+  `G_PlayerEvent(entnum, event)` before it copies it to the entity.
+  VERIFIED. `ClientThink_real` runs `ClientEvents`, which fires the shot,
+  after that copy. VERIFIED, the call order. So a shot's kick reaches the
+  aim of the next cmd, never its own. INFERRED.
+- `G_PlayerEvent` (1.5b 0x3b2e4) calls `BG_WeaponFireRecoil(ps,
+  &client+0x22c0, local)` for events 159, 160, 161 and 168
+  (`EV_FIRE_WEAPON`, `B`, `LASTSHOT`, `MG42`; 1.5's ids are 1.1's) and
+  nothing else. UO's (0x435cc) does the same for its 163..166 and 173,
+  which adds `EV_FIRE_WEAPONC`, with the spring at `client+0x4714`.
+  VERIFIED.
+- `BG_WeaponFireRecoil` (1.5b 0x3246c, UO 0x396bc) draws four `rand()`s,
+  each scaled by 1/2^31 (`.rodata` 0x77758 is 2147483648.0, UO 0x9d990):
+  the view kick's pitch and yaw, off the `ads` pair when `fWeaponPosFrac`
+  is exactly 1.0 (0x77754) and the `hip` pair otherwise, written into the
+  caller's local and dropped; then the gun kick's pitch and yaw, off the
+  `ads` pair when the fraction is above 0 (0x77760), added to the spring's
+  two speeds. `min + (max - min) * r` each. The 1.5 file offsets are 1.1's
+  plus 0xc (gun kick 0x35c..0x368 and 0x39c..0x3a8, view kick 0x37c..0x388
+  and 0x3bc..0x3c8); UO's sit at 0x3d4..0x448. VERIFIED.
+- The spring itself (1.5b 0x31940 stepping 0x3171a per axis) is 1.1's: 5 ms
+  substeps (0x77700) of `msec * 0.001`, the four keys blended hip to sight
+  by the fraction, settled under 0.25 degrees (0x776e8) and 1 a second
+  (0x776f0), and run only for an `aimDownSight` weapon. Its angles reach the
+  shot only down a sight with the fraction non-zero, through the aim
+  block's composition. VERIFIED, the reads and constants; INFERRED, the
+  order.
+
+Measured, VERIFIED: `gunkick_ab.rs`'s three captures
+(`mp_carentan-dm-slope-8ms-gunkick-{1.1,1.5,uo}.txt`) hold a thompson whose
+file has no spread and its gun-kick ranges pinned (pitch -60, yaw 40), held
+from the hip, then down the sight, at a wall 1091 units out. From the hip
+every round of all three strikes one spot. Down the sight 1.1d's thirteen
+rounds stay within two units of it; 1.5b's climb from z 18 to 81 and UO's
+from 15 to 81, each a few units across, the spring at its 4-degree
+`gunMaxPitch`. Ours replays the cmds on retail's level times and lands every
+round within a unit of retail's on all three.
+
+**As implemented.** `ClientSim::fire_recoil` (`crates/server/src/spectate.rs`)
+draws the four off the server's RNG for each fire event a cmd's pmove
+raised, under `MoveRules::v15()` only, and `ClientSim::update_aim` steps
+the spring (`pmove::aim::GunKick`) before each cmd's aim block and hands it
+in. A spawn clears it with the rest of the aim state.
 
 ## 7. Stored floats
 
