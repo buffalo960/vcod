@@ -609,6 +609,19 @@ struct Args {
     /// replays it under UO's rules.
     #[arg(long, allow_negative_numbers = true)]
     probe_uofoot: Option<f32>,
+    /// With --save-slope, on a United Offensive server: a run at the wall
+    /// under a window too low for a standing body, a jump and crouch held
+    /// in the air, from a placement of `client-probes/probe_crouchjump`
+    /// (`+set probe_teleport 1 +set probe_spot cassino|streets|low`). The
+    /// value is the world yaw to face: -128 for cassino, 180 for streets,
+    /// -90 for low. Tag the fixture `crouchjump-<spot>`; moves_ab.rs
+    /// replays it under UO's rules (bot-navigation.md, "Walled-in spawns").
+    #[arg(long, allow_negative_numbers = true)]
+    probe_crouchjump: Option<f32>,
+    /// With --probe-crouchjump: the same run and jump with no crouch, the
+    /// control (tag `crouchjump-<spot>-stand`).
+    #[arg(long, requires = "probe_crouchjump")]
+    probe_crouchjump_stand: bool,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -1110,6 +1123,8 @@ fn main() -> Result<()> {
                 sprint: args.probe_sprint,
                 autofire: args.probe_autofire,
                 uofoot: args.probe_uofoot,
+                crouchjump: args.probe_crouchjump,
+                crouchjump_stand: args.probe_crouchjump_stand,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,

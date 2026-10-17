@@ -120,7 +120,10 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.knockback_flags = pm_flags & (super::PMF_TIME_KNOCKBACK | super::PMF_TIME_DAMAGE);
     ps.jump_penalty = ps.rules.v15() && pm_flags & PMF_JUMP_PENALTY != 0;
     ps.weapon_disabled = pm_flags & crate::net::flags::PMF_WEAPON_DISABLED != 0;
-    ps.knockback_ms = if ps.knockback_flags != 0 || ps.jump_penalty {
+    // 1.5 takes the penalty's flag off in the air and leaves its timer
+    // running, and a running timer still keeps the slide's clips off the
+    // velocity (bot-navigation.md, "Walled-in spawns").
+    ps.knockback_ms = if ps.knockback_flags != 0 || ps.rules.v15() {
         int("pm_time") as f32
     } else {
         0.0

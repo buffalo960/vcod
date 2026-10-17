@@ -3953,6 +3953,37 @@ mod tests {
         assert_eq!(ups, [0, 127]);
     }
 
+    /// On a crouched jump edge the cmd after the jump holds crouch, with
+    /// `upmove` -127, through the air, and lets it go on the ground.
+    #[test]
+    fn a_bot_on_a_crouched_jump_edge_crouches_in_the_air() {
+        use vcod_common::net::msg::WBUTTON_CROUCH;
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.stop = true;
+        v.waypoint = Some([2.0, 0.0, 64.0]);
+        bot.think(&v);
+        v.stop = false;
+        v.jump = true;
+        v.crouch_jump = true;
+        v.waypoint = Some([30.0, 0.0, 84.0]);
+        bot.think(&v);
+        let jump = bot.think(&v);
+        assert_eq!((jump.up, jump.wbuttons & WBUTTON_CROUCH), (127, 0));
+        v.on_ground = false;
+        for _ in 0..3 {
+            let air = bot.think(&v);
+            assert_eq!(
+                (air.up, air.wbuttons & WBUTTON_CROUCH),
+                (-127, WBUTTON_CROUCH)
+            );
+        }
+        v.on_ground = true;
+        v.jump = false;
+        v.crouch_jump = false;
+        assert_eq!(bot.think(&v).wbuttons & WBUTTON_CROUCH, 0, "landed");
+    }
+
     /// A jump edge whose top is more than a jump below, the body still
     /// slowing from the last waypoint's pace: pinned only after two cmds
     /// with the key held at the new waypoint, as the graph's walk stalled.

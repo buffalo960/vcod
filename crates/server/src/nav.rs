@@ -6658,6 +6658,30 @@ mod tests {
 
     /// Node 4 of [`tiny`] is a drop's foot with no way on: cut off from the
     /// component the other four make.
+    /// mp_cassino's axis room: from the wall under its south-west window a
+    /// forward walk does not get onto the sill, a crouched jump does, as a
+    /// retail UO client's does at a bot's 50 ms cmds
+    /// (`moves_ab.rs` `CROUCHJUMP_UO`).
+    #[test]
+    fn a_crouched_jump_gets_onto_cassinos_axis_sill_where_a_run_does_not() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let entry = fs.resolve_map("mp_cassino").unwrap();
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let from = Vec3::new(5347.0, -1496.0, 128.125);
+        let sill = glam::Vec2::new(5305.0, -1548.0);
+        with_rules(MoveRules::Uo, || {
+            let walk = |gait| walk_as(&world.collision, from, sill, Some(160.125), gait);
+            assert!(matches!(
+                walk(Gait::Forward),
+                Walked::Blocked | Walked::Fell
+            ));
+            assert!(matches!(walk(Gait::CrouchJump), Walked::Arrived(_, true)));
+        });
+    }
+
     #[test]
     fn a_node_that_reaches_no_node_of_the_largest_component_is_cut_off() {
         assert_eq!(tiny().cut_off(), vec![4]);
