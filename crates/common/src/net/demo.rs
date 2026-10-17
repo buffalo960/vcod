@@ -83,18 +83,27 @@ pub fn gamestate_message(
 /// trailer (0x40e430).
 pub struct DemoWriter<W: Write> {
     out: W,
+    written: u64,
 }
 
 impl<W: Write> DemoWriter<W> {
     pub fn new(out: W) -> Self {
-        DemoWriter { out }
+        DemoWriter { out, written: 0 }
     }
 
     /// One record: the message's sequence, then its length and bytes.
     pub fn write_message(&mut self, sequence: u32, msg: &[u8]) -> io::Result<()> {
         self.out.write_all(&sequence.to_le_bytes())?;
         self.out.write_all(&(msg.len() as u32).to_le_bytes())?;
-        self.out.write_all(msg)
+        self.out.write_all(msg)?;
+        self.written += 8 + msg.len() as u64;
+        Ok(())
+    }
+
+    /// Bytes written so far, buffered or not: the `ftell` the
+    /// `RECORDING` line reads (CoDMP.exe 0x416b10).
+    pub fn written(&self) -> u64 {
+        self.written
     }
 
     /// The two -1 longs that end a demo; hands the sink back.
