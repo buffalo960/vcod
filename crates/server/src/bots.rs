@@ -259,6 +259,10 @@ pub struct BotView {
     /// A held rocket launcher (`weaponClass rocketlauncher`) with a round
     /// left, clip or reserve: what breaches a `bas` base.
     pub rocket: Option<u8>,
+    /// A held bullet weapon other than the pistol with a round left, clip
+    /// or reserve: what the bot fights with once its primary is a spent
+    /// launcher.
+    pub gun: Option<u8>,
     /// Ms from a dry reload's start to the held weapon's next shot; 0 when
     /// unknown.
     pub reload_ms: i32,
@@ -477,6 +481,8 @@ pub struct BasBaseView {
     pub breached: bool,
     /// A charge ticks on it.
     pub planted: bool,
+    /// While planted, whole seconds before the charge blows.
+    pub blows_in: Option<f32>,
     /// Where the plant and the defuse are done: the objective model (the
     /// 150-unit reach) and the middle of the trigger the view has to rest
     /// on.
@@ -702,6 +708,16 @@ pub struct Bot {
     /// A weapon switch under way: the byte every cmd carries until
     /// `ps.weapon` reads it (AGENTS.md, "Every cmd carries the weapon").
     switch_to: Option<u8>,
+    /// `bas` launchers tapped for with nothing taken, and the ticks each
+    /// stays passed over ([`SHUN_TICKS`]); the last tapped and its taps.
+    shunned: Vec<([f32; 3], u32)>,
+    tapped: Option<([f32; 3], u32)>,
+    /// The `bas` launcher walked to, the nearest the body has come to it
+    /// and the ticks since it last came nearer.
+    fetch: Option<([f32; 3], f32, u32)>,
+    /// Lives lost: a `bas` attacker goes for the next of the other side's
+    /// bases after each, off the defender that killed it.
+    deaths: u32,
     /// The weapon a pistol draw put away, and the ticks since the bot last
     /// saw an enemy with the pistol out.
     primary: u8,
@@ -736,6 +752,8 @@ pub struct Bot {
     wedge_ticks: u32,
     /// Ticks in a row [`BotView::stranded`].
     strand_ticks: u32,
+    /// Ticks with no round left in any gun, launcher or pistol.
+    dry_ticks: u32,
     /// A `kill` for the driver to send as a client command.
     kill: bool,
     /// An unstick spell began this tick: the driver's follower rounds the
@@ -903,6 +921,10 @@ const BAS_REACH: f32 = 112.0;
 /// A base's charge goes off with a 1000-damage `radiusDamage` on every
 /// player within 500 units of it (`BaseAssault_bomb_countdown`).
 const BAS_BLAST: f32 = 520.0;
+/// An attacker holds the room of its own charge until this many seconds
+/// are left on it, then gets out of the blast: with 8 s a planter climbing
+/// out of the room was still inside it when it went.
+const BAS_CLEAR_S: f32 = 20.0;
 /// An attacker this near a charge on its own base turns back to defuse it.
 const BAS_DEFUSE_NEAR: f32 = 2000.0;
 /// A rocket's burst counts at a base this near its origin: the base links
@@ -912,11 +934,23 @@ pub const BREACH_NEAR: f32 = 64.0;
 /// A rocket is fired at a base from this far at least, clear of its own
 /// 256-unit splash, and at most this far.
 pub const BREACH_MIN: f32 = 400.0;
+/// A rocket's burst on the way to a base is this far from the muzzle at
+/// least: the launchers' 256-unit splash, and a margin.
+pub const BREACH_CLEAR: f32 = 320.0;
 pub const BREACH_RANGE: f32 = 1500.0;
 /// A base's own launchers (`mpweapon_*` with `script_gameobjectname bas`)
 /// lie in its bunker, this near its origin, behind the walls a breach
 /// deletes (about 145 units on mp_foy).
 const BAS_BUNKER: f32 = 300.0;
+/// Dry this long, a bot uses `kill` (`Bot::think`).
+const DRY_TICKS: u32 = 200;
+/// Ticks a fetch may go without coming [`FETCH_CLOSING`] nearer its
+/// launcher (the reach included: one stood at counts down too).
+const FETCH_STALL_TICKS: u32 = 400;
+const FETCH_CLOSING: f32 = 32.0;
+/// Taps at one launcher before it is passed over, and for how long.
+const LAUNCHER_TAPS: u32 = 3;
+const SHUN_TICKS: u32 = 1200;
 /// Stood this long at a breach stand with no shot, the bot tries another.
 const BREACH_IDLE_TICKS: u32 = 40;
 /// Inset from a bombzone's edges before the bot counts as inside it.
@@ -977,6 +1011,10 @@ impl Bot {
             crouch_ticks: 0,
             grenade_cooldown: 200,
             respawn_ticks: 0,
+            deaths: 0,
+            shunned: Vec::new(),
+            tapped: None,
+            fetch: None,
             stage: Stage::Wander,
             rifle: 0,
             armed: 0,
@@ -995,6 +1033,7 @@ impl Bot {
             wedge_at: [f32::INFINITY; 3],
             wedge_ticks: 0,
             strand_ticks: 0,
+            dry_ticks: 0,
             kill: false,
             stuck: false,
             forced: None,
@@ -1115,6 +1154,9 @@ impl Bot {
         if let Some(f) = view.frag_near {
             return Goal::Away(f);
         }
+        if let Some(c) = Self::blast_near(view) {
+            return Goal::Away(c);
+        }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
         }
@@ -1128,6 +1170,24 @@ impl Bot {
             return Goal::To(p);
         }
         Goal::Roam
+    }
+
+    /// A `bas` charge about to go off with the bot inside its blast, fight
+    /// or no fight: one of its own side's in the last [`BAS_CLEAR_S`], one
+    /// on its own base once a defuse could no longer finish.
+    fn blast_near(view: &BotView) -> Option<[f32; 3]> {
+        let Some(UoView::Bas(b)) = view.uo.as_ref() else {
+            return None;
+        };
+        b.bases.iter().filter(|x| x.planted).find_map(|x| {
+            let (left, c) = (x.blows_in?, x.charge?);
+            let late = if x.ours {
+                left < BAS_DEFUSE_TICKS as f32 / 20.0
+            } else {
+                left <= BAS_CLEAR_S
+            };
+            (late && dist_sq(view.origin, c.origin) < BAS_BLAST * BAS_BLAST).then_some(c.origin)
+        })
     }
 
     /// The hunted run from the last enemy they saw or heard, else from
@@ -1345,15 +1405,30 @@ impl Bot {
                         ticks: BAS_DEFUSE_TICKS,
                     });
                 }
-                if defends || theirs.is_empty() {
-                    let n = mine.len();
-                    return (n > 0).then(|| guard(mine[(rank / 2) % n].at));
+                // A defender keeps the charge room of a breached base of
+                // ours, the one way a plant comes; with none breached there
+                // is nothing to defend and it attacks with the rest.
+                let open: Vec<&&BasBaseView> = mine.iter().filter(|x| x.breached).collect();
+                if theirs.is_empty() || (defends && !open.is_empty()) {
+                    let n = open.len();
+                    return if n > 0 {
+                        let x = open[(rank / 2) % n];
+                        Some(guard(x.charge.map_or(x.at, |c| c.origin)))
+                    } else {
+                        (!mine.is_empty()).then(|| guard(mine[(rank / 2) % mine.len()].at))
+                    };
                 }
-                let t = theirs[(rank / 2) % theirs.len()];
+                let t = theirs[(rank / 2 + self.deaths as usize) % theirs.len()];
                 Some(match t.charge {
+                    // Our charge: hold its room against the defuse, then
+                    // clear the blast before it goes.
                     Some(c) if t.planted => ObjTarget::Guard {
                         at: c.origin,
-                        inner: BAS_BLAST,
+                        inner: if t.blows_in.is_some_and(|s| s > BAS_CLEAR_S) {
+                            0.0
+                        } else {
+                            BAS_BLAST
+                        },
                     },
                     Some(c) if t.breached => ObjTarget::Defuse {
                         bomb: c,
@@ -1368,16 +1443,17 @@ impl Bot {
                         stand: self.breach_stand(&mine, t),
                         aim: t.shot,
                     },
-                    // Those in a standing base of theirs lie behind its
-                    // walls.
+                    // Those in a standing base, ours or theirs, lie behind
+                    // its walls.
                     _ => match b
                         .launchers
                         .iter()
                         .filter(|l| {
-                            theirs
+                            b.bases
                                 .iter()
                                 .all(|x| x.breached || dist_sq(**l, x.at) > BAS_BUNKER * BAS_BUNKER)
                         })
+                        .filter(|l| !self.shunned.iter().any(|s| arrived(s.0, **l)))
                         .min_by(|x, y| {
                             dist_sq(view.origin, **x).total_cmp(&dist_sq(view.origin, **y))
                         }) {
@@ -1473,6 +1549,12 @@ impl Bot {
             ObjTarget::Plant(s) => Goal::To(s.stand),
             // Too close: any way out will do, and the roam leaves the ring
             // well before it gets anywhere.
+            // A charge about to blow: away from it, the way out of its room.
+            ObjTarget::Guard { at, inner }
+                if inner >= BAS_BLAST && dist_sq(view.origin, at) < inner * inner =>
+            {
+                Goal::Away(at)
+            }
             ObjTarget::Guard { at, inner } if dist_sq(view.origin, at) < inner * inner => {
                 Goal::Roam
             }
@@ -1525,6 +1607,7 @@ impl Bot {
             self.obj.zone = d.flags.iter().position(|f| f.site.stand == site.stand);
         }
         let ready = self.obj.rest == 0 && (at || (view.linked && self.obj.held > 0));
+        self.fetching(view, t);
         let cur = [yaw_diff(view.view[0], 0.0), view.view[1]];
         match t {
             Some(ObjTarget::Plant(_)) if ready => {
@@ -1584,6 +1667,9 @@ impl Bot {
                     return None;
                 }
                 let (tp, ty) = aim_angles(view, spot);
+                // The view's pitch stops at 80: one right underfoot settles
+                // there.
+                let tp = tp.clamp(-80.0, 80.0);
                 let aim = self.turn_toward(view, [tp, ty]);
                 let off = yaw_diff(tp, cur[0]).hypot(yaw_diff(ty, cur[1]));
                 self.obj.settled = if off < SETTLE_DEG {
@@ -1600,6 +1686,9 @@ impl Bot {
                     // `holduse`).
                     self.obj.held += 1;
                     if self.obj.held >= 2 {
+                        if matches!(view.uo, Some(UoView::Bas(_))) {
+                            self.tapped_launcher(spot);
+                        }
                         self.obj.held = 0;
                         self.obj.settled = 0;
                         self.obj.rest = RETRY_TICKS;
@@ -1634,8 +1723,49 @@ impl Bot {
             _ => {
                 self.obj.held = 0;
                 self.obj.settled = 0;
+                self.obj.idle = 0;
                 None
             }
+        }
+    }
+
+    /// A `bas` launcher the body has come no nearer to in
+    /// [`FETCH_STALL_TICKS`] is passed over: one lay where the graph's
+    /// nearest node was a floor over it, and the bot walked into the wall
+    /// for good; at another the use tap took nothing, and the bot stood
+    /// there for twenty minutes.
+    fn fetching(&mut self, view: &BotView, t: Option<ObjTarget>) {
+        let Some(ObjTarget::Pickup { aim, .. }) =
+            t.filter(|_| matches!(view.uo, Some(UoView::Bas(_))))
+        else {
+            self.fetch = None;
+            return;
+        };
+        let d = dist_sq(view.origin, aim).sqrt();
+        let (best, ticks) = match self.fetch {
+            Some((p, best, ticks)) if p == aim && d > best - FETCH_CLOSING => (best, ticks + 1),
+            _ => (d, 0),
+        };
+        if ticks >= FETCH_STALL_TICKS {
+            self.shunned.push((aim, SHUN_TICKS));
+            self.fetch = None;
+        } else {
+            self.fetch = Some((aim, best, ticks));
+        }
+    }
+
+    /// A tap at a `bas` launcher: [`LAUNCHER_TAPS`] at one with no rocket
+    /// in hand after passes it over for a while. The use pickup refused
+    /// some for good (a bot stood tapping at one for 20 minutes).
+    fn tapped_launcher(&mut self, at: [f32; 3]) {
+        let taps = match self.tapped {
+            Some((p, n)) if arrived(p, at) => n + 1,
+            _ => 1,
+        };
+        self.tapped = Some((at, taps));
+        if taps >= LAUNCHER_TAPS {
+            self.tapped = None;
+            self.shunned.push((at, SHUN_TICKS));
         }
     }
 
@@ -1664,9 +1794,17 @@ impl Bot {
         if view.busy_ms != 0 {
             return cmd;
         }
+        // A rocket leaves along the spread aim (`Weapon_RocketLauncher_Fire`):
+        // up to 12 degrees off from the hip, 4 sighted. From the hip a
+        // breach rocket struck the stand's own walls.
+        let sighted = !view.has_ads || view.ads_frac >= 1.0;
         if view.clip == 0 {
             cmd.wbuttons |= msg::WBUTTON_RELOAD;
-        } else if self.obj.settled >= SETTLE_TICKS && self.fire_cooldown == 0 {
+        } else if view.has_ads {
+            cmd.buttons |= msg::BUTTON_ADS;
+        }
+        if view.clip != 0 && sighted && self.obj.settled >= SETTLE_TICKS && self.fire_cooldown == 0
+        {
             cmd.buttons |= msg::BUTTON_ATTACK;
             // The bit comes up between rounds.
             self.fire_cooldown = 2;
@@ -1809,15 +1947,31 @@ impl Bot {
     pub(crate) fn think(&mut self, view: &BotView) -> UserCmd {
         self.fire_cooldown = self.fire_cooldown.saturating_sub(1);
         self.sprint_leg = false;
+        for s in &mut self.shunned {
+            s.1 -= 1;
+        }
+        self.shunned.retain(|s| s.1 > 0);
+        if view.rocket.is_some() {
+            self.tapped = None;
+        }
         let mut cmd = NULL_USERCMD;
         if view.weapon != 0 {
             self.armed = view.weapon;
+        } else if view.weapons_held >> self.armed.min(63) & 1 == 0
+            && let Some(w) = view.gun.or(view.rocket).or(view.pistol)
+        {
+            // Empty hands after a use pickup swapped the armed weapon away:
+            // the byte asks for one still carried, or nothing comes up.
+            self.armed = w;
         }
         cmd.weapon = self.armed;
         // Death and spectatorship outrank the stage machine: a corpse still
         // in a grenade phase must reach the respawn press below, not sit in
         // `think_cook` forever.
         if view.dead {
+            if self.respawn_ticks == 0 {
+                self.deaths = self.deaths.wrapping_add(1);
+            }
             self.respawn_ticks += 1;
             // Whatever the death interrupted, the new life starts clean: no
             // throw resumes on respawn.
@@ -1848,6 +2002,19 @@ impl Bot {
         }
         self.respawn_ticks = 0;
         if self.wedged(view) && !view.one_life {
+            self.kill = true;
+        }
+        // Nothing left to fire: a respawn brings the kit back. A `bas`
+        // defender stood dry at its base for twenty minutes, an attacker
+        // in its sight.
+        let spent = |w: u8| w == 0 || w >= 64 || view.loaded >> w & 1 == 0;
+        let dry = view.gun.is_none()
+            && view.rocket.is_none()
+            && view.pistol.is_none_or(spent)
+            && spent(view.weapon);
+        self.dry_ticks = if dry { self.dry_ticks + 1 } else { 0 };
+        if self.dry_ticks >= DRY_TICKS && !view.one_life {
+            self.dry_ticks = 0;
             self.kill = true;
         }
         self.obj.live = true;
@@ -2212,6 +2379,8 @@ impl Bot {
             self.switch_to = None;
         }
         if self.shoot {
+            self.off_launcher(view);
+            self.off_dry(view);
             self.sidearm(view);
         }
         if let Some(w) = self.switch_to {
@@ -2229,6 +2398,50 @@ impl Bot {
         }
         cmd.angles = cmd_angles(view, [pitch, yaw]);
         cmd
+    }
+
+    /// A held rocket launcher fires at no player (`trigger`): rockets are
+    /// for the bases. With a 320-unit floor on the range, a rocket at a
+    /// moving body still burst on cover by the shooter often enough that a
+    /// bot killed itself in most four-bot rounds (bot-objectives.md 7.2).
+    fn launcher_in_hand(view: &BotView) -> bool {
+        view.rocket.is_some_and(|r| r == view.weapon)
+    }
+
+    /// The gun, else the pistol, comes out over a held rocket launcher
+    /// with an enemy in sight: rockets are for the bases, and one at an
+    /// enemy is a splash on the shooter as often as not. The breach draws
+    /// the launcher again.
+    fn off_launcher(&mut self, view: &BotView) {
+        if view.enemy.is_none() || view.rocket.is_none_or(|r| r != view.weapon) {
+            return;
+        }
+        let loaded = |w: u8| w < 64 && view.loaded >> w & 1 == 1;
+        let to = view.gun.or(view.pistol.filter(|p| loaded(*p)));
+        if let Some(to) = to
+            && self.switch_to.is_none()
+        {
+            self.primary = view.weapon;
+            self.calm_ticks = 0;
+            self.switch_to = Some(to);
+        }
+    }
+
+    /// The held weapon and the pistol both spent (a launcher fired dry):
+    /// the gun comes out, or the bot stands with nothing to fire.
+    fn off_dry(&mut self, view: &BotView) {
+        let loaded = |w: u8| w != 0 && w < 64 && view.loaded >> w & 1 == 1;
+        if self.switch_to.is_some()
+            || view.weapon == 0
+            || loaded(view.weapon)
+            || view.pistol.is_some_and(loaded)
+            || view.grenade == Some(view.weapon)
+        {
+            return;
+        }
+        if let Some(g) = view.gun {
+            self.switch_to = Some(g);
+        }
     }
 
     /// The pistol comes out when the held weapon runs dry with an enemy
@@ -2271,8 +2484,11 @@ impl Bot {
         } else {
             self.calm_ticks + 1
         };
-        if loaded(self.primary) && (self.calm_ticks >= HOLSTER_TICKS || !loaded(pistol)) {
-            self.switch_to = Some(self.primary);
+        let back = Some(self.primary).filter(|w| loaded(*w)).or(view.gun);
+        if let Some(back) = back
+            && (self.calm_ticks >= HOLSTER_TICKS || !loaded(pistol))
+        {
+            self.switch_to = Some(back);
         }
     }
 
@@ -2556,7 +2772,7 @@ impl Bot {
         ready: bool,
         cmd: &mut UserCmd,
     ) {
-        if view.clip == 0 || view.friend_in_line {
+        if view.clip == 0 || view.friend_in_line || Self::launcher_in_hand(view) {
             self.burst_ticks = 0;
             return;
         }
@@ -3201,6 +3417,7 @@ mod tests {
             unpin: None,
             pistol: None,
             rocket: None,
+            gun: None,
             reload_ms: 2500,
             draw_ms: 750,
             loaded: (1 << 10) | (1 << 6),
@@ -5410,6 +5627,7 @@ mod tests {
             ours,
             breached: false,
             planted: false,
+            blows_in: None,
             charge: None,
             shot: None,
             stands: Vec::new(),
@@ -5465,6 +5683,11 @@ mod tests {
         v.clip = 1;
         let (pitch, yaw) = aim_angles(&v, [2000.0, 0.0, 40.0]);
         v.view = [pitch, yaw, 0.0];
+        v.ads_frac = 0.5;
+        let cmd = bot.think(&v);
+        assert_ne!(cmd.buttons & BUTTON_ADS, 0, "sights up for the shot");
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "not from the hip");
+        v.ads_frac = 1.0;
         let fired = (0..4).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
         assert!(fired, "no round at the base");
 
@@ -5488,5 +5711,197 @@ mod tests {
             aim: [2000.0, 0.0, -160.0],
         });
         assert_eq!(bot.goal(&v), Goal::To([2000.0, 0.0, -176.0]));
+    }
+
+    /// A launcher in the bot's own standing base lies behind its walls
+    /// too: the bot passed it by and stood at the wall for good.
+    #[test]
+    fn a_launcher_in_its_own_standing_bunker_is_passed_by() {
+        let bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        v.origin = [-1700.0, 0.0, 64.0];
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.launchers.push([-1900.0, 0.0, 8.0]);
+        assert_eq!(bot.goal(&v), Goal::To([300.0, 200.0, 8.0]));
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.bases[0].breached = true;
+        assert_eq!(bot.goal(&v), Goal::To([-1900.0, 0.0, 8.0]));
+    }
+
+    /// Each life lost sends the attacker at the next of the other side's
+    /// bases, off the defender guarding the last.
+    #[test]
+    fn a_bas_attacker_turns_to_the_next_base_after_a_death() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.bases[1].breached = true;
+        let mut other = b.bases[1].clone();
+        other.at = [0.0, 2000.0, 0.0];
+        b.bases.push(other);
+        assert_eq!(bot.goal(&v), Goal::To([2000.0, 0.0, 0.0]));
+        v.dead = true;
+        bot.think(&v);
+        v.dead = false;
+        assert_eq!(bot.goal(&v), Goal::To([0.0, 2000.0, 0.0]));
+    }
+
+    /// A launcher tapped at three times with nothing taken is passed over.
+    #[test]
+    fn a_launcher_that_gives_nothing_is_passed_over() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.launchers.push([-900.0, 0.0, 8.0]);
+        for _ in 0..LAUNCHER_TAPS {
+            assert_eq!(bot.goal(&v), Goal::To([300.0, 200.0, 8.0]));
+            bot.tapped_launcher([300.0, 200.0, 8.0]);
+        }
+        assert_eq!(bot.goal(&v), Goal::To([-900.0, 0.0, 8.0]));
+    }
+
+    /// A bot with no round left anywhere asks for `kill`, once it has
+    /// been dry a while; one with a gun loaded never does.
+    #[test]
+    fn a_bot_with_nothing_to_fire_respawns() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.gun = Some(10);
+        (0..DRY_TICKS + 1).for_each(|_| _ = bot.think(&v));
+        assert!(!bot.take_kill());
+        v.gun = None;
+        (v.clip, v.loaded) = (0, 0);
+        (0..DRY_TICKS).for_each(|_| _ = bot.think(&v));
+        assert!(bot.take_kill());
+    }
+
+    /// A defender attacks while none of its side's bases is breached, and
+    /// keeps the charge room of one that is.
+    #[test]
+    fn a_bas_defender_attacks_until_a_base_of_its_own_is_breached() {
+        let bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.rank = 1;
+        assert_eq!(
+            bot.goal(&v),
+            Goal::To([300.0, 200.0, 8.0]),
+            "fetches a launcher"
+        );
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.bases[0].breached = true;
+        b.bases[0].charge = Some(BombView {
+            origin: [-2000.0, 0.0, -176.0],
+            aim: [-2000.0, 0.0, -160.0],
+        });
+        assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]));
+    }
+
+    /// A launcher the body comes no nearer to is passed over.
+    #[test]
+    fn a_launcher_out_of_reach_is_passed_over() {
+        let mut bot = Bot::new("allies", false, 1);
+        let v = bas_view();
+        for _ in 0..FETCH_STALL_TICKS + 1 {
+            bot.think(&v);
+        }
+        assert_ne!(bot.goal(&v), Goal::To([300.0, 200.0, 8.0]));
+    }
+
+    /// Empty hands whose last weapon a pickup swapped away ask for one the
+    /// bot still carries.
+    #[test]
+    fn empty_hands_ask_for_a_weapon_still_carried() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        bot.think(&v);
+        v.weapon = 0;
+        v.weapons_held = 1 << 20;
+        v.gun = Some(20);
+        assert_eq!(bot.think(&v).weapon, 20);
+    }
+
+    /// A spent launcher in hand and a spent pistol: the gun comes out.
+    #[test]
+    fn a_spent_launcher_and_pistol_hand_over_to_the_gun() {
+        let (mut bot, mut v) = engaged(21);
+        v.weapon = 20;
+        v.weapons_held |= (1 << 20) | (1 << 2);
+        v.pistol = Some(2);
+        v.clip = 0;
+        v.loaded = 1 << 10;
+        v.gun = Some(10);
+        assert_eq!(bot.think(&v).weapon, 10);
+    }
+
+    /// The planter holds the room of its charge against the defuse while
+    /// the clock has time on it, and gets out of the blast before it goes.
+    #[test]
+    fn a_bas_planter_holds_its_charge_then_clears_the_blast() {
+        let bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        let charge = [2000.0, 0.0, -176.0];
+        let b = their_base(&mut v);
+        b.breached = true;
+        b.planted = true;
+        b.blows_in = Some(30.0);
+        b.charge = Some(BombView {
+            origin: charge,
+            aim: [2000.0, 0.0, -160.0],
+        });
+        assert_eq!(bot.goal(&v), Goal::To(charge), "out of the room");
+        v.origin = [1900.0, 0.0, -176.0];
+        assert_eq!(bot.goal(&v), Goal::Hold, "in the room, on guard");
+        their_base(&mut v).blows_in = Some(BAS_CLEAR_S);
+        assert_eq!(bot.goal(&v), Goal::Away(charge), "inside the blast");
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [1800.0, 0.0, -150.0],
+            velocity: [0.0; 3],
+        });
+        assert_eq!(bot.goal(&v), Goal::Away(charge), "a fight in the blast");
+        v.enemy = None;
+        v.origin = [1400.0, 0.0, 0.0];
+        assert_eq!(bot.goal(&v), Goal::Hold, "clear of it");
+    }
+
+    /// A rocket launcher in hand fires at no enemy, near or far; the
+    /// pistol comes out against one, the gun first when there is one.
+    #[test]
+    fn no_rocket_goes_at_an_enemy() {
+        let (mut bot, mut v) = engaged(21);
+        v.rocket = Some(10);
+        v.pistol = Some(2);
+        v.weapons_held |= 1 << 2;
+        v.loaded |= 1 << 2;
+        v.clip = 1;
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "a rocket at 100 units");
+        assert_eq!(cmd.weapon, 2, "the pistol comes out");
+
+        let (mut bot, mut v) = engaged(21);
+        v.rocket = Some(10);
+        v.clip = 1;
+        v.has_ads = false;
+        v.enemy.as_mut().unwrap().origin = [900.0, 0.0, 124.0];
+        let fired = (0..20).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
+        assert!(!fired, "a rocket at 900 units");
+
+        v.gun = Some(4);
+        v.weapons_held |= 1 << 4;
+        v.loaded |= 1 << 4;
+        assert_eq!(bot.think(&v).weapon, 4);
     }
 }
