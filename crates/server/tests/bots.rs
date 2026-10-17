@@ -860,8 +860,9 @@ fn four_shooting_uo_bots_end_a_bas_round() {
         let rocket = ["bazooka", "panzerschreck", "panzerfaust"]
             .iter()
             .any(|r| weapon.contains(r));
+        // UO's lines can log 0 for both numbers; the names tell.
         assert!(
-            !(k[1] == k[5] && rocket),
+            !(k[1] == k[5] && k[3] == k[7] && rocket),
             "a bot's own rocket killed it ({mod_}): {k:?}"
         );
     }
@@ -877,7 +878,8 @@ fn kills(sv: &vcod_server::Server) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// `bots` bots play mp_foy's bas round, seed 7, three rockets a base; the
+/// `bots` bots play mp_foy's bas round, seed 7 (`BOTS_SEED`; the seed is
+/// made odd), three rockets a base; the
 /// round has to end on its bases. `None` without a UO install.
 fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
     let Some(fs) = vcod_common::testing::uo_fs() else {
@@ -891,7 +893,7 @@ fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
     cfg.map = "mp_foy".into();
     let mut sv = vcod_server::Server::new(cfg, now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
-    sv.test_seed_rng(7);
+    sv.test_seed_rng(std::env::var("BOTS_SEED").map_or(7, |v| v.parse().expect("BOTS_SEED")));
     sv.set_cvar("scr_bas_basehealth", "3000");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -903,8 +905,50 @@ fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
     };
     let mut first = None;
     let mut end = None;
+    // `BAS_TRACE=1`: the bots and the bases every 5 s, and each `A;` line.
+    let trace = std::env::var_os("BAS_TRACE").is_some();
+    let mut logged = 0;
     for tick in 0..BAS_ROUND_TICKS {
         run(&mut sv, &mut now, 1);
+        if trace {
+            let log = sv.script_log();
+            // A restart starts a new log.
+            if log.len() < logged {
+                logged = 0;
+            }
+            for l in &log[logged..] {
+                if l.contains("A;") || l.contains("K;") {
+                    eprintln!("{tick}: {}", l.trim_end());
+                }
+            }
+            logged = log.len();
+            if tick % 100 == 0 {
+                for slot in sv.bot_slots() {
+                    let team = sv.bot_team(slot);
+                    if let Some(b) = sv.bot_body(slot) {
+                        eprintln!(
+                            "{tick}: bot {slot} team {team} at {:?} dead {} hp {}",
+                            b.origin.map(|v| v as i32),
+                            b.dead,
+                            b.health
+                        );
+                    }
+                }
+                if let Some(vcod_server::game::script::UoObjectives::Bas(bases)) = sv.bot_uo() {
+                    for b in bases {
+                        eprintln!(
+                            "{tick}: base team {} at {:?} breached {} planted {} blows_in {:?} charge {:?}",
+                            b.team,
+                            b.at.map(|v| v as i32),
+                            b.breached,
+                            b.planted,
+                            b.blows_in,
+                            b.charge.map(|c| c.1.map(|v| v as i32))
+                        );
+                    }
+                }
+            }
+        }
         if first.is_none() && count(&sv, "bas_breached") > 0 {
             first = Some(tick);
         }

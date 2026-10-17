@@ -641,12 +641,19 @@ first everywhere.
   15.5 s (S&D's defuse, section 3, with its reach and hold as
   parameters). A charged one is guarded from within 250 units of the
   charge, in its room or the bunker over it, the way any defuser has to
-  come, while `countdowntime` reads more than 8 s; then from outside the
+  come, while `countdowntime` reads more than 20 s; then from outside the
   blast, 520 to 670 units off, the bot leaving the room by the graph's
   flee (`Goal::Away`). Guarded from outside the blast all along, every
-  plant was defused unseen once each side had a defender. A defender guards its own bases by rank and defuses a
-  charge on one (10.5 s), and so does an attacker within 2000 units of
-  it. A standing base is breached with rockets (below); bots ride no
+  plant was defused unseen once each side had a defender. Any bot inside
+  the 500-unit blast of a charge about to go (its own side's in the last
+  20 s, the other side's once a defuse could no longer finish) flees it
+  before anything else but a live frag, fight or no fight. A defender
+  keeps the charge room of a breached base of its side's, the only way
+  a plant comes; with none breached it attacks with the rest, since a
+  standing base needs no guard. Each side defuses a charge on one of its
+  bases (10.5 s): a defender, and an attacker within 2000 units of it.
+  An attacker goes for the next of the other side's bases after each of
+  its deaths, off the defender that killed it. A standing base is breached with rockets (below); bots ride no
   tank.
 - **The breach.** An attacker with no loaded rocket launcher in hand
   (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve) walks
@@ -666,10 +673,17 @@ first everywhere.
   the live check (`Server::breach_shot`, from its own muzzle, 400 to 1500
   off) finds a shot, it stops, draws the launcher, rests the view on the
   aim, fires and reloads, until the launcher is dry; then it fetches
-  another. A visible enemy comes first with shoot on. A rocket goes at
-  no enemy within 320 units (the launchers' 256-unit splash, with room
-  for a miss), and the pistol comes out over the launcher against one;
-  a bot killed itself with its own `bazooka_mp` splash before.
+  another. A visible enemy comes first with shoot on. No rocket goes at
+  a player: with an enemy in sight the gun, else the pistol, comes out
+  over the launcher, and the breach draws it again. A 320-unit floor on
+  the range still left a bot killed by its own splash in most four-bot
+  rounds. Nor does a breach rocket go while another player's box
+  crosses its line, or where it would burst within 320 units of the
+  muzzle (`BREACH_CLEAR`; the base's mesh reaches toward the shooter).
+  A bot with both its weapons spent draws the gun it still has; one
+  with no round anywhere uses `kill` after 10 s, and a launcher the body
+  has come no 32 units nearer in 20 s (a node over it, or a tap that
+  takes nothing) is passed over for a minute.
 - The way into a breached base opens only when its walls go, after the
   graph was built. The server builds the graph without the `rubble`
   brushes (`World::rubble`; out of the way except over a dead base) and
@@ -728,10 +742,10 @@ fired one rocket and stood for good on a launcher that never reloaded;
 before the shell direct hit (missiles2) a rocket struck the base's
 model and took it nothing.
 
-VERIFIED (measured, ours, 2026-10-17, same setup, after the planter
-held its charge's room and the close-rocket rule went in): two bots,
-shoot off, round over by its bases at tick 14739 (five breached, five
-gone off, none defused); four bots, shoot on, gate
-`four_shooting_uo_bots_end_a_bas_round`: first breach at tick 2377,
-four breached, three planted and gone off, none defused, round over at
-tick 14359 (12 min), nine kills and none by a bot's own rocket.
+VERIFIED (measured, ours, 2026-10-17, same setup, the rules above):
+gate `four_shooting_uo_bots_end_a_bas_round`, four bots shooting, over
+`BOTS_SEED` 1 to 15 odd: RESULTS_4. The two-bot gate: RESULTS_2.
+With the planter's guard alone (8 s, outside-the-blast before), one
+seed in eight ended; the rest stalled on defuses, a bot standing at a
+launcher it could not take, a dry defender, or a bot killing itself
+with its own rocket.
