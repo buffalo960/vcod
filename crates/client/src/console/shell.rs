@@ -1263,6 +1263,7 @@ mod tests {
             [
                 "cl_allowDownload",
                 "cl_freelook",
+                "cl_freezeDemo",
                 "cl_language",
                 "cl_maxpackets",
                 "cl_packetdup",
