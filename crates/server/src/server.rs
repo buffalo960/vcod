@@ -9552,7 +9552,7 @@ impl Server {
                 collision,
                 proto,
             );
-            entities.extend(rt.bodies().entities());
+            entities.extend(rt.body_entities(proto));
         }
 
         // Every live temp entity, at the number `G_TempEntity` took for it,

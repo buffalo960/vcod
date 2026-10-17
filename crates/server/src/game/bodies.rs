@@ -183,6 +183,17 @@ impl BodyQueue {
         }
     }
 
+    /// `G_FreeEntity` on body `number`, a script's `delete` of the entity
+    /// `cloneplayer` returned: off the wire until the queue reuses the slot.
+    pub fn free(&mut self, number: u32) {
+        if let Some(slot) = number
+            .checked_sub(BODY_FIRST)
+            .and_then(|i| self.slots.get_mut(i as usize))
+        {
+            *slot = None;
+        }
+    }
+
     /// The live bodies, by entity number. No `Protocol`: a body's fields are
     /// resolved once, at the push.
     pub fn entities(&self) -> impl Iterator<Item = (u32, EntityState)> + '_ {

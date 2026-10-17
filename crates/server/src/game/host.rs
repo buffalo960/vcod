@@ -1479,6 +1479,10 @@ impl GameHost {
         self.movers.forget(id);
         self.links.forget(id);
         self.free_ground_refs(id.0);
+        // A corpse `cloneplayer` handed to script leaves the queue with it.
+        if self.ents.get(id).is_some() {
+            self.bodies.free(id.0);
+        }
         self.ents.free(id);
         // `G_FreeEntity` lets the children go where they stand
         // (0x669f1..0x66a9e), so a child later in the entity pass is never
