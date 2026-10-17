@@ -336,7 +336,12 @@ and it goes stationary with the yaw and roll the tumble reached and a pitch of
 4: the explode event rides the missile's own ring, on the frame its `eType` has
 already become 0. `entityState.index` is 0, unlike `ET_ITEM`'s, because a
 missile's model rides `s.eFlags 0x03000000`, which is above the 24-bit
-netfield and never travels.
+netfield and never travels. VERIFIED: the 2026-10-17 recapture of
+`mp_carentan-tdm-grenade.txt` prints `eFlags` 16777216 on every in-flight
+and resting frame: the field arrives non-zero with 24 zero bits, and vcod's
+reader marks that with a bit above the width (`msg::above_width`, "PlayerState
+delta"); the first capture's reader printed 0. INFERRED: the model bits are
+what make the int non-zero.
 
 VERIFIED from the same captures: the playerstate field `grenadeTimeLeft` takes
 exactly two values on a stock 1.1 MP server, 0 and the held weapon's
@@ -1154,7 +1159,7 @@ VERIFIED, both committed spectator captures: `viewangles[0]` and `viewangles[1]`
 
 For a **spawned player** the same sum is measured directly:
 
-VERIFIED, from the `--save-ads` capture taken on `mp_carentan` under `tdm` with `kar98k_sniper_mp` (`crates/server/tests/fixtures/playerstate/mp_carentan-tdm-ads-sniper.txt`): `delta_angles[1]` reads 24576 and `viewangles[1]` reads -45.0 on every one of its 355 `!trace` lines. Those two pin the wire cmd yaw at 32768: `ANGLE2SHORT(-45)` is 57344, and `57344 - 24576` is 32768. Do not read the capture's `!input yaw=0` as the wire value -- that column records the script's nominal input, and `NetClient::send_frame` (`crates/common/src/net/mod.rs:346`) subtracts `delta_angles` from every axis before the cmd goes out. INFERRED, from the probe's own control flow, that 32768 is what `hold_view_yaw` produces: it holds the view of the first snapshot it saw, which for this run was the spectator's, and the client's subtraction turns that into the wire word.
+VERIFIED, from the `--save-ads` capture taken on `mp_carentan` under `tdm` with `kar98k_sniper_mp` (`crates/server/tests/fixtures/playerstate/mp_carentan-tdm-ads-sniper.txt`, recaptured 2026-10-17): `delta_angles[1]` reads 24576 and `viewangles[1]` reads 45.0, the spawn point's yaw, on every one of its 356 `!trace` lines. Those two pin the wire cmd yaw at 49152: `ANGLE2SHORT(45)` is 8192, and `8192 - 24576` is 49152 modulo 65536. Do not read the capture's `!input yaw=0` as the wire value -- that column records the script's yaw on top of the held facing, and `NetClient::send_frame` (`crates/common/src/net/mod.rs`) subtracts `delta_angles` from every axis before the cmd goes out. INFERRED, from the probe's own control flow, that the 45 is what `hold_view_yaw` produces: it reads the spawn's facing off `delta_angles` and holds it. VERIFIED, the first capture (in git at `c52e9606`): the same 24576 under `viewangles[1]` -45.0 on all 355 lines, a wire yaw of 32768, from a `hold_view_yaw` that held the view of the first snapshot it saw, the spectator's.
 
 VERIFIED that the field tracks the cmd rather than pinning the spawn angle, from both motion captures: `mp_carentan-dm-motion.txt` reads 135.0 at every held pose and moves by exactly the turn steps' 60 degrees, to 75.0 at `turn_left` and -165.0 at `turn_right`; `mp_pavlov-dm-motion.txt` is the same shape off a base of 45.0.
 
