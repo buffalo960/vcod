@@ -325,6 +325,10 @@ pub struct ClientSim {
     /// The last damage's kick, which the aim block plays out
     /// (`P_DamageFeedback` step 6, combat doc 6).
     kick: pmove::aim::DamageKick,
+    /// The gun-kick spring the aim block adds down the sight. Only 1.5's and
+    /// UO's servers kick it, off each fire event (`BG_WeaponFireRecoil`,
+    /// cod15-movement.md 6); on 1.1 it stays zero (combat doc 15.2).
+    gun_kick: pmove::aim::GunKick,
     /// `client+0x220c/0x2210`: where this client's next shot, swing or
     /// throw goes, computed once per cmd ahead of its moves.
     aim: [f32; 2],
@@ -538,6 +542,7 @@ impl ClientSim {
             view_angles: view,
             aim_state: Default::default(),
             kick: Default::default(),
+            gun_kick: Default::default(),
             aim: [view[0], view[1]],
             gun_offset: [0.0; 2],
             view_lerp_start: None,
@@ -761,6 +766,7 @@ impl ClientSim {
         // of the client.
         self.aim_state = Default::default();
         self.kick = Default::default();
+        self.gun_kick = Default::default();
         self.aim = [self.view_angles[0], self.view_angles[1]];
         self.gun_offset = [0.0; 2];
         // `ClientSpawn` calls `G_EntUnlink` on the spawning client
@@ -2114,16 +2120,21 @@ impl ClientSim {
         if self.pm_type != PmType::Normal || self.dead {
             return;
         }
+        let def = weapons
+            .get(self.ps.weapon as usize)
+            .and_then(Option::as_ref);
+        let msec = msec.min(200);
+        if let Some(def) = def {
+            self.gun_kick
+                .step(def, self.ps.weapon_pos_frac, msec as f32 * 0.001);
+        }
         let input = pmove::aim::AimInput {
-            def: weapons
-                .get(self.ps.weapon as usize)
-                .and_then(Option::as_ref),
+            def,
             view: self.view_angles,
-            msec: msec.min(200),
+            msec,
             now_ms,
             kick: self.kick,
-            // Retail's server never kicks the spring (combat doc 15.2).
-            gun_kick: [0.0; 2],
+            gun_kick: self.gun_kick.angles,
             sway_scale: 1.0,
         };
         self.aim = pmove::aim::aim_angles(&self.ps, &mut self.aim_state, &input);
@@ -2132,6 +2143,33 @@ impl ClientSim {
             wrap(self.aim[0] - self.view_angles[0]),
             wrap(self.aim[1] - self.view_angles[1]),
         ];
+    }
+
+    /// `G_PlayerEvent`'s fire arm on a 1.5 or UO server (1.5b 0x3b2e4, UO
+    /// 0x435cc): `BG_WeaponFireRecoil` (1.5b 0x3246c, UO 0x396bc) draws the
+    /// view kick, which the server drops, then the gun kick, which it adds
+    /// to the spring's speeds: four `rand()`s, `rand` a draw in
+    /// `0..=0x7fff_ffff`. The ranges are the sight's when the fraction is
+    /// above 0 (cod15-movement.md 6). Nothing on 1.1.
+    pub fn fire_recoil(&mut self, weapons: &[Option<WeaponDef>], mut rand: impl FnMut() -> i32) {
+        if !self.ps.rules.v15() {
+            return;
+        }
+        let Some(def) = weapons
+            .get(self.ps.weapon as usize)
+            .and_then(Option::as_ref)
+        else {
+            return;
+        };
+        let mut draw = |[min, max]: [f32; 2]| min + (max - min) * (rand() as f32 / 2_147_483_648.0);
+        let a = &def.aim;
+        let view = usize::from(self.ps.weapon_pos_frac == 1.0);
+        draw(a.view_kick_pitch[view]);
+        draw(a.view_kick_yaw[view]);
+        let gun = usize::from(self.ps.weapon_pos_frac > 0.0);
+        let pitch = draw(a.gun_kick_pitch[gun]);
+        let yaw = draw(a.gun_kick_yaw[gun]);
+        self.gun_kick.kick(pitch, yaw);
     }
 
     /// How far the last cmd's shot left off the view it was aimed from,

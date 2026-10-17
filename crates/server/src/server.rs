@@ -8299,6 +8299,9 @@ impl Server {
     /// what each slot replayed, for the trace line `send_snapshots` writes.
     fn replay_moves(&mut self) -> Vec<MoveSummary> {
         use vcod_common::movetrace::{Body, MoveWorld};
+        use vcod_common::net::event_ids::{
+            EV_FIRE_WEAPON_MG42, EV_FIRE_WEAPONB, EV_UO_FIRE_WEAPONC,
+        };
         use vcod_common::pmove::weapon::{
             EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_WEAPON_ALT,
         };
@@ -8482,6 +8485,22 @@ impl Server {
                 });
                 if let (Some(u), Some(w)) = (unlinked, collision) {
                     w.relink_model_instance(u);
+                }
+            }
+            // `BG_PlayerStateToEntityState` hands each new event to
+            // `G_PlayerEvent` after `Pmove`, ahead of `ClientEvents`: on 1.5
+            // and UO a fire event kicks the gun spring the next cmd's aim
+            // reads (cod15-movement.md 6).
+            for e in &raised {
+                if matches!(
+                    e.event,
+                    EV_FIRE_WEAPON
+                        | EV_FIRE_WEAPONB
+                        | EV_FIRE_WEAPON_LASTSHOT
+                        | EV_FIRE_WEAPON_MG42
+                        | EV_UO_FIRE_WEAPONC
+                ) {
+                    sim.fire_recoil(weapons.defs(), || rand_from(&mut self.rng));
                 }
             }
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
