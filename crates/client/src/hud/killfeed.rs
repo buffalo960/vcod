@@ -8,19 +8,8 @@ use vcod_common::net::events::GameEvent;
 /// `attackerEntityNum` for a world kill (doc section 1).
 const ENTITYNUM_WORLD: i32 = vcod_common::net::protocol::ENTITYNUM_WORLD as i32;
 
-/// `Obituary::mod_` on a weapon death; real ids are 0..=24.
+/// `Obituary::mod_` on a weapon death; real ids are 0..=26.
 const NO_MOD: i32 = -1;
-
-// Means-of-death ids (doc section 2); only the ones used here are named.
-#[cfg_attr(not(test), allow(dead_code))] // only exercised by this module's own tests
-const MOD_RIFLE_BULLET: i32 = 2;
-const MOD_MELEE: i32 = 7;
-const MOD_HEAD_SHOT: i32 = 8;
-const MOD_WATER: i32 = 16;
-const MOD_SLIME: i32 = 17;
-const MOD_CRUSH: i32 = 19;
-const MOD_FALLING: i32 = 21;
-const MOD_SUICIDE: i32 = 22;
 
 /// A decoded `EV_OBITUARY`. `attacker` is `None` for a world kill or suicide.
 /// Exactly one of `weapon`/`mod_` is meaningful, discriminated by `mod_ == NO_MOD`.
@@ -30,7 +19,8 @@ pub struct Obituary {
     pub victim: u32,
     /// 1-based index into CS 7; 0 on a MOD death.
     pub weapon: i32,
-    /// Means-of-death id (doc section 2); `NO_MOD` on a weapon death.
+    /// The wire's means-of-death id, in the server protocol's numbering
+    /// (doc section 2, coduo-diff.md 12); `NO_MOD` on a weapon death.
     pub mod_: i32,
 }
 
@@ -57,29 +47,38 @@ pub fn decode_obituary(ev: &GameEvent) -> Obituary {
     }
 }
 
-/// The seven MODs the server tags with bit 7; anything else falls to
-/// `killIconDied` like the client's switch default. Drown and slime ship no
-/// art (doc section 2).
-fn mod_icon(mod_: i32) -> &'static str {
-    match mod_ {
-        MOD_MELEE => "gfx/hud/death_melee",
-        MOD_HEAD_SHOT => "gfx/hud/death_headshot",
-        MOD_WATER => "gfx/hud/death_drown",
-        MOD_SLIME => "gfx/hud/death_slime",
-        MOD_CRUSH => "gfx/hud/death_crush",
-        MOD_FALLING => "gfx/hud/death_falling",
-        MOD_SUICIDE => "gfx/hud/death_suicide",
-        _ => "gfx/hud/death_died",
+/// `CG_Obituary`'s icon switch on a bit-7 parm: the material each case
+/// names, `killIconDied` for any other (doc section 2). The `killIcon*`
+/// materials are pak4's `scripts/hud.shader` (drown and slime draw
+/// `death_died`) and UO's `scripts/gmi_hud.shader`. 1.5's switch is 1.1's
+/// (`cgame_mp_x86.dll` 0x3001e9f5); UO renumbered the ids and added
+/// artillery, the tank and jeep crush and binoculars (`uo_cgame_mp_x86.dll`
+/// 0x3002231e, coduo-diff.md 12).
+fn mod_icon(mod_: i32, uo: bool) -> &'static str {
+    match (uo, mod_) {
+        (_, 7) => "killIconMelee",
+        (_, 8) => "killIconHeadShot",
+        (false, 16) | (true, 15) => "killIconDrown",
+        (false, 17) => "killIconSlime",
+        (false, 19) | (true, 16) => "killIconCrush",
+        (false, 21) | (true, 20) => "killIconFalling",
+        (false, 22) | (true, 21) => "killIconSuicide",
+        (true, 13) => "gfx/icons/hud@artillery",
+        (true, 17) => "killIconCrushTank",
+        (true, 18) => "killIconCrushJeep",
+        (true, 26) => "gfx/icons/hud@bino_owned",
+        _ => "killIconDied",
     }
 }
 
 /// The weapon's `killIcon` when non-empty, else the MOD icon. `kill_icon` is
-/// resolved by the caller, which has filesystem access.
-pub fn icon_for(ob: &Obituary, kill_icon: Option<&str>) -> String {
+/// resolved by the caller, which has filesystem access; `uo` picks United
+/// Offensive's switch.
+pub fn icon_for(ob: &Obituary, kill_icon: Option<&str>, uo: bool) -> String {
     if let Some(icon) = kill_icon.filter(|s| !s.is_empty()) {
         return icon.to_string();
     }
-    mod_icon(ob.mod_).to_string()
+    mod_icon(ob.mod_, uo).to_string()
 }
 
 /// Stock `g_TeamColor_Axis`/`g_TeamColor_Allies` from
@@ -144,19 +143,68 @@ mod tests {
             attacker: Some(1),
             victim: 2,
             weapon: 3,
-            mod_: MOD_RIFLE_BULLET,
+            mod_: NO_MOD,
         };
         assert_eq!(
-            icon_for(&ob, Some("gfx/hud/hud@death_kar98.tga")),
+            icon_for(&ob, Some("gfx/hud/hud@death_kar98.tga"), false),
             "gfx/hud/hud@death_kar98.tga"
         );
         let ob = Obituary {
             attacker: None,
             victim: 2,
             weapon: 0,
-            mod_: MOD_FALLING,
+            mod_: 21,
         };
-        assert_eq!(icon_for(&ob, None), "gfx/hud/death_falling");
+        assert_eq!(icon_for(&ob, None, false), "killIconFalling");
+        // An empty `killIcon` is the switch's default.
+        let ob = Obituary { mod_: NO_MOD, ..ob };
+        assert_eq!(icon_for(&ob, Some(""), false), "killIconDied");
+    }
+
+    /// 1.1's ids against UO's: UO's 15 is the drown, 1.1's the airstrike.
+    #[test]
+    fn each_protocol_reads_its_own_means_of_death() {
+        let icon = |m, uo| mod_icon(m, uo);
+        assert_eq!(icon(16, false), "killIconDrown");
+        assert_eq!(icon(17, false), "killIconSlime");
+        assert_eq!(icon(19, false), "killIconCrush");
+        assert_eq!(icon(23, false), "killIconDied");
+        assert_eq!(icon(13, false), "killIconDied");
+        assert_eq!(icon(15, true), "killIconDrown");
+        assert_eq!(icon(16, true), "killIconCrush");
+        assert_eq!(icon(17, true), "killIconCrushTank");
+        assert_eq!(icon(18, true), "killIconCrushJeep");
+        assert_eq!(icon(13, true), "gfx/icons/hud@artillery");
+        assert_eq!(icon(14, true), "killIconDied");
+        assert_eq!(icon(26, true), "gfx/icons/hud@bino_owned");
+        assert_eq!(icon(25, true), "killIconDied");
+    }
+
+    /// Every icon the switch names has art: a shader script's image or a
+    /// file of its own.
+    #[test]
+    fn every_mod_icon_resolves_to_an_image() {
+        let check = |fs: &vcod_common::pk3::Pk3Fs, uo: bool| {
+            let shaders = vcod_common::assets::load_shaders(fs);
+            for m in 0..32 {
+                let name = mod_icon(m, uo);
+                let map = shaders.image_map();
+                let path = map
+                    .get(name)
+                    .or_else(|| map.get(&name.to_ascii_lowercase()))
+                    .map_or(name, String::as_str);
+                assert!(
+                    vcod_common::assets::resolve_bundle_image(fs, path).is_some(),
+                    "MOD {m} (uo {uo}): {name} -> {path}"
+                );
+            }
+        };
+        if let Some(fs) = vcod_common::testing::game_fs_11() {
+            check(&fs, false);
+        }
+        if let Some(fs) = vcod_common::testing::uo_fs() {
+            check(&fs, true);
+        }
     }
 
     #[test]
@@ -184,7 +232,7 @@ mod tests {
 
     #[test]
     fn decode_reads_mod_when_bit_seven_is_set() {
-        let parm = 0x80 | MOD_FALLING;
+        let parm = 0x80 | 21;
         let ob = decode_obituary(&ev(parm, 3, 7));
         assert_eq!(
             ob,
@@ -192,7 +240,7 @@ mod tests {
                 attacker: Some(7),
                 victim: 3,
                 weapon: 0,
-                mod_: MOD_FALLING,
+                mod_: 21,
             }
         );
     }

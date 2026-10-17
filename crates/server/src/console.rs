@@ -222,7 +222,7 @@ pub enum Rotate {
 /// `sv_mapRotation` when empty (doc 5).
 #[derive(Default, Debug)]
 pub struct Rotation {
-    current: String,
+    pub current: String,
     pub warnings: Vec<String>,
 }
 

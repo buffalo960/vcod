@@ -411,6 +411,10 @@ fn build(
         seti(&mut e, "loopSound", idx);
     }
 
+    // An item overwrites it with its own below.
+    if let Some(g) = host.ents.get(id).map(|e| e.ground) {
+        seti(&mut e, "groundEntityNum", g);
+    }
     match kind {
         Kind::Item(item) => {
             seti(&mut e, "eType", ET_ITEM);

@@ -172,11 +172,15 @@ pub fn frametime(msec: i32) -> f32 {
 /// `Pmove`'s walk from `command_time` up to the cmd's clock: steps of at most
 /// `MAX_FRAME_MS`, each its own `PmoveSingle` on a cmd stamped at the step's
 /// end (0x344e4, and 0x34074 for what lands in `commandTime`), with the
-/// arrears past `MAX_PMOVE_ARREARS_MS` dropped. Yields each step's cmd and
-/// its length in seconds; nothing for a cmd already run (docs/protocol-1.1.md,
-/// "How long a cmd is simulated for").
-pub fn chop(command_time: i32, cmd: &UserCmd) -> impl Iterator<Item = (UserCmd, f32)> + use<> {
-    let cmd = *cmd;
+/// arrears past `MAX_PMOVE_ARREARS_MS` dropped. Runs `step` on each step's
+/// cmd and its length in seconds, and nothing for a cmd already run
+/// (docs/protocol-1.1.md, "How long a cmd is simulated for"). `step` returns
+/// the held-jump latch (`pm_flags` 0x8) it left: while that is set `Pmove`
+/// writes 20 into the cmd's `upmove` (0x344f2-0x344f8, 1.5b 0x28ad5, UO
+/// 0x2e29a), so every later step's air and ladder wish reads 20, not the
+/// key's 127 (cod11-mantle.md, "The jump").
+pub fn chop(command_time: i32, cmd: &UserCmd, mut step: impl FnMut(&UserCmd, f32) -> bool) {
+    let mut cmd = *cmd;
     let dt_ms = cmd.server_time.wrapping_sub(command_time);
     let mut base = if dt_ms <= 0 {
         cmd.server_time
@@ -185,17 +189,17 @@ pub fn chop(command_time: i32, cmd: &UserCmd) -> impl Iterator<Item = (UserCmd, 
     } else {
         command_time
     };
-    std::iter::from_fn(move || {
-        (base != cmd.server_time).then(|| {
-            let msec = (cmd.server_time - base).min(MAX_FRAME_MS as i32);
-            base += msec;
-            let step = UserCmd {
-                server_time: base,
-                ..cmd
-            };
-            (step, frametime(msec))
-        })
-    })
+    while base != cmd.server_time {
+        let msec = (cmd.server_time - base).min(MAX_FRAME_MS as i32);
+        base += msec;
+        let at = UserCmd {
+            server_time: base,
+            ..cmd
+        };
+        if step(&at, frametime(msec)) {
+            cmd.up = 20;
+        }
+    }
 }
 
 /// What a live player's step left beside the playerstate.
@@ -272,9 +276,12 @@ mod tests {
     }
 
     fn steps(command_time: i32, server_time: i32) -> Vec<(i32, f32)> {
-        chop(command_time, &cmd(server_time))
-            .map(|(c, dt)| (c.server_time, dt))
-            .collect()
+        let mut out = Vec::new();
+        chop(command_time, &cmd(server_time), |c, dt| {
+            out.push((c.server_time, dt));
+            false
+        });
+        out
     }
 
     /// The bit table measured off a retail 1.1 client on 2026-09-01, one case
@@ -348,6 +355,27 @@ mod tests {
                 (5150, frametime(18))
             ]
         );
+    }
+
+    #[test]
+    fn a_latched_jump_reads_upmove_20_on_the_later_steps() {
+        let held = UserCmd {
+            server_time: 5150,
+            up: 127,
+            ..Default::default()
+        };
+        let mut ups = Vec::new();
+        chop(5000, &held, |c, _| {
+            ups.push(c.up);
+            true
+        });
+        assert_eq!(ups, [127, 20, 20]);
+        ups.clear();
+        chop(5000, &held, |c, _| {
+            ups.push(c.up);
+            false
+        });
+        assert_eq!(ups, [127, 127, 127]);
     }
 
     #[test]

@@ -83,9 +83,10 @@ something, the bullet links it.
   redirected one is asked for again, a later redirect of it refused so a
   1.5 server sends it over UDP. Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
-  directory over `main/` and swaps in the mod's menus, its
-  `cl_allowDownload` decides whether to download, and a mod's script menus
-  and `hud.menu` text show up.
+  directory over `main/` and swaps in the mod's menus, every systeminfo
+  key (`cl_allowDownload`, `rate`, `snaps`, ...) is forced into the
+  client's cvars as retail does, and a mod's script menus and `hud.menu`
+  text show up.
 - `--vanilla` (client and server) puts only the install patch's stock paks
   on the search path and ignores third-party maps, `zzz_*` mods, downloads
   and `fs_game`; the client downloads nothing under it
@@ -276,8 +277,10 @@ something, the bullet links it.
   scoreboard included. So do the endings: `ctf`'s flag drop and 20 s
   return, `dom`'s domination bonus, `hq`'s wave scoring, `bas`'s bomb
   plant, defuse and blast, and in all four the round end, the score or
-  round limit, intermission and the restart `exitLevel` falls back to
-  (same doc, 22).
+  round limit, intermission and the restart `exitLevel` falls back to;
+  `ctf`'s flag returned by a defender's touch, the round clock and time
+  limit in `ctf`, `bas`, `hq` and `tdm`, `tdm`'s killcam, and a rotation
+  a script sets that names another map (same doc, 22).
 - Hosts United Offensive's tanks and jeeps: they spawn with retail's
   entity numbers and configstrings, the use key boards the one you look
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
@@ -287,7 +290,9 @@ something, the bullet links it.
   shells and blasts; a jeep takes bullets and a struck vehicle a shell's
   whole damage as on retail, a vehicle driven into another shoves it, and
   one wedged seven seconds destroys itself, a wreck's respawn included.
-  A seated driver's and gunner's body meets a level ray where retail's
+  A vehicle's death puts its riders out as retail's does: each takes the
+  5-point probe hit through his damage callback, and one it leaves whole
+  looks for a dismount spot. A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes; a vehicle and its sound blends leave
@@ -317,7 +322,9 @@ something, the bullet links it.
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as
-  retail's does.
+  retail's does; a missile at the sky is freed on 1.1 and 1.5 and flies
+  on through it on UO. A rocket or a swing hurts a UO `setTakeDamage`
+  model directly, and a swing at nothing raises no event.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.
 - Search & Destroy end to end: plant, defuse, progress bar, compass
@@ -329,7 +336,8 @@ something, the bullet links it.
 - Map triggers, script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
-- Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
+- Intermission, `map_restart` and `sv_mapRotation` the way retail runs them,
+  a rotation a script `setCvar`s included.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
   zombie slots and retail-measured pings. `getinfo` and `getstatus` answer
@@ -362,11 +370,13 @@ something, the bullet links it.
   and run from live ones, and play
   the objectives of UO's `sd`, `ctf` (take, carry, return), `dom` (stand
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
-  (plant on a breached base and defuse; they can't breach one, since they
-  ignore vehicles). The nav graph is rebuilt when the script deletes walls,
-  as `bas` does to a breached base. Bots never crouch on the move, so a UO spawn room
-  whose only way out is a crouched jump through a window (mp_cassino's axis
-  room, two on mp_streets) holds a bot spawned there.
+  (fetch a bazooka or panzerschreck lying about and breach a base with
+  rockets from a spot with a shot at it, plant on a breached base and
+  defuse; they ignore vehicles). The nav graph is rebuilt when the script
+  deletes walls, as `bas` does to a breached base. Bots never crouch on
+  the move, so a UO spawn room whose only way out is a crouched jump
+  through a window (mp_cassino's axis room, two on mp_streets) holds a
+  bot spawned there.
 
 ## What it doesn't do
 
@@ -435,6 +445,9 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
+- A UO rider killed with his vehicle, where he sat, stays on the hull;
+  retail's corpse slides off it
+  ([coduo-vehicles.md](research/coduo-vehicles.md) 11.2).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.
@@ -473,7 +486,8 @@ console.
   most, as the retail cgame and renderer do. A `map_restart` clears them
   with every live effect and sound, empties the objective text and stands
   the player up running, and drops the centre print, the vote lines and
-  the hit icons, as `CG_MapRestart` does; the next snapshot then runs the
+  the hit icons, as `CG_MapRestart` does, and the game and bold message
+  windows, as the engine's `n`/`B` case does; the next snapshot then runs the
   respawn reset. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
