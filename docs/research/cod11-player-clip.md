@@ -512,7 +512,7 @@ velocity is the tail's (0x34398) replacement off the 1 ms step's move, not a
 clip. VERIFIED, vcod measurement the same day: ours matches every row past
 the first trial, and with the restore skipped under 0x200 36 rows differ
 (`fall_ab::a_hit_slide_along_a_wall_keeps_its_velocity_as_retail_does`).
-No capture covers `StuckInClient`'s 0x100 push on a wall.
+Section 10.4 is `StuckInClient`'s 0x100 push into a wall.
 
 ### 8.6 The damage-free ladder's parm
 
@@ -1160,6 +1160,40 @@ at it (section 6.2). The pair stayed inside each other for the rest of the
 run and neither could walk out: a move that starts inside a body and ends
 inside its z-span is allsolid (section 2.2), so nothing but the push
 separates two players.
+
+### 10.4 Pushed into a wall
+
+The same pair under `+set probe_bump_spot wall`: the walker stands at
+(-56, 448, 0.25) on mp_carentan, 8.875 short of the caulk wall of brush
+2201 at y 471.875, with open floor along +x to a second wall at x 71.875.
+The files are `mp_carentan-dm-bump-overlap-wall-walker.txt` and
+`-overlap-wall-script.txt` (2026-10-17).
+
+VERIFIED (`PROBE overlap 35200 0 1`; walker lines at ct 35182-35599): the
+still walker takes (140.89, 127.47) with `pm_time` 300, reaches the wall
+at y 456.873 on the second snapshot after and slides along +x. While the
+timer runs its velocity keeps the y the wall stops (117, 108, 99, 91, 84
+on consecutive snapshots, x and y shrinking by the same factor, about
+0.92 a snapshot), and the first snapshot with `pm_time` 0 carries y 0
+(ct 35532, velocity (79, 0, 0)). INFERRED: under 0x100 the slide's restore of the start
+velocity (section 7) hands the into-wall part back every frame, the
+quartered friction wears both parts down alike, and the first frame
+without the timer clips it away.
+
+VERIFIED (`PROBE overlap 53200 0 1`; ct 53183-53682): with the walker
+walking +x into the corner of the two walls at (56.874, 456.873), the push
+(114.01, 151.99) leaves velocity (0, 0, 0) from the next snapshot on, the
+body never moves, and `pm_time` reads 300 on four snapshots running
+before it counts down: the target, pushed back into the walker each end
+frame, kept overlapping. INFERRED: a push into both planes of a crease
+leaves nothing for the restore to hand back.
+
+VERIFIED, vcod measurement the same day
+(`stuck_ab::a_pushed_player_slides_along_a_wall_as_retail_does`): every
+snapshot pair no push wrote between, rebased on retail's state and run
+through our pmove cmd for cmd, lands on retail's origin, velocity and
+`pm_time` (674 pairs, 13 under the timer, 6 of them along the wall). The
+push's direction rides `rand()`, so the gate replays pmove only.
 
 ## 11. As implemented
 

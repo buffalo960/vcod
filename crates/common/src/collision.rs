@@ -354,6 +354,13 @@ fn clip_segment(
     }
 }
 
+thread_local! {
+    /// The fraction a capsule last entered a brush at without replacing
+    /// the trace's equal one, or -1: two brushes a sweep meets at the same
+    /// fraction, whose reported side retail's leaf order picks.
+    static BRUSH_TIE: std::cell::Cell<f32> = const { std::cell::Cell::new(-1.0) };
+}
+
 /// Retail's brush clip (`cod_lnxded` 0x8054e90, the capsule arm) on a
 /// brush whose first six planes are the axial ones, `-x, +x, -y, +y, -z,
 /// +z`, as `brush_side_planes` lays them out. The axial sides take the
@@ -387,7 +394,8 @@ fn clip_brush_capsule(
     // `+0x10c`), `(r, r, half height)` for an upright one.
     let ext = [0, 1, 2].map(|i| sphere[i].abs() + r);
     let mut enter = 0.0f32;
-    let mut leave = d(trace.fraction);
+    let frac0 = d(trace.fraction);
+    let mut leave = frac0;
     let mut allsolid = true;
     let mut lead: Option<(Vec3, usize)> = None;
     // One side's distances; `false` when the side rules the brush out.
@@ -421,6 +429,11 @@ fn clip_brush_capsule(
             let e = back / gap;
             enter = e as f32;
             if leave <= gcc(e) {
+                // Entering exactly at the trace's fraction is a tie the
+                // walk order settles (`walk_tree`).
+                if leave == frac0 && gcc(e) == frac0 {
+                    BRUSH_TIE.set(trace.fraction);
+                }
                 return false;
             }
             lead = Some((normal, k));
@@ -2453,6 +2466,7 @@ impl CollisionWorld {
         // subsequence of them in the same order (its fraction is never
         // larger), so it replays the list instead of walking again.
         let entry = *trace;
+        BRUSH_TIE.set(-1.0);
         let mut walk = Walk {
             sweep,
             leaves: [0; LEAF_LOG],
@@ -2474,8 +2488,14 @@ impl CollisionWorld {
             self.trace_node(0, &mut walk, false, trace);
         }
         // A sweep that meets a patch starts over: model 0 in retail's leaf
-        // order, then the submodels and the static models as before.
-        if walk.patch_met.get()
+        // order, then the submodels and the static models as before. So
+        // does one whose contact ties two model-0 brushes, as a capsule
+        // standing across two floor brushes does: the first in retail's
+        // order names the surface (bsp-ibsp59-format.md, "The leaf walk").
+        let tied = trace.fraction < 1.0
+            && BRUSH_TIE.get() == trace.fraction
+            && matches!(trace.hit, Some(Prim::Brush(b)) if self.brushes[b as usize].model == 0);
+        if (walk.patch_met.get() || tied)
             && let Some(leaves) = &self.leaf_walk
         {
             *trace = entry;
@@ -4229,6 +4249,39 @@ mod tests {
             "textures/normandy/floors/rock@cobbl_patrn1a"
         );
         assert_eq!(sound_material(t.surface_flags), 21);
+    }
+
+    /// A capsule standing across two floor brushes that meet at one
+    /// height enters both at the same fraction; retail reports the one its
+    /// leaf walk reaches first. On mp_carentan at (817.4, 694.6) that is
+    /// brush 3882's material 4, where the BVH met brush 3880's 21 first:
+    /// retail 1.1d, 1.5b and UO all step there with `EV_FOOTSTEP_RUN` 4
+    /// (the patchwalk pillar captures, bsp-ibsp59-format.md "The leaf
+    /// walk").
+    #[test]
+    fn a_capsule_on_two_floor_brushes_reads_the_first_in_leaf_order() {
+        let Some(data) =
+            crate::testing::game_fs().and_then(|fs| fs.read("maps/mp/mp_carentan.bsp"))
+        else {
+            return;
+        };
+        let bsp = crate::bsp::parse(&data).unwrap();
+        let world = CollisionWorld::build(&bsp, &[]);
+        let at = Vec3::new(817.44934, 694.5726, 8.125);
+        let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+        for arith in [Arith::Kept, Arith::Stored] {
+            world.set_arith(arith);
+            let t = world.move_trace(
+                at + Vec3::Z * 0.25,
+                at - Vec3::Z * 0.25,
+                mins,
+                maxs,
+                MASK_PLAYERSOLID,
+            );
+            assert_eq!(t.fraction, 0.5, "{arith:?}");
+            assert_eq!(sound_material(t.surface_flags), 4, "{arith:?} {:?}", t.hit);
+        }
+        world.set_arith(Arith::Kept);
     }
 
     #[test]

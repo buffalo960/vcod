@@ -618,3 +618,30 @@ misses on the sprint run (VERIFIED, the gate on that revert).
 captures the same way on protocol 6 (VERIFIED, 12 821 cmds, 0
 mismatches). The seats are not covered: a seated sim needs the server's
 vehicle.
+
+## 16. The prone check
+
+VERIFIED, `BG_CheckProneValid` (0x2162c) against 1.5b's (0x1cf58), read
+side by side in the Ghidra export: UO adds two arguments. The sixteenth
+turns on a sweep of a ±6 box from the origin 8 up, 38 units along the
+facing (rodata 0x9a9b4 8.0, 0x9a9b8 -38.0 along the back vector), refusing
+on any hit; only the bipod's own call passes it (`BG_CheckProne`, 0x22ff3,
+passes 0). The seventeenth, a function of the hit entity, refuses a body
+whose ground 10 units down (0x9a9a4) is entity type 12, a vehicle; it runs
+only on the lie-down call (the ninth argument 0). VERIFIED: with the
+fourteenth argument 0 the trace mask is 0x810031, 1.5b's 0x810011 plus
+water; a feet or chest sample that lands in water skips the steep test,
+and a chest sample more than 24 (0x9a9e0, a double) off the origin plus 6
+refuses. `PM_VerifyPronePosition` (0x2e3b0) passes the fourteenth 0, so the
+prone move's check sees water.
+
+VERIFIED, retail capture (`mp_carentan-dm-slope-8ms-patchwalk-pillar-uo.txt`,
+2026-10-17): crawling forward and left along the brick wall at x 971.9 on
+mp_carentan from (956.9, 588), UO refuses every cmd past y 599.77 from ct
+34625 (the snapshot keeps 599.76776, velocity 0), where 1.1d and 1.5b
+crawl on to 600.36 and 600.34 on the same script. vcod, under UO's rules,
+crawls to 600.24 before its check refuses, as under 1.5's. INFERRED: none
+of the three additions above fires there (a dry, flat brush floor, no
+vehicle, the bipod's sweep not asked), and a test run with the water mask
+on our check moved nothing; the refusing test is not identified. The
+gate tolerates those 16 snapshots (`moves_ab.rs`, `PILLAR_UO_GAPS`).

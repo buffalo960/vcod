@@ -188,6 +188,10 @@ pub struct Save {
     /// `--probe-crouchjump-stand`: the same script with no crouch, the
     /// control run.
     pub crouchjump_stand: bool,
+    /// `--probe-patchwalk <yaw>`: the slope capture's walk is
+    /// [`patchwalk_script`] from a `client-probes/probe_patchwalk`
+    /// placement facing that world yaw.
+    pub patchwalk: Option<f32>,
     pub combat: bool,
     pub ads: bool,
     pub grenade: bool,
@@ -363,6 +367,7 @@ pub fn probe(
         uofoot: probe_uofoot,
         crouchjump: probe_crouchjump,
         crouchjump_stand,
+        patchwalk: probe_patchwalk,
         combat: save_combat,
         ads: save_ads,
         grenade: save_grenade,
@@ -432,7 +437,8 @@ pub fn probe(
         || probe_sprint
         || probe_autofire
         || probe_uofoot.is_some()
-        || probe_crouchjump.is_some();
+        || probe_crouchjump.is_some()
+        || probe_patchwalk.is_some();
     let slope = slope || save_slope || prone_crawl;
     // A crew member's slope capture records its seats, not the route.
     let pvs = pvs || save_entities || (slope && !prone_crawl && probe_vehicle.is_none());
@@ -448,6 +454,8 @@ pub fn probe(
         ProneScript::switching(yaw, uofoot_script(), UOFOOT_SWITCHES)
     } else if let Some(yaw) = probe_crouchjump {
         ProneScript::new(yaw, crouchjump_script(!crouchjump_stand))
+    } else if let Some(yaw) = probe_patchwalk {
+        ProneScript::new(yaw, patchwalk_script())
     } else {
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
@@ -599,7 +607,13 @@ pub fn probe(
     let mut turret_spawned = false;
     // A tag starting `overlap` picks the walker's overlap script, which pairs
     // with the gsc's `probe_overlap 1`.
-    let mut bump = BumpProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("overlap")));
+    // A tag starting `overlap-wall` runs it at the gsc's `probe_bump_spot
+    // wall`, where the push drives the walker into a wall.
+    let mut bump = BumpProbe::new(
+        tag.as_deref().is_some_and(|t| t.starts_with("overlap")),
+        tag.as_deref()
+            .is_some_and(|t| t.starts_with("overlap-wall")),
+    );
     let mut wrote_bump = false;
     // A tag starting `torso` fires and reloads on the move (probe_torso).
     let mut legs =
@@ -1637,6 +1651,8 @@ pub fn probe(
                                 SlopeWalk::UoFoot
                             } else if probe_crouchjump.is_some() {
                                 SlopeWalk::CrouchJump
+                            } else if probe_patchwalk.is_some() {
+                                SlopeWalk::PatchWalk
                             } else {
                                 SlopeWalk::Prone
                             },
@@ -1728,6 +1744,8 @@ pub fn probe(
                 SlopeWalk::UoFoot
             } else if probe_crouchjump.is_some() {
                 SlopeWalk::CrouchJump
+            } else if probe_patchwalk.is_some() {
+                SlopeWalk::PatchWalk
             } else if prone_crawl {
                 SlopeWalk::Prone
             } else if probe_vehicle.is_some() {
@@ -7207,6 +7225,7 @@ enum SlopeWalk {
     Vehicle,
     UoFoot,
     CrouchJump,
+    PatchWalk,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -7244,7 +7263,19 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if walk == SlopeWalk::CrouchJump {
+    if walk == SlopeWalk::PatchWalk {
+        let env = match protocol.version {
+            6 => "COD_VERSION=1.5 ",
+            22 => "COD_VERSION=uo ",
+            _ => "",
+        };
+        out.push_str(&format!(
+            "# Captured with {env}tools/run_probe.sh client-probes/probe_patchwalk {map}\n\
+             # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
+             # --probe-patchwalk <yaw> --probe-cmd-ms {cmd_ms}: patchwalk_script() from the\n\
+             # placement, facing the --probe-patchwalk yaw. !cmd is a\n"
+        ));
+    } else if walk == SlopeWalk::CrouchJump {
         out.push_str(&format!(
             "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_crouchjump {map}\n\
              # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
@@ -7745,6 +7776,59 @@ fn crouchjump_script(crouch: bool) -> Vec<ProneStep> {
         step(2950, 0, 127, 0),
         step(5000, 0, 0, 0),
         step(7000, 0, 0, 0),
+    ]
+}
+
+/// `--probe-patchwalk`, from a `client-probes/probe_patchwalk` placement
+/// facing a patch: a run into it, runs sliding along it both ways,
+/// runs at it turned 30 degrees either side, a running jump at it,
+/// crouch walks along it, a crawl into and along it and a stand beside
+/// it, then a step back (bsp-ibsp59-format.md, "Patch collision on 1.5 and UO").
+fn patchwalk_script() -> Vec<ProneStep> {
+    use net::msg::{WBUTTON_CROUCH, WBUTTON_PRONE};
+    const C: u8 = WBUTTON_CROUCH;
+    const P: u8 = WBUTTON_PRONE;
+    let step = |at_ms, wbuttons: u8, forward, right, up: i8, yaw| ProneStep {
+        at_ms,
+        buttons: 0,
+        wbuttons,
+        forward,
+        right,
+        up: if wbuttons != 0 { -127 } else { up },
+        yaw,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0, 0, 0.0),
+        // Into it, then along it right, left and back to the middle.
+        step(1000, 0, 127, 0, 0, 0.0),
+        step(1800, 0, 127, 127, 0, 0.0),
+        step(2500, 0, 127, -127, 0, 0.0),
+        step(3900, 0, 127, 127, 0, 0.0),
+        step(4600, 0, -127, 0, 0, 0.0),
+        step(4900, 0, 0, 0, 0, 0.0),
+        // At it turned 30 degrees either way.
+        step(5200, 0, 127, 0, 0, 30.0),
+        step(5900, 0, 127, 0, 0, -30.0),
+        step(6600, 0, -127, 0, 0, 0.0),
+        step(6900, 0, 0, 0, 0, 0.0),
+        // A running jump at it.
+        step(7200, 0, 127, 0, 127, 0.0),
+        step(7350, 0, 127, 0, 0, 0.0),
+        // Crouched along it.
+        step(8000, C, 127, 127, 0, 0.0),
+        step(8700, C, 127, -127, 0, 0.0),
+        step(10100, C, 127, 127, 0, 0.0),
+        // Prone, a crawl into it and along it, then up beside it.
+        step(10800, P, 0, 0, 0, 0.0),
+        step(12300, P, 127, 0, 0, 0.0),
+        step(13100, P, 127, 127, 0, 0.0),
+        step(13800, P, 127, -127, 0, 0.0),
+        step(15200, P, 0, 0, 0, 0.0),
+        step(15700, 0, 0, 0, 0, 0.0),
+        step(17200, 0, -127, 0, 0, 0.0),
+        step(17600, 0, 0, 0, 0, 0.0),
+        step(18600, 0, 0, 0, 0, 0.0),
     ]
 }
 
@@ -10694,6 +10778,9 @@ fn write_turret_fixture(
 /// The target's feet under `client-probes/probe_bump`'s `probe_teleport 1`; the
 /// walker is placed [`BUMP_BACK`] units behind along -x, both facing +x.
 const BUMP_SPOT: [f32; 3] = [1132.0, -376.0, -151.875];
+/// The target's feet under `probe_bump_spot wall`: the walker's spot, 200
+/// behind, stands 8.875 short of a +y wall (cod11-player-clip.md 10.4).
+const BUMP_SPOT_WALL: [f32; 3] = [144.0, 448.0, 0.25];
 const BUMP_BACK: f32 = 200.0;
 /// Standing this close in xy to the start is being placed.
 const BUMP_PLACED: f32 = 10.0;
@@ -12232,6 +12319,8 @@ fn bump_axis_far(d: f32, v: f32) -> i8 {
 #[derive(Default)]
 struct BumpProbe {
     overlap: bool,
+    /// [`BUMP_SPOT`], or [`BUMP_SPOT_WALL`] for the wall run.
+    spot: [f32; 3],
     phase: BumpPhase,
     phase_started: Option<Instant>,
     /// Wall clock and server time of the snapshot that showed the placement.
@@ -12261,9 +12350,10 @@ struct BumpProbe {
 const BUMP_STANCES: [BumpStance; 3] = [BumpStance::Stand, BumpStance::Crouch, BumpStance::Prone];
 
 impl BumpProbe {
-    fn new(overlap: bool) -> Self {
+    fn new(overlap: bool, wall: bool) -> Self {
         BumpProbe {
             overlap,
+            spot: if wall { BUMP_SPOT_WALL } else { BUMP_SPOT },
             ..Default::default()
         }
     }
@@ -12290,7 +12380,7 @@ impl BumpProbe {
     }
 
     fn target_xy(&self) -> [f32; 2] {
-        let t = self.target.map_or(BUMP_SPOT, |t| t.0);
+        let t = self.target.map_or(self.spot, |t| t.0);
         [t[0], t[1]]
     }
 
@@ -12430,13 +12520,17 @@ impl BumpProbe {
     }
 
     /// The other player nearest the spot: `(origin, entity, solid)`.
-    fn read_target(snap: &net::snapshot::Snapshot, me: u32) -> Option<([f32; 3], u32, i32)> {
+    fn read_target(
+        snap: &net::snapshot::Snapshot,
+        me: u32,
+        spot: [f32; 3],
+    ) -> Option<([f32; 3], u32, i32)> {
         let p = wire();
         snap.entities
             .iter()
             .filter(|&(&n, e)| n != me && e.field_i32(p, "eType") == crate::entities::ET_PLAYER)
             .map(|(&n, e)| (e.origin(p), n, e.field_i32(p, "solid")))
-            .min_by(|a, b| horiz_dist(a.0, BUMP_SPOT).total_cmp(&horiz_dist(b.0, BUMP_SPOT)))
+            .min_by(|a, b| horiz_dist(a.0, spot).total_cmp(&horiz_dist(b.0, spot)))
     }
 
     fn snap_line(&self, snap: &net::snapshot::Snapshot) -> String {
@@ -12493,7 +12587,7 @@ impl BumpProbe {
         ];
         self.ground = snap.ps.field_i32(p, "groundEntityNum");
         self.msg = snap.message_num;
-        self.target = Self::read_target(snap, me);
+        self.target = Self::read_target(snap, me, self.spot);
 
         if self.phase != BumpPhase::Wait && self.traced != Some(snap.message_num) {
             self.traced = Some(snap.message_num);
@@ -12547,7 +12641,7 @@ impl BumpProbe {
         }
         let next = match self.phase {
             BumpPhase::Wait => {
-                let start = [BUMP_SPOT[0] - BUMP_BACK, BUMP_SPOT[1], BUMP_SPOT[2]];
+                let start = [self.spot[0] - BUMP_BACK, self.spot[1], self.spot[2]];
                 if horiz_dist(self.origin, start) <= BUMP_PLACED {
                     self.placed = Some((now, snap.server_time));
                     BumpPhase::Settle
@@ -12659,7 +12753,7 @@ fn write_bump_fixture(
     out.push_str("# through another.\n");
     out.push_str(&format!(
         "# bump spot={},{},{} yaw=0\n",
-        BUMP_SPOT[0], BUMP_SPOT[1], BUMP_SPOT[2]
+        bp.spot[0], bp.spot[1], bp.spot[2]
     ));
     out.push_str(&format!(
         "# map {map}, gametype {gametype}, walker team={} weapon={}, script {}\n",
@@ -12675,6 +12769,12 @@ fn write_bump_fixture(
 # probe) {BUMP_BACK} units behind it along -x, both facing +x. The recipe is in\n\
 # crates/gsc/tests/fixtures/semantics/client-probes/README.md, probe_bump.\n"
     ));
+    if bp.spot == BUMP_SPOT_WALL {
+        out.push_str(
+            "# Wall run, +set probe_bump_spot wall: the walker stands 8.875 short of a +y wall,\n\
+# so the push drives it into the wall.\n",
+        );
+    }
     if bp.overlap {
         out.push_str(&format!(
             "# Overlap script, +set probe_overlap 1: the gsc setorigins the target onto the walker\n\
