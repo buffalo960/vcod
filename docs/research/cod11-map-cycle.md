@@ -872,12 +872,14 @@ the first (coduo-diff.md 22).
 As implemented: `Server::with_seed`, which the binary calls with the wall
 clock, keeps a level seed that seeds `GameHost::rng` at each load through
 `Carry::seed` and steps after it, so every level, restarts included, draws
-anew. `Server::new` hands no seed and every level draws from `RNG_SEED`:
-the tests' spawn picks hold on every level, and the UO `gametypes_ab`
-probes that restart (`tdmend`, `ctftime`, `bas`, `bastime`, `basend`) need
-that. Their second level's spawns and facings matched retail's one capture
-only because ours repeated the first level's draws, and five of them fail
-under a stepped seed. vcod keeps its xorshift generator, not `irand`'s LCG;
+anew. `Server::new` hands no seed and every level draws from `RNG_SEED`,
+so a test's spawn picks hold on every level. `gametypes_ab` does not
+lean on that: it runs `Server::with_seed` and replays each probe's retail
+spawn picks (`Server::pin_spawns`, read off the captures' first playing
+snapshot of each life), since no seed reproduces a wall-clock draw. Before
+that, the UO probes that restart (`tdmend`, `ctftime`, `bas`, `bastime`,
+`basend`) matched retail's second level only because ours repeated the
+first level's draws, and all five failed under a stepped seed. vcod keeps its xorshift generator, not `irand`'s LCG;
 the missiles' tumble keeps its own state, reset at every load
 (`Missiles::rng`). `server.rs`'s `a_restart_reseeds_the_script_draws`
 fails without the seed.

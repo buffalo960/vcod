@@ -281,8 +281,8 @@ something, the bullet links it.
   plant, defuse and blast, and in all four the round end, the score or
   round limit, intermission and the restart `exitLevel` falls back to;
   `ctf`'s flag returned by a defender's touch, the round clock and time
-  limit in `ctf`, `bas`, `hq` and `tdm`, `tdm`'s killcam, and a rotation
-  a script sets that names another map (same doc, 22).
+  limit in `ctf`, `dom`, `bas`, `hq` and `tdm`, `tdm`'s killcam, and a
+  rotation a script sets that names another map (same doc, 22).
 - Hosts United Offensive's tanks and jeeps: they spawn with retail's
   entity numbers and configstrings, the use key boards the one you look
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
