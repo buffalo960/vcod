@@ -2017,7 +2017,7 @@ cmd stream on vcod's mover (`crates/server/tests/playerstate_slope_ab.rs`):
 the sight-held route walk of every `--save-slope` capture settles at 63 per
 axis on a diagonal, 89.7 units/s, where vcod wished 190, and the ADS
 capture's plain walk at 224 (`mp_carentan-dm-ads.txt`, `walk`: velocity
-163, 154). Neither is `g_speed`.
+-5, 224 on the 2026-10-17 recapture, 163, 154 before). Neither is `g_speed`.
 
 VERIFIED: `PM_WalkMove` (0x2f258) calls the cmd scale at 0x2e690 with a
 copy of the cmd (0x2f2bf), and `PM_AirMove` (0x2f03c) calls the one at

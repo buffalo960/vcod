@@ -2315,8 +2315,10 @@ impl ScriptRuntime {
                         rec.busy = 0;
                     }
                 }
-                // `G_FreeEntity`'s unlink.
+                // `G_FreeEntity`'s unlink and ground sweep
+                // (`ClientDisconnect` 0x42bfc).
                 self.host.area.unlink(slot as u32);
+                self.host.free_ground_refs(slot as u32);
                 self.host.ents.free_client(slot);
             }
         }

@@ -1578,7 +1578,11 @@ pub fn probe(
                         longest_sightline(w, eye)
                     });
                 }
-                if combat.step(now, s) {
+                // The clock after the reads above: the weapon file and the
+                // sight line take 100-200 ms on the first settled snapshot,
+                // and a first step timed from before them opened with a
+                // snapshot gap and that much of its hold already spent.
+                if combat.step(Instant::now(), s) {
                     // The sway run is a measurement: its impact lines
                     // went to stdout and there is no fixture for it.
                     if !probe_sway {
@@ -2873,7 +2877,7 @@ struct MotionProbe {
     traced: Option<u32>,
     /// The view yaw at the spawn, which every pose's own yaw is an offset
     /// from ([`hold_view_yaw`]).
-    spawn_yaw: Option<i32>,
+    spawn_yaw: ViewHold,
 }
 
 impl Default for MotionProbe {
@@ -2885,7 +2889,7 @@ impl Default for MotionProbe {
             captured: Vec::new(),
             done: false,
             traced: None,
-            spawn_yaw: None,
+            spawn_yaw: ViewHold::default(),
         }
     }
 }
@@ -3797,7 +3801,7 @@ struct CombatProbe {
     /// The weapon file has been read once; a second look would reread it every
     /// frame.
     weapon_read: bool,
-    spawn_yaw: Option<i32>,
+    spawn_yaw: ViewHold,
     stall: StallTurn,
     /// Configstring 7 indexes, 1-based, of the frag and of the weapon the join
     /// chose; 0 until the list is read.
@@ -3831,7 +3835,7 @@ impl Default for CombatProbe {
             done: false,
             traced: None,
             weapon_read: false,
-            spawn_yaw: None,
+            spawn_yaw: ViewHold::default(),
             stall: StallTurn::default(),
             frag_index: 0,
             joined_index: 0,
@@ -3973,9 +3977,13 @@ impl CombatProbe {
 
     /// Holds the step's base input, and taps only once its clock runs: a step
     /// waiting for the weapon to read ready must not be tapping while it waits.
+    /// A walk stands still until its clock runs too: `advance` used to walk
+    /// through the join's settle, so the `# spawn` pose (and the yaw a gate
+    /// rebases `!input` on) was taken after a stall turn the input never had.
     fn cmd(&self) -> net::msg::UserCmd {
         match (self.steps.get(self.idx), self.started) {
             (Some(step), Some(t)) => step.cmd_at(t.elapsed()),
+            (Some(step), None) if step.walks => net::msg::NULL_USERCMD,
             (Some(step), None) => step.base,
             (None, _) => net::msg::NULL_USERCMD,
         }
@@ -4405,8 +4413,8 @@ fn write_combat_fixture(
     let (spawn_origin, spawn_view) = combat.spawn_pose.unwrap_or_default();
     out.push_str(&format!(
         "# spawn origin={} viewangles={}\n",
-        vec_str(spawn_origin),
-        vec_str(spawn_view),
+        vec_exact(spawn_origin),
+        vec_exact(spawn_view),
     ));
     if combat.kind == "lean" {
         out.push_str("# Every step is scoped and holds still. The probe aims every cmd at the\n");
@@ -4450,8 +4458,8 @@ frag={} frag_index={} origin={} viewangles={}\n",
             combat.joined_index,
             combat.frag_name,
             combat.frag_index,
-            vec_str(origin),
-            vec_str(view),
+            vec_exact(origin),
+            vec_exact(view),
         ));
     }
     let broken: Vec<&str> = combat
@@ -4705,6 +4713,13 @@ fn pairs_str(pairs: &[(usize, i16)]) -> String {
 
 fn vec_str(v: [f32; 3]) -> String {
     format!("{:.1},{:.1},{:.1}", v[0], v[1], v[2])
+}
+
+/// A vector as the shortest decimals that read back as the same f32: a pose
+/// a gate places its client at. One decimal put a spawn's -138.0048 view (short
+/// 40413) a short off when read back.
+fn vec_exact(v: [f32; 3]) -> String {
+    format!("{},{},{}", v[0], v[1], v[2])
 }
 
 impl HitSample {
@@ -6807,28 +6822,49 @@ fn write_playerstate_fixture(
     Ok(())
 }
 
+/// What [`hold_view_yaw`] keeps: the facing the spawn gave, once known, and
+/// until then the last spectating snapshot's `delta_angles[1]` and the yaw
+/// the probe asked for under it.
+#[derive(Default)]
+struct ViewHold {
+    spawn: Option<i32>,
+    before: Option<(i32, i32)>,
+}
+
 /// A scripted yaw is a view direction, an offset from where the spawn faced:
-/// `spawn` latches the view yaw of the first snapshot that shows the player
-/// spawned, and every later cmd asks for that plus the script's yaw.
+/// every cmd after the spawn asks for that facing plus the script's yaw.
 /// `send_frame` takes `delta_angles` off, so a push of `delta_angles` (the
-/// prone cone's hold) never turns the heading the script asked for. Before
-/// 2026-10-17 this took `delta_angles` off too, latched before the spawn:
-/// the view then followed every push the other way, and a prone swing past
-/// the cap oscillated (playerstate_motion_ab.rs).
+/// prone cone's hold) never turns the heading the script asked for.
+///
+/// The facing is not read off the first spawned snapshot's view: by then
+/// the probe's own cmds have turned it (on 1.1 the spawn's think runs a cmd
+/// whose angles are the negated `delta_angles`, so that view reads 0). It is
+/// read off `delta_angles`: `SetClientViewAngle` sets them to the spawn's
+/// yaw less the last cmd's angle, and that cmd was the asked-for yaw less the
+/// spectating `delta_angles` (cod15-movement.md, "The spawn's lie-down";
+/// cod11-combat.md 9.2). Before 2026-10-17 this took `delta_angles` off too,
+/// so the view followed every push the other way, and a prone swing past the
+/// cap oscillated (playerstate_motion_ab.rs); until the second fix that day
+/// it latched the first spawned view, so every capture faced world yaw 0.
 fn hold_view_yaw(
     cmd: &mut net::msg::UserCmd,
     client: &NetClient<UdpTransport>,
-    spawn: &mut Option<i32>,
+    hold: &mut ViewHold,
 ) {
     let Some(s) = client.snapshots().newest() else {
         return;
     };
     let p = wire();
-    if spawn.is_none() && s.ps.field_i32(p, "pm_type") == PM_NORMAL {
-        let view = f32::from_bits(s.ps.field_i32(p, "viewangles[1]") as u32);
-        *spawn = Some((view * 65536.0 / 360.0).round() as i32);
+    let delta = s.ps.field_i32(p, "delta_angles[1]");
+    if hold.spawn.is_none() {
+        if s.ps.field_i32(p, "pm_type") == PM_NORMAL {
+            let (before, asked) = hold.before.unwrap_or((0, 0));
+            hold.spawn = Some((delta - before + asked) & 0xffff);
+        } else {
+            hold.before = Some((delta, cmd.angles[1]));
+        }
     }
-    if let Some(spawn) = *spawn {
+    if let Some(spawn) = hold.spawn {
         cmd.angles[1] = (spawn + cmd.angles[1]) & 0xffff;
     }
 }
@@ -12682,11 +12718,10 @@ fn write_entities_fixture(
 sample of a set\n"
     ));
     head.push_str("# already seen adds a position and no new visibility case.\n");
-    head.push_str(
-        "# Every run is taken from a settled server: an item's groundEntityNum reads 0\n",
-    );
-    head.push_str("# for the first minute after a map load and ENTITYNUM_NONE afterwards, so a\n");
-    head.push_str("# capture taken straight after +map disagrees with every later one.\n");
+    head.push_str("# Every run is taken from a server one client has already joined and left:\n");
+    head.push_str("# its ClientDisconnect frees entity 0, and G_FreeEntity's sweep turns every\n");
+    head.push_str("# groundEntityNum still at G_Spawn's 0 (the script models, the turrets) to\n");
+    head.push_str("# 1023, so a first run on a fresh server disagrees with every later one.\n");
     head.push_str(
         "# One [sample] per station, carrying the probe's origin there and every entity\n",
     );
@@ -12817,7 +12852,7 @@ struct PvsProbe {
     detour_deg: i32,
     /// Time and position the current stuck window opened at.
     last_progress: Option<(Instant, [f32; 3])>,
-    spawn_yaw: Option<i32>,
+    spawn_yaw: ViewHold,
     /// The previous snapshot's entities, which the next one is diffed against.
     live: BTreeMap<u32, EntInfo>,
     /// Newest snapshot already diffed, so the diff runs per snapshot rather
@@ -12835,7 +12870,7 @@ impl Default for PvsProbe {
             started: None,
             detour_deg: 0,
             last_progress: None,
-            spawn_yaw: None,
+            spawn_yaw: ViewHold::default(),
             live: BTreeMap::new(),
             traced: None,
             stations: Vec::new(),
