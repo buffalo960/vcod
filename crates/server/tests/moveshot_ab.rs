@@ -38,11 +38,14 @@ const TOL: f32 = 1.0;
 const GAPS: &[(&str, &str, usize, &str)] = &[("walk", "uo", 5, PLACEMENT)];
 
 /// After the teleport onto the street's grade ours' body settles 0.2 units
-/// down its side from retail's, which stays where the gametype put it (the
-/// thrower slide, cod11-combat.md 2.1, "Measured"), until the crouched
-/// strafes push both against the same wall. Every earlier round lands a unit
-/// over at most, except this one: it strikes a slanted face at x 1244, where
-/// that offset moves the impact a unit on two axes.
+/// off retail's until the crouched strafes push both against the same
+/// wall. `setOrigin` keeps the velocity of the spawn's landing and the
+/// slide rides the cmds' times in the first frames (cod11-combat.md 2.1,
+/// the thrower's slide); these captures log neither the dm spawn nor the
+/// cmds before the script starts, so the gate cannot pin them as
+/// scriptmodel_ab does. Every earlier round lands a unit over at most,
+/// except this one: it strikes a slanted face at x 1244, where that offset
+/// moves the impact a unit on two axes.
 const PLACEMENT: &str = "the placement's settle";
 
 /// One part of the probe: its `probe_spot`, the weapon and where the

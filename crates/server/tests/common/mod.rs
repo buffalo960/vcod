@@ -1643,3 +1643,25 @@ impl ProbeHold {
 pub fn rechamber_bridge(states: &[i32], i: usize) -> bool {
     i > 0 && states[i] == 0 && states[i - 1] == 3 && states.get(i + 1) == Some(&4)
 }
+
+/// A map's `mp_*spawn*` entities as `(origin, angles)`.
+pub fn spawn_points(fs: &vcod_common::pk3::Pk3Fs, map: &str) -> Vec<([f32; 3], [f32; 3])> {
+    let path = fs.resolve_map(map).expect("map in the mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&path).unwrap()).unwrap();
+    vcod_common::bsp::entity_blocks(&bsp.entities)
+        .iter()
+        .filter(|e| {
+            e.get("classname")
+                .is_some_and(|c| c.starts_with("mp_") && c.contains("spawn"))
+        })
+        .filter_map(|e| {
+            let origin = vcod_common::bsp::parse_vec3(e.get("origin")?)?;
+            let angles = match (e.get("angles"), e.get("angle")) {
+                (Some(a), _) => vcod_common::bsp::parse_vec3(a)?,
+                (None, Some(y)) => [0.0, y.parse().ok()?, 0.0],
+                (None, None) => [0.0; 3],
+            };
+            Some((origin, angles))
+        })
+        .collect()
+}

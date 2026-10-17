@@ -1154,28 +1154,63 @@ byte +0x2e is set. The floor is 8 (0xb5f90). VERIFIED. INFERRED: byte
 `FireWeapon` (0x8bd05) and `FireWeaponMelee` (0x8bef7) call it as 1.5's
 do. VERIFIED.
 
-**Measured.** `mp_carentan-scriptmodel-throw-1.5.txt` (2026-10-16, 1.5b,
-the prone part with the thrower's origin logged as each frag shows): the
-thrower slid from the site to (1368.03, 2608.14, -23.8748) and both frags
-leave from (1368.034, 2608.136, 36.125), z bits 0x4210803a: his origin
-plus 60, nothing truncated. VERIFIED (capture). The earlier
+**Measured.** `mp_carentan-scriptmodel-throw-1.5.txt` (2026-10-17, 1.5b,
+the prone part with the thrower's origin logged every frame of his first
+second and as each frag shows): the thrower slid from the site to
+(1368.0339, 2608.136, -23.874777) and both frags leave from (1368.034,
+2608.136, 36.125), z bits 0x4210803a: his origin plus 60, nothing
+truncated. VERIFIED (capture). The earlier
 `mp_carentan-scriptmodel-prone-1.5.txt` throws left from (1368, 2608,
 36.148) on the same site, so that thrower's feet stood at -23.852 (where
 1.1d's point is 37.0); INFERRED, off the rule. UO's
-`mp_carentan-scriptmodel-throw-uo.txt` (1.51b): the thrower stays at
-(1368, 2608, -23.875) and both frags leave from z bits 0x42108002, 36.125
-and two float steps. VERIFIED (capture). The two steps are not explained:
-a standing thrower's bob is zero by the rule above.
+`mp_carentan-scriptmodel-throw-uo.txt` (1.51b, 2026-10-17): the thrower
+slid to (1368.204, 2608.102, -23.874743) and both frags leave from z bits
+0x42108044, the float of his z plus 60. VERIFIED (capture). The capture
+it replaced read the thrower at (1368, 2608, -23.875) and its frags at z
+0x42108002, 36.125 and two float steps; INFERRED: his z was -23.874992,
+which six significant digits print as -23.875, since the replacement's
+frags leave on the float of his z plus 60.
+
+**The thrower's slide.** VERIFIED, `game.mp.i386.so` 1.5b player
+`setOrigin` (0x3e148) and UO 1.51b's (0x467a4): unlink, `ps.origin` set
+to the argument, z plus the rodata constant, `eFlags` 0x8 flipped,
+`BG_PlayerStateToEntityState`, `r.currentOrigin` copied, link. Neither
+writes `ps.velocity`. VERIFIED, live (1.5b and UO 1.51b, 2026-10-17,
+`client-probes/probe_scriptmodel` prone part, eight 1.5b and ten UO
+runs, the thrower probe's snapshots logged with velocity and
+`commandTime` and its cmd times): a thrower `spawn`ed on 1.5b's tdm
+point at (976, -864) leaves the spawn's think at (976.016, -863.939,
+-5.89044) on its grade moving (1, 4, 0) on the ground; UO's at (976,
+-792) leaves at (976.077, -791.959, -4.50126) moving (6, 3, -1). The
+script's `setOrigin` onto the site that frame (z -22.75, a unit and an
+eighth over the floor) keeps the velocity. The net probe sends its cmds
+16 or 17 ms apart from each snapshot's time (12000, 12016, 12032 before
+the 12050 frame), so the next frame's `commandTime` is 12032 and he has
+fallen 32 ms, 0.6 off the site; the script's `distance > 0.5` check sets
+him back on it with the velocity, now (1, 4, -26), and the next frame's
+cmds land him at (1368.0339, 2608.136, -23.874777) on 1.5b and (1368.204,
+2608.102, -23.874743) on UO, where friction stops him. A spawn that lands
+still (1.5b's (1080, 3488), UO's (1800, 2696) and others) puts him at
+(1368, 2608, -23.852). INFERRED: the slide is the spawn's landing
+velocity carried through `setOrigin`; how far it carries rides the
+client's cmd times against the frame, and which spawn the clock-seeded
+pick took (`cod11-map-cycle.md` 4.8). Ours' 1.5 and UO pmove match it to
+the float: the earlier 0.25 (1.5) and 0.35 (UO) against retail's 0.14
+and none were the gate's even 16 ms cmds running 48 ms into the first
+frame, and a different spawn on UO.
 
 **As implemented.** `combat::muzzle_point_in` takes the 1.5 path for
 `MoveRules::V1_5` and `Uo` (`aim::add_muzzle_bob` for the bob at the game
 module's float precision; the bipod trace against the world only, the
 entities it would meet not modelled). `scriptmodel_ab`'s
 `a_frag_leaves_15s_untruncated_muzzle` and
-`a_frag_leaves_uos_untruncated_muzzle` replay the two captures: each
-side's start is its own thrower's origin plus 60, ours within 0.5 of
-retail's (ours' thrower slides 0.25 on 1.5's rules and 0.35 on UO's,
-where retail's slides 0.14 and not at all).
+`a_frag_leaves_uos_untruncated_muzzle` replay the two captures with the
+thrower pinned to the spawn point under retail's first `PROBE thrower`
+line (dropped as `placeSpawnpoint` drops it) and sending the net probe's
+cmds (`ProbeHold::framed`): every frame of his first second sits on
+retail's float, and both frags leave from retail's point bit for bit.
+The prone-back gates pin the thrower the same way, to the spawn their
+capture's `PROBE shooter` line implies.
 
 **Measured moving, leaning, seated and on the bipod.** 2026-10-17, four
 `--save-slope` captures on retail with the weapon's spread and gun kick
@@ -1221,8 +1256,11 @@ muzzle across the view (impacts are whole units, truncated toward zero):
   lands at (-3815, 928, -9). VERIFIED (capture, gate).
 
 The street placement settles differently: after the gametype's
-`setOrigin` ours' body slides 0.2 down the grade's side where retail's
-stays at (900, 1930), until a later strafe pins both on the same wall.
+`setOrigin` ours' body sits 0.2 off retail's on the grade, until a later
+strafe pins both on the same wall. This is the thrower's slide above
+(the spawn's landing velocity and the first frames' cmd times); these
+captures log neither the dm spawn nor the cmds before the script, so
+`moveshot_ab` cannot pin them. INFERRED.
 That moves the early rounds a unit at most, but one round on UO that
 strikes a slanted face at x 1244 a unit on two axes (`moveshot_ab`
 `GAPS`). On flat ground retail's body sits at z -23.874996 after a
@@ -2884,6 +2922,33 @@ raised. So the queue records which client each body was born from, and
 `Server::send_snapshots` re-reads a body born this frame from that client's
 sim once, at the snapshot build, after the frame's sim ops have been applied.
 A body born on an earlier frame is never re-read.
+
+**The corpse as a script entity.** VERIFIED, `game.mp.i386.so`:
+`cloneplayer` (0x4450c) ends in `GScr_AddEntity(body)` (0x446d1), so the
+method returns the corpse. `G_SpawnPlayerClone` (0x67888) names it through
+`scr_const+0x56` (0x678e6), the constant `G_InitGentity` (0x6783c) writes,
+which vcod reads as `noclass`. Nothing on the clone path writes
+`s.eventSequence` or `s.events`, and `G_FreeEntity` zeroes a reused slot,
+so a corpse is born with an empty ring. `G_PlaySoundAlias` (0x67b30)
+appends `EV_SOUND_ALIAS` (172) to `s.events` of any entity with no client,
+a corpse included. VERIFIED (capture), retail 1.1d mp_carentan,
+2026-10-17, `client-probes/probe_dyingpose`, whose killed callback runs
+`body = self cloneplayer(); body playsound("MP_bomb_plant");`: the killed
+line named entity 64, and the client's first snapshot holding it
+(`crates/common/tests/fixtures/net/snapshots-dyingpose.bin`, 11500) carried
+`eventSequence` 1, events `[172, 0, 0, 0]`, parms `[4, 0, 0, 0]`, `eFlags`
+0x818 and `apos` yaw 90. A client that first sees a fresh corpse replays its
+ring from 0 (`cod11-events-and-fx.md` 1, "An entity enters the snapshot"),
+so such a sound plays for a spectator who walks into view within the
+250 ms. VERIFIED (capture): the stock 1.1 and UO captures' corpses all carry
+`eventSequence` 0, and no stock gametype touches the body it clones.
+
+Ours: `cloneplayer` returns `ObjectTable::spawn_body`'s entity at the body's
+number; the snapshot build writes that entity's ring into the queue's state
+(`ScriptRuntime::body_entities`), `playSound` on it broadcasts it as on any
+entity, and a `delete` frees the queue's slot (`BodyQueue::free`).
+`dyingpose_ab::a_sound_played_on_a_corpse_rides_its_ring` compares the ring,
+`eFlags` and yaw with the capture's.
 
 **As implemented**, `dropItem` (same file). VERIFIED that retail's
 `PlayerCmd_dropItem` (`.so` 0x43684) resolves the name through
@@ -7341,15 +7406,50 @@ for the updater and its conditions. `Controllers::new` and
 `AnimScript::anim_records`. `ClientSim::commit_pose` sets the movetype from
 its own pmove selection, then steps and updates. The client steps
 per drawn player per rendered frame, off the lerped `apos`, `angles2[1]`,
-`eFlags` and the legs anim's record. GAP: neither side runs the controllers
-on a dying body (`eFlags & 1`): its `L[1]` is the legs' world yaw. What
-frame retail draws a dying body in was not read. `fTorsoHeight`,
+`eFlags` and the legs anim's record. A dying body runs them too (below,
+"The dying body"). `fTorsoHeight`,
 `fTorsoPitch` and `fWaistPitch` come from `BG_CheckProneValid`'s ground
 samples and reach the entity through `BG_PlayerStateToEntityState`
 (0x2ce55..0x2cea3), scaled by the eye's leg, only when prone
 (cod11-mantle.md, "The ground samples"); ours sends them and poses its hit
 bodies with the entity's copy. Player `eFlags` 0x400, which narrows the
 torso clamp to 45, is 16.5.
+
+**The dying body.** VERIFIED, `game.mp.i386.so`: `ClientEndFrame` arms the
+controller hook (`ent+0x220` = 0x416c0, 0x41261) on every `eType` 1 entity,
+a dead session's included, and `BG_Player_DoControllers` (0x2b7f8) returns
+early only on `eFlags & 0xc000`; its one test of `eFlags & 1` (0x2b9f5..)
+skips the `AngleSubtract(legs yaw, viewangles[1])`, so a dead body's
+`tag_origin` yaw is the legs' world yaw. `G_DObjGetWorldTagMatrix`
+(0x6746c) then turns the posed tag by `r.currentAngles` (`ent+0x140`), the
+view yaw: the body is turned by the yaw twice. INFERRED: no trace meets
+that pose, since a dead body's contents are 0 or CORPSE (5.1), so a tag
+lookup is what reads it. VERIFIED, 1.5b's (0x1a389, the
+`eFlags & 1` test beside the subtract) and UO's (0x1e761, with the rider's
+0x100000 beside it) hooks skip the same subtract. VERIFIED, 1.5b's ease
+(0x1ad71) steps toward that target with no dead test; UO's was not read.
+
+VERIFIED (capture), retail 1.1d mp_carentan, 2026-10-17,
+`client-probes/probe_dyingpose` (fixture
+`crates/server/tests/fixtures/dyingpose/mp_carentan-dm.txt`): a body held
+at world yaw 90 with a script_origin linked to each of eight bones, then
+`suicide()` into the dead session. The ten live frames and the death frame
+matched ours to the hundredth. From the second dead frame on (the death
+clip, `legsAnim` 20, already at its last frame) retail's bones sat at ours
+turned another 90 degrees about the origin: pelvis (-3.72, -0.04) off the
+origin where ours read (-0.04, 3.72), head (20.48, 5.30) where ours read
+(5.30, -20.48). Ours had skipped the controllers on `EF_DEAD`. A body facing
+0 cannot tell the two apart: an earlier run at yaw 0 matched.
+
+VERIFIED, `cgame_mp_x86.dll`: `CG_Player` (0x30028210) draws no `EF_DEAD`
+player (cod11-movers.md 15) and the hook call at 0x3001d460 is for `eType`
+1 only, so the client never poses a dying body; a corpse (`eType` 2) runs no
+controllers.
+
+Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
+and UO like any other; `dyingpose_ab::a_dying_body_poses_like_retail`
+holds every bone of all 60 frames within 0.05 of retail's. Not captured on
+1.5b or UO.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 

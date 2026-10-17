@@ -63,6 +63,11 @@
 //
 //	PROBE shooter <time> <entity number> <x> <y> <z>
 //
+//	and every frame of his first second in the pair, before that frame's
+//	`setOrigin`, with his offset from the site in thousandths of a unit:
+//
+//	PROBE thrower <time> <x> <y> <z> <dx> <dy> <dz>
+//
 //	PROBE site <time> <allies spot> <axis spot> <yaw>
 //	PROBE rphase <time> <phase> [<origin>]
 //	PROBE gren <time> <entity number> <origin>
@@ -349,6 +354,12 @@ pair_part(part)
 					model setmodel("xmodel/barrel_black1");
 					logPrint("PROBE rphase " + now + " shown " + model.origin + "\n");
 				}
+			}
+			if (part == "prone" && now < placed + 1000)
+			{
+				o = shooter.origin;
+				d = o - site.a;
+				logPrint("PROBE thrower " + now + " " + o[0] + " " + o[1] + " " + o[2] + " " + d[0] * 1000 + " " + d[1] * 1000 + " " + d[2] * 1000 + "\n");
 			}
 			if (part == "prone")
 			{

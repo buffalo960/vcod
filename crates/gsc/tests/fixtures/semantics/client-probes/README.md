@@ -2127,3 +2127,28 @@ vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:<p> --probe-team
 
 The fixtures are `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-moveshot-*.txt`
 (walk on 1.5b and UO, bipod on UO), gated by `crates/server/tests/moveshot_ab.rs`.
+
+## probe_dyingpose
+
+A dying body's bones and its corpse's ring, `docs/research/cod11-combat.md`
+16.4 ("The dying body") and 5.2 ("The corpse as a script entity"). dm with
+its killed callback replaced: the first player to spawn is put on
+mp_carentan's flat prone spot, eight bones get a linked script_origin, and
+every frame for 0.5 s alive and 2.5 s after `suicide()` the script logs
+them. The killed callback takes the dead session, clones the corpse and
+plays `MP_bomb_plant` on it. The client holds world yaw 90 with
+`--probe-yaw` (the plain probe holds 0, which hides the dead body's turn)
+and writes the snapshot pair the corpse rides:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=30 \
+  tools/run_probe.sh client-probes/probe_dyingpose mp_carentan
+# second shell, about 7 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team axis --probe-yaw 90 \
+  --save-snapshots --capture-tag dyingpose --probe-secs 18
+```
+
+The fixtures `crates/server/tests/fixtures/dyingpose/mp_carentan-dm.txt`
+and `crates/common/tests/fixtures/net/{gamestate,snapshots}-dyingpose.bin`,
+gated by `crates/server/tests/dyingpose_ab.rs`. The death clip is a
+`rand()` draw: the gate seeds ours to draw retail's `legsAnim` 20.
