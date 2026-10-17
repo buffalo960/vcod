@@ -800,6 +800,61 @@ waittill("x")` is not woken (0). UO's `hq.gsc` restarts its wave timer this
 way (`level notify("Timer Changed"); level thread hq_reinforcement_timer()`),
 and the queued notify had frozen `level.counter`.
 
+**Two notifies of one event in one step: the second is lost, VERIFIED
+(`probe_notify_twice`, retail 1.1d and UO 1.51b, 2026-10-17, identical).**
+A pump that runs `level notify("tick", 1); level notify("tick", 2); level
+notify("first"); level notify("second")` in one step, against a thread that
+waits on `"tick"` twice, one that waits on it once and one that waits on
+`"first"` and then `"second"`: retail logged `pumped`, `chain_first`,
+`twice_1 1`, `once 1`, `done`, and neither `twice_2` nor `chain_second`.
+INFERRED: the first notify wakes a waiter and takes it off the event, the waiter does
+not run before the notifier's step ends, and the second notify finds nobody;
+a woken waiter reads the first notify's arguments. The threads run newest
+wake first (`chain_first` ahead of the `"tick"` waiters), and one notify's
+waiters in start order, as the thread pick paragraph has it. vcod's
+`Vm::notify` does the same: it only flips the waiter to runnable
+(`sched::tests::two_notifies_of_the_same_event_in_one_step_lose_the_second`).
+
+**Engine notifies and the trigger queue (`game.mp.i386.so` 1.1d).**
+INFERRED, from the bullets below: what the game module notifies outside a
+script step only wakes waiters too; they run at the next `Scr_RunCurrentThreads`, so a notify
+raised in every cmd reaches a waiter once a frame.
+
+- VERIFIED: `G_TouchTriggers` notifies `"touch"` on the spot (0x3fa4d,
+  0x3fa6f; `cod11-combat.md` 14.7), and so does `Cmd_Activate_f` its
+  `trigger_use`'s `"trigger"` (0x48547; `cod11-gametypes-re-bel.md` 4).
+- VERIFIED: `Touch_Multi` (0x65a18), `hurt_touch` (0x64dc4),
+  `Activate_trigger_damage` (0x650c0) and `G_Trigger` (0x656f0, the
+  `trigger_lookat` path) do not notify `"trigger"`. Each appends (entity
+  number, activator number, both entities' `+0x300` use counts) to a
+  12-byte queue at `level+0x1dec`, its count at `level+0x29ec`, and only a
+  full queue (0x100 entries) notifies on the spot.
+- VERIFIED, `G_RunFrame` 0x50529..0x50665, its first work after the cvar
+  update: a 0x400-byte seen table is zeroed once, then each round bumps a
+  byte marker and walks the queue in order. An entry whose two use counts
+  no longer match is dropped; one whose entity was already sent this round
+  stays and marks the round for another; the rest get the activator pushed
+  and `Scr_Notify(ent, "trigger", 1)` (0x505f6). A sent or dropped entry is
+  replaced by the last one, which is examined next (0x505fe..0x50635). Each
+  round ends in `Scr_RunCurrentThreads` (0x50653); the rounds repeat while a
+  round kept an entry, and the count is zeroed after the last (0x50665), so
+  what a round's threads queued is dropped unless a later round runs.
+- VERIFIED, `client-probes/probe_touchorder` (`cod11-combat.md` 14.7):
+  every frame a player stands in two minefields logs one `"trigger"` pair,
+  then the `"touch"` lines, then one more `"trigger"` pair per later cmd of
+  the frame. INFERRED, from that log and the code above: the first round
+  runs the waiters its triggers woke ahead of those the cmds' touches woke,
+  last woken first, and each later round runs the next cmd's triggers.
+- VERIFIED: 1.5b's `G_RunFrame` (0x506c9..0x5082a, count at
+  `level+0x2e10`) and UO 1.51b's (0x59cf5..0x59e56, `level+0x2e60`) run the
+  same rounds. INFERRED: with the same order.
+
+vcod: `engine_notifies` holds what retail notifies on the spot and
+`trigger_fires` the queue; `ScriptRuntime::run_threads` raises the first at
+the top of the script frame and `ScriptRuntime::trigger_rounds` hands out
+the second. The full-queue arm is not modelled. Gate:
+`crates/server/tests/touchorder_ab.rs`.
+
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe
 spawned, and those three in spawn order. The probe prints only `targetname`
@@ -1168,31 +1223,17 @@ fields; the client's half is `play::shock` (`cod11-shellshock.md`). The A/B is
 
 ## 10. Divergences kept as documentation, not code
 
-Eleven places where the implementation made a deliberate call the corpus
-cannot settle, recorded here rather than silently baked into behaviour that
-looks authoritative. Two more are gone. `delete()` used to free the entity
-on the spot where retail defers it, and the entity think scheduler stage 3
-added closes that (section 14 of
-`docs/research/cod11-gsc-object-model.md`, and `probe_delete` in §9). A
-script handle used to be a bare entity number, so a stale one read whatever
-spawned into its slot next; it carries a generation now and reads as
-retail's dead entity (`probe_stale_handle` in §9).
+Ten places where the implementation made a deliberate call the corpus cannot
+settle, recorded here rather than silently baked into behaviour that looks
+authoritative. Three more are gone. Two notifies of one event in one step
+coalescing was listed here and is retail's behaviour (`probe_notify_twice`,
+section 9's notify paragraphs). `delete()` used to free the entity on the
+spot where retail defers it, and the entity think scheduler stage 3 added
+closes that (section 14 of `docs/research/cod11-gsc-object-model.md`, and
+`probe_delete` in §9). A script handle used to be a bare entity number, so a
+stale one read whatever spawned into its slot next; it carries a generation
+now and reads as retail's dead entity (`probe_stale_handle` in §9).
 
-- **Two `notify`s of the same event on the same target within one
-  scheduling step coalesce; the second is lost.** The first wakes the
-  waiter (flips it out of `WaitingNotify`) and the waiter does not run
-  until the notifier's step ends, so the second finds no matching waiter
-  and is dropped silently. Measured: a pump firing `self notify("tick", 1); self
-  notify("tick", 2);` in one step against a loop doing `self
-  waittill("tick", v)` twice receives only `1`, then hangs forever on the
-  second `waittill` — one frame apart (each notify in its own step) both
-  arrive. Retail runs the waiter synchronously off `notify`, so it sees both
-  (INFERRED from the engine's dispatch shape; the double-notify case has not
-  been put to a retail server). This is a direct consequence of vcod's choice that a notify can
-  never reenter the VM (`step_thread`'s own doc comment); fixing it would
-  mean running the waiter inside the notify, deferred to the next project.
-  Pinned by
-  `sched::tests::two_notifies_of_the_same_event_in_one_step_coalesce_and_the_second_is_lost`.
 - **A thread killed by *another* thread's `endon` notify mid-step keeps
   executing to its next suspend.** The self-notify half of this is no longer
   a divergence: a thread's own `notify` does not kill it, measured against

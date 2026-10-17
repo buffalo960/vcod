@@ -319,6 +319,13 @@ PROBE notify_frame resume late_wait0 6
 PROBE notify_frame past_wait0 late_wait0 6
 PROBE notify_frame done 20
 
+# probe_notify_twice
+PROBE notify_twice pumped
+PROBE notify_twice chain_first
+PROBE notify_twice twice_1 1
+PROBE notify_twice once 1
+PROBE notify_twice done
+
 # probe_persist_exit
 PROBE before_game_str kept
 PROBE before_game_num 7

@@ -188,3 +188,8 @@ second at either `developer` setting, so the server never reaches the next
 `logPrint` and the capture would be empty. That run was taken by hand, with
 `developer 0`, and is described in the same paragraph rather than captured
 here.
+
+`probe_notify_twice` notifies one event twice and two events back to back in
+one step: a waiter woken by the first does not run before the second, so the
+second reaches nobody. Captured on 1.1d and UO 1.51b, which print the same
+lines (`docs/research/cod11-gsc-language.md` section 9).
