@@ -618,3 +618,19 @@ misses on the sprint run (VERIFIED, the gate on that revert).
 captures the same way on protocol 6 (VERIFIED, 12 821 cmds, 0
 mismatches). The seats are not covered: a seated sim needs the server's
 vehicle.
+
+## 16. The lean's footstep cadence
+
+`PM_Footsteps` (0x297e4, 1.5's 0x24ae8) on the ground picks the walk's
+cadence (the walk's speed scale in the full-speed divisor and the walk's
+K) from `pm_flags` 0x80 only; 1.5's also takes it on a non-zero `leanf`
+(`ps+0x40`, 0x24bf7). UO's ladder branch and `PM_FootstepEvent`
+(0x2937c, its walk step ids) still test the lean (`ps+0x44`). VERIFIED,
+both Ghidra exports. So a leaning body on UO bobs at the run's rate for
+its speed: a lean strafe at 71 ticks `bobCycle` 6 a 50 ms snapshot on
+retail. VERIFIED, `mp_carentan-dm-slope-8ms-moveshot-walk-uo.txt`
+(`cod11-combat.md` 2.1, "Measured moving"). vcod under 1.5's rule ticked
+14 on the same cmds. VERIFIED (the gate before the fix). vcod's `pmove::footsteps`
+takes the lean out of the cadence under `MoveRules::Uo` only
+(`a_uo_lean_bobs_at_the_run_s_rate`).
+

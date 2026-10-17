@@ -1175,8 +1175,60 @@ entities it would meet not modelled). `scriptmodel_ab`'s
 `a_frag_leaves_uos_untruncated_muzzle` replay the two captures: each
 side's start is its own thrower's origin plus 60, ours within 0.5 of
 retail's (ours' thrower slides 0.25 on 1.5's rules and 0.35 on UO's,
-where retail's slides 0.14 and not at all). Not measured live: a moving
-or leaning 1.5 or UO shot, a rider's shot and the bipod trace.
+where retail's slides 0.14 and not at all).
+
+**Measured moving, leaning, seated and on the bipod.** 2026-10-17, four
+`--save-slope` captures on retail with the weapon's spread and gun kick
+zeroed in the server's homepath (`common::STEADY_WEAPON`), so each round
+leaves along the view and its impact on a wall 1090 units out reads the
+muzzle across the view (impacts are whole units, truncated toward zero):
+
+- `mp_carentan-dm-slope-8ms-moveshot-walk-1.5.txt` (1.5b) and `-uo.txt`
+  (UO 1.51b), `client-probes/probe_moveshot` `--probe-moveshot walk`, a
+  thompson: 58 rounds each, strafing both ways at 178, running forward
+  and back, crouched and sighted strafes, leaning still both ways
+  (`leanf` ±0.5) and leaning while strafing (a lean slows the strafe to
+  71). VERIFIED (captures). Replayed cmd for cmd on ours, every round
+  lands on retail's unit or the next (`moveshot_ab`). With the bob taken
+  out of `muzzle_point_in` 21 of UO's rounds and 15 of 1.5's miss by 1.4
+  to 2.2 units; with the lean taken out all 18 leaning rounds on each miss
+  by 8 to 15. VERIFIED (gate runs on those reverts). So the rule above holds on the move:
+  the bob's side term along the right of the view, its vertical term,
+  and `G_AddLean` on top. INFERRED, from the agreement.
+- The UO capture found one difference, not in the muzzle: a leaning body's
+  `bobCycle` ticked 6 a snapshot on retail and 14 on ours. UO's
+  `PM_Footsteps` (`game.mp.uo` nm 0x297e4) takes the walk's cadence from
+  `pm_flags` 0x80 only, where 1.5's (0x24ae8) also walks on a non-zero
+  `leanf` (0x24bf7) (VERIFIED, both decompiles; `coduo-movement.md` 16).
+  The 1.5 capture's leaning rounds and cycles match 1.5's rule. VERIFIED.
+- `mp_carentan-dm-slope-8ms-moveshot-bipod-uo.txt` (UO), `--probe-moveshot
+  bipod`, an mg30cal deployed prone 20 units short of the wall (face x
+  1991.875, origin x 1971, `proneDirection` 0): the rounds along the bipod
+  strike (1991, 1930, -12), those with the view at +30 and -30 degrees
+  (1991, 1934, -12) and (1991, 1925, -12). VERIFIED (capture). The box
+  trace stops 12.875 forward (x 1983.875), and from there the 30-degree
+  lines reach the wall at y 1930 ± 4.62; from the untraced eye they would
+  reach it at ± 12.05 (1942 and 1917, what ours lands with the trace
+  removed). INFERRED, from the geometry; the trace is the one above. The
+  trigger held prone with the bipod up fires nothing on retail or ours.
+  VERIFIED (capture, gate).
+- `mp_peaks-tdm-slope-8ms-jeep-rider-uo.txt` (UO), `probe_vehicle`
+  `--probe-vehicle seats` with a steadied kar98k: the jeep passenger's
+  `seat_fire` round (view pitch held at the seat arc's 48.8 degrees) strikes
+  (-3837, 925, -15), 28 over his origin (-3883.89, 920.46, 10.06), on
+  retail and on ours (`vehicle_ab`'s
+  `the_jeep_passenger_s_round_lands_as_on_retail`). From his eye (60) ours
+  lands at (-3815, 928, -9). VERIFIED (capture, gate).
+
+The street placement settles differently: after the gametype's
+`setOrigin` ours' body slides 0.2 down the grade's side where retail's
+stays at (900, 1930), until a later strafe pins both on the same wall.
+That moves the early rounds a unit at most, but one round on UO that
+strikes a slanted face at x 1244 a unit on two axes (`moveshot_ab`
+`GAPS`). On flat ground retail's body sits at z -23.874996 after a
+placement 0.125 over the floor (-23.875) and ours stays at -23.75. Both
+VERIFIED (captures). The UO throw's two float steps above (36.125 plus
+two ulps) are that z: -23.874996 + 60. INFERRED.
 
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is
 `ps->aimSpreadScale / 255.0`. INFERRED: it is computed once a frame, since

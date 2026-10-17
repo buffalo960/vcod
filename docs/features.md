@@ -322,7 +322,8 @@ something, the bullet links it.
   through the seams retail's does. A submodel's patches and terrain clip
   only while its entity is linked. Shots,
   swings and throws start from each patch's muzzle (1.1's truncated
-  point, 1.5's and UO's bobbed one). On 1.5 and UO each shot kicks the
+  point, 1.5's and UO's bobbed and leaned one, a UO rider's 28 over his
+  origin, a UO bipod's traced to the wall in front). On 1.5 and UO each shot kicks the
   server's gun spring, so a sighted burst climbs as retail's does. Melee
   works. Grenades are real
   missiles that bounce (off script models, and off a player's posed bones
