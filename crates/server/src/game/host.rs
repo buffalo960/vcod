@@ -1384,11 +1384,32 @@ impl GameHost {
         // it would start out on the dead one's trajectory.
         self.movers.forget(id);
         self.links.forget(id);
+        self.free_ground_refs(id.0);
         self.ents.free(id);
         // `G_FreeEntity` lets the children go where they stand
         // (0x669f1..0x66a9e), so a child later in the entity pass is never
         // re-anchored on a freed parent.
         crate::game::link::prune(self);
+    }
+
+    /// `G_FreeEntity`'s sweep (game.mp 0x66ad1..0x66b13): every entity in
+    /// use whose `s.groundEntityNum` names the freed number reads 1023 from
+    /// then on. A script model or a turret holds `G_Spawn`'s 0, entity 0,
+    /// so the first client's disconnect turns them all (protocol doc,
+    /// "The static fields"). A player's comes off its playerstate instead.
+    pub fn free_ground_refs(&mut self, num: u32) {
+        let num = num as i32;
+        for e in self.ents.iter_inuse_mut() {
+            if e.ground == num {
+                e.ground = ENTITYNUM_NONE;
+            }
+            if let Some(item) = e.item.as_mut()
+                && item.ground == num
+            {
+                item.ground = ENTITYNUM_NONE;
+            }
+        }
+        self.missiles.free_ground_refs(num);
     }
 
     /// Every due think at once, each `ThinkFn::Free` routed through
@@ -2234,6 +2255,22 @@ mod tests {
             .map(|(i, _)| *i)
             .collect();
         assert_eq!(slots, [3, 12]);
+    }
+
+    /// `G_FreeEntity`'s sweep (0x66b0e..0x66b13): a freed number goes out of
+    /// every `groundEntityNum` that names it, the zeroed one a script model
+    /// spawns with included, and no other.
+    #[test]
+    fn freeing_an_entity_clears_the_ground_that_names_it() {
+        let mut host = run_main(r#"main() { e = spawn("script_model", (0, 0, 0)); }"#).unwrap();
+        let grounds =
+            |h: &GameHost| -> Vec<i32> { h.ents.iter_inuse().map(|(_, e)| e.ground).collect() };
+        assert!(!grounds(&host).is_empty());
+        assert!(grounds(&host).iter().all(|g| *g == 0));
+        host.free_ground_refs(3);
+        assert!(grounds(&host).iter().all(|g| *g == 0));
+        host.free_ground_refs(0);
+        assert!(grounds(&host).iter().all(|g| *g == ENTITYNUM_NONE));
     }
 
     /// Runs `src`'s `main()` on a bare host and hands the host back, or the

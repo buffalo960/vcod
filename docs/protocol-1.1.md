@@ -303,9 +303,19 @@ is the same 1-based weapon index `entityState.weapon` carries.
 The static fields the traces show alongside those: `eFlags` 16 and
 `groundEntityNum` 1022 (`ENTITYNUM_WORLD`) on the items, `clientNum` 254 on
 them and 0 on the scriptmover and the turret, and `solid` 0 on all of them.
-`groundEntityNum` on the scriptmover reads 0 for about a minute after a map
-load and 1023 (`ENTITYNUM_NONE`) from then on, which is why a trace has to be
-taken from a settled server.
+`groundEntityNum` on the scriptmover and the turret reads 0 until the client
+in slot 0 leaves and 1023 (`ENTITYNUM_NONE`) from then on. VERIFIED live (retail
+1.1d, `mp_carentan` `dm`, 2026-10-17): a spectator that never joined read 0 on
+all four for 280 s of a fresh server; on another fresh server the first
+`--save-entities` run read 0 and the runs after it 1023 from their first
+sample. VERIFIED, `game.mp.i386.so` 1.1d: `ClientDisconnect` (0x42aac) calls
+`G_FreeEntity` on the client (0x42bfc), and `G_FreeEntity` (0x66948) walks
+every entity in use (`inuse`, +0x160, 0x66ad1) and stores 0x3ff into a
+`s.groundEntityNum` (+0x7c) equal to the freed number (0x66b0e, 0x66b13).
+INFERRED: the scriptmover and the turret carry `G_Spawn`'s zeroed 0, which
+names entity 0, so slot 0's departure turns them. A trace is
+therefore taken after one client has come and gone, and
+`entities_ab.rs` replays such a client before its own.
 
 #### What a missile looks like
 

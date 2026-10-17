@@ -12653,11 +12653,10 @@ fn write_entities_fixture(
 sample of a set\n"
     ));
     head.push_str("# already seen adds a position and no new visibility case.\n");
-    head.push_str(
-        "# Every run is taken from a settled server: an item's groundEntityNum reads 0\n",
-    );
-    head.push_str("# for the first minute after a map load and ENTITYNUM_NONE afterwards, so a\n");
-    head.push_str("# capture taken straight after +map disagrees with every later one.\n");
+    head.push_str("# Every run is taken from a server one client has already joined and left:\n");
+    head.push_str("# its ClientDisconnect frees entity 0, and G_FreeEntity's sweep turns every\n");
+    head.push_str("# groundEntityNum still at G_Spawn's 0 (the script models, the turrets) to\n");
+    head.push_str("# 1023, so a first run on a fresh server disagrees with every later one.\n");
     head.push_str(
         "# One [sample] per station, carrying the probe's origin there and every entity\n",
     );
