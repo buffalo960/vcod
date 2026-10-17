@@ -488,9 +488,81 @@ vcod: `pmove::clamp_velocity_to_move` and `slide_move`'s gravity take the
 stores under `MoveRules::v15()`; `collision::cm_endpos` takes the stored
 end under `Arith::Stored`, which the server sets on protocols 6 and 22 and
 the client's live world, `play::replay` and `play::loopback` set off the
-connection's protocol (`Arith::for_protocol`), so the predictor computes
-what a Linux 1.5b or UO server does. INFERRED: a Windows server's or
-cgame's arithmetic is MSVC's and was not read.
+connection's protocol (`Arith::for_protocol`). The client's
+predictor no longer follows them: it runs the Windows client's build
+(section 8).
+
+## 8. The Windows clients
+
+The retail clients are one MSVC build of the collision and pmove code on
+every patch, which stores some of the floats section 7's gcc build stores
+and keeps the rest, at 53-bit precision. vcod predicts with it
+(`Arith::Msvc`); the server keeps the Linux rules. Modules: 1.1
+`CoDMP.exe` and `cgame_mp_x86.dll`, 1.5 `CoDMP.exe` (Ghidra's
+`CoDMP15.exe`) and `cgame_mp_x86.dll`, UO 1.51 `CoDUOMP.exe` and
+`uo_cgame_mp_x86.dll`; addresses are VAs (exe base 0x400000, cgame
+0x30000000).
+
+- Precision: 1.5's exe calls `_controlfp(0x10000, 0x30000)` (`_PC_53`)
+  at 0x569040 and UO's at 0x5783fc; no game code loads a control word of
+  its own, and the CRT's trig wrappers test for 0x27f (1.5 0x5728a4).
+  VERIFIED. INFERRED: the call is the CRT's startup default, so a value
+  kept on the stack is an `f64`.
+- One build: 1.1's and 1.5's patch code (1.1 0x41a2a0-0x41f780, 1.5
+  0x41c1a0-0x421680), brush clip (1.1 0x4230c0, 1.5 0x424fc0) and
+  `CM_BoxTrace` (1.1 0x424530, 1.5 0x426430) match instruction for
+  instruction with addresses masked; UO's (brush clip 0x426a80) is another
+  MSVC's register allocation with the same stores. VERIFIED.
+- `PM_SlideMove`'s gravity: stored before the average, as 1.5b's (1.1
+  cgame 0x3000cc1c, 1.5 0x3000d9dd, UO 0x3000e9b1). 1.1d keeps it.
+  VERIFIED.
+- The default arm's tail (1.1 cgame 0x3000c90d, 1.5 0x3000d6c4, UO
+  0x3000e64f): x of the displacement stays on the stack, y and z are
+  stored, and the rate `((dz^2 + dy^2) + dx^2) / (ft * ft)` and the squared
+  speed stay on the stack; 1.1 and 1.5 sum the speed `(vz^2 + vy^2) + vx^2`,
+  UO `(vx^2 + vy^2) + vz^2`. The compare and `(1.0 / ft) * d` are 1.1d's.
+  VERIFIED.
+- `CM_BoxTrace`'s end point: the shifted end is kept (1.5 0x4264d6 `fsts`
+  with the delta taken off the stack at 0x4264da, UO 0x427f76), as 1.1d's;
+  the delta and the end point round as both Linux builds. VERIFIED.
+- The brush clip (1.5 0x424fc0, UO 0x426a80): stored are `d1`
+  (0x42503f), the enter path's `d1 - d2` (0x42506d), the enter fraction
+  (0x4250d1) and the leave fraction (0x425169); kept are `d2`
+  (0x425043), the leave path's `d1 - d2` (0x425146), `d1 - 0.125`
+  (0x4250b0) and the enter fraction in its compare with the leave one
+  (0x4250d5). On a slanted side `dist + radius` (0x4251c7) and the shifted
+  start (0x4251fb) are kept and only the shifted end is stored (0x42521e),
+  where both Linux builds store all three. VERIFIED.
+- The patch build, against bsp-ibsp59-format.md's table: stored as 1.5b's
+  are `VectorNormalize` (0x42fc00), `CM_AddFacetBevels`'s two distances
+  (0x41dcb8, 0x41dcdd), `BaseWindingForPlane`'s (0x42027b, the corners'
+  first steps 0x4203e3 and 0x420428) and `ChopWindingInPlace`'s distance
+  and split fraction (0x420a52, 0x420c2c), whose dot product it keeps;
+  kept are `CM_NeedsSubdivision` (0x41c500, the deviation and its length
+  too, which both gccs round), `CM_Subdivide` (0x41c560), `CM_FindPlane`
+  (0x41cf00) and `CM_PointOnPlaneSide` (0x41d0c0). UO's (0x41db40 on)
+  store alike. VERIFIED.
+- The patch traces: `CM_CheckFacetPlane` (1.5 0x41efe0, UO 0x420a70)
+  stores `d1` and `d2` (0x41f002, 0x41f01d) and keeps both fractions
+  through the clamp and the compare; the point trace (0x41ead0) stores
+  each plane's `d1` (0x41eb4d) and keeps its `d2` and the struck plane's
+  distances. VERIFIED.
+
+INFERRED, off those: a Windows client predicts a fall from rest as 1.1d
+falls on every patch (`a_fall_from_rest_ties_the_tail_by_the_start_height`),
+so on a 1.5 or UO server it misses the tail's tie wherever 1.5b's stores
+take the other side. VERIFIED, `play::replay::the_windows_build_draws_no_new_correction`
+(2026-10-17): over the 1.1, 1.5 and UO own-body captures, all taken
+against Linux servers, the Windows build adds last-bit corrections (1.5
+moves 13 to 46, UO sprint 114 to 125, 1.1 moves 5 to 8) and none past the
+predictor's 0.1 miss epsilon.
+
+Not read on Windows: the terrain point clip (`Terrain::point_clip_stored`
+is the Linux builds'; the client takes the kept one), the patch position
+test and the facet walk that answers only whether a facet stops a trace
+(1.5 0x41ee90, stores `d1`). Not modelled: the Windows dot products'
+order, `(z n2 + y n1) + x n0` in `CM_FindPlane` (0x41cf00), where vcod sums
+x first.
 
 ## Unchanged
 

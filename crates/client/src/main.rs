@@ -742,8 +742,8 @@ struct LivePhase {
 
 fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
     let world = collision::CollisionWorld::build(bsp, &props::collision_tris(fs, &bsp.entities));
-    // Predict what the protocol's Linux server computes.
-    world.set_arith(vcod_common::patch::Arith::for_protocol(net.protocol()));
+    // Predict as the retail Windows client does, not as the server.
+    world.set_arith(vcod_common::patch::Arith::for_client());
     // A brush model clips only through its snapshot entity
     // (`pmove::movers::SnapshotMovers::place`), as retail's cgame meets it.
     for model in 1..world.model_count() {

@@ -600,9 +600,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
   collision on 1.5 and UO"), and so does the patch capsule arm; pmove's fall stores its gravity,
   its tail and the trace's end point (`cod15-movement.md` 7). A 1.5 or
-  UO server, and the client on one, sets
-  `CollisionWorld::set_arith(Arith::for_protocol(..))`; a replay world
-  in a test sets it too.
+  UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
+  a replay world in a test sets it too. The client's world runs
+  `Arith::for_client()` on every protocol: the Windows clients are one
+  MSVC build that stores some of those and keeps the rest (8), so a
+  client replay of a Linux capture corrects in the last bits.
 - A sweep, point or capsule, that meets a model-0 patch is clipped again
   in retail's BSP leaf order (`leafwalk.rs`): a patch clips only from a
   leaf on the path that lists it (mp_carentan's 69, 109, 283 and 284 are
