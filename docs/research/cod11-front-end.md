@@ -1781,6 +1781,48 @@ carries its label.
   mod's paks: a mod that ships its own `maps/mp/<map>.bsp` replaces the
   stock geometry and collision. INFERRED (the two above together).
 
+### The cgame restart
+
+- `CL_Vid_Restart_f` (`0x40fbe0`), while a cgame runs (`0x1617348`),
+  calls its export `0x11` to save state into the hunk before the restart
+  and, once `CL_InitCGame` has run, export `0x12` (`0x404fb0`) to hand it
+  back. VERIFIED (calls). The 1.1 MP cgame's `vmMain` (`0x300203b0`)
+  answers both with 0 and saves nothing. VERIFIED (the switch). 1.5's
+  engine (`CoDMP.exe` `0x4107f0`) uses exports `0x12` and `0x13`, which
+  its cgame's `vmMain` (`0x30021650`) answers with 0; UO's
+  (`CoDUOMP.exe` `0x411560`) uses `0x13` and `0x14`, and its cgame's
+  `vmMain` (`0x3002af00`) answers with 0 too. VERIFIED (calls and
+  switches). So on all three nothing of the old cgame carries over.
+  INFERRED (from the two above).
+- `CL_ShutdownCGame` (`0x401a20`, called twice by the restart)
+  `FreeLibrary`s the cgame module and zeroes its VM slot, and
+  `CL_InitCGame` (`0x4049c0`) loads it again and calls `CG_Init` (export
+  0) with `0x15de99c`, `0x15de9a4` and `0x15ce860`. VERIFIED (calls).
+  Those are the current server message number, command sequence and
+  client number, as Q3's `CL_InitCGame` passes. INFERRED. A freshly loaded
+  DLL starts from its image, so everything the cgame keeps starts over:
+  the chat ring (cod11-chat.md 3.2), the kick and landing dip, the
+  prediction and its error, every entity's state, which the first
+  snapshot resets as a load's does, and the weapon selection. INFERRED
+  (the module reload).
+- `CG_Init` parses configstring 7's weapons again as the configstring
+  stands then, not as the gamestate sent it. INFERRED (the parse at
+  `0x3000ef10` runs under `CG_Init`, and `CG_ConfigStringModified` has
+  no case for 7).
+- The restart opens with `0x44fa40(1)`, which ends every 2D and 3D
+  sample and closes every stream: its flags 2, 4 and 8 keep the music
+  slot, the ambient slots or the samples, and 1 sets none of them.
+  VERIFIED (the decompilation). `CG_Init` starts the ambient again
+  (cod11-sound-system.md, `snd_restart`). INFERRED. `snd_restart`
+  restores its saved streams after the restart (`0x40fea7`), so they
+  outlive this stop. VERIFIED (calls).
+- `CL_InitCGame` and `CL_SendPureChecksums` run only past `CA_LOADING`
+  (`0x40fda5`), so a `vid_restart` during a load restarts no cgame.
+  VERIFIED (asm). 1.5 (`0x404ab0`, `0x4106d0`) and UO (`0x405310`,
+  `0x411450`) keep the same tail; `0x404ab0` and `0x405310` carry
+  `maps/mp/%s.bsp` and `CL_InitCGame: %5.2f seconds`. VERIFIED (calls,
+  strings).
+
 ### vcod
 
 - `mods_menu` opens from the stock button, lists `vcod_common::pk3::mod_list`
@@ -1800,6 +1842,17 @@ carries its label.
   A `vid_restart` with the mod unchanged keeps the loaded map, which
   reads the same files. The next gamestate puts a server's own `fs_game`
   back.
+- Every `vid_restart` in a live game, the Mods switch's included,
+  restarts the cgame half (`App::restart_cgame`, `restart_live_cgame`):
+  the live state starts fresh over the kept collision map and
+  `cl.serverTime`, configstring 7 is parsed again, the view
+  (`OnlineView::restart_cgame`: kick, landing, quake, shellshock; the
+  `cg_shellshock` file the cvars hold stays), the selection, the
+  prediction, the HUD (`Hud::restart_cgame`: message windows, chat,
+  scoreboard, kill icons, vote and timeout lines), the effects and the
+  marks start over, every sound stops and the ambient starts from the
+  top (not after `snd_restart`, whose restored streams play on), and
+  `cp` goes out again. Before the game is live nothing restarts.
 - The pick forces the `fs_game` cvar, as `RunMod`'s `trap_Cvar_Set`
   does. A server that names no `fs_game` keeps whatever the cvar holds;
   one that names another replaces it, and leaving keeps the server's

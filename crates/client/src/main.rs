@@ -797,6 +797,15 @@ struct LivePhase {
 /// The live phase off `bsp`, with the weapons configstring 7 (`weapons_cs`)
 /// names read off `fs`.
 fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, weapons_cs: &str) -> Phase {
+    Phase::Live(Box::new(LivePhase::new(
+        client_world(fs, bsp),
+        live_weapons(fs, weapons_cs),
+    )))
+}
+
+/// The client's collision map off `bsp`, what `CM_LoadMap` (CoDMP.exe
+/// 0x419c90) loads for the cgame.
+fn client_world(fs: &Pk3Fs, bsp: &bsp::Bsp) -> collision::CollisionWorld {
     let world = collision::CollisionWorld::build(bsp, &props::collision_tris(fs, &bsp.entities));
     // Predict as the retail Windows client does, not as the server.
     world.set_arith(vcod_common::patch::Arith::for_client());
@@ -805,27 +814,47 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, weapons_cs: &str) -> Phase {
     for model in 1..world.model_count() {
         world.set_model_linked(model, false);
     }
-    Phase::Live(Box::new(LivePhase {
-        world,
-        // Read once per gamestate: the cgame parses configstring 7 in its
-        // weapon setup (0x3000ef10) and `CG_ConfigStringModified` has no
-        // case for it (docs/research/cod11-hud-protocol.md, after the
-        // configstring table).
-        weapons: vcod_common::weapon_table::from_configstring(fs, weapons_cs),
-        scene: entities::EntityScene::new(),
-        events: net::events::EventTracker::new(),
-        predicted_events: play::events::PredictedEvents::default(),
-        clock: play::clock::ServerClock::default(),
-        last_loop_snap: None,
-        looped_fx: fx::looped::LoopedFx::default(),
-        vehicle_trails: fx::vehicle_trails::VehicleTrails::default(),
-        drawn_pos: HashMap::new(),
-        drawn_vehicle_angles: HashMap::new(),
-        seat_turn: play::seat::FourWheelTurn::default(),
-        gunner_sway: play::seat::GunnerSway::default(),
-        turret_sway: play::seat::GunnerSway::default(),
-        seat_frac: 0.0,
-    }))
+    world
+}
+
+/// Read once per cgame: it parses configstring 7 in its weapon setup
+/// (0x3000ef10) and `CG_ConfigStringModified` has no case for it
+/// (docs/research/cod11-hud-protocol.md, after the configstring table).
+fn live_weapons(fs: &Pk3Fs, weapons_cs: &str) -> Vec<Option<weapon::WeaponDef>> {
+    vcod_common::weapon_table::from_configstring(fs, weapons_cs)
+}
+
+impl LivePhase {
+    fn new(world: collision::CollisionWorld, weapons: Vec<Option<weapon::WeaponDef>>) -> LivePhase {
+        LivePhase {
+            world,
+            weapons,
+            scene: entities::EntityScene::new(),
+            events: net::events::EventTracker::new(),
+            predicted_events: play::events::PredictedEvents::default(),
+            clock: play::clock::ServerClock::default(),
+            last_loop_snap: None,
+            looped_fx: fx::looped::LoopedFx::default(),
+            vehicle_trails: fx::vehicle_trails::VehicleTrails::default(),
+            drawn_pos: HashMap::new(),
+            drawn_vehicle_angles: HashMap::new(),
+            seat_turn: play::seat::FourWheelTurn::default(),
+            gunner_sway: play::seat::GunnerSway::default(),
+            turret_sway: play::seat::GunnerSway::default(),
+            seat_frac: 0.0,
+        }
+    }
+
+    /// An in-game `vid_restart`'s fresh cgame over the engine's state:
+    /// the collision map (`world`) and `cl.serverTime` (`clock`) stay, the
+    /// rest starts over and configstring 7 is parsed again as it stands
+    /// (docs/research/cod11-front-end.md section 17, "The cgame restart").
+    fn restart_cgame(self, weapons: Vec<Option<weapon::WeaponDef>>) -> LivePhase {
+        LivePhase {
+            clock: self.clock,
+            ..LivePhase::new(self.world, weapons)
+        }
+    }
 }
 
 enum Mode {
@@ -1873,15 +1902,52 @@ fn read_map(fs: &Pk3Fs, map: &str) -> Result<bsp::Bsp> {
     bsp::parse(&data).with_context(|| format!("cannot parse {path}"))
 }
 
-/// The serverinfo's map and a fresh live phase off `fs`: the CPU half of
+/// The serverinfo's map and its collision map off `fs`: the CPU half of
 /// [`App::reload_live_map`].
-fn reread_live_map(fs: &Pk3Fs, configstrings: &[String]) -> Result<(bsp::Bsp, Phase)> {
-    let cs = |i: usize| configstrings.get(i).map_or("", String::as_str);
-    let map = net::info_value_for_key(cs(0), "mapname")
+fn reread_live_map(
+    fs: &Pk3Fs,
+    configstrings: &[String],
+) -> Result<(bsp::Bsp, collision::CollisionWorld)> {
+    let serverinfo = configstrings.first().map_or("", String::as_str);
+    let map = net::info_value_for_key(serverinfo, "mapname")
         .context("the server sent no mapname in its serverinfo")?;
     let bsp = read_map(fs, map)?;
-    let phase = live_phase(fs, &bsp, cs(7));
-    Ok((bsp, phase))
+    let world = client_world(fs, &bsp);
+    Ok((bsp, world))
+}
+
+/// The CPU half of [`App::restart_cgame`]: a live game's cgame state
+/// starts over as `CL_InitCGame` (CoDMP.exe 0x4049c0) loads a fresh cgame
+/// (docs/research/cod11-front-end.md section 17, "The cgame restart").
+/// False, touching nothing, before the game is live.
+#[allow(clippy::too_many_arguments)]
+fn restart_live_cgame(
+    phase: &mut Phase,
+    view: &mut play::view::OnlineView,
+    input: &mut play::input::PlayInput,
+    predictor: &mut play::predict::Predictor,
+    hud: Option<&mut hud::Hud>,
+    fx: &mut fx::sim::FxSystem,
+    fs: &Pk3Fs,
+    configstrings: &[String],
+) -> bool {
+    if !matches!(phase, Phase::Live(_)) {
+        return false;
+    }
+    let Phase::Live(live) = std::mem::replace(phase, Phase::Connecting) else {
+        unreachable!()
+    };
+    let weapons = live_weapons(fs, configstrings.get(7).map_or("", String::as_str));
+    *phase = Phase::Live(Box::new(live.restart_cgame(weapons)));
+    view.restart_cgame();
+    // The fresh cgame's first snapshot runs a load's resets.
+    input.new_gamestate();
+    predictor.reset();
+    if let Some(hud) = hud {
+        hud.restart_cgame();
+    }
+    fx.clear();
+    true
 }
 
 /// Parse the map, upload it to the GPU and hand back the live phase.
@@ -2837,40 +2903,48 @@ impl App {
                     self.shell.apply_latched_sound();
                     let rate = audio::bank::mixer_rate(self.shell.cvar_f32("mss_khz") as i32);
                     self.audio.restart(&self.fs, rate);
-                    self.apply(event_loop, vec![Effect::VidRestart]);
+                    // The streams `audio.restart` brought back outlive
+                    // the restart's stop (0x40fea7 restores after 0x40fbe0).
+                    self.vid_restart(event_loop, false);
                 }
-                Effect::VidRestart => {
-                    if self.refuse_vid_restart() {
-                        continue;
-                    }
-                    self.shell.apply_latched_video();
-                    // A Mods pick the listen server refused takes effect now
-                    // (`FS_Restart` on a modified `fs_game`, 0x40fd66).
-                    if !matches!(self.mode, Mode::Online { .. }) {
-                        self.switch_fs_game(self.fs_game_cvar());
-                    }
-                    self.vid_restart_ui();
-                    self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
-                    // Retail's `vid_restart` reloads every image; vcod rebuilds
-                    // only when the format or an image setting moved.
-                    let textures = texture_cvars(&self.shell, self.textures.filter);
-                    if self.renderer.as_ref().is_some_and(|r| {
-                        r.hdr() != hdr_cvar(&self.shell) || textures != self.textures
-                    }) {
-                        self.rebuild_renderer(event_loop);
-                    }
-                    if let Some(w) = &self.window {
-                        let (size, fullscreen) = video_mode(&self.shell);
-                        w.set_fullscreen(
-                            fullscreen.then_some(winit::window::Fullscreen::Borderless(None)),
-                        );
-                        if let Some(size) = size {
-                            let _ = w.request_inner_size(size);
-                        }
-                    }
-                }
+                Effect::VidRestart => self.vid_restart(event_loop, true),
             }
         }
+    }
+
+    /// `vid_restart` (`CL_Vid_Restart_f`, CoDMP.exe 0x40fbe0): the latched
+    /// video cvars, the UI, the window and, in a live game, the cgame
+    /// ([`Self::restart_cgame`], `stop_sounds` passed on).
+    fn vid_restart(&mut self, event_loop: &ActiveEventLoop, stop_sounds: bool) {
+        if self.refuse_vid_restart() {
+            return;
+        }
+        self.shell.apply_latched_video();
+        // A Mods pick the listen server refused takes effect now
+        // (`FS_Restart` on a modified `fs_game`, 0x40fd66).
+        if !matches!(self.mode, Mode::Online { .. }) {
+            self.switch_fs_game(self.fs_game_cvar());
+        }
+        self.vid_restart_ui();
+        self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
+        // Retail's `vid_restart` reloads every image; vcod rebuilds
+        // only when the format or an image setting moved.
+        let textures = texture_cvars(&self.shell, self.textures.filter);
+        if self
+            .renderer
+            .as_ref()
+            .is_some_and(|r| r.hdr() != hdr_cvar(&self.shell) || textures != self.textures)
+        {
+            self.rebuild_renderer(event_loop);
+        }
+        if let Some(w) = &self.window {
+            let (size, fullscreen) = video_mode(&self.shell);
+            w.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
+            if let Some(size) = size {
+                let _ = w.request_inner_size(size);
+            }
+        }
+        self.restart_cgame(stop_sounds);
     }
 
     /// A renderer for `window` with the current world, submodels and
@@ -3254,30 +3328,10 @@ impl App {
             return;
         }
         self.after_menu();
-        if let Mode::Online {
-            net,
-            view,
-            input,
-            phase,
-            ..
-        } = &mut self.mode
-        {
+        if let Mode::Online { view, .. } = &mut self.mode {
             view.reopen();
-            if let Phase::Live(_) = phase {
-                // The restarted cgame's first snapshot runs a load's resets.
-                view.new_gamestate();
-                input.new_gamestate();
-                if let Some(r) = &mut self.renderer {
-                    prewarm_viewmodels(view, r, &self.fs, net.configstrings());
-                }
-            }
-            // `CL_InitCGame` and `CL_SendPureChecksums` run only past
-            // `CA_LOADING`; before that the load sends `cp` itself.
-            if matches!(phase, Phase::Live(_)) {
-                let feed = net.gamestate().map_or(0, |g| g.checksum_feed);
-                net.send_reliable(&self.fs.pure_command(feed, net.protocol().pure_dlls));
-            }
         }
+        self.restart_cgame(true);
     }
 
     /// A live game's map read again off the reopened search path, as
@@ -3294,16 +3348,65 @@ impl App {
         else {
             return Ok(());
         };
-        let (bsp, live) = reread_live_map(&self.fs, net.configstrings())?;
-        *phase = live;
-        self.audio
-            .set_ambient(&self.fs, net::info_value_for_key(net.configstring(3), "n"));
-        if let (Some(r), Phase::Live(live)) = (&mut self.renderer, &*phase) {
+        let (bsp, world) = reread_live_map(&self.fs, net.configstrings())?;
+        if let Phase::Live(live) = phase {
+            live.world = world;
+        }
+        if let Some(r) = &mut self.renderer {
             r.load_world(&bsp, &self.fs)?;
-            r.set_hud_weapons(Some(&live.weapons));
         }
         self.world = Some(World { bsp });
         Ok(())
+    }
+
+    /// An in-game `vid_restart`'s cgame half: `CL_ShutdownCGame` (CoDMP.exe
+    /// 0x401a20) frees the cgame module and `CL_InitCGame` (0x4049c0)
+    /// loads a fresh one, so the HUD, the kick, the effects, the event
+    /// rings and the prediction start over; then `CL_SendPureChecksums`
+    /// (0x40fac0) sends `cp`. `stop_sounds` is the restart's own
+    /// `S_StopAllSounds` (0x44fa40), which `snd_restart`'s stream restore
+    /// already stands for. Only past `CA_LOADING`, as retail
+    /// (docs/research/cod11-front-end.md section 17, "The cgame restart").
+    fn restart_cgame(&mut self, stop_sounds: bool) {
+        let Mode::Online {
+            net,
+            view,
+            input,
+            predictor,
+            phase,
+            ..
+        } = &mut self.mode
+        else {
+            return;
+        };
+        if !restart_live_cgame(
+            phase,
+            view,
+            input,
+            predictor,
+            self.hud.as_mut(),
+            &mut self.fx,
+            &self.fs,
+            net.configstrings(),
+        ) {
+            return;
+        }
+        if stop_sounds {
+            self.audio.stop_all();
+        }
+        // `CG_Init` replays configstring 3 (sound doc section 9).
+        self.audio
+            .set_ambient(&self.fs, net::info_value_for_key(net.configstring(3), "n"));
+        if let Some(r) = &mut self.renderer {
+            r.clear_marks();
+            r.set_screen_blend(None);
+            if let Phase::Live(live) = &*phase {
+                r.set_hud_weapons(Some(&live.weapons));
+            }
+            prewarm_viewmodels(view, r, &self.fs, net.configstrings());
+        }
+        let feed = net.gamestate().map_or(0, |g| g.checksum_feed);
+        net.send_reliable(&self.fs.pure_command(feed, net.protocol().pure_dlls));
     }
 
     /// Drops the map, its sounds and effects, between servers.
@@ -6781,6 +6884,57 @@ mod tests {
         }
     }
 
+    /// An in-game `vid_restart` starts the cgame over on the engine's
+    /// collision map and clock, parses configstring 7 as it stands and
+    /// empties the cgame's chat; before the game is live it does nothing.
+    #[test]
+    fn a_vid_restart_in_a_game_restarts_the_cgame() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut cs = vec![String::new(); 8];
+        cs[0] = "\\mapname\\mp_harbor".into();
+        cs[7] = "m1carbine_mp".into();
+        let (bsp, world) = reread_live_map(&fs, &cs).unwrap();
+        let mut live = LivePhase::new(world, live_weapons(&fs, &cs[7]));
+        live.clock.update(1000, 5000, 1, 0);
+        let time = live.clock.server_time();
+        live.drawn_pos.insert(3, Vec3::ONE);
+        live.seat_frac = 1.0;
+        let mut phase = Phase::Live(Box::new(live));
+        cs[7] = "m1carbine_mp kar98k_mp".into();
+        let mut view = play::view::OnlineView::default();
+        let mut input = play::input::PlayInput::default();
+        let mut predictor = play::predict::Predictor::default();
+        let mut fx = fx::sim::FxSystem::new();
+        let mut hud = hud::Hud::new(&fs).unwrap();
+        hud.chat.push("hello", 0);
+        let mut restart = |phase: &mut Phase, hud: &mut hud::Hud| {
+            restart_live_cgame(
+                phase,
+                &mut view,
+                &mut input,
+                &mut predictor,
+                Some(hud),
+                &mut fx,
+                &fs,
+                &cs,
+            )
+        };
+        assert!(!restart(&mut Phase::Connecting, &mut hud));
+        assert!(!hud.chat.is_empty());
+        assert!(restart(&mut phase, &mut hud));
+        let Phase::Live(live) = &phase else {
+            panic!("not live")
+        };
+        assert_eq!(live.world.model_count(), bsp.models.len());
+        assert_eq!(live.clock.server_time(), time);
+        assert!(live.drawn_pos.is_empty());
+        assert_eq!(live.seat_frac, 0.0);
+        assert_eq!(live.weapons.iter().flatten().count(), 2);
+        assert!(hud.chat.is_empty());
+    }
+
     /// A Mods pick in a game reads the map again off the mod's paks, as
     /// `CL_InitCGame`'s `CM_LoadMap` does with no local server: a mod that
     /// ships its own `maps/mp/mp_carentan.bsp` replaces the stock geometry
@@ -6800,11 +6954,8 @@ mod tests {
         let mut cs = vec![String::new(); 8];
         cs[0] = "\\mapname\\mp_carentan".into();
         let models = |fs: &Pk3Fs| {
-            let (bsp, phase) = reread_live_map(fs, &cs).unwrap();
-            let Phase::Live(live) = phase else {
-                panic!("not live")
-            };
-            assert_eq!(live.world.model_count(), bsp.models.len());
+            let (bsp, world) = reread_live_map(fs, &cs).unwrap();
+            assert_eq!(world.model_count(), bsp.models.len());
             (bsp.models.len(), bsp.entities.len())
         };
         let before = models(&Pk3Fs::open_search(&base, None, None, false).unwrap());
