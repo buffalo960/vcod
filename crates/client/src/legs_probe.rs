@@ -3,11 +3,16 @@
 //! then runs, strafes and crouch-walks a fixed script at world yaw 0, and
 //! writes every usercmd and every snapshot's movement and anim fields to
 //! `crates/server/tests/fixtures/movers/<map>-dm-legs-client.txt`, which
-//! `legs_ab.rs` replays cmd for cmd beside the gsc's bone log.
+//! `legs_ab.rs` replays cmd for cmd beside the gsc's bone log. Under a
+//! `--capture-tag` starting `torso` it runs [`TORSO_SCRIPT`] instead, firing,
+//! reloading and aiming on the move beside `client-probes/probe_torso`, for
+//! `torso_ab.rs`.
 
 use std::time::Instant;
 use vcod_common::net;
-use vcod_common::net::msg::{NULL_USERCMD, UserCmd, WBUTTON_CROUCH};
+use vcod_common::net::msg::{
+    BUTTON_ADS, BUTTON_ATTACK, NULL_USERCMD, UserCmd, WBUTTON_CROUCH, WBUTTON_RELOAD,
+};
 use vcod_common::net::snapshot::Snapshot;
 
 /// Where `probe_legs.gsc` puts the player: mp_carentan's flat bottom floor,
@@ -21,6 +26,11 @@ struct Step {
     forward: i8,
     right: i8,
     crouch: bool,
+    /// Fire taps every [`FIRE_PERIOD_MS`]: the carbine is semi-automatic.
+    fire: bool,
+    /// One reload tap at the step's start.
+    reload: bool,
+    ads: bool,
 }
 
 const fn step(label: &'static str, ms: u128, forward: i8, right: i8, crouch: bool) -> Step {
@@ -30,8 +40,28 @@ const fn step(label: &'static str, ms: u128, forward: i8, right: i8, crouch: boo
         forward,
         right,
         crouch,
+        fire: false,
+        reload: false,
+        ads: false,
     }
 }
+
+const fn fire(s: Step) -> Step {
+    Step { fire: true, ..s }
+}
+
+const fn reload(s: Step) -> Step {
+    Step { reload: true, ..s }
+}
+
+const fn ads(s: Step) -> Step {
+    Step { ads: true, ..s }
+}
+
+/// A fire tap is held this long and starts this often: two cmds down at
+/// the probe's 60 Hz, and well past m1carbine_mp's 0.135 s `fireTime`.
+const TAP_MS: u128 = 32;
+const FIRE_PERIOD_MS: u128 = 300;
 
 /// From the snapshot that showed the placement. The street is clear 680
 /// units either side of the mark, and each run is paired with its way back.
@@ -54,8 +84,35 @@ const SCRIPT: &[Step] = &[
     step("stand", 1500, 0, 0, false),
 ];
 
-#[derive(Default)]
+/// The torso capture's walk. The carbine holds 15: the first two fire steps
+/// spend 11 before the first reload, the next 5 before the second, and the
+/// crouched and aimed ones the rest. Each reload step is followed by a stop
+/// long enough for the reload to end before the next shot.
+const TORSO_SCRIPT: &[Step] = &[
+    step("settle", 1500, 0, 0, false),
+    fire(step("fire", 1500, 0, 0, false)),
+    fire(step("run_fire", 1800, 127, 0, false)),
+    step("stop", 1000, 0, 0, false),
+    reload(step("back_reload", 1800, -127, 0, false)),
+    step("stop2", 2000, 0, 0, false),
+    fire(step("strafe_fire", 1500, 0, 127, false)),
+    reload(step("strafe_reload", 1500, 0, -127, false)),
+    step("stop3", 2000, 0, 0, false),
+    step("crouch", 800, 0, 0, true),
+    fire(step("crouch_fire", 1200, 0, 0, true)),
+    fire(step("crouch_run_fire", 1200, 127, 0, true)),
+    reload(step("crouch_back_reload", 1500, -127, 0, true)),
+    step("crouch_stop", 2000, 0, 0, true),
+    step("stand", 1000, 0, 0, false),
+    ads(step("ads", 800, 0, 0, false)),
+    ads(fire(step("ads_fire", 1500, 0, 0, false))),
+    ads(fire(step("ads_walk_fire", 1500, 127, 0, false))),
+    step("end", 1500, 0, 0, false),
+];
+
 pub struct LegsProbe {
+    script: &'static [Step],
+    torso: bool,
     /// Wall clock and server time of the snapshot that showed the placement.
     placed: Option<(Instant, i32)>,
     seen: Option<u32>,
@@ -64,6 +121,18 @@ pub struct LegsProbe {
 }
 
 impl LegsProbe {
+    /// The torso walk when `torso`, the plain one otherwise.
+    pub fn new(torso: bool) -> Self {
+        Self {
+            script: if torso { TORSO_SCRIPT } else { SCRIPT },
+            torso,
+            placed: None,
+            seen: None,
+            lines: Vec::new(),
+            done: false,
+        }
+    }
+
     pub fn running(&self) -> bool {
         !self.done
     }
@@ -73,15 +142,20 @@ impl LegsProbe {
             .map(|(t, _)| now.saturating_duration_since(t).as_millis())
     }
 
-    fn step(&self, now: Instant) -> Option<&'static Step> {
+    /// The step at `now` and how far into it.
+    fn step_at(&self, now: Instant) -> Option<(&'static Step, u128)> {
         let mut ms = self.ms(now)?;
-        for s in SCRIPT {
+        for s in self.script {
             if ms < s.ms {
-                return Some(s);
+                return Some((s, ms));
             }
             ms -= s.ms;
         }
         None
+    }
+
+    fn step(&self, now: Instant) -> Option<&'static Step> {
+        self.step_at(now).map(|(s, _)| s)
     }
 
     /// The cmd for `now`, in world angles: `send_frame` takes the
@@ -91,12 +165,21 @@ impl LegsProbe {
             angles: [0, 0, 0],
             ..NULL_USERCMD
         };
-        if let Some(s) = self.step(now) {
+        if let Some((s, into)) = self.step_at(now) {
             cmd.forward = s.forward;
             cmd.right = s.right;
             if s.crouch {
                 cmd.wbuttons |= WBUTTON_CROUCH;
                 cmd.up = -127;
+            }
+            if s.fire && into % FIRE_PERIOD_MS < TAP_MS {
+                cmd.buttons |= BUTTON_ATTACK;
+            }
+            if s.reload && into < TAP_MS {
+                cmd.wbuttons |= WBUTTON_RELOAD;
+            }
+            if s.ads {
+                cmd.buttons |= BUTTON_ADS;
             }
         }
         cmd
@@ -146,7 +229,7 @@ impl LegsProbe {
             let v = [0, 1, 2].map(|i| s.ps.field_f32(p, &format!("velocity[{i}]")));
             let label = self.step(now).map_or("end", |st| st.label);
             self.lines.push(format!(
-                "!snap msg={} t={} ct={} step={label} origin={},{},{} vel={},{},{} legs={} torso={} movementDir={} pm_flags={} view={},{}",
+                "!snap msg={} t={} ct={} step={label} origin={},{},{} vel={},{},{} legs={} torso={} movementDir={} pm_flags={} view={},{} weaponstate={} weapAnim={}",
                 s.message_num,
                 s.server_time,
                 s.ps.field_i32(p, "commandTime"),
@@ -162,9 +245,11 @@ impl LegsProbe {
                 s.ps.field_i32(p, "pm_flags"),
                 s.ps.viewangles(p)[0],
                 s.ps.viewangles(p)[1],
+                s.ps.field_i32(p, "weaponstate"),
+                s.ps.field_i32(p, "weapAnim"),
             ));
         }
-        let total: u128 = SCRIPT.iter().map(|s| s.ms).sum();
+        let total: u128 = self.script.iter().map(|s| s.ms).sum();
         if self.ms(now).is_some_and(|ms| ms >= total + 1000) {
             self.done = true;
         }
@@ -201,19 +286,26 @@ impl LegsProbe {
             LEGS_SPOT[1],
             LEGS_SPOT[2]
         ));
-        out.push_str(
+        out.push_str(if self.torso {
+            "# client-probes/probe_torso under tools/run_probe.sh puts the player on the spot at\n\
+             # level time 25000 and logs its bones per frame (the server half, -torso.txt).\n\
+             # Script from the snapshot that showed the placement, world yaw 0 throughout:\n#"
+        } else {
             "# client-probes/probe_legs under tools/run_probe.sh puts the player on the spot at\n\
              # level time 25000 and logs its bones per frame (the server half, -legs.txt).\n\
-             # Script from the snapshot that showed the placement, world yaw 0 throughout:\n#",
-        );
-        for s in SCRIPT {
+             # Script from the snapshot that showed the placement, world yaw 0 throughout:\n#"
+        });
+        for s in self.script {
             out.push_str(&format!(
-                " {} {}ms f{} r{}{};",
+                " {} {}ms f{} r{}{}{}{}{};",
                 s.label,
                 s.ms,
                 s.forward,
                 s.right,
-                if s.crouch { " crouch" } else { "" }
+                if s.crouch { " crouch" } else { "" },
+                if s.fire { " fire" } else { "" },
+                if s.reload { " reload" } else { "" },
+                if s.ads { " ads" } else { "" },
             ));
         }
         out.push('\n');
