@@ -5546,7 +5546,10 @@ mod tests {
     /// edge leads: mp_ship's ledge at (3686, -354, 400), narrow over the
     /// hold at 92, is reached only by the risky back down from (3647, -353,
     /// 611), and three bots that roamed to it on seeds 2305-4607 missed it
-    /// and died. A start already past such an edge roams as before.
+    /// and died. A start already past such an edge roams as before. Since
+    /// the air accelerate's floor (cod11-mantle.md, "The walk's accel
+    /// floor") the drops onto (3647, -353, 611) read risky too; its deck
+    /// neighbour at (3648, -317, 618) is in the safe part.
     #[test]
     fn a_roam_never_ends_where_only_a_risky_edge_leads() {
         let nodes = (0..3)
@@ -5571,7 +5574,7 @@ mod tests {
         let g = graph_for("mp_ship", &world);
         let node = |p: [f32; 3]| g.nearest(p).unwrap();
         assert!(!g.safe[node([3647.6, -352.0, 400.125]) as usize]);
-        assert!(g.safe[node([3647.0, -352.9, 611.1]) as usize]);
+        assert!(g.safe[node([3647.9, -316.9, 618.5]) as usize]);
     }
 
     fn map_world(map: &str) -> Option<crate::world::World> {
