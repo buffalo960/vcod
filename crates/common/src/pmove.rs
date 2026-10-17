@@ -1237,15 +1237,17 @@ pub fn pmove(
     }
     set_water_level(ps, world);
 
-    // PM_Footsteps @0x322c8 runs once per move, after the final ground trace.
-    footsteps(ps, input, world, dt, &mut events);
-    weapon::pm_weapon(
-        ps,
-        input,
-        weapons,
-        (dt * 1000.0).round() as i32,
-        &mut events,
-    );
+    // PM_Footsteps @0x322c8 runs once per move, after the final ground trace:
+    // after `PM_Weapon` on 1.1 (0x34331, 0x34336), before it on 1.5
+    // (0x28889, 0x2888e) and UO (0x2e04e, 0x2e053).
+    let dt_ms = (dt * 1000.0).round() as i32;
+    if ps.rules == MoveRules::V1_1 {
+        weapon::pm_weapon(ps, input, weapons, dt_ms, &mut events);
+        footsteps(ps, input, world, dt, &mut events);
+    } else {
+        footsteps(ps, input, world, dt, &mut events);
+        weapon::pm_weapon(ps, input, weapons, dt_ms, &mut events);
+    }
     // Retail's `pm->oldcmd`: what the next step subtracts this one from.
     ps.last_cmd_angles = input.angles;
     ps.last_cmd_ads = input.ads;
@@ -5169,6 +5171,52 @@ mod tests {
         }
         assert!(!ids.is_empty());
         assert!(ids.iter().all(|&e| e == EV_FOOTSTEP_RUN_WATER), "{ids:?}");
+    }
+
+    /// 1.1 runs `PM_Weapon` ahead of `PM_Footsteps` (0x34331, 0x34336), 1.5
+    /// and UO behind it: a step that both fires and steps rings the shot
+    /// first on 1.1 only.
+    #[test]
+    fn the_shot_and_the_footstep_ring_in_each_versions_order() {
+        let def = WeaponDef {
+            clip_size: 200,
+            fire_time: 0.001,
+            clip_index: 1,
+            ammo_index: 1,
+            ..WeaponDef::default()
+        };
+        let weapons = [None, Some(def)];
+        let w = dirt_flat();
+        let w = MoveWorld::bare(&w);
+        let run = PmInput {
+            forward: 1.0,
+            attack: true,
+            weapon: 1,
+            ..PmInput::default()
+        };
+        for (rules, shot_first) in [(MoveRules::V1_1, true), (MoveRules::V1_5, false)] {
+            let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.125), 0.0);
+            ps.rules = rules;
+            weapon::give(&mut ps, 1, 1);
+            ps.weapon = 1;
+            ps.ammoclip[1] = 200;
+            let both = (0..125)
+                .map(|_| pmove(&mut ps, &run, &w, 0.008, &weapons))
+                .find(|ev| {
+                    ev.iter().any(|e| e.event == weapon::EV_FIRE_WEAPON)
+                        && ev.iter().any(|e| e.event == EV_FOOTSTEP_RUN_BASE + 6)
+                })
+                .expect("a step that fires and steps");
+            let first = both
+                .iter()
+                .find(|e| e.event == weapon::EV_FIRE_WEAPON || e.event == EV_FOOTSTEP_RUN_BASE + 6)
+                .unwrap();
+            assert_eq!(
+                first.event == weapon::EV_FIRE_WEAPON,
+                shot_first,
+                "{rules:?} {both:?}"
+            );
+        }
     }
 
     /// The airborne ladder branch probes into the wall face; a miss or a
