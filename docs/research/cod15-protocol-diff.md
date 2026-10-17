@@ -735,9 +735,12 @@ and an empty ring from its first playing snapshot; the death frame reads
 sends the same. The `--probe-moves` run over `client-probes/probe_prone`
 drains the same events on both (41, then 87 and 110 per jump, 18). The
 `EV_PUTAWAY_WEAPON` an earlier comparison saw at a 1.5b spawn did not
-come back. One difference showed instead: the dead playerstate's
-`weaponstate` reads 0 on 1.5b and 1 on `vcod-server` in 1.5 mode (both 0
-on 1.1).
+come back. The dead playerstate's `weaponstate`, 0 on 1.5b and 1 on
+`vcod-server` in that run, is no 1.5 difference: it is 1 when one cmd
+reached the server behind the `kill` inside its frame and 0 when two or
+more did, on 1.1d, 1.5b and UO alike, and ours follows the same rule
+(2026-10-17, VERIFIED, run: `--probe-kill-cmds 1,3`, `kill_cmds_ab.rs`;
+`cod11-combat.md` 9.2, "The death frame's `weaponstate`").
 
 ### Missiles
 

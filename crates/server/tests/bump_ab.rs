@@ -181,9 +181,10 @@ fn run_cmd(
         return;
     }
     cmd::apply_view(ps, cmd.angles, da);
-    for (step, dt) in cmd::chop(*last_st, cmd) {
-        pmove(ps, &cmd::pm_input(&step), world, dt, weapons);
-    }
+    cmd::chop(*last_st, cmd, |step, dt| {
+        pmove(ps, &cmd::pm_input(step), world, dt, weapons);
+        ps.jump_latched
+    });
     *last_st = cmd.server_time;
     // `BUMP_TRACE=<ct>`: print every cmd within 60 ms before that clock.
     if let Some(at) = std::env::var("BUMP_TRACE")
@@ -468,7 +469,7 @@ fn report(rows: &[Row], spot: Vec3) {
 
 /// Loads the map the way the slope gate does, with `dm`'s gameobject rule.
 fn load() -> Option<(CollisionWorld, vcod_server::weapons::WeaponTable)> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs
         .resolve_map("mp_carentan")
         .expect("map in the mounted paks");

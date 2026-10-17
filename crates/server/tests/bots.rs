@@ -832,3 +832,71 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
+
+/// Two bots, one a side, play UO base assault on mp_foy with nobody
+/// shooting: each, a lone attacker, fetches rocket launchers, breaches the
+/// other side's bases from a stand with a shot at them, plants and sees
+/// the charge off, until one side has no base left (bot-objectives.md
+/// 7.2). With a defender a side every plant is defused. Bases take three direct
+/// rockets here (`scr_bas_basehealth 3000`); the stock 24500 is 25, and
+/// the round runs half an hour. Needs `COD_DIR` at a UO install.
+#[test]
+#[ignore = "builds mp_foy's UO graph and its rebuilds, runs 2 bots for up to 29 min of game time, ~4 min in release; run with --ignored"]
+fn uo_bots_breach_bases_until_a_bas_round_ends() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_foy").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(2, false, "bas");
+    cfg.map = "mp_foy".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+    sv.test_seed_rng(7);
+    sv.set_cvar("scr_bas_basehealth", "3000");
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let count = |sv: &vcod_server::Server, event: &str| {
+        sv.script_log()
+            .iter()
+            .filter(|l| l.trim_end().ends_with(event))
+            .count()
+    };
+    let mut first = None;
+    let mut end = None;
+    for tick in 0..BAS_ROUND_TICKS {
+        run(&mut sv, &mut now, 1);
+        if first.is_none() && count(&sv, "bas_breached") > 0 {
+            first = Some(tick);
+        }
+        // `bas.gsc`'s round end logs the winners (`W;`).
+        if sv.script_log().iter().any(|l| l.starts_with("W;")) {
+            end = Some(tick);
+            break;
+        }
+    }
+    eprintln!(
+        "first breach at tick {first:?}, round over at {end:?}: {} breached, {} destroyed, {} defused",
+        count(&sv, "bas_breached"),
+        count(&sv, "bas_destroyed"),
+        count(&sv, "bas_defused"),
+    );
+    assert!(
+        first.is_some_and(|t| t < BAS_BREACH_TICKS),
+        "no base breached in {} s",
+        BAS_BREACH_TICKS / 20
+    );
+    assert!(end.is_some(), "the round never ended on its bases");
+    assert!(
+        count(&sv, "bas_destroyed") >= 3,
+        "the round ended on its clock"
+    );
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// `scr_bas_roundlength` is 30 minutes; the round ends by then whatever
+/// the bases did, so the gate stops short of it.
+const BAS_ROUND_TICKS: usize = 29 * 60 * 20;
+const BAS_BREACH_TICKS: usize = 5 * 60 * 20;

@@ -338,10 +338,9 @@ decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
   5 s as an `iPrintLn`, and it takes a ring slot like any game message.
 - VERIFIED: 1.5 `CoDMP.exe` has the same case: `0x4022b5` writes the
   `0x1100` cell and the line ends through `0x4094e0` with `edx` 1, as 1.1's
-  does. INFERRED for UO: the
-  decompiled case 4 of `CoDUOMP.exe` makes the same calls in the same
-  order, but the window index is not visible there and no UO binary was on
-  hand to read the `edx`. UO's `CG_Obituary` calls trap 4 with the same
+  does. VERIFIED for UO: `CoDUOMP.exe`'s case 4 writes the `0x1100` cell
+  at 0x4022e3 and ends the line through 0x409b40 with `edx` 1
+  (0x402337), the game window. UO's `CG_Obituary` calls trap 4 with the same
   nine arguments and adds a MOD `0x1a` row, `gfx/icons/hud@bino_owned`.
 - VERIFIED, the draw (refexport slot `0xdc`, `0x4dfa60`; the refexport is
   copied at `0x411ac5` from the table `0x4b4a30` fills at `0xca26c8`): the line splits at the first cell
@@ -360,6 +359,17 @@ decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
 - VERIFIED: `CL_InitCGame` (after the `"CL_InitCGame: %5.2f seconds\n"`
   print) empties the game, bold and third message windows, so a new
   gamestate drops every kill line.
+- VERIFIED: `CL_GetServerCommand`'s `n` case (1.1 `CoDMP.exe` 0x4017c3,
+  index 10 of the byte table at 0x401824 off `'d'`, jump table 0x401808)
+  calls 0x4087b0, which zeroes the rings of the game window (0x142efcc)
+  and window 2 (0x142f050, the bold window: trap 3, 0x401fc2, writes
+  window 2), then zeroes window 3 (0x142f0d4) itself
+  before the cgame sees the command. The switch at 0x408c90 maps window
+  0 to 0x142f5a8, 1 to 0x142efcc, 2 to 0x142f050 and 3 to 0x142f0d4.
+  VERIFIED: 1.5's (`CoDMP.exe` 0x401620, calling 0x408ce0) and UO's
+  (`CoDUOMP.exe` 0x401630, calling 0x409340) take `B` and `n` into the
+  same case. So a `map_restart` empties the game and bold windows, kill
+  lines included. vcod: `Hud::on_map_restart`.
 
 vcod: `Hud::on_game_event` builds a `messages::KillLine` and pushes it into
 the game message window; `messages::kill_line` draws it. There is no
@@ -433,8 +443,8 @@ the two halves agree.
 |---|---|---|---|
 | `0x87` | `MOD_MELEE` (7) | `killIconMelee` | `gfx/hud/death_melee.dds` |
 | `0x88` | `MOD_HEAD_SHOT` (8) | `killIconHeadShot` | `gfx/hud/death_headshot.dds` |
-| `0x90` | `MOD_WATER` (16) | `killIconDrown` | none ships |
-| `0x91` | `MOD_SLIME` (17) | `killIconSlime` | none ships |
+| `0x90` | `MOD_WATER` (16) | `killIconDrown` | `gfx/hud/death_died.dds` |
+| `0x91` | `MOD_SLIME` (17) | `killIconSlime` | `gfx/hud/death_died.dds` |
 | `0x93` | `MOD_CRUSH` (19) | `killIconCrush` | `gfx/hud/death_crush.dds` |
 | `0x95` | `MOD_FALLING` (21) | `killIconFalling` | `gfx/hud/death_falling.dds` |
 | `0x96` | `MOD_SUICIDE` (22) | `killIconSuicide` | `gfx/hud/death_suicide.dds` |
@@ -452,15 +462,18 @@ Notes:
   (`0x30020e9f`..`0x30020ee5`, each `RegisterMaterial(name, 5)` with the handle
   discarded), then passed to trap `4` by name.
 
-UNVERIFIED: the `killIcon<Mod>` to image binding. No stock pk3 contains an
-entry named `killIconMelee` (checked: full file listings of all nine
-`main/*.pk3`, plus `zipgrep` over `pak0.pk3` and `pak5.pk3`, plus every
-`fxshaders/*.shader` and every `ui_mp/*` file). The only plausible art is the
-six `gfx/hud/death_*.dds` images whose names line up one-for-one with the six
-MOD cases that have art, and 1.5's cgame uses the identical names. vcod maps
-the MOD case straight to `gfx/hud/death_<mod>.dds` and draws nothing for
-drown/slime. Check that would settle it: run the stock 1.1 MP client, die by
-melee, and screenshot the killfeed row.
+VERIFIED, the `killIcon<Mod>` to image binding: each name is a shader in
+`pak4.pk3:scripts/hud.shader` (1.5's `pak8.pk3` carries the same blocks)
+whose one stage is `map clamp gfx/hud/death_<name>.tga`, `blendFunc blend`,
+vertex colour and alpha. `killIconDrown`, `killIconSlime` and
+`killIconDied` all map `gfx/hud/death_died.tga`, so a drown or slime death
+draws the generic icon. VERIFIED: 1.5's `cgame_mp_x86.dll` switch
+(0x3001e9f5) has 1.1's eight cases. United Offensive's is in
+`coduo-diff.md` 12.
+
+vcod: `killfeed::mod_icon` names the material each case names, per
+protocol, and the HUD resolves it through the shader scripts' image map
+like any HUD material.
 
 ---
 

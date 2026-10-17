@@ -141,7 +141,8 @@ hint is `ent+0xdc`, a zero hint skips the entity, and the string is
 
 vcod, since this change: `item::activate_ent` scores `trigger_use` rows
 beside items and turrets, centred on their absolute box; the use key's
-`Activate::Trigger` queues the `trigger` notify; `trigger::touched` skips
+`Activate::Trigger` raises the `trigger` notify with the cmd's other
+engine notifies, outside `G_RunFrame`'s trigger queue; `trigger::touched` skips
 `trigger_use`; `cursor_hint_pass` returns the trigger's hint and string;
 `setHintString` lives in `builtins::entity`. Before it, a `trigger_use` fired
 on contact with the use key held, which on the stock maps only `re` used.

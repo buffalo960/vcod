@@ -61,7 +61,7 @@ fn retail() -> BTreeMap<String, Vec<String>> {
 
 #[test]
 fn placespawnpoint_matches_retail_on_every_stock_map() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let fs = Rc::new(fs);

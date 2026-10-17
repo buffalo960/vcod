@@ -32,11 +32,53 @@ const HELD_FIELDS: &[&str] = &["weapons[0]", "weapon"];
 /// Every entry is a known divergence from retail, not a fact about it, and
 /// the list is self-cleaning: [`check`] asserts that a gapped channel still
 /// differs, so an entry that starts matching fails the run rather than
-/// quietly outliving the defect it names. Empty is the goal and the state:
-/// the last entries were the scoped rifle's segmented reload, whose start
-/// segment ours followed with a loop segment retail skips because the start
-/// had already filled the clip (cod11-combat.md, 9.2, closed 2026-09-07).
-const KNOWN_GAPS: &[Gap] = &[];
+/// quietly outliving the defect it names. Empty is the goal. The scoped
+/// rifle's segmented reload was closed 2026-09-07 (cod11-combat.md, 9.2).
+///
+/// The entries now are the 2026-10-17 recaptures' tap phase
+/// ([`TAP_PHASE`]): where in the server frame a tap's cmd landed on retail,
+/// which the captures do not record.
+const KNOWN_GAPS: &[Gap] = &[
+    gap("mp_carentan", "combat", "sustained_fire", "transients"),
+    gap("mp_carentan", "combat", "crouch_fire", "transients"),
+    gap("mp_carentan", "combat", "prone_fire", "transients"),
+    gap("mp_pavlov", "combat", "single_shot", "transients"),
+    gap("mp_pavlov", "ads", "hip_shot", "transients"),
+    gap("mp_carentan", "ads-sniper", "hip_shot", "transients"),
+    Gap {
+        why: "the reload's end segment (weapAnim 14) starts on the step boundary: retail's \
+              first sample, 16 ms in, already reads it and ours' opening sample, before the \
+              step's first cmd, still reads the loop (13); both end the reload at 800-809 ms",
+        ..gap("mp_carentan", "ads-sniper", "ads_release", "weapAnim")
+    },
+];
+
+/// Why a fire step's sight and spread are gapped. The probe taps on wall
+/// clock from a snapshot it has processed, so a retail tap lands anywhere in
+/// the server frame: the first sample after each hip fire step's first shot
+/// read the spread counter 0 to 50 ms decayed across the twelve such steps
+/// recaptured 2026-10-17 (undecayed in five, 178.5 on the carbine and 255 on
+/// the bolt rifles). The replay taps on the frame's first cmd, so its sample
+/// is always 25-35 ms decayed, and a retail sample near either end is more
+/// than [`SPREAD_TOL`] off it. The shot count, the states and the decay rate
+/// (51 a frame on the carbine on both) match; the captures carry no cmd
+/// times to place ours' taps where retail's went.
+const TAP_PHASE: &str = "the tap's place in the server frame (TAP_PHASE)";
+
+const fn gap(
+    map: &'static str,
+    kind: &'static str,
+    label: &'static str,
+    channel: &'static str,
+) -> Gap {
+    Gap {
+        map,
+        kind,
+        label,
+        channel,
+        why: TAP_PHASE,
+    }
+}
 
 /// One [`KNOWN_GAPS`] entry.
 struct Gap {
@@ -381,12 +423,11 @@ fn check(map: &str, gametype: &str, kind: &str) {
     let held =
         vcod_server::configstrings::weapon_index(&weapon).expect("the joined weapon in CS 7");
     let mut steps = parse_fixture(&text, held as u8);
-    // The combat captures predate 5233cc3, when the probe's stall turn still
-    // rode past the walk: retail's view settled through the still `idle`
-    // step at a facing no `!input` records (90 on pavlov, -90 on carentan,
-    // yaw 0 throughout). The step after such a turn starts at retail's
-    // settled spot and facing, since what the prone check finds behind the
-    // body depends on both (player-model-anim-system.md, "Prone fire").
+    // The combat script's `advance` ends wherever its stall turns steered
+    // it, and the still `idle` after it turns the view back to the spawn's
+    // facing. The step after such a turn starts at retail's settled spot and
+    // facing, since what the prone check finds behind the body depends on
+    // both (player-model-anim-system.md, "Prone fire").
     for i in 2..steps.len() {
         let prev = &steps[i - 1];
         let still = !prev.walks && prev.base.forward == 0 && prev.base.right == 0;
@@ -405,8 +446,31 @@ fn check(map: &str, gametype: &str, kind: &str) {
         .iter()
         .map(|step| step.iter().map(|s| trace_of(s, s.ms)).collect())
         .collect();
+    // `COMBAT_REPORT=<label>` prints retail's and our trace of that step.
+    if let Ok(label) = std::env::var("COMBAT_REPORT") {
+        for (step, ours) in steps.iter().zip(&mine) {
+            if step.label != label {
+                continue;
+            }
+            for (side, trace) in [("retail", &step.trace), ("ours", ours)] {
+                for t in trace {
+                    println!(
+                        "{side} {kind} {label} {}ms state={} anim={} torso={} seq={} frac={:?} spread={:?} view={:?}",
+                        t.ms,
+                        t.weaponstate,
+                        t.weap_anim,
+                        t.torso_anim,
+                        t.event_sequence,
+                        t.pos_frac,
+                        t.spread,
+                        t.viewangles,
+                    );
+                }
+            }
+        }
+    }
     let mut bad = Vec::new();
-    for ((step, ours), samples) in steps.iter().zip(&mine).zip(&replayed) {
+    for (i, ((step, ours), samples)) in steps.iter().zip(&mine).zip(&replayed).enumerate() {
         // A walk is the capture's own exclusion: the stall response steers
         // it, so where it ends up is not reproducible.
         if step.walks {
@@ -567,7 +631,21 @@ fn check(map: &str, gametype: &str, kind: &str) {
                 }
             }
         }
-        let view_bad = view_misses(&step.trace, ours);
+        // The view after the step's first cmd: retail's samples taken after
+        // the step began follow it (the probe sends one every 16 ms from the
+        // start), and ours' opening one, which precedes it, has no
+        // counterpart among them. Retail's opening sample after a walk holds
+        // where the walk's stall turns left the view, which no replay
+        // reproduces (the walk is the capture's own exclusion above).
+        let opens_after_walk = i > 0 && steps[i - 1].walks;
+        let r_view: Vec<Trace> = step
+            .trace
+            .iter()
+            .filter(|t| !(opens_after_walk && t.ms == 0))
+            .cloned()
+            .collect();
+        let skip = usize::from(r_view.first().is_none_or(|t| t.ms > 0));
+        let view_bad = view_misses(&r_view, &ours[skip.min(ours.len())..]);
         match gapped(map, kind, &step.label, "viewangles") {
             Some(why) => assert!(
                 !view_bad.is_empty(),
@@ -619,10 +697,6 @@ fn the_weapon_channel_matches_retail_on_mp_pavlov() {
     check("mp_pavlov", "dm", "combat");
 }
 
-// Both carbine sight captures carry a `# NOTE` about `ads_walk`: it walked 45
-// degrees off its recorded yaw, the probe's stall turn having ridden every
-// step until 5233cc3. The transients this gate compares do not depend on the
-// heading, so the two stay usable as they are.
 #[test]
 fn the_sight_and_spread_match_retail_on_mp_carentan() {
     check("mp_carentan", "dm", "ads");

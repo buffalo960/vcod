@@ -57,9 +57,6 @@ const ALT: u8 = vcod_common::net::msg::BUTTON_MELEE;
 /// (docs/research/coduo-vehicles.md 12). `inputs` is each client slot's
 /// seated input.
 pub fn run(host: &mut GameHost, cx: &mut Cx, inputs: &[Option<RiderInput>]) {
-    for id in std::mem::take(&mut host.vehicles.deaths) {
-        die(host, cx, id);
-    }
     let now = host.level_time_ms;
     for driven in [false, true] {
         for id in host.vehicles.in_slot_order() {
@@ -428,8 +425,8 @@ fn think(host: &mut GameHost, cx: &mut Cx, id: EntId, inputs: &[Option<RiderInpu
 /// 0x827ab's `G_Damage`s on the vehicle itself, `MOD_COLLISION` with the
 /// hit's normal and point: one under `g_vehicleEnableCollisionDamage` for
 /// a hit driven into the surface past 0.5, and 999999 once seven seconds
-/// wedged. A death runs `Scr_Vehicle_Die` at once, as `G_Damage`'s die
-/// callback does. Returns whether any landed.
+/// wedged. A death queues `Scr_Vehicle_Die` for the server, which walks it
+/// after the thinks. Returns whether any landed.
 fn self_damage(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -460,10 +457,6 @@ fn self_damage(
             for (event, args) in notifies {
                 host.engine_notifies.push((id, event, args));
             }
-            if let Some(i) = host.vehicles.deaths.iter().position(|&d| d == id) {
-                host.vehicles.deaths.remove(i);
-                die(host, cx, id);
-            }
         }
     }
     landed
@@ -471,32 +464,6 @@ fn self_damage(
 
 /// The stuck kill's damage (0xf423f, 0x85793).
 const STUCK_KILL: i32 = 999_999;
-
-/// `Scr_Vehicle_Die` (0x8dccb): every rider out. One the death cannot
-/// hurt (a tank's driver) looks for a dismount spot; the rest get out where
-/// they sit. Retail decides by a 5-point `MOD_EXPLOSIVE` probe hit through
-/// the damage callback; vcod asks the invulnerability rule directly. The
-/// vehicle itself stays, for the scripts to burn and delete.
-fn die(host: &mut GameHost, cx: &mut Cx, id: EntId) {
-    let Some(v) = host.vehicles.live.get(&id) else {
-        return;
-    };
-    let kind = host.vehicles.info_of(v).kind;
-    let riders: Vec<(usize, usize)> = (1..=MAX_SEATS)
-        .filter_map(|s| v.seats[s].map(|r| (s, r)))
-        .collect();
-    for (seat, r) in riders {
-        let shielded = kind == super::info::KIND_TANK && seat == 1;
-        let from = host
-            .ents
-            .handle(r as u32)
-            .map_or([0.0; 3], |e| crate::game::item::origin_of(host, cx, e));
-        super::seat::unlink_player(host, cx, r, shielded, from, super::seat::PLAYER_BOX);
-        if host.vehicles.seat_of(r).is_some() {
-            super::seat::unlink_player(host, cx, r, false, from, super::seat::PLAYER_BOX);
-        }
-    }
-}
 
 /// 0x87480, the engine and gun sounds: the idle pair (B1) and the engine
 /// pair (B2) crossfaded by the step's blend while a driver has the engine

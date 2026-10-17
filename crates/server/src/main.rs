@@ -179,8 +179,8 @@ fn main() -> Result<()> {
     let sock = UdpSocket::bind(("0.0.0.0", args.port))
         .with_context(|| format!("binding udp/{}", args.port))?;
     // A thread reads the socket as packets arrive so each carries its arrival
-    // time into the tick (`Server::handle_packet_at`); the tick still handles
-    // them in arrival order at its start.
+    // time into the tick (`Server::handle_packet_read`); the tick still
+    // handles them in arrival order at its start.
     let (packet_tx, packets) = std::sync::mpsc::sync_channel(PACKET_QUEUE);
     {
         let sock = sock.try_clone().context("cloning the socket")?;
@@ -283,6 +283,10 @@ fn main() -> Result<()> {
     // `SV_Frame`'s loop does (map-cycle doc, 4.7).
     let mut next = Instant::now();
     let mut stats = TickStats::default();
+    // When retail's event loop would be free to handle the next packet: the
+    // end of the last one handled. Its frame runs in well under a
+    // millisecond, so a tick does not hold it; an rcon `map_restart` does.
+    let mut free_at = next;
     loop {
         let now = Instant::now();
         let late = now.saturating_duration_since(next);
@@ -290,7 +294,13 @@ fn main() -> Result<()> {
             let Ok((arrived, from, pkt)) = packets.try_recv() else {
                 break;
             };
-            server.handle_packet_at(from, &pkt, now, arrived);
+            // Retail handles a packet within 5 ms of its arrival unless an
+            // earlier packet still holds the loop; vcod reads them at the
+            // tick, so the handling moment is rebuilt here.
+            let read = arrived.max(free_at);
+            let started = Instant::now();
+            server.handle_packet_read(from, &pkt, now, arrived, read);
+            free_at = read + started.elapsed();
         }
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) && !quit_queued {
             quit_queued = true;

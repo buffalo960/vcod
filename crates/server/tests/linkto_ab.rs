@@ -181,7 +181,7 @@ fn run_ours_patched(
     watch: &[&str],
     patch: fn(Vec<u8>) -> Vec<u8>,
 ) -> Option<Ours> {
-    let mut fs = vcod_common::testing::game_fs()?;
+    let mut fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bytes = patch(fs.read(&bsp_path).unwrap());
     fs.overlay(&bsp_path, bytes.clone());
@@ -668,7 +668,7 @@ const SERVER4: &str = "tests/fixtures/movers/mp_carentan-dm-linkattach.txt";
 /// with retail's message (movers doc 16, "A tag on an attached model").
 #[test]
 fn a_tag_on_an_attached_model_takes_a_link_like_retail() {
-    let Some(mut fs) = vcod_common::testing::game_fs() else {
+    let Some(mut fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

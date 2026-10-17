@@ -62,7 +62,7 @@ fn snaps_after(cl: &NetClient<ClientEnd>, after: i32) -> Vec<(i32, i32, u32)> {
 
 #[test]
 fn the_first_snapshot_after_a_restart_is_the_last_frame_it_owed() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

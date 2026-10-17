@@ -10,7 +10,7 @@ use vcod_common::animtree::PlayerAnims;
 use vcod_common::bonetrace::{PriorityMap, bone_trace};
 use vcod_common::collision::{CONTENTS_GLASS, CollisionWorld, sound_material};
 use vcod_common::net::events::dir_to_byte;
-use vcod_common::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD};
+use vcod_common::net::protocol::ENTITYNUM_WORLD;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::pose_player;
 use vcod_common::pmove::weapon::{SpreadStance, hip_spread_min};
@@ -1328,6 +1328,7 @@ pub fn melee_fire(
     weapon_index: u8,
     aim: [f32; 2],
     sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
     world: Option<&CollisionWorld>,
     models: &[PlacedModel],
     hitlocs: &HitLocTable,
@@ -1351,119 +1352,123 @@ pub fn melee_fire(
         end,
         pass,
         sims,
-        &[],
+        targets,
         world,
         models,
         &BULLET_PRIORITY,
         bones,
     );
     let weapon = weapon_index as i32;
+    if let Traced::Player {
+        slot,
+        fraction,
+        hitloc,
+    } = traced
+    {
+        let point = muzzle + (end - muzzle) * fraction;
+        let damage = def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32;
+        let damage = located_damage(damage, hitlocs.multiplier(hitloc));
+        return ShotResult {
+            effects: vec![
+                Effect::Impact(TempEntity {
+                    event: EV_MELEE_HIT,
+                    // The bone trace answers no normal. Retail's is the
+                    // bone's own, which the melee capture reads as the swing
+                    // reversed and tilted: parm 115 against a forward of +y.
+                    parm: dir_to_byte((-forward).into()),
+                    surf_type: SURF_FLESH,
+                    other: slot as u32,
+                    attacker: 0,
+                    weapon,
+                    origin: point.into(),
+                    client_num: 0,
+                    scale: 0,
+                    scope: Scope::Broadcast,
+                    quake: None,
+                    origin2: None,
+                }),
+                Effect::Hit(Hit {
+                    victim: slot,
+                    attacker,
+                    inflictor: None,
+                    damage,
+                    dflags: 0,
+                    mod_: "MOD_MELEE",
+                    weapon: weapon_name.to_string(),
+                    point: point.into(),
+                    dir: forward.into(),
+                    hitloc,
+                }),
+            ],
+            struck: Vec::new(),
+        };
+    }
+    // A miss names what the trace met; a sky face or nothing at all
+    // spawns no event (0x687a9, 0x687c2; UO 0x8a6ff).
+    let miss = |normal: Vec3, surface_flags: u32, other: u32, at: Vec3| {
+        Effect::Impact(TempEntity {
+            event: EV_MELEE_MISS,
+            parm: dir_to_byte(normal.into()),
+            surf_type: sound_material(surface_flags),
+            other,
+            attacker: 0,
+            weapon,
+            origin: at.into(),
+            client_num: 0,
+            scale: 0,
+            scope: Scope::Broadcast,
+            quake: None,
+            origin2: None,
+        })
+    };
     match traced {
-        Traced::Player {
-            slot,
-            fraction,
-            hitloc,
-        } => {
-            let point = muzzle + (end - muzzle) * fraction;
-            let damage = def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32;
-            let damage = located_damage(damage, hitlocs.multiplier(hitloc));
-            ShotResult {
-                effects: vec![
-                    Effect::Impact(TempEntity {
-                        event: EV_MELEE_HIT,
-                        // The bone trace answers no normal. Retail's is the
-                        // bone's own, which the melee capture reads as the swing
-                        // reversed and tilted: parm 115 against a forward of +y.
-                        parm: dir_to_byte((-forward).into()),
-                        surf_type: SURF_FLESH,
-                        other: slot as u32,
-                        attacker: 0,
-                        weapon,
-                        origin: point.into(),
-                        client_num: 0,
-                        scale: 0,
-                        scope: Scope::Broadcast,
-                        quake: None,
-                        origin2: None,
-                    }),
-                    Effect::Hit(Hit {
-                        victim: slot,
-                        attacker,
-                        inflictor: None,
-                        damage,
-                        dflags: 0,
-                        mod_: "MOD_MELEE",
-                        weapon: weapon_name.to_string(),
-                        point: point.into(),
-                        dir: forward.into(),
-                        hitloc,
-                    }),
-                ],
-                struck: Vec::new(),
-            }
-        }
-        // A vehicle's hull takes a swing as a wall does: `MOD_MELEE` is
-        // one no vehicle takes damage from. A script model too, which has
-        // no `takedamage` in 1.1. `otherEntityNum` is the traced entity.
+        Traced::Player { .. } => unreachable!("returned above"),
+        // `G_Damage` on anything with `takedamage`: a UO script model
+        // `setTakeDamage` opened (a vehicle's hull takes it too, and
+        // `MOD_MELEE` is one no vehicle is hurt by). A 1.1 script model
+        // has no `takedamage`.
         Traced::Model {
             id,
             fraction,
             normal,
             surface_flags,
-            ..
+            takes_damage,
+        } => {
+            let at = muzzle + (end - muzzle) * fraction;
+            let mut effects = vec![miss(normal, surface_flags, id.0, at)];
+            if takes_damage {
+                effects.push(Effect::EntityHit(EntityHit {
+                    target: id,
+                    attacker,
+                    inflictor: None,
+                    damage: def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32,
+                    dflags: 0,
+                    mod_: "MOD_MELEE",
+                    point: at.into(),
+                    dir: forward.into(),
+                }));
+            }
+            ShotResult {
+                effects,
+                struck: Vec::new(),
+            }
+        }
+        // A shootable grenade's box: its 1 health goes as a round's does.
+        Traced::Entity {
+            id,
+            fraction,
+            normal,
         } => ShotResult {
-            effects: vec![Effect::Impact(TempEntity {
-                event: EV_MELEE_MISS,
-                parm: dir_to_byte(normal.into()),
-                surf_type: sound_material(surface_flags),
-                other: id.0,
-                attacker: 0,
-                weapon,
-                origin: (muzzle + (end - muzzle) * fraction).into(),
-                client_num: 0,
-                scale: 0,
-                scope: Scope::Broadcast,
-                quake: None,
-                origin2: None,
-            })],
-            struck: Vec::new(),
+            effects: vec![miss(normal, 0, id.0, muzzle + (end - muzzle) * fraction)],
+            struck: vec![id],
         },
-        // A swing that meets nothing still raises the miss: `Weapon_Melee`
-        // spawns one of the two events on every path.
-        Traced::World(t) => ShotResult {
-            effects: vec![Effect::Impact(TempEntity {
-                event: EV_MELEE_MISS,
-                parm: dir_to_byte(t.normal.into()),
-                surf_type: sound_material(t.surface_flags),
-                other: ENTITYNUM_WORLD,
-                attacker: 0,
-                weapon,
-                origin: t.endpos.into(),
-                client_num: 0,
-                scale: 0,
-                scope: Scope::Broadcast,
-                quake: None,
-                origin2: None,
-            })],
-            struck: Vec::new(),
-        },
-        Traced::Nothing | Traced::Entity { .. } => ShotResult {
-            effects: vec![Effect::Impact(TempEntity {
-                event: EV_MELEE_MISS,
-                parm: 0,
-                surf_type: 0,
-                other: ENTITYNUM_NONE,
-                attacker: 0,
-                weapon,
-                origin: end.into(),
-                client_num: 0,
-                scale: 0,
-                scope: Scope::Broadcast,
-                quake: None,
-                origin2: None,
-            })],
-            struck: Vec::new(),
-        },
+        Traced::World(t) if t.surface_flags & crate::game::missile::SURF_NOIMPACT == 0 => {
+            ShotResult {
+                effects: vec![miss(t.normal, t.surface_flags, ENTITYNUM_WORLD, t.endpos)],
+                struck: Vec::new(),
+            }
+        }
+        Traced::World(_) | Traced::Nothing => ShotResult::default(),
     }
 }
 
@@ -2549,6 +2554,7 @@ mod tests {
             1,
             [0.0, 0.0],
             &sims[..1],
+            &[],
             Some(&world),
             std::slice::from_ref(&model),
             &table,
@@ -2836,6 +2842,7 @@ mod tests {
                 12,
                 sims[0].1.aim_angles(),
                 sims,
+                &[],
                 Some(&world),
                 &[],
                 &table,
@@ -2857,11 +2864,96 @@ mod tests {
         assert_eq!(te.weapon, 12, "the swinger's weapon rides the event");
         assert_eq!(te.scope, Scope::Broadcast, "the victim is sent it too");
 
+        // Retail 1.1d and UO swing at nothing with no event at all
+        // (`client-probes/probe_skyshot`'s air part).
         let r = swing(&[(0, &a), (1, &far)], &mut rng);
         assert!(r.hits().next().is_none(), "100 units is out of reach");
+        assert!(
+            r.impacts().next().is_none(),
+            "a swing at the air spawns nothing"
+        );
+    }
+
+    /// `Weapon_Melee` runs `G_Damage` on whatever it meets with `takedamage`
+    /// (2.5): retail UO's `setTakeDamage` barrel in
+    /// `client-probes/probe_takedamage` takes `meleeDamage + rand()%5` as
+    /// `MOD_MELEE` beside the miss event naming it; one without
+    /// `takedamage` takes only the event. A shootable grenade's box is
+    /// struck as a round strikes it.
+    #[test]
+    fn a_swing_damages_what_takes_damage() {
+        use vcod_common::collision::ModelTri;
+        let world = vcod_common::collision::test_world(&[]);
+        let table = HitLocTable::default();
+        let a = new_for_test([0.0, 0.0, 0.0], 0.0);
+        let def = melee_carbine();
+        let muzzle = muzzle_point(&a.ps);
+        let (p, q, r, t) = (
+            Vec3::new(0.0, -50.0, -50.0),
+            Vec3::new(0.0, 50.0, -50.0),
+            Vec3::new(0.0, 50.0, 50.0),
+            Vec3::new(0.0, -50.0, 50.0),
+        );
+        let face = |tri| ModelTri {
+            tri,
+            contents: 0x2080,
+            surface_flags: 0,
+        };
+        let model = |takes_damage| PlacedModel {
+            id: EntId(170, 0),
+            origin: Vec3::new(30.0, 0.0, muzzle.z),
+            axis: glam::Mat3::IDENTITY,
+            tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
+            owner: None,
+            takes_damage,
+            body: false,
+        };
+        let swing = |models: &[PlacedModel], targets: &[ShotTarget]| {
+            melee_fire(
+                0,
+                &def,
+                "m1carbine_mp",
+                12,
+                a.aim_angles(),
+                &[(0, &a)],
+                targets,
+                Some(&world),
+                models,
+                &table,
+                None,
+                &mut 1u64,
+            )
+        };
+        let r = swing(&[model(true)], &[]);
         let te = only(r.impacts(), "the miss event");
-        assert_eq!(te.event, EV_MELEE_MISS);
-        assert_eq!(te.other, ENTITYNUM_NONE);
+        assert_eq!((te.event, te.other), (EV_MELEE_MISS, 170));
+        let hit = r
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::EntityHit(h) => Some(h.clone()),
+                _ => None,
+            })
+            .expect("G_Damage on the barrel");
+        assert_eq!((hit.target, hit.mod_), (EntId(170, 0), "MOD_MELEE"));
+        assert!((50..55).contains(&hit.damage), "{}", hit.damage);
+
+        let r = swing(&[model(false)], &[]);
+        assert!(
+            !r.effects.iter().any(|e| matches!(e, Effect::EntityHit(_))),
+            "no takedamage, no damage"
+        );
+
+        let satchel = ShotTarget {
+            id: EntId(150, 0),
+            lo: Vec3::new(30.0, -6.0, muzzle.z - 3.0),
+            hi: Vec3::new(42.0, 6.0, muzzle.z + 3.0),
+            owner: None,
+        };
+        let r = swing(&[], &[satchel]);
+        assert_eq!(r.struck, vec![EntId(150, 0)]);
+        let te = only(r.impacts(), "the miss event");
+        assert_eq!((te.event, te.other), (EV_MELEE_MISS, 150));
     }
 
     /// A melee hit goes through the same `located_damage` as a bullet
@@ -2885,6 +2977,7 @@ mod tests {
             12,
             a.aim_angles(),
             &[(0, &a), (1, &near)],
+            &[],
             Some(&world),
             &[],
             &table,

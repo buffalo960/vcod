@@ -135,7 +135,7 @@ fn install(name: &str) -> (Vm, FuncRef) {
 /// (docs/research/cod11-gsc-object-model.md sections 13 and 14).
 #[test]
 fn probe_ents_matches_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
 
@@ -198,7 +198,7 @@ fn probe_ents_matches_retail() {
 /// `crate::game::script`).
 #[test]
 fn probe_delete_matches_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
 
@@ -404,7 +404,7 @@ impl ScriptSource for PakWithProbe {
 /// assertions in `script.rs` come out the same either way.
 #[test]
 fn probe_bootstrap_matches_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let fs = Rc::new(fs);
@@ -454,7 +454,7 @@ fn probe_bootstrap_matches_retail() {
 /// serverId moving rather than on the log growing: the after-half is longer
 /// than the before-half, and a length test would miss the boundary.
 fn run_persist_probe(name: &str, rotation: Option<&str>) -> Vec<String> {
-    let fs = vcod_common::testing::game_fs().expect("game_fs, checked by the caller");
+    let fs = vcod_common::testing::game_fs_11().expect("game_fs_11, checked by the caller");
     let text = std::fs::read_to_string(format!("../gsc/tests/fixtures/semantics/{name}.gsc"))
         .unwrap_or_else(|e| panic!("read {name}.gsc: {e}"));
 
@@ -510,7 +510,7 @@ fn run_persist_probe(name: &str, rotation: Option<&str>) -> Vec<String> {
 /// handle `game["ent"]` held reads undefined on the far side.
 #[test]
 fn probe_persist_restart_matches_retail() {
-    if vcod_common::testing::game_fs().is_none() {
+    if vcod_common::testing::game_fs_11().is_none() {
         return;
     }
     let ours = run_persist_probe("probe_persist_restart", None);
@@ -520,7 +520,7 @@ fn probe_persist_restart_matches_retail() {
 /// `exitLevel(false)`: `game[]` is freed with everything else.
 #[test]
 fn probe_persist_exit_matches_retail() {
-    if vcod_common::testing::game_fs().is_none() {
+    if vcod_common::testing::game_fs_11().is_none() {
         return;
     }
     let ours = run_persist_probe(
@@ -533,7 +533,7 @@ fn probe_persist_exit_matches_retail() {
 /// `exitLevel(true)`: the same end of level, keeping `game[]`.
 #[test]
 fn probe_persist_exit_save_matches_retail() {
-    if vcod_common::testing::game_fs().is_none() {
+    if vcod_common::testing::game_fs_11().is_none() {
         return;
     }
     let ours = run_persist_probe(
@@ -645,13 +645,7 @@ fn run_initializing_probe(name: &str) -> Option<Vec<String>> {
 /// [`run_initializing_probe`], with a client connecting on the second frame
 /// when `player` is set.
 fn run_probe_with(name: &str, player: bool) -> Option<Vec<String>> {
-    run_probe_frames(name, player, 4)
-}
-
-/// [`run_probe_with`] for `frames` frames, the network clock following the
-/// level's.
-fn run_probe_frames(name: &str, player: bool, frames: i32) -> Option<Vec<String>> {
-    let fs = Rc::new(vcod_common::testing::game_fs()?);
+    let fs = Rc::new(vcod_common::testing::game_fs_11()?);
     let path = format!("maps/mp/gametypes/{name}");
     let text = std::fs::read_to_string(format!("../gsc/tests/fixtures/semantics/{name}.gsc"))
         .unwrap_or_else(|e| panic!("read {name}.gsc: {e}"));
@@ -672,14 +666,13 @@ fn run_probe_frames(name: &str, player: bool, frames: i32) -> Option<Vec<String>
         Carry::default(),
     )
     .unwrap_or_else(|e| panic!("load mp_pavlov on {name}: {e:?}"));
-    for frame in 1..=frames {
+    for frame in 1..=4 {
         if player && frame == 2 {
             rt.push_client_event(ClientEvent::Connect {
                 slot: 0,
                 name: "probe".into(),
             });
         }
-        rt.set_network_time(frame * 50);
         rt.run_frame(frame * 50);
     }
     Some(
