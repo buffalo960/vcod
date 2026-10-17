@@ -509,6 +509,18 @@ pub struct Step {
     /// retail's settled spot after a step that walked, since where a walk
     /// ends is not reproducible.
     pub place: Option<([f32; 3], f32)>,
+    /// Every cmd retail's step sent once its clock ran (`!cmds`), `None` on
+    /// a capture taken before the line existed.
+    pub cmds: Option<CmdLog>,
+}
+
+/// A step's `!cmds` line: the newest snapshot's `serverTime` when the
+/// step's clock started, each cmd's `serverTime`, and the `buttons` and
+/// `wbuttons` of each cmd whose bits differ from the step's base.
+pub struct CmdLog {
+    pub start: i32,
+    pub stamps: Vec<i32>,
+    pub bits: BTreeMap<usize, (u8, u8)>,
 }
 
 impl Step {
@@ -552,6 +564,10 @@ pub struct Trace {
     /// own.
     pub pm_flags: Option<i32>,
     pub ground_entity: Option<i32>,
+    /// The snapshot's `serverTime` and `ps.commandTime`; `None` on a capture
+    /// taken before the trace carried them.
+    pub server_time: Option<i32>,
+    pub command_time: Option<i32>,
 }
 
 pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
@@ -583,6 +599,7 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
                 trace: Vec::new(),
                 settled: BTreeMap::new(),
                 place: None,
+                cmds: None,
             });
             continue;
         }
@@ -633,6 +650,31 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
             if let Some(w) = m.get("weapon") {
                 step.weapon = w.parse::<u8>().unwrap();
             }
+        } else if let Some(rest) = line.strip_prefix("!cmds ") {
+            let m = kv(rest);
+            let mut st: i32 = m["st"].parse().unwrap();
+            let mut stamps = vec![st];
+            for d in m["d"].split(',').filter(|d| !d.is_empty()) {
+                st += d.parse::<i32>().unwrap();
+                stamps.push(st);
+            }
+            let bits = m
+                .get("in")
+                .map(|v| v.as_str())
+                .unwrap_or("")
+                .split(',')
+                .filter(|c| !c.is_empty())
+                .map(|c| {
+                    let (i, b) = c.split_once(':').unwrap();
+                    let (b, w) = b.split_once('/').unwrap();
+                    (i.parse().unwrap(), (b.parse().unwrap(), w.parse().unwrap()))
+                })
+                .collect();
+            step.cmds = Some(CmdLog {
+                start: m["start"].parse().unwrap(),
+                stamps,
+                bits,
+            });
         } else if let Some(rest) = line.strip_prefix("!trace ") {
             let m = kv(rest);
             let i = |k: &str| m[k].parse::<i32>().unwrap();
@@ -670,6 +712,8 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
                 }),
                 pm_flags: m.get("pm_flags").map(|v| v.parse().unwrap()),
                 ground_entity: m.get("groundEntityNum").map(|v| v.parse().unwrap()),
+                server_time: m.get("serverTime").map(|v| v.parse().unwrap()),
+                command_time: m.get("commandTime").map(|v| v.parse().unwrap()),
             });
         } else if !line.starts_with('!') {
             // The settled field lines: `<name> <i32>`, the playerstate the
@@ -811,7 +855,12 @@ pub fn replay_as(
     }
     let p = proto;
     let mut out = Vec::new();
-    for step in steps {
+    // Cmds a logged step sent past the next step's start, with their
+    // retail stamps; they run in the next step's first frames.
+    let mut carry: Vec<(i32, UserCmd)> = Vec::new();
+    // The logged step before's clock offset, which the next one keeps.
+    let mut shift_carried: Option<i32> = None;
+    for (si, step) in steps.iter().enumerate() {
         if let Some(place) = step.place {
             put(&mut sv, &mut cl, &mut now, place);
             yaw_short = short_of(place.1);
@@ -831,7 +880,8 @@ pub fn replay_as(
         if step.weapon == 0 {
             base.weapon = held(&cl);
         }
-        if step.wait_ready {
+        // A logged step's wait is in its log.
+        if step.wait_ready && step.cmds.is_none() {
             for i in 0..100 {
                 now += Duration::from_millis(FRAME_MS as u64);
                 cl.send_frame(&base);
@@ -852,6 +902,106 @@ pub fn replay_as(
         if let Some(s) = cl.snapshots().newest() {
             samples.push(sample_of(s, 0, sv.pending_explosions().len()));
         }
+        // A step that logged its cmds replays them at retail's stamps on our
+        // clock, so each tap lands where in the server frame retail's did:
+        // retail's frame after `start` is ours after the step's newest
+        // snapshot. Each frame runs the cmds retail's did, up to the
+        // `commandTime` its snapshot read (a cmd can reach retail's server
+        // after the frame its stamp puts it in), else those stamped before
+        // the frame. The step ends on the last snapshot retail traced in it,
+        // and what it logged past that runs in the next step, on the same
+        // clock unless that one waits for the weapon first.
+        if let Some(log) = &step.cmds {
+            let open = cl.snapshots().newest().map_or(0, |s| s.server_time);
+            let shift = shift_carried.unwrap_or(open - log.start);
+            let first = log.stamps[0];
+            let hands_on = steps.get(si + 1).is_some_and(|s| s.cmds.is_some());
+            let end = step.trace.iter().filter_map(|t| t.server_time).max();
+            let mut next = 0;
+            let mut frame = open;
+            let more = |frame: i32, next: usize| {
+                end.is_some_and(|e| frame - shift < e) || (!hands_on && next < log.stamps.len())
+            };
+            while more(frame, next) {
+                frame += FRAME_MS as i32;
+                let ran = step
+                    .trace
+                    .iter()
+                    .find(|t| t.server_time == Some(frame - shift))
+                    .and_then(|t| t.command_time)
+                    .unwrap_or(frame - shift - 1);
+                let ours_now = held(&cl);
+                let da = cl.snapshots().newest().map_or([0; 3], |s| {
+                    [0, 1, 2].map(|i| s.ps.field_i32(p, &format!("delta_angles[{i}]")))
+                });
+                let mut batch: Vec<(i32, UserCmd)> = Vec::new();
+                while carry.first().is_some_and(|c| c.0 <= ran) {
+                    batch.push(carry.remove(0));
+                }
+                while next < log.stamps.len() && log.stamps[next] <= ran {
+                    let st = log.stamps[next];
+                    let mut cmd = base;
+                    cmd.weapon = weapon_byte(step, i64::from(st - first), ours_now);
+                    (cmd.buttons, cmd.wbuttons) = log
+                        .bits
+                        .get(&next)
+                        .copied()
+                        .unwrap_or((base.buttons, base.wbuttons));
+                    batch.push((st, cmd));
+                    next += 1;
+                }
+                let wire: Vec<UserCmd> = batch
+                    .into_iter()
+                    .map(|(st, mut cmd)| {
+                        cmd.server_time = st + shift;
+                        cmd.angles = [0, 1, 2].map(|i| (cmd.angles[i] - da[i]) & 0xffff);
+                        cmd
+                    })
+                    .collect();
+                now += Duration::from_millis(FRAME_MS as u64);
+                cl.pump_at(now);
+                cl.send_cmds(&wire);
+                self::step(&mut sv, &q, &mut cl, now);
+                let blasts = sv.pending_explosions().len();
+                if let Some(s) = cl.snapshots().newest() {
+                    samples.push(sample_of(s, i64::from(frame - open), blasts));
+                }
+            }
+            // What retail's step sent past the next one's start, on the
+            // next step's clock, which runs on this shift.
+            let ours_now = held(&cl);
+            for k in next..log.stamps.len() {
+                let st = log.stamps[k];
+                let mut cmd = base;
+                cmd.weapon = weapon_byte(step, i64::from(st - first), ours_now);
+                (cmd.buttons, cmd.wbuttons) = log
+                    .bits
+                    .get(&k)
+                    .copied()
+                    .unwrap_or((base.buttons, base.wbuttons));
+                carry.push((st, cmd));
+            }
+            shift_carried = hands_on.then_some(shift);
+            // Each sample pairs with retail's of the same frame and takes its
+            // `ms`; one retail traced in another step is dropped.
+            let retail: BTreeMap<i32, i64> = step
+                .trace
+                .iter()
+                .filter_map(|t| Some((t.server_time?, t.ms)))
+                .collect();
+            if !retail.is_empty() {
+                samples.retain_mut(|s| {
+                    retail
+                        .get(&(s.server_time - shift))
+                        .map(|&ms| s.ms = ms)
+                        .is_some()
+                });
+            }
+            out.push(samples);
+            continue;
+        }
+        carry.clear();
+        shift_carried = None;
         let frames = (step.hold_ms / FRAME_MS).max(1);
         let taps = taps(step);
         for i in 0..frames {
