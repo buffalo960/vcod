@@ -342,6 +342,9 @@ pub struct NetClient<T: Transport> {
     recording: Option<Recording>,
     /// The demo being played (`clc.demoplaying`); the transport is unused.
     demo: Option<demo::DemoReader>,
+    /// `clc.firstDemoFrameSkipped` (CoDMP.exe 0x15ef00c): the playback's
+    /// first `CA_PRIMED` frame has gone by.
+    demo_frame_skipped: bool,
 }
 
 /// Raw snapshot messages as `[u32 message_num][u32 len][bytes]` triples, the
@@ -479,6 +482,7 @@ impl<T: Transport> NetClient<T> {
             listen: false,
             recording: None,
             demo: None,
+            demo_frame_skipped: false,
         }
     }
 
@@ -507,6 +511,20 @@ impl<T: Transport> NetClient<T> {
             if self.events.contains(&NetEvent::GamestateReady) {
                 break;
             }
+        }
+        std::mem::take(&mut self.events)
+    }
+
+    /// `CL_SetCGameTime` in `CA_PRIMED` (CoDMP.exe 0x404d60), the map up
+    /// and no snapshot yet: the playback's first such frame reads nothing,
+    /// every later one reads one message. Only `CL_Disconnect`'s clear of
+    /// `clc` resets the skip, so a gamestate inside the demo skips no frame.
+    pub fn pump_demo_primed(&mut self, now: Instant) -> Vec<NetEvent> {
+        self.now = now;
+        if !self.demo_frame_skipped {
+            self.demo_frame_skipped = true;
+        } else if self.demo.is_some() && self.state != NetState::Disconnected {
+            self.read_demo_message();
         }
         std::mem::take(&mut self.events)
     }

@@ -137,8 +137,18 @@ the parse, so the first message written is that full frame's.
 `CL_SetCGameTime` (`0x404d60`) reads the demo (VERIFIED):
 
 - in `CA_PRIMED` (5), the map loaded and no snapshot yet: skip the first
-  frame (`clc.firstDemoFrameSkipped`, `0x15ef00c`), then one message a
-  frame until `CL_FirstSnapshot` (`0x404d00`) makes the state 6;
+  frame (`clc.firstDemoFrameSkipped`, `0x15ef00c`, set at `0x404d85`),
+  then one message a frame (`0x40e9c0` at `0x404d90`), and when that
+  message brought a snapshot `CL_FirstSnapshot` (`0x404d00`, called at
+  `0x404da8`) makes the state 6 (VERIFIED, the calls and the store).
+  The same call then goes on into the `CA_ACTIVE` arm below (INFERRED:
+  the state compare after `CL_FirstSnapshot` falls through to it), so
+  that frame already counts as `timedemo`'s first and reads past the
+  first snapshot. Only `CL_Disconnect`'s clear of `clc` (`0x15ce860`,
+  0xa201 dwords, the `rep stos` at `0x40f0ac`) resets the skip
+  (VERIFIED, no other store to `0x15ef00c`), and `demo` disconnects
+  first, so each playback skips one frame and a gamestate inside the
+  demo skips none;
 - in `CA_ACTIVE` (6), unless the demo plays with `cl_freezeDemo` set, the
   clock: `realtime + serverTimeDelta - cl_timeNudge` (the nudge kept to
   +-30), never below `cl.oldServerTime`. Frozen, `cl.serverTime`
@@ -152,6 +162,20 @@ the parse, so the first message written is that full frame's.
   demo the count carries on from the new base;
 - then messages while `cl.snap.serverTime <= cl.serverTime`, stopping if
   the state leaves 6, which a gamestate in the demo does.
+
+Nothing lifts the frame cap under `timedemo`. `Com_Frame` (`0x437f40`)
+waits until `Sys_Milliseconds` has moved `minMsec` past the last frame,
+`minMsec` being 1, or `1000 / com_maxfps` (integer) when `com_maxfps`
+(handle `0x163b3ec`) is above 0 and `dedicated` (`0x163a200`) is 0
+(VERIFIED, `0x438040`..`0x438062`). `com_maxfps` is `"85"`, flag 1,
+`CVAR_ARCHIVE` (VERIFIED, the `Cvar_Get` at `0x437807`). `timedemo`'s
+handle `0x15f706c` is read only by `CL_SetCGameTime` and
+`CL_DemoCompleted` (VERIFIED, its two loads in the decompile). 1.5's
+`Com_Frame` (`CoDMP15.exe` `0x43a3d0`) and UO's (`CoDUOMP.exe`
+`0x43c580`) make the same test and register `com_maxfps` `"85"`, flag 1
+(VERIFIED, the default strings at `0x5a1a6c` and `0x59821c`). So a
+retail `timedemo` runs at most about 90 frames a second by default, and
+a `com_maxfps` over 1000 waits not at all.
 
 `CL_AdjustTimeDelta` (`0x404bf0`) returns at once while a demo plays
 (VERIFIED, its first compare on `0x15ef004`), so the delta set by the
@@ -204,17 +228,20 @@ player off the snapshots: no prediction, the playerstate's events and
 damage feedback off the snapshot. vcod has no `EV_STEP_VIEW` smoothing
 online either.
 
-vcod reads through `NetClient::pump_demo`: up to the first gamestate, then
-nothing while the map loads, then while the newest snapshot is no later
-than the frame's time (`ServerClock::time_at`, one snapshot past the drawn
-time), breaking at a gamestate. The clock runs `ServerClock::update_demo`,
+vcod reads through `play::demos::read_frame`: `NetClient::pump_demo` up
+to the first gamestate, nothing while the map loads, then
+`NetClient::pump_demo_primed` (the playback's one skipped frame, then a
+message a frame) until a snapshot seeds the clock, and in that frame and
+every later one while the newest snapshot is no later than the frame's
+time (`ServerClock::time_at`, one snapshot past the drawn time),
+breaking at a gamestate. Its frames are paced by `com_maxfps` ("85",
+archived) as `Com_Frame`'s are. The clock runs `ServerClock::update_demo`,
 which never adjusts, holds under `cl_freezeDemo` and steps 50 ms a frame
 under `timedemo` (`play::demos::TimeDemo` keeps the count for the whole
 demo). It answers no script menu, sends nothing, and on the demo's end
 prints the `timedemo` line, returns to the main menu and runs `nextdemo`.
 A key under 0x80 or `MOUSE1` with no menu, console or chat field up opens
-the main menu and clears `nextdemo`. It skips the `PRIMED`
-one-message-a-frame stage and reads to the first snapshot at once.
+the main menu and clears `nextdemo`.
 
 ### The systeminfo and a missing map
 
@@ -258,9 +285,6 @@ the two commands on a 1.5 or UO server.
 ## 7. Not done
 
 - `cl_avidemo` and `cl_forceavidemo`: vcod takes no screenshots.
-- `timedemo` keeps vcod's frame pacing (`r_swapInterval`); whether
-  retail lifts `com_maxfps` under it was not read.
-- The `PRIMED` stage's one message a frame.
 - A demo written by a retail client has not been played in vcod, nor a
   vcod one in a retail client: this machine runs no retail client. The
   format checks are vcod against itself (`crates/server/tests/demos.rs`)
@@ -269,10 +293,15 @@ the two commands on a 1.5 or UO server.
 
 ## 8. The `RECORDING` line
 
-`SCR_DrawScreenField` calls `SCR_DrawDemoRecording` (`0x416b10`) in
-`CA_ACTIVE` only, right after `CL_CGameRendering`, so it draws over the
-game and under the menus and console (VERIFIED, case 6 of the state
-switch). While `clc.demorecording` (`0x15ef000`) is set it formats
+`SCR_DrawScreenField` (`0x416dd0`) calls `SCR_DrawDemoRecording`
+(`0x416b10`, at `0x416f19`) in `CA_ACTIVE` only, right after
+`CL_CGameRendering`, so it draws over the game and under the menus and
+console (VERIFIED, case 6 of the state switch, jump table `0x416fb0`).
+The whole switch runs only when the UI's `UI_IS_FULLSCREEN` (`VM_Call`
+6, the call at `0x416e60`) returns 0 (VERIFIED), which
+`ui_mp_x86.dll` `0x40016ab0` answers 1 for any menu on the open stack
+with window flag 4 (visible) and its fullscreen field (`+0xbc`) set
+(VERIFIED): under a fullscreen menu there is no line. While `clc.demorecording` (`0x15ef000`) is set it formats
 `RECORDING %s: %ik` with `clc.demoName` (`0x15eefc0`, the name `record`
 was given or `demoNNNN`, 63 characters at most) and the file's size from
 `ftell` (or the zip entry's offset for a file in a pk3) shifted down 10
@@ -291,9 +320,16 @@ branch at `0x41862c`), and draw it white (colour code `'7'`) straight at
 (5, 479) on the 640x480 grid, font 5, scale 1/3, an 8 unit cell
 (VERIFIED, the renderer call at `0x418689`): it scales with the window.
 `cg_showdemoname` is `"1"`, archived, in both cgames' cvar tables
-(VERIFIED, the rows beside `cg_autodemo`). That 1.5 and UO call it in
-`CA_ACTIVE` only, as 1.1 does, is INFERRED.
+(VERIFIED, the rows beside `cg_autodemo`). 1.5 and UO call it in `CA_ACTIVE` only, right after `CL_CGameRendering`,
+and only when `UI_IS_FULLSCREEN` returns 0 (VERIFIED: `CoDMP15.exe`
+`0x4188d0`, the UI call at `0x418970`, table `0x418af4`, case 6 at
+`0x418a2b` calling `0x4185a0` at `0x418a37`; `CoDUOMP.exe` `0x419d80`,
+`0x419e1d`, table `0x419fa0`, case 6 at `0x419ed8` calling `0x419a60` at
+`0x419ee4`). Under a fullscreen menu their switch still runs
+`CL_CGameRendering` for states 4 to 6, but not the line (VERIFIED, the
+second switch).
 
 vcod draws it in the online frame's live phase over the HUD and under
-the menus (`Console::recording_line`), its size the bytes the
+the menus, none of them fullscreen (`Console::recording_line`,
+`Ui::fullscreen`), its size the bytes the
 `DemoWriter` has written.
