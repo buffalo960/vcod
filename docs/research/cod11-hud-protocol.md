@@ -341,7 +341,7 @@ decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
   does. VERIFIED for UO: `CoDUOMP.exe`'s case 4 writes the `0x1100` cell
   at 0x4022e3 and ends the line through 0x409b40 with `edx` 1
   (0x402337), the game window. UO's `CG_Obituary` calls trap 4 with the same
-nine arguments and adds a MOD `0x1a` row, `gfx/icons/hud@bino_owned`.
+  nine arguments and adds a MOD `0x1a` row, `gfx/icons/hud@bino_owned`.
 - VERIFIED, the draw (refexport slot `0xdc`, `0x4dfa60`; the refexport is
   copied at `0x411ac5` from the table `0x4b4a30` fills at `0xca26c8`): the line splits at the first cell
   of colour 13, `0x10`, `0x11` or `0x12` (`0x4df5b0`), colours 10..12 set the

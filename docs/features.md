@@ -471,7 +471,8 @@ console.
   most, as the retail cgame and renderer do. A `map_restart` clears them
   with every live effect and sound, empties the objective text and stands
   the player up running, and drops the centre print, the vote lines and
-  the hit icons, as `CG_MapRestart` does; the next snapshot then runs the
+  the hit icons, as `CG_MapRestart` does, and the game and bold message
+  windows, as the engine's `n`/`B` case does; the next snapshot then runs the
   respawn reset. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the
