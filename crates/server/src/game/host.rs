@@ -750,7 +750,7 @@ impl GameHost {
             None => (vector(self, cx, "origin"), vector(self, cx, "angles")),
         };
         let link = match shape.kind {
-            LinkKind::Brush | LinkKind::ScriptBrush => {
+            LinkKind::Brush | LinkKind::ScriptBrush | LinkKind::Vehicle => {
                 crate::area::Link::brush(origin, angles, shape.mins, shape.maxs, shape.contents)
             }
             LinkKind::ScriptModel => {
@@ -918,6 +918,7 @@ impl GameHost {
                     mins: glam::Vec3::from(mins),
                     maxs: glam::Vec3::from(maxs),
                     brush,
+                    vehicle_link: None,
                 })
             })
             .collect();
@@ -934,12 +935,17 @@ impl GameHost {
                 Some((_, b)) => (b.0, b.1, Some(vcod_common::collision::Pusher::Copy(id.0))),
                 None => (info.mins, info.maxs, None),
             };
+            let vehicle_link = self
+                .area
+                .last_link(id.0)
+                .map(|l| (glam::Vec3::from(l.absmin), glam::Vec3::from(l.absmax)));
             victims.push(crate::game::combat::EntityVictim {
                 id,
                 origin: glam::Vec3::from(v.pose.origin),
                 mins: glam::Vec3::from(mins),
                 maxs: glam::Vec3::from(maxs),
                 brush,
+                vehicle_link,
             });
         }
         // A shootable grenade that still takes damage (`G_GrenadeDie`).
@@ -950,6 +956,7 @@ impl GameHost {
                 mins: crate::game::missile::SHOOTABLE_MINS,
                 maxs: crate::game::missile::SHOOTABLE_MAXS,
                 brush: None,
+                vehicle_link: None,
             });
         }
         victims.sort_by_key(|v| v.id.0);
