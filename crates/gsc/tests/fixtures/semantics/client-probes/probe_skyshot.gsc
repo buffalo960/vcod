@@ -23,6 +23,12 @@
 //
 //	PROBE air <time> <spot> <yaw> <pitch>
 //
+//	spot: at (`probe_x`, `probe_y`, `probe_z`), the ground's height, looking
+//	along `probe_yaw` and `probe_pitch` (mp_harbor's water, combat doc
+//	12.1), handed the weapon as the sky part does.
+//
+//	PROBE spot <time> <spot> <yaw> <pitch>
+//
 //	A player's damage callback only logs and takes no health:
 //
 //	PROBE hit <time> <entity number> dmg <amount> mod <mod>
@@ -117,6 +123,13 @@ run(part, w)
 		}
 		logPrint("PROBE sky " + gettime() + " " + spot + " " + top + " " + surf + "\n");
 	}
+	else if (part == "spot")
+	{
+		spot = (getcvarfloat("probe_x"), getcvarfloat("probe_y"), getcvarfloat("probe_z") + 0.125);
+		yaw = getcvarfloat("probe_yaw");
+		pitch = getcvarfloat("probe_pitch");
+		logPrint("PROBE spot " + gettime() + " " + spot + " " + yaw + " " + pitch + "\n");
+	}
 	else
 	{
 		for (i = 1; i < spawns.size && !isdefined(spot); i++)
@@ -148,6 +161,8 @@ run(part, w)
 			slot = "primaryb";
 			if (w == "fraggrenade_mp")
 				slot = "grenade";
+			if (w == "smokegrenade_mp")
+				slot = "smokegrenade";
 			if (now == placed + 1000 && w != "")
 			{
 				shooter setWeaponSlotWeapon(slot, w);

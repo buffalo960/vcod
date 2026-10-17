@@ -332,7 +332,8 @@ something, the bullet links it.
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as
   retail's does; a missile at the sky is freed on 1.1 and 1.5 and flies
-  on through it on UO. A rocket or a swing hurts a UO `setTakeDamage`
+  on through it on UO, and one that drops fast into water splashes (UO
+  frees a smoke grenade there). A rocket or a swing hurts a UO `setTakeDamage`
   model directly, and a swing at nothing raises no event.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.
