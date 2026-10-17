@@ -4248,6 +4248,9 @@ impl Server {
                 } else {
                     self.bot_enemies.get(slot)?.1
                 };
+                // One the brain gave up on (`Bot::ignores`) is left out.
+                let enemy =
+                    enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
                 view.noise = crate::bots::loudest(&noises, *slot, view.origin);
                 let held = self.bot_sidesteps.remove(slot);
@@ -4854,9 +4857,9 @@ impl Server {
         (!crate::bots::friend_in_line(muzzle, spot.into(), &bodies)).then_some(spot)
     }
 
-    /// The script models within [`BREACH_MODEL_NEAR`] of a `bas` base, on
-    /// such a level only: what a rocket fired at one meets besides the
-    /// world, the base's own model among them.
+    /// The script models and vehicles within [`BREACH_MODEL_NEAR`] of a
+    /// `bas` base, on such a level only: what a rocket fired at one meets
+    /// besides the world, the base's own model among them.
     fn bot_breach_models(
         &mut self,
         uo: Option<&script::UoObjectives>,
@@ -4867,7 +4870,7 @@ impl Server {
         let Some(rt) = self.script.as_mut() else {
             return Vec::new();
         };
-        rt.placed_script_models()
+        rt.shot_models()
             .into_iter()
             .filter(|m| {
                 bases
@@ -9963,8 +9966,11 @@ const BREACH_SECTORS: usize = 16;
 /// nearest to.
 const BREACH_STAND_FAR: f32 = 1000.0;
 const BREACH_STAND_IDEAL: f32 = 600.0;
-/// Script models this near a base are in its breach traces.
-const BREACH_MODEL_NEAR: f32 = 1200.0;
+/// Script models and vehicles this near a base are in its breach traces:
+/// anywhere between it and a stand. A rocket from mp_italy's stand by the
+/// allied spawn struck the Sherman parked 190 units on, 1290 from the
+/// base, and killed its shooter.
+const BREACH_MODEL_NEAR: f32 = crate::bots::BREACH_RANGE + 64.0;
 
 /// Where a rocket from `muzzle` is aimed at a base whose script model
 /// stands at `base`, from [`crate::bots::BREACH_MIN`] to
@@ -10006,8 +10012,40 @@ fn breach_aim(
             && match best.1 {
                 Some(o) => o == base,
                 None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
-            };
+            }
+            && spread_clear(world, models, muzzle, dir);
         ok.then_some(spot.into())
+    })
+}
+
+/// The launchers' sighted spread standing (`adsSpread`: 4 for the
+/// bazooka and the panzerschreck, 3.5 for the panzerfaust).
+const BREACH_SPREAD_DEG: f32 = 4.0;
+
+/// Whether rockets along the edge of the sighted spread cone round `dir`
+/// meet nothing within [`crate::bots::BREACH_CLEAR`] of the muzzle: the
+/// line's middle alone left a bot now and then killed by a rocket the
+/// spread carried into the cover by its stand. Only the near part of the
+/// cone counts; where the rest bursts the base's checks already rule.
+fn spread_clear(
+    world: &vcod_common::collision::CollisionWorld,
+    models: &[crate::game::combat::PlacedModel],
+    muzzle: glam::Vec3,
+    dir: glam::Vec3,
+) -> bool {
+    use crate::bots::BREACH_CLEAR;
+    let right = dir.cross(glam::Vec3::Z).normalize_or(glam::Vec3::X);
+    let up = right.cross(dir);
+    let r = BREACH_SPREAD_DEG.to_radians().tan();
+    (0..8).all(|k| {
+        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+        let ray = (dir + (right * a.cos() + up * a.sin()) * r).normalize();
+        let end = muzzle + ray * BREACH_CLEAR;
+        world.missile_trace(muzzle, end).fraction >= 1.0
+            && models.iter().all(|m| {
+                m.clip(muzzle, end, crate::game::missile::MISSILE_MODEL_MASK, 1.0)
+                    .is_none()
+            })
     })
 }
 

@@ -767,6 +767,11 @@ pub struct Bot {
     /// left the yaw cap, and ticks the bipod stays down with no enemy.
     lmg_tries: u32,
     lmg_rest: u32,
+    /// Ticks in sight of an enemy with no round fired at him, and the
+    /// enemy given up on for a while past [`FUTILE_TICKS`]
+    /// ([`Bot::ignores`]).
+    futile: u32,
+    ignored: Option<(usize, u32)>,
     lmg_linger: u32,
     /// A throw turned away from an enemy that came inside the blast: the
     /// yaw it goes to. And the ticks a throw has been held past its release
@@ -1040,6 +1045,8 @@ impl Bot {
             obj: Objective::default(),
             lmg_tries: 0,
             lmg_rest: 0,
+            futile: 0,
+            ignored: None,
             lmg_linger: 0,
             throw_away: None,
             throw_at: None,
@@ -1407,9 +1414,21 @@ impl Bot {
                 }
                 // A defender keeps the charge room of a breached base of
                 // ours, the one way a plant comes; with none breached there
-                // is nothing to defend and it attacks with the rest.
+                // is nothing to defend and it attacks with the rest. One
+                // that does not shoot stops no plant there, and defused
+                // each charge the moment it was down for good: it attacks
+                // too, and comes back to defuse.
                 let open: Vec<&&BasBaseView> = mine.iter().filter(|x| x.breached).collect();
-                if theirs.is_empty() || (defends && !open.is_empty()) {
+                // A charge of ours ticking: a defender that shoots joins
+                // its planter in holding its room. One on one, the
+                // defender in the room won most fights and defused.
+                let backing = theirs
+                    .iter()
+                    .find(|x| x.planted && x.charge.is_some())
+                    .filter(|_| self.shoot);
+                if theirs.is_empty()
+                    || (defends && self.shoot && !open.is_empty() && backing.is_none())
+                {
                     let n = open.len();
                     return if n > 0 {
                         let x = open[(rank / 2) % n];
@@ -1418,7 +1437,14 @@ impl Bot {
                         (!mine.is_empty()).then(|| guard(mine[(rank / 2) % mine.len()].at))
                     };
                 }
-                let t = theirs[(rank / 2 + self.deaths as usize) % theirs.len()];
+                // Without shooting, a side's two bots split over the other
+                // side's bases: on one, its lone defender ran back and
+                // defused every plant (seed 7's 67 defuses).
+                let pick = if self.shoot { rank / 2 } else { rank };
+                let t = match backing {
+                    Some(x) if defends => x,
+                    _ => theirs[(pick + self.deaths as usize) % theirs.len()],
+                };
                 Some(match t.charge {
                     // Our charge: hold its room against the defuse, then
                     // clear the blast before it goes.
@@ -1945,6 +1971,38 @@ impl Bot {
     /// The tick's usercmd. The driver stamps `server_time` and pushes the
     /// cmd into the client's queue.
     pub(crate) fn think(&mut self, view: &BotView) -> UserCmd {
+        let cmd = self.think_body(view);
+        self.count_futile(view, &cmd);
+        cmd
+    }
+
+    /// An enemy in sight whom no round has gone at for [`FUTILE_TICKS`] is
+    /// given up on for [`IGNORE_TICKS`]: a UO bot with only an LMG it
+    /// could not deploy on a stair, and one with a dry pistol and rockets
+    /// (none go at players), stood facing each other for twenty minutes.
+    fn count_futile(&mut self, view: &BotView, cmd: &UserCmd) {
+        if let Some((slot, left)) = self.ignored {
+            self.ignored = (left > 1).then_some((slot, left - 1));
+        }
+        match view.enemy {
+            Some(e) if cmd.buttons & msg::BUTTON_ATTACK == 0 => {
+                self.futile += 1;
+                if self.futile >= FUTILE_TICKS {
+                    self.futile = 0;
+                    self.ignored = Some((e.slot, IGNORE_TICKS));
+                }
+            }
+            _ => self.futile = 0,
+        }
+    }
+
+    /// Whether the server leaves the enemy in `slot` out of this bot's
+    /// view ([`Bot::count_futile`]).
+    pub fn ignores(&self, slot: usize) -> bool {
+        self.ignored.is_some_and(|(s, _)| s == slot)
+    }
+
+    fn think_body(&mut self, view: &BotView) -> UserCmd {
         self.fire_cooldown = self.fire_cooldown.saturating_sub(1);
         self.sprint_leg = false;
         for s in &mut self.shunned {
@@ -3144,6 +3202,10 @@ const SCOPE_MIN_RANGE: f32 = 200.0;
 /// 6), and a target more than this far round the deploy's facing is past
 /// `bg_lmg_yawcap`'s 55 degrees, near enough.
 const LMG_TRY_TICKS: u32 = 10;
+/// In sight this long with no round fired, an enemy is left out of the
+/// view this long ([`Bot::count_futile`]).
+const FUTILE_TICKS: u32 = 200;
+const IGNORE_TICKS: u32 = 600;
 const LMG_REST_TICKS: u32 = 40;
 const LMG_LINGER_TICKS: u32 = 60;
 const LMG_READY_FRAC: f32 = 0.99;
@@ -5784,10 +5846,11 @@ mod tests {
     }
 
     /// A defender attacks while none of its side's bases is breached, and
-    /// keeps the charge room of one that is.
+    /// keeps the charge room of one that is; one that does not shoot
+    /// attacks still.
     #[test]
     fn a_bas_defender_attacks_until_a_base_of_its_own_is_breached() {
-        let bot = Bot::new("allies", false, 1);
+        let bot = Bot::new("allies", true, 1);
         let mut v = bas_view();
         let Some(UoView::Bas(b)) = v.uo.as_mut() else {
             unreachable!()
@@ -5807,6 +5870,51 @@ mod tests {
             aim: [-2000.0, 0.0, -160.0],
         });
         assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]));
+        let calm = Bot::new("allies", false, 1);
+        assert_eq!(calm.goal(&v), Goal::To([300.0, 200.0, 8.0]));
+        // With two bases of theirs it takes the one the first bot does not.
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        let mut other = b.bases[1].clone();
+        other.at = [2000.0, 3000.0, 0.0];
+        other.breached = true;
+        other.charge = Some(BombView {
+            origin: [2000.0, 3000.0, -176.0],
+            aim: [2000.0, 3000.0, -160.0],
+        });
+        b.bases.push(other);
+        assert_eq!(calm.goal(&v), Goal::To([2000.0, 3000.0, -176.0]));
+        assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]));
+    }
+
+    /// A defender with a charge of its side's ticking on the other side's
+    /// base leaves its own breached base's room to hold that one's.
+    #[test]
+    fn a_bas_defender_backs_a_ticking_charge() {
+        let bot = Bot::new("allies", true, 1);
+        let mut v = bas_view();
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.rank = 1;
+        b.bases[0].breached = true;
+        b.bases[0].charge = Some(BombView {
+            origin: [-2000.0, 0.0, -176.0],
+            aim: [-2000.0, 0.0, -160.0],
+        });
+        let theirs = [2000.0, 0.0, -176.0];
+        let t = &mut b.bases[1];
+        t.breached = true;
+        t.charge = Some(BombView {
+            origin: theirs,
+            aim: [2000.0, 0.0, -160.0],
+        });
+        assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]), "its room");
+        let t = their_base(&mut v);
+        t.planted = true;
+        t.blows_in = Some(40.0);
+        assert_eq!(bot.goal(&v), Goal::To(theirs), "the charge's room");
     }
 
     /// A launcher the body comes no nearer to is passed over.
@@ -5875,6 +5983,33 @@ mod tests {
         v.enemy = None;
         v.origin = [1400.0, 0.0, 0.0];
         assert_eq!(bot.goal(&v), Goal::Hold, "clear of it");
+    }
+
+    /// An enemy no round goes at (an LMG that will not deploy, here) is
+    /// given up on after [`FUTILE_TICKS`] for [`IGNORE_TICKS`]; one being
+    /// shot at is not.
+    #[test]
+    fn an_enemy_no_round_goes_at_is_given_up_on() {
+        let (mut bot, mut v) = engaged(21);
+        let fired = (0..FUTILE_TICKS).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
+        assert!(fired && !bot.ignores(3), "a rifle fires");
+
+        let (mut bot, mut v2) = engaged(21);
+        v2.lmg = true;
+        v2.automatic = true;
+        for _ in 0..FUTILE_TICKS - 1 {
+            assert_eq!(bot.think(&v2).buttons & BUTTON_ATTACK, 0);
+        }
+        assert!(!bot.ignores(3));
+        bot.think(&v2);
+        assert!(bot.ignores(3), "nothing fired in {FUTILE_TICKS} ticks");
+        v.enemy = None;
+        for _ in 0..IGNORE_TICKS - 1 {
+            bot.think(&v);
+        }
+        assert!(bot.ignores(3));
+        bot.think(&v);
+        assert!(!bot.ignores(3), "back in view after {IGNORE_TICKS} ticks");
     }
 
     /// A rocket launcher in hand fires at no enemy, near or far; the

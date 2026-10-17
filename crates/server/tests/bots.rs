@@ -952,6 +952,17 @@ fn four_shooting_uo_bots_end_a_bas_round() {
     }
 }
 
+/// Four bots, two a side, nobody shooting: a defender that cannot shoot
+/// attacks too, on another base than its partner's, and comes back to
+/// defuse, so a charge goes off while its base's side is away
+/// (bot-objectives.md 7.2; seed 5 still loops on defuses there). Needs
+/// `COD_DIR` at a UO install.
+#[test]
+#[ignore = "builds mp_foy's UO graph and its rebuilds, runs 4 bots for up to 29 min of game time; run with --ignored"]
+fn four_uo_bots_end_a_bas_round_without_shooting() {
+    bas_round(4, false);
+}
+
 /// The script log's kills: victim guid, num, team, name, attacker guid,
 /// num, team, name, weapon, damage, means of death, hit location.
 fn kills(sv: &vcod_server::Server) -> Vec<Vec<String>> {
@@ -962,19 +973,20 @@ fn kills(sv: &vcod_server::Server) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// `bots` bots play mp_foy's bas round, seed 7 (`BOTS_SEED`; the seed is
-/// made odd), three rockets a base; the
-/// round has to end on its bases. `None` without a UO install.
+/// `bots` bots play mp_foy's bas round (`BAS_MAP` names another), seed 7
+/// (`BOTS_SEED`; the seed is made odd), three rockets a base; the round
+/// has to end on its bases. `None` without a UO install.
 fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
+    let map = std::env::var("BAS_MAP").unwrap_or_else(|_| "mp_foy".into());
     let Some(fs) = vcod_common::testing::uo_fs() else {
         eprintln!("COD_DIR has no uo/: skipping");
         return None;
     };
-    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_foy").unwrap()).unwrap())
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map(&map).unwrap()).unwrap())
         .expect("parse the bsp");
     let mut now = Instant::now();
     let mut cfg = cfg(bots, shoot, "bas");
-    cfg.map = "mp_foy".into();
+    cfg.map = map;
     let mut sv = vcod_server::Server::new(cfg, now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
     sv.test_seed_rng(std::env::var("BOTS_SEED").map_or(7, |v| v.parse().expect("BOTS_SEED")));
@@ -989,7 +1001,8 @@ fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
     };
     let mut first = None;
     let mut end = None;
-    // `BAS_TRACE=1`: the bots and the bases every 5 s, and each `A;` line.
+    // `BAS_TRACE=1`: the bots and the bases every 5 s (`BAS_TRACE_EVERY`
+    // ticks), and each `A;` and `K;` line.
     let trace = std::env::var_os("BAS_TRACE").is_some();
     let mut logged = 0;
     for tick in 0..BAS_ROUND_TICKS {
@@ -1006,7 +1019,8 @@ fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
                 }
             }
             logged = log.len();
-            if tick % 100 == 0 {
+            let every = std::env::var("BAS_TRACE_EVERY").map_or(100, |v| v.parse().unwrap());
+            if tick % every == 0 {
                 for slot in sv.bot_slots() {
                     let team = sv.bot_team(slot);
                     if let Some(b) = sv.bot_body(slot) {
@@ -1061,7 +1075,15 @@ fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
         count(&sv, "bas_destroyed") >= 3,
         "the round ended on its clock"
     );
-    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    // Stock `BaseAssault_bomb_think` decrements a `count` it never sets
+    // when a charge's trigger fires outside a round: a bot looking at a
+    // live charge in the end-of-round delay (bot-objectives.md 7.1).
+    let aborts: Vec<String> = sv
+        .script_aborts()
+        .into_iter()
+        .filter(|a| !a.starts_with("maps/mp/gametypes/bas::BaseAssault_bomb_think:3152:"))
+        .collect();
+    assert_eq!(aborts, Vec::<String>::new());
     Some(sv)
 }
 
