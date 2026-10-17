@@ -1775,12 +1775,10 @@ fn download_dirs<'a>(mod_dir: &'a str, fs_game: &'a Option<String>) -> Vec<&'a s
     std::iter::once(mod_dir).chain(fs_game.as_deref()).collect()
 }
 
-/// `cl_allowDownload`: the systeminfo's value when the server sets one
-/// (`CL_SystemInfoChanged` copies every systeminfo key into a cvar), the
-/// client's own otherwise.
-fn allow_download(shell: &console::shell::Shell, systeminfo: &str) -> bool {
-    net::download::server_allows_download(systeminfo)
-        .unwrap_or_else(|| shell.cvar_f32("cl_allowDownload") != 0.0)
+/// `cl_allowDownload`, which a server's systeminfo sets like any other key
+/// (`system_info_changed`).
+fn allow_download(shell: &console::shell::Shell) -> bool {
+    shell.cvar_f32("cl_allowDownload") != 0.0
 }
 
 /// Reopens the pk3 search path after a download. Everything read off the old
@@ -4070,12 +4068,12 @@ impl ApplicationHandler for App {
                                     gamestate_ready = true;
                                     predictor.fall_heights =
                                         pmove::FallHeights::from_systeminfo(net.configstring(1));
-                                    self.shell.set_cheats(sv_cheats(net.configstring(1)));
+                                    system_info_changed(&mut self.shell, net, &self.config_path);
                                 }
                                 net::NetEvent::ConfigstringChanged(1) => {
                                     predictor.fall_heights =
                                         pmove::FallHeights::from_systeminfo(net.configstring(1));
-                                    self.shell.set_cheats(sv_cheats(net.configstring(1)));
+                                    system_info_changed(&mut self.shell, net, &self.config_path);
                                 }
                                 _ => {}
                             }
@@ -4275,7 +4273,7 @@ impl ApplicationHandler for App {
                                         &mut self.title,
                                         &self.game_dir,
                                         &download_dirs(&self.mod_dir, &self.fs_game),
-                                        allow_download(&self.shell, net.configstring(1)),
+                                        allow_download(&self.shell),
                                         self.fs.vanilla(),
                                     ) {
                                         Ok(next) => *phase = next,
@@ -4414,7 +4412,7 @@ impl ApplicationHandler for App {
                                         &mut self.title,
                                         &self.game_dir,
                                         &download_dirs(&self.mod_dir, &self.fs_game),
-                                        allow_download(&self.shell, net.configstring(1)),
+                                        allow_download(&self.shell),
                                         self.fs.vanilla(),
                                     ) {
                                         Ok(next) => *phase = next,
@@ -6400,9 +6398,29 @@ fn cg_fov(shell: &console::shell::Shell) -> f32 {
     shell.cvar_f32("cg_fov").clamp(weapon::CG_FOV, 160.0)
 }
 
-/// The systeminfo's `sv_cheats`, as `CL_SystemInfoChanged` reads it.
-fn sv_cheats(systeminfo: &str) -> bool {
-    net::info_value_for_key(systeminfo, "sv_cheats") == Some("1")
+/// `CL_SystemInfoChanged` (CoDMP.exe 0x415eb0) at a gamestate or a `d 1`:
+/// every systeminfo key becomes a client cvar. A demo sets none. A forced
+/// userinfo cvar (`rate`, `snaps`) goes back to the server as a userinfo
+/// change, an archived one into the config, as `cvar_modifiedFlags` does.
+fn system_info_changed(
+    shell: &mut console::shell::Shell,
+    net: &mut net::NetClient<net::UdpTransport>,
+    config_path: &std::path::Path,
+) {
+    if net.is_demo() {
+        return;
+    }
+    for effect in shell.apply_systeminfo(net.configstring(1)) {
+        match effect {
+            console::shell::Effect::Userinfo => net.set_userinfo(shell.userinfo()),
+            console::shell::Effect::SaveConfig => {
+                if let Err(e) = std::fs::write(config_path, shell.config_text()) {
+                    log::warn!("cannot write {}: {e}", config_path.display());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// `--probe-say`'s `SECS:COMMAND`.

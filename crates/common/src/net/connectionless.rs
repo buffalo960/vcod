@@ -150,6 +150,32 @@ pub fn info_value_for_key<'a>(info: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+/// `Info_NextPair` run to the end, as `CL_SystemInfoChanged` walks the
+/// systeminfo (CoDMP.exe 0x415f90): one leading `\` skipped per pair, an
+/// empty key ends the walk, a key with no value reads `""`.
+pub fn info_pairs(info: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut rest = info;
+    loop {
+        rest = rest.strip_prefix('\\').unwrap_or(rest);
+        let (key, value);
+        match rest.split_once('\\') {
+            None => (key, value, rest) = (rest, "", ""),
+            Some((k, after)) => {
+                key = k;
+                // The value runs to the next `\`, which stays for the next pair.
+                let end = after.find('\\').unwrap_or(after.len());
+                value = &after[..end];
+                rest = &after[end..];
+            }
+        }
+        if key.is_empty() {
+            return out;
+        }
+        out.push((key, value));
+    }
+}
+
 /// `(first word, remainder after the separator)`; `None` without the -1 prefix.
 pub fn parse_oob(packet: &[u8]) -> Option<(&str, &[u8])> {
     let body = packet.strip_prefix(&OOB_PREFIX[..])?;
@@ -230,6 +256,19 @@ mod tests {
         assert!(!i.set_value_for_key("k", "x".repeat(room + 1)));
         assert!(i.set_value_for_key("k", "x".repeat(room)));
         assert_eq!(i.to_string().len(), MAX_INFO_STRING);
+    }
+
+    #[test]
+    fn info_pairs_walk_like_cl_system_info_changed() {
+        assert_eq!(
+            info_pairs(r"\sv_cheats\0\rate\5000\fs_game\genesis"),
+            [("sv_cheats", "0"), ("rate", "5000"), ("fs_game", "genesis")]
+        );
+        // No leading `\`, an empty value, and a last key with no value.
+        assert_eq!(info_pairs(r"a\\b\2\c"), [("a", ""), ("b", "2"), ("c", "")]);
+        // An empty key ends the walk.
+        assert_eq!(info_pairs(r"\a\1\\\b\2"), [("a", "1")]);
+        assert!(info_pairs("").is_empty());
     }
 
     /// Retail over rcon: `sv_hostname a;b\c` came back as `abc` (1.1d,

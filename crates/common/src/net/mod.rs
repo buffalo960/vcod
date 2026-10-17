@@ -4,7 +4,7 @@
 pub mod capture;
 pub mod connectionless;
 pub mod demo;
-pub use connectionless::info_value_for_key;
+pub use connectionless::{info_pairs, info_value_for_key};
 pub mod download;
 pub mod event_ids;
 pub mod events;

@@ -88,13 +88,6 @@ pub fn fs_game(systeminfo: &str, base: &str) -> Option<String> {
     (safe_name(v) && !v.eq_ignore_ascii_case(base)).then(|| v.to_string())
 }
 
-/// The systeminfo's `cl_allowDownload`, which the server forces on the
-/// client; `None` when the server leaves it to the client.
-pub fn server_allows_download(systeminfo: &str) -> Option<bool> {
-    super::info_value_for_key(systeminfo, "cl_allowDownload")
-        .map(|v| v.trim().parse::<i32>().unwrap_or(0) != 0)
-}
-
 /// One `sv_referencedPakNames` entry with its `sv_referencedPaks` checksum
 /// (`None` when the server's lists don't pair up).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -475,13 +468,6 @@ mod tests {
             assert_eq!(fs_game(&format!("\\fs_game\\{v}"), "main"), None, "{v:?}");
         }
         assert_eq!(fs_game(SYSTEMINFO, "main"), None);
-    }
-
-    #[test]
-    fn the_server_can_force_downloads_either_way() {
-        assert_eq!(server_allows_download(MOD_SYSTEMINFO), Some(false));
-        assert_eq!(server_allows_download("\\cl_allowDownload\\1"), Some(true));
-        assert_eq!(server_allows_download(SYSTEMINFO), None);
     }
 
     #[test]
