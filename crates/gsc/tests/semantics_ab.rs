@@ -219,9 +219,15 @@ fn captures() -> BTreeMap<String, (Vec<String>, Option<String>)> {
 /// which is `vcod-common`'s; `crates/server/tests/placespawn_ab.rs` runs it
 /// on every stock map against a fixture of its own.
 const RUN_IN_SERVER_CRATE: &[&str] = &[
+    "probe_attach_badindex",
+    "probe_attach_badtag",
+    "probe_attach_slots",
+    "probe_attach_twice",
+    "probe_attach_twice_notag",
     "probe_bootstrap",
     "probe_cvar",
     "probe_delete",
+    "probe_detach_missing",
     "probe_ents",
     "probe_late_attach",
     "probe_late_index",
@@ -256,6 +262,7 @@ const RUN_IN_SERVER_CRATE: &[&str] = &[
     "probe_stale_hud_method",
     "probe_stale_hud_read",
     "probe_stale_hud_write",
+    "probe_testclient",
 ];
 
 #[test]

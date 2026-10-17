@@ -44,6 +44,11 @@
 //! `probe_late_settext`, `probe_late_shellshock`, `probe_late_shockspan`,
 //! `probe_late_statusicon` and `probe_late_viewmodel`.
 //!
+//! The `probe_attach_*` probes and `probe_detach_missing` are claimed here
+//! for the object table's attachment slots, and `probe_testclient` for the
+//! client entity `addTestClient` connects; both run through the real
+//! bootstrap.
+//!
 //! `probe_ents`, `probe_delete`, `probe_bootstrap`, `probe_loadfx_wait`,
 //! the `probe_precache_*` and the `probe_late_*` probes need `COD_DIR`;
 //! without the paks they return early, like every other game-data test in
@@ -610,6 +615,40 @@ fn probe_late_index_matches_retail() {
     }
 }
 
+/// `attach`'s six slots, the error on a pair already attached, the
+/// compaction behind a `detach`, the lower-cased tag and the "bad index"
+/// readers (docs/research/cod11-gsc-object-model.md 24).
+#[test]
+fn probe_attach_matches_retail() {
+    for name in [
+        "probe_attach_badindex",
+        "probe_attach_badtag",
+        "probe_attach_slots",
+        "probe_attach_twice",
+        "probe_attach_twice_notag",
+        "probe_detach_missing",
+    ] {
+        let Some(ours) = run_initializing_probe(name) else {
+            return;
+        };
+        assert_eq!(ours, retail_probe_lines(name), "{name}");
+        assert!(retail_probe_died(name), "{name}");
+    }
+}
+
+/// `addTestClient`: refused in the first 3 s for the counter's first bot,
+/// then a client connected inside the call, its `begin` after the caller's
+/// wait (docs/research/cod11-gsc-object-model.md 25). Ours runs without a
+/// `Server`, so the network clock is mirrored in by hand as `Server` does,
+/// and the spawned client's origin is only the spawn's own.
+#[test]
+fn probe_testclient_matches_retail() {
+    let Some(ours) = run_probe_frames("probe_testclient", false, 150) else {
+        return;
+    };
+    assert_eq!(ours, retail_probe_lines("probe_testclient"));
+}
+
 /// Runs `name` as mp_pavlov's gametype through the real bootstrap for four
 /// frames and returns its `PROBE` lines; `None` without `COD_DIR`.
 fn run_initializing_probe(name: &str) -> Option<Vec<String>> {
@@ -619,6 +658,12 @@ fn run_initializing_probe(name: &str) -> Option<Vec<String>> {
 /// [`run_initializing_probe`], with a client connecting on the second frame
 /// when `player` is set.
 fn run_probe_with(name: &str, player: bool) -> Option<Vec<String>> {
+    run_probe_frames(name, player, 4)
+}
+
+/// [`run_probe_with`] for `frames` frames, the network clock following the
+/// level's.
+fn run_probe_frames(name: &str, player: bool, frames: i32) -> Option<Vec<String>> {
     let fs = Rc::new(vcod_common::testing::game_fs()?);
     let path = format!("maps/mp/gametypes/{name}");
     let text = std::fs::read_to_string(format!("../gsc/tests/fixtures/semantics/{name}.gsc"))
@@ -640,13 +685,14 @@ fn run_probe_with(name: &str, player: bool) -> Option<Vec<String>> {
         Carry::default(),
     )
     .unwrap_or_else(|e| panic!("load mp_pavlov on {name}: {e:?}"));
-    for frame in 1..=4 {
+    for frame in 1..=frames {
         if player && frame == 2 {
             rt.push_client_event(ClientEvent::Connect {
                 slot: 0,
                 name: "probe".into(),
             });
         }
+        rt.set_network_time(frame * 50);
         rt.run_frame(frame * 50);
     }
     Some(

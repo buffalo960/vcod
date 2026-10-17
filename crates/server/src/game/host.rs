@@ -101,6 +101,17 @@ pub struct SpawnRequest {
     pub mode: SpawnMode,
 }
 
+/// `SV_AddTestClient`'s state (cod_lnxded 0x808753c). `counter` is the
+/// process-wide `bot%d` number, also the bot address's port, and `svs_time_ms`
+/// the network clock `Server` mirrors in before the script runs; `added` are
+/// the slots the builtin connected, for `Server` to give a `Client`.
+#[derive(Default)]
+pub struct TestClients {
+    pub counter: u32,
+    pub svs_time_ms: i32,
+    pub added: Vec<(usize, String)>,
+}
+
 /// Which movement path `self spawn(origin, angles)` puts a client on, read
 /// off its `sessionstate` (map-cycle doc, 6.1: the four legal strings and
 /// the word they map onto). `dead` spawns as a spectator: nothing simulates
@@ -312,6 +323,8 @@ pub struct GameHost {
     /// Spawns the script performed this frame, drained by `Server` after
     /// `run_frame` the way `client_commands` is.
     pub client_spawns: Vec<SpawnRequest>,
+    /// `addTestClient`'s engine half, mirrored with `Server`.
+    pub test_clients: TestClients,
     /// Each client's weapons, by slot. `giveWeapon` and `setSpawnWeapon`
     /// write it, `spawn` clears it, and `Server` copies it into the client's
     /// sim every frame — the same re-read-it-each-frame arrangement the
@@ -643,6 +656,55 @@ pub type Bounds = ([f32; 3], [f32; 3]);
 pub(crate) const RNG_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
 impl GameHost {
+    /// `ClientConnect` up to its callback: the slot's `gclient_t` cleared,
+    /// the entity allocated with any carried `pers`, `.name` filled in. The
+    /// caller runs `CodeCallback_PlayerConnect` on the entity it returns.
+    pub fn connect_client(&mut self, cx: &mut Cx, slot: usize, name: &str) -> Option<EntId> {
+        // The slot's `gclient_t` starts clean, so a reconnect into a slot
+        // cannot inherit the previous occupant's weapons in the frames
+        // before its first `spawn`.
+        if let Some(w) = self.client_weapons.get_mut(slot) {
+            *w = crate::weapons::PlayerWeapons::default();
+        }
+        if let Some(v) = self.client_viewmodel.get_mut(slot) {
+            *v = 0;
+        }
+        if let Some(s) = self.client_shellshock.get_mut(slot) {
+            *s = [0; 3];
+        }
+        if let Some(b) = self.client_old_buttons.get_mut(slot) {
+            *b = 0;
+        }
+        if let Some(p) = self.client_ping_until.get_mut(slot) {
+            *p = 0;
+        }
+        if let Some(v) = self.client_voted.get_mut(slot) {
+            *v = false;
+        }
+        if let Some(c) = self.client_complaints.get_mut(slot) {
+            *c = crate::game::vote::Complaint::default();
+        }
+        self.reset_client_objectives(slot);
+        // The carried `pers`, if the boundary this client crossed kept one;
+        // taken, so a later reconnect starts empty as retail's does.
+        let pers = self.pers_carry.get_mut(slot).and_then(Option::take);
+        let id = match self.ents.spawn_client(cx, slot, pers.as_ref()) {
+            Ok(id) => id,
+            Err(e) => {
+                log::error!("client {slot}: no entity: {e:?}");
+                return None;
+            }
+        };
+        // `.name` is `CLIENT_FIELDS[0]`; retail fills it in
+        // `ClientUserinfoChanged`, before the callback runs.
+        let field = cx.intern_folded("name");
+        let value = Value::String(cx.intern_exact(name));
+        if let Err(e) = vcod_gsc::Host::set_field(self, cx, id, field, value) {
+            log::error!("client {slot}: name not set: {e:?}");
+        }
+        Some(id)
+    }
+
     /// The vitals half of `player_die`, the one place a client dies: health
     /// 0, dead until the next spawn, `takedamage` set (5.1 step 10). The
     /// follower walk runs once the killed callback returns
@@ -1185,6 +1247,7 @@ impl GameHost {
             client_events: Vec::new(),
             client_commands: Vec::new(),
             client_spawns: Vec::new(),
+            test_clients: TestClients::default(),
             client_weapons: vec![crate::weapons::PlayerWeapons::default(); MAX_CLIENTS],
             client_viewmodel: vec![0; MAX_CLIENTS],
             client_shellshock: vec![[0; 3]; MAX_CLIENTS],

@@ -18,7 +18,7 @@ pub(crate) const CALLBACK_SETUP: &str = "maps/mp/gametypes/_callbacksetup";
 /// The event `Callback_PlayerConnect` parks on before it lets the client
 /// into the world. A misspelt notify does not error, it hangs the thread,
 /// so the literal lives here with a test on it.
-const BEGIN_NOTIFY: &str = "begin";
+pub(crate) const BEGIN_NOTIFY: &str = "begin";
 
 /// The event every gametype's team-join loop parks on, once the connect
 /// callback has opened the first menu. Same silent failure as
@@ -2028,6 +2028,11 @@ impl ScriptRuntime {
     /// attachments, not part of the body: the stock character script does
     /// `attachFromArray(xmodelalias\head_allied::main())` and
     /// `self attach(self.hatModel)`, so a client sent none is headless.
+    /// The tag takes its configstring here, not at `attach`: `ClientEndFrame`'s
+    /// own-body arm calls `G_TagIndex` on each (1.1 0x413f6, UO
+    /// `G_UpdateClientInfo` 0x52c81), so only a playing or dead client
+    /// allocates one (docs/research/cod11-gsc-object-model.md, "attach and
+    /// detach").
     pub fn client_attachments(&mut self, slot: usize) -> Vec<(i32, i32)> {
         let Some(ent) = self.client_entity(slot) else {
             return Vec::new();
@@ -2043,28 +2048,50 @@ impl ScriptRuntime {
                     .collect()
             })
         };
+        let own_body = self.client_session(slot).is_some_and(|s| {
+            matches!(
+                s.state,
+                crate::follow::SessionState::Playing | crate::follow::SessionState::Dead
+            )
+        });
         let layout = self.host.allocators.layout();
-        let index_in = |range: crate::configstrings::CsRange, name: &str| {
-            if name.is_empty() {
-                return 0;
-            }
-            let (first, last) = layout.bounds(range);
-            let base = layout.base(range);
-            self.host.configstrings[first..=last]
-                .iter()
-                .position(|cs| cs == name)
-                .map_or(0, |i| (first + i - base) as i32)
-        };
-        pairs
-            .iter()
-            .take(ATTACH_SLOTS)
-            .map(|(m, t)| {
-                (
-                    index_in(crate::configstrings::CsRange::Model, m),
-                    index_in(crate::configstrings::CsRange::Tag, t),
+        let mut out = Vec::with_capacity(pairs.len());
+        for (m, t) in pairs.iter().take(ATTACH_SLOTS) {
+            let tag = if t.is_empty() {
+                None
+            } else if own_body {
+                self.host
+                    .allocators
+                    .index(
+                        &mut self.host.configstrings,
+                        crate::configstrings::CsRange::Tag,
+                        t,
+                    )
+                    .ok()
+            } else {
+                self.host.allocators.find_folded(
+                    &self.host.configstrings,
+                    crate::configstrings::CsRange::Tag,
+                    t,
                 )
-            })
-            .collect()
+            };
+            let model = if m.is_empty() {
+                None
+            } else {
+                self.host.allocators.find_folded(
+                    &self.host.configstrings,
+                    crate::configstrings::CsRange::Model,
+                    m,
+                )
+            };
+            let rel =
+                |slot: Option<usize>, range| slot.map_or(0, |s| (s - layout.base(range)) as i32);
+            out.push((
+                rel(model, crate::configstrings::CsRange::Model),
+                rel(tag, crate::configstrings::CsRange::Tag),
+            ));
+        }
+        out
     }
 
     /// The models a client wears, by name rather than by configstring index:
@@ -2110,6 +2137,12 @@ impl ScriptRuntime {
                 _ => [0.0; 3],
             }
         })
+    }
+
+    /// The network clock (`svs.time`) `addTestClient`'s reconnect check
+    /// reads; `Server` mirrors it in before the threads run.
+    pub fn set_network_time(&mut self, svs_ms: i32) {
+        self.host.test_clients.svs_time_ms = svs_ms;
     }
 
     pub fn client_entity(&self, slot: usize) -> Option<EntId> {
@@ -2193,58 +2226,10 @@ impl ScriptRuntime {
     fn dispatch_client_event(&mut self, ev: ClientEvent) {
         match ev {
             ClientEvent::Connect { slot, name } => {
-                // The slot's `gclient_t` starts clean, so a reconnect into a
-                // slot cannot inherit the previous occupant's weapons in the
-                // frames before its first `spawn`.
-                if let Some(w) = self.host.client_weapons.get_mut(slot) {
-                    *w = crate::weapons::PlayerWeapons::default();
-                }
-                if let Some(v) = self.host.client_viewmodel.get_mut(slot) {
-                    *v = 0;
-                }
-                if let Some(s) = self.host.client_shellshock.get_mut(slot) {
-                    *s = [0; 3];
-                }
-                if let Some(b) = self.host.client_old_buttons.get_mut(slot) {
-                    *b = 0;
-                }
-                if let Some(p) = self.host.client_ping_until.get_mut(slot) {
-                    *p = 0;
-                }
-                if let Some(v) = self.host.client_voted.get_mut(slot) {
-                    *v = false;
-                }
-                if let Some(c) = self.host.client_complaints.get_mut(slot) {
-                    *c = crate::game::vote::Complaint::default();
-                }
-                self.host.reset_client_objectives(slot);
-                // The carried `pers`, if the boundary this client crossed
-                // kept one; taken, so a later reconnect starts empty as
-                // retail's does.
-                let pers = self.host.pers_carry.get_mut(slot).and_then(Option::take);
                 let host = &mut self.host;
-                let id = match self
-                    .vm
-                    .with_cx(|cx| host.ents.spawn_client(cx, slot, pers.as_ref()))
-                {
-                    Ok(id) => id,
-                    Err(e) => {
-                        log::error!("client {slot}: no entity: {e:?}");
-                        return;
-                    }
+                let Some(id) = self.vm.with_cx(|cx| host.connect_client(cx, slot, &name)) else {
+                    return;
                 };
-                // `.name` is `CLIENT_FIELDS[0]`; retail fills it in
-                // `ClientUserinfoChanged`, before the callback runs.
-                use vcod_gsc::Host;
-                let host = &mut self.host;
-                let set = self.vm.with_cx(|cx| {
-                    let field = cx.intern_folded("name");
-                    let value = Value::String(cx.intern_exact(&name));
-                    host.set_field(cx, id, field, value)
-                });
-                if let Err(e) = set {
-                    log::error!("client {slot}: name not set: {e:?}");
-                }
                 self.start_callback("CodeCallback_PlayerConnect", id);
             }
             ClientEvent::Begin(slot) => {

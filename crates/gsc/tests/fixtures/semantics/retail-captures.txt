@@ -18,6 +18,39 @@ PROBE arraykey_size_both 2
 PROBE arraykey_read_orig 1
 PROBE arraykey_read_lower 2
 
+# probe_attach_badindex
+PROBE at badindex
+PROBE_FATAL bad index
+
+# probe_attach_badtag
+PROBE at badtag
+PROBE_FATAL bad index
+
+# probe_attach_slots
+PROBE size4 4
+PROBE tag0 tag_a
+PROBE tag2 []
+PROBE model3 xmodel/crate_misc2a
+PROBE size_detached 3
+PROBE after_detach0 xmodel/crate_misc2a tag [tag_a]
+PROBE after_detach1 xmodel/crate_misc2a tag []
+PROBE after_detach2 xmodel/crate_misc2a tag [tag_d]
+PROBE size_notag 2 tag1 tag_d
+PROBE size_filled 4
+PROBE tag3 tag_e
+PROBE size6 6
+PROBE size_cleared 0
+PROBE at seventh
+PROBE_FATAL maximum attached models exceeded
+
+# probe_attach_twice
+PROBE at twice
+PROBE_FATAL model 'XMODEL/crate_misc2a' already attached to tag 'TAG_A'
+
+# probe_attach_twice_notag
+PROBE at twice_notag
+PROBE_FATAL model 'xmodel/crate_misc2a' already attached to tag ''
+
 # probe_autoviv
 PROBE at viv_zero_index
 PROBE viv_zero_index_size 1
@@ -156,6 +189,10 @@ PROBE at delete_after_wait
 PROBE delete_count_after_wait 6
 PROBE at delete_reuse_after_wait
 PROBE delete_number_reuse_after_wait 299
+
+# probe_detach_missing
+PROBE at detach_missing
+PROBE_FATAL failed to detach model 'xmodel/crate_misc2a' from tag 'tag_b'
 
 # probe_endon_after_notify
 PROBE endon_after_notify 14
@@ -531,6 +568,25 @@ PROBE at string_index
 PROBE string_index b 1 4
 PROBE at string_index_past
 PROBE_FATAL string index 9 out of range
+
+# probe_testclient
+PROBE early 0
+PROBE before
+PROBE connect 0 bot1 state spectator
+PROBE returned 1 player 1 num 0 name bot1 state spectator team spectator
+PROBE connect 1 bot2 state spectator
+PROBE second num 1 name bot2
+PROBE begin 1
+PROBE begin 0
+PROBE connect_wait 0
+PROBE connect_wait 1
+PROBE spawned dz 195.993 health 0
+PROBE after1s dz 195.993 ground 0
+PROBE connect 2 bot3 state spectator
+PROBE third num 2 name bot3
+PROBE done
+PROBE begin 2
+PROBE connect_wait 2
 
 # probe_truthy
 PROBE at truthy_nonempty_string
