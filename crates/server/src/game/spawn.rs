@@ -1447,7 +1447,7 @@ mod tests {
     /// gametype script precached first and the whole block was offset.
     #[test]
     fn mp_pavlov_opens_the_model_block_with_its_lumps_first_model() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let capture = std::fs::read_to_string(concat!(
@@ -1665,7 +1665,7 @@ mod tests {
     /// slots `configstrings_ab` measures.
     #[test]
     fn both_gate_maps_reproduce_the_residual_configstrings() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let fs = std::rc::Rc::new(fs);

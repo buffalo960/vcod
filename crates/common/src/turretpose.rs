@@ -169,7 +169,7 @@ mod tests {
     /// fully down. The gun is at (1712, 1830, 8) facing 229.
     #[test]
     fn the_captured_gunner_origins_replay() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let anims = PlayerAnims::load(&fs).unwrap();
