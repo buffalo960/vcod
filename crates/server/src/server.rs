@@ -818,9 +818,10 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
 
 /// `VEH_PlayerCollision` (game.mp.uo 0x8213f) for every body a vehicle's
 /// probes struck this frame: knocked away along the vehicle's motion, and
-/// at most every 500 ms run over for `150 * min(speed / 400, 1)`
-/// (`MOD_CRUSH_JEEP` off a four-wheel, `MOD_CRUSH_TANK` else), charged to
-/// the driver, the vehicle the inflictor.
+/// at most every 500 ms run over for `150 * min(speed / 400, 1)`, 0 when
+/// the vehicle moves away from him (`MOD_CRUSH_JEEP` off a four-wheel,
+/// `MOD_CRUSH_TANK` else), charged to the driver, the vehicle the
+/// inflictor, then the `vehicle_hit_person` alias.
 fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
     const CRUSH_GAP_MS: i32 = 500;
     let now = rt.host.level_time_ms;
@@ -845,14 +846,18 @@ fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
             continue;
         };
         sim.ps.velocity = push.velocity;
-        let last = rt.host.vehicles.crushed.get(&slot).copied();
-        if last.is_some_and(|t| now - t < CRUSH_GAP_MS) || push.damage <= 0 {
+        // `client+0x4728`, zero from the spawn: a body struck going away
+        // takes its 0 damage and the sound, and restarts the 500 ms too.
+        let last = rt.host.vehicles.crushed.get(&slot).copied().unwrap_or(0);
+        if last >= now - CRUSH_GAP_MS {
             continue;
         }
         rt.host.vehicles.crushed.insert(slot, now);
+        let prone = sim.ps.stance == vcod_common::pmove::Stance::Prone;
         let Some(v) = rt.host.vehicles.live.get(&veh) else {
             continue;
         };
+        let hit_person = rt.host.vehicles.info_of(v).hit_person_index;
         let four_wheel =
             rt.host.vehicles.info_of(v).kind == crate::game::vehicle::info::KIND_FOUR_WHEEL;
         let mod_ = if four_wheel {
@@ -880,6 +885,29 @@ fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
                 rt.deliver_hits(vec![hit]);
             }
             None => rt.deliver_world_hit(slot, veh, push.damage, 0, mod_),
+        }
+        // `vehicle_hit_person` at the body, `1500 (1 - f)` up, broadcast
+        // (`svFlags |= 8`), unless he lies prone (`pm_flags` 1).
+        if !prone && hit_person != 0 {
+            rt.with_host(|host, cx| {
+                host.add_temp_entity(
+                    cx,
+                    crate::game::temp_entity::TempEntity {
+                        event: crate::game::script::EV_SOUND_ALIAS,
+                        parm: hit_person,
+                        surf_type: 0,
+                        other: 0,
+                        attacker: 0,
+                        weapon: 0,
+                        client_num: 0,
+                        scale: 0,
+                        origin: push.sound.to_array(),
+                        scope: crate::game::temp_entity::Scope::Broadcast,
+                        quake: None,
+                        origin2: None,
+                    },
+                )
+            });
         }
     }
 }
