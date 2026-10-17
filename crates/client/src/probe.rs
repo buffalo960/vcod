@@ -177,6 +177,9 @@ pub struct Save {
     /// `--probe-autofire`: the slope capture's walk is [`autofire_script`]
     /// from the street placement, on United Offensive.
     pub autofire: bool,
+    /// `--probe-moveshot <part>`: the slope capture's walk is
+    /// [`moveshot_script`] from a `client-probes/probe_moveshot` placement.
+    pub moveshot: Option<MoveShot>,
     /// `--probe-uofoot <yaw>`: the slope capture's walk is [`uofoot_script`]
     /// from a `client-probes/probe_uofoot` placement facing that world yaw,
     /// on United Offensive.
@@ -358,6 +361,7 @@ pub fn probe(
         turns: probe_turns,
         sprint: probe_sprint,
         autofire: probe_autofire,
+        moveshot: probe_moveshot,
         uofoot: probe_uofoot,
         crouchjump: probe_crouchjump,
         crouchjump_stand,
@@ -428,6 +432,7 @@ pub fn probe(
         || probe_turns
         || probe_sprint
         || probe_autofire
+        || probe_moveshot.is_some()
         || probe_uofoot.is_some()
         || probe_crouchjump.is_some();
     let slope = slope || save_slope || prone_crawl;
@@ -441,6 +446,8 @@ pub fn probe(
         ProneScript::new(0.0, sprint_script())
     } else if probe_autofire {
         ProneScript::new(0.0, autofire_script())
+    } else if let Some(part) = probe_moveshot {
+        ProneScript::new(0.0, moveshot_script(part))
     } else if let Some(yaw) = probe_uofoot {
         ProneScript::switching(yaw, uofoot_script(), UOFOOT_SWITCHES)
     } else if let Some(yaw) = probe_crouchjump {
@@ -1627,6 +1634,8 @@ pub fn probe(
                                 SlopeWalk::Sprint
                             } else if probe_autofire {
                                 SlopeWalk::Autofire
+                            } else if let Some(part) = probe_moveshot {
+                                SlopeWalk::MoveShot(part)
                             } else if probe_uofoot.is_some() {
                                 SlopeWalk::UoFoot
                             } else if probe_crouchjump.is_some() {
@@ -1718,6 +1727,8 @@ pub fn probe(
                 SlopeWalk::Sprint
             } else if probe_autofire {
                 SlopeWalk::Autofire
+            } else if let Some(part) = probe_moveshot {
+                SlopeWalk::MoveShot(part)
             } else if probe_uofoot.is_some() {
                 SlopeWalk::UoFoot
             } else if probe_crouchjump.is_some() {
@@ -7198,6 +7209,7 @@ enum SlopeWalk {
     Turns,
     Sprint,
     Autofire,
+    MoveShot(MoveShot),
     Vehicle,
     UoFoot,
     CrouchJump,
@@ -7238,7 +7250,23 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if walk == SlopeWalk::CrouchJump {
+    if let SlopeWalk::MoveShot(part) = walk {
+        let env = if protocol.version == 22 {
+            "COD_VERSION=uo "
+        } else {
+            "COD_VERSION=1.5 "
+        };
+        let spot = match part {
+            MoveShot::Walk => "street",
+            MoveShot::Bipod => "wall",
+        };
+        let name = part.name();
+        out.push_str(&format!(
+            "# Captured with {env}tools/run_probe.sh client-probes/probe_moveshot {map} +set probe_teleport 1\n\
+             # +set probe_spot {spot} and --net-probe --save-slope --probe-moveshot {name} --probe-cmd-ms {cmd_ms}:\n\
+             # moveshot_script({name}) from the placement, facing world yaw 0. !cmd is a\n"
+        ));
+    } else if walk == SlopeWalk::CrouchJump {
         out.push_str(&format!(
             "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_crouchjump {map}\n\
              # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
@@ -7710,6 +7738,128 @@ fn autofire_script() -> Vec<ProneStep> {
         step(10250, 0),
         step(12000, 0),
     ]
+}
+
+/// `--probe-moveshot`: which part of [`moveshot_script`] runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum MoveShot {
+    /// From the street spot with an automatic (`thompson_mp`): bursts
+    /// while strafing, running, crouched, sighted and leaning.
+    Walk,
+    /// From the wall spot with a United Offensive LMG (`mg30cal_mp`):
+    /// bursts from the bipod with the view swung off it, then prone
+    /// without it.
+    Bipod,
+}
+
+impl MoveShot {
+    fn name(self) -> &'static str {
+        match self {
+            MoveShot::Walk => "walk",
+            MoveShot::Bipod => "bipod",
+        }
+    }
+}
+
+/// `--probe-moveshot`, on a 1.5 or United Offensive server, from a
+/// `client-probes/probe_moveshot` placement facing world yaw 0 and the
+/// wall: short bursts whose muzzle the walk bob, the lean or the bipod
+/// trace moves (docs/research/cod11-combat.md 2.1). Each moving burst
+/// starts after the body is up to speed. A stance key holds `up` at -127.
+fn moveshot_script(part: MoveShot) -> Vec<ProneStep> {
+    use net::msg::{
+        BUTTON_ADS, BUTTON_ATTACK, WBUTTON_CROUCH, WBUTTON_LEAN_LEFT, WBUTTON_LEAN_RIGHT,
+        WBUTTON_PRONE, WBUTTON_RELOAD,
+    };
+    const A: u8 = BUTTON_ATTACK;
+    const S: u8 = BUTTON_ADS;
+    const C: u8 = WBUTTON_CROUCH;
+    const P: u8 = WBUTTON_PRONE;
+    const L: u8 = WBUTTON_LEAN_LEFT;
+    const R: u8 = WBUTTON_LEAN_RIGHT;
+    const RL: u8 = WBUTTON_RELOAD;
+    let step = |at_ms, buttons, wbuttons: u8, forward, right, yaw| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up: if wbuttons & (P | C) != 0 { -127 } else { 0 },
+        yaw,
+        pitch: 0.0,
+    };
+    let mut v = vec![step(0, 0, 0, 0, 0, 0.0)];
+    match part {
+        MoveShot::Walk => {
+            // Moving bursts: (buttons, wbuttons, forward, right), each key
+            // held 500 ms, the trigger 400 ms of it, then 900 ms still.
+            let mut t = 1000;
+            let burst = |v: &mut Vec<ProneStep>, t: &mut u64, b: u8, wb: u8, f: i8, r: i8| {
+                v.push(step(*t, b, wb, f, r, 0.0));
+                v.push(step(*t + 500, b | A, wb, f, r, 0.0));
+                v.push(step(*t + 900, b, wb, f, r, 0.0));
+                v.push(step(*t + 1100, b, wb, 0, 0, 0.0));
+                *t += 2000;
+            };
+            burst(&mut v, &mut t, 0, 0, 0, 127);
+            burst(&mut v, &mut t, 0, 0, 0, -127);
+            burst(&mut v, &mut t, 0, 0, 127, 0);
+            burst(&mut v, &mut t, 0, 0, -127, 0);
+            // A reload, then crouched and sighted strafes each way.
+            v.push(step(t, 0, RL, 0, 0, 0.0));
+            v.push(step(t + 100, 0, 0, 0, 0, 0.0));
+            t += 4000;
+            v.push(step(t, 0, C, 0, 0, 0.0));
+            t += 1000;
+            burst(&mut v, &mut t, 0, C, 0, 127);
+            burst(&mut v, &mut t, 0, C, 0, -127);
+            v.push(step(t, 0, 0, 0, 0, 0.0));
+            t += 1000;
+            v.push(step(t, S, 0, 0, 0, 0.0));
+            t += 1000;
+            burst(&mut v, &mut t, S, 0, 0, 127);
+            burst(&mut v, &mut t, S, 0, 0, -127);
+            v.push(step(t, 0, 0, 0, 0, 0.0));
+            t += 1000;
+            v.push(step(t, 0, RL, 0, 0, 0.0));
+            v.push(step(t + 100, 0, 0, 0, 0, 0.0));
+            t += 4000;
+            // Leaning still, each way, then leaning while strafing.
+            for lean in [L, R] {
+                v.push(step(t, 0, lean, 0, 0, 0.0));
+                v.push(step(t + 1000, A, lean, 0, 0, 0.0));
+                v.push(step(t + 1300, 0, lean, 0, 0, 0.0));
+                v.push(step(t + 1600, 0, 0, 0, 0, 0.0));
+                t += 2500;
+            }
+            burst(&mut v, &mut t, 0, L, 0, 127);
+            burst(&mut v, &mut t, 0, R, 0, -127);
+            v.push(step(t, 0, 0, 0, 0, 0.0));
+            v.push(step(t + 1500, 0, 0, 0, 0, 0.0));
+        }
+        MoveShot::Bipod => {
+            // Down, the bipod deployed facing the wall, a burst along it,
+            // then one with the view 30 degrees off each side.
+            v.push(step(1000, 0, P, 0, 0, 0.0));
+            v.push(step(3000, S, P, 0, 0, 0.0));
+            v.push(step(5500, S | A, P, 0, 0, 0.0));
+            v.push(step(5800, S, P, 0, 0, 0.0));
+            v.push(step(6000, S, P, 0, 0, 0.0));
+            v.push(step(7000, S, P, 0, 0, 30.0));
+            v.push(step(8000, S | A, P, 0, 0, 30.0));
+            v.push(step(8300, S, P, 0, 0, 30.0));
+            v.push(step(9000, S, P, 0, 0, 30.0));
+            v.push(step(10500, S, P, 0, 0, -30.0));
+            v.push(step(11500, S | A, P, 0, 0, -30.0));
+            v.push(step(11800, S, P, 0, 0, -30.0));
+            // The bipod up: prone from the hip, 30 degrees off, no trace.
+            v.push(step(12500, 0, P, 0, 0, -30.0));
+            v.push(step(16500, A, P, 0, 0, -30.0));
+            v.push(step(16800, 0, P, 0, 0, -30.0));
+            v.push(step(18000, 0, P, 0, 0, -30.0));
+        }
+    }
+    v
 }
 
 /// `--probe-crouchjump`, from a `client-probes/probe_crouchjump`

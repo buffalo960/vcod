@@ -597,6 +597,16 @@ struct Args {
     /// through the shot and the rechamber (tag `springfield-held-1.1`).
     #[arg(long)]
     probe_autofire: bool,
+    /// With --save-slope, on a 1.5 or United Offensive server: shots whose
+    /// muzzle moves, from a placement of `client-probes/probe_moveshot` on
+    /// mp_carentan facing world yaw 0. `walk` (`+set probe_spot street`,
+    /// --probe-weapon thompson_mp) fires bursts strafing, running,
+    /// crouched, sighted and leaning; `bipod` (UO, `+set probe_spot wall`,
+    /// --probe-weapon mg30cal_mp) from the bipod deployed short of a wall
+    /// with the view swung off it. Tag the fixture `moveshot-<part>-1.5` or
+    /// `-uo`; moveshot_ab.rs replays it (cod11-combat.md 2.1).
+    #[arg(long, value_enum, value_name = "PART")]
+    probe_moveshot: Option<probe::MoveShot>,
     /// With --save-slope, on a United Offensive server: the bipod and
     /// grenade cook script from a placement of
     /// `client-probes/probe_uofoot` on mp_foy (`+set probe_teleport 1
@@ -1122,6 +1132,7 @@ fn main() -> Result<()> {
                 turns: args.probe_turns,
                 sprint: args.probe_sprint,
                 autofire: args.probe_autofire,
+                moveshot: args.probe_moveshot,
                 uofoot: args.probe_uofoot,
                 crouchjump: args.probe_crouchjump,
                 crouchjump_stand: args.probe_crouchjump_stand,
