@@ -209,6 +209,23 @@ something, the bullet links it.
   map, type-and-map and kick picks call one.
 - Follows the server through a map change: loading screen, downloads, new
   map. Open menus close, as in CoD.
+- Wide and ultrawide windows, a vcod extension (retail stretches its 4:3
+  layout over any window): `vc_widescreen 1` (archived, live, default)
+  widens the view past 4:3 and keeps 4:3's vertical fov (Hor+; `cg_fov`
+  and every sight, scope and seat fov stay a 4:3 view's width), and moves
+  the HUD's side pieces (compass, stance, chat, kill feed, votes to the
+  left; health, ammo, weapon strip to the right) to the window's edges
+  while the crosshair, hints and centre prints stay in the middle.
+  `vc_widescreen 0` is retail's fixed horizontal fov with the whole HUD in
+  the 4:3 box. Menus always draw in the centred 4:3 box, the cursor mapped
+  through it; full-screen fades, backdrops and the damage flash cover the
+  whole window (cod11-hud-protocol.md section 10).
+- `r_fullscreen 1` is borderless on the window's monitor at the desktop's
+  resolution, `r_fullscreen 2` exclusive at the monitor's mode closest to
+  the `r_mode` size (borderless on Wayland); `r_mode -1` with
+  `r_customwidth` / `r_customheight` asks for any size, and Alt+Enter
+  flips `r_fullscreen` and restarts the video, as retail's does
+  (cod11-front-end.md section 21).
 - Retail's drop-down console on `` ` ``. It takes the commands under
   [Console](usage.md#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
 - `vc_bicubic 1` (archived, live, default 0) filters lightmaps with a cubic

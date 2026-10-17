@@ -178,12 +178,33 @@ held; `m_forward`, and `m_side` under `+strafe`), `cg_fov`
 (cheat-protected, so 80 unless the server runs `sv_cheats 1`), `rate`
 (25000; retail's first-run 5000 starves snapshots), `snaps`,
 `scr_conspeed`, `mss_volume`, `r_mode` / `r_fullscreen` (applied at start
-and by `vid_restart`, which also reloads the menus closed), `com_maxfps`
+and by `vid_restart`, which also reloads the menus closed; see
+[Window and fullscreen](#window-and-fullscreen)), `com_maxfps`
 (retail's frame cap, `timedemo` included: `1000 / com_maxfps` whole ms a frame; vcod defaults to 0, no cap past vsync, where retail defaults to 85, about 90 fps),
 `password` and the browser's `ui_netSource`,
 `ui_joinGametype` and `ui_browserShow*`. `exec <file>` runs a config from the paks or `main/`,
 and `ui_load` reloads the menus off the list `ui_menuFiles` names.
 Binds only act while connected.
+
+### Window and fullscreen
+
+- `r_fullscreen 0` is a window, `1` a borderless window over the monitor
+  the window is on, at the desktop's resolution, `2` exclusive fullscreen:
+  the monitor switches to its mode closest to the `r_mode` size (the
+  desktop's size when `r_mode` names none). Wayland has no exclusive
+  mode, so `2` is borderless there. Alt+Enter flips between windowed and
+  `1` and runs `vid_restart`.
+- `r_mode` picks retail's 13 sizes (0 is 320x240, 3 640x480, 6 1024x768,
+  11 856x480, 12 1920x1200). `r_mode -1` takes `r_customwidth` x
+  `r_customheight`, or keeps the window's own size while either is 0,
+  vcod's default: `r_customwidth 3440; r_customheight 1440; r_mode -1;
+  vid_restart` asks for a 21:9 window or, with `r_fullscreen 2`, that mode.
+- `vc_widescreen 1` (default) draws a window wider than 4:3 Hor+: `cg_fov`
+  and the zoom fovs are a 4:3 view's width, so 16:9 at `cg_fov 80` is
+  about 96 degrees wide and 21:9 about 111, as tall as 4:3, and the HUD's
+  side pieces sit at the window's edges. `vc_widescreen 0` keeps retail's
+  horizontal fov (a wider window sees less above and below) and the whole
+  HUD in the centred 4:3 box. Menus draw in that box either way.
 
 ### Main menu and browser
 
