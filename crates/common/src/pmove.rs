@@ -1734,7 +1734,8 @@ fn dead_friction(ps: &mut PlayerState) {
 /// ([`footstep_speed`]); a step event fires on each 128-tick crossing while
 /// move keys are held and the gait is audible. The ladder branch runs ahead
 /// of the speed gates (0x323a2 precedes the fcom at 0x3249f). The walk is
-/// `pm_flags` 0x80, the ADS walk, and under 1.5 a lean too (0x24bf7).
+/// `pm_flags` 0x80, the ADS walk, and under 1.5 a lean too (0x24bf7); UO's
+/// ground cadence leaves the lean out (`game.mp.uo` 0x297e4).
 fn footsteps(
     ps: &mut PlayerState,
     input: &PmInput,
@@ -1774,9 +1775,17 @@ fn footsteps(
         }
         return;
     }
-    let full = footstep_speed(ps, input, walking);
+    // UO's ground cadence walks on the ADS walk alone: a lean ticks at the
+    // run's rate there (`game.mp.uo` 0x297e4), though its ladder cadence and
+    // `PM_FootstepEvent` (0x2937c) still walk on one (coduo-movement.md 16).
+    let gait = if ps.rules == MoveRules::Uo {
+        ps.walking || input.walk_slow
+    } else {
+        walking
+    };
+    let full = footstep_speed(ps, input, gait);
     let rate =
-        (f64::from(speed) / full * f64::from(step_rate(stance, walking, ps.backwards_run))) as f32;
+        (f64::from(speed) / full * f64::from(step_rate(stance, gait, ps.backwards_run))) as f32;
     let old = ps.bob_cycle;
     ps.bob_cycle = tick_bob_cycle(old, msec, rate);
     if input.forward != 0.0 || input.right != 0.0 {
@@ -7975,6 +7984,30 @@ mod tests {
         ps.velocity = Vec3::new(0.5, 0.0, 0.0);
         footsteps(&mut ps, &still, &w, 0.008, &mut Vec::new());
         assert_eq!(ps.bob_cycle, 0);
+    }
+
+    /// A leaning body's bob ticks at the walk's rate on 1.5 and the run's on
+    /// UO (`game.mp.uo` 0x297e4): the same strafe at the same speed advances
+    /// UO's cycle by less (moveshot_ab.rs, the lean-strafe rounds).
+    #[test]
+    fn a_uo_lean_bobs_at_the_run_s_rate() {
+        let w = dirt_flat();
+        let w = MoveWorld::bare(&w);
+        let strafe = PmInput {
+            right: 1.0,
+            ..Default::default()
+        };
+        let tick_of = |rules: MoveRules| {
+            let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+            ps.rules = rules;
+            ps.on_ground = true;
+            ps.lean = -0.5;
+            ps.velocity = Vec3::new(0.0, -71.0, 0.0);
+            footsteps(&mut ps, &strafe, &w, 0.050, &mut Vec::new());
+            ps.bob_cycle
+        };
+        let (v15, uo) = (tick_of(MoveRules::V1_5), tick_of(MoveRules::Uo));
+        assert!(uo > 0 && uo < v15, "1.5 {v15} UO {uo}");
     }
 
     fn prone_on(w: &MoveWorld, origin: Vec3, ground: bool, rules: MoveRules) -> Option<ProneBody> {

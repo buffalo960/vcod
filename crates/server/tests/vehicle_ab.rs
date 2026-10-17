@@ -20,6 +20,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::NetClient;
 use vcod_common::net::NetEvent;
+use vcod_common::net::event_ids::{EV_BULLET_HIT_LARGE, EV_BULLET_HIT_SMALL, EV_UO_BULLET_HIT};
 use vcod_common::net::msg::{BUTTON_USE, EntityState, PlayerState, UserCmd};
 use vcod_common::net::protocol::PROTOCOL_V22;
 
@@ -53,6 +54,8 @@ struct Snap {
     wire: BTreeMap<String, i32>,
     /// The seat's vehicle's every non-zero entity field (drive captures).
     veh: Option<BTreeMap<String, i32>>,
+    /// Every bullet-impact temp entity on the snapshot, `(number, at)`.
+    imp: Vec<(u32, [i32; 3])>,
 }
 
 fn kv(s: &str) -> BTreeMap<String, i32> {
@@ -99,6 +102,14 @@ fn parse(text: &str) -> Vec<Line> {
                     ct: field("ct").parse().unwrap(),
                     wire: kv(field("wire")),
                     veh: (!veh.is_empty()).then(|| kv(veh)),
+                    imp: field("imp")
+                        .split(';')
+                        .filter_map(|e| e.split_once(':'))
+                        .map(|(n, at)| {
+                            let at: Vec<f32> = at.split(',').map(|c| c.parse().unwrap()).collect();
+                            (n.parse().unwrap(), std::array::from_fn(|i| at[i] as i32))
+                        })
+                        .collect(),
                 }));
             }
             _ => {}
@@ -113,6 +124,8 @@ struct Sample {
     veh: Option<EntityState>,
     /// The sound-blend entities on the wire: number, both aliases.
     blends: Vec<(u32, i32, i32)>,
+    /// The bullet impacts on the wire, `(number, at)`.
+    impacts: Vec<(u32, [i32; 3])>,
 }
 
 /// A cmd that holds the view where the newest snapshot has it, stamped at
@@ -188,7 +201,18 @@ impl Boarded {
 /// `client-probes/probe_vehicle` on `map` with `cvars`, one axis client
 /// joined, placed beside the `vehicletype` and in its seat by the use key.
 fn board(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Boarded> {
-    let fs = vcod_common::testing::uo_fs()?;
+    board_with(map, vehicletype, cvars, |_| {})
+}
+
+/// [`board`] with the paks changed first.
+fn board_with(
+    map: &str,
+    vehicletype: &str,
+    cvars: &[(&str, &str)],
+    edit: impl FnOnce(&mut vcod_common::pk3::Pk3Fs),
+) -> Option<Boarded> {
+    let mut fs = vcod_common::testing::uo_fs()?;
+    edit(&mut fs);
     let p = &PROTOCOL_V22;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -272,6 +296,17 @@ fn board(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Boarded
 }
 
 fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) -> Option<Replay> {
+    replay_with(map, vehicletype, cvars, lines, |_| {})
+}
+
+/// [`replay`] with the paks changed first.
+fn replay_with(
+    map: &str,
+    vehicletype: &str,
+    cvars: &[(&str, &str)],
+    lines: &[Line],
+    edit: impl FnOnce(&mut vcod_common::pk3::Pk3Fs),
+) -> Option<Replay> {
     let Boarded {
         mut sv,
         q,
@@ -279,7 +314,7 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
         mut now,
         mut join,
         mut last_sent,
-    } = board(map, vehicletype, cvars)?;
+    } = board_with(map, vehicletype, cvars, edit)?;
     let frame = Duration::from_millis(common::FRAME_MS as u64);
     let first = lines.iter().find_map(|l| match l {
         Line::Snap(s) => Some(s.t),
@@ -447,10 +482,24 @@ fn sample(cl: &NetClient<ClientEnd>) -> Sample {
             )
         })
         .collect();
+    let impacts = s
+        .entities
+        .iter()
+        .filter(|(_, e)| {
+            p.event_of(e.field_i32(p, "eType")).is_some_and(|ev| {
+                [EV_BULLET_HIT_SMALL, EV_BULLET_HIT_LARGE, EV_UO_BULLET_HIT].contains(&ev)
+            })
+        })
+        .map(|(&n, e)| {
+            let at = vcod_common::net::trajectory::Trajectory::read(e, p, "pos").base;
+            (n, at.to_array().map(|c| c as i32))
+        })
+        .collect();
     Sample {
         ps: s.ps.clone(),
         veh: s.entities.get(&veh_num).cloned(),
         blends,
+        impacts,
     }
 }
 
@@ -951,4 +1000,53 @@ fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
         mine, theirs,
         "origin and angles the script reads after the spawn"
     );
+}
+
+/// Every impact in the order it first showed on a snapshot.
+fn new_impacts(snaps: impl Iterator<Item = Vec<(u32, [i32; 3])>>) -> Vec<[i32; 3]> {
+    let mut prev = Vec::new();
+    let mut out = Vec::new();
+    for cur in snaps {
+        out.extend(cur.iter().filter(|i| !prev.contains(*i)).map(|i| i.1));
+        prev = cur;
+    }
+    out
+}
+
+const JEEP_RIDER: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-rider-uo.txt";
+
+/// The jeep passenger's own round, `SEATS`' `seat_fire` with the view 75
+/// degrees down past the hull, from a kar98k with no spread
+/// (`common::STEADY_WEAPON` on both servers): UO's `CalcMuzzlePoint` puts
+/// a rider's muzzle 28 over his origin, not at his eye, so the round
+/// strikes the ground where retail's did (docs/research/cod11-combat.md
+/// 2.1).
+#[test]
+fn the_jeep_passenger_s_round_lands_as_on_retail() {
+    let text = std::fs::read_to_string(JEEP_RIDER).unwrap();
+    let lines = parse(&text);
+    let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
+    let Some(ours) = replay_with("mp_peaks", "willyjeep_mp", &cvars, &lines, |fs| {
+        common::steady_weapon(fs, "kar98k_mp")
+    }) else {
+        return;
+    };
+    let retail = new_impacts(lines.iter().filter_map(|l| match l {
+        Line::Snap(s) => Some(s.imp.clone()),
+        Line::Cmd(_) => None,
+    }));
+    let ours = new_impacts(ours.samples.iter().map(|s| s.impacts.clone()));
+    if std::env::var("VEHICLE_REPORT").is_ok() {
+        eprintln!("rider rounds: retail {retail:?} ours {ours:?}");
+    }
+    assert_eq!(retail.len(), 1, "{retail:?}");
+    assert_eq!(ours.len(), retail.len(), "retail {retail:?} ours {ours:?}");
+    for (r, o) in retail.iter().zip(&ours) {
+        // Both snapped to whole units: one muzzle lands on one unit, or the
+        // next across an edge.
+        assert!(
+            r.iter().zip(o).all(|(a, b)| (a - b).abs() <= 1),
+            "retail {r:?} ours {o:?}"
+        );
+    }
 }

@@ -414,7 +414,8 @@ takes `framed`, which lands him on retail's float after the script's
   counts as the walk in the rate (`pm_flags` 0x80 or `leanf` non-zero,
   0x24bf7) and in the step ids (0x3105c), but not in
   `PM_ShouldMakeFootsteps` (0x24a5a), so a lean run is audible with walk
-  ids. VERIFIED. The ladder branch also skips `pm_type` 1 and takes its
+  ids. VERIFIED. UO drops the lean from the ground cadence only
+  (`coduo-movement.md` 16). The ladder branch also skips `pm_type` 1 and takes its
   quiet window from `pm_ladderJumpTime` (300, `.rodata` 0x75630). VERIFIED.
   An airborne body, ladder or not, whose effective stance differs from its
   flags' (`pm_flags & 3` against 1 prone, 2 crouch, asm 0x24e51) falls

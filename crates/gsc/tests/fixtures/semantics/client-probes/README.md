@@ -2112,6 +2112,29 @@ The twelve fixtures (8 and 50 ms cmds, crouched and standing, three rooms)
 are `crates/server/tests/fixtures/playerstate/*-crouchjump-*.txt`, gated by
 `moves_ab.rs`'s `the_predictor_replays_uo_jumps_through_low_windows`.
 
+## probe_moveshot
+
+Shots whose 1.5 or United Offensive muzzle moves (`docs/research/cod11-combat.md`
+2.1, "1.5 and United Offensive"). Stock dm on mp_carentan; under
+`probe_teleport 1` it puts every allied player facing world yaw 0:
+`probe_spot street` is probe_prone's street at (900 1930), the wall 1090
+units ahead; `wall` is the ground 20 units (`probe_walldist`) short of that
+wall (face x 1991.875, floor z -23.875). The client runs `--save-slope
+--probe-moveshot walk` (a thompson: bursts strafing, running, crouched,
+sighted and leaning) or `bipod` (UO, an mg30cal: bursts from the bipod with
+the view along it and 30 degrees off each side, then the trigger held prone
+with the bipod up, which fires nothing on retail). Each server's homepath
+holds the weapon file with `crates/server/tests/common/mod.rs`
+`STEADY_WEAPON` applied, so a round leaves along the view.
+
+```
+COD_VERSION=uo COD_LNXDED_HOME=<home with uo/weapons/mp/thompson_mp> PORT=<p> COD_DIR=<uo install> SECS=80 tools/run_probe.sh client-probes/probe_moveshot mp_carentan +set probe_teleport 1 +set probe_spot street
+# second shell, about 6 s later:
+vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:<p> --probe-team allies --probe-weapon thompson_mp --save-slope --probe-moveshot walk --probe-cmd-ms 8 --capture-tag moveshot-walk-uo --probe-secs 65
+```
+
+The fixtures are `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-moveshot-*.txt`
+(walk on 1.5b and UO, bipod on UO), gated by `crates/server/tests/moveshot_ab.rs`.
 ## probe_patchwalk
 
 Player movement against mp_carentan's lump 24 patches
