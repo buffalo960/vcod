@@ -756,3 +756,45 @@ fn a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail() {
         bad.join("\n")
     );
 }
+
+const ANGLESNAP: &str = "tests/fixtures/movers/mp_carentan-dm-anglesnap.txt";
+
+/// `SV_LinkEntity` snaps `r.currentAngles` on every link, not only a
+/// mover's: a script model, a script origin, an item and a brush model
+/// each read the `.angles` written until an `.origin` write links them,
+/// then the snapped set (movers doc 12, "The snap on every link"). Server
+/// alone, no client.
+#[test]
+fn every_link_snaps_angles_like_retail() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp_path = fs.resolve_map(MAP).expect("map in mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_anglesnap"), now);
+    sv.overlay_script(
+        "maps/mp/gametypes/probe_anglesnap",
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_anglesnap.gsc"),
+    );
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load scripts");
+    for _ in 0..100 {
+        common::run_alone(&mut sv, &mut now, FRAME_MS);
+        if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
+            break;
+        }
+    }
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    let rows = |lines: Vec<&str>| -> Vec<String> {
+        lines
+            .into_iter()
+            .filter_map(|l| l.find("PROBE a ").map(|i| l[i..].trim().to_string()))
+            .collect()
+    };
+    let ours = rows(sv.script_log().iter().map(String::as_str).collect());
+    let text = std::fs::read_to_string(ANGLESNAP).unwrap();
+    let retail = rows(text.lines().collect());
+    assert_eq!(retail, ours);
+}

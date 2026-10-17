@@ -599,9 +599,11 @@ fn run_one(host: &mut GameHost, cx: &mut Cx, links: &Links, id: EntId, fresh: bo
             .filter(|&n| n > 0),
         host.world.clone(),
     ) {
-        world
-            .collision
-            .set_model_pose(model as usize, placed.origin, Vec3::from(angles));
+        world.collision.set_model_pose(
+            model as usize,
+            placed.origin,
+            crate::game::mover::snap_angles(Vec3::from(angles)),
+        );
     }
 }
 

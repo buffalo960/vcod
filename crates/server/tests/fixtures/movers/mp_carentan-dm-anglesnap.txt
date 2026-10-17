@@ -1,0 +1,32 @@
+# Retail CoD 1.1d dedicated server: .angles on four entity kinds before and after a link.
+# map mp_carentan, gametype dm (served as probe_anglesnap), no client, 2026-10-17.
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=32322 SECS=12 \
+#       tools/run_probe.sh client-probes/probe_anglesnap mp_carentan
+# The retail 1.5b (COD_VERSION=1.5) and United Offensive 1.51b (COD_VERSION=uo) servers
+# logged these lines byte for byte. docs/research/cod11-movers.md 12, "The snap on every
+# link", is what it measured.
+PROBE a model 0 set 400000 8.99996e+10 1.1e+06
+PROBE a model 0 linked 0 9e+10 1.1e+06
+PROBE a origin 0 set 400000 8.99996e+10 1.1e+06
+PROBE a origin 0 linked 0 9e+10 1.1e+06
+PROBE a item 0 set 400000 8.99996e+10 1.1e+06
+PROBE a item 0 linked 0 9e+10 1.1e+06
+PROBE a brush 0 set 400000 8.99996e+10 1.1e+06
+PROBE a brush 0 linked 0 9e+10 1.1e+06
+PROBE a model 0 later 0 9e+10 1.1e+06
+PROBE a origin 0 later 0 9e+10 1.1e+06
+PROBE a item 0 later 0 9e+10 1.1e+06
+PROBE a brush 0 later 0 9e+10 1.1e+06
+PROBE a model 1 set -9.995e+08 1.80001e+11 3.59999e+11
+PROBE a model 1 linked -9.995e+08 1.8e+11 3.6e+11
+PROBE a origin 1 set -9.995e+08 1.80001e+11 3.59999e+11
+PROBE a origin 1 linked -9.995e+08 1.8e+11 3.6e+11
+PROBE a item 1 set -9.995e+08 1.80001e+11 3.59999e+11
+PROBE a item 1 linked -9.995e+08 1.8e+11 3.6e+11
+PROBE a brush 1 set -9.995e+08 1.80001e+11 3.59999e+11
+PROBE a brush 1 linked -9.995e+08 1.8e+11 3.6e+11
+PROBE a model 1 later -9.995e+08 1.8e+11 3.6e+11
+PROBE a origin 1 later -9.995e+08 1.8e+11 3.6e+11
+PROBE a item 1 later -9.995e+08 1.8e+11 3.6e+11
+PROBE a brush 1 later -9.995e+08 1.8e+11 3.6e+11
+PROBE done

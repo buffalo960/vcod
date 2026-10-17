@@ -416,7 +416,7 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     // `G_MoverTeam`: `amove` is the trajectory less `r.currentAngles`,
     // which `G_MoverPush` adds back and the link snaps (movers doc 12,
     // "The residual yaw").
-    let (turned, mut angles) = if moving {
+    let (turned, angles) = if moving {
         let target = if m.apos.started {
             bg_evaluate(m.apos.stored, &m.apos.current, level_ms)
         } else {
@@ -427,9 +427,9 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     } else {
         (before, before)
     };
-    if !m.sine && done.iter().any(|d| d.event == ROTATEDONE) {
-        angles = reached_angles(m.apos.current.base);
-    }
+    // `Reached_ScriptMover` quantizes after the links, so no link snaps it.
+    let reached_at = (!m.sine && done.iter().any(|d| d.event == ROTATEDONE))
+        .then(|| reached_angles(m.apos.current.base));
     let fields = [
         (m.pos.started, "origin", origin),
         (m.apos.started || moving, "angles", angles),
@@ -456,6 +456,9 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         }
         let (origin, angles) = pose(host, cx, id);
         host.link_entity_at(cx, id, Some((origin.into(), angles.into())));
+    }
+    if let Some(a) = reached_at {
+        let _ = host.write_field(cx, id, angles_atom, vcod_gsc::Value::Vector(a.into()));
     }
     host.movers.rows.insert(id, m);
     // A push runs first and a blocked one never reaches this
