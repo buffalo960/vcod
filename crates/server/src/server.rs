@@ -5068,6 +5068,7 @@ impl Server {
                         ours: b.team == team,
                         breached: b.breached,
                         planted: b.planted,
+                        blows_in: b.blows_in,
                         charge: b.charge.map(|(bounds, model)| BombView {
                             origin: model,
                             aim: mid(bounds),
