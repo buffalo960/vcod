@@ -1631,9 +1631,38 @@ runs lie 1.1 units apart.
       at the seat: the offset is not ported (it moves the link box and
       what links to him, never the rays or the snapshot).
     - The 400 ms after a seat change also part. Retail's bones glide to
-      the new seat over eight frames, the same pose twice every other
-      frame; ours arrive in four (up to 6 units apart on the way)
-      (VERIFIED, `tank` run). Not traced.
+      the new seat over eight frames; ours arrived in four (up to 6 units
+      apart on the way) (VERIFIED, `tank` run). The cause is the setter
+      (UO 0x2ce5f, 1.5b 0x28ced): when the legs anim changes crouch or
+      prone class (`BG_IsCrouchingAnim` 0x2cdac, movetype mask 0xc4;
+      `BG_IsProneAnim` 0x2ce04, 0x308) it stores `bg.time + 400` in the
+      client info (`ci+0x4c0`, 1.5b `ci+0x4a4`), and every later blend of
+      either channel is at least what is left of that. Its other floors are 1.1's, without 1.1's
+      200/250 stance rule (VERIFIED decompile). 1.1d has no such window
+      (no `bg.time + 400` store in the `game.mp.i386.so` decompile,
+      VERIFIED decompile). The gunner's
+      `standMG42` legs are of another class than a seat's, so a change
+      in or out of seat 2 blends over 400 ms. vcod ports it
+      (`animclock::ChannelClock::update_windowed`, the server's 1.5 and
+      UO end frames). Measured 2026-10-17 (retail UO 1.51b, `tank` run
+      on port 32775, `probe_bones 1`): the change into the gunner's seat
+      now matches retail's every frame within 0.21, but for one frame
+      where retail repeats the last pose (41850); the change back into
+      the driver's takes eight frames on both, but ours dips up to 3.5
+      units below retail's path (VERIFIED, replay). Not traced: a blend
+      out of a node the first change's window still held, or the fading
+      clips' order.
+    - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
+      fresh retail jeep run (seat changes at 41550 and 53550, port
+      32776) meets the passenger's stint up to 1.07 off ours, where the
+      committed fixture (changes at 41500 and 53500) matches at 0.00.
+      Starting the clips of an end frame that changes the torso anim a
+      frame ahead, as a spawn's, matches the fresh run at 0.01 and puts
+      the fixture's 0.57 off (VERIFIED, replay). Some rebuild inside the
+      thread pass decides it, which neither rule names; not ported.
+      A delayed `wait 0.1` thread of `maps/mp/_jeepdrive_gmi.gsc`
+      (`delayed_process_activate`) runs on every seat change and is a
+      candidate (INFERRED).
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
   within a quarter unit, the stints after the gunner's seat included.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
