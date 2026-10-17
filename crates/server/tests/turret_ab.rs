@@ -1368,8 +1368,19 @@ const FIXTURE_VICTIM_UO: &str = concat!(
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim-uo.txt"
 );
 const LATE_VICTIM: &[i32] = &[];
-const LATE_VICTIM_15: &[i32] = &[];
+/// The sweep's cmd 19985 (sent at ms 1733) still reads in the view of
+/// snapshot 20000, which shows cmd 19969's -141 (turrets doc 13.3).
+const LATE_VICTIM_15: &[i32] = &[19985];
 const LATE_VICTIM_UO: &[i32] = &[];
+/// Cmds stamped at or past a snapshot's time whose view that snapshot
+/// already shows (turrets doc 13.3), keyed by the probe's send `ms`
+/// because the probe's clock repeats a stamp: 1.5b's first cmd 23550 and
+/// first 23750, whose pitches -32 and -8 the snapshots at 23550 and 23750
+/// read.
+const EARLY_VICTIM_15: &[i32] = &[5284, 5483];
+/// The same on UO: cmd 20651 (145 at snapshot 20650) and the first 25150
+/// (pitch 4 at 25150).
+const EARLY_VICTIM_UO: &[i32] = &[1077, 5576];
 const GAPS_VICTIM: &[(&str, &str)] = &[];
 /// [`GAPS`] for the `-victim-15` capture: the wounding round.
 const GAPS_VICTIM_15: &[(&str, &str)] = &[
@@ -1504,6 +1515,8 @@ fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 struct RetailCmd {
     st: i32,
+    /// The probe's clock when it sent the cmd; unlike `st`, never repeats.
+    ms: i32,
     /// With the wire angles, as retail's server received them.
     cmd: UserCmd,
 }
@@ -1511,6 +1524,9 @@ struct RetailCmd {
 struct Capture {
     /// The cmds that reached the server a frame late (see [`LATE`]).
     late: &'static [i32],
+    /// The cmds, by send `ms`, that reached the server a frame early (see
+    /// [`EARLY_VICTIM_15`]).
+    early: &'static [i32],
     weapon: String,
     gun: u32,
     cmds: Vec<RetailCmd>,
@@ -1547,6 +1563,7 @@ fn parse(text: &str) -> Capture {
             let i = |k: &str| m[k].parse::<i32>().unwrap();
             cmds.push(RetailCmd {
                 st: i("st"),
+                ms: i("ms"),
                 cmd: UserCmd {
                     buttons: i("buttons") as u8,
                     wbuttons: i("wbuttons") as u8,
@@ -1633,6 +1650,7 @@ fn parse(text: &str) -> Capture {
     }
     Capture {
         late: &[],
+        early: &[],
         weapon,
         gun,
         cmds,
@@ -1677,10 +1695,12 @@ fn rig_on(cap: &Capture, fs: Pk3Fs, p: &'static Protocol, rebase_max: f32) -> Op
 }
 
 /// The retail snapshot a cmd's effect first shows in.
-fn frame_of(cap: &Capture, st: i32) -> Option<i32> {
-    let t = cap.traces.iter().map(|(_, s)| s.t).find(|&t| st < t)?;
-    Some(if cap.late.contains(&st) {
+fn frame_of(cap: &Capture, c: &RetailCmd) -> Option<i32> {
+    let t = cap.traces.iter().map(|(_, s)| s.t).find(|&t| c.st < t)?;
+    Some(if cap.late.contains(&c.st) {
         t + FRAME_MS as i32
+    } else if cap.early.contains(&c.ms) {
+        t - FRAME_MS as i32
     } else {
         t
     })
@@ -1706,7 +1726,7 @@ fn replay(rig: &mut Rig, cap: &Capture) -> Vec<Sample> {
         let batch: Vec<(i64, UserCmd)> = cap
             .cmds
             .iter()
-            .filter(|c| frame_of(cap, c.st) == Some(t))
+            .filter(|c| frame_of(cap, c) == Some(t))
             .map(|c| {
                 let mut cmd = UserCmd { weapon, ..c.cmd };
                 for i in 0..3 {
@@ -1969,7 +1989,7 @@ fn the_mount_sweep_fire_and_release_match_uo_on_mp_carentan() {
 /// victim captures show there is in `cod11-turrets.md` 13.1 and 14.8).
 fn victim_rows(rows: Vec<String>) -> Vec<String> {
     rows.into_iter()
-        .filter(|r| r.starts_with("[fire]") || r.starts_with("[target]"))
+        .filter(|r| std::env::var("ALLROWS").is_ok() || r.starts_with("[fire]") || r.starts_with("[target]"))
         .collect()
 }
 
@@ -2005,6 +2025,7 @@ fn the_victim_capture_matches_15b_on_mp_carentan() {
     }
     let cap = Capture {
         late: LATE_VICTIM_15,
+        early: EARLY_VICTIM_15,
         ..parse(&read(FIXTURE_VICTIM_15))
     };
     let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V6, REBASE_MAX_VICTIM) else {
@@ -2023,6 +2044,7 @@ fn the_victim_capture_matches_uo_on_mp_carentan() {
     };
     let cap = Capture {
         late: LATE_VICTIM_UO,
+        early: EARLY_VICTIM_UO,
         ..parse(&read(FIXTURE_VICTIM_UO))
     };
     let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V22, REBASE_MAX_VICTIM) else {
