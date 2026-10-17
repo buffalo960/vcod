@@ -815,6 +815,45 @@ recompiles.
 
 ---
 
+### 4.8 The script's random draws start over at every load
+
+VERIFIED, `game.mp.i386.so` 1.1d: `randomInt` (builtin 0x5e470) is
+`irand(0, n)` (0x3d47c) and `randomFloat` (0x5e4bc) `flrand(0, f)`
+(0x3d43c). Both step one 32-bit state at 0x7dcd8 as `s = s * 0x343fd +
+0x269ec3` and draw its bits 17..31, `irand` as `min + (r * (max - min) >>
+15)`. VERIFIED: `G_InitGame` (0x4fb14) calls `srand(randomSeed)` at
+0x4fb63 and then `Rand_Init(trap_Milliseconds())` at 0x4fb6e..0x4fb74;
+`Rand_Init` (0x3d42c) only stores its argument into 0x7dcd8. VERIFIED, the
+same three calls in 1.5b (`G_InitGame` 0x4f10a: `srand` 0x4f168,
+`trap_Milliseconds` 0x4f16d, `Rand_Init` 0x4f175; `randomInt` 0x5f6a8 calls
+`irand` 0x38153 at 0x5f702) and UO 1.51b (`G_InitGame` 0x586cf: 0x5872d,
+0x58732, 0x5873a; `randomInt` 0x6b397 calls `irand` 0x3f3a3 at 0x6b3f1),
+with the same constants in `irand`. VERIFIED, `cod_lnxded` 1.1d: both
+`G_InitGame` calls (3 step 19 at 0x808919f, 4.1 at 0x80893b0) pass the
+return of 0x806d988 as `randomSeed`, a function that drains the event
+queue at 0x8112040 and returns the last event's time. INFERRED, off that
+shape against Q3's: it is `Com_Milliseconds`, the `srand` seed feeds only
+libc `rand()`, which `randomInt` does not read.
+
+So a script's draws are neither carried across a level boundary nor
+repeated: every `G_InitGame`, a `map_restart` included, seeds them from the
+wall clock. VERIFIED, `crates/server/tests/fixtures/gametypes/mp_cassino-hqtime-*-uo.txt`:
+the level after the time limit's restart shows a different hq radio from
+the first (coduo-diff.md 22).
+
+As implemented: `Server::with_seed`, which the binary calls with the wall
+clock, keeps a level seed that seeds `GameHost::rng` at each load through
+`Carry::seed` and steps after it, so every level, restarts included, draws
+anew. `Server::new` hands no seed and every level draws from `RNG_SEED`:
+the tests' spawn picks hold on every level, and the UO `gametypes_ab`
+probes that restart (`tdmend`, `ctftime`, `bas`, `bastime`, `basend`) need
+that. Their second level's spawns and facings matched retail's one capture
+only because ours repeated the first level's draws, and five of them fail
+under a stepped seed. vcod keeps its xorshift generator, not `irand`'s LCG;
+the missiles' tumble keeps its own state, reset at every load
+(`Missiles::rng`). `server.rs`'s `a_restart_reseeds_the_script_draws`
+fails without the seed.
+
 ## 5. `SV_MapRotate_f` and the rotation grammar
 
 My name for `cod_lnxded` `0x80840c8`. VERIFIED: registered as the console
