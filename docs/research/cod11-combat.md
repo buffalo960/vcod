@@ -1154,29 +1154,64 @@ byte +0x2e is set. The floor is 8 (0xb5f90). VERIFIED. INFERRED: byte
 `FireWeapon` (0x8bd05) and `FireWeaponMelee` (0x8bef7) call it as 1.5's
 do. VERIFIED.
 
-**Measured.** `mp_carentan-scriptmodel-throw-1.5.txt` (2026-10-16, 1.5b,
-the prone part with the thrower's origin logged as each frag shows): the
-thrower slid from the site to (1368.03, 2608.14, -23.8748) and both frags
-leave from (1368.034, 2608.136, 36.125), z bits 0x4210803a: his origin
-plus 60, nothing truncated. VERIFIED (capture). The earlier
+**Measured.** `mp_carentan-scriptmodel-throw-1.5.txt` (2026-10-17, 1.5b,
+the prone part with the thrower's origin logged every frame of his first
+second and as each frag shows): the thrower slid from the site to
+(1368.0339, 2608.136, -23.874777) and both frags leave from (1368.034,
+2608.136, 36.125), z bits 0x4210803a: his origin plus 60, nothing
+truncated. VERIFIED (capture). The earlier
 `mp_carentan-scriptmodel-prone-1.5.txt` throws left from (1368, 2608,
 36.148) on the same site, so that thrower's feet stood at -23.852 (where
 1.1d's point is 37.0); INFERRED, off the rule. UO's
-`mp_carentan-scriptmodel-throw-uo.txt` (1.51b): the thrower stays at
-(1368, 2608, -23.875) and both frags leave from z bits 0x42108002, 36.125
-and two float steps. VERIFIED (capture). The two steps are not explained:
-a standing thrower's bob is zero by the rule above.
+`mp_carentan-scriptmodel-throw-uo.txt` (1.51b, 2026-10-17): the thrower
+slid to (1368.204, 2608.102, -23.874743) and both frags leave from z bits
+0x42108044, the float of his z plus 60. VERIFIED (capture). The capture
+it replaced read the thrower at (1368, 2608, -23.875) and its frags at z
+0x42108002, 36.125 and two float steps; INFERRED: his z was -23.874992,
+which six significant digits print as -23.875, since the replacement's
+frags leave on the float of his z plus 60.
+
+**The thrower's slide.** VERIFIED, `game.mp.i386.so` 1.5b player
+`setOrigin` (0x3e148) and UO 1.51b's (0x467a4): unlink, `ps.origin` set
+to the argument, z plus the rodata constant, `eFlags` 0x8 flipped,
+`BG_PlayerStateToEntityState`, `r.currentOrigin` copied, link. Neither
+writes `ps.velocity`. VERIFIED, live (1.5b and UO 1.51b, 2026-10-17,
+`client-probes/probe_scriptmodel` prone part, eight 1.5b and ten UO
+runs, the thrower probe's snapshots logged with velocity and
+`commandTime` and its cmd times): a thrower `spawn`ed on 1.5b's tdm
+point at (976, -864) leaves the spawn's think at (976.016, -863.939,
+-5.89044) on its grade moving (1, 4, 0) on the ground; UO's at (976,
+-792) leaves at (976.077, -791.959, -4.50126) moving (6, 3, -1). The
+script's `setOrigin` onto the site that frame (z -22.75, a unit and an
+eighth over the floor) keeps the velocity. The net probe sends its cmds
+16 or 17 ms apart from each snapshot's time (12000, 12016, 12032 before
+the 12050 frame), so the next frame's `commandTime` is 12032 and he has
+fallen 32 ms, 0.6 off the site; the script's `distance > 0.5` check sets
+him back on it with the velocity, now (1, 4, -26), and the next frame's
+cmds land him at (1368.0339, 2608.136, -23.874777) on 1.5b and (1368.204,
+2608.102, -23.874743) on UO, where friction stops him. A spawn that lands
+still (1.5b's (1080, 3488), UO's (1800, 2696) and others) puts him at
+(1368, 2608, -23.852). INFERRED: the slide is the spawn's landing
+velocity carried through `setOrigin`; how far it carries rides the
+client's cmd times against the frame, and which spawn the clock-seeded
+pick took (`cod11-map-cycle.md` 4.8). Ours' 1.5 and UO pmove match it to
+the float: the earlier 0.25 (1.5) and 0.35 (UO) against retail's 0.14
+and none were the gate's even 16 ms cmds running 48 ms into the first
+frame, and a different spawn on UO.
 
 **As implemented.** `combat::muzzle_point_in` takes the 1.5 path for
 `MoveRules::V1_5` and `Uo` (`aim::add_muzzle_bob` for the bob at the game
 module's float precision; the bipod trace against the world only, the
 entities it would meet not modelled). `scriptmodel_ab`'s
 `a_frag_leaves_15s_untruncated_muzzle` and
-`a_frag_leaves_uos_untruncated_muzzle` replay the two captures: each
-side's start is its own thrower's origin plus 60, ours within 0.5 of
-retail's (ours' thrower slides 0.25 on 1.5's rules and 0.35 on UO's,
-where retail's slides 0.14 and not at all). Not measured live: a moving
-or leaning 1.5 or UO shot, a rider's shot and the bipod trace.
+`a_frag_leaves_uos_untruncated_muzzle` replay the two captures with the
+thrower pinned to the spawn point under retail's first `PROBE thrower`
+line (dropped as `placeSpawnpoint` drops it) and sending the net probe's
+cmds (`ProbeHold::framed`): every frame of his first second sits on
+retail's float, and both frags leave from retail's point bit for bit.
+The prone-back gates pin the thrower the same way, to the spawn their
+capture's `PROBE shooter` line implies. Not measured live: a moving or
+leaning 1.5 or UO shot, a rider's shot and the bipod trace.
 
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is
 `ps->aimSpreadScale / 255.0`. INFERRED: it is computed once a frame, since
