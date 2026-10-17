@@ -445,13 +445,17 @@ pub fn seat_inputs(
 /// no longer set lands on 0 at the next frame's step
 /// (docs/research/coduo-vehicles.md 11.4, cod11-movers.md 15 "The weight
 /// ramp"). The cgame's copy sets its goals over one frame, so a drawn rider
-/// plays the goal weights.
+/// plays the goal weights. The node a seat change leaves keeps its leaves:
+/// nothing clears them, and the old legs clip fades out on them
+/// (coduo-vehicles.md 13, "The glide back").
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SeatRamp {
     node: Option<usize>,
     /// Leaf, weight at `start_ms`, goal, and the ms to reach it.
     leaves: Vec<(usize, f32, f32, f32)>,
     start_ms: i32,
+    /// The ramp of the node last left, its own `held` dropped.
+    held: Option<Box<SeatRamp>>,
 }
 
 /// `G_PlayerVehiclePositionAndBlend`'s goal time, `1 / 10` s (0xa7b28 is
@@ -475,8 +479,14 @@ impl SeatRamp {
     /// One end frame's goals at `now_ms`: [`seat_inputs`]' node and leaves,
     /// `None` for a body with no seat blend.
     pub fn set(&mut self, goal: Option<(usize, Vec<(usize, f32)>)>, now_ms: i32) {
+        if self.node.is_some() && goal.as_ref().map(|g| g.0) != self.node {
+            let mut left = std::mem::take(self);
+            left.held = None;
+            self.held = Some(Box::new(left));
+        }
         let Some((node, goal)) = goal else {
-            *self = SeatRamp::default();
+            self.node = None;
+            self.leaves.clear();
             return;
         };
         if self.node != Some(node) {
@@ -485,6 +495,9 @@ impl SeatRamp {
             self.node = Some(node);
             self.leaves = goal.iter().map(|&(l, w)| (l, w, w, 0.0)).collect();
             self.start_ms = now_ms;
+            if self.held.as_ref().is_some_and(|h| h.node == Some(node)) {
+                self.held = None;
+            }
             return;
         }
         let mut next: Vec<(usize, f32, f32, f32)> = Vec::new();
@@ -514,17 +527,22 @@ impl SeatRamp {
         self.start_ms = now_ms;
     }
 
-    /// The node and the leaves' weights at `now_ms`, as
-    /// [`PoseInputs::seat_leaves`] takes them.
-    pub fn at(&self, now_ms: i32) -> Option<(usize, Vec<(usize, f32)>)> {
-        let node = self.node?;
-        Some((
-            node,
-            (0..self.leaves.len())
-                .map(|i| (self.leaves[i].0, self.weight(i, now_ms)))
-                .filter(|&(_, w)| w > 0.0)
-                .collect(),
-        ))
+    /// The node and the leaves' weights at `now_ms`, then the node last
+    /// left's, as [`PoseInputs::seat_leaves`] takes them; empty for a ramp
+    /// never set.
+    pub fn at(&self, now_ms: i32) -> Vec<(usize, Vec<(usize, f32)>)> {
+        let own = self.node.map(|node| {
+            (
+                node,
+                (0..self.leaves.len())
+                    .map(|i| (self.leaves[i].0, self.weight(i, now_ms)))
+                    .filter(|&(_, w)| w > 0.0)
+                    .collect(),
+            )
+        });
+        own.into_iter()
+            .chain(self.held.iter().flat_map(|h| h.at(now_ms)))
+            .collect()
     }
 }
 
@@ -906,10 +924,12 @@ pub struct PoseInputs<'a> {
     pub turret_leaves: Option<&'a [(usize, f32)]>,
     /// `None` for a mounted or dead body.
     pub controllers: Option<Controllers>,
-    /// A UO rider's [`seat_leaves`]: the node they were set under and the
-    /// leaves with their weights, played in place of any layer of either
-    /// channel on that node (the torso of a `both` anim shares it).
-    pub seat_leaves: Option<(usize, Vec<(usize, f32)>)>,
+    /// A UO rider's [`seat_leaves`]: each node they were set under with its
+    /// leaves and their weights, played in place of any layer of either
+    /// channel on that node (the torso of a `both` anim shares it). The
+    /// current seat's comes first, then the node a seat change left, which
+    /// the old legs clip fades out on.
+    pub seat_leaves: Vec<(usize, Vec<(usize, f32)>)>,
 }
 
 /// The legs and torso clips as the tree walk blends `main`'s two nodes
@@ -975,9 +995,8 @@ fn layer_clips(
 ) -> Vec<(Rc<XAnim>, f32, f32)> {
     let mut out = Vec::new();
     for l in layers {
-        if let Some((node, leaves)) = &inputs.seat_leaves
-            && inputs.anims.index.node_id(l.index) == Some(*node)
-        {
+        let node = inputs.anims.index.node_id(l.index);
+        if let Some((_, leaves)) = inputs.seat_leaves.iter().find(|(n, _)| Some(*n) == node) {
             for &(leaf, w) in leaves {
                 if let Some(anim) = clip(&inputs.anims.tree.nodes[leaf].name) {
                     let frame = anim.frame_pos(l.seconds, anim.looping);
@@ -1508,11 +1527,10 @@ main
     fn the_seat_blend_ramps_over_100_ms() {
         let mut r = SeatRamp::default();
         r.set(Some((7, vec![(1, 1.0)])), 1000);
-        assert_eq!(r.at(1000), Some((7, vec![(1, 1.0)])));
+        assert_eq!(r.at(1000), vec![(7, vec![(1, 1.0)])]);
         r.set(Some((7, vec![(1, 0.6), (2, 0.4)])), 1050);
         let w = |r: &SeatRamp, t: i32, leaf: usize| {
-            r.at(t)
-                .unwrap()
+            r.at(t)[0]
                 .1
                 .iter()
                 .find(|&&(l, _)| l == leaf)
@@ -1525,9 +1543,22 @@ main
         assert!((w(&r, 1100, 2) - 0.2).abs() < 0.001, "held until the step");
         assert_eq!(w(&r, 1150, 2), 0.0);
         r.set(Some((9, vec![(4, 1.0)])), 1150);
-        assert_eq!(r.at(1150), Some((9, vec![(4, 1.0)])));
+        let at = r.at(1150);
+        assert_eq!(at[0], (9, vec![(4, 1.0)]));
+        let (node, left) = &at[1];
+        assert_eq!(*node, 7, "the node left keeps its leaves");
+        assert!(
+            near(left[0].1, 0.7) && (left[1].1 - 0.2).abs() < 0.001,
+            "{left:?}"
+        );
         r.set(None, 1200);
-        assert_eq!(r.at(1200), None);
+        assert_eq!(r.at(1200), vec![(9, vec![(4, 1.0)])]);
+        r.set(Some((9, vec![(4, 1.0)])), 1250);
+        assert_eq!(
+            r.at(1250),
+            vec![(9, vec![(4, 1.0)])],
+            "back on it, held no more"
+        );
     }
 
     /// Prone halves (down) or quarters (up) the torso pitch onto `back_up`

@@ -19,7 +19,8 @@
 //!
 //! `ARMOR_REPORT=1` prints both logs; in the silhouette runs
 //! `ARMOR_BONES=1` adds the probe's `probe_bones` lines, `ARMOR_FIXTURE=<path>`
-//! replays another capture's seat times and `ARMOR_LATE=<ms>` its join.
+//! replays another capture's seat times, joining as much later as its
+//! placement came, and `ARMOR_LATE=<ms>` overrides that join.
 //! Needs `COD_DIR` at a UO install; without one it returns early.
 
 mod common;
@@ -60,11 +61,7 @@ const SIT: Schedule = [
 /// the retail client's commands landed a frame off [`SIT`]'s.
 fn schedule_of(fixture: &str) -> Schedule {
     let time = |l: &str| l.split(' ').nth(2).and_then(|t| t.parse::<i64>().ok());
-    let place = fixture
-        .lines()
-        .find(|l| l.starts_with("PROBE place ") && l.split(' ').nth(3) == Some("0"))
-        .and_then(time)
-        .expect("the target's placement");
+    let place = place_of(fixture);
     let seats: Vec<i64> = fixture
         .lines()
         .filter(|l| l.starts_with("PROBE seat "))
@@ -77,6 +74,15 @@ fn schedule_of(fixture: &str) -> Schedule {
         .find_map(time)
         .expect("the exit");
     [seats[0], seats[1], seats[2], out].map(|t| t - place)
+}
+
+/// The level time of the target's `PROBE place` line.
+fn place_of(fixture: &str) -> i64 {
+    fixture
+        .lines()
+        .find(|l| l.starts_with("PROBE place ") && l.split(' ').nth(3) == Some("0"))
+        .and_then(|l| l.split(' ').nth(2)?.parse().ok())
+        .expect("the target's placement")
 }
 
 /// Hits by (phase, seat): `phase` counts the rider's seat changes, so a
@@ -584,6 +590,12 @@ fn silhouettes(map: &str, vehicletype: &str, fixture: &str, late_ms: i64) {
     let alt = std::env::var("ARMOR_FIXTURE")
         .ok()
         .map(|p| std::fs::read_to_string(p).unwrap());
+    // Another capture's target joined on its own level time: shift the
+    // join by its placement's, or every clip runs off retail's phase.
+    let late_ms = late_ms
+        + alt
+            .as_deref()
+            .map_or(0, |a| place_of(a) - place_of(fixture));
     let fixture = alt.as_deref().unwrap_or(fixture);
     let late_ms = std::env::var("ARMOR_LATE").map_or(late_ms, |v| v.parse().unwrap());
     let Some(log) = ours_after(
@@ -620,6 +632,90 @@ fn the_tank_gunner_meets_the_rays_where_retails_does() {
         include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt"),
         LATE_MS,
     );
+}
+
+/// Each `PROBE bone` line's tag position by (time, tag).
+fn bones(log: &[String]) -> BTreeMap<(i32, String), [f32; 3]> {
+    let mut out = BTreeMap::new();
+    for l in log {
+        let Some(rest) = l.trim().strip_prefix("PROBE bone ") else {
+            continue;
+        };
+        let (head, v) = rest.split_once(" (").unwrap();
+        let t: Vec<&str> = head.splitn(4, ' ').collect();
+        let v: Vec<f32> = v
+            .trim_end_matches(')')
+            .split(", ")
+            .map(|x| x.parse().unwrap())
+            .collect();
+        out.insert(
+            (t[0].parse().unwrap(), t[3].to_string()),
+            [v[0], v[1], v[2]],
+        );
+    }
+    out
+}
+
+/// Bones of the tank glide that part from retail's, by time and tag (`""`
+/// for every tag), with why (docs/research/coduo-vehicles.md 13, "The
+/// glide back").
+const GLIDE_GAPS: &[(i32, &str, &str)] = &[
+    // `G_RunClient` re-reads a linked rider's `r.currentOrigin` off his
+    // link every entity pass; ours links the probe's marks to the change's
+    // placement, 21 units up, for one frame.
+    (53900, "", "the rider's fixed link"),
+    // The neck and head controls ease from 0 after the change; retail's
+    // head is 0.34 further along on the second frame.
+    (54000, "bip01 head", "the head control's first steps"),
+    // A `bulletTrace` in the first thread pass (the profile at 54050, the
+    // aim sweep at 54200) stamps the body's bones under the frame's DObj
+    // stamp, so retail's link pass reads the last frame's pose; ours'
+    // trace stamps nothing (cod11-movers.md 15).
+    (54100, "", "a thread trace's stamp"),
+    (54250, "", "a thread trace's stamp"),
+];
+
+/// The tank rider back from the gunner's seat into the driver's: his legs
+/// blend `standMG42_aim` out over the stance window's 400 ms, on the leaf
+/// the gunner's seat blend left at full weight, not the one the aim group
+/// descends to by the view's pitch. Every bone of the glide within 0.02 of
+/// retail's, but for [`GLIDE_GAPS`].
+#[test]
+fn the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail() {
+    let fixture = include_str!("fixtures/vehicles/mp_cassino-tank-glide-uo.txt");
+    let silhouette = include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt");
+    let late_ms = LATE_MS + place_of(fixture) - place_of(silhouette);
+    let cvars = [
+        ("probe_aim_sweep", "1"),
+        ("probe_profile", "1"),
+        ("probe_bones", "1"),
+    ];
+    let Some(log) = ours_after(
+        "mp_cassino",
+        "panzeriv_mp",
+        &cvars,
+        true,
+        late_ms,
+        Some(schedule_of(fixture)),
+    ) else {
+        return;
+    };
+    let retail = bones(&fixture.lines().map(str::to_string).collect::<Vec<_>>());
+    let ours = bones(&log);
+    let gap = |t: i32, tag: &str| {
+        GLIDE_GAPS
+            .iter()
+            .any(|&(gt, gtag, _)| gt == t && (gtag.is_empty() || gtag == tag))
+    };
+    let mut misses = Vec::new();
+    for ((t, tag), r) in &retail {
+        let o = ours.get(&(*t, tag.clone()));
+        let close = o.is_some_and(|o| (0..3).all(|i| (r[i] - o[i]).abs() <= 0.02));
+        if !close && !gap(*t, tag) {
+            misses.push(format!("{t} {tag}: retail {r:?}, ours {o:?}"));
+        }
+    }
+    assert!(misses.is_empty(), "{}", misses.join("\n"));
 }
 
 /// Every profile of a target that never boards, ray for ray at the

@@ -811,6 +811,57 @@ struct EntityAnim {
     body: BodyAngles,
     /// 1.5's and UO's controls as eased so far (cgame uo 0x30005730).
     controls: Option<Controllers>,
+    /// 1.5's and UO's stance window (`ci+0x4a4` 1.5b, `ci+0x4c0` UO):
+    /// `animclock::ChannelClock::update_windowed`.
+    stance_window_ms: i32,
+    seat: SeatLeaves,
+}
+
+/// The cgame's two channel updates (0x30003be0; 1.5 0x30003870 and UO
+/// 0x30003a90 under the stance window, coduo-vehicles.md 13).
+fn update_channels(
+    (legs, torso, window): (&mut ChannelClock, &mut ChannelClock, &mut i32),
+    anims: &PlayerAnims,
+    rules: MoveRules,
+    (legs_wire, torso_wire): (i32, i32),
+    seen: &Seen,
+    at: Times,
+) {
+    if rules == MoveRules::V1_1 {
+        legs.update(anims, true, legs_wire, seen, at);
+        torso.update(anims, false, torso_wire, seen, at);
+    } else {
+        legs.update_windowed(anims, true, legs_wire, seen, at, window);
+        torso.update_windowed(anims, false, torso_wire, seen, at, window);
+    }
+}
+
+/// A rider's seat node and leaves this frame, and those of the node the
+/// last seat change left.
+#[derive(Clone, Default)]
+struct SeatLeaves {
+    goal: Option<(usize, Vec<(usize, f32)>)>,
+    left: Option<(usize, Vec<(usize, f32)>)>,
+}
+
+impl SeatLeaves {
+    /// This frame's seat goal, then the leaves of the node the last seat
+    /// change left, which the old legs clip fades out on: nothing in the
+    /// cgame clears them (coduo-vehicles.md 13, "The glide back").
+    fn next(
+        &mut self,
+        goal: Option<(usize, Vec<(usize, f32)>)>,
+    ) -> Vec<(usize, Vec<(usize, f32)>)> {
+        let node = goal.as_ref().map(|g| g.0);
+        if self.goal.as_ref().map(|g| g.0) != node {
+            self.left = self.goal.take();
+        }
+        if self.left.as_ref().is_some_and(|g| Some(g.0) == node) {
+            self.left = None;
+        }
+        self.goal = goal.clone();
+        goal.into_iter().chain(self.left.clone()).collect()
+    }
 }
 
 impl EntityAnim {
@@ -824,6 +875,8 @@ impl EntityAnim {
             visual: EntityVisual::None,
             body: BodyAngles::default(),
             controls: None,
+            stance_window_ms: 0,
+            seat: SeatLeaves::default(),
         }
     }
 }
@@ -1584,6 +1637,8 @@ pub fn build_instances(
                         visual: EntityVisual::None,
                         body: st.body,
                         controls: st.controls,
+                        stance_window_ms: st.stance_window_ms,
+                        seat: st.seat.clone(),
                     };
                 }
                 st.visual = roster_visual;
@@ -1625,8 +1680,8 @@ pub fn build_instances(
                         ),
                         eflags,
                     };
-                    st.legs.update(anims, true, legs_wire, &seen, at);
-                    st.torso.update(anims, false, torso_wire, &seen, at);
+                    let channels = (&mut st.legs, &mut st.torso, &mut st.stance_window_ms);
+                    update_channels(channels, anims, rules, (legs_wire, torso_wire), &seen, at);
 
                     // Corpses keep their death-clip pose; their aim fields are
                     // stale and would twist the body forever. A gunner runs no
@@ -1673,6 +1728,9 @@ pub fn build_instances(
                     // the goal weights on the gunner's own tree); an MG42 aim
                     // group descends by the torso pitch with no yaw, which
                     // the wire does not carry.
+                    let goal = rider
+                        .as_ref()
+                        .and_then(|seat| seat_inputs(anims, legs_wire, seat));
                     let inputs = PoseInputs {
                         anims,
                         legs: legs_wire,
@@ -1682,9 +1740,7 @@ pub fn build_instances(
                         nodes: st.torso.node_weights(render_time),
                         group_pitch: pitch,
                         turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
-                        seat_leaves: rider
-                            .as_ref()
-                            .and_then(|seat| seat_inputs(anims, legs_wire, seat)),
+                        seat_leaves: st.seat.next(goal),
                         controllers,
                     };
                     st.pose = pose_player(&assembly.skeleton, &inputs, |n| load_clip(clips, fs, n));
@@ -2119,6 +2175,72 @@ mod tests {
             let model = static_item_model(p, index).expect("a static item row");
             xmodel::load(&fs, model).unwrap_or_else(|e| panic!("{model}: {e:#}"));
         }
+    }
+
+    /// A seat change keeps the leaves of the node it left beside the new
+    /// seat's, until the rider is back on that node.
+    #[test]
+    fn a_seat_change_keeps_the_left_nodes_leaves() {
+        let mut s = SeatLeaves::default();
+        let gunner = (248, vec![(261, 1.0)]);
+        assert_eq!(s.next(Some(gunner.clone())), vec![gunner.clone()]);
+        assert_eq!(
+            s.next(None),
+            vec![gunner.clone()],
+            "the driver's seat has none"
+        );
+        assert_eq!(s.next(None), vec![gunner.clone()]);
+        let jeep = (273, vec![(276, 1.0)]);
+        assert_eq!(
+            s.next(Some(jeep.clone())),
+            vec![jeep.clone()],
+            "the left node moves on"
+        );
+        assert_eq!(s.next(Some(gunner.clone())), vec![gunner.clone(), jeep]);
+        assert_eq!(
+            s.next(Some(gunner.clone())),
+            vec![gunner.clone(), (273, vec![(276, 1.0)])]
+        );
+    }
+
+    /// On 1.5 and UO a drawn body's crouch stretches the torso's next
+    /// blend to what is left of 400 ms, as the server's does; 1.1's
+    /// setter keeps the fire anim's own.
+    #[test]
+    fn a_drawn_crouch_stretches_the_next_blend_off_1_1() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let (stand, crouch) = (
+            anims.wire_of("pb_stand_alert").unwrap(),
+            anims.wire_of("pb_crouch_alert").unwrap(),
+        );
+        // The first `fireweapon` torso anim, which carries its own 30 ms.
+        let block = anims.script.event("fireweapon").unwrap();
+        let name = &block
+            .clauses
+            .iter()
+            .flat_map(|c| &c.torso)
+            .next()
+            .unwrap()
+            .name;
+        let fire = anims.wire_of(name).unwrap();
+        let seen = Seen {
+            client_num: 0,
+            tr_base: Vec3::ZERO,
+            eflags: 0,
+        };
+        let torso_weight = |rules| {
+            let (mut legs, mut torso, mut window) = Default::default();
+            for (t, l, tr) in [(1000, stand, 0), (2000, crouch, 0), (2100, crouch, fire)] {
+                let ch = (&mut legs, &mut torso, &mut window);
+                update_channels(ch, &anims, rules, (l, tr), &seen, Times::end_frame(t));
+            }
+            torso.layers(2150).last().unwrap().weight
+        };
+        assert!((torso_weight(MoveRules::V1_1) - 1.0).abs() < 1e-6);
+        assert!((torso_weight(MoveRules::V1_5) - 50.0 / 300.0).abs() < 1e-3);
     }
 
     #[test]
@@ -2707,7 +2829,15 @@ mod tests {
                         assert!(near(a, b), "{client:?} {c:?}");
                     }
                     let leaves = seat_inputs(&anims, legs, &drawn);
-                    assert_eq!(leaves, server.seat_leaves);
+                    // The server's list carries the node a seat change left
+                    // after this seat's.
+                    match &leaves {
+                        Some(l) => assert_eq!(server.seat_leaves.first(), Some(l)),
+                        None => {
+                            let node = anims.index.node_id(legs);
+                            assert!(server.seat_leaves.iter().all(|l| Some(l.0) != node));
+                        }
+                    }
                     *seats
                         .entry((v.pose.kind, seat, leaves.is_some()))
                         .or_insert(0) += 1;
