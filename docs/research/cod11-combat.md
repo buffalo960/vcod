@@ -2392,7 +2392,7 @@ every cell counted, not only those past 0.5):
   blends in from no weight starts its clock a frame after the end frame
   that set it, when its node first has weight; one set at full weight does
   not (a spawn's idle, `cod11-turrets.md` 13.6, matches to 0.001 with no
-  shift on 1.1d). Not ported: it moves every blended clip on every patch,
+  shift on 1.1d; UO's runs a frame ahead for another reason, 13.7). Not ported: it moves every blended clip on every patch,
   and the 0.01 to 0.04 still left on standing cells, where prone reads
   0.0002, says the rule is not whole yet.
 - UO's run of the probe also reads its leaning phases 0.4 to 12 units off

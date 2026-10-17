@@ -15,6 +15,7 @@ main()
 	thread watch_pose();
 	thread watch_respawn();
 	thread watch_hitlog();
+	thread watch_spawns();
 	maps\mp\gametypes\dm::main();
 }
 
@@ -92,6 +93,9 @@ try_place(gun)
 	if (isdefined(self.probe_placed))
 		return;
 	self.probe_placed = 1;
+	//	The spawn point the stock spawnPlayer picked, which a replay pins.
+	if (getcvar("probe_spawnlog") == "1")
+		logPrint("PROBE spawnat " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
 	fwd = anglestoforward(gun.angles);
 	if (self.pers["team"] == "allies")
 	{
@@ -103,12 +107,52 @@ try_place(gun)
 		spot = gun.origin + (fwd[0] * 300, fwd[1] * 300, 0);
 		yaw = gun.angles[1] + 180;
 	}
+	//	With `probe_ground 1` the axis player lands on the ground under the
+	//	spot instead of falling onto it.
+	if (self.pers["team"] == "axis" && getcvar("probe_ground") == "1")
+		spot = bullettrace(spot, spot - (0, 0, 200), false, self)["position"] + (0, 0, 0.125);
 	self.probe_spot = spot;
 	if (self.pers["team"] == "axis")
 		self swap_head();
 	self setorigin(spot);
 	self setplayerangles((0, yaw, 0));
 	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + " " + getTime() + "\n");
+}
+
+//	With `probe_spawnlog 1`: the level time of every player's `spawned`
+//	notify, which the stock spawnPlayer raises ahead of its `spawn`:
+//
+//	PROBE spawned <entity number> <time>
+//
+//	and, at each placement, where the spawn put him:
+//
+//	PROBE spawnat <entity number> <origin> <angles>
+watch_spawns()
+{
+	if (getcvar("probe_spawnlog") != "1")
+		return;
+	for (;;)
+	{
+		players = getentarray("player", "classname");
+		for (i = 0; i < players.size; i++)
+		{
+			if (isdefined(players[i].probe_spawnlog))
+				continue;
+			players[i].probe_spawnlog = 1;
+			players[i] thread log_spawns();
+		}
+		wait 0.05;
+	}
+}
+
+log_spawns()
+{
+	self endon("disconnect");
+	for (;;)
+	{
+		self waittill("spawned");
+		logPrint("PROBE spawned " + self getEntityNumber() + " " + getTime() + "\n");
+	}
 }
 
 //	The head is a random draw from the team's alias (`xmodelalias/head_*`),
