@@ -1,0 +1,17 @@
+# Retail CoD 1.1d dedicated server, 2026-10-17: the PROBE lines of
+# client-probes/probe_leanpvs on mp_carentan, then the watcher's snapshots
+# as `SEEN <serverTime> <0|1>` at each change in whether they carried the
+# target's entity 0 (from his `VEH ... rider 0` lines).
+# COD_LNXDED_HOME=<abs> PORT=32787 SECS=45 tools/run_probe.sh client-probes/probe_leanpvs mp_carentan
+# vcod --net-probe 127.0.0.1:32787 --probe-team axis --probe-uo-weapon direct --probe-secs 36   # 6 s in
+# vcod --net-probe 127.0.0.1:32787 --probe-team allies --probe-uo-weapon direct --probe-secs 33   # 2 s later
+PROBE phase 15000 level 0
+PROBE phase 17000 right 32
+PROBE phase 19000 level2 0
+PROBE phase 21000 left 16
+PROBE phase 23000 right2 32
+PROBE phase 25000 level3 0
+PROBE done 27000
+SEEN 14000 1
+SEEN 21050 0
+SEEN 23350 1
