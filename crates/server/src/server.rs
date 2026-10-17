@@ -2088,7 +2088,7 @@ impl Server {
     /// loop would have handled the packet: its arrival, or later when the
     /// server was busy with a frame or an earlier packet. rcon's window
     /// reads it, as retail's reads the clock at the handling
-    /// (cod11-server-handshake.md, "The read schedule").
+    /// (cod11-server-handshake.md, "rcon").
     pub fn handle_packet_read(
         &mut self,
         from: SocketAddr,
@@ -14068,7 +14068,7 @@ mod tests {
 
     /// Two requests 510 ms apart read in one tick: retail handles each as it
     /// arrives, so both are answered; the window reads the handling moment,
-    /// not the tick's (cod11-server-handshake.md, "The read schedule").
+    /// not the tick's (cod11-server-handshake.md, "rcon").
     #[test]
     fn rcon_s_window_reads_each_request_s_own_moment() {
         let t = Instant::now();
