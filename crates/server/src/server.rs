@@ -7624,7 +7624,7 @@ impl Server {
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
                 };
-                sim.session_dead = session.map(|s| s.state == follow::SessionState::Dead);
+                sim.session = session.map(|s| s.state);
                 sim.update_contents();
                 let live = sim.pm_type == PmType::Normal && !sim.dead && sim.health > 0;
                 if live {
@@ -9045,12 +9045,17 @@ impl Server {
                 if hidden {
                     None
                 } else if sim.linked() {
-                    Some((
-                        i as u32,
-                        copied.unwrap_or_else(|| {
-                            sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
-                        }),
-                    ))
+                    let mut e = copied.unwrap_or_else(|| {
+                        sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
+                    });
+                    // Killed after its end frame copied it, its session
+                    // still `playing` there: the corpse relink still lands.
+                    if sim.dead
+                        && let Some(f) = msg::EntityState::field_index(self.proto, "solid")
+                    {
+                        e.fields[f] = sim.linked_solid;
+                    }
+                    Some((i as u32, e))
                 } else if sim.dead {
                     let mut e = copied?;
                     if let Some(f) = msg::EntityState::field_index(self.proto, "solid") {

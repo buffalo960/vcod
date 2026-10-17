@@ -46,8 +46,8 @@
 //!
 //! The `probe_attach_*` probes and `probe_detach_missing` are claimed here
 //! for the object table's attachment slots, and `probe_testclient` for the
-//! client entity `addTestClient` connects; both run through the real
-//! bootstrap.
+//! client `addTestClient` connects, which `testclient.rs` runs on a whole
+//! server: its spawn reads the map's collision.
 //!
 //! `probe_ents`, `probe_delete`, `probe_bootstrap`, `probe_loadfx_wait`,
 //! the `probe_precache_*` and the `probe_late_*` probes need `COD_DIR`;
@@ -634,19 +634,6 @@ fn probe_attach_matches_retail() {
         assert_eq!(ours, retail_probe_lines(name), "{name}");
         assert!(retail_probe_died(name), "{name}");
     }
-}
-
-/// `addTestClient`: refused in the first 3 s for the counter's first bot,
-/// then a client connected inside the call, its `begin` after the caller's
-/// wait (docs/research/cod11-gsc-object-model.md 25). Ours runs without a
-/// `Server`, so the network clock is mirrored in by hand as `Server` does,
-/// and the spawned client's origin is only the spawn's own.
-#[test]
-fn probe_testclient_matches_retail() {
-    let Some(ours) = run_probe_frames("probe_testclient", false, 150) else {
-        return;
-    };
-    assert_eq!(ours, retail_probe_lines("probe_testclient"));
 }
 
 /// Runs `name` as mp_pavlov's gametype through the real bootstrap for four

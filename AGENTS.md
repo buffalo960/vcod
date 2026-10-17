@@ -704,7 +704,7 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - `ClientEndFrame`'s dead arm (`pm_type` 6, no contents, off the wire)
   keys on `sessionstate` `dead`, not on health: a `suicide()` that stays
   `playing` keeps `pm_type` 0, and a test that kills through the vitals
-  sets the session too (`ClientSim::session_dead`, combat doc 5.1).
+  sets the session too (`ClientSim::session`, combat doc 5.1).
 - `player_die` notifies the victim `death` with the attacker before the
   killed callback; UO's rank icon is destroyed on it (coduo-diff.md 22).
 - A killed gunner keeps the turret until its own end-frame turn;

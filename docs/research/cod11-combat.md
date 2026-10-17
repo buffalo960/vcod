@@ -2554,8 +2554,12 @@ vcod keyed the dead arm on the health instead and sent `pm_type` 6 and no
 entity at the suicide. VERIFIED, ours before the fix:
 `a_suicide_that_stays_playing_keeps_pm_type_0`
 (`crates/server/tests/suicide_playing.rs`) failed. Fixed: the end frame
-reads the session (`ClientSim::session_dead`, set in the end-frame loop);
-a sim no script client backs keeps the health rule. VERIFIED, ours after
+reads the session (`ClientSim::session`, set in the end-frame loop): only
+`playing` keeps the body on the wire with contents, `dead` alone writes
+`pm_type` 6, and a sim no script client backs keeps the health rule. The
+death's own relink as a corpse (step 13) clears `solid` until the body's
+next link, so the suicide's frame goes out with `solid` 0 (INFERRED, off
+step 13; the probe logged no `solid`). VERIFIED, ours after
 the fix, the same probe pair against `vcod-server --gametype-script`:
 `pm_type` 0 and slot 1 in slot 0's snapshot until the `dead` write, then
 6 and gone on the same frame.
