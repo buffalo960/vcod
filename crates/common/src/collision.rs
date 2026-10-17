@@ -803,6 +803,11 @@ struct ModelInstance {
     contents: u32,
 }
 
+/// A submodel copy out of the traces for a while
+/// ([`CollisionWorld::unlink_model_instance`]).
+#[derive(Debug)]
+pub struct UnlinkedInstance(ModelInstance);
+
 /// One world copy: its entity, pose and `r.contents`, which a trace's mask
 /// must meet before the copy is clipped at all (`SV_ClipMoveToEntities`
 /// lists entities by contents).
@@ -1507,6 +1512,27 @@ impl CollisionWorld {
         }
         self.any_instance
             .store(!instances.is_empty(), Ordering::Release);
+    }
+
+    /// Takes entity `entity`'s submodel copy out of the traces, as
+    /// `trap_UnlinkEntity` would, for [`Self::relink_model_instance`] to
+    /// put back. `None` when the entity has none.
+    pub fn unlink_model_instance(&self, entity: u32) -> Option<UnlinkedInstance> {
+        let mut instances = self.instances.write().unwrap_or_else(|e| e.into_inner());
+        let i = instances.iter().position(|i| i.entity == entity)?;
+        let inst = instances.remove(i);
+        self.any_instance
+            .store(!instances.is_empty(), Ordering::Release);
+        Some(UnlinkedInstance(inst))
+    }
+
+    /// Puts back a copy [`Self::unlink_model_instance`] took out, where it
+    /// stood.
+    pub fn relink_model_instance(&self, unlinked: UnlinkedInstance) {
+        let mut instances = self.instances.write().unwrap_or_else(|e| e.into_inner());
+        instances.retain(|i| i.entity != unlinked.0.entity);
+        instances.push(unlinked.0);
+        self.any_instance.store(true, Ordering::Release);
     }
 
     /// Lump 27's model count, the world's model 0 included.
@@ -4398,6 +4424,32 @@ mod tests {
         world.set_model_instance(301, 1, None);
         world.set_model_instance(300, 1, None);
         assert_eq!(ray(&world, None).1, ENTITYNUM_NONE);
+    }
+
+    /// An unlinked instance clips nothing until it is put back where it
+    /// stood.
+    #[test]
+    fn an_unlinked_model_instance_clips_again_once_relinked() {
+        let world = CollisionWorld::build(&two_model_world("script_brushmodel"), &[]);
+        world.set_model_linked(1, false);
+        let ray = |w: &CollisionWorld| {
+            let t = w.trace_with_mask(
+                Vec3::new(150.0, 0.0, 32.0),
+                Vec3::new(450.0, 0.0, 32.0),
+                Vec3::ZERO,
+                Vec3::ZERO,
+                TRACE_MASK_MOVE,
+                false,
+                None,
+            );
+            w.entity_num(&t)
+        };
+        world.set_model_instance(300, 1, Some((Vec3::new(250.0, 0.0, 0.0), Vec3::ZERO, 1)));
+        assert!(world.unlink_model_instance(301).is_none());
+        let unlinked = world.unlink_model_instance(300).unwrap();
+        assert_eq!(ray(&world), ENTITYNUM_NONE);
+        world.relink_model_instance(unlinked);
+        assert_eq!(ray(&world), 300);
     }
 
     /// `model_box_trace` sees one model: the floor under the door is not in

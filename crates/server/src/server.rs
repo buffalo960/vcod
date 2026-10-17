@@ -8446,6 +8446,22 @@ impl Server {
                 // The aim block runs once per cmd, on the whole cmd, before
                 // the chop (`ClientThink_real` 0x40169-0x40456).
                 sim.update_aim(dt_ms, now_ms, weapons.defs());
+                // A UO body inside a vehicle's collmap: the vehicle may sit
+                // out this cmd's pmove (coduo-vehicles.md 11.6).
+                let unlinked = match (collision, self.script.as_ref()) {
+                    (Some(w), Some(rt))
+                        if sim.ps.rules == vcod_common::pmove::MoveRules::Uo
+                            && spectating[slot].is_none() =>
+                    {
+                        sim.vehicle_overlap(MoveWorld::new(w, &bodies, slot as u32), |e| {
+                            let id = rt.host.ents.handle(e)?;
+                            let v = rt.host.vehicles.live.get(&id)?;
+                            Some((v.pose.origin.into(), v.velocity.into()))
+                        })
+                        .and_then(|e| w.unlink_model_instance(e))
+                    }
+                    _ => None,
+                };
                 // A hitching client's gap is simulated, not discarded: see
                 // `cmd::chop`.
                 vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd, |step, dt| {
@@ -8464,6 +8480,9 @@ impl Server {
                     bodies.extend(sim.body(slot as u32));
                     sim.ps.jump_latched
                 });
+                if let (Some(u), Some(w)) = (unlinked, collision) {
+                    w.relink_model_instance(u);
+                }
             }
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
             // falls, in the order it raised them, fired below before its

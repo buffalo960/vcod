@@ -853,6 +853,81 @@ impl ClientSim {
         }
     }
 
+    /// United Offensive's `ClientThink_real` ahead of `Pmove` (game.mp.uo
+    /// 0x415e4..0x419c3, coduo-vehicles.md 11.6): a client on foot whose box
+    /// starts inside a vehicle (`eType` 12) gets out of it. The vehicle is
+    /// unlinked for this cmd's pmove while the client is slower than 1 or
+    /// moves away from it (the flat dot of the two directions past 0.8);
+    /// one slower than 1 and not prone is also pushed off it at 200 along
+    /// the flat direction from the vehicle's origin, with a 200 ms damage
+    /// timer. `vehicle` gives a vehicle entity's `r.currentOrigin` and
+    /// world velocity. Returns the vehicle to unlink until the cmd's
+    /// pmove is done.
+    pub fn vehicle_overlap(
+        &mut self,
+        world: MoveWorld<'_>,
+        vehicle: impl Fn(u32) -> Option<(Vec3, Vec3)>,
+    ) -> Option<u32> {
+        if self.seat.is_some() || self.pm_type == PmType::Intermission {
+            return None;
+        }
+        let mask = if self.pm_dead {
+            vcod_common::movetrace::MASK_DEADSOLID
+        } else {
+            vcod_common::collision::MASK_PLAYERSOLID
+        };
+        let mut maxs = self.ps.maxs();
+        maxs.z = match self.ps.stance {
+            pmove::Stance::Prone => pmove::HEIGHT_PRONE,
+            pmove::Stance::Crouch => pmove::HEIGHT_CROUCH,
+            _ => maxs.z,
+        };
+        let at = self.ps.origin;
+        let t = world.box_trace(at, at, self.ps.mins(), maxs, mask);
+        if !t.startsolid && !t.allsolid {
+            return None;
+        }
+        let ent = world.entity_num(&t);
+        let (origin, velocity) = vehicle(ent)?;
+        // Both `VectorNormalize`d whole, then their z dropped unrenormalized.
+        let unit = |v: Vec3| {
+            let l = (f64::from(v.x).powi(2) + f64::from(v.y).powi(2) + f64::from(v.z).powi(2))
+                .sqrt() as f32;
+            (if l != 0.0 { v * (1.0 / l) } else { v }, l)
+        };
+        let (mut dir, _) = unit(at - origin);
+        let (mut along, speed) = unit(self.ps.velocity);
+        dir.z = 0.0;
+        along.z = 0.0;
+        let dot = f64::from(dir.x) * f64::from(along.x) + f64::from(dir.y) * f64::from(along.y);
+        if !(speed < 1.0 || dot > f64::from(0.8f32)) {
+            return None;
+        }
+        if self.ps.stance != pmove::Stance::Prone && speed < 1.0 {
+            if unit(velocity).1 > 1.0 {
+                // `VEH_PlayerCollision`'s push. Its run-over damage and
+                // sound are not dealt from here (open, 11.6).
+                if let Some(push) = crate::game::vehicle::physics::player_push(
+                    origin,
+                    velocity,
+                    at,
+                    self.ps.velocity,
+                ) {
+                    self.ps.velocity = push.velocity;
+                }
+                let (v, l) = unit(self.ps.velocity);
+                if l < 200.0 {
+                    self.ps.velocity = v * 200.0;
+                }
+            } else {
+                self.ps.velocity = dir * 200.0;
+            }
+            self.ps.knockback_ms = 200.0;
+            self.ps.knockback_flags |= pmove::PMF_TIME_DAMAGE;
+        }
+        Some(ent)
+    }
+
     /// The live and spectating arms of the spawn's own think, which
     /// `spawn_think` leaves to a caller with a world: 100 ms of pmove up to
     /// `now_ms` on [`Self::spawn_cmd`]. It is what puts the standing idle on
