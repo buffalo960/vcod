@@ -1375,6 +1375,7 @@ fn main() -> Result<()> {
         render_ms: 0.0,
         fx_ms: 0.0,
         look_zoom: (1.0, false),
+        mouse: Default::default(),
         ignore_hw_gamma: false,
         textures: texture_settings::TextureSettings::default(),
         texture_mode_seen: String::new(),
@@ -2076,6 +2077,8 @@ struct App {
     /// Last frame's fov over `cg_fov` and whether the view rides a mounted
     /// gun: the mouse's sensitivity scale ([`play::input::MouseLook`]).
     look_zoom: (f32, bool),
+    /// The view's mouse motion since the last frame (`CL_MouseEvent`).
+    mouse: play::input::MouseAccum,
     /// `r_ignorehwgamma` as of the last window start or `vid_restart`
     /// (retail latches it): textures bake `r_gamma` at each world load and
     /// the frame pass only clamps.
@@ -2121,6 +2124,46 @@ impl App {
     }
 
     /// Gives the mouse to the view (`grabbed`) or takes it back.
+    /// `CL_MouseMove` (CoDMP.exe 0x40b240) once a frame: the motion since
+    /// the last frame, or with `m_filter` its mean with the last frame's,
+    /// turns the view or, online, moves the cmd (`MouseLook::moves`).
+    fn mouse_frame(&mut self) {
+        let filter = self.shell.cvar_f32("m_filter") as i32 != 0;
+        let (dx, dy) = self.mouse.take(filter);
+        if !self.grabbed {
+            self.mouse.clear();
+            return;
+        }
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let look = play::input::MouseLook {
+            sensitivity: self.shell.cvar_f32("sensitivity"),
+            m_yaw: self.shell.cvar_f32("m_yaw"),
+            m_pitch: self.shell.cvar_f32("m_pitch"),
+            m_forward: self.shell.cvar_f32("m_forward"),
+            m_side: self.shell.cvar_f32("m_side"),
+            freelook: self.shell.cvar_f32("cl_freelook") as i32 != 0,
+        };
+        match &mut self.mode {
+            Mode::Idle => {}
+            Mode::Fly(cam) => cam.look(look.degrees(dx, dy, 1.0, false)),
+            Mode::Online { join, .. } if join.stray_catcher() => {}
+            Mode::Online { input, .. } => {
+                let (zoom, mounted) = self.look_zoom;
+                let (mlook, strafe) = input.mlook_strafe();
+                input.mouse_move(look.moves(dx, dy, zoom, mounted, mlook, strafe));
+            }
+            Mode::Walk { ps, .. } => {
+                // the same turn and pitch clamp as FlyCamera::look
+                let [pitch, yaw] = look.degrees(dx, dy, 1.0, false);
+                ps.yaw += yaw.to_radians();
+                ps.pitch =
+                    (ps.pitch - pitch.to_radians()).clamp(camera::PITCH_MIN, camera::PITCH_MAX);
+            }
+        }
+    }
+
     fn set_grab(&mut self, grabbed: bool) {
         if self.window.is_none() {
             return;
@@ -2573,8 +2616,16 @@ impl App {
                     _ => console::log::print(&format!("Unknown command \"{word}\"")),
                 },
                 Effect::Button(action, down) => {
-                    if let Mode::Online { input, .. } = &mut self.mode {
+                    let freelook = self.shell.cvar_f32("cl_freelook") as i32 != 0;
+                    if let Mode::Online { input, net, .. } = &mut self.mode {
                         input.key(action, down);
+                        if action == play::input::Action::MLook && !down && !freelook {
+                            let delta = net
+                                .snapshots()
+                                .newest()
+                                .map_or(0, |s| s.ps.field_i32(net.protocol(), "delta_angles[0]"));
+                            input.center_view(delta);
+                        }
                     }
                 }
                 Effect::Impulse(action) => {
@@ -3726,6 +3777,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.pace_frame();
+                self.mouse_frame();
                 let now = Instant::now();
                 let dt = (now - self.last_frame).as_secs_f32().min(0.1);
                 self.last_frame = now;
@@ -6368,29 +6420,8 @@ impl ApplicationHandler for App {
                 self.ui_effects(event_loop, effects);
                 return;
             }
-            if !self.grabbed {
-                return;
-            }
-            let look = play::input::MouseLook {
-                sensitivity: self.shell.cvar_f32("sensitivity"),
-                m_yaw: self.shell.cvar_f32("m_yaw"),
-                m_pitch: self.shell.cvar_f32("m_pitch"),
-            };
-            match &mut self.mode {
-                Mode::Idle => {}
-                Mode::Fly(cam) => cam.look(look.degrees(dx, dy, 1.0, false)),
-                Mode::Online { join, .. } if join.stray_catcher() => {}
-                Mode::Online { input, .. } => {
-                    let (zoom, mounted) = self.look_zoom;
-                    input.mouse(look.degrees(dx, dy, zoom, mounted));
-                }
-                Mode::Walk { ps, .. } => {
-                    // the same turn and pitch clamp as FlyCamera::look
-                    let [pitch, yaw] = look.degrees(dx, dy, 1.0, false);
-                    ps.yaw += yaw.to_radians();
-                    ps.pitch =
-                        (ps.pitch - pitch.to_radians()).clamp(camera::PITCH_MIN, camera::PITCH_MAX);
-                }
+            if self.grabbed {
+                self.mouse.add(dx, dy);
             }
         }
     }

@@ -118,12 +118,14 @@ const COMMANDS: &[&str] = &[
     "+leanleft",
     "+leanright",
     "+melee",
+    "+mlook",
     "+moveleft",
     "+moveright",
     "+reload",
     "+scores",
     "+speed",
     "+sprint",
+    "+strafe",
     "-activate",
     "-attack",
     "-back",
@@ -132,12 +134,14 @@ const COMMANDS: &[&str] = &[
     "-leanleft",
     "-leanright",
     "-melee",
+    "-mlook",
     "-moveleft",
     "-moveright",
     "-reload",
     "-scores",
     "-speed",
     "-sprint",
+    "-strafe",
     "bind",
     "bindlist",
     "cg_shellshock",
@@ -195,6 +199,8 @@ fn button(word: &str) -> Option<Action> {
         "leanleft" => Action::LeanLeft,
         "leanright" => Action::LeanRight,
         "sprint" => Action::Sprint,
+        "mlook" => Action::MLook,
+        "strafe" => Action::Strafe,
         _ => return None,
     })
 }
@@ -290,8 +296,8 @@ const MENU_CVARS: &[(&str, &str)] = &[
     ("m_filter", "0"),
     ("cg_drawCrosshair", "1"),
     ("cg_drawStatus", "1"),
-    // Registered by CoDMP.exe and read by nothing in 1.1, so the compass
-    // and the (absent) team overlay ignore them in retail too.
+    // Registered by CoDMP.exe and read by nothing in 1.1, 1.5 or UO, so the
+    // compass and the (absent) team overlay ignore them in retail too.
     ("cg_drawCompass", "1"),
     ("cg_drawTeamOverlay", "2"),
     ("cg_marks", "1"),
@@ -350,6 +356,10 @@ impl Shell {
         s.register("sensitivity", "5", ARCHIVE);
         s.register("m_yaw", "0.022", ARCHIVE);
         s.register("m_pitch", "0.022", ARCHIVE);
+        // CL_Init: "0.25", archived; `cl_freelook` 0 and `+strafe` move
+        // through them (section 5).
+        s.register("m_forward", "0.25", ARCHIVE);
+        s.register("m_side", "0.25", ARCHIVE);
         // Retail's first-run rate is 5000, which starves snapshots on a busy server.
         s.register("rate", "25000", ARCHIVE | USERINFO);
         s.register("snaps", "20", ARCHIVE | USERINFO);
