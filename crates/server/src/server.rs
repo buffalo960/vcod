@@ -781,7 +781,9 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
             })
         })
         .collect();
+    rt.vehicle_deaths();
     rt.with_host(|host, cx| crate::game::vehicle::think::run(host, cx, &inputs));
+    rt.vehicle_deaths();
     apply_seat_ops(clients, rt);
     crush(clients, rt);
     for (slot, c) in clients.iter_mut().enumerate() {
@@ -7230,6 +7232,11 @@ impl Server {
                     crate::game::host::LinkOp::Unlink => None,
                 };
             }
+            // A seat the frame's threads left (`Scr_Vehicle_Die` under a
+            // `doDamage`) is left ahead of the entity pass, and ahead of
+            // the knockback of any hit after it: the exit's pop sets the
+            // velocity, the hit adds to it.
+            apply_seat_ops(&mut self.clients, rt);
             // What script did to each sim, applied once, then the health
             // mirror and the frame's damage feedback, in that order:
             // `P_DamageFeedback` reads the health the hit left.

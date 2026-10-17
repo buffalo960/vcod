@@ -561,6 +561,42 @@ impl ScriptRuntime {
         for (event, args) in notifies {
             self.vm.notify(Target::Entity(id), event, &args);
         }
+        self.vehicle_deaths();
+    }
+
+    /// `Scr_Vehicle_Die` for every vehicle death queued outside a builtin
+    /// (a round in a cmd, a blast in the entity pass, a collision in the
+    /// think): each rider's probe callback runs to its first `wait` before
+    /// the next rider's ([`crate::game::vehicle::die`]).
+    pub fn vehicle_deaths(&mut self) {
+        loop {
+            let host = &mut self.host;
+            let next = self
+                .vm
+                .with_cx(|cx| crate::game::vehicle::die::drain(host, cx));
+            for (on, event, args) in std::mem::take(&mut self.host.vehicles.die_notifies) {
+                let event = self.vm.with_cx(|cx| cx.intern_folded(event));
+                self.vm.notify(Target::Entity(on), event, &args);
+            }
+            match next {
+                Some((victim, args)) => {
+                    if let Err(e) = self.start_with_args(
+                        CALLBACK_SETUP,
+                        "CodeCallback_PlayerDamage",
+                        Some(Target::Entity(victim)),
+                        args,
+                    ) {
+                        log::error!("gsc: {e:#}");
+                    }
+                }
+                None if self.host.vehicles.deaths.is_empty()
+                    && self.host.vehicles.dying.is_empty() =>
+                {
+                    return;
+                }
+                None => {}
+            }
+        }
     }
 
     /// Damage whose attacker is not a player. `hurt_touch` (0x64dc4) hands
@@ -1821,6 +1857,8 @@ impl ScriptRuntime {
     /// last spawned rather than where it now stands.
     pub fn set_client_origin(&mut self, slot: usize, origin: [f32; 3]) {
         use vcod_gsc::Host;
+        self.host.vehicles.lifted.remove(&slot);
+        self.host.vehicles.stale_seated.remove(&slot);
         let Some(ent) = self.client_entity(slot) else {
             return;
         };

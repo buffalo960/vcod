@@ -1754,6 +1754,8 @@ impl Host for GameHost {
     fn spawn_returned(&mut self, cx: &mut Cx, token: u32) {
         if token == crate::game::builtins::combat::BLAST_TOKEN {
             crate::game::builtins::combat::blast_step(self, cx);
+        } else if token == crate::game::vehicle::die::DIE_TOKEN {
+            crate::game::vehicle::die_next(self, cx);
         } else {
             self.player_die_walk(cx, token as usize);
         }
