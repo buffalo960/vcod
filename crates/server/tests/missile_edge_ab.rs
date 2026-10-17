@@ -6,7 +6,9 @@
 //! raises no event on either, and at the floor, which raises the miss
 //! (2.5). `client-probes/probe_takedamage` stands a `setTakeDamage` barrel
 //! in front of a UO shooter: a rocket's direct hit and a swing both run
-//! `G_Damage` on it (13.1, 2.5).
+//! `G_Damage` on it (13.1, 2.5). `probe_skyshot`'s spot part stands the shooter on
+//! mp_harbor's sea wall: a rocket, a frag and UO's smoke grenade into the
+//! water raise retail's splash (12.1).
 //!
 //! `ME_REPORT=1` prints both logs. The 1.1d tests need `COD_DIR` at a 1.1
 //! install, the UO ones at a UO one; each returns early without.
@@ -33,6 +35,9 @@ const TAKEDAMAGE: &str =
 enum Script {
     Aim,
     Melee,
+    /// `--probe-uo-weapon throw`: settles 3 s, pulls back for 1 s, waits
+    /// 6 s and pulls back for 1 s again.
+    Throw,
 }
 
 impl Script {
@@ -42,27 +47,31 @@ impl Script {
             Script::Melee if (0..3).any(|k| (3000 + 1500 * k..3100 + 1500 * k).contains(&ms)) => {
                 BUTTON_MELEE
             }
+            Script::Throw if (3000..4000).contains(&ms) || (10_000..11_000).contains(&ms) => {
+                BUTTON_ATTACK
+            }
             _ => 0,
         }
     }
 }
 
-/// Our run of `name` (`script`) on mp_carentan with `cvars` set and one
+/// Our run of `name` (`script`) on `map` with `cvars` set and one
 /// allies shooter running `run` for `ms` from its spawn. Returns the
 /// script's log, then a line per snapshot per missile and temp entity in
 /// the shooter's snapshots, in the fixtures' `VEH` shape.
 fn ours(
     fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
     name: &str,
     script: &str,
     cvars: &[(&str, &str)],
     run: Script,
     ms: i64,
 ) -> Vec<String> {
-    let bsp_path = fs.resolve_map("mp_carentan").expect("map in the paks");
+    let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", name), now);
+    let mut sv = vcod_server::Server::new(common::cfg(map, name), now);
     sv.set_protocol(vcod_server::server::install_protocol(&fs));
     sv.overlay_script(&format!("maps/mp/gametypes/{name}"), script);
     for (k, v) in cvars {
@@ -73,8 +82,14 @@ fn ours(
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
-    // The net probe's allies pick (`--probe-team allies`).
-    let mut join = Join::new("allies", "m1carbine_mp");
+    // The net probe's allies pick (`--probe-team allies`): mp_harbor's
+    // allies are Russian.
+    let rifle = if map == "mp_harbor" {
+        "mosin_nagant_mp"
+    } else {
+        "m1carbine_mp"
+    };
+    let mut join = Join::new("allies", rifle);
     let mut hold = common::ProbeHold {
         aim: true,
         ..Default::default()
@@ -138,13 +153,17 @@ fn ours(
             if let Some(ev) = p.event_of(i("eType")) {
                 let o = e.origin(p);
                 lines.push(format!(
-                    "VEH {} temp {num} ev {ev} parm {} other {} pos {:.1} {:.1} {:.1}",
+                    "VEH {} temp {num} ev {ev} parm {} other {} pos {:.1} {:.1} {:.1} \
+                     surf {} scale {} weapon {}",
                     snap.server_time,
                     i("eventParm"),
                     i("otherEntityNum"),
                     o[0],
                     o[1],
                     o[2],
+                    i("surfType"),
+                    i("_union.scale"),
+                    i("weapon"),
                 ));
             } else if i("eType") == 4 || missiles.contains(num) {
                 missiles.insert(*num);
@@ -200,7 +219,8 @@ fn vec_at(l: &str, from: usize) -> [f32; 3] {
     [v[0], v[1], v[2]]
 }
 
-/// The first rocket's `PROBE miss` lines: (time, origin).
+/// The first missile's `PROBE miss` lines, rocket or grenade: (time,
+/// origin).
 fn first_rocket(lines: &[String]) -> Vec<(i32, [f32; 3])> {
     let miss: Vec<&String> = lines
         .iter()
@@ -255,6 +275,7 @@ fn a_rocket_at_the_sky_is_freed_silently() {
     ));
     let log = ours(
         fs,
+        "mp_carentan",
         "probe_skyshot",
         SKYSHOT,
         &[("probe_part", "sky"), ("probe_weapon", "panzerfaust_mp")],
@@ -284,6 +305,7 @@ fn a_uo_rocket_flies_on_through_the_sky() {
     ));
     let log = ours(
         fs,
+        "mp_carentan",
         "probe_skyshot",
         SKYSHOT,
         &[("probe_part", "sky"), ("probe_weapon", "bazooka_mp")],
@@ -360,6 +382,7 @@ fn a_rocket_hits_a_takedamage_model_directly_on_uo() {
     ));
     let log = ours(
         fs,
+        "mp_carentan",
         "probe_takedamage",
         TAKEDAMAGE,
         &[("probe_weapon", "bazooka_mp")],
@@ -402,6 +425,7 @@ fn a_swing_damages_a_takedamage_model_on_uo() {
     ));
     let log = ours(
         fs,
+        "mp_carentan",
         "probe_takedamage",
         TAKEDAMAGE,
         &[("probe_dist", "40")],
@@ -458,6 +482,7 @@ fn a_swing_at_nothing_raises_no_event() {
         let fixture = retail(fixture);
         let log = ours(
             fs,
+            "mp_carentan",
             "probe_skyshot",
             SKYSHOT,
             &[("probe_part", "air")],
@@ -488,6 +513,7 @@ fn a_swing_at_the_floor_raises_the_miss() {
     ));
     let log = ours(
         fs,
+        "mp_carentan",
         "probe_skyshot",
         SKYSHOT,
         &[("probe_part", "air"), ("probe_pitch", "80")],
@@ -517,4 +543,190 @@ fn a_swing_at_the_floor_raises_the_miss() {
             "retail {r:?}\nours {o:?}"
         );
     }
+}
+
+/// The shooter on mp_harbor's south sea wall over open water, looking
+/// along yaw 90 and `pitch` degrees down (`probe_skyshot`'s spot part).
+fn harbor(fs: vcod_common::pk3::Pk3Fs, weapon: &str, pitch: &str, run: Script) -> Vec<String> {
+    ours(
+        fs,
+        "mp_harbor",
+        "probe_skyshot",
+        SKYSHOT,
+        &[
+            ("probe_part", "spot"),
+            ("probe_weapon", weapon),
+            ("probe_x", "-12640"),
+            ("probe_y", "-7036"),
+            ("probe_z", "152"),
+            ("probe_yaw", "90"),
+            ("probe_pitch", pitch),
+        ],
+        run,
+        20_000,
+    )
+}
+
+/// The first temp entity's first snapshot: (time, number, the line from
+/// `ev` on). The shooter's own spawn and swings raise none here.
+fn splash(lines: &[String]) -> (i32, String, Vec<String>) {
+    let l = lines
+        .iter()
+        .find(|l| l.contains(" temp "))
+        .unwrap_or_else(|| panic!("no splash in {lines:?}"));
+    let t: Vec<&str> = l.split(' ').collect();
+    (
+        t[1].parse().unwrap(),
+        t[3].to_string(),
+        t[4..].iter().map(|s| s.to_string()).collect(),
+    )
+}
+
+/// The `VEH` missile lines' (time, base, etype) once it has exploded.
+fn explode(lines: &[String]) -> Option<(i32, [f32; 3])> {
+    lines
+        .iter()
+        .find(|l| l.contains(" missile ") && l.contains(" etype 0"))
+        .map(|l| {
+            let t: Vec<&str> = l.split(' ').collect();
+            let v = |k: usize| t[k].parse::<f32>().unwrap();
+            (t[1].parse().unwrap(), [v(7), v(8), v(9)])
+        })
+}
+
+/// A splash's tokens past the position: `ev`, `parm`, `other` and then
+/// `surf`, `scale`, `weapon`.
+fn splash_fields(t: &[String]) -> Vec<String> {
+    let mut out = t[..6].to_vec();
+    out.extend_from_slice(&t[10..]);
+    out
+}
+
+/// A frag thrown flat off the wall: its `trDelta` z (the throw's 120)
+/// passes 30, so the move that enters the water raises the splash at the
+/// missile's origin before it, and the whole flight matches retail's to
+/// the hundredth (combat doc 12.1).
+#[test]
+fn a_frag_into_water_splashes() {
+    for (fs, fixture) in [
+        (
+            vcod_common::testing::game_fs_11(),
+            include_str!("fixtures/missiles/mp_harbor-water-frag.txt"),
+        ),
+        (
+            vcod_common::testing::uo_fs(),
+            include_str!("fixtures/missiles/mp_harbor-water-frag-uo.txt"),
+        ),
+    ] {
+        let Some(fs) = fs else {
+            continue;
+        };
+        let fixture = retail(fixture);
+        let log = harbor(fs, "fraggrenade_mp", "0", Script::Throw);
+        report(&fixture, &log);
+        let (r, o) = (first_rocket(&fixture), first_rocket(&log));
+        assert!(r.len() > 30, "{fixture:?}");
+        assert!(o.len() >= 30, "ours threw nothing: {log:?}");
+        for k in 0..30 {
+            assert!(
+                dist(r[k].1, o[k].1) < 0.01,
+                "frame {k}: retail {:?}\nours {:?}",
+                &r[..30],
+                &o[..30]
+            );
+        }
+        let (rs, os) = (splash(&fixture), splash(&log));
+        assert_eq!(os.1, rs.1, "retail {rs:?}, ours {os:?}");
+        assert_eq!(os.2, rs.2, "retail {rs:?}, ours {os:?}");
+        assert_eq!(os.0 - o[0].0, rs.0 - r[0].0, "retail {rs:?}, ours {os:?}");
+    }
+}
+
+/// A rocket 45 degrees down into the water: the splash on the move that
+/// enters it, then the explode on the harbor floor, its origin snapped
+/// toward the launch by `floor` and `ceil` (combat doc 12.1, 13.1). Each
+/// server takes its own launch spread, so x is left out and the rest are
+/// held to the height the spread can move them.
+#[test]
+fn a_rocket_into_water_splashes() {
+    for (fs, fixture, weapon) in [
+        (
+            vcod_common::testing::game_fs_11(),
+            include_str!("fixtures/missiles/mp_harbor-water-rocket.txt"),
+            "panzerfaust_mp",
+        ),
+        (
+            vcod_common::testing::uo_fs(),
+            include_str!("fixtures/missiles/mp_harbor-water-rocket-uo.txt"),
+            "bazooka_mp",
+        ),
+    ] {
+        let Some(fs) = fs else {
+            continue;
+        };
+        let fixture = retail(fixture);
+        let log = harbor(fs, weapon, "45", Script::Aim);
+        report(&fixture, &log);
+        let (r, o) = (first_rocket(&fixture), first_rocket(&log));
+        assert!(!o.is_empty(), "ours fired nothing: {log:?}");
+        let (rs, os) = (splash(&fixture), splash(&log));
+        assert_eq!(os.1, rs.1, "retail {rs:?}, ours {os:?}");
+        // `scale` packs the flight, which the spread turns: each server's
+        // packs its own round's first step, z made positive.
+        let without_scale = |t: &[String]| {
+            let mut f = splash_fields(t);
+            f.drain(8..10);
+            f
+        };
+        assert_eq!(
+            without_scale(&os.2),
+            without_scale(&rs.2),
+            "retail {rs:?}, ours {os:?}"
+        );
+        for (m, sp) in [(&r, &rs), (&o, &os)] {
+            let d = [0, 1, 2].map(|k| (m[1].1[k] - m[0].1[k]) / dist(m[1].1, m[0].1));
+            let byte = vcod_common::net::events::dir_to_byte([d[0], d[1], d[2].abs()]);
+            assert_eq!(sp.2[13], byte.to_string(), "{sp:?} flew {d:?}");
+        }
+        assert_eq!(os.0 - o[0].0, rs.0 - r[0].0, "retail {rs:?}, ours {os:?}");
+        let z = |t: &[String]| t[9].parse::<f32>().unwrap();
+        assert!(
+            (z(&os.2) - z(&rs.2)).abs() < 10.0,
+            "retail {rs:?}, ours {os:?}"
+        );
+        let (rx, ox) = (
+            explode(&fixture).expect("retail's exploded"),
+            explode(&log).unwrap_or_else(|| panic!("ours did not explode: {log:?}")),
+        );
+        assert_eq!(ox.0 - o[0].0, rx.0 - r[0].0, "retail {rx:?}, ours {ox:?}");
+        assert_eq!(ox.1[2], rx.1[2], "retail {rx:?}, ours {ox:?}");
+    }
+}
+
+/// UO frees a smoke grenade on its splash: the temp entity goes out and
+/// the grenade is gone from that snapshot on, never popped (combat doc
+/// 12.1).
+#[test]
+fn a_uo_smoke_grenade_into_water_is_freed() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = retail(include_str!(
+        "fixtures/missiles/mp_harbor-water-smoke-uo.txt"
+    ));
+    let log = harbor(fs, "smokegrenade_mp", "0", Script::Throw);
+    report(&fixture, &log);
+    let gone = |lines: &[String]| {
+        let (at, num, tail) = splash(lines);
+        let missile = lines
+            .iter()
+            .filter(|l| l.contains(" missile "))
+            .map(|l| l.split(' ').nth(1).unwrap().parse::<i32>().unwrap())
+            .max()
+            .expect("a grenade on the wire");
+        (at - missile, num, tail)
+    };
+    let (rg, og) = (gone(&fixture), gone(&log));
+    assert_eq!(og, rg, "retail {rg:?}, ours {og:?}");
+    assert_eq!(rg.0, 50);
 }
