@@ -14,6 +14,8 @@ const MAX_NUDGE: i32 = 30;
 /// `CL_FinishMove` (CoDMP.exe 0x40b690) stamps no cmd past this beyond the
 /// snapshot.
 const MAX_CMD_AHEAD: i32 = 5000;
+/// `timedemo`'s step a frame (`* 0x32`, CoDMP.exe 0x404d60).
+const TIMEDEMO_MS: i32 = 50;
 
 /// How the delta has moved, for the F3 overlay.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -25,6 +27,18 @@ pub struct ClockStats {
     pub back: u32,
     /// Frames whose time reached the newest snapshot's minus 5.
     pub extrapolated: u32,
+}
+
+/// How a demo's clock runs this frame, off `cl_freezeDemo` and
+/// `timedemo` (`CL_SetCGameTime`, CoDMP.exe 0x404d60).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DemoClock {
+    /// `cl_freezeDemo`: the time holds where it was.
+    pub freeze: bool,
+    /// `timedemo`'s frame count (`clc.timeDemoFrames`, 0x15ef014), this
+    /// frame counted: the time is the first snapshot's plus 50 ms a frame,
+    /// frozen or not.
+    pub timedemo_frames: Option<i32>,
 }
 
 #[derive(Default)]
@@ -39,6 +53,8 @@ pub struct ServerClock {
     old_frame_snap: i32,
     /// `cl.extrapolatedSnapshot`.
     extrapolated: bool,
+    /// `clc.timeDemoBaseTime` (0x15ef01c): the first snapshot's time.
+    demo_base: i32,
     server_time: i32,
     pub stats: ClockStats,
 }
@@ -85,22 +101,48 @@ impl ServerClock {
 
     /// [`Self::frame`] for a demo, whose delta never adjusts
     /// (`CL_AdjustTimeDelta` returns first while one plays, CoDMP.exe
-    /// 0x404bf0).
-    pub fn update_demo(&mut self, realtime: i32, snap: i32, nudge: i32) -> i32 {
-        self.frame(realtime, snap, false, nudge)
+    /// 0x404bf0). A frozen demo only seeds the delta; `timedemo` then
+    /// overwrites the time.
+    pub fn update_demo(&mut self, realtime: i32, snap: i32, nudge: i32, how: DemoClock) -> i32 {
+        if how.freeze {
+            if self.delta.is_none() || snap < self.old_frame_snap {
+                self.first_snapshot(realtime, snap);
+            }
+            self.old_frame_snap = snap;
+        } else {
+            self.frame(realtime, snap, false, nudge);
+        }
+        if let Some(n) = how.timedemo_frames {
+            self.server_time = self.demo_base + n * TIMEDEMO_MS;
+        }
+        self.server_time
     }
 
-    /// The time [`Self::frame`] would draw at `realtime`, before the
+    /// Whether a snapshot has seeded the clock (`cls.state` 6, `CA_ACTIVE`).
+    pub fn started(&self) -> bool {
+        self.delta.is_some()
+    }
+
+    /// The time [`Self::update_demo`] will draw at `realtime`, before the
     /// frame's snapshot is known: what a demo is read up to. `None`
     /// before the first snapshot.
-    pub fn time_at(&self, realtime: i32, nudge: i32) -> Option<i32> {
+    pub fn time_at(&self, realtime: i32, nudge: i32, how: DemoClock) -> Option<i32> {
+        let delta = self.delta?;
+        if let Some(n) = how.timedemo_frames {
+            return Some(self.demo_base + n * TIMEDEMO_MS);
+        }
+        if how.freeze {
+            return Some(self.server_time);
+        }
         let nudge = nudge.clamp(-MAX_NUDGE, MAX_NUDGE);
-        Some((realtime + self.delta? - nudge).max(self.old_server_time))
+        Some((realtime + delta - nudge).max(self.old_server_time))
     }
 
+    /// `CL_FirstSnapshot` (CoDMP.exe 0x404d00).
     fn first_snapshot(&mut self, realtime: i32, snap: i32) {
         self.delta = Some(snap - realtime);
         self.old_server_time = snap;
+        self.demo_base = snap;
         self.extrapolated = false;
     }
 
@@ -304,5 +346,40 @@ mod tests {
             drawn = c.update(realtime, 43_600, num, 0);
         }
         assert!((43_600..43_800).contains(&drawn), "{drawn}");
+    }
+
+    #[test]
+    fn a_frozen_demo_holds_and_resumes_from_the_held_time() {
+        let run = DemoClock::default();
+        let freeze = DemoClock {
+            freeze: true,
+            ..run
+        };
+        let mut c = ServerClock::default();
+        assert_eq!(c.update_demo(1000, 50_000, 0, run), 50_000);
+        assert_eq!(c.update_demo(1100, 50_000, 0, run), 50_100);
+        assert_eq!(c.time_at(1500, 0, freeze), Some(50_100));
+        assert_eq!(c.update_demo(1500, 50_200, 0, freeze), 50_100);
+        // The delta never moved, so thawed the time jumps to the wall's.
+        assert_eq!(c.update_demo(1600, 50_200, 0, run), 50_600);
+    }
+
+    #[test]
+    fn timedemo_steps_50_ms_a_frame_off_the_first_snapshot() {
+        let mut c = ServerClock::default();
+        let td = |n| DemoClock {
+            timedemo_frames: Some(n),
+            ..DemoClock::default()
+        };
+        assert_eq!(c.time_at(1000, 0, td(1)), None);
+        c.update_demo(1000, 50_000, 0, DemoClock::default());
+        assert_eq!(c.time_at(1001, 0, td(1)), Some(50_050));
+        assert_eq!(c.update_demo(1001, 50_050, 0, td(1)), 50_050);
+        // Frozen too: timedemo wins.
+        let frozen = DemoClock {
+            freeze: true,
+            timedemo_frames: Some(2),
+        };
+        assert_eq!(c.update_demo(1002, 50_100, 0, frozen), 50_100);
     }
 }

@@ -1371,6 +1371,7 @@ fn main() -> Result<()> {
         os_cursor: true,
         captured: false,
         server_process: None,
+        timedemo: Default::default(),
         exec_depth: 0,
         error: None,
     };
@@ -2043,6 +2044,8 @@ struct App {
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
+    /// The playing demo's `timedemo` count.
+    timedemo: play::demos::TimeDemo,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -2859,9 +2862,30 @@ impl App {
         self.ui.close_all();
         self.mode = online_mode(net, None, None);
         self.connect_addr = None;
+        self.timedemo = Default::default();
         self.set_title(format!("{} — demo {name}", version_tag()));
         if self.console.open {
             self.toggle_console();
+        }
+    }
+
+    /// `CL_DemoCompleted` (CoDMP.exe 0x40e920): the `timedemo` line, the
+    /// disconnect, then `CL_NextDemo` (0x40ed80), which runs `nextdemo`
+    /// once and clears it.
+    fn demo_completed(&mut self, event_loop: &ActiveEventLoop, now_ms: i32) {
+        if self.shell.cvar_f32("timedemo") != 0.0
+            && let Some(line) = self.timedemo.report(now_ms)
+        {
+            console::log::print(&line);
+        }
+        self.disconnect(None);
+        let next = self.shell.cvar("nextdemo").unwrap_or("").to_string();
+        log::debug!("CL_NextDemo: {next}");
+        if !next.is_empty() {
+            let effects = self.shell.execute("set nextdemo \"\"");
+            self.apply(event_loop, effects);
+            let effects = self.shell.execute(&next);
+            self.apply(event_loop, effects);
         }
     }
 
@@ -3682,6 +3706,21 @@ impl ApplicationHandler for App {
                         join,
                     } => {
                         let mut vm = None;
+                        // `timedemo` counts the frames drawn once the first
+                        // snapshot is in; `cl_freezeDemo` holds the time.
+                        let demo_clock = play::clock::DemoClock {
+                            freeze: self.shell.cvar_f32("cl_freezeDemo") != 0.0,
+                            timedemo_frames: match &*phase {
+                                Phase::Live(live)
+                                    if net.is_demo()
+                                        && live.clock.started()
+                                        && self.shell.cvar_f32("timedemo") != 0.0 =>
+                                {
+                                    Some(self.timedemo.step(local_ms as i32))
+                                }
+                                _ => None,
+                            },
+                        };
                         // A demo is read up to the clock (`CL_SetCGameTime`,
                         // CoDMP.exe 0x404d60), nothing while a map loads.
                         let events = if net.is_demo() {
@@ -3691,6 +3730,7 @@ impl ApplicationHandler for App {
                                         .time_at(
                                             local_ms as i32,
                                             self.shell.cvar_f32("cl_timeNudge") as i32,
+                                            demo_clock,
                                         )
                                         .unwrap_or(i32::MIN),
                                 ),
@@ -4004,8 +4044,12 @@ impl ApplicationHandler for App {
                                 (&mut *phase, net.snapshots().newest())
                         {
                             let nudge = self.shell.cvar_f32("cl_timeNudge") as i32;
-                            live.clock
-                                .update_demo(local_ms as i32, s.server_time, nudge);
+                            live.clock.update_demo(
+                                local_ms as i32,
+                                s.server_time,
+                                nudge,
+                                demo_clock,
+                            );
                         }
                         if matches!(phase, Phase::Live(_))
                             && !gamestate_ready
@@ -6066,7 +6110,7 @@ impl ApplicationHandler for App {
                 // A drop or a failed load ends the session, not the program:
                 // retail falls back to its console and menus.
                 if demo_over && fatal.is_none() {
-                    self.disconnect(None);
+                    self.demo_completed(event_loop, local_ms as i32);
                     return;
                 }
                 if let Some(err) = fatal {

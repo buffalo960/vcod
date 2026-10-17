@@ -364,8 +364,13 @@ impl Shell {
         s.register("cl_packetdup", "1", ARCHIVE);
         s.register("cl_timeNudge", "0", 0);
         // 1.5's and UO's cgame records on the server's `C` and stops on its
-        // `D` while this is 1 (cod11-demos.md, "Automatic demos").
+        // `D` while this is 1; their cvar table rows are "0", archived
+        // (cod11-demos.md, "Automatic demos").
         s.register("cg_autodemo", "0", ARCHIVE);
+        // CL_Init (CoDMP.exe 0x411fd8, 0x411f8e): `timedemo` "0" with no
+        // flags, `cl_freezeDemo` "0" CVAR_TEMP (cod11-demos.md, "Playback").
+        s.register("timedemo", "0", 0);
+        s.register("cl_freezeDemo", "0", 0);
         // CoDMP.exe registers `password` CVAR_USERINFO, not archived
         // (0x4123ea); the browser's password popup edits it.
         s.register("password", "", USERINFO);
@@ -1049,6 +1054,15 @@ pub fn split_commands(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nextdemo_holds_a_whole_line_and_clears() {
+        let mut s = Shell::new();
+        s.execute("set nextdemo \"demo b; set nextdemo demo a\"");
+        assert_eq!(s.cvar("nextdemo"), Some("demo b; set nextdemo demo a"));
+        s.execute("set nextdemo \"\"");
+        assert_eq!(s.cvar("nextdemo"), Some(""));
+    }
 
     #[test]
     fn a_run_only_value_stays_out_of_the_config_until_set_again() {

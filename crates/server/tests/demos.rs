@@ -87,7 +87,10 @@ fn a_recorded_demo_plays_back_the_frames_the_client_parsed() {
     let sink = Shared::default();
     cl.start_recording(Box::new(sink.clone()), "ab")
         .expect("record in a level");
-    assert!(cl.start_recording(Box::new(Shared::default()), "x").is_err());
+    assert!(
+        cl.start_recording(Box::new(Shared::default()), "x")
+            .is_err()
+    );
 
     // Walk and fire; a restart halfway sends `map_restart`'s commands.
     let mut live = Seen::default();
