@@ -405,7 +405,8 @@ VERIFIED, off the capture:
   while the stalled descent was still running replaced it: the wire's new
   `trBase` z 30 is the old trajectory at the call's level time, and its
   `trDelta` z -32 is the 32 that `getorigin()` read a frame earlier. Section
-  14 has the second run that tells the two apart.
+  14 has the second run that tells the two apart, and "A blocked mover"
+  below the setup that does it.
 - **The residual yaw.** After `rotateyaw(2, 1)` and `rotateyaw(-2, 1)` the
   slab's `apos.trBase` reads `-0.0` and the pushed player drifts +x by 0.021
   a frame while it is pushed, the slab's whole push turning about the world
@@ -506,8 +507,45 @@ VERIFIED, the 1.5b and UO game modules (`private/server-1.5`,
 `AngleNormalize360` and `AngleNormalize180` as 1.1d's does, and 1.5b's
 `BG_EvaluateTrajectory` stores a linear trajectory's `dt` to a float
 (`0x1b8f5`) before the mul-add, which vcod follows on a 1.5 or UO server
-(`Movers::stored`). UNVERIFIED: the 1.5b and UO engines' `SV_LinkEntity`
-snap; vcod applies 1.1d's on every protocol.
+(`Movers::stored`). The 1.5b and UO engines snap as 1.1d's does (next
+subsection).
+
+### The snap on every link
+
+VERIFIED, `cod_lnxded` 1.1d: the snap at `0x08090a0a`..`0x08090aad` runs on
+every `SV_LinkEntity` call, after the `s.solid` packing and before any test
+of the entity's contents or shape, on `ent+0x140`. VERIFIED, the 1.5b
+engine: `SV_LinkEntity` (`0x8098df6`) calls a three-component loop
+(`0x8098d7f`) on `ent+0x144` at `0x8098f72`; the loop rounds each
+component through `0x809ac27` (`+ 0.5`, rodata `0x80e0b5c`, truncated
+under a `0xc00` control word), stores the difference to a float
+(`0x8098dc2`), squares it and compares it against `1.0000001e-6` (rodata
+`0x80e0b00`). VERIFIED, the UO 1.51b engine: the same loop (`0x8099d77`,
+rounding through `0x809bc1f`, the constant at `0x80e6a40`) on `ent+0x148`,
+called from its `SV_LinkEntity` at `0x8099f6a`. INFERRED: `ent+0x144` and
+`ent+0x148` are those builds' `r.currentAngles` (their contents tests read
+`ent+0x11c` and `ent+0x120`, 1.1d's `+0x118` moved by the same amount);
+the stored difference changes nothing, since the difference of a float and
+a nearby integer is exact in a float.
+
+VERIFIED, `client-probes/probe_anglesnap.gsc` against the retail 1.1d,
+1.5b and UO 1.51b Linux servers, mp_carentan, no client, 2026-10-17,
+identical lines on all three:
+`crates/server/tests/fixtures/movers/mp_carentan-dm-anglesnap.txt`. A
+script model, a script origin, a suspended `item_health` and model `*5`
+each read `.angles` as written, (0.0004, 89.9996, 0.0011) and (-0.9995,
+180.0008, 359.9991), until an `.origin` write links them; from then on they
+read (0, 90, 0.0011) and (-0.9995, 180, 360), and a frame later the same.
+-0.9995 stays: `n` truncates -0.4995 to 0.
+
+VERIFIED, 1.1d `ClientThink_real`'s tail writes `ent+0x140..0x148` after
+its link (cod11-gametypes-re-bel.md 8.6). INFERRED: a playing client's
+`.angles` reads the tail's unsnapped write after every cmd.
+
+vcod: `GameHost::link_entity_at` snaps the `angles` field of every entity
+with no client it links or unlinks; `ride_ab.rs`'s
+`every_link_snaps_angles_like_retail` replays the probe and matches every
+line. A client's link does not snap.
 
 ### A blocked mover
 
@@ -516,12 +554,50 @@ moves 2 units more on retail than on ours once. In the `-ents` run its
 trajectory, stalled from 36700, logs no change at 36950 and shifts again
 from 37000: it moved 72 to 70 on that pass and stalled at 70. In the first
 run every `crush` sample reads 72, and the `moveto` that resets it starts
-from 30 where ours starts from 32: the move falls between the last sample
-and the teleport. VERIFIED, the first run's wire: the player's ground reads
-1022 on every snapshot of the crush and its `commandTime` trails the
-snapshot by at most 34 ms, so a cmd relinked him on every frame. What lets
-the one frame through is not on either capture; `ride_ab.rs` holds it as
-its `reset` and `crush` gaps.
+from 30 where ours started from 32. The two have different causes.
+
+VERIFIED, game.mp `ScriptEnt_MoveAxis` (`0x606c0`) and `ScriptEntCmd_MoveTo`
+(`0x603a0`) hand `r.currentOrigin` (`ent+0x134`; `0x608a1`, `0x60554`) to
+the move setup (`0x5fb38`, called at `0x608bf` and `0x60575`) and end in
+`trap_LinkEntity` (`0x608cb`, `0x60581`). INFERRED, off the setup's
+control flow: it takes the delta to the target off `r.currentOrigin` first; then,
+when `pos.trType` is not 0, `BG_EvaluateTrajectory` writes the running
+trajectory at `level.time` into `r.currentOrigin`; `trBase` is copied from
+it, and a last evaluation of the new trajectory at `level.time` writes it
+back. VERIFIED: `ScriptEnt_RotateAxis` calls the same setup on `r.currentAngles`
+(`0x60d52`), `ScriptEntCmd_RotateVelocity` its velocity twin `0x5feb0`
+on `ent+0x140` (`0x60f24`, `0x60f45`), and `ScriptEntCmd_RotateTo` the setup at
+`0x60b3c`; each links after (`0x60d5e`, `0x60f51`, `0x60b4b`).
+`ScriptEntCmd_GravityMove` (`0x60590`) copies
+`r.currentOrigin` into `trBase` (`0x60667`) and calls no evaluation before
+it. INFERRED: `0x5feb0` evaluates a running trajectory as `0x5fb38` does;
+after a move verb on a moving entity `getorigin()`
+reads the new `trBase`, one frame further on than it read before the call
+(a stalled trajectory runs a frame ahead of where the mover holds), and the
+verb's link puts the clip there. That is the first run's 2 units: its reset
+is called a second after the teleport, while the slab, freed, still
+descends.
+
+VERIFIED, `client-probes/probe_crush.gsc` against the retail 1.1d Linux
+server, mp_carentan, 2026-10-17, the client on a jittered link
+(`VCOD_NETSIM="ping=40,jitter=70"`):
+`crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`, the slab
+held on the player for 8 s. It slips 2 units five times (72 to 62), each on
+the frame after a snapshot whose `commandTime` repeats the one before it,
+and on no other frame: those five frames ran with no cmd from the player.
+The `moveto` called in the frame of the teleport, the slab still stalled at
+62, reads `getorigin()` 60 straight after the call. INFERRED, off the push
+listing above: the blocked push leaves the player unlinked; only his next
+`ClientThink` links him, so a frame that runs before one reaches the server
+finds nobody under the slab. The `-ents` run's client logged no
+`commandTime`, so its 36950 pass is read as one such frame, not measured.
+
+vcod: the move verbs write the start into `origin` and link
+(`builtins::mover::linked`, `mover::verb_linked`), and a blocked push
+leaves the blocker unlinked as retail does. `ride_ab.rs`'s
+`a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail` replays the
+crush capture, holding the cmd back from each frame that ran without one,
+and matches every slab sample; the `-ents` run keeps its `crush` gap.
 
 ### The box test
 
