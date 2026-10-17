@@ -1132,10 +1132,31 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   cone and `EV_PAIN` 100. The tank captures' main gun shots read this on
   the driver: `damageCount` 44 on the seats capture, 30 on the drive
   (VERIFIED, capture). vcod-server queues the same feedback
-  (`SimOp::VehiclePain`) and matches the event, its parm and
-  `damageEvent`; its splash on the hull charged 43 and 38, so the counts
-  stay one and eight off (VERIFIED, `vehicle_ab` replay). Where the
-  amount parts is open: retail logs no `damage` notify in those runs. The scale
+  (`SimOp::VehiclePain`) and matches the event, its parm,
+  `damageEvent` and both counts (VERIFIED, `vehicle_ab` replay). It
+  charged 43 and 38 until the splash took retail's measure, below.
+- **A blast on a hull.** `G_RadiusDamage` (game.mp.uo 0x5098b) measures
+  an entity with `r.bmodel` (+0x104) to its `r.absmin`/`r.absmax`
+  (+0x124, +0x130) on each axis, and one that also has a vehicle record
+  (+0x164) to that box drawn in by three quarters of `r.mins`/`r.maxs`
+  (+0x108, +0x114): `absmin - 0.75 mins` to `absmax - 0.75 maxs`
+  (VERIFIED decompile). `VEH_SetupCollmap`'s `SetBrushModel` makes a paired vehicle a brush
+  model, so UO's `SV_LinkEntity` (`coduo_lnxded` 0x8099dee) files it,
+  once any angle is set, under a cube of `RadiusFromBounds` (0x806a0c3)
+  of the collmap's bounds about `r.currentOrigin`, grown a unit
+  (VERIFIED decompile). `CanDamage` probes about the box's middle, the origin. The direction
+  `G_Damage` gets is `r.currentOrigin` less the blast lifted 24, which
+  it normalizes for the `damage` notify and the pain's jolt (VERIFIED
+  decompile, 0x5098b and 0x4fedb). `Scr_Vehicle_DamageScale` (0x8ccad)
+  measures the point against the record's physics pose (`rec+0xb8`, its
+  angles at `rec+0xd0`) through `AnglesToAxis` of all three angles, the
+  hull's pitch and roll included (VERIFIED decompile). vcod links a
+  paired vehicle as a brush model (`LinkKind::Vehicle`), measures the
+  blast as above (`EntityVictim::vehicle_link`) and scales on the
+  record's pose; on the two tank captures the own shell's splash then
+  charges 189 x 0.233 = 44 and 134 x 0.231 = 30, retail's counts
+  (VERIFIED, `vehicle_ab` replay). Measured axially on the file's box
+  from the origin it charged 43 and 38. The scale
   times the damage is truncated (`fistp` under a 0xc00 control word,
   0x4ffbf..0x4ffd1) and a result under 1 is lifted to 1 (VERIFIED
   disassembly; the jeep's rear 18.75 reads 18 in the hits capture below).
@@ -1435,9 +1456,9 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   (VERIFIED, replay). Gaps: the probe's view past
   the seat pitch clamp, where the per-cmd push runs a snapshot apart from
   the rebase (the clamp itself is `moves_ab`'s), and the cone there and at
-  each seat change, whose turn term reads the rebased cmd angles' jump;
-  the driver's feedback count from the tank's own shell (13, "The
-  driver's feedback"). `delta_angles` is not compared: its absolute value
+  each seat change, whose turn term reads the rebased cmd angles' jump.
+  The driver's feedback from the tank's own shell matches (13, "A blast
+  on a hull"). `delta_angles` is not compared: its absolute value
   rides the replaying client's own cmd angles. The jeep driver's legs
   in the four snapshots after the exit read `pb_stand_alert` (185) on
   retail, airborne: UO's `PM_Footsteps` (0x297e4) returns early for an
