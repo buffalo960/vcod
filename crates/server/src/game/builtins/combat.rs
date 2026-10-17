@@ -480,10 +480,24 @@ pub fn radius_damage(
         "none",
         "MOD_EXPLOSIVE",
     );
+    // United Offensive's builtin (0x6c229) takes an attacker and an
+    // inflictor after the four, by count (`Scr_GetNumParam`): the attacker
+    // the world when absent, the inflictor NULL (coduo-vehicles.md 11.2).
+    let uo = host.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version;
+    let entity = |v: Option<&Value>| match v {
+        Some(Value::Entity(e)) if uo => Some(*e),
+        _ => None,
+    };
+    let (attacker, inflictor) = (entity(args.get(4)), entity(args.get(5)));
     let candidates = blast_candidates(host, cx, &blast);
     host.blast_noises.push(*origin);
     host.radius_ignore_active = host.ignore_radius_damage;
-    host.blasts.push(ScriptBlast { blast, candidates });
+    host.blasts.push(ScriptBlast {
+        blast,
+        candidates,
+        attacker,
+        inflictor,
+    });
     blast_step(host, cx);
     Ok(Value::Undefined)
 }
@@ -511,6 +525,9 @@ fn blast_candidates(
 pub struct ScriptBlast {
     blast: crate::game::combat::Blast,
     candidates: Vec<EntId>,
+    /// UO's attacker and inflictor arguments; the world and NULL without.
+    attacker: Option<EntId>,
+    inflictor: Option<EntId>,
 }
 
 /// The `spawn_then` token of a blast victim's damage callback. Every other
@@ -572,23 +589,36 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
             continue;
         };
         // A rider takes a tenth; with no inflictor even a tank's driver does.
+        let inflictor = host.blasts.last().and_then(|w| w.inflictor);
         let Some(damage) = host
             .vehicles
-            .occupant_damage(slot, None, hit.damage, DFLAG_RADIUS)
+            .occupant_damage(slot, inflictor, hit.damage, DFLAG_RADIUS)
         else {
             continue;
         };
         let (mod_, none) = (cx.intern_exact("MOD_EXPLOSIVE"), cx.intern_exact("none"));
         // The inflictor is NULL and the attacker `g_entities[ENTITYNUM_WORLD]`
-        // (combat doc, 14.2), so the callbacks get `undefined` and the world.
+        // (combat doc, 14.2), so the callbacks get `undefined` and the world,
+        // unless UO's call named them. The weapon is the inflictor's, else
+        // the attacker's (`G_DamageClient` 0x4fd4b).
         let world_ent = host.ents.world(cx);
+        let walk = host.blasts.last().expect("the walk this turn came from");
+        let (attacker, inflictor) = (walk.attacker, walk.inflictor);
+        let weapon = match inflictor.or(attacker) {
+            Some(e) => {
+                let w = crate::game::vehicle::inflictor_weapon(host, Some(e));
+                let w = host.defs.weapon_name(w).unwrap_or("none").to_string();
+                cx.intern_exact(&w)
+            }
+            None => none,
+        };
         let args = vec![
-            Value::Undefined,
-            Value::Entity(world_ent),
+            inflictor.map_or(Value::Undefined, Value::Entity),
+            Value::Entity(attacker.unwrap_or(world_ent)),
             Value::Int(damage),
             Value::Int(DFLAG_RADIUS),
             Value::String(mod_),
-            Value::String(none),
+            Value::String(weapon),
             Value::Vector(hit.point),
             Value::Vector(hit.dir),
             Value::String(none),
@@ -657,7 +687,7 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
     ) else {
         return;
     };
-    let attacker = host.ents.world(cx);
+    let attacker = walk.attacker.unwrap_or_else(|| host.ents.world(cx));
     let hit = victim.hit(&walk.blast, attacker);
     for (event, args) in host.damage_nonclient(cx, id, damage, attacker, &hit) {
         let event = cx.intern_folded(event);

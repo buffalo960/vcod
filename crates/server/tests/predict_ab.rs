@@ -178,14 +178,15 @@ impl Run<'_> {
             return;
         }
         self.sim.update_aim(dt_ms, cmd.server_time, self.weapons);
-        for (step, dt) in pm::cmd::chop(self.st, cmd) {
+        pm::cmd::chop(self.st, cmd, |step, dt| {
             self.sim.step(
-                &step,
+                step,
                 dt,
                 Some(MoveWorld::new(self.world, &self.bodies, 0)),
                 self.weapons,
             );
-        }
+            self.sim.ps.jump_latched
+        });
         self.st = cmd.server_time;
     }
 

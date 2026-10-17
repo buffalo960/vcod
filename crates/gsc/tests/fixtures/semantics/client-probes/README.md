@@ -1269,9 +1269,12 @@ An earlier run without the `mt` and `pt` watchers printed the same `f` and
 `t` lines. Ours, the same day: the
 `touch_pass` trace walks 102, 101, b, a, c after the spawn and after `kept`,
 102, 101, a, b, c after `moved`, and the ammo run takes e. Its log lines
-come out in another order (`mt 101`, `mt 102`, `pt 102`, `t a`, `t b`,
-`t c`, `f 101`, `f 102`, once a frame), since vcod delivers the notifies at
-the next script frame and runs the waiters in thread age.
+came out in another order then (`mt 101`, `mt 102`, `pt 102`, `t a`, `t b`,
+`t c`, `f 101`, `f 102`, once a frame); since 2026-10-17 they match
+retail's, `G_RunFrame`'s trigger queue included. A full retail log of the
+first mode, rerun that day, is
+`crates/server/tests/fixtures/touchorder/mp_pavlov.txt`, which
+`touchorder_ab.rs` replays.
 
 ## probe_squash
 

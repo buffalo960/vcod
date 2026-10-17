@@ -303,9 +303,19 @@ is the same 1-based weapon index `entityState.weapon` carries.
 The static fields the traces show alongside those: `eFlags` 16 and
 `groundEntityNum` 1022 (`ENTITYNUM_WORLD`) on the items, `clientNum` 254 on
 them and 0 on the scriptmover and the turret, and `solid` 0 on all of them.
-`groundEntityNum` on the scriptmover reads 0 for about a minute after a map
-load and 1023 (`ENTITYNUM_NONE`) from then on, which is why a trace has to be
-taken from a settled server.
+`groundEntityNum` on the scriptmover and the turret reads 0 until the client
+in slot 0 leaves and 1023 (`ENTITYNUM_NONE`) from then on. VERIFIED live (retail
+1.1d, `mp_carentan` `dm`, 2026-10-17): a spectator that never joined read 0 on
+all four for 280 s of a fresh server; on another fresh server the first
+`--save-entities` run read 0 and the runs after it 1023 from their first
+sample. VERIFIED, `game.mp.i386.so` 1.1d: `ClientDisconnect` (0x42aac) calls
+`G_FreeEntity` on the client (0x42bfc), and `G_FreeEntity` (0x66948) walks
+every entity in use (`inuse`, +0x160, 0x66ad1) and stores 0x3ff into a
+`s.groundEntityNum` (+0x7c) equal to the freed number (0x66b0e, 0x66b13).
+INFERRED: the scriptmover and the turret carry `G_Spawn`'s zeroed 0, which
+names entity 0, so slot 0's departure turns them. A trace is
+therefore taken after one client has come and gone, and
+`entities_ab.rs` replays such a client before its own.
 
 #### What a missile looks like
 
@@ -336,7 +346,12 @@ and it goes stationary with the yaw and roll the tumble reached and a pitch of
 4: the explode event rides the missile's own ring, on the frame its `eType` has
 already become 0. `entityState.index` is 0, unlike `ET_ITEM`'s, because a
 missile's model rides `s.eFlags 0x03000000`, which is above the 24-bit
-netfield and never travels.
+netfield and never travels. VERIFIED: the 2026-10-17 recapture of
+`mp_carentan-tdm-grenade.txt` prints `eFlags` 16777216 on every in-flight
+and resting frame: the field arrives non-zero with 24 zero bits, and vcod's
+reader marks that with a bit above the width (`msg::above_width`, "PlayerState
+delta"); the first capture's reader printed 0. INFERRED: the model bits are
+what make the int non-zero.
 
 VERIFIED from the same captures: the playerstate field `grenadeTimeLeft` takes
 exactly two values on a stock 1.1 MP server, 0 and the held weapon's
@@ -1154,7 +1169,7 @@ VERIFIED, both committed spectator captures: `viewangles[0]` and `viewangles[1]`
 
 For a **spawned player** the same sum is measured directly:
 
-VERIFIED, from the `--save-ads` capture taken on `mp_carentan` under `tdm` with `kar98k_sniper_mp` (`crates/server/tests/fixtures/playerstate/mp_carentan-tdm-ads-sniper.txt`): `delta_angles[1]` reads 24576 and `viewangles[1]` reads -45.0 on every one of its 355 `!trace` lines. Those two pin the wire cmd yaw at 32768: `ANGLE2SHORT(-45)` is 57344, and `57344 - 24576` is 32768. Do not read the capture's `!input yaw=0` as the wire value -- that column records the script's nominal input, and `NetClient::send_frame` (`crates/common/src/net/mod.rs:346`) subtracts `delta_angles` from every axis before the cmd goes out. INFERRED, from the probe's own control flow, that 32768 is what `hold_view_yaw` produces: it holds the view of the first snapshot it saw, which for this run was the spectator's, and the client's subtraction turns that into the wire word.
+VERIFIED, from the `--save-ads` capture taken on `mp_carentan` under `tdm` with `kar98k_sniper_mp` (`crates/server/tests/fixtures/playerstate/mp_carentan-tdm-ads-sniper.txt`, recaptured 2026-10-17): `delta_angles[1]` reads 24576 and `viewangles[1]` reads 45.0, the spawn point's yaw, on every one of its 356 `!trace` lines. Those two pin the wire cmd yaw at 49152: `ANGLE2SHORT(45)` is 8192, and `8192 - 24576` is 49152 modulo 65536. Do not read the capture's `!input yaw=0` as the wire value -- that column records the script's yaw on top of the held facing, and `NetClient::send_frame` (`crates/common/src/net/mod.rs`) subtracts `delta_angles` from every axis before the cmd goes out. INFERRED, from the probe's own control flow, that the 45 is what `hold_view_yaw` produces: it reads the spawn's facing off `delta_angles` and holds it. VERIFIED, the first capture (in git at `c52e9606`): the same 24576 under `viewangles[1]` -45.0 on all 355 lines, a wire yaw of 32768, from a `hold_view_yaw` that held the view of the first snapshot it saw, the spectator's.
 
 VERIFIED that the field tracks the cmd rather than pinning the spawn angle, from both motion captures: `mp_carentan-dm-motion.txt` reads 135.0 at every held pose and moves by exactly the turn steps' 60 degrees, to 75.0 at `turn_left` and -165.0 at `turn_right`; `mp_pavlov-dm-motion.txt` is the same shape off a base of 45.0.
 
@@ -1362,7 +1377,7 @@ Anti-abuse behaviour, and one timing difference; the wire format is unchanged (`
 - A netchan message is parsed in full (header checks, `serverId`, every command and every usercmd) before anything about the client is updated. Retail commits the sequence number, the address and the timeout stamp first, so one spoofed packet with a client's IP and qport and a huge sequence number stalls that client until it times out.
 - A `connect` that matches a live client's address and qport may replace it only when it carries that client's challenge, or when the slot has been silent for `sv_reconnectlimit` (3 s). Retail hands the slot over on the address match alone.
 - Challenges expire after 60 s.
-- Packets wait for the next tick to be read, up to 50 ms, and rcon's 500 ms window is measured at that read; requests sent less than about 550 ms apart can be dropped where retail would have answered both. Pings are not affected: a reader thread stamps each packet's arrival, and a move message's ack takes the time of the newest frame that had gone out when it arrived, as retail's 5 ms socket poll gives (`docs/research/cod11-server-handshake.md`, "Pings").
+- Packets wait for the next tick to be read, up to 50 ms, but each is handled on the moment retail's 5 ms socket poll would have handled it: rcon's 500 ms window reads its arrival (or the end of an earlier packet's handling that ran past it), and a move message's ack takes the time of the newest frame that had gone out when it arrived (`docs/research/cod11-server-handshake.md`, "rcon" and "Pings"). Replies still leave at the tick's end.
 - `Sys_IsLANAddress`, which decides whether a client's `rate` reads 99999 or its clamped userinfo value, matches against the host's interface addresses where retail matches against what its hostname resolves to (`docs/research/cod11-server-handshake.md`, "Rate").
 - `dedicated` defaults to 1, so no master heartbeat, where retail's default of 2 heartbeats. This is deliberate, so dev runs stay off the public list; `--set dedicated=2` opts in.
 - Clients' packets run at the tick, not as they arrive. Retail's `SV_UserMove` calls the game's `ClientThink` per cmd as each client's message is parsed (cod_lnxded `0x80872cb`; the call is VERIFIED, that it is `ClientThink` is INFERRED), between game frames, on the previous frame's `level.time`. `replay_moves` runs every packet queued since the last tick in the order the server executed it, a packet's `kill` ahead of its cmds and each cmd's shots inside it, so the order is retail's; only the clock differs (`docs/research/cod11-combat.md`, section 16).

@@ -2070,10 +2070,17 @@ captures and the gates.
 - `configstrings_uo_ab`: the whole table against `gamestate-uo.bin`, the
   start time included: UO's level clock starts at the server's uptime, 3's
   `t` and 14 read 1810050 there, and the gate loads ours on that clock
-  (`Server::start_clock_at`). Only `sv_serverid` is left out, which
-  retail's first level reads as 17 and vcod as 16 (VERIFIED, live; the
-  extra low-nibble bump is the restart path's, coduo_lnxded 0x8088325,
-  which vcod does not take at startup, INFERRED).
+  (`Server::start_clock_at`), `sv_serverid` included. A fresh retail UO
+  server's first level reads 16, in `rcon sv_serverid` and in a probe's
+  gamestate, with no client and with one joined (VERIFIED, live,
+  2026-10-17, mp_cassino dm), as `SV_SpawnServer`'s `+0x10` gives
+  (coduo_lnxded, the add after `Cvar_Set("mapname")`; VERIFIED,
+  decompile). The capture's 17 is that server's history: one spawn and
+  one `map_restart` (`0x8088325`, low nibble up one; VERIFIED, decompile)
+  before the probe joined. INFERRED, off the nibbles. The gate restarts
+  ours once on a clock 300 ms earlier, the three 100 ms settle frames
+  the spawn runs before the restart can start its level, and the table
+  then matches whole. VERIFIED (gate).
 - `playerstate_uo_ab`: above.
 - `combat_uo_ab`: retail's `--save-combat` capture (kar98k: single shot,
   sustained fire, reload, crouched and prone shots) replayed on a protocol
@@ -2360,12 +2367,12 @@ carriers against the section 19 captures.
 
 ### Not done
 
-A live capture of a satchel shot off (the decompile and unit tests only);
+A swing now strikes a satchel's box as a round does, and the other
+missiles' every-frame links are unlinks, their `r.contents` being 0
+(cod11-combat.md 2.5, 14.7). A live capture of a satchel shot off (the decompile and unit tests only);
 a satchel shot in the 300 ms its explode rides the wire (retail's
 `takedamage` survives the explode, so a second `G_GrenadeDie` there would
-explode it again; INFERRED, not ported); melee against a satchel; the
-other missiles' links in the area tree, which retail makes every frame;
-a live run of a retail UO client burning on vcod-server; the
+explode it again; INFERRED, not ported); a live run of a retail UO client burning on vcod-server; the
 flamethrower's stray bullets on vcod-server. The bipod deploy's entity
 bit is not a gap: `BG_PlayerStateToEntityState` (game.mp.uo 0x2cd8b) ORs
 0x100 (1.1's 0x200) into the entity's `eFlags` whenever `pm_flags` 0x20,
@@ -2502,6 +2509,50 @@ new level's `setTeamScore("allies", 0)` changes it), `d 3` (the ambient)
 `G_InitGame`'s, the gametype's and the level script's writes). vcod's
 restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
 `d 1` (cod11-map-cycle.md 4.5); it has no `d 14`, which it holds at `0`.
+
+Four more probes, 2026-10-17, ports 32531-32539, the same two clients and
+`gametypes_ab` tests (`uo_*_time*`, `uo_team_deathmatch_*`), cover the
+clock ends, the defender's return and a rotation to another map:
+- **ctf** (`probe_ctftime`, mp_cassino, `scr_ctf_roundlength 0.5`,
+  `scr_ctf_timelimit 0.5`, no score or round limit). The allied player
+  takes the axis flag, faces yaw 0 and `suicide()`s: `drop_flag`'s
+  `getPlant` puts it 11 units ahead, at (4974, -1987, -7.88). The axis
+  player `setOrigin`s onto it and `ctf_think`'s own-team branch returns
+  it one frame later: `A;...;axis;...;ctf_returned`,
+  `GMI_CTF_PLAYER_RETURNED_FLAG_AXIS` and the returned sound, no
+  `TIMEOUT_RETURNING` (VERIFIED, the log's 17400 and 17450, and the
+  captures). The round clock runs out 30 s into the level:
+  `GMI_CTF_TIMEEXPIRED`, `endRound("draw")`; after the 10 s end-round
+  delay `game["timepassed"]` reads 0.78 and `checkTimeLimit` ends the map
+  (`MPSCRIPT_TIME_LIMIT_REACHED`, `MPSCRIPT_THE_GAME_IS_A_TIE`,
+  intermission). The probe's own `setCvar("sv_mapRotation", "gametype
+  probe_ctftime map mp_foy")` is what `exitLevel(false)` rotates through:
+  a gamestate for mp_foy with serverId 33, and `g_gametype` still the
+  probe (VERIFIED, the log's `PROBE done mp_foy probe_ctftime` and the
+  `!gamestate` line; cod11-map-cycle.md 5.2).
+- **tdm** (`probe_tdmend`, mp_cassino, `scr_tdm_timelimit 0.5`,
+  `scr_tdm_scorelimit 2`). The allied player kills the axis player with
+  `finishPlayerDamage`: allies 1, under the limit. The victim's killcam
+  runs (2 s dying, `archivetime` 9), and he respawns only on a use press
+  after it (`waitRespawnButton`; the probe taps use 10 s after the kill).
+  `startGame`'s `checkTimeLimit` ends the map at 30100 ms of level time
+  (VERIFIED, the log and captures).
+- **hq** (`probe_hqtime`, mp_cassino, `scr_hq_timelimit 0.5`). Nobody
+  takes the radio; the time limit ends the map at 30100. The restarted
+  level shows a different radio, (1903, -1314, 168) where the first showed
+  (658, -1782, 0) (VERIFIED, the captures' objective slot 0). vcod shows
+  the first level's radio again (VERIFIED, the gate's ours side). INFERRED,
+  off `hq_randomize_radioarray`'s `randomInt` and vcod's per-level
+  `GameHost` seeding `RNG_SEED`: retail's draws carry across a restart and
+  vcod's start over. `gametypes_ab` drops every hq radio's origin, as for
+  the first level's random pick.
+- **bas** (`probe_bastime`, mp_foy, `scr_bas_roundlength 0.5`,
+  `scr_bas_roundlimit 1`, `scr_bas_startrounddelay 5`). Nobody breaches;
+  the round clock runs out with three bases a side: `GMI_DOM_TIMEEXPIRED`,
+  `endRound("draw")`, then `MPSCRIPT_ROUND_LIMIT_REACHED` and the map end
+  at 53650 (VERIFIED, the log and captures).
+All four match on vcod-server; `probe_ctftime` failed before
+`map_rotate` read the script's cvars (ours restarted mp_cassino).
 
 ### Engine facts the gametypes reach
 
@@ -2642,8 +2693,9 @@ restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
   (cod11-map-cycle.md 4.5). VERIFIED, retail's burst at mp_foy's first
   restart (`mp_foy-bas-attacker-uo.txt`, `ms=19467`): `d 14 23300`, `d 13`
   with the fog, `d 3 n\ambient_mp_foy\t\23300`, then `n`.
-- Not measured: `doDamage` on a client; a time limit; a map rotation that
-  names another map; `ctf`'s flag returned by a defender's touch.
+- Not measured: `doDamage` on a client; `dom`'s round clock and time
+  limit (the same `startRound` and `checkTimeLimit` shape as `ctf`'s,
+  which `probe_ctftime` measures).
 
 ## 23. HTTP downloads
 
@@ -2705,8 +2757,9 @@ The client's `cp` and the server's check take the module names from
   section 1's ten stock paks and `main/nsf_mp_j5outpost` (live, VERIFIED).
 - vcod-server builds the same lists and bound; `configstrings_uo_ab`
   compares the referenced pair on every UO table and both pure captures'
-  serverinfo and systeminfo byte for byte, bar `sv_serverid` (the captures
-  were a second map load). Its pure gate needs `nsf_mp_j5outpost.pk3` in
+  serverinfo and systeminfo byte for byte, `sv_serverid` 32 included: the
+  captures were each recipe's second map load, and the gate loads the
+  recipe's first map before it. Its pure gate needs `nsf_mp_j5outpost.pk3` in
   the install's `main/`.
 
 ## Tools
