@@ -68,7 +68,9 @@ something, the bullet links it.
   the client disconnects; LAN and Internet leave the client in the menus.
   The client kills any server it started when it exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
-  sensitivity and invert, player name, rate, master volume, video mode and
+  sensitivity, invert, free look and mouse smoothing (`cl_freelook`,
+  `m_filter`, with `+mlook` and `+strafe`), player name, rate, master
+  volume, video mode and
   full screen, brightness, texture detail, filter and quality, dynamic
   lights, sync, blood and sound quality, applied at the restarts retail
   applies them at. Choices land in the console's binds and cvars and persist in
@@ -82,11 +84,12 @@ something, the bullet links it.
   not the one the server lists is deleted before anything loads it, and a
   redirected one is asked for again, a later redirect of it refused so a
   1.5 server sends it over UDP. Pure servers take its pak
-  checksums. Modded servers work too: a server's `fs_game` layers its mod
-  directory over `main/` and swaps in the mod's menus, every systeminfo
-  key (`cl_allowDownload`, `rate`, `snaps`, ...) is forced into the
-  client's cvars as retail does, and a mod's script menus and `hud.menu`
-  text show up.
+  checksums. Modded servers work too: every systeminfo key
+  (`cl_allowDownload`, `rate`, `snaps`, `fs_game`, ...) is forced into the
+  client's cvars as retail does, the forced `fs_game` layers its mod
+  directory over `main/` and swaps in the mod's menus (and stays after you
+  leave, as retail's does), and a mod's script menus and `hud.menu` text
+  show up.
 - `--vanilla` (client and server) puts only the install patch's stock paks
   on the search path and ignores third-party maps, `zzz_*` mods, downloads
   and `fs_game`; the client downloads nothing under it
@@ -386,7 +389,7 @@ popups work. The options screens' texture detail, filter and quality,
 model detail, dynamic lights, sync, blood, wall marks, ejecting brass and
 sound quality take effect as retail applies them; the sound provider and
 NVIDIA fog are stored but ignored, and the language picker stays hidden.
-Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
+Show Compass and Team Overlay do nothing, as in retail 1.1, 1.5 and UO. CD key prints
 "not in vcod yet".
 There is no listen server: Start New Server always runs a separate
 `vcod-server`, Dedicated No joins it as an ordinary client (it needs the
