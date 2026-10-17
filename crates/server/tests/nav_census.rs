@@ -67,7 +67,7 @@ fn every_stock_maps_spawns_stay_in_one_component() {
 /// to a bot is the second: the spawns whose way leads into the fight.
 const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
     ("mp_arnhem", 231, 287, 332),
-    ("mp_berlin", 202, 301, 303),
+    ("mp_berlin", 202, 303, 303),
     ("mp_cassino", 94, 168, 180),
     ("mp_foy", 317, 341, 391),
     ("mp_italy", 361, 361, 371),
@@ -83,7 +83,7 @@ const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
     ("mp_uo_dawnville", 189, 243, 249),
     ("mp_uo_depot", 275, 351, 351),
     ("mp_uo_harbor", 113, 292, 292),
-    ("mp_uo_hurtgen", 281, 282, 286),
+    ("mp_uo_hurtgen", 282, 282, 286),
     ("mp_uo_powcamp", 226, 254, 258),
 ];
 
