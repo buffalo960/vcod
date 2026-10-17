@@ -2544,7 +2544,11 @@ and slot 0's snapshot kept carrying slot 1, `eFlags` unchanged, for the
 3 s the session stayed `playing`; the frame the script wrote `dead`,
 slot 1 read `pm_type` 6, its eye started down (51.18, 42, 33, ... 8), and
 it left slot 0's snapshot. The 2026-10-07 `probe_compass` run saw the same
-`pm_type` 0 then 6 (`cod11-hud-protocol.md` 9).
+`pm_type` 0 then 6 (`cod11-hud-protocol.md` 9). INFERRED, UO's
+`ClientEndFrame` (`game.mp.uo.i386.so`, Ghidra output): the same compares
+of `sessionState` against 3, 2 and 1 pick the arm, and only the 1 arm
+stores 6 (7 linked) with the same `svFlags` and `takedamage` writes, so UO
+keeps a playing suicide at `pm_type` 0 too; not run live there.
 
 vcod keyed the dead arm on the health instead and sent `pm_type` 6 and no
 entity at the suicide. VERIFIED, ours before the fix:
