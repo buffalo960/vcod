@@ -461,6 +461,12 @@ impl Ui {
         !self.open.is_empty() && !self.down
     }
 
+    /// `UI_IS_FULLSCREEN` (ui_mp_x86.dll 0x40016ab0): a menu on the stack
+    /// flagged visible and fullscreen, a UI taken down by a key included.
+    pub fn fullscreen(&self) -> bool {
+        self.open.iter().any(|&m| self.menus[m].fullscreen)
+    }
+
     /// `_UI_KeyEvent` (0x4000d6f0) for a key, a button or a release: with
     /// no focused menu (`Menu_GetFocused`, 0x40016970, finds none with
     /// both flags) it clears the UI's key catcher bit, runs
@@ -1615,7 +1621,7 @@ impl Ui {
         };
         // `_UI_KeyEvent` (0x4000d72d): an Esc with no fullscreen menu open
         // closes them all, ahead of `onEsc` and the `execKey`s.
-        if code == KeyCode::Escape && !self.open.iter().any(|&m| self.menus[m].fullscreen) {
+        if code == KeyCode::Escape && !self.fullscreen() {
             self.close_every_menu(shell, &mut out);
             return (true, out);
         }

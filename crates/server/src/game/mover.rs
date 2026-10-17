@@ -291,8 +291,10 @@ impl Movers {
     /// trajectory has it at `now_ms`, a frame further on: the ride
     /// capture's `moveto` on the descending slab sent `trBase` z 28 with a
     /// velocity of -30 from the 30 script read, ran out 2 units short and
-    /// settled on `dest` (movers doc, section 14).
-    pub fn move_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) {
+    /// settled on `dest` (movers doc, section 14). Returns the start, which
+    /// the verb writes into `r.currentOrigin` and links (0x5fb38): `getorigin()`
+    /// reads it straight after the call (movers doc 12, "A blocked mover").
+    pub fn move_to(&mut self, id: EntId, now_ms: i32, from: Vec3, dest: Vec3, m: Ramp) -> Vec3 {
         let row = self.row(id);
         let base = if row.pos.started {
             row.pos.at(now_ms)
@@ -302,6 +304,7 @@ impl Movers {
         row.pos.current = stationary(base);
         row.pos.start(now_ms, m.segments(dest - from), MOVEDONE);
         row.pos.dest = Some(dest);
+        base
     }
 
     /// `rotateto` and the three axis verbs. The delta is taken per component
@@ -413,7 +416,7 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     // `G_MoverTeam`: `amove` is the trajectory less `r.currentAngles`,
     // which `G_MoverPush` adds back and the link snaps (movers doc 12,
     // "The residual yaw").
-    let (turned, mut angles) = if moving {
+    let (turned, angles) = if moving {
         let target = if m.apos.started {
             bg_evaluate(m.apos.stored, &m.apos.current, level_ms)
         } else {
@@ -424,9 +427,9 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     } else {
         (before, before)
     };
-    if !m.sine && done.iter().any(|d| d.event == ROTATEDONE) {
-        angles = reached_angles(m.apos.current.base);
-    }
+    // `Reached_ScriptMover` quantizes after the links, so no link snaps it.
+    let reached_at = (!m.sine && done.iter().any(|d| d.event == ROTATEDONE))
+        .then(|| reached_angles(m.apos.current.base));
     let fields = [
         (m.pos.started, "origin", origin),
         (m.apos.started || moving, "angles", angles),
@@ -454,6 +457,9 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         let (origin, angles) = pose(host, cx, id);
         host.link_entity_at(cx, id, Some((origin.into(), angles.into())));
     }
+    if let Some(a) = reached_at {
+        let _ = host.write_field(cx, id, angles_atom, vcod_gsc::Value::Vector(a.into()));
+    }
     host.movers.rows.insert(id, m);
     // A push runs first and a blocked one never reaches this
     // (`crate::game::script::ScriptRuntime::push_mover`).
@@ -461,6 +467,18 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         reached(host, id);
     }
     (done, step)
+}
+
+/// A verb's closing `trap_LinkEntity`, at the `origin` and `angles` it left:
+/// a brush model's clip is put there, and its next move pushes from there.
+pub fn verb_linked(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) {
+    host.link_entity(cx, id);
+    let pose = pose(host, cx, id);
+    if let Some(m) = host.movers.rows.get_mut(&id)
+        && m.clip.is_some()
+    {
+        m.clip = Some(pose);
+    }
 }
 
 /// `G_MoverTeam`'s tail (0x558a0..0x558e9), after the move went through:
