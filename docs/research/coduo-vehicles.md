@@ -577,7 +577,7 @@ whole entity state, the gun's `angles2[2]` and `origin2[1]` included.
   (94) the pitch matches and the yaw is up to 0.63 off, the difference
   above (VERIFIED, replay). `the_jeep_gun_replays_on_ours` replays the
   capture on vcod-server: every vehicle field matches on all 501 seated
-  snapshots; the view past the 12000 pitch clamp is the known rebase gap.
+  snapshots, the view and the cone included (VERIFIED, replay).
 - **Not done.** The roll 0x30040580 writes; the push-off 0x30035800 gives a body that walks into a vehicle.
   The hatch needs nothing: retail disabled it (section 1). Vehicle
   sounds and the vehicle MG's client-traced impacts are `coduo-diff.md`
@@ -1516,7 +1516,7 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   snapshot line carries the vehicle's whole entity state), and the seat
   capture of section 8. The replay boards the same vehicle on ours
   through the probe gametype and the use key, sends the capture's cmds on
-  our clock (each rebased on our `delta_angles`, as the probe builds them,
+  our clock (rebased once a seat from retail's `delta_angles` onto ours,
   and `nextvehslot` where the capture's seat changes) and diffs every
   snapshot. The vehicle's state matches retail on every field and every
   snapshot of both drives: pose, sway bytes, turret, steer, track clock,
@@ -1524,10 +1524,15 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   alias), `loopSound`. The rider matches in seat, view, pm flags, legs
   and origin, the exits' rise and fall included since the cmds after an
   exit run linked (11.2), and in velocity, the weapon state and the cone
-  (VERIFIED, replay). Gaps: the probe's view past
-  the seat pitch clamp, where the per-cmd push runs a snapshot apart from
-  the rebase (the clamp itself is `moves_ab`'s), and the cone there and at
-  each seat change, whose turn term reads the rebased cmd angles' jump.
+  (VERIFIED, replay), the pitch clamp's and the jeep passenger's arcs'
+  per-cmd `delta_angles` pushes included: they move ours cmd for cmd as
+  they moved retail's (VERIFIED, replay; until 2026-10-17 the replay
+  rebased every cmd on our newest `delta_angles`, which put each push a
+  snapshot apart and opened the cone on the jump, 9 tolerated rows). Gap:
+  each seat change's snapshot, and on the tank the next one's cone. The
+  probe's `nextvehslot` rides no cmd, so ours changes seat in another
+  frame than retail's and its `SetClientViewAngle` reads the view tag as
+  that frame poses the turret (INFERRED, the replay's timing).
   The driver's feedback from the tank's own shell matches (13, "A blast
   on a hull"). `delta_angles` is not compared: its absolute value
   rides the replaying client's own cmd angles. The jeep driver's legs
