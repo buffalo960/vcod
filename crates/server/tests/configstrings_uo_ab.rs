@@ -280,6 +280,47 @@ fn a_pure_server_s_systeminfo_matches_uo() {
     }
 }
 
+/// A pak in `uo/` is listed once the level reads a file from it, and two
+/// reads only the load makes: the map's sound load spec and each
+/// `#using_animtree`'s tree (bas's `_flak_gmi.gsc` names `flak88`).
+/// Retail UO with `fs_debug 1` reads both on mp_foy bas
+/// (cod11-server-handshake.md, "The four cvars").
+#[test]
+fn a_pak_holding_the_load_spec_or_an_animtree_is_referenced() {
+    let Some(stock) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let dir = vcod_common::testing::game_dir();
+    let scratch = std::env::temp_dir()
+        .join(format!("vcod-loadreads-{}", std::process::id()))
+        .join("uo");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let files = [
+        ("zzz_spec", "soundloadspecs/mp/mp_foy.csv"),
+        ("zzz_tree", "animtrees/flak88.atr"),
+    ];
+    for (pak, file) in files {
+        let bytes = stock.read(file).expect(file);
+        let pk3 = vcod_common::testing::pk3_with(&[(file, &bytes)]);
+        std::fs::write(scratch.join(format!("{pak}.pk3")), pk3).unwrap();
+    }
+    let dirs = vec![dir.join("main"), dir.join("uo"), scratch.clone()];
+    let fs = vcod_common::pk3::Pk3Fs::open_dirs(dirs, None, false).unwrap();
+    let sv = server_with(fs, "mp_foy", "bas", 0, &[], 0);
+    let _ = std::fs::remove_dir_all(scratch.parent().unwrap());
+    let names = vcod_common::net::connectionless::info_value_for_key(
+        sv.configstring(1),
+        "sv_referencedPakNames",
+    )
+    .unwrap_or_default();
+    for (pak, _) in files {
+        assert!(
+            names.split(' ').any(|n| n == format!("uo/{pak}")),
+            "uo/{pak} not in sv_referencedPakNames: {names}"
+        );
+    }
+}
+
 fn check(mut retail: BTreeMap<usize, String>, mut ours: BTreeMap<usize, String>, what: &str) {
     for t in [&mut retail, &mut ours] {
         if let Some(s) = t.get_mut(&1) {

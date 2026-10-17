@@ -5573,14 +5573,26 @@ impl Server {
                     let _ = vcod_common::xmodel::load_bones(fs, name);
                 }
             }
-            // So does the load's sound alias pass, every `soundaliases/*.csv`,
-            // which UO leaves unflagged.
+            // So does the load's sound alias pass: every `soundaliases/*.csv`
+            // on 1.5; on UO the map's sound load spec, or the default one
+            // when the map ships none, whose aliases UO leaves unflagged.
             if self.proto.version == PROTOCOL_V6.version {
                 for name in fs.list_prefix("soundaliases/") {
                     if name.ends_with(".csv") {
                         fs.touch(&name);
                     }
                 }
+            } else {
+                let spec = format!("soundloadspecs/mp/{}.csv", self.cfg.map);
+                if fs.contains(&spec) {
+                    fs.touch(&spec);
+                } else {
+                    fs.touch("soundloadspecs/mp/default.csv");
+                }
+            }
+            // And the script load reads each `#using_animtree`'s tree.
+            for tree in rt.animtrees() {
+                fs.touch(&format!("animtrees/{tree}.atr"));
             }
         }
         let cvars = rt.cvars();
