@@ -614,7 +614,7 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
                 } else {
                     o.clone()
                 };
-                if matches!(gametype, "bel" | "hq" | "hqend") {
+                if gametype == "bel" || gametype.starts_with("hq") {
                     objectives_without_origin(&o)
                 } else {
                     o
@@ -897,4 +897,9 @@ fn uo_team_deathmatch_killcam_and_time_limit_match_retail() {
 #[test]
 fn uo_base_assault_round_clock_and_round_limit_match_retail() {
     uo_gametype(&UO_FOY, "bastime", 80, 75_000);
+}
+
+#[test]
+fn uo_headquarters_time_limit_matches_retail() {
+    uo_gametype(&UO, "hqtime", 50, 45_000);
 }
