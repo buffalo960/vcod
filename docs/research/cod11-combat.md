@@ -5918,9 +5918,15 @@ and lists e first in the ammo run. INFERRED: those lists are retail's too:
 running each phase's woken threads in the reverse of the order they were
 woken, the first notify of a frame waking each waiter, gives every `t`,
 `mt` and `pt` line in the table from them, and the `f` pair in the same
-reverse. The rule for when woken threads run, and why the `"touch"`
-waiters wake once a frame where the `"trigger"` ones wake once a cmd, is
-not settled here.
+reverse. VERIFIED since, `G_RunFrame` 0x50540..0x50665: the `"trigger"`
+of a `trigger_multiple` is not notified in the cmd but queued, and the
+frame hands the queue out one trigger per entity a round with
+`Scr_RunCurrentThreads` after each round, which is why the `f` pair comes
+once a cmd while a `"touch"`, notified in the cmd to a waiter that has not
+run again by the next one, comes once a frame (`cod11-gsc-language.md`,
+"Engine notifies and the trigger queue"). VERIFIED, a 2026-10-17 rerun
+(`crates/server/tests/fixtures/touchorder/mp_pavlov.txt`): every frame of a
+phase repeats the first's `t`, `mt` and `pt` lines after its first `f` pair.
 
 **As implemented.** `crate::area::AreaTree` is the tree above, port for
 port: the lazy split on the region handed in, the one-level push-down, the
@@ -5969,10 +5975,11 @@ Not routed through the tree: a linked client's per-frame relink in
 touches no BSP leaf, which `SV_LinkEntity` unlinks
 (the leaf count at 0x8090c68, the unlink at 0x8090c84). Not walking it yet: `G_GetActivateEnt` (the use key; sorted
 by score, so the order reaches it only through ties), `G_KillBox`, `positionWouldTelefrag` and
-the two trigger-damage walks. vcod delivers the `"touch"` and `"trigger"`
-notifies at the top of the next script frame in the order they were
-raised, and runs their waiters in thread age, so the log lines above come
-out in a different order on ours.
+the two trigger-damage walks. vcod raises the `"touch"` notifies at the
+top of the next script frame in the order the walk made them and hands the
+`"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);
+`crates/server/tests/touchorder_ab.rs` replays the probe and reads every
+frame's lines in retail's order.
 
 ---
 
