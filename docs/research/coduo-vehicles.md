@@ -1369,17 +1369,63 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   - **Back from the gunner's seat.** On retail the tank driver's second
     stint (phase 3, after the gunner's) does not repeat his first: the
     rider cells stand up to 1.1 units apart, growing with the height
-    above the origin, a tilt of about 0.65 degrees, with the same seat
-    origin, view and vehicle angles (VERIFIED, fixture). Ours moves the
-    same way by about half: 11 of 84 cells stop up to 0.65 off retail's
-    and one meets one side only. The jeep passenger's stint, also the
-    one after the gunner's seat, is the one jeep stint off retail's (4 of
-    30 cells, up to 0.57). What the gunner's seat leaves on the body is
-    open. UO's anim setter (`game.mp.uo` 0x1ce5f) passes
-    `XAnimSetCompleteGoalWeight` a last argument of 0 for the channel
-    record at `ci+0x380` and 1 for the other, and sets a looping movement
-    clip's time only when its node's weight reads 0.0 (0xa95ec) (VERIFIED
-    decompile); which state the gunner's seat leaves is not traced.
+    above the origin, with the same seat origin, view and vehicle angles
+    (VERIFIED, fixture). Measured 2026-10-17 with `probe_bones 1` added to
+    `probe_vehicle_armor` (a `script_origin` linked to nine bones and
+    `tag_origin` once the target sits, one more linked untagged, logged
+    every frame; retail UO 1.51b, `tank`, `jeep` and `foot` runs on ports
+    3236x, kept in the worktree's `tmp/`):
+    - The bones the link pass reads match ours to 0.01 in every settled
+      frame of every stint, the profile frames included, in both
+      vehicles (VERIFIED, replay on the run's own seat times). The body
+      the gunner's seat leaves is the same body.
+    - The rays do not. Replayed on the run's own times, ours meets every
+      cell of the tank's stints 1 and 2 to 0.01 and misses phase 3 by up
+      to 1.18; with the rays posed 50 ms earlier (the trace's anim clock
+      one frame back), phase 3 and the 12 s on foot after the exit match
+      to 0.00 and phase 1 goes off by up to 0.45 (VERIFIED, replay). The
+      jeep: on foot before boarding the rays match at the frame's own
+      time (0.01) and not a frame back (up to 0.26); its phases 1 and 2
+      read the same either way; its phase 3 and the exit match a frame
+      back (VERIFIED, replay). With no vehicle at all, 90 s on foot, the
+      rays match at the frame's own time all through (VERIFIED,
+      `mp_peaks-jeep-silhouette-foot-uo.txt`), so the switch is not the
+      client's clock drifting: from some point after the first seat
+      change, retail's script trace poses that rider at the last frame's
+      anim time, where the link pass, after `G_XAnimUpdate` (game.mp.uo
+      0x59983, called in `G_RunFrame` 0x59c21 after the first
+      `Scr_RunCurrentThreads`), poses him at the frame's. What switches
+      it is not traced. `G_XAnimUpdateEnt` (0x5992c) skips only an
+      entity with `flags` 0x4000 (VERIFIED decompile); no `or` of 0x4000
+      into `flags` appears in the module's disassembly, and the seat
+      cycle (`Cmd_NextVehSlot_f` 0x4ed9b, `G_VEH_CycleSlot` 0x8da1e:
+      `VEH_UnlinkPlayer` 0x89fb2, then the seat link 0x8998d) calls no
+      DObj time setter (INFERRED, read of the decompile). vcod poses
+      every script trace at the frame's time, which the on-foot gate
+      pins.
+    - **The tank driver's link offset.** The seat link
+      (0x8998d) links the player with `G_EntLinkToWithOffset` at
+      `BG_GetVehiclePosOffset(type, requested slot)` (0x230e5): a use
+      requests slot 0, so a tank's driver boarded by use is linked with
+      no offset where his seat has (0, 0, -20) (`.data` 0xa94f8; the
+      gunner's (10, 5, -39) at 0xa94ec, artillery's (0, -24, 0) at
+      0xa94e0) (VERIFIED decompile, file bytes). `G_RunClient` (0x41dfc)
+      writes the linked player's `r.currentOrigin` and `ps.origin` from
+      that link every entity pass (`G_SetFixedLink` mode 2), and
+      `G_PlayerVehiclePositionAndBlend` puts `ps.origin` back on the
+      offset seat at the end frame (VERIFIED decompile). So through the
+      first stint the driver's entity sits 20 units above his
+      `ps.origin`: an untagged link and every bone link to him read 20
+      high (129.08 against 109.08), and from the first `nextvehslot`,
+      which requests the slot it takes, they read level (VERIFIED,
+      `tank` run). The jeep's offsets are all zero and its links read
+      level in every stint (VERIFIED, `jeep` run). vcod links its rider
+      at the seat: the offset is not ported (it moves the link box and
+      what links to him, never the rays or the snapshot).
+    - The 400 ms after a seat change also part. Retail's bones glide to
+      the new seat over eight frames, the same pose twice every other
+      frame; ours arrive in four (up to 6 units apart on the way)
+      (VERIFIED, `tank` run). Not traced.
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
   within a quarter unit, the two stints after the gunner's seat within
   0.6 and 0.7 (`SILHOUETTE_GAPS`).

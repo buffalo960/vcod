@@ -2,9 +2,12 @@
 //! demo (docs/research/cod11-demos.md). The file format is
 //! `vcod_common::net::demo`'s.
 
+use super::clock::{DemoClock, ServerClock};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use vcod_common::net::demo;
 use vcod_common::net::protocol::{PROTOCOL_V1, Protocol};
+use vcod_common::net::{NetClient, NetEvent, Transport};
 
 /// `record`'s file under `dir` (the game directory's `demos/`) and the
 /// name it keeps (`clc.demoName`): `name` with the protocol's `.dm_<n>`,
@@ -52,6 +55,58 @@ impl TimeDemo {
             )
         })
     }
+}
+
+/// The demo knobs a frame reads: `cl_freezeDemo`, `timedemo` and
+/// `cl_timeNudge`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DemoKnobs {
+    pub freeze: bool,
+    pub timedemo: bool,
+    pub nudge: i32,
+}
+
+/// One frame of `CL_SetCGameTime`'s demo read (CoDMP.exe 0x404d60) once
+/// the map is up, `realtime` the local clock in ms. Before the first
+/// snapshot it is `CA_PRIMED`: [`NetClient::pump_demo_primed`], and a
+/// snapshot that message brings seeds the clock (`CL_FirstSnapshot`,
+/// 0x404d00) and falls through to `CA_ACTIVE` in the same frame, which
+/// counts the `timedemo` frame and reads up to the clock. Returns the
+/// messages' events and the clock the frame draws with; the caller runs
+/// [`ServerClock::update_demo`] with it once the events are handled.
+pub fn read_frame<T: Transport>(
+    net: &mut NetClient<T>,
+    clock: &mut ServerClock,
+    td: &mut TimeDemo,
+    now: Instant,
+    realtime: i32,
+    knobs: DemoKnobs,
+) -> (Vec<NetEvent>, DemoClock) {
+    let held = DemoClock {
+        freeze: knobs.freeze,
+        timedemo_frames: None,
+    };
+    let mut events = Vec::new();
+    if !clock.started() {
+        events = net.pump_demo_primed(now);
+        let stop = events
+            .iter()
+            .any(|e| matches!(e, NetEvent::GamestateReady | NetEvent::DemoEnded(_)));
+        let Some(snap) = net.snapshots().newest().map(|s| s.server_time) else {
+            return (events, held);
+        };
+        if stop {
+            return (events, held);
+        }
+        clock.update_demo(realtime, snap, knobs.nudge, held);
+    }
+    let how = DemoClock {
+        freeze: knobs.freeze,
+        timedemo_frames: knobs.timedemo.then(|| td.step(realtime)),
+    };
+    let until = clock.time_at(realtime, knobs.nudge, how);
+    events.extend(net.pump_demo(now, until));
+    (events, how)
 }
 
 /// `demo <name>`'s file and the protocol it was recorded under. Retail
@@ -209,79 +264,121 @@ mod tests {
         net
     }
 
+    /// Only the playback's first `CA_PRIMED` frame is skipped: after a
+    /// gamestate inside the demo the first such frame reads.
+    #[test]
+    fn a_gamestate_inside_a_demo_skips_no_frame() {
+        let now = Instant::now();
+        let gs = vcod_common::testing::fixture("net/gamestate-delta.bin");
+        let snaps = vcod_common::testing::fixture("net/snapshots-delta.bin");
+        let first = u32::from_le_bytes(snaps[..4].try_into().unwrap());
+        let len = u32::from_le_bytes(snaps[4..8].try_into().unwrap()) as usize;
+        let mut w = demo::DemoWriter::new(Vec::new());
+        w.write_message(first - 1, &gs).unwrap();
+        w.write_message(first, &snaps[8..8 + len]).unwrap();
+        w.write_message(first + 1, &gs).unwrap();
+        let data = w.finish().unwrap();
+        let mut net = NetClient::play_demo(UdpTransport::none(), now, &PROTOCOL_V1, data);
+        assert!(net.pump_demo(now, None).contains(&NetEvent::GamestateReady));
+        assert!(net.pump_demo_primed(now).is_empty());
+        assert!(net.snapshots().newest().is_none());
+        net.pump_demo_primed(now);
+        assert!(net.snapshots().newest().is_some());
+        assert!(
+            net.pump_demo(now, Some(i32::MAX))
+                .contains(&NetEvent::GamestateReady)
+        );
+        // The next record is the trailer, read on the first frame.
+        let events = net.pump_demo_primed(now);
+        assert!(events.iter().any(|e| matches!(e, NetEvent::DemoEnded(_))));
+    }
+
+    const TIMEDEMO: DemoKnobs = DemoKnobs {
+        freeze: false,
+        timedemo: true,
+        nudge: 0,
+    };
+
     /// `timedemo` reads a 20 Hz demo one snapshot a frame, however fast
-    /// the frames come.
+    /// the frames come: the first map-up frame reads nothing, the next
+    /// reads the first snapshot and draws 50 ms past it as frame 1.
     #[test]
     fn timedemo_reads_a_snapshot_a_frame() {
-        use super::super::clock::{DemoClock, ServerClock};
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let mut net = retail_demo(now);
         let mut clock = ServerClock::default();
         let mut td = TimeDemo::default();
+        // The demo's first snapshot: what `CL_FirstSnapshot` bases on.
+        let base = {
+            let mut n = retail_demo(now);
+            n.pump_demo_primed(now);
+            assert!(n.snapshots().newest().is_none());
+            n.pump_demo_primed(now);
+            n.snapshots().newest().unwrap().server_time
+        };
         let mut frames = 0;
-        let mut first = None;
-        loop {
-            let realtime = 1000 + frames;
-            let how = DemoClock {
-                freeze: false,
-                timedemo_frames: clock.started().then(|| td.step(realtime)),
-            };
-            let until = clock.time_at(realtime, 0, how).unwrap_or(i32::MIN);
-            let before = net.snapshots().newest().map(|s| s.message_num);
-            let events = net.pump_demo(now, Some(until));
+        for frame in 0.. {
+            let realtime = 1000 + frame;
+            let (events, how) = read_frame(&mut net, &mut clock, &mut td, now, realtime, TIMEDEMO);
             if events.iter().any(|e| matches!(e, NetEvent::DemoEnded(_))) {
+                assert_eq!(how.timedemo_frames, Some(frames + 1));
                 break;
             }
-            let newest = net.snapshots().newest().unwrap();
-            // Read one snapshot past the frame's time, which steps 50 ms.
-            assert!(newest.server_time > until);
-            if before.is_some() {
-                assert_eq!(newest.server_time, until + 50, "frame {frames}");
-            }
-            first.get_or_insert(newest.server_time);
-            clock.update_demo(realtime, newest.server_time, 0, how);
+            let Some(newest) = net.snapshots().newest().map(|s| s.server_time) else {
+                // `clc.firstDemoFrameSkipped`: nothing read, nothing counted.
+                assert_eq!((frame, how.timedemo_frames), (0, None));
+                continue;
+            };
+            let t = clock.update_demo(realtime, newest, 0, how);
             frames += 1;
+            assert_eq!(how.timedemo_frames, Some(frames));
+            assert_eq!(t, base + 50 * frames, "frame {frame}");
+            // Read one snapshot past the frame's time.
+            assert_eq!(newest, t + 50, "frame {frame}");
         }
-        let span = net.snapshots().newest().unwrap().server_time - first.unwrap();
-        // The first frame reads to the first snapshot; the one that finds
-        // the trailer is counted but not drawn.
-        assert_eq!(frames, span / 50);
+        let span = net.snapshots().newest().unwrap().server_time - base;
+        // The frame that finds the trailer is counted but not drawn.
+        assert_eq!(frames + 1, span / 50);
         assert!(
             td.report(2000)
                 .unwrap()
-                .starts_with(&format!("{frames} frames"))
+                .starts_with(&format!("{} frames", frames + 1))
         );
     }
 
     #[test]
     fn a_demo_reads_one_snapshot_ahead_of_the_clock() {
-        use std::time::Instant;
         let now = Instant::now();
         let mut net = retail_demo(now);
-        let mut clock = super::super::clock::ServerClock::default();
+        let mut clock = ServerClock::default();
+        let mut td = TimeDemo::default();
         let mut seen = std::collections::BTreeSet::new();
         let mut ended = false;
         for frame in 0..10_000 {
             let realtime = 1000 + frame * 16;
-            let run = super::super::clock::DemoClock::default();
-            let until = clock.time_at(realtime, 0, run).unwrap_or(i32::MIN);
-            let events = net.pump_demo(now, Some(until));
+            let knobs = DemoKnobs::default();
+            let (events, run) = read_frame(&mut net, &mut clock, &mut td, now, realtime, knobs);
             if events.iter().any(|e| matches!(e, NetEvent::DemoEnded(_))) {
                 ended = true;
                 break;
             }
-            let newest = net.snapshots().newest().expect("a snapshot");
+            let Some(newest) = net.snapshots().newest() else {
+                assert_eq!(frame, 0, "only the first frame is skipped");
+                continue;
+            };
             seen.insert(newest.message_num);
             let t = clock.update_demo(realtime, newest.server_time, 0, run);
             assert!(
-                newest.server_time > t || frame == 0,
+                newest.server_time > t,
                 "frame {frame}: drawn past the newest"
             );
             let (a, b) = net.snapshots().two_for_time(t).unwrap();
             assert!(a.server_time <= t && t <= b.server_time, "frame {frame}");
         }
         assert!(ended, "the demo never ended");
-        assert_eq!(seen.len(), 400);
+        // Every snapshot is newest on some frame but the first: the frame
+        // that seeds the clock on it reads on to the next.
+        assert_eq!(seen.len(), 399);
         assert_eq!(clock.stats.resets + clock.stats.fast, 0);
     }
 }
