@@ -35,9 +35,20 @@ const Z_MERGE: f32 = 40.0;
 /// A walk bound for a node's floor also ends this close to its height
 /// (bot-navigation.md, "The flood": mp_ship's hull beam).
 const ARRIVE: f32 = 8.0;
-/// A walk that drops further than this is refused: past
-/// `bg_fallDamageMinHeight` (256) the drop hurts.
-const MAX_DROP: f32 = 200.0;
+/// A walk whose fall, from the highest the body rose to where it lands,
+/// is deeper than this is refused: past `bg_fallDamageMinHeight` (256 in
+/// 1.1d's and UO's `gameCvarTable`) the fall hurts. mp_cassino's allied
+/// upper floor leaves by a window sill 240 over the street
+/// (bot-navigation.md, "Other rules").
+const MAX_DROP: f32 = 250.0;
+/// [`MAX_DROP`] for a walk set off at a body's own pace, the follower's
+/// proof again from where a bot stands, read in the air from where the
+/// body last stood: a bot moving onto a drop deeper than this is held to
+/// take it from rest. mp_ship's ledge 211 under the
+/// deck at (3647, -352.9, 611.1) lands a back down at the 190 a bot came
+/// along the deck with, and a bot that did fell past it to the hold
+/// (bot-navigation.md section 3).
+const PACED_DROP: f32 = 200.0;
 /// An edge whose ends differ by less than this in height is level, and a
 /// walk one way stands in for the walk back.
 const LEVEL: f32 = 1.0;
@@ -58,6 +69,12 @@ const MAX_EXPANSIONS: usize = 40_000;
 /// How far a bot steps aside to clear a teammate off its line of fire.
 pub const SIDESTEP_MIN: f32 = 24.0;
 pub const SIDESTEP_MAX: f32 = 128.0;
+
+/// [`NavGraph::link_pockets`]: the rounds it floods on from the floors it
+/// finds, the headings it runs each cut-off node in, and how far.
+const POCKET_ROUNDS: usize = 3;
+const POCKET_YAWS: usize = 32;
+const POCKET_REACH: [f32; 2] = [48.0, 80.0];
 
 const CARDINALS: [(i32, i32); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
 const DIAGONALS: [(i32, i32); 4] = [(1, 1), (-1, 1), (-1, -1), (1, -1)];
@@ -178,6 +195,7 @@ impl NavGraph {
         g.flood(world, hazards, &inside, ends);
         g.link_back(world);
         g.link_leaps(world);
+        g.link_pockets(world, hazards, &inside);
         g.mark_risky(world);
         g.mark_perches(world);
         g.index_components();
@@ -408,25 +426,42 @@ impl NavGraph {
     /// stand behind a drop out of it, which a bot spawned there leaves by
     /// and never comes back up (bot-navigation.md, "Other rules").
     pub fn spawn_census(&self, world: &CollisionWorld, spawns: &[[f32; 3]]) -> (usize, usize) {
-        let nodes: Vec<u32> = spawns
+        let (most, lost) = self.census_lost(world, spawns);
+        (most, spawns.len() - lost.len())
+    }
+
+    /// The census's main-component count, and the spawns that do not reach
+    /// that component: each spawn's index with its node, `None` for one
+    /// with no node at all (`nav_build`'s `LOST=1`).
+    pub fn census_lost(
+        &self,
+        world: &CollisionWorld,
+        spawns: &[[f32; 3]],
+    ) -> (usize, Vec<(usize, Option<u32>)>) {
+        let nodes: Vec<Option<u32>> = spawns
             .iter()
-            .filter_map(|s| {
+            .map(|s| {
                 let feet = with_rules(self.rules, || settle(world, Vec3::from(*s), 0.0));
                 self.nearest(feet.map_or(*s, Into::into))
             })
             .collect();
         let mut count = BTreeMap::new();
-        for &n in &nodes {
+        for &n in nodes.iter().flatten() {
             *count.entry(self.comp[n as usize]).or_insert(0) += 1;
         }
         // The most spawns, the lower component on a tie.
         let Some((&main, &most)) = count.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
         else {
-            return (0, 0);
+            return (0, (0..spawns.len()).map(|i| (i, None)).collect());
         };
         let head = self.members[main as usize][0];
-        let leave = nodes.iter().filter(|&&n| self.reaches(n, head)).count();
-        (most, leave)
+        let lost = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is_none_or(|n| !self.reaches(n, head)))
+            .map(|(i, &n)| (i, n))
+            .collect();
+        (most, lost)
     }
 
     fn index_components(&mut self) {
@@ -504,6 +539,139 @@ impl NavGraph {
                 d(**a).total_cmp(&d(**b)).then(a.cmp(b))
             })?;
         (*best != from).then_some(*best)
+    }
+
+    /// The nodes that reach no node of the largest strongly connected
+    /// component, in index order.
+    fn cut_off(&self) -> Vec<u32> {
+        let comp = self.components();
+        let mut sizes: HashMap<u32, usize> = HashMap::new();
+        for &c in &comp {
+            *sizes.entry(c).or_insert(0) += 1;
+        }
+        let Some(main) = sizes
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+            .map(|(&c, _)| c)
+        else {
+            return Vec::new();
+        };
+        let mut into: Vec<Vec<u32>> = vec![Vec::new(); self.nodes.len()];
+        for (a, out) in self.edges.iter().enumerate() {
+            for &b in out {
+                into[b as usize].push(a as u32);
+            }
+        }
+        let mut reaches = vec![false; self.nodes.len()];
+        let mut stack: Vec<u32> = (0..self.nodes.len() as u32)
+            .filter(|&n| comp[n as usize] == main)
+            .collect();
+        for &n in &stack {
+            reaches[n as usize] = true;
+        }
+        while let Some(b) = stack.pop() {
+            for &a in &into[b as usize] {
+                if !std::mem::replace(&mut reaches[a as usize], true) {
+                    stack.push(a);
+                }
+            }
+        }
+        (0..self.nodes.len() as u32)
+            .filter(|&n| !reaches[n as usize])
+            .collect()
+    }
+
+    /// The flood aims at column centres, so a way out through a gap off
+    /// every lattice line is never walked: mp_streets' allied rooms at
+    /// (-260, -6900, 8) leave only by a window whose sill a standing body
+    /// fits on within 2 units of height and 16 across. From every node
+    /// that reaches no node of the largest component, runs in
+    /// [`POCKET_YAWS`] headings to [`POCKET_REACH`] away; a rest on a floor
+    /// no node holds becomes a node and floods on, and one on another
+    /// node's floor is walked again node to node (bot-navigation.md,
+    /// "Other rules").
+    fn link_pockets(
+        &mut self,
+        world: &CollisionWorld,
+        hazards: &[BrushHull],
+        inside: &dyn Fn(Vec3) -> bool,
+    ) {
+        for _ in 0..POCKET_ROUNDS {
+            let cut = self.cut_off();
+            if cut.is_empty() {
+                return;
+            }
+            let pocket: HashSet<u32> = cut.iter().copied().collect();
+            let jobs: Vec<(u32, glam::Vec2)> = cut
+                .iter()
+                .flat_map(|&n| {
+                    let p = self.nodes[n as usize].truncate();
+                    (0..POCKET_YAWS).flat_map(move |i| {
+                        let a = (i as f32 * 360.0 / POCKET_YAWS as f32).to_radians();
+                        let dir = glam::Vec2::new(a.cos(), a.sin());
+                        POCKET_REACH.map(|r| (n, p + dir * r))
+                    })
+                })
+                .collect();
+            // A rest proves a way only where the run aimed at the rest itself,
+            // as a bot following the edge aims, arrives there too.
+            let ends = par_map(&jobs, |&(n, t)| {
+                let from = self.nodes[n as usize];
+                match walk_as(world, from, t, None, Gait::Forward) {
+                    Walked::Arrived(q, _) if !perched(world, q) => {
+                        match walk_as(world, from, q.truncate(), Some(q.z), Gait::Forward) {
+                            Walked::Arrived(_, jumped) => Some((q, jumped)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            });
+            let mut fresh = Vec::new();
+            let mut recheck = Vec::new();
+            for (&(n, _), end) in jobs.iter().zip(ends) {
+                let Some((q, jumped)) = end else {
+                    continue;
+                };
+                let c = self.column(q);
+                match self.find(c, q.z) {
+                    Some(m) if (self.nodes[m as usize].z - q.z).abs() < ARRIVE => {
+                        if !pocket.contains(&m) && !self.edges[n as usize].contains(&m) {
+                            recheck.push((n, m));
+                        }
+                    }
+                    _ if self.nodes.len() < MAX_NODES && inside(q) && !hazard(hazards, q) => {
+                        let m = self.add(c, q);
+                        self.link_as(n, m, jumped);
+                        fresh.push(m);
+                    }
+                    _ => {}
+                }
+            }
+            recheck.sort_unstable();
+            recheck.dedup();
+            let walked = par_map(&recheck, |&(n, m)| {
+                let to = self.nodes[m as usize];
+                walk_to(
+                    world,
+                    &self.ladder_boxes,
+                    self.nodes[n as usize],
+                    to.truncate(),
+                    Some(to.z),
+                )
+            });
+            let mut linked = false;
+            for (&(n, m), w) in recheck.iter().zip(walked) {
+                if let Some((_, jumped)) = w {
+                    self.link_as(n, m, jumped);
+                    linked = true;
+                }
+            }
+            if fresh.is_empty() && !linked {
+                return;
+            }
+            self.flood(world, hazards, inside, fresh);
+        }
     }
 
     /// The flood walks to a neighbouring column only, so a ledge across a
@@ -3250,8 +3418,8 @@ const TURN_PACE: f32 = 150.0;
 /// How far across from a ladder box a fall is retried backing down.
 const LADDER_NEAR: f32 = 96.0;
 /// The ticks a walk's budget stretches by while the body is in the air:
-/// a fall of [`MAX_DROP`] takes 14.
-const FALL_TICKS: usize = 16;
+/// a fall of [`MAX_DROP`] takes 16.
+const FALL_TICKS: usize = 18;
 
 /// Inside this of its target, horizontally, a body backing onto a ladder
 /// below a ledge creeps: an airborne grab reaches 17 units past the box
@@ -3552,7 +3720,10 @@ fn walk_sliding(
     // (-417, 1112), bot-navigation.md section 3).
     let mut rung_top = f32::MIN;
     let mut fell = false;
-    // Where the body last stood or held on; a fall is measured from here.
+    // The highest the body rose since it last stood or held on: a fall is
+    // measured from there, as `PM_CrashLand` measures it. A paced walk
+    // measures from where the body last stood, in the air only.
+    let mut fall_top = from.z;
     let mut support_z = from.z;
     let mut tick = 0;
     let mut airborne = false;
@@ -3616,13 +3787,21 @@ fn walk_sliding(
         if ps.sliding() && !ps.on_ladder {
             slid.push(ps.origin);
         }
-        if ps.on_ground || ps.on_ladder {
-            support_z = ps.origin.z;
-        } else {
+        let held = ps.on_ground || ps.on_ladder;
+        if !held {
             fell = true;
-            if ps.origin.z < support_z - MAX_DROP {
-                return Walked::Fell;
-            }
+            fall_top = fall_top.max(ps.origin.z);
+        }
+        let deep = match pace {
+            Some(_) => !held && ps.origin.z < support_z - PACED_DROP,
+            None => ps.origin.z < fall_top - MAX_DROP,
+        };
+        if deep {
+            return Walked::Fell;
+        }
+        if held {
+            fall_top = ps.origin.z;
+            support_z = ps.origin.z;
         }
         if ps.on_ground && target.distance(ps.origin.truncate()) < ARRIVE && on_floor(ps.origin.z) {
             if under_ground(world, ps.origin)
@@ -6380,6 +6559,41 @@ mod tests {
     /// under the steep face, the step lifts the body onto it and it slides
     /// back, off the ground most ticks; only a jump from a tick on the
     /// ground takes it onto the ledge 40 up (bot-navigation.md "Jumps").
+    /// mp_cassino's allied upper floor at z 208 leaves by a window sill at
+    /// 240 over the street at 0: the walk jumps onto the sill and falls 240,
+    /// under `bg_fallDamageMinHeight`'s 256 (bot-navigation.md, "Other
+    /// rules").
+    #[test]
+    fn a_walk_off_cassinos_allied_sill_falls_240_and_lands() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let entry = fs.resolve_map("mp_cassino").unwrap();
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let floor = Vec3::new(193.0, 1103.0, 208.125);
+        with_rules(MoveRules::Uo, || {
+            let out = walk_to(
+                &world.collision,
+                &[],
+                floor,
+                glam::Vec2::new(16.0, 1104.0),
+                None,
+            );
+            assert!(
+                out.is_some_and(|(p, jumped)| jumped && p.z < 40.0),
+                "{out:?}"
+            );
+        });
+    }
+
+    /// Node 4 of [`tiny`] is a drop's foot with no way on: cut off from the
+    /// component the other four make.
+    #[test]
+    fn a_node_that_reaches_no_node_of_the_largest_component_is_cut_off() {
+        assert_eq!(tiny().cut_off(), vec![4]);
+    }
+
     #[test]
     fn a_run_bobbing_under_a_steep_face_jumps_out_of_the_gutter() {
         let Some(fs) = vcod_common::testing::uo_fs() else {

@@ -883,8 +883,9 @@ on ours: every line from the kill on matches retail's, the death blast's
 victims and their damage included, but the gunner's body within 4 units
 (the kill comes mid-turn of his gun; retail's three runs put him 3.3
 apart), a dismounted driver's first fall frame (the probe client's cmd
-clock), and two corpses killed in place: retail's slide off the hull
-over the next half second, ours stay where the seat left them (open).
+clock), and the corpses of the riders killed in place: they get out of
+the hull a cmd at a time (11.6), along retail's path but the probe
+client's cmd clock apart, the gunner's from his mid-turn spot.
 
 ### 11.3 Changing seats
 
@@ -947,6 +948,55 @@ as `self.origin` and `self.angles` straight after the `spawn`: 1.49
 along the spawn's yaw and the 100 ms fall. vcod's `spawn` builtin runs
 the same think on a fresh sim, which holds no seat, and reads the same
 text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
+
+### 11.6 A body inside a vehicle
+
+United Offensive's `ClientThink_real` (game.mp.uo 0x40c91) gets a client
+on foot out of a vehicle before his `Pmove` (VERIFIED disassembly,
+0x415e4..0x419c3, and decompile):
+
+- With `ps.eFlags & 0x100000` clear (not seated), a `trap_TraceCapsule`
+  position test at `ps.origin` with the client's box, `maxs.z` 30 under
+  `pm_flags` 1 (prone) and 50 under 2 (crouched), passing his own
+  number, under the cmd's mask: 0x2810011 alive, 0x810011 at `pm_type`
+  6 and up.
+- When it starts or is all solid and the entity it names has `eType` 12:
+  `dir` is `ps.origin - r.currentOrigin` of the vehicle, `VectorNormalize`d
+  whole, and `along` the velocity's `VectorNormalize2`, which returns the
+  speed; both then lose their z without renormalizing.
+- The speed under 1.0 (rodata 0x9de18), or `dir . along` past 0.8
+  (0x9de24): the vehicle is `trap_UnlinkEntity`ed, and
+  `trap_LinkEntity`ed back after the `Pmove` (0x41a97). Otherwise
+  nothing happens.
+- Then, not prone and the speed under 1.0: a vehicle whose record
+  velocity (`rec+0xe8`) is past 1.0 runs `VEH_PlayerCollision(vehicle,
+  player)` and a velocity under 200 (0x9de28) is scaled up to 200; a
+  vehicle at rest sets the velocity to `200 dir`. Either way `pm_time`
+  becomes 200 and `pm_flags` takes 0x200 (the damage knockback's timer).
+- Prone, inside the vehicle (unlinked or not), and `client+0x472c` more
+  than 500 ms old: `VEH_PlayerDamage(player, vehicle, 10)`, and a second
+  `VEH_PlayerDamage(player, player, 10)` when the first left his health
+  alone.
+
+A rider put out where he sat (11.2) is that body: his box starts in the
+hull's collmap, so a cmd with velocity left meets the linked hull, is
+held all solid and ends with its velocity zeroed by the pmove's tail; the
+next starts under 1.0, unlinks the hull and pushes him off at 200 from
+its origin. The corpse leaves a cmd at a time, which the three captures
+of `client-probes/probe_vehdie` show: Panzer IV killed by itself, the
+driver's corpse 0.65 along x at the kill's next frame and 8.7 half a
+second on, the gunner's 20 units out (VERIFIED, capture,
+`mp_cassino-tank-die-*-uo.txt`).
+
+vcod runs it as `ClientSim::vehicle_overlap` before each UO cmd's pmove,
+the collmap instance taken out of the collision world for the cmd
+(`CollisionWorld::unlink_model_instance`). `vehicle_die_ab` sends the
+probe's 16, 16 and 18 ms cmds a frame and puts the driver's corpse
+within 1 unit of retail's at both lines, and the gunner's within 6.2
+from his mid-turn start (INFERRED, the residue is the probe client's cmd
+clock, which no capture logs). A body that a moving vehicle overlaps
+takes `player_push`'s velocity, but its run-over damage and sound are
+not dealt from this path, and the prone damage is not ported (open).
 
 ## 12. The drive step
 
@@ -1290,8 +1340,8 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
     capture).
   - Traces toward the seated rider that miss him stop on the tank, entity
     186, at fraction 0.69 to 0.83 (VERIFIED capture).
-  - The retail probe client (`--probe-uo-weapon hold`) sends a cmd every
-    16 ms holding the view it saw at its placement, rebased on each
+  - The retail probe client (`--probe-uo-weapon hold`) sends cmds at
+    60 Hz (cod15-movement.md 6) holding the view it saw at its placement, rebased on each
     snapshot's `delta_angles`, and the gsc's `setPlayerAngles` writes the
     view and `delta_angles` against the last cmd every frame. Over a real
     link the rebase lags, so the rounds land between the two views by the
@@ -1695,8 +1745,9 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
 - **Not done.** The path methods; `closespeed` and
   `harc` read 0; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13); a corpse killed in a seat's place does not slide (11.2,
-  "The death's riders").
+  section 13); a body pushed out of a moving vehicle (11.6) takes
+  `VEH_PlayerCollision`'s push but not its run-over damage and sound,
+  and a prone one's 10-point `VEH_PlayerDamage` is not ported.
 - **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
   clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
   and blend time 0, then sets each goal weight at the rate `1 / (10 |weight
