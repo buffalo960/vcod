@@ -446,6 +446,9 @@ impl Hud {
         font::set_team_colours(f.protocol.team_colour_codes, f.cvar);
         let mut out = Vec::new();
         let screen = (f.screen_w, f.screen_h);
+        // vcod's: `vc_widescreen 0` keeps the whole HUD in the 4:3 box.
+        let edges = (f.cvar)("vc_widescreen").is_none_or(|c| vote::atol(&c) != 0);
+        let v = hudelem::Virtual::with_edges(screen, edges);
         let pm_type = |ps: &PlayerState| ps.field_i32(f.protocol, "pm_type");
         match f.ps.filter(|ps| draws_native_hud(pm_type(ps))) {
             Some(ps) => {
@@ -463,12 +466,11 @@ impl Hud {
                     bound_key: f.bound_key,
                     draw: f.draw,
                 };
-                self.player
-                    .build(&view, &cx, f.server_time, screen, &mut out);
+                self.player.build(&view, &cx, f.server_time, &v, &mut out);
                 // `Menu_PaintAll` paints the rest of hud.menu over the native items.
                 if f.draw.status {
                     self.hud_menu
-                        .build(&self.fonts, screen, f.localized, f.cvar, &mut out);
+                        .build(&self.fonts, &v, f.localized, f.cvar, &mut out);
                 }
             }
             None => self.player.hidden(),
@@ -489,11 +491,10 @@ impl Hud {
                 f.bound_key,
                 &self.fonts,
                 f.server_time,
-                screen,
+                &v,
                 &mut out,
             );
         }
-        let v = hudelem::Virtual::new(screen);
         let now_ms = (f.now * 1000.0) as i32;
         // `CG_Draw2D` returns for intermission (pm_type 5) before both.
         // 1.1 sends the vote's end as server time, 1.5 and UO the ms left.
@@ -516,7 +517,7 @@ impl Hud {
                 now_ms,
                 &name,
                 f.bound_key,
-                &v,
+                &v.left(),
                 &mut out,
             );
             self.vote_sound |= !complaint
@@ -526,7 +527,7 @@ impl Hud {
                     clock,
                     voted,
                     f.bound_key,
-                    &v,
+                    &v.left(),
                     &mut out,
                 );
             self.timeout
@@ -541,7 +542,7 @@ impl Hud {
         });
         let [r, g, b, _] = killfeed::team_color(team);
         self.chat
-            .build(&self.fonts, [r, g, b], now_ms, &v, &mut out);
+            .build(&self.fonts, [r, g, b], now_ms, &v.left(), &mut out);
         // The board goes over everything; while it is up the cgame skips
         // the game and bold message windows (0x30018810) and the centre
         // print (0x300188e4).
@@ -551,11 +552,12 @@ impl Hud {
             if f.ps.is_none_or(|ps| pm_type(ps) != 5) {
                 self.center_print.build(&self.fonts, now_ms, &v, &mut out);
             }
-            self.game_messages.build(&self.fonts, now_ms, &v, &mut out);
+            self.game_messages
+                .build(&self.fonts, now_ms, &v.left(), &mut out);
             self.bold_messages.build(&self.fonts, now_ms, &v, &mut out);
         }
         if let Some(field) = &self.chat_field {
-            chat::field(field, &self.fonts, f.localized, &v, &mut out);
+            chat::field(field, &self.fonts, f.localized, &v.left(), &mut out);
         }
         // The scoreboard reuses the parsed gametype; its last `b` reply
         // overrides CS 5/6 (status.rs).
