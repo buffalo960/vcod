@@ -347,8 +347,12 @@ client's do not), while the predictor reading hint 7 value 0 deploys
 standing on those two snapshots, as the retail cgame's identical code
 would (INFERRED); the next snapshot corrects it. `moves_ab`'s
 `the_predictor_replays_uo_mounts_and_cook` replays all three under UO's
-rules: every compared field right but those two snapshots and each
-capture's first `aimSpreadScale` (`UOFOOT_GAPS`).
+rules: every compared field right but those two snapshots
+(`UOFOOT_GAPS`). The stand and mount captures were retaken 2026-10-17
+(VERIFIED, same recipe) with the cmds sent ahead of the first logged
+snapshot in the file: the ones stamped past its `commandTime` run in the
+first pair, and without them that pair's `aimSpreadScale` read one turn
+short.
 
 ### The server's half
 

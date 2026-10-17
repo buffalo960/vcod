@@ -1201,8 +1201,8 @@ mod tests {
             let c = host.ents.spawn_client(cx, 0, None).unwrap();
             let recv = Some(Target::Entity(c));
             let (first, _) = CsRange::ShellShock.bounds();
-            host.configstrings[first] = "default".into();
-            host.configstrings[first + 1] = "groggy".into();
+            host.configstrings.set(first, "default");
+            host.configstrings.set(first + 1, "groggy");
             host.level_time_ms = 1250;
             let s = |cx: &mut Cx, t: &str| Value::String(cx.intern_exact(t));
             let args = [s(cx, "GROGGY"), Value::Float(1.5)];

@@ -605,19 +605,33 @@ and set back to the same text still queues a `d 12`, and the squash
 keeps one `d` per slot at its last write, which orders the burst 13, 12,
 3.
 
-As implemented: `SP_worldspawn`'s 13, 3 and 11 and `G_InitGame`'s fog go
-through `GameHost::load_write`, and the fog builtins and `ambientPlay`
-log their writes too while the level initializes (`GameHost::load_writes`).
-`map_restart` replays that log against what the clients hold, then every
-other slot the level left different, through `send_server_command`, whose
-squash is retail's. `tests/mapchange_ab.rs` compares
-the burst slot for slot: vcod's restart sends `d 13 70050` and an ambient
-`t` of 70050 too.
+As implemented: the game's table is a `ConfigStrings`
+(`crates/server/src/configstrings.rs`) whose only write is `set`,
+`SV_SetConfigstring`'s shape: a write that leaves its slot as it was is
+dropped, and one that changes it is logged in order. `SP_worldspawn`'s
+writes (the start time, 3, 4 from the worldspawn's `message` key, `g_motd`
+at the start time's next slot, 11) and `G_InitGame`'s fog go through it
+like every builtin's. `map_restart` replays that log, from the load
+through the settle frames, against what the clients hold, then whatever
+slot the engine itself left different (the cvar mirror) in slot order,
+through `send_server_command`, whose squash is retail's. The frame's diff
+orders its slots by their last write in the log too, and drains it.
+`tests/mapchange_ab.rs` compares the burst slot for slot: vcod's restart
+sends `d 13 70050` and an ambient `t` of 70050 too;
+`a_restart_s_burst_keeps_the_write_order` pins a level that writes 6
+ahead of 5.
 
-Two divergences on the wire:
+VERIFIED, `game.mp.i386.so`: 4 is `G_SpawnString("message", "")`
+(0x61dc0, the key at 0x79147) written as is (0x61dcc), and the motd is
+`g_motd`'s string (`vmCvar_t` + 0x10, 0x61dd9) into 14 (0x61dde). 1.5b
+writes the same two at 0x66a24 and 0x66a3d (14), its key `message` at
+0x7e60b; UO at 0x72c1f and 0x72c38 (15, past its start time at 14), the
+key at 0xa51eb. The stock fixtures carry
+neither: no stock worldspawn has a `message` key and `g_motd` defaults
+to `""`, so both slots read empty on retail and vcod alike.
 
-- The order of slots no log names: slot order on vcod, write order on
-  retail. vcod writes no `message` (4) or `g_motd` (14) at all.
+One divergence on the wire:
+
 - The cvar table is carried from the outgoing level rather than rebuilt from
   `default_mp.cfg`, on this path and on the map change alike, because
   retail's `Cvar_Set` writes a process-global table that neither boundary

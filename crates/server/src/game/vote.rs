@@ -22,7 +22,7 @@ impl GameHost {
     /// `CS_VOTE_*` shifted to `CsLayout::vote`.
     fn set_vote_cs(&mut self, v1: usize, text: String) {
         let at = self.allocators.layout().vote + v1 - CS_VOTE_TIME;
-        self.configstrings[at] = text;
+        self.configstrings.set(at, text);
     }
 }
 
