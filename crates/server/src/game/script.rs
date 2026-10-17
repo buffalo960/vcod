@@ -384,7 +384,7 @@ impl ScriptRuntime {
         // `G_InitGame`'s `G_setfog("0")` past the spawn (0x4fe2e), ahead of
         // the scripts' own fog.
         let fog = host.allocators.layout().fog;
-        host.load_write(fog, "0".to_string());
+        host.configstrings.set(fog, "0");
 
         let mut rt = ScriptRuntime {
             vm,
@@ -4111,7 +4111,7 @@ mod tests {
                    self.probe_out = menu + \":\" + response; }\n",
         );
         let (lo, _) = crate::configstrings::CsRange::Menu.bounds();
-        rt.host.configstrings[lo + 1] = "weapon_russian".to_string();
+        rt.host.configstrings.set(lo + 1, "weapon_russian");
         rt.push_client_event(ClientEvent::Connect {
             slot: 0,
             name: "vcod".into(),
@@ -4977,7 +4977,7 @@ mod tests {
         rt.set_client_origin(1, [0.0, 4.0, 0.0]);
         rt.set_client_on_ground(0, true);
         rt.set_client_on_ground(1, true);
-        rt.host.configstrings[1212] = "CGAME_USEMG42".into();
+        rt.host.configstrings.set(1212, "CGAME_USEMG42");
         let host = &mut rt.host;
         let gun = rt.vm.with_cx(|cx| {
             let id = host.ents.spawn(cx).unwrap();

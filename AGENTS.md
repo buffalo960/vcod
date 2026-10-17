@@ -539,9 +539,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   its `n`/`B`, one `d` per slot after the queue's squash: the fog
   `G_InitGame` clears and the map sets back still goes out, and
   `ExitLevel` zeroes the team scores in the game only, so the next
-  level's `setTeamScore(..., 0)` goes out as `d 6 0`. A write at load
-  that must reach that burst in order goes through
-  `GameHost::load_write` (map-cycle doc 4.5).
+  level's `setTeamScore(..., 0)` goes out as `d 6 0`. The burst and the
+  frame's diff go in write order, off `ConfigStrings::set`'s log: a
+  game write that bypasses `set` is not possible (no `DerefMut`), so
+  keep it that way (map-cycle doc 4.5).
 - `map_restart` keeps the configstring table and the item registry; only a
   map load clears them. vcod's restart also keeps the compiled scripts
   (`Carry::scripts`); a test that swaps a script mid-level goes through
