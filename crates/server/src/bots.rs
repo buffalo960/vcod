@@ -474,8 +474,6 @@ pub struct BasBaseView {
     pub breached: bool,
     /// A charge ticks on it.
     pub planted: bool,
-    /// While planted, whole seconds before the charge blows.
-    pub blows_in: Option<f32>,
     /// Where the plant and the defuse are done: the objective model (the
     /// 150-unit reach) and the middle of the trigger the view has to rest
     /// on.
@@ -900,10 +898,6 @@ const BAS_REACH: f32 = 112.0;
 /// A base's charge goes off with a 1000-damage `radiusDamage` on every
 /// player within 500 units of it (`BaseAssault_bomb_countdown`).
 const BAS_BLAST: f32 = 520.0;
-/// An attacker holds the room of its own charge until this many seconds
-/// are left on it, then gets out of the blast: about 700 units of stair
-/// and bunker at 190 units/s, twice over.
-const BAS_CLEAR_S: f32 = 8.0;
 /// An attacker this near a charge on its own base turns back to defuse it.
 const BAS_DEFUSE_NEAR: f32 = 2000.0;
 /// A rocket's burst counts at a base this near its origin: the base links
@@ -918,9 +912,6 @@ pub const BREACH_RANGE: f32 = 1500.0;
 /// lie in its bunker, this near its origin, behind the walls a breach
 /// deletes (about 145 units on mp_foy).
 const BAS_BUNKER: f32 = 300.0;
-/// A rocket at an enemy nearer than this would splash the shooter: the
-/// launchers' `explosionRadius` is 256 (bot-objectives.md 7.2).
-const ROCKET_CLEAR: f32 = 320.0;
 /// Stood this long at a breach stand with no shot, the bot tries another.
 const BREACH_IDLE_TICKS: u32 = 40;
 /// Inset from a bombzone's edges before the bot counts as inside it.
@@ -1354,15 +1345,9 @@ impl Bot {
                 }
                 let t = theirs[(rank / 2) % theirs.len()];
                 Some(match t.charge {
-                    // Our charge: hold its room against the defuse, then
-                    // clear the blast before it goes.
                     Some(c) if t.planted => ObjTarget::Guard {
                         at: c.origin,
-                        inner: if t.blows_in.is_some_and(|s| s > BAS_CLEAR_S) {
-                            0.0
-                        } else {
-                            BAS_BLAST
-                        },
+                        inner: BAS_BLAST,
                     },
                     Some(c) if t.breached => ObjTarget::Defuse {
                         bomb: c,
@@ -1482,12 +1467,6 @@ impl Bot {
             ObjTarget::Plant(s) => Goal::To(s.stand),
             // Too close: any way out will do, and the roam leaves the ring
             // well before it gets anywhere.
-            // A charge about to blow: away from it, the way out of its room.
-            ObjTarget::Guard { at, inner }
-                if inner >= BAS_BLAST && dist_sq(view.origin, at) < inner * inner =>
-            {
-                Goal::Away(at)
-            }
             ObjTarget::Guard { at, inner } if dist_sq(view.origin, at) < inner * inner => {
                 Goal::Roam
             }
@@ -2203,7 +2182,6 @@ impl Bot {
             self.switch_to = None;
         }
         if self.shoot {
-            self.off_launcher(view);
             self.sidearm(view);
         }
         if let Some(w) = self.switch_to {
@@ -2221,30 +2199,6 @@ impl Bot {
         }
         cmd.angles = cmd_angles(view, [pitch, yaw]);
         cmd
-    }
-
-    /// A held rocket launcher at an enemy inside [`ROCKET_CLEAR`]: the
-    /// burst would take the shooter too. No round goes (`trigger`).
-    fn too_close_to_fire(&self, view: &BotView, dist: f32) -> bool {
-        view.rocket.is_some_and(|r| r == view.weapon) && dist < ROCKET_CLEAR
-    }
-
-    /// The pistol comes out over a held rocket launcher with an enemy inside
-    /// [`ROCKET_CLEAR`]; [`Bot::sidearm`] puts it back once the fight is
-    /// over.
-    fn off_launcher(&mut self, view: &BotView) {
-        let (Some(pistol), Some(e)) = (view.pistol, view.enemy) else {
-            return;
-        };
-        let loaded = pistol < 64 && view.loaded >> pistol & 1 == 1;
-        if self.switch_to.is_none()
-            && loaded
-            && self.too_close_to_fire(view, dist_sq(view.origin, e.origin).sqrt())
-        {
-            self.primary = view.weapon;
-            self.calm_ticks = 0;
-            self.switch_to = Some(pistol);
-        }
     }
 
     /// The pistol comes out when the held weapon runs dry with an enemy
@@ -2572,7 +2526,7 @@ impl Bot {
         ready: bool,
         cmd: &mut UserCmd,
     ) {
-        if view.clip == 0 || view.friend_in_line || self.too_close_to_fire(view, dist) {
+        if view.clip == 0 || view.friend_in_line {
             self.burst_ticks = 0;
             return;
         }
@@ -5382,7 +5336,6 @@ mod tests {
             ours,
             breached: false,
             planted: false,
-            blows_in: None,
             charge: None,
             shot: None,
             stands: Vec::new(),
@@ -5461,52 +5414,5 @@ mod tests {
             aim: [2000.0, 0.0, -160.0],
         });
         assert_eq!(bot.goal(&v), Goal::To([2000.0, 0.0, -176.0]));
-    }
-
-    /// The planter holds the room of its charge against the defuse while
-    /// the clock has time on it, and gets out of the blast before it goes.
-    #[test]
-    fn a_bas_planter_holds_its_charge_then_clears_the_blast() {
-        let bot = Bot::new("allies", false, 1);
-        let mut v = bas_view();
-        let charge = [2000.0, 0.0, -176.0];
-        let b = their_base(&mut v);
-        b.breached = true;
-        b.planted = true;
-        b.blows_in = Some(30.0);
-        b.charge = Some(BombView {
-            origin: charge,
-            aim: [2000.0, 0.0, -160.0],
-        });
-        assert_eq!(bot.goal(&v), Goal::To(charge), "out of the room");
-        v.origin = [1900.0, 0.0, -176.0];
-        assert_eq!(bot.goal(&v), Goal::Hold, "in the room, on guard");
-        their_base(&mut v).blows_in = Some(BAS_CLEAR_S);
-        assert_eq!(bot.goal(&v), Goal::Away(charge), "inside the blast");
-        v.origin = [1400.0, 0.0, 0.0];
-        assert_eq!(bot.goal(&v), Goal::Hold, "clear of it");
-    }
-
-    /// A rocket launcher held with an enemy inside `ROCKET_CLEAR` fires no
-    /// round; the pistol comes out. Past it the launcher fires.
-    #[test]
-    fn no_rocket_goes_at_a_close_enemy() {
-        let (mut bot, mut v) = engaged(21);
-        v.rocket = Some(10);
-        v.pistol = Some(2);
-        v.weapons_held |= 1 << 2;
-        v.loaded |= 1 << 2;
-        v.clip = 1;
-        let cmd = bot.think(&v);
-        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "a rocket at 100 units");
-        assert_eq!(cmd.weapon, 2, "the pistol comes out");
-
-        let (mut bot, mut v) = engaged(21);
-        v.rocket = Some(10);
-        v.clip = 1;
-        v.has_ads = false;
-        v.enemy.as_mut().unwrap().origin = [ROCKET_CLEAR + 200.0, 0.0, 124.0];
-        let fired = (0..20).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
-        assert!(fired, "no rocket at range");
     }
 }
