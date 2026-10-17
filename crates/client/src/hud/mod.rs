@@ -316,10 +316,7 @@ impl Hud {
         if ev.event != EV_OBITUARY {
             return;
         }
-        let mut ob = killfeed::decode_obituary(ev);
-        if ob.mod_ >= 0 {
-            ob.mod_ = (f.protocol.mod_to_v1)(ob.mod_);
-        }
+        let ob = killfeed::decode_obituary(ev);
         if let Some((text, y)) = obituary_center_print(&ob, f) {
             self.center_print.print(&text, y, (f.now * 1000.0) as i32);
         }
@@ -341,7 +338,8 @@ impl Hud {
             .then(|| self.weapon_kill_icon(f.fs, f.configstrings, ob.weapon))
             .flatten();
         let icon_wide = kill_icon.as_ref().is_some_and(|(_, wide)| *wide);
-        let icon = killfeed::icon_for(&ob, kill_icon.as_ref().map(|(path, _)| path.as_str()));
+        let uo = f.protocol.version == PROTOCOL_V22.version;
+        let icon = killfeed::icon_for(&ob, kill_icon.as_ref().map(|(path, _)| path.as_str()), uo);
 
         let line = messages::KillLine {
             attacker,
@@ -1480,7 +1478,7 @@ mod tests {
             lines,
             [&messages::KillLine {
                 attacker: Some(("Me".into(), [1.0, 0.5, 0.5])),
-                icon: "gfx/hud/death_melee".into(),
+                icon: "killIconMelee".into(),
                 icon_wide: false,
                 victim: ("Bob".into(), [0.5, 0.5, 1.0]),
             }]

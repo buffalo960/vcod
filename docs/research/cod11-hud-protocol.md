@@ -433,8 +433,8 @@ the two halves agree.
 |---|---|---|---|
 | `0x87` | `MOD_MELEE` (7) | `killIconMelee` | `gfx/hud/death_melee.dds` |
 | `0x88` | `MOD_HEAD_SHOT` (8) | `killIconHeadShot` | `gfx/hud/death_headshot.dds` |
-| `0x90` | `MOD_WATER` (16) | `killIconDrown` | none ships |
-| `0x91` | `MOD_SLIME` (17) | `killIconSlime` | none ships |
+| `0x90` | `MOD_WATER` (16) | `killIconDrown` | `gfx/hud/death_died.dds` |
+| `0x91` | `MOD_SLIME` (17) | `killIconSlime` | `gfx/hud/death_died.dds` |
 | `0x93` | `MOD_CRUSH` (19) | `killIconCrush` | `gfx/hud/death_crush.dds` |
 | `0x95` | `MOD_FALLING` (21) | `killIconFalling` | `gfx/hud/death_falling.dds` |
 | `0x96` | `MOD_SUICIDE` (22) | `killIconSuicide` | `gfx/hud/death_suicide.dds` |
@@ -452,15 +452,18 @@ Notes:
   (`0x30020e9f`..`0x30020ee5`, each `RegisterMaterial(name, 5)` with the handle
   discarded), then passed to trap `4` by name.
 
-UNVERIFIED: the `killIcon<Mod>` to image binding. No stock pk3 contains an
-entry named `killIconMelee` (checked: full file listings of all nine
-`main/*.pk3`, plus `zipgrep` over `pak0.pk3` and `pak5.pk3`, plus every
-`fxshaders/*.shader` and every `ui_mp/*` file). The only plausible art is the
-six `gfx/hud/death_*.dds` images whose names line up one-for-one with the six
-MOD cases that have art, and 1.5's cgame uses the identical names. vcod maps
-the MOD case straight to `gfx/hud/death_<mod>.dds` and draws nothing for
-drown/slime. Check that would settle it: run the stock 1.1 MP client, die by
-melee, and screenshot the killfeed row.
+VERIFIED, the `killIcon<Mod>` to image binding: each name is a shader in
+`pak4.pk3:scripts/hud.shader` (1.5's `pak8.pk3` carries the same blocks)
+whose one stage is `map clamp gfx/hud/death_<name>.tga`, `blendFunc blend`,
+vertex colour and alpha. `killIconDrown`, `killIconSlime` and
+`killIconDied` all map `gfx/hud/death_died.tga`, so a drown or slime death
+draws the generic icon. VERIFIED: 1.5's `cgame_mp_x86.dll` switch
+(0x3001e9f5) has 1.1's eight cases. United Offensive's is in
+`coduo-diff.md` 12.
+
+vcod: `killfeed::mod_icon` names the material each case names, per
+protocol, and the HUD resolves it through the shader scripts' image map
+like any HUD material.
 
 ---
 
