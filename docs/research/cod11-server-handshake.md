@@ -243,8 +243,9 @@ vcod's server bounds the systeminfo at 1023 on protocol 1 (trimming paks,
 not `sv_serverid`) and at 8191 on 6 and 22, and sends every configstring of
 1000 bytes or more as `x`/`y`/`z` (`net::configstring_commands`); the client
 puts them back together. The UO gate `a_pure_server_s_systeminfo_matches_uo`
-matches both pure captures byte for byte bar `sv_serverid`, which the
-captures read after a second map load.
+matches both pure captures byte for byte, `sv_serverid` included: it
+loads the recipe's first map, then the captured one, as the captures were
+a second map load (32).
 
 ### Identical on both maps, index < 140
 
@@ -544,6 +545,19 @@ and the zombie half of `Server::drop_client`.
   after a dropped one was answered. The check (`cmp eax,0x1f3` at
   0x808c423, skipped while the last time is still 0) runs before the
   password test. INFERRED.
+- The window's clock is the time at the handling: `SVC_RemoteCommand`
+  (1.1d 0x808c404) calls 0x806d988 first (0x808c410) and compares its
+  result against the last time at 0x80e30c8. VERIFIED (disassembly).
+  0x806d988 pumps `Com_GetRealEvent` until an empty event and returns its
+  time, Q3's `Com_Milliseconds`. INFERRED (its shape against Q3). With
+  the 5 ms socket read ("Pings"), two requests 505 ms apart
+  were both answered on 20 of 20 tries and 490 ms apart on 0 of 10.
+  VERIFIED (live, 1.1d, 2026-10-17). vcod-server rebuilds that moment
+  (`Server::handle_packet_read`): a packet's arrival, or the end of the
+  previous packet's handling when that ran later (an rcon `map_restart`);
+  its tick is not counted, since retail's frame runs in well under a
+  millisecond. Same 20 of 20 and 0 of 10 on vcod's debug build, where
+  the tick-start read had answered 10 of 20 at 505 ms. VERIFIED (live).
 - Replies, VERIFIED by capture:
   - no `rconPassword` set: `print\nNo rconpassword set on the server.\n`;
   - wrong password: `print\nBad rconpassword.\n`;
@@ -1706,11 +1720,41 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
   some files later or never, so on 1.5 and UO it makes the reads that flag
   a pak at that point: each indexed model's descriptor and LOD 0
   `xmodelparts` (retail's `G_ModelIndex` precache), and on 1.5 every
-  `soundaliases/*.csv`. What retail reads that vcod still does not (weapon
-  world and pickup models, vehicle death models, `soundloadspecs/`) comes
-  from paks the stock maps flag anyway: the UO gates on mp_cassino (dm, ctf,
-  dom, hq), mp_foy bas and mp_j5outpost and the 1.5 gate on mp_carentan
-  match retail's referenced pair exactly. VERIFIED (those gates).
+  `soundaliases/*.csv`; on UO the map's sound load spec; and on both each
+  `#using_animtree`'s tree. The UO gates on mp_cassino (dm, ctf, dom, hq),
+  mp_foy bas and mp_j5outpost and the 1.5 gate on mp_carentan match
+  retail's referenced pair exactly, and
+  `a_pak_holding_the_load_spec_or_an_animtree_is_referenced` lists a pak
+  holding either file. VERIFIED (those gates).
+- The load's reads after `FS_ClearPakReferences`, diffed file by file
+  between retail UO's `fs_debug 1` log and vcod's `read <file> from <pak>`
+  trace (2026-10-17, mp_cassino dm and mp_foy bas):
+  - Every weapon file, weapon world and pickup model and vehicle model
+    retail reads, vcod reads too. VERIFIED (live). Retail's flagged reads vcod lacked were
+    `soundloadspecs/mp/<map>.csv` and `animtrees/flak88.atr` (with
+    `xanim/void` from `pak0`, flagged anyway). `configure_mp.csv` is read
+    before the spawn's clear, so it flags nothing. VERIFIED (live).
+  - UO's spawn calls `0x806e35a(va("maps/mp/%s.bsp"), 2)` after
+    `sv_serverid` (decompile, coduo_lnxded). With 1 or 2 it opens
+    `soundloadspecs/mp/<map>.csv`, falling back to
+    `soundloadspecs/mp/default.csv` when the map has none (`0x806e15e`),
+    and reads the `soundaliases/` files the spec lists; with any other
+    value it lists `soundaliases/*.csv` as 1.5 does. VERIFIED (decompile).
+    1.5b and 1.1d hold no `soundloadspecs` string. VERIFIED (strings).
+  - The animtree read follows the script compile: `Can't find
+    animtrees/turret88.atr`, then `animtrees/flak88.atr`, then
+    `animtrees/multiplayer.atr`, after `mp/playeranim.script` on mp_foy.
+    VERIFIED (log). Each name is a `#using_animtree` of a loaded script
+    (`_flak_gmi.gsc`'s `flak88`). INFERRED. All three servers hold
+    `animtrees/%s.atr` (1.1d 0x8e904, 1.5b 0x98e04, UO 0x9ed44 file
+    offsets). VERIFIED (strings). vcod touches the tree on 1.5 too; that
+    1.5b reads it at the same point is INFERRED.
+  - A scratch UO install with `uo/zzz_spec.pk3` (only
+    `soundloadspecs/mp/mp_foy.csv`) and `uo/zzz_tree.pk3` (only
+    `animtrees/flak88.atr`): retail on mp_foy bas lists `uo/zzz_tree
+    uo/zzz_spec uo/pakuo07 uo/pakuo04 uo/pakuo03 uo/pakuo01 uo/pakuo00
+    main/pak9 main/pak8 main/pak5 main/pak4 main/pak0`, and vcod-server,
+    probed through `--net-probe`, the same string. VERIFIED (live).
 - `sv_pure` defaults to `1` (`0x80d542c`). VERIFIED. With it on and no pak
   loaded the server prints `WARNING: sv_pure set but no PK3 files loaded`
   (`0x80d5540`). VERIFIED.
@@ -1735,6 +1779,10 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
 
 ### The client side
 
+- `CL_SystemInfoChanged` (`0x415eb0`) also forces every systeminfo key
+  into a client cvar, whatever its flags, while no demo plays and no local
+  server runs. VERIFIED (cod11-front-end.md 16, "The systeminfo sets
+  client cvars", with the 1.5 and UO addresses).
 - `CL_SystemInfoChanged` (`0x415eb0`) hands `sv_paks`/`sv_pakNames` to
   `FS_PureServerSetLoadedPaks` (`0x43c290`) and the referenced pair to
   `FS_ServerSetReferencedPaks` (`0x43c530`); both error `pak sum/name

@@ -43,6 +43,16 @@ impl Kind {
         }
     }
 
+    /// `cg_gameMessageWidth` 70 and `cg_gameBoldMessageWidth` 60, the
+    /// characters a line holds before it wraps (cgame cvar table, 1.1
+    /// 0x300750c0, the same defaults on 1.5 and UO).
+    fn width(self) -> usize {
+        match self {
+            Kind::Game => 70,
+            Kind::Bold => 60,
+        }
+    }
+
     /// Font 0 at 0.25, or font 4 at a third.
     fn font<'a>(self, fonts: &'a UiFonts, v: &Virtual) -> (&'a super::font::Font, f32) {
         let (slot, scale) = match self {
@@ -99,10 +109,22 @@ impl Window {
         }
     }
 
-    /// A localized message, one line per `\n`.
+    /// A localized message as traps 2 and 3 write it (CoDMP.exe 0x401e52,
+    /// 0x401fc2): every `\n` ends a line, an empty one too, and each part
+    /// wraps at the window's width. The colour runs on across parts.
     pub fn push(&mut self, text: &str, now_ms: i32) {
-        for line in text.split('\n').filter(|l| !l.is_empty()) {
-            self.add_line(Body::Text(line.to_string()), now_ms);
+        let mut colour = '7';
+        let parts: Vec<&str> = text.split('\n').collect();
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                if i + 1 < parts.len() {
+                    self.add_line(Body::Text(String::new()), now_ms);
+                }
+                continue;
+            }
+            for line in wrap(part, self.kind.width(), &mut colour) {
+                self.add_line(Body::Text(line), now_ms);
+            }
         }
     }
 
@@ -206,6 +228,98 @@ impl Window {
     }
 }
 
+/// CoDMP.exe 0x408f80 for the game and bold windows: one part of a message
+/// cut into console lines of at most `limit` characters. A part longer than
+/// `limit` (colour codes not counted, 0x4aa6c0) is balanced over
+/// `ceil(len / limit)` lines: a line also ends after a space once it holds
+/// `len / lines`. Before each character the rest of its word (bytes above a
+/// space, at most `limit`) moves to a new line when it would overrun, unless
+/// it fills a whole line; so a word longer than `limit` breaks where its
+/// last `limit - 1` characters start. A space opening a line after a wrap
+/// is dropped. `colour` is the running `^N`, which each line reopens with
+/// (cod11-chat.md 3.3).
+fn wrap(text: &str, limit: usize, colour: &mut char) -> Vec<String> {
+    let s: Vec<char> = text.chars().collect();
+    let code = |i: usize| {
+        (s[i] == '^')
+            .then(|| s.get(i + 1).copied())
+            .flatten()
+            .filter(|c| ('0'..='7').contains(c))
+    };
+    let mut len = 0;
+    let mut i = 0;
+    while i < s.len() {
+        if code(i).is_some() {
+            i += 2;
+            continue;
+        }
+        len += usize::from(s[i] != '\n' && s[i] != '\r');
+        i += 1;
+    }
+    let soft = if len > limit {
+        len / len.div_ceil(limit)
+    } else {
+        limit
+    };
+
+    let mut lines = Vec::new();
+    let mut cells: Vec<(char, char)> = Vec::new();
+    let mut col = 0;
+    let mut end_line = |cells: &mut Vec<(char, char)>, col: &mut usize| {
+        let mut line = String::new();
+        let mut drawn = '7';
+        let used = cells.iter().rposition(|c| c.0 != ' ').map_or(0, |n| n + 1);
+        for &(ch, c) in &cells[..used] {
+            if c != drawn {
+                line.push('^');
+                line.push(c);
+                drawn = c;
+            }
+            line.push(ch);
+        }
+        lines.push(line);
+        cells.clear();
+        *col = 0;
+    };
+    let mut wrapped = false;
+    let mut i = 0;
+    while i < s.len() {
+        if let Some(c) = code(i) {
+            *colour = c;
+            i += 2;
+            continue;
+        }
+        let ch = s[i];
+        let word = s[i..].iter().take(limit).take_while(|&&c| c > ' ').count();
+        if word != limit && col + word > limit {
+            end_line(&mut cells, &mut col);
+            wrapped = true;
+        }
+        i += 1;
+        match ch {
+            '\n' => end_line(&mut cells, &mut col),
+            '\r' => col = 0,
+            ' ' if col == 0 && wrapped => {}
+            _ => {
+                if col < cells.len() {
+                    cells[col] = (ch, *colour);
+                } else {
+                    cells.push((ch, *colour));
+                }
+                col += 1;
+                if col >= limit || (col >= soft && ch == ' ') {
+                    end_line(&mut cells, &mut col);
+                    wrapped = true;
+                }
+            }
+        }
+    }
+    if col > 0 {
+        end_line(&mut cells, &mut col);
+    }
+    lines
+}
+
 /// The console-line draw's kill segments (CoDMP.exe 0x4dfa60): each text
 /// run advances x by its truncated width; the icon is `scale * 48` times its
 /// code over 32 on each side, its top at `baseline - (scale * 38.4 + h) / 2`,
@@ -257,6 +371,65 @@ mod tests {
                 (text, l.start, l.end)
             })
             .collect()
+    }
+
+    fn wrapped(text: &str, limit: usize) -> Vec<String> {
+        wrap(text, limit, &mut '7')
+    }
+
+    /// Ten nine-letter words, 99 characters: two lines, the first ending
+    /// after the space that reaches 49.
+    #[test]
+    fn a_long_line_wraps_into_balanced_lines() {
+        let words: Vec<String> = (1..=10).map(|n| format!("word{n:05}")).collect();
+        let text = words.join(" ");
+        assert_eq!(
+            wrapped(&text, 70),
+            [words[..5].join(" "), words[5..].join(" ")]
+        );
+        assert_eq!(wrapped("short line", 70), ["short line"]);
+        // The second of two spaces opens the next line, and is dropped.
+        let text = format!("{}  {}", words[..5].join(" "), words[5..].join(" "));
+        assert_eq!(wrapped(&text, 70)[1], words[5..].join(" "));
+    }
+
+    /// A word that won't fit moves down; one longer than the line breaks
+    /// where its last 69 characters start.
+    #[test]
+    fn a_word_moves_down_and_a_long_one_breaks() {
+        let text = format!("{} {}", "a".repeat(10), "b".repeat(65));
+        assert_eq!(wrapped(&text, 70), ["a".repeat(10), "b".repeat(65)]);
+        assert_eq!(
+            wrapped(&"x".repeat(100), 70),
+            ["x".repeat(31), "x".repeat(69)]
+        );
+    }
+
+    /// The running colour reopens each line; codes count for no width.
+    #[test]
+    fn a_wrapped_line_keeps_its_colour() {
+        let text = format!("^1{} {}", "a".repeat(40), "b".repeat(35));
+        assert_eq!(
+            wrapped(&text, 70),
+            [
+                format!("^1{}", "a".repeat(40)),
+                format!("^1{}", "b".repeat(35))
+            ]
+        );
+        assert_eq!(wrapped(&format!("^2{}", "c".repeat(70)), 70).len(), 1);
+    }
+
+    /// Every `\n` ends a line, an empty one too; a trailing one does not
+    /// add one. The bold window wraps at 60.
+    #[test]
+    fn a_message_takes_a_slot_per_line() {
+        let mut w = Window::new(Kind::Game);
+        w.push("a\n\nb\n", 0);
+        let texts: Vec<_> = live(&w).into_iter().map(|l| l.0).collect();
+        assert_eq!(texts, ["a", "", "b"]);
+        let mut w = Window::new(Kind::Bold);
+        w.push(&format!("{} {}", "a".repeat(40), "b".repeat(25)), 0);
+        assert_eq!(live(&w).len(), 2);
     }
 
     #[test]

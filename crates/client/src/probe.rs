@@ -217,6 +217,8 @@ pub struct Save {
     pub killcam: bool,
     /// `--probe-killcam-skip-ms`: press use this long into the killcam.
     pub killcam_skip_ms: Option<u64>,
+    /// `--probe-kill-cmds`: the target's cmds behind each `kill`, cycled.
+    pub kill_cmds: Vec<usize>,
     /// `--probe-fall`: print every snapshot a landing moved, no fixture.
     pub fall: bool,
     /// `--probe-fall-walk`: the world yaw `--probe-fall` walks at.
@@ -372,6 +374,7 @@ pub fn probe(
         follow: probe_follow,
         killcam: probe_killcam,
         killcam_skip_ms,
+        kill_cmds,
         fall: probe_fall,
         fall_walk,
         fall_prone,
@@ -545,6 +548,15 @@ pub fn probe(
     } else {
         TARGET_KILL_AT
     });
+    target_probe.bursts = kill_cmds;
+    anyhow::ensure!(
+        !target_probe.bursts.contains(&0),
+        "--probe-kill-cmds counts start at 1"
+    );
+    // `--probe-kill-cmds`: the last cmd sent, which a burst stamps on from,
+    // and the end of the quiet after one.
+    let mut last_sent: Option<net::msg::UserCmd> = None;
+    let mut quiet_until: Option<Instant> = None;
     let mut wrote_hit = false;
     // The hit capture waits for the first spawn before its script starts.
     let mut spawned = false;
@@ -1134,11 +1146,14 @@ pub fn probe(
         // A retail client stays `CA_CONNECTED` until its downloads end and
         // creates no usercmds before `CA_PRIMED`, so nothing enters the
         // world mid-download.
-        let sent = if download.as_ref().is_some_and(DownloadProbe::holds_cmds) {
+        let sent = if download.as_ref().is_some_and(DownloadProbe::holds_cmds)
+            || quiet_until.is_some_and(|t| now < t)
+        {
             None
         } else {
             client.send_frame(&cmd)
         };
+        last_sent = sent.or(last_sent);
         if let Some(c) = sent {
             if probe_fall {
                 fall.record_cmd(c.server_time, fall_walk.map(|_| c.angles[1]));
@@ -1319,6 +1334,19 @@ pub fn probe(
                 .collect();
             for c in pending {
                 client.send_reliable(&c);
+            }
+            // Each message carries the queued `kill`; the server runs it
+            // once, ahead of the first message's cmd.
+            if let Some(n) = target_probe.burst.take()
+                && let Some(last) = last_sent
+            {
+                for k in 1..=n as i32 {
+                    client.send_cmds(&[net::msg::UserCmd {
+                        server_time: last.server_time + k,
+                        ..last
+                    }]);
+                }
+                quiet_until = Some(now + KILL_CMDS_QUIET);
             }
             // A map-cycle capture runs on the probe's own clock and writes
             // its own fixture below; the script here only supplies its motion.
@@ -4612,6 +4640,11 @@ const TARGET_SCORE_PERIOD: Duration = Duration::from_secs(2);
 /// The cap on the whole run: past the shooter's approach limit and its firing
 /// phases, so the target is still tracing when the shots land.
 const TARGET_RUN_LIMIT: Duration = Duration::from_secs(200);
+/// `--probe-kill-cmds`: a kill this long after the last, once alive again.
+const KILL_CMDS_PERIOD: Duration = Duration::from_secs(8);
+/// `--probe-kill-cmds`: no cmd this long after a kill's burst, so the next
+/// one reaches the server past the death frame's `ClientEndFrame`.
+const KILL_CMDS_QUIET: Duration = Duration::from_millis(150);
 
 /// Retail's body queue: the corpse clone lands in one of the eight entities
 /// straight past the 64 client slots (docs/research/cod11-combat.md, 5.2).
@@ -4880,6 +4913,12 @@ struct TargetProbe {
     done: bool,
     /// How long after the spawn the first `kill` goes out.
     kill_at: Duration,
+    /// `--probe-kill-cmds`: the cmd counts each kill takes in turn.
+    bursts: Vec<usize>,
+    /// The count the loop sends behind the `kill` it is about to send.
+    burst: Option<usize>,
+    /// `(ms, cmds)` per kill in burst mode.
+    kills: Vec<(u128, usize)>,
 }
 
 impl TargetProbe {
@@ -4956,12 +4995,23 @@ impl TargetProbe {
         // independent of whether the shooter ever finds a line of sight.
         let kill_due = match self.killed_at {
             None => elapsed >= self.kill_at,
+            Some(t) if !self.bursts.is_empty() => {
+                self.died_at.is_none()
+                    && pm_type == PM_NORMAL
+                    && now.duration_since(t) >= KILL_CMDS_PERIOD
+            }
             Some(t) => self.died_at.is_none() && now.duration_since(t) >= TARGET_KILL_PERIOD,
         };
         if kill_due {
             println!("TARGET: sending kill at +{ms}ms");
             self.pending.push("kill".to_string());
             self.killed_at = Some(now);
+            if !self.bursts.is_empty() {
+                let n = self.bursts[self.kills.len() % self.bursts.len()];
+                println!("TARGET: {n} cmds behind the kill");
+                self.burst = Some(n);
+                self.kills.push((ms, n));
+            }
         }
         if pm_type != PM_NORMAL {
             if self.died_at.is_none() {
@@ -4997,9 +5047,12 @@ impl TargetProbe {
             }
         }
 
-        if self
-            .last_score_at
-            .is_none_or(|t| now.duration_since(t) >= TARGET_SCORE_PERIOD)
+        // A burst run sends no `score`: a bare one opens retail's 800 ms
+        // flood window, which drops a `kill` that falls inside it.
+        if self.bursts.is_empty()
+            && self
+                .last_score_at
+                .is_none_or(|t| now.duration_since(t) >= TARGET_SCORE_PERIOD)
         {
             self.last_score_at = Some(now);
             self.pending.push("score".to_string());
@@ -6129,6 +6182,15 @@ and carries nothing about what a shot does to a player."
     if target.corpses.is_empty() {
         notes.push("# BROKEN no corpse ever appeared in the body queue.".to_string());
     }
+    if !target.kills.is_empty() {
+        notes.push(format!(
+            "# --probe-kill-cmds: each `kill` (a !kill line) went out with exactly `cmds`\n\
+# usercmds behind it, one message each, back to back, then no cmd for {} ms;\n\
+# a kill every {} s once alive again, and no `score` (its flood window drops a kill).",
+            KILL_CMDS_QUIET.as_millis(),
+            KILL_CMDS_PERIOD.as_secs()
+        ));
+    }
     let mut body = String::from("[section target]\n");
     body.push_str(&format!(
         "!observed deaths={} traced={} obituaries={} corpse_edges={} scoreboards={}\n",
@@ -6138,6 +6200,9 @@ and carries nothing about what a shot does to a player."
         target.corpses.len(),
         target.scoreboards.len(),
     ));
+    for (ms, cmds) in &target.kills {
+        body.push_str(&format!("!kill ms={ms} cmds={cmds}\n"));
+    }
     for s in &target.trace {
         body.push_str(&s.line());
     }

@@ -327,7 +327,7 @@ struct Rig {
 /// The probe as our gametype under the recipe's two cvars, one client
 /// through the stock menus, and a second to let the first teleport settle.
 fn rig() -> Option<Rig> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let fs = Rc::new(fs);

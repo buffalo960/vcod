@@ -2111,11 +2111,27 @@ impl Server {
         now: Instant,
         arrived: Instant,
     ) {
+        self.handle_packet_read(from, pkt, now, arrived, arrived);
+    }
+
+    /// [`Self::handle_packet_at`] with `read`, the moment retail's event
+    /// loop would have handled the packet: its arrival, or later when the
+    /// server was busy with a frame or an earlier packet. rcon's window
+    /// reads it, as retail's reads the clock at the handling
+    /// (cod11-server-handshake.md, "rcon").
+    pub fn handle_packet_read(
+        &mut self,
+        from: SocketAddr,
+        pkt: &[u8],
+        now: Instant,
+        arrived: Instant,
+        read: Instant,
+    ) {
         self.ack_time_ms = self
             .last_send
             .filter(|&(at, _)| arrived < at)
             .map(|(_, before)| before);
-        self.handle_packet(from, pkt, now);
+        self.dispatch_packet(from, pkt, now, read);
         self.ack_time_ms = None;
     }
 
@@ -2128,6 +2144,10 @@ impl Server {
 
     /// `SV_PacketEvent`.
     pub fn handle_packet(&mut self, from: SocketAddr, pkt: &[u8], now: Instant) {
+        self.dispatch_packet(from, pkt, now, now);
+    }
+
+    fn dispatch_packet(&mut self, from: SocketAddr, pkt: &[u8], now: Instant, read: Instant) {
         // `Com_EventLoop` hands a packet to `SV_PacketEvent` only while
         // `sv_running` is set.
         if self.killed {
@@ -2136,7 +2156,7 @@ impl Server {
         match parse_oob(pkt) {
             Some((cmd, _)) => {
                 let cmd = cmd.to_string();
-                self.handle_oob(from, &cmd, pkt, now);
+                self.handle_oob(from, &cmd, pkt, now, read);
             }
             None => self.handle_client_packet(from, pkt, now),
         }
@@ -2145,7 +2165,7 @@ impl Server {
     /// `connect` re-parses `raw` because its body is compressed; the browser
     /// queries tokenize its line (`oob_argv`). The queries are rate limited
     /// before anything is looked at; a limited request is dropped silently.
-    fn handle_oob(&mut self, from: SocketAddr, cmd: &str, raw: &[u8], now: Instant) {
+    fn handle_oob(&mut self, from: SocketAddr, cmd: &str, raw: &[u8], now: Instant, read: Instant) {
         match cmd {
             "getinfo" | "getstatus" | "getchallenge" => {
                 if self.limiter.reply_limited(from.ip(), now) {
@@ -2159,8 +2179,9 @@ impl Server {
                 }
             }
             "connect" => self.svc_direct_connect(from, raw, now),
-            // Rate limited by its own server-wide window, not the buckets.
-            "rcon" => self.svc_remote_command(from, raw, now),
+            // Rate limited by its own server-wide window, not the buckets,
+            // on the clock at the handling.
+            "rcon" => self.svc_remote_command(from, raw, read, now),
             // `SV_ConnectionlessPacket` (0x808c827) matches it and does
             // nothing; a client leaves through the netchan `disconnect`.
             "disconnect" => {}
@@ -2447,10 +2468,10 @@ impl Server {
     /// `SVC_RemoteCommand` (0x808c404). The reply is whatever the command
     /// printed, in `print\n` packets of up to `rcon::OUTPUT_BUF` bytes; a
     /// rate-limited request gets nothing.
-    fn svc_remote_command(&mut self, from: SocketAddr, raw: &[u8], now: Instant) {
+    fn svc_remote_command(&mut self, from: SocketAddr, raw: &[u8], read: Instant, now: Instant) {
         use crate::rcon::Verdict;
         let args = crate::game::say::tokenize(&oob_line(raw));
-        let verdict = self.rcon.check(&self.rcon_password, &args, now);
+        let verdict = self.rcon.check(&self.rcon_password, &args, read);
         let shown = args.get(2).map_or("", String::as_str);
         match verdict {
             Verdict::Limited => return,
@@ -5603,14 +5624,26 @@ impl Server {
                     let _ = vcod_common::xmodel::load_bones(fs, name);
                 }
             }
-            // So does the load's sound alias pass, every `soundaliases/*.csv`,
-            // which UO leaves unflagged.
+            // So does the load's sound alias pass: every `soundaliases/*.csv`
+            // on 1.5; on UO the map's sound load spec, or the default one
+            // when the map ships none, whose aliases UO leaves unflagged.
             if self.proto.version == PROTOCOL_V6.version {
                 for name in fs.list_prefix("soundaliases/") {
                     if name.ends_with(".csv") {
                         fs.touch(&name);
                     }
                 }
+            } else {
+                let spec = format!("soundloadspecs/mp/{}.csv", self.cfg.map);
+                if fs.contains(&spec) {
+                    fs.touch(&spec);
+                } else {
+                    fs.touch("soundloadspecs/mp/default.csv");
+                }
+            }
+            // And the script load reads each `#using_animtree`'s tree.
+            for tree in rt.animtrees() {
+                fs.touch(&format!("animtrees/{tree}.atr"));
             }
         }
         let cvars = rt.cvars();
@@ -10282,7 +10315,7 @@ mod tests {
     /// (docs/research/cod11-gsc-language.md, "The script clock").
     #[test]
     fn the_script_clock_matches_probe_startclock() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             eprintln!("COD_DIR unset or has no main/: skipping");
             return;
         };
@@ -10345,7 +10378,7 @@ mod tests {
     /// linked `SVF_NOCLIENT` and baselined all the same (map-cycle doc 3.3).
     #[test]
     fn the_first_maps_baselines_match_retail() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             eprintln!("COD_DIR unset or has no main/: skipping");
             return;
         };
@@ -14066,6 +14099,24 @@ mod tests {
         assert_eq!(rcon(&mut sv, "secret bogus_cmd", t), ["print\n"]);
         let t = t + Duration::from_millis(500);
         assert_eq!(rcon(&mut sv, "secret", t), ["print\n"]);
+    }
+
+    /// Two requests 510 ms apart read in one tick: retail handles each as it
+    /// arrives, so both are answered; the window reads the handling moment,
+    /// not the tick's (cod11-server-handshake.md, "rcon").
+    #[test]
+    fn rcon_s_window_reads_each_request_s_own_moment() {
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        sv.set_cvar("rconPassword", "pw");
+        let tick = t + Duration::from_millis(560);
+        let mut answered = 0;
+        for at in [t, t + Duration::from_millis(510)] {
+            let pkt = oob("rcon pw bogus_cmd");
+            sv.handle_packet_read(addr(9), &pkt, tick, at, at);
+            answered += sv.take_outgoing().len();
+        }
+        assert_eq!(answered, 2);
     }
 
     /// `clientkick` drops through `SV_DropClient`: the slot is a zombie that

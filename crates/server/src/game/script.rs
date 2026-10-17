@@ -93,6 +93,16 @@ pub struct CompiledScripts {
     gametype_entry: String,
     entry: String,
     program: vcod_gsc::Program,
+    /// The `#using_animtree` names the closure declares.
+    animtrees: Vec<String>,
+}
+
+impl CompiledScripts {
+    /// The animtrees the level's scripts name, whose `.atr` the engine
+    /// reads at the load (cod11-server-handshake.md, "The four cvars").
+    pub fn animtrees(&self) -> &[String] {
+        &self.animtrees
+    }
 }
 
 /// The BSP's share of a level load: the entity string the spawn pass
@@ -305,6 +315,7 @@ impl ScriptRuntime {
                     gametype_entry: gametype_entry.clone(),
                     entry: entry.clone(),
                     program: vm.program(),
+                    animtrees: loader.animtrees().map(str::to_string).collect(),
                 });
                 (vm, scripts)
             }
@@ -2169,6 +2180,11 @@ impl ScriptRuntime {
         self.dispatch_client_event(ClientEvent::Connect { slot, name });
     }
 
+    /// The animtrees the level's scripts name in `#using_animtree`.
+    pub fn animtrees(&self) -> &[String] {
+        self.scripts.as_ref().map_or(&[], |c| c.animtrees())
+    }
+
     #[cfg(test)]
     pub(crate) fn compiled(&self) -> Option<&Rc<CompiledScripts>> {
         self.scripts.as_ref()
@@ -3842,7 +3858,7 @@ mod tests {
     /// (docs/research/cod11-gsc-object-model.md 23.3, 23.6).
     #[test]
     fn get_plant_puts_the_charge_where_retail_did_on_mp_carentan() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let bytes = fs.read("maps/mp/mp_carentan.bsp").expect("mp_carentan.bsp");

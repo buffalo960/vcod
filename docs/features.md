@@ -83,9 +83,10 @@ something, the bullet links it.
   redirected one is asked for again, a later redirect of it refused so a
   1.5 server sends it over UDP. Pure servers take its pak
   checksums. Modded servers work too: a server's `fs_game` layers its mod
-  directory over `main/` and swaps in the mod's menus, its
-  `cl_allowDownload` decides whether to download, and a mod's script menus
-  and `hud.menu` text show up.
+  directory over `main/` and swaps in the mod's menus, every systeminfo
+  key (`cl_allowDownload`, `rate`, `snaps`, ...) is forced into the
+  client's cvars as retail does, and a mod's script menus and `hud.menu`
+  text show up.
 - `--vanilla` (client and server) puts only the install patch's stock paks
   on the search path and ignores third-party maps, `zzz_*` mods, downloads
   and `fs_game`; the client downloads nothing under it
@@ -476,7 +477,8 @@ console.
   most, as the retail cgame and renderer do. A `map_restart` clears them
   with every live effect and sound, empties the objective text and stands
   the player up running, and drops the centre print, the vote lines and
-  the hit icons, as `CG_MapRestart` does; the next snapshot then runs the
+  the hit icons, as `CG_MapRestart` does, and the game and bold message
+  windows, as the engine's `n`/`B` case does; the next snapshot then runs the
   respawn reset. `cg_shadows 1` (a cheat, off by
   default as in retail) drops the `markShadow` blob under players 250 to
   1024 units away. Brush models and props take none, as in retail; the

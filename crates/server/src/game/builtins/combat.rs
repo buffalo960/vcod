@@ -1537,7 +1537,7 @@ mod tests {
     /// `setOrigin` putting its player at the head of the node it lands in.
     #[test]
     fn radiusdamage_walks_its_victims_in_the_area_trees_order() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let bytes = fs.read("maps/mp/mp_carentan.bsp").unwrap();

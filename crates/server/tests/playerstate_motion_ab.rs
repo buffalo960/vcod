@@ -414,7 +414,7 @@ fn send_at_probe_rate<T: vcod_common::net::Transport>(
 }
 
 fn check(map: &str, gametype: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let path = format!(
@@ -493,7 +493,7 @@ fn the_moving_playerstate_matches_retail_on_mp_carentan() {
 /// The animation index under each pose, against retail's. `check` diffs the
 /// fields the mover owns; this diffs the one the animscript machine owns.
 fn check_anims(map: &str, gametype: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let path = format!(
@@ -567,7 +567,7 @@ fn check_anims(map: &str, gametype: &str) {
 /// looping anim every frame or never restarts a repeated one. Frame by frame,
 /// because a pose sample cannot see the anims a pose passes through.
 fn check_anim_restarts(map: &str, gametype: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let path = format!(

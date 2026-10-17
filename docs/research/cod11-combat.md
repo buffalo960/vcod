@@ -3448,6 +3448,26 @@ Closed on 2026-09-27, the `kill` death frame and the respawn frame:
   wire's `viewHeightTarget` off the last move's arm. Pinned by
   `the_kill_commands_death_frame_is_retails` (`tests/combat.rs`), with 1.8's
   pickup rule from the same day.
+- **The death frame's `weaponstate`.** Measured on 2026-10-17; ours already
+  matched. VERIFIED, run: the target probe's `--probe-kill-cmds 1,3` sends
+  each `kill` with exactly one or three cmds behind it, one message each,
+  back to back, then no cmd for 150 ms. On 1.1d, 1.5b and UO 1.51b alike
+  (`mp_carentan-dm-hit-target-killcmds{,-1.5,-uo}.txt`, 7, 10 and 10
+  kills) a kill with one cmd reads `weaponstate` 1 and one with three reads
+  0, and the dead player keeps it until the respawn; the events are
+  `EV_DEATH`, `EV_RAISE_WEAPON` (UO's `EV_REMOVE_WEAPON_ATTACHMENTS`
+  between them) either way. VERIFIED: `PM_Weapon`'s dead arm stores only
+  `ps->weapon` 0: 1.1d `.so` 0x390fe, 1.5b `game.mp.i386.so` 0x303fc
+  (behind `cmpl $0x5,0x4(%eax)` at 0x303ec), UO `game.mp.uo.i386.so`
+  0x372bb (`ps+0xd8`, behind 0x372ab); `player_die` stores no
+  `weaponstate` on any of them. INFERRED: the first cmd's putaway to empty
+  hands raises weapon 0 (state 1); a second live cmd before `ClientEndFrame`
+  ends that raise, weapon 0's `raiseTime` being 0, and reads 0. The
+  unscripted captures' mix (the `tdm` hit target: one death in five reads
+  1) is where the kill fell in the frame: one cmd reaches the server inside
+  it about a third of the time at 16 ms a cmd. The 1.5 "0 on 1.5b, 1 on
+  ours" note of 2026-10-14 (`cod15-protocol-diff.md`, "Spawn events") was
+  one sample of that. Pinned by `tests/kill_cmds_ab.rs` at each install.
 - **The respawn frame carried `legsAnim` 0 where retail carries 634.**
   VERIFIED, run: one frame, the next reading 634 and every frame after it.
   VERIFIED, `game.mp.i386.so`: `ClientSpawn` ends in `ClientThink_real`
