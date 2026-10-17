@@ -6176,7 +6176,11 @@ impl ApplicationHandler for App {
                 } = &self.mode
                     && let Some((name, bytes)) = net.recording_status()
                 {
-                    hud_quads.extend(self.console.recording_line(name, bytes));
+                    let v1 = net.protocol().version == net::protocol::PROTOCOL_V1.version;
+                    let show_name = v1 || self.shell.cvar_f32("cg_showdemoname") as i32 == 1;
+                    let text = console::recording_text(name, bytes, show_name);
+                    let (w, h) = r.screen_size();
+                    hud_quads.extend(self.console.recording_line(&text, v1, w, h));
                 }
                 if self.ui.active() {
                     if let Mode::Online { net, .. } = &self.mode {

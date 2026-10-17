@@ -364,9 +364,11 @@ impl Shell {
         s.register("cl_packetdup", "1", ARCHIVE);
         s.register("cl_timeNudge", "0", 0);
         // 1.5's and UO's cgame records on the server's `C` and stops on its
-        // `D` while this is 1; their cvar table rows are "0", archived
-        // (cod11-demos.md, "Automatic demos").
+        // `D` while this is 1; their cvar table rows are "0", archived.
+        // `cg_showdemoname` 1, archived, names the demo on their
+        // `RECORDING` line (cod11-demos.md 6 and 8).
         s.register("cg_autodemo", "0", ARCHIVE);
+        s.register("cg_showdemoname", "1", ARCHIVE);
         // CL_Init (CoDMP.exe 0x411fd8, 0x411f8e): `timedemo` "0" with no
         // flags, `cl_freezeDemo` "0" CVAR_TEMP (cod11-demos.md, "Playback").
         s.register("timedemo", "0", 0);
