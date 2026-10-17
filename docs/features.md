@@ -53,7 +53,8 @@ something, the bullet links it.
   screen meanwhile; `demo <name>` plays any of the three back through the
   online frame, the recorder drawn as a followed player with no
   prediction, as the cgame draws a demo. `timedemo 1` steps 50 ms a frame
-  and prints the frame rate at the end, `cl_freezeDemo 1` holds the
+  (paced by `com_maxfps`, as retail's is) and prints the frame rate at
+  the end, `cl_freezeDemo 1` holds the
   clock, `nextdemo` runs once the demo ends, and any key opens the main
   menu. A demo fetches nothing: its map missing is retail's `Couldn't
   load maps/mp/<map>.bsp`. `cg_autodemo 1` records on a 1.5 or UO
@@ -393,9 +394,8 @@ console.
   ([cod15-movement.md](research/cod15-movement.md)).
   PunkBuster servers refuse it (vcod runs no PunkBuster), and
   `cg_autoscreenshot` does nothing (no screenshots).
-- Demo playback has no `cl_avidemo` (no screenshots), and `timedemo`
-  keeps the usual frame pacing (`r_swapInterval 0` lifts the vsync). No demo has yet crossed between vcod
-  and a retail client either way
+- Demo playback has no `cl_avidemo` (no screenshots). No demo has yet
+  crossed between vcod and a retail client either way
   ([cod11-demos.md](research/cod11-demos.md) 7).
 - Prediction carries you on a moving brush model and turns your view with
   its yaw, as retail's does, but never turns your position about it.
