@@ -1,0 +1,43 @@
+# Retail CoD UO 1.51b dedicated server's games_mp.log for the probe_bastime run beside it
+# (the two mp_foy-bastime-<role>-uo.txt fixtures), the engine's m:ss stamp stripped.
+------------------------------------------------------------
+InitGame: \g_gametype\probe_bastime\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\abc\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE prematch
+J;0;0;vcod
+PROBE placed 0 allies (-2172.00, -7148.00, 192.12) (0.00, 0.00, 0.00)
+PROBE settled 0 (0.00, 0.00, 0.00)
+J;0;1;vcod
+PROBE placed 1 axis (3546.00, 513.00, 33.12) (0.00, 0.00, 0.00)
+PROBE settled 1 (0.00, 0.00, 0.00)
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_bastime\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\abc\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+J;0;1;vcod
+J;0;0;vcod
+PROBE state  | 0 playing st=gfx/hud/hud@us_rank1.dds sc=0 d=0 | 1 playing st=gfx/hud/hud@us_rank1.dds sc=0 d=0 | allies 0 axis 0 playing ended=0 map=0
+PROBE players 0 1
+PROBE state  | 0 playing st=gfx/hud/hud@us_rank1.dds sc=0 d=0 | 1 playing st=gfx/hud/hud@us_rank1.dds sc=0 d=0 | allies 0 axis 0 playing ended=1 map=0
+PROBE intermission 53650 1
+PROBE state  | 0 intermission st=gfx/hud/hud@us_rank1.dds sc=0 d=0 | 1 intermission st=gfx/hud/hud@us_rank1.dds sc=0 d=0 | allies 0 axis 0 intermission ended=1 map=1
+ExitLevel: executed
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_bastime\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\abc\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE done 63600
+J;0;1;vcod
+J;0;0;vcod
+PROBE placed 1 axis (3546.00, 513.00, 33.12) (0.00, 0.00, 0.00)
+PROBE placed 0 allies (-2172.00, -7148.00, 192.12) (0.00, 0.00, 0.00)
+PROBE settled 0 (0.00, 0.00, 0.00)
+PROBE settled 1 (0.00, 0.00, 0.00)
+RestartGame:
+------------------------------------------------------------
+------------------------------------------------------------
+InitGame: \g_gametype\probe_bastime\g_timeoutsallowed\0\gamename\CoD:United Offensive\mapname\mp_foy\protocol\22\scr_allow_jeeps\1\scr_allow_tanks\1\shortversion\1.51\sv_allowAnonymous\0\sv_floodProtect\1\sv_hostname\abc\sv_maxclients\8\sv_maxPing\0\sv_maxRate\0\sv_minPing\0\sv_privateClients\0\sv_punkbuster\0\sv_pure\0
+PROBE done 69600
+J;0;1;vcod
+J;0;0;vcod
+Q;0;0;vcod
+Q;0;1;vcod

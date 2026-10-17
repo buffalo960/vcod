@@ -1,0 +1,37 @@
+# Retail CoD 1.1d dedicated server, mp_carentan tdm, client-probes/probe_skyshot sky part, panzerfaust_mp, captured 2026-10-17:
+#   PORT=32501 PROBE_SECS=45 tools/run_probe.sh client-probes/probe_skyshot mp_carentan +set probe_part sky +set probe_weapon panzerfaust_mp
+#   vcod --net-probe 127.0.0.1:32501 --probe-team allies --probe-uo-weapon aim --probe-secs 30
+# The rocket's move meets the sky at z 2304 on the frame after its last line and it leaves the wire with no explode (combat doc 12.3).
+# Retail server PROBE lines on the first rocket, then the shooter probe's VEH missile lines on it (vehicle_probe.rs report).
+PROBE sky 1050 (1192.00, 3296.00, -23.75) 2303.88 default
+PROBE miss 13200 170 rocket (1192.00, 3296.00, 37.00)
+PROBE miss 13250 170 rocket (1233.90, 3333.90, 311.20)
+PROBE miss 13300 170 rocket (1254.85, 3352.85, 448.30)
+PROBE miss 13350 170 rocket (1275.80, 3371.80, 585.40)
+PROBE miss 13400 170 rocket (1296.75, 3390.75, 722.50)
+PROBE miss 13450 170 rocket (1317.70, 3409.70, 859.60)
+PROBE miss 13500 170 rocket (1338.65, 3428.65, 996.70)
+PROBE miss 13550 170 rocket (1359.60, 3447.60, 1133.80)
+PROBE miss 13600 170 rocket (1380.55, 3466.55, 1270.90)
+PROBE miss 13650 170 rocket (1401.50, 3485.50, 1408.00)
+PROBE miss 13700 170 rocket (1422.45, 3504.45, 1545.10)
+PROBE miss 13750 170 rocket (1443.40, 3523.40, 1682.20)
+PROBE miss 13800 170 rocket (1464.35, 3542.35, 1819.30)
+PROBE miss 13850 170 rocket (1485.30, 3561.30, 1956.40)
+PROBE miss 13900 170 rocket (1506.25, 3580.25, 2093.50)
+PROBE miss 13950 170 rocket (1527.20, 3599.20, 2230.60)
+VEH 13200 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13250 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13300 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13350 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13400 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13450 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13500 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13550 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13600 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13650 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13700 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13750 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13800 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13850 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0
+VEH 13900 missile 170 type 2 base 1192.000 3296.000 37.000 bits 0x44950000 0x454e0000 0x42140000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0

@@ -907,6 +907,18 @@ the ordering and the branch conditions.
 - Anything else prints `"Unknown keyword '%s' in sv_mapRotation.\n"`
   (`0x80d3c40`), reads the next token and loops (`0x8084260..0x8084278`).
 
+VERIFIED (UO 1.51b, `probe_ctftime`, 2026-10-17,
+`tests/fixtures/gametypes/mp_cassino-ctftime-*-uo.txt`): a gametype
+script's `setCvar("sv_mapRotation", ...)` drives the next `map_rotate`:
+the probe writes `gametype probe_ctftime map mp_foy` at load, and the
+`exitLevel(false)` at its map end loads mp_foy. INFERRED, off section 5's
+`Cvar_Set` calls and the game module's `setCvar` being a `trap_Cvar_Set`:
+both rotation cvars are the one engine table, so a script can also read
+or rewrite `sv_mapRotationCurrent`. vcod's `map_rotate` reads both from
+the script's cvar table when a level is loaded and writes the queue back
+there (`Server::run_console`, `console::Command::MapRotate`); before, it
+read only its own copy, which `--set` and rcon fill.
+
 INFERRED, off the `VM_Call(gvm, 15, 0)` arm: a gametype change in the rotation
 drops whatever persistence the outgoing level asked to keep, because the flag
 `SV_SpawnServer` reads at 3 step 2 has been zeroed before the `map` line

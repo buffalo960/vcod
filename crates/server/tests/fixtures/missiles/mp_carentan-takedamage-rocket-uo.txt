@@ -1,0 +1,11 @@
+# Retail CoD United Offensive 1.51b dedicated server, mp_carentan tdm, client-probes/probe_takedamage, bazooka_mp at a setTakeDamage barrel 200 out, captured 2026-10-17:
+#   COD_VERSION=uo PORT=32502 PROBE_SECS=50 tools/run_probe.sh client-probes/probe_takedamage mp_carentan +set probe_weapon bazooka_mp
+#   vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:32502 --probe-team allies --probe-uo-weapon aim --probe-secs 30
+# Each rocket's direct G_Damage on the barrel (1000 MOD_PROJECTILE at the contact, wherever the spread put it) and no splash on it; the shooter takes the splash (combat doc 13.1).
+PROBE site 1050 (1368.00, 2608.00, -23.75) 45 170 (1509.42, 2749.42, -23.88)
+PROBE hit 16400 0 dmg 35 mod MOD_PROJECTILE_SPLASH
+PROBE mdamage 16450 1000 MOD_PROJECTILE (1499.55, 2739.89, -3.26)
+PROBE hit 22700 0 dmg 35 mod MOD_PROJECTILE_SPLASH
+PROBE mdamage 22750 1000 MOD_PROJECTILE (1498.84, 2741.63, 1.68)
+PROBE hit 27900 0 dmg 35 mod MOD_PROJECTILE_SPLASH
+PROBE mdamage 27950 1000 MOD_PROJECTILE (1498.47, 2742.50, -14.68)

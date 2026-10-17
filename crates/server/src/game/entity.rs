@@ -116,6 +116,10 @@ pub struct GEntity {
     /// `delete()`'s `trap_UnlinkEntity` (game.mp 0x5da81): off every
     /// snapshot from the call, though the slot is freed 100 ms later.
     pub unlinked: bool,
+    /// `s.groundEntityNum` of an entity nothing else drives it on (a script
+    /// model, a turret, a brush model): `G_Spawn`'s zeroed 0 until
+    /// `G_FreeEntity` frees entity 0 (`GameHost::free_ground_refs`).
+    pub ground: i32,
 }
 
 /// The `gentity` fields `SV_LinkEntity` reads off an entity with no client
@@ -381,6 +385,7 @@ impl ObjectTable {
             brush_model: None,
             link: None,
             unlinked: false,
+            ground: 0,
         });
         Ok(id)
     }
@@ -409,6 +414,7 @@ impl ObjectTable {
                 brush_model: None,
                 link: None,
                 unlinked: false,
+                ground: 0,
             });
         }
         EntId(ENTITYNUM_WORLD, 0)
@@ -508,6 +514,7 @@ impl ObjectTable {
             brush_model: None,
             link: None,
             unlinked: false,
+            ground: 0,
         });
         Ok(EntId(slot as u32, self.ent_gens[slot]))
     }
@@ -572,6 +579,7 @@ impl ObjectTable {
             brush_model: None,
             link: None,
             unlinked: false,
+            ground: 0,
         });
         Ok(EntId(FIRST_HUD_ELEM + i as u32, self.hud_gens[i]))
     }
@@ -733,6 +741,11 @@ impl ObjectTable {
             .iter()
             .enumerate()
             .filter_map(|(i, e)| e.as_ref().map(|e| (EntId(i as u32, self.ent_gens[i]), e)))
+    }
+
+    /// [`Self::iter_inuse`], mutable.
+    pub fn iter_inuse_mut(&mut self) -> impl Iterator<Item = &mut GEntity> {
+        self.ents.iter_mut().flatten()
     }
 
     #[cfg(test)]
