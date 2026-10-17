@@ -660,6 +660,7 @@ fn vehicle_fire(
                     shot.dir,
                     shell,
                     kind,
+                    true,
                     now,
                 ) {
                     log::warn!("vehicle {} shell not spawned: {e:?}", id.0);
@@ -1632,6 +1633,9 @@ pub struct Server {
     /// Each bombzone's `(mins, maxs)` and the stand `site_stand` picked in
     /// it, for the life of the nav graph.
     bot_sites: Vec<([f32; 3], [f32; 3], [f32; 3])>,
+    /// Each `bas` base's origin and the graph's spots a rocket fired from
+    /// bursts at it (`breach_stands`), for the life of the nav graph.
+    bot_breach_stands: Vec<([f32; 3], Vec<[f32; 3]>)>,
     /// The shots and blasts since the bots last listened, in sim order;
     /// `step_bots` takes them at the top of the next tick.
     bot_noises: Vec<crate::bots::Noise>,
@@ -2019,6 +2023,7 @@ impl Server {
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
             bot_sites: Vec::new(),
+            bot_breach_stands: Vec::new(),
             bot_noises: Vec::new(),
             archive: Default::default(),
             dedicated: 1,
@@ -4155,6 +4160,7 @@ impl Server {
         let re = self.bot_re();
         let bel = self.bot_bel();
         let uo = self.bot_uo();
+        let launchers = self.bot_launchers(uo.as_ref());
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -4240,6 +4246,11 @@ impl Server {
                 });
             }
         }
+        let breach_models = if views.iter().any(|(_, v)| v.rocket.is_some()) {
+            self.bot_breach_models(uo.as_ref())
+        } else {
+            Vec::new()
+        };
         if let Some(uo) = &uo {
             let team = |slot: usize| teams.get(slot).copied().unwrap_or(0);
             let slots: Vec<usize> = views.iter().map(|(s, _)| *s).collect();
@@ -4252,7 +4263,12 @@ impl Server {
                     .iter()
                     .filter(|s| team(**s) == mine && *s < slot)
                     .count();
-                view.uo = Some(self.bot_uo_view(uo, *slot, mine, rank));
+                let breach = crate::bots::Breach {
+                    rocket: view.rocket.is_some(),
+                    launchers: &launchers,
+                    models: &breach_models,
+                };
+                view.uo = Some(self.bot_uo_view(uo, *slot, mine, rank, &breach));
             }
         }
         if let Some((attackers, defenders, sd)) = &sd {
@@ -4527,6 +4543,7 @@ impl Server {
             self.nav_rebuild = None;
             self.bot_paths.clear();
             self.bot_sites.clear();
+            self.bot_breach_stands.clear();
         }
     }
 
@@ -4680,6 +4697,123 @@ impl Server {
         })
     }
 
+    /// The rocket launchers lying about, on a `bas` level only: what a bot
+    /// breaches a base with (bot-objectives.md 7.2).
+    fn bot_launchers(&mut self, uo: Option<&script::UoObjectives>) -> Vec<[f32; 3]> {
+        if !matches!(uo, Some(script::UoObjectives::Bas(_))) {
+            return Vec::new();
+        }
+        let weapons = self.weapon_table.clone();
+        let Some(rt) = self.script.as_mut() else {
+            return Vec::new();
+        };
+        rt.weapon_items()
+            .into_iter()
+            .filter(|(w, _)| {
+                weapons
+                    .get(*w as usize)
+                    .is_some_and(|d| d.weapon_class == "rocketlauncher")
+            })
+            .map(|(_, at)| at)
+            .collect()
+    }
+
+    /// Where a rocket from `slot`'s muzzle is aimed to burst within
+    /// [`crate::bots::BREACH_NEAR`] of a base at `at`, between
+    /// [`crate::bots::BREACH_MIN`] and [`crate::bots::BREACH_RANGE`] off:
+    /// the base's origin, or a point under it on the floor it sits on. A
+    /// script model links as a point, so a rocket aimed at the origin flies
+    /// through it and bursts on what lies behind.
+    fn breach_shot(
+        &self,
+        slot: usize,
+        at: [f32; 3],
+        models: &[crate::game::combat::PlacedModel],
+    ) -> Option<[f32; 3]> {
+        let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
+        let world = &self.world.as_ref()?.collision;
+        let muzzle = crate::game::combat::muzzle_point(&sim.ps);
+        breach_aim(world, models, muzzle, at.into())
+    }
+
+    /// The script models within [`BREACH_MODEL_NEAR`] of a `bas` base, on
+    /// such a level only: what a rocket fired at one meets besides the
+    /// world, the base's own model among them.
+    fn bot_breach_models(
+        &mut self,
+        uo: Option<&script::UoObjectives>,
+    ) -> Vec<crate::game::combat::PlacedModel> {
+        let Some(script::UoObjectives::Bas(bases)) = uo else {
+            return Vec::new();
+        };
+        let Some(rt) = self.script.as_mut() else {
+            return Vec::new();
+        };
+        rt.placed_script_models()
+            .into_iter()
+            .filter(|m| {
+                bases
+                    .iter()
+                    .any(|b| m.origin.distance(glam::Vec3::from(b.at)) < BREACH_MODEL_NEAR)
+            })
+            .collect()
+    }
+
+    /// Up to one graph node in each of [`BREACH_SECTORS`] sectors round a
+    /// base, [`crate::bots::BREACH_MIN`] to [`BREACH_STAND_FAR`] off, from
+    /// whose standing eye [`breach_aim`] finds a shot: where a bot with a
+    /// rocket walks to. Empty until the graph is up.
+    fn breach_stands(
+        &mut self,
+        at: [f32; 3],
+        models: &[crate::game::combat::PlacedModel],
+    ) -> Vec<[f32; 3]> {
+        use crate::bots::BREACH_MIN;
+        if let Some((_, s)) = self.bot_breach_stands.iter().find(|(b, _)| *b == at) {
+            return s.clone();
+        }
+        let (Some(g), Some(w)) = (self.nav.clone(), self.world.as_ref()) else {
+            return Vec::new();
+        };
+        let base = glam::Vec3::from(at);
+        // On the graph's main component, as `site_stand`'s.
+        let comp = g.components();
+        let mut sizes: BTreeMap<u32, usize> = BTreeMap::new();
+        for c in &comp {
+            *sizes.entry(*c).or_default() += 1;
+        }
+        let main = sizes
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+            .map(|(c, _)| *c);
+        let mut best: [Option<(f32, glam::Vec3)>; BREACH_SECTORS] = [None; BREACH_SECTORS];
+        for (i, n) in g.nodes.iter().enumerate() {
+            let d = n.truncate().distance(base.truncate());
+            if !(BREACH_MIN..=BREACH_STAND_FAR).contains(&d) {
+                continue;
+            }
+            let eye = *n + glam::Vec3::Z * vcod_common::pmove::VIEW_STAND;
+            if breach_aim(&w.collision, models, eye, base).is_none() {
+                continue;
+            }
+            let a = (n.y - base.y)
+                .atan2(n.x - base.x)
+                .rem_euclid(std::f32::consts::TAU);
+            let k = ((a / std::f32::consts::TAU * BREACH_SECTORS as f32) as usize)
+                .min(BREACH_SECTORS - 1);
+            if Some(comp[i]) != main {
+                continue;
+            }
+            let score = (d - BREACH_STAND_IDEAL).abs();
+            if best[k].is_none_or(|(s, _)| score < s) {
+                best[k] = Some((score, *n));
+            }
+        }
+        let stands: Vec<[f32; 3]> = best.iter().flatten().map(|(_, n)| (*n).into()).collect();
+        self.bot_breach_stands.push((at, stands.clone()));
+        stands
+    }
+
     /// What one bot's body sees this tick, from its sim and the weapon
     /// table. `None` between levels, where the null cmd is all a bot can
     /// send.
@@ -4728,6 +4862,7 @@ impl Server {
                 })
             })
             .fold(0u64, |m, i| m | 1 << i);
+        let rocket = held(&|d| d.weapon_class == "rocketlauncher").filter(|r| loaded >> r & 1 == 1);
         Some(crate::bots::BotView {
             origin: sim.ps.origin.into(),
             eye_height: sim.ps.view_height(),
@@ -4826,6 +4961,7 @@ impl Server {
             push_off: None,
             unpin: None,
             pistol,
+            rocket,
             reload_ms,
             draw_ms,
             loaded,
@@ -4899,7 +5035,9 @@ impl Server {
         slot: usize,
         team: i32,
         rank: usize,
+        breach: &crate::bots::Breach,
     ) -> crate::bots::UoView {
+        let rocket = breach.rocket;
         use crate::bots::*;
         let origin_of = |c: usize| -> Option<[f32; 3]> {
             Some(
@@ -4985,8 +5123,17 @@ impl Server {
                             origin: model,
                             aim: mid(bounds),
                         }),
+                        shot: (rocket && b.team != team && !b.breached)
+                            .then(|| self.breach_shot(slot, b.at, breach.models))
+                            .flatten(),
+                        stands: if rocket && b.team != team && !b.breached {
+                            self.breach_stands(b.at, breach.models)
+                        } else {
+                            Vec::new()
+                        },
                     })
                     .collect(),
+                launchers: breach.launchers.to_vec(),
                 rank,
             }),
         }
@@ -5308,6 +5455,7 @@ impl Server {
         self.nav_rebuild = None;
         self.bot_paths.clear();
         self.bot_sites.clear();
+        self.bot_breach_stands.clear();
         self.bot_noises.clear();
         self.creases = Default::default();
     }
@@ -6350,10 +6498,24 @@ impl Server {
                 return self.absorb_load("map_restart", r);
             }
             console::Command::MapRotate => {
-                let full = self.sv_map_rotation.clone();
+                // Both rotation cvars are the one table a script's
+                // `setCvar` and `getCvar` reach on retail (doc section 5.2).
+                let mut full = self.sv_map_rotation.clone();
+                if let Some(rt) = self.script.as_ref() {
+                    let script = rt.host.cvars.get("sv_mapRotation");
+                    if !script.is_empty() {
+                        full = script.to_string();
+                    }
+                    self.rotation.current = rt.host.cvars.get("sv_mapRotationCurrent").to_string();
+                }
                 let before = self.cfg.gametype.clone();
                 let mut gametype = before.clone();
                 let next = self.rotation.rotate(&full, &mut gametype);
+                if let Some(rt) = self.script.as_mut() {
+                    rt.host
+                        .cvars
+                        .set("sv_mapRotationCurrent", &self.rotation.current);
+                }
                 for w in self.rotation.warnings.drain(..) {
                     log::warn!("{w}");
                 }
@@ -7445,13 +7607,15 @@ impl Server {
                     };
                     rt.deliver_hits(vec![hit]);
                 }
-                // A UO vehicle the shell struck takes it the same way
-                // (`G_MissileImpact`'s `G_Damage`, game.mp.uo 0x5db67): the
-                // flight as the direction, the contact as the point.
+                // Any other entity the shell struck that takes damage (a UO
+                // vehicle, a `setTakeDamage` script model) takes it the same
+                // way (`G_MissileImpact`'s `G_Damage`, 1.1 0x53ab4, game.mp.uo
+                // 0x6db67, combat doc 13.1): the flight as the direction, the
+                // contact as the point.
                 if let Some(v) = x
                     .struck
                     .and_then(|n| rt.host.ents.handle(n))
-                    .filter(|v| rt.host.vehicles.live.contains_key(v))
+                    .filter(|&v| rt.host.entity_takes_damage(v))
                     && x.shell_damage > 0
                 {
                     rt.deliver_entity_hit(&crate::game::combat::EntityHit {
@@ -8203,9 +8367,9 @@ impl Server {
                 };
                 // A hitching client's gap is simulated, not discarded: see
                 // `cmd::chop`.
-                for (step, dt) in vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd) {
+                vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd, |step, dt| {
                     raised.extend(sim.step(
-                        &step,
+                        step,
                         dt,
                         collision.map(|w| {
                             MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
@@ -8214,7 +8378,8 @@ impl Server {
                     ));
                     bodies.retain(|b| b.entity != slot as u32);
                     bodies.extend(sim.body(slot as u32));
-                }
+                    sim.ps.jump_latched
+                });
                 if let (Some(u), Some(w)) = (unlinked, collision) {
                     w.relink_model_instance(u);
                 }
@@ -8654,6 +8819,7 @@ impl Server {
                 (end - muzzle).normalize_or_zero(),
                 shell,
                 kind,
+                false,
                 level_ms,
             ) {
                 log::warn!(
@@ -8909,6 +9075,7 @@ impl Server {
                     weapon,
                     aim,
                     &sims,
+                    &targets,
                     collision,
                     &models,
                     &self.hitlocs,
@@ -9480,6 +9647,57 @@ cmds {processed} span {span} queued {queued} ack {} behind {ack_behind} {base_de
             clients,
         });
     }
+}
+
+/// Sectors round a `bas` base the breach stands are spread over.
+const BREACH_SECTORS: usize = 16;
+/// How far off a breach stand may lie, and the distance it is picked
+/// nearest to.
+const BREACH_STAND_FAR: f32 = 1000.0;
+const BREACH_STAND_IDEAL: f32 = 600.0;
+/// Script models this near a base are in its breach traces.
+const BREACH_MODEL_NEAR: f32 = 1200.0;
+
+/// Where a rocket from `muzzle` is aimed at a base whose script model
+/// stands at `base`, from [`crate::bots::BREACH_MIN`] to
+/// [`crate::bots::BREACH_RANGE`] off: a point on the model's mesh the
+/// rocket strikes first (`G_MissileImpact`'s direct `G_Damage`), or one
+/// whose burst on the world lands within [`crate::bots::BREACH_NEAR`] of
+/// the origin (the splash). Tried up the bunker, then at its foot.
+fn breach_aim(
+    world: &vcod_common::collision::CollisionWorld,
+    models: &[crate::game::combat::PlacedModel],
+    muzzle: glam::Vec3,
+    base: glam::Vec3,
+) -> Option<[f32; 3]> {
+    use crate::bots::{BREACH_MIN, BREACH_NEAR, BREACH_RANGE};
+    let d = muzzle.distance(base);
+    if !(BREACH_MIN..=BREACH_RANGE).contains(&d) {
+        return None;
+    }
+    [40.0, 72.0, 16.0, 0.0].into_iter().find_map(|up| {
+        let spot = base + glam::Vec3::Z * up;
+        let dir = (spot - muzzle).normalize_or_zero();
+        let end = spot + dir * BREACH_NEAR;
+        let tr = world.missile_trace(muzzle, end);
+        let mut best = (tr.fraction, None);
+        for m in models {
+            if let Some((f, ..)) = m.clip(
+                muzzle,
+                end,
+                crate::game::missile::MISSILE_MODEL_MASK,
+                best.0,
+            ) {
+                best = (f, Some(m.origin));
+            }
+        }
+        let burst = muzzle + (end - muzzle) * best.0;
+        let ok = match best.1 {
+            Some(o) => o == base,
+            None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
+        };
+        ok.then_some(spot.into())
+    })
 }
 
 #[cfg(test)]
@@ -10474,6 +10692,42 @@ mod tests {
             sv.script_cvar("g_gametype").as_deref(),
             Some("tdm"),
             "the rotated level's script still reads the value `--set` left"
+        );
+    }
+
+    /// Doc section 5.2: a script's `setCvar("sv_mapRotation", ...)` is the
+    /// rotation the next `map_rotate` runs, and the queue it leaves is
+    /// `sv_mapRotationCurrent` in the same table.
+    #[test]
+    fn a_rotation_a_script_set_drives_map_rotate() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR not at a 1.1 install: skipping");
+            return;
+        };
+        let fs = Rc::new(fs);
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_cvar("g_gametype", "dm");
+        let path = fs.resolve_map("mp_carentan").expect("map in the paks");
+        let bsp =
+            vcod_common::bsp::parse(&fs.read(&path).expect("read the bsp")).expect("parse the bsp");
+        sv.load_world(World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs).expect("load the scripts");
+        sv.script.as_mut().unwrap().host.cvars.set(
+            "sv_mapRotation",
+            "gametype tdm map mp_brecourt map mp_carentan",
+        );
+
+        sv.push_console("map_rotate");
+        sv.tick(now);
+        assert_eq!(
+            sv.cfg.map, "mp_brecourt",
+            "the script's rotation did not load"
+        );
+        assert_eq!(sv.cfg.gametype, "tdm");
+        assert_eq!(
+            sv.script_cvar("sv_mapRotationCurrent").as_deref(),
+            Some("map mp_carentan"),
         );
     }
 

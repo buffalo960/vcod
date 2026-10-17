@@ -277,8 +277,10 @@ something, the bullet links it.
   scoreboard included. So do the endings: `ctf`'s flag drop and 20 s
   return, `dom`'s domination bonus, `hq`'s wave scoring, `bas`'s bomb
   plant, defuse and blast, and in all four the round end, the score or
-  round limit, intermission and the restart `exitLevel` falls back to
-  (same doc, 22).
+  round limit, intermission and the restart `exitLevel` falls back to;
+  `ctf`'s flag returned by a defender's touch, the round clock and time
+  limit in `ctf`, `bas`, `hq` and `tdm`, `tdm`'s killcam, and a rotation
+  a script sets that names another map (same doc, 22).
 - Hosts United Offensive's tanks and jeeps: they spawn with retail's
   entity numbers and configstrings, the use key boards the one you look
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
@@ -322,7 +324,9 @@ something, the bullet links it.
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as
-  retail's does.
+  retail's does; a missile at the sky is freed on 1.1 and 1.5 and flies
+  on through it on UO. A rocket or a swing hurts a UO `setTakeDamage`
+  model directly, and a swing at nothing raises no event.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.
 - Search & Destroy end to end: plant, defuse, progress bar, compass
@@ -334,7 +338,8 @@ something, the bullet links it.
 - Map triggers, script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
-- Intermission, `map_restart` and `sv_mapRotation` the way retail runs them.
+- Intermission, `map_restart` and `sv_mapRotation` the way retail runs them,
+  a rotation a script `setCvar`s included.
 - Spectator follow and the killcam, replayed from a ring of archived frames.
 - rcon with retail's commands and replies, bans, the master heartbeat,
   zombie slots and retail-measured pings. `getinfo` and `getstatus` answer
@@ -367,8 +372,9 @@ something, the bullet links it.
   and run from live ones, and play
   the objectives of UO's `sd`, `ctf` (take, carry, return), `dom` (stand
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
-  (plant on a breached base and defuse; they can't breach one, since they
-  ignore vehicles). The nav graph is rebuilt when the script deletes walls,
+  (fetch a bazooka or panzerschreck lying about and breach a base with
+  rockets from a spot with a shot at it, plant on a breached base and
+  defuse; they ignore vehicles). The nav graph is rebuilt when the script deletes walls,
   as `bas` does to a breached base.
 
 ## What it doesn't do

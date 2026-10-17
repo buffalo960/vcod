@@ -902,9 +902,10 @@ impl ClientSim {
         }
         let own = self.last_cmd_angles;
         let start = cmd.server_time.wrapping_sub(SPAWN_THINK_MS as i32);
-        for (step, dt) in cmd::chop(start, cmd) {
-            self.step(&step, dt, Some(world), &[]);
-        }
+        cmd::chop(start, cmd, |step, dt| {
+            self.step(step, dt, Some(world), &[]);
+            self.ps.jump_latched
+        });
         self.last_cmd_angles = own;
     }
 
