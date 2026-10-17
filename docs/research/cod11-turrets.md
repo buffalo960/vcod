@@ -1726,26 +1726,51 @@ a higher slot killed after its turn still goes out on it, `solid` 0. The
 rig's target sends three cmds a frame, as the net probe does, or on a
 `-victim` capture the cmds its `pos.trTime` names, one every 16 ms back to
 the last snapshot's (INFERRED, the probe's `--probe-cmd-ms`).
-`turret_ab`'s three `the_victim_capture_matches_*` gates diff the fire and
-target phases of those captures, the target's entity included: on 1.1 they
-match with no row, the killing round too, and 1.5 and UO each keep one
-impact a truncation step off along the same ray with the target's entity
-matching to the unit (the wound on 1.5, the kill on UO; the idle phase,
-as the wounding round in 13.1).
+`turret_ab`'s three `the_victim_capture_matches_*` gates diff every phase
+of those captures, the target's entity included: the killing round matches
+on 1.1, and 1.5 and UO each keep one impact a truncation step off along
+the same ray with the target's entity matching to the unit (the wound on
+1.5, the kill on UO; the idle phase, as the wounding round in 13.1).
 
-What the victim captures show outside the target phases, open:
+The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
 
-- 1.1d, the refused phase from 37050: ours 0.2 units short in x after the
-  drop off the sandbags, 0.256 at 37350, past the gate's 0.25.
-- 1.5b, the strafe: VERIFIED, `-victim-15.txt` at 33900, retail steps onto
-  the sandbags with `EV_STEP_VIEW` parm 139 where ours raises 142, and every
-  origin after it is off by up to 3 units. The 1.1 fix
-  (`cod11-mantle.md`, "The step-up stops a unit short") does not cover
-  1.5's step.
-- 1.5b and UO, the sweep: a snapshot each where retail's view lags ours by
-  one 2-degree step (1.5 at 20000, 23550 and 23750, UO at 20650 and 25150),
-  late cmds as 12.1's, which those gates would need listed; and UO's strafe
-  at 34800, 2 units off.
+- VERIFIED, the sweep: a snapshot may already show a cmd stamped at or
+  past its own time. `-victim-15.txt` 23550 and 23750 read pitch -32 and
+  -8, the view of the first of two cmds stamped 23550 (sent at probe ms
+  5284) and of the first 23750 (5483); `-victim-uo.txt` 20650 reads yaw
+  145, cmd 20651's (1077), and 25150 pitch 4, the first 25150's (5576).
+  `-victim-15.txt` 20000 reads -141, cmd 19969's, so 19985 (1733) had not
+  run yet. INFERRED: the probe sends one cmd a message
+  (`Connection::send_frame`), and a snapshot shows every cmd that reached
+  the server before its frame, whatever the stamp says; the stamp rule of
+  12.1 is the usual case of that. The gates list them (`EARLY_VICTIM_15`,
+  `EARLY_VICTIM_UO` by send ms, since the probe repeats a stamp, and
+  `LATE_VICTIM_15`); ours then matches every sweep snapshot.
+- VERIFIED, UO's strafe at 34800: retail's body moved 10.5 units since
+  34750 and 2.9 by 34850, ours 7.4 and 6.0. The first of two cmds stamped
+  34800 (15229) ran before frame 34800; listed, ours matches.
+- 1.5b's strafe step (the 142 against retail's 139, VERIFIED at 33900):
+  not the step. Ours ran 0.2 units further along +y than retail from
+  33750, the frame the body meets clip brush 7 (`clip_nosight_dirt`, face
+  normal (0.9965, 0.0838, 0)), and so came onto the sandbags' 52-degree
+  face further up. INFERRED: cmd 33700 (15446) reached retail's server
+  behind 33716, which then ran from 33682, and `SV_UserMove` (1.5b
+  `cod_lnxded` 0x808cade, the `cmdCount` strings) skips a cmd stamped at
+  or below the last one run. Dropped, ours matches 33750 to 0.02 and the
+  step raises 139 at retail's origin. The landing at 34050 is the same
+  shape with 34016 behind 34032; of the cmds near it only that drop leaves
+  no row (34000's leaves 0.17 units and a legs anim). These two rest on
+  the fit alone: no capture logs what order the server received cmds in.
+- 1.1d, the refused phase: open. After the step at 36900 (parm 142, ours
+  the same) the fall down the face drifts ours along -x, at least 0.05 off
+  by 37000 and 0.16 by the landing at 37050, while y stays within print.
+  No cmd early or late reproduces it (each of 36866..37084 tried), and
+  the 1.5b and UO falls down the same face match. Projected through the
+  face's clip, an air acceleration across it some 13% under ours would
+  move x and leave y about a third as far off (INFERRED, arithmetic on
+  the snapshots, not read from 1.1d's `PM_AirMove`). The fixture prints
+  origins to 0.1, so the 0.256 at 37350 is that drift where the print
+  rounds it past the gate's 0.25; `GAPS_VICTIM` names that row.
 
 ## 14. The client
 
