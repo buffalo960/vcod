@@ -1716,6 +1716,21 @@ carries its label.
   re-sends `cp`; a pure server that does not list the mod's paks keeps
   them out of the search path. VERIFIED (calls); INFERRED (the state
   numbering, which is CoD's own).
+- Before the restart `vid_restart` clears the whole hunk (`Hunk_Clear`
+  `0x432090`, `Hunk_Clear: reset the hunk ok`). `CL_InitCGame` builds
+  `maps/mp/%s.bsp` off the serverinfo's map and calls the cgame's
+  `CG_Init` (`0x30022f90` in `cgame_mp_x86.dll`), which loads the
+  `collision map` (syscall 0x1f) and then the world (syscall 0x2c) under
+  their `LOADING... %s` lines and parses configstring 7's weapons again
+  (`0x3000ef10`). VERIFIED (strings, calls).
+- `CM_LoadMap` (`0x419c90`, `CM_LoadMap( %s, %i )`) reuses the loaded map
+  for a client load only while a local server runs (the cvar
+  `vid_restart` refuses on). VERIFIED (asm). Otherwise it zeroes the
+  collision state (0xa15c bytes) and reads the file again through
+  `0x42a8b0`, a `(name, &buffer) -> length` read off the search path.
+  INFERRED (its shape). So an in-game mod switch reads the map off the
+  mod's paks: a mod that ships its own `maps/mp/<map>.bsp` replaces the
+  stock geometry and collision. INFERRED (the two above together).
 
 ### vcod
 
@@ -1729,9 +1744,13 @@ carries its label.
 - In a game the switch keeps the connection: the search path reopens under
   the server's pure list, the renderer's shaders, the HUD, sounds, effects
   and viewmodels reload, the front end is rebuilt closed and the game has
-  the mouse again, and a live map sends `cp` once more. The map's world
-  geometry stays as loaded. The next gamestate puts a server's own
-  `fs_game` back.
+  the mouse again, and a live map sends `cp` once more. The map is read
+  again off the new search path (`reread_live_map`): the world, its
+  collision, the ambient and configstring 7's weapons, with a fresh
+  entity scene and the first snapshot's resets, as the restarted cgame's.
+  A `vid_restart` with the mod unchanged keeps the loaded map, which
+  reads the same files. The next gamestate puts a server's own `fs_game`
+  back.
 - A server that names no `fs_game` keeps the player's mod; one that names
   another replaces it for the connection, and leaving goes back to the
   player's.

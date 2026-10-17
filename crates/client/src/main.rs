@@ -740,10 +740,17 @@ struct LivePhase {
     seat_frac: f32,
 }
 
-fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
+/// The live phase off `bsp`, with the weapons configstring 7 (`weapons_cs`)
+/// names read off `fs`.
+fn live_phase(
+    fs: &Pk3Fs,
+    bsp: &bsp::Bsp,
+    protocol: &'static net::protocol::Protocol,
+    weapons_cs: &str,
+) -> Phase {
     let world = collision::CollisionWorld::build(bsp, &props::collision_tris(fs, &bsp.entities));
     // Predict what the protocol's Linux server computes.
-    world.set_arith(vcod_common::patch::Arith::for_protocol(net.protocol()));
+    world.set_arith(vcod_common::patch::Arith::for_protocol(protocol));
     // A brush model clips only through its snapshot entity
     // (`pmove::movers::SnapshotMovers::place`), as retail's cgame meets it.
     for model in 1..world.model_count() {
@@ -755,7 +762,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         // weapon setup (0x3000ef10) and `CG_ConfigStringModified` has no
         // case for it (docs/research/cod11-hud-protocol.md, after the
         // configstring table).
-        weapons: vcod_common::weapon_table::from_configstring(fs, net.configstring(7)),
+        weapons: vcod_common::weapon_table::from_configstring(fs, weapons_cs),
         scene: entities::EntityScene::new(),
         events: net::events::EventTracker::new(),
         predicted_events: play::events::PredictedEvents::default(),
@@ -1786,6 +1793,33 @@ fn reopen_fs(
     Ok(())
 }
 
+/// `maps/mp/<map>.bsp` off the search path, parsed: what `CM_LoadMap`
+/// (CoDMP.exe 0x419c90) and `R_LoadWorldMap` read.
+fn read_map(fs: &Pk3Fs, map: &str) -> Result<bsp::Bsp> {
+    let Some(path) = fs.resolve_map(map) else {
+        bail!("map '{map}' did not resolve in the pk3 search path");
+    };
+    let data = fs
+        .read(&path)
+        .with_context(|| format!("cannot read {path}"))?;
+    bsp::parse(&data).with_context(|| format!("cannot parse {path}"))
+}
+
+/// The serverinfo's map and a fresh live phase off `fs`: the CPU half of
+/// [`App::reload_live_map`].
+fn reread_live_map(
+    fs: &Pk3Fs,
+    configstrings: &[String],
+    protocol: &'static net::protocol::Protocol,
+) -> Result<(bsp::Bsp, Phase)> {
+    let cs = |i: usize| configstrings.get(i).map_or("", String::as_str);
+    let map = net::info_value_for_key(cs(0), "mapname")
+        .context("the server sent no mapname in its serverinfo")?;
+    let bsp = read_map(fs, map)?;
+    let phase = live_phase(fs, &bsp, protocol, cs(7));
+    Ok((bsp, phase))
+}
+
 /// Parse the map, upload it to the GPU and hand back the live phase.
 #[allow(clippy::too_many_arguments)]
 fn load_map(
@@ -1798,13 +1832,7 @@ fn load_map(
     window: Option<&Window>,
     title: &mut String,
 ) -> Result<Phase> {
-    let Some(path) = fs.resolve_map(map) else {
-        bail!("map '{map}' did not resolve in the pk3 search path");
-    };
-    let data = fs
-        .read(&path)
-        .with_context(|| format!("cannot read {path}"))?;
-    let bsp = bsp::parse(&data).with_context(|| format!("cannot parse {path}"))?;
+    let bsp = read_map(fs, map)?;
     // The ambient rides configstring 3 (docs/research/cod11-sound-system.md,
     // section 9); a fresh gamestate may have changed it.
     audio.set_ambient(fs, net::info_value_for_key(net.configstring(3), "n"));
@@ -1812,7 +1840,7 @@ fn load_map(
     if let Some(window) = window {
         window.set_title(title);
     }
-    let phase = live_phase(fs, &bsp, net);
+    let phase = live_phase(fs, &bsp, net.protocol(), net.configstring(7));
     r.load_world(&bsp, fs)?;
     if let Phase::Live(live) = &phase {
         r.set_hud_weapons(Some(&live.weapons));
@@ -3080,6 +3108,10 @@ impl App {
             if let Some(r) = &mut self.renderer {
                 r.reopen(&self.fs);
             }
+            if let Err(e) = self.reload_live_map() {
+                self.disconnect(Some(format!("{e:#}")));
+                return;
+            }
         }
         if let Err(e) = self.restart_ui() {
             self.disconnect(Some(e));
@@ -3087,10 +3119,22 @@ impl App {
         }
         self.after_menu();
         if let Mode::Online {
-            net, view, phase, ..
+            net,
+            view,
+            input,
+            phase,
+            ..
         } = &mut self.mode
         {
             view.reopen();
+            if let Phase::Live(_) = phase {
+                // The restarted cgame's first snapshot runs a load's resets.
+                view.new_gamestate();
+                input.new_gamestate();
+                if let Some(r) = &mut self.renderer {
+                    prewarm_viewmodels(view, r, &self.fs, net.configstrings());
+                }
+            }
             // `CL_InitCGame` and `CL_SendPureChecksums` run only past
             // `CA_LOADING`; before that the load sends `cp` itself.
             if matches!(phase, Phase::Live(_)) {
@@ -3098,6 +3142,32 @@ impl App {
                 net.send_reliable(&self.fs.pure_command(feed, net.protocol().pure_dlls));
             }
         }
+    }
+
+    /// A live game's map read again off the reopened search path, as
+    /// `vid_restart`'s `CL_InitCGame` (CoDMP.exe 0x4049c0) has the cgame's
+    /// `CG_Init` (0x30022f90) load the collision map and the world anew: a
+    /// mod's own `maps/mp/<map>.bsp` replaces the stock one. The live state
+    /// starts fresh, as the cgame's does; snapshots keep flowing.
+    fn reload_live_map(&mut self) -> Result<()> {
+        let Mode::Online {
+            net,
+            phase: phase @ Phase::Live(_),
+            ..
+        } = &mut self.mode
+        else {
+            return Ok(());
+        };
+        let (bsp, live) = reread_live_map(&self.fs, net.configstrings(), net.protocol())?;
+        *phase = live;
+        self.audio
+            .set_ambient(&self.fs, net::info_value_for_key(net.configstring(3), "n"));
+        if let (Some(r), Phase::Live(live)) = (&mut self.renderer, &*phase) {
+            r.load_world(&bsp, &self.fs)?;
+            r.set_hud_weapons(Some(&live.weapons));
+        }
+        self.world = Some(World { bsp });
+        Ok(())
     }
 
     /// Drops the map, its sounds and effects, between servers.
@@ -6540,6 +6610,40 @@ mod tests {
             [fx::registry::Resolved::Spawn { path, .. }] => assert_eq!(path, "fx/mod/hit.efx"),
             other => panic!("impact table from the new pak: {other:?}"),
         }
+    }
+
+    /// A Mods pick in a game reads the map again off the mod's paks, as
+    /// `CL_InitCGame`'s `CM_LoadMap` does with no local server: a mod that
+    /// ships its own `maps/mp/mp_carentan.bsp` replaces the stock geometry
+    /// and collision.
+    #[test]
+    fn a_mod_switch_in_a_game_reads_the_mods_map() {
+        let Some(stock) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let base = vcod_common::testing::game_dir().join("main");
+        let harbor = stock.read("maps/mp/mp_harbor.bsp").unwrap();
+        let mods = tempfile::tempdir().unwrap();
+        let game = mods.path().join("modharbor");
+        std::fs::create_dir(&game).unwrap();
+        make_pk3(&game, "z_mod.pk3", &[("maps/mp/mp_carentan.bsp", &harbor)]);
+
+        let mut cs = vec![String::new(); 8];
+        cs[0] = "\\mapname\\mp_carentan".into();
+        let proto = &net::protocol::PROTOCOL_V1;
+        let models = |fs: &Pk3Fs| {
+            let (bsp, phase) = reread_live_map(fs, &cs, proto).unwrap();
+            let Phase::Live(live) = phase else {
+                panic!("not live")
+            };
+            assert_eq!(live.world.model_count(), bsp.models.len());
+            (bsp.models.len(), bsp.entities.len())
+        };
+        let before = models(&Pk3Fs::open_search(&base, None, None, false).unwrap());
+        let after = models(&Pk3Fs::open_search(&base, Some(&game), None, false).unwrap());
+        let harbor = bsp::parse(&harbor).unwrap();
+        assert_ne!(before, after);
+        assert_eq!(after, (harbor.models.len(), harbor.entities.len()));
     }
 
     #[test]
