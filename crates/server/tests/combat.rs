@@ -724,7 +724,7 @@ fn the_kill_command_suicides_a_player() {
 fn the_kill_commands_death_frame_is_retails() {
     use vcod_common::net::msg::NULL_USERCMD;
 
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
@@ -847,7 +847,7 @@ fn retail_bullet_death() -> std::collections::BTreeMap<String, String> {
 fn a_bullet_deaths_frame_is_retails() {
     use vcod_common::net::msg::{BUTTON_ADS, BUTTON_ATTACK, NULL_USERCMD, UserCmd};
 
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

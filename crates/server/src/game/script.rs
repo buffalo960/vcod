@@ -3804,7 +3804,7 @@ mod tests {
     /// (docs/research/cod11-gsc-object-model.md 23.3, 23.6).
     #[test]
     fn get_plant_puts_the_charge_where_retail_did_on_mp_carentan() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let bytes = fs.read("maps/mp/mp_carentan.bsp").expect("mp_carentan.bsp");

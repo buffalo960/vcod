@@ -271,7 +271,7 @@ fn our_pullback(step: &[Sample]) -> Option<i32> {
 
 #[test]
 fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let (map, gametype) = ("mp_carentan", "tdm");

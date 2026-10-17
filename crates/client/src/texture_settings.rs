@@ -378,8 +378,13 @@ struct Down<'a> {
 
 impl Down<'_> {
     fn step(&mut self, w: u32, h: u32, px: &[u8]) -> (u32, u32, Vec<u8>) {
-        if let (Some(name), Some(load)) = (&self.name, self.load)
-            && let Some(next) = next_custom_level(name)
+        // The name steps on before the load, found or not: the next level
+        // reads `#N+2` (0x4eb1d0 rewrites it in place).
+        let next = self.name.as_deref().and_then(next_custom_level);
+        if next.is_some() {
+            self.name.clone_from(&next);
+        }
+        if let (Some(next), Some(load)) = (next, self.load)
             && let Some(img) = load(&next)
         {
             // retail's (w + 1) >> 1; the GPU's chain halves down, so an odd
@@ -388,11 +393,12 @@ impl Down<'_> {
             let fits = want == ((w / 2).max(1), (h / 2).max(1));
             match img.data {
                 ImageData::Rgba8(level) if fits && (img.width, img.height) == want => {
-                    self.name = Some(next);
                     return (want.0, want.1, level);
                 }
-                // retail refuses the whole image here; vcod box filters
-                _ => log::warn!(
+                // UO warns and filters; 1.1 and 1.5 refuse the whole image
+                // (cod11-front-end.md 14, "Custom mip levels"). Stock UO
+                // skins land here, so debug.
+                _ => log::debug!(
                     "custom mipmap image '{next}' should be {} x {}, is {} x {}; filtering instead",
                     want.0,
                     want.1,
@@ -832,6 +838,64 @@ mod tests {
             Mips::chain("a#0.tga", &wrong),
         );
         assert_eq!(levels[0], vec![0; 16]);
+    }
+
+    #[test]
+    fn a_refused_or_missing_custom_level_still_steps_the_name() {
+        // UO's `deadtreehoriz#01` (512) over 1.1's `#2` (128): level 1
+        // refuses `#2`, level 2 reads `#3`, never the fitting `#2`
+        let load = |name: &str| match name {
+            "a#2" => Some(rgba(1, 1, vec![9; 4])),
+            _ => None,
+        };
+        let mut img = rgba(4, 4, vec![0; 64]);
+        let levels = prepare(
+            &mut img,
+            0,
+            None,
+            Store::default(),
+            Mips::chain("a#01", &load),
+        );
+        assert_eq!(levels, vec![vec![0; 16], vec![0; 4]]);
+        // a missing `#1` still makes the next level `#2`
+        let load = |name: &str| match name {
+            "a#2" => Some(rgba(1, 1, vec![9; 4])),
+            _ => None,
+        };
+        let mut img = rgba(4, 4, vec![0; 64]);
+        let levels = prepare(
+            &mut img,
+            0,
+            None,
+            Store::default(),
+            Mips::chain("a#0", &load),
+        );
+        assert_eq!(levels, vec![vec![0; 16], vec![9; 4]]);
+    }
+
+    #[test]
+    fn uo_foliage_over_the_1_1_levels_filters_its_whole_chain() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let skin = "foliage_masked@deadtreehoriz#01.tga";
+        let mut img = vcod_common::assets::load_skin_image(&fs, skin);
+        assert_eq!((img.width, img.height), (512, 512));
+        let levels = prepare(
+            &mut img,
+            0,
+            None,
+            Store::default(),
+            Mips::chain(skin, &skin_levels(&fs)),
+        );
+        // no level is 1.1's `#2`, which would sit at index 1 (128 x 128)
+        let ImageData::Rgba8(base) = &img.data else {
+            unreachable!()
+        };
+        let (_, _, l1) = halve(512, 512, base);
+        let (_, _, l2) = halve(256, 256, &l1);
+        assert_eq!(levels[0], l1);
+        assert_eq!(levels[1], l2);
     }
 
     #[test]

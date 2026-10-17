@@ -532,6 +532,39 @@ the `size2` slots, so the sprite is square.
 The `Cylinder` primitive (FUN_00511350 @ `0x511350`) uses the same two values
 as ring radii: `size2` at `origin`, `size` at `oldorigin`.
 
+### An element with no shaders
+
+- VERIFIED, CoDMP.exe 1.1: the `shaders` key's handler (0x49c8b0)
+  registers each name and pushes its handle onto the template's list
+  (`+0x68`..`+0x74`); a block without the key leaves the list empty. The
+  sprite spawn (case 1 of 0x494050, the call to the constructor 0x49f360
+  at 0x495169) takes its shader from 0x492780, which returns a random
+  entry or 0 when the list is empty, and the constructor stores it as the
+  refEntity's `customShader` (`+0x68`).
+- VERIFIED: 0x4d5170 adds a sprite, tail, line or cylinder (`reType` 4..15
+  but 11) through its `customShader` with only an upper range check, and
+  0x4fdb30 zeroes the shader count before 0x4fd780 registers `<default>`,
+  so handle 0 is `<default>`: such an element draws the default image.
+- VERIFIED, census (`every_stock_element_without_shaders_is_zero_sized`
+  in `fx/efx.rs`): 2 elements of the 1.1 paks (the bare `Particle {}` in
+  `fx/explosions/boom_dirt.efx`, one in `fx/test/modeltest.efx`) and 62
+  of United Offensive's `uo/` paks (mostly the `call_impactmark` and
+  `call_shockwave` carriers of `fx/explosions/vehicles/*_complete.efx`
+  and `lofx/`, which only fly to their `impactfx`, plus UO's own
+  `boom_dirt`, `modeltest`, `artillery/pak88_sideorient`,
+  `map_foy/nests/towersoundcall` and `map_trenches/stuka_hitground`)
+  have no `shaders`,
+  and every one has zero `size` and `length` (R7's default), so retail
+  draws them with no area.
+- INFERRED: United Offensive picks the same way (CoDUOMP.exe 0x4a7770,
+  the same rand-or-0 pick off a template list).
+- vcod: `fx::sim::push_quads` skips a particle with no shader, which
+  draws nothing as retail's zero-area `<default>` does. A third-party
+  element with no shaders and a size would show the default image on
+  retail and nothing on vcod. Before 2026-10-17 the renderer warned
+  `fx shader ""` once a session on a UO server (mp_kursk's vehicle
+  explosions).
+
 ## R5. A `Tail` is anchored at its head, and `length` is the full length
 
 The per-frame tail update at `0x48f360` stashes the pre-move origin into
