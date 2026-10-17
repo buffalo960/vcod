@@ -701,6 +701,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   14.7).
 - Blast victims are measured per turn, after earlier callbacks ran. A client
   killed this frame keeps `takedamage` until its own end frame.
+- `ClientEndFrame`'s dead arm (`pm_type` 6, no contents, off the wire)
+  keys on `sessionstate` `dead`, not on health: a `suicide()` that stays
+  `playing` keeps `pm_type` 0, and a test that kills through the vitals
+  sets the session too (`ClientSim::session_dead`, combat doc 5.1).
 - `player_die` notifies the victim `death` with the attacker before the
   killed callback; UO's rank icon is destroyed on it (coduo-diff.md 22).
 - A killed gunner keeps the turret until its own end-frame turn;
@@ -758,6 +762,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   indexed (`Allocators::index_precached`), and `statusicon`, `headicon`
   and `shellshock` never index one, so a test that sets one fills its
   configstring first.
+- `attach` of a pair the entity already carries, or of a seventh model,
+  is a script error, and its tag indexes nothing: a player's tags take
+  their configstrings at his own end frame (`client_attachments`;
+  object-model doc 24). `addTestClient` runs the connect callback inside
+  the call and the `begin` waiters after the caller's step (25).
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc

@@ -980,7 +980,7 @@ team at +0x74. Which client each element reaches, and the wire it reaches it
 on, is docs/research/cod11-hud-protocol.md section 5.
 
 `thread addBotClients()` is commented out in the shipped `dm.gsc`, so nothing
-in the stock bootstrap reaches `addTestClient`.
+in the stock bootstrap reaches `addTestClient` (section 25).
 
 ### 16.1 `placeSpawnpoint` drops a player capsule, measured
 
@@ -2788,6 +2788,106 @@ Still different:
   against retail run 9's probe logs: ours sends no `sv_referencedPaks` or
   `sv_referencedPakNames` in the systeminfo string, where retail's carries
   both.
+
+## 24. `attach` and `detach`
+
+An entity carries six attachment slots: model indices at `gentity_t+0x2ec`
+(bytes) and tags at `+0x2f2` (script string ids, shorts). VERIFIED,
+`G_EntAttach` (0x66190), `G_EntDetach` (0x67ed0) and the builtins at
+0x5d334 (`attach`), 0x59bac (`detach`) and 0x5d3ec (`detachAll`).
+
+- `attach(model[, tag])` first calls `G_EntDetach` with the same pair; a hit
+  is the script error `model '%s' already attached to tag '%s'` (string at
+  0x76aa0), raised after the detach has taken the old pair off. VERIFIED,
+  disassembly 0x5d39c..0x5d3bb. VERIFIED live,
+  `probe_attach_twice`/`probe_attach_twice_notag` on retail 2026-10-17: the
+  message quotes the strings as the script spelt them (`'XMODEL/crate_misc2a'`,
+  `'TAG_A'`), and a missing tag reads `''`.
+- `G_EntAttach` takes the first slot whose model byte is 0 and returns 0 when
+  all six are taken, before indexing anything; the builtin then raises
+  `maximum attached models exceeded` (0x76ae0). VERIFIED, 0x66190 and
+  0x5d3d1. VERIFIED live, `probe_attach_slots`.
+- The model indexes through `G_ModelIndex`'s inlined gate (section 9 of
+  `cod11-gsc-language.md`); the tag is stored through
+  `SL_GetLowercaseString` and indexes nothing. VERIFIED, 0x66297. VERIFIED
+  live: `getAttachTagName` reads `tag_a` back for an attach on `TAG_A`.
+- The tag takes a configstring (`G_TagIndex`, 0x66fa8, 108 + index) only in
+  `ClientEndFrame`'s own-body arm, once per attachment of the player's own
+  entity every frame (1.1 inlined, the call at 0x413f6; UO `G_UpdateClientInfo`
+  0x52c81). INFERRED, off the call sites: no other caller of `G_TagIndex`
+  exists, so a script model's tags never reach the configstring table, and
+  a player's tag goes out the first frame his own body ends, not at the
+  attach.
+- `G_EntDetach` matches the first slot whose tag id equals the lower-cased
+  argument's and whose model name equals the argument without case, clears
+  it and closes up the slots behind it, `ignoreCollision` bits with them.
+  VERIFIED, UO 0x8818a (1.1's Ghidra output stops at the
+  `Scr_SetString`). VERIFIED live, `probe_attach_slots`: after detaching
+  the second of four (on `Tag_B`), `getAttachSize` reads 3 and the old
+  third and fourth read back at 1 and 2.
+- `detach(model[, tag])` with no match prints `Current attachments:` and a
+  `model: '%s', tag: '%s'` line per slot, then raises `failed to detach
+  model '%s' from tag '%s'`. VERIFIED, 0x59c33..0x59cb4 and the strings at
+  0x76b01, 0x76b17 and 0x76b40; VERIFIED live, `probe_detach_missing`.
+- `getAttachModelName`, `getAttachTagName` (and UO's
+  `getAttachIgnoreCollision`) take an index below 6 whose slot holds a
+  model; anything else is `Scr_ParamError(0, "bad index")`. VERIFIED, UO
+  0x67e71 and 0x67f6a. VERIFIED live on 1.1d, `probe_attach_badindex` and
+  `probe_attach_badtag`: index 1 of a one-attachment entity dies with
+  `bad index`.
+
+vcod (`crates/server/src/game/builtins/attach.rs`): the list is the
+compacted slot array, `attach` checks the pair and the count in retail's
+order, `detach` is one builtin for all three protocols, and
+`client_attachments` (`game/script.rs`) indexes a playing or dead client's
+tags each frame. `crates/server/tests/semantics_ents.rs`
+`probe_attach_matches_retail` replays the six probes.
+
+## 25. `addTestClient`
+
+`addTestClient()` (`functions[103]`, 0x5f6e8) is `trap_AddTestClient` then
+`Scr_AddEntity` of what it returns, or nothing. VERIFIED, the relocations
+at 0x5f6ee and 0x5f6fb. The engine half is `SV_AddTestClient` (cod_lnxded
+0x808753c, syscall 0x41):
+
+- It takes the first slot from 0 whose state is `CS_FREE`, builds
+  `connect "\cg_predictItems\1\cl_anonymous\0\handicap\100\color\4\head\default\model\multi\snaps\20\rate\5000\name\bot%d\protocol\%d"`
+  from a process-wide counter (0x80e2f9c, 0 in `.data`) and the protocol,
+  makes a bot address (type 0) whose port is that counter, counts it up and
+  runs `SV_DirectConnect`. VERIFIED, 0x8087548..0x80875ea.
+- `SV_DirectConnect`'s reconnect check walks every slot, free ones
+  included, and refuses a base-address match whose `lastConnectTime` is
+  within `sv_reconnectlimit` seconds (0x80855e6..0x8085655). A bot address
+  compares by port (`NET_CompareBaseAdr` 0x8080e60, type 0), so the
+  counter's first bot, port 0, matches every never-used slot, whose address
+  is zero, and is refused for the server's first 3 s; every later bot has a
+  port no slot carries. VERIFIED, both functions; INFERRED, the reading.
+  VERIFIED live, `probe_testclient`: a call at the first `wait 0.05` comes
+  back undefined and the next call, past `wait 5`, is `bot1`.
+- When the connect took, it sets `client_t+0x5a8f4` (the bot flag: no
+  reliable commands, no timeout, no snapshot), sends the gamestate, sets
+  `CS_ACTIVE`, the gentity and `lastUsercmd` (zeroed) and calls
+  `ClientBegin`. VERIFIED, 0x808769d..0x8087767.
+- VERIFIED live, `probe_testclient` on retail 2026-10-17: the connect
+  callback runs inside the call up to its `waittill("begin")`, with
+  `sessionstate` `spectator`; the call returns the entity (number 0, name
+  `bot1`); the `begin` waiters run only once the calling thread reaches its
+  `wait`, two clients' in the reverse of their connects (`begin 1` before
+  `begin 0`).
+- A test client sends no usercmds, and `G_RunClient` (0x40660) thinks only
+  under `g_synchronousClients`, so nothing moves it. VERIFIED, 0x40660.
+  VERIFIED live: spawned 200 units over a spawn point it reads
+  `dz 195.993` at the spawn and the same a second later, `isOnGround` 0.
+- No stock MP script calls it: `addBotClients` is commented out in every
+  stock gametype (dm, tdm, sd, re). VERIFIED, pak5.
+
+vcod (`builtins/client.rs` `add_test_client`): the host connects the slot
+and runs the callback inside the call, queues the `begin` notify, and
+`Server::install_test_client` gives the slot an active `Client` with no
+netchan and no bot brain. The counter lives in `Server` and survives a map
+change. Not modelled: a slot a UDP client once held (its address is no
+longer zero, so retail's port-0 bot is not refused there), and the test
+client across a map change.
 
 ## Open, and worth a probe
 
