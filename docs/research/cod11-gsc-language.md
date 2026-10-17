@@ -451,10 +451,10 @@ object model, the cvar table or a real map, all of which live in
 `crates/server`, so they are measured there by
 `crates/server/tests/semantics_ents.rs` against the same capture file, and
 so are the seven `probe_stale_*`, which free an object and read its handle
-back. Three
-(`probe_game_dotwrite`, `probe_level_bracket`, `probe_level_size`) are
-captured but skipped for the reasons `§10` and `semantics_ab.rs`'s
-`KNOWN_GAPS_OUT_OF_SCOPE` give.
+back. A probe retail refuses to compile has a section holding only
+`PROBE_ERROR script compile error`, and `semantics_ab.rs` requires vcod's
+compiler to refuse it too (`probe_game_dotwrite`, `probe_level_bracket`,
+`probe_self_bracket`).
 
 Four facts about the retail side shaped how the measurement had to be taken,
 and each is worth knowing before writing another probe:
@@ -833,21 +833,39 @@ is not merely fatal at runtime the way an out-of-place index assignment is
 object`, that voids the whole script before `main()` runs at all
 (`probe_game_dotwrite`). `level["k"] = "v"` gets the same compile-time
 treatment the other way, `not an array, string, or vector`
-(`probe_level_bracket`) — retail's compiler statically knows each global's
-access mode and rejects the wrong one before any code runs, not just the
-line that reaches it. This settles the "still unestablished" entry the
-previous task left here: `game` is genuinely array-typed, not a struct that
-also answers to brackets, and vcod now models it as one (`Vm::game`,
-`ArrayId`, `Op::LoadGame` pushes `Value::Array`). Section 10 covers why
-vcod does not reproduce the compile-time half.
+(`probe_level_bracket`), and so does `self["k"] = 1`
+(`probe_self_bracket`). VERIFIED on 1.1d and UO 1.51b, each console naming
+the line and the message. `game` is genuinely array-typed, not a struct
+that also answers to brackets, and vcod models it as one (`Vm::game`,
+`ArrayId`, `Op::LoadGame` pushes `Value::Array`).
 
-Also measured, though out of the scope that motivated the above:
-**`level.size` reads a constant `1`, not a field count (`probe_level_size`).**
-Set one dot-field on `level` or two, `level.size` reads `1` either way —
-unlike `game.size`/an array's `.size`, which do count keys. vcod's
-`LoadField` only special-cases `.size` for `Value::Array`/`Value::String`,
-so `level.size` in vcod reads `Undefined` and then fails to concatenate.
-Not fixed here; see the "Still unestablished" entry below.
+**Why: the compiler types the bare globals.** cod_lnxded 1.1d's object
+emitter (0x08096d34) switches on the operand's node kind: four kinds
+compile (among them three keyword nodes, 0x1c, 0x1d and 0x1f, emitting
+opcodes 7, 8 and 9) and any other is `not an object` (VERIFIED, the switch
+and the string). The array emitter (0x08096bb8) does the same with its own
+set, which holds the keyword node 0x1e (opcode 0xf) and none of the other
+three, and fails the rest with `not an array, string, or vector`
+(VERIFIED). `game` is 0x1e and `level` and `self` are object nodes
+(VERIFIED by the probes); that the third object node is `anim` is INFERRED
+from the keyword set, as no probe reaches `anim`. Three emitters call the
+object emitter (0x08093e44, 0x08093f98, 0x080940d8) and several the array
+emitter; that field and index reads go through them as the writes do is
+INFERRED from that, not probed. vcod refuses `game.x`, `level[k]`,
+`self[k]` and `anim[k]` read or written (`Compiler::check_object`,
+`check_array`, `crates/gsc/src/compile.rs`). `.size` is not a field: the
+interpreter runs it as opcode 0x4e (VERIFIED, cod_lnxded's dispatch calls
+0x080a2f28 there), and `game.size` and `level.size` both compile (VERIFIED,
+`probe_game`, `probe_level_size`), so vcod skips the object check for it.
+
+**`.size` of an object that is not an array is 1 (`probe_level_size`).**
+Set one dot-field on `level` or two, `level.size` reads `1` either way, on
+1.1d and on UO 1.51b (VERIFIED). The size opcode's handler (cod_lnxded
+0x080a2f28, VERIFIED) reads a string's length; for an object (type 7) it
+answers the element count when the object is an array (type 0xf) and `1`
+for any other kind, struct, entity or hudelem alike; any other operand is
+`size cannot be applied to %s`. vcod's `Op::LoadField` answers 1 for a
+`Value::Struct` or `Value::Entity` under `size`.
 
 Three of the five that run in `crates/server` were measured for the gametype
 bootstrap, and each is there because it needs the cvar table or a real map
@@ -1136,12 +1154,6 @@ fields; the client's half is `play::shock` (`cod11-shellshock.md`). The A/B is
   the same fatal cast `!""` measured, which is the reading that follows from
   the empty case, and nothing on the bootstrap path reaches it: every
   `scr_allow_*` value is `"0"` or `"1"`.
-- **What `level.size` actually is.** `probe_level_size` (above) shows retail
-  answers `1` regardless of field count, but not why — whether it is a
-  generic non-array-non-string `.size` default, an engine-native property
-  unrelated to field count, or something else. `level.foo`-style field reads
-  are otherwise ordinary (§9's `field_read_*` cases), so this looks specific
-  to the name `size`. No probe has isolated the cause.
 - **`undefined == undefined`.** Not probed. Retail's error message for the
   mixed case names a "pair has unmatching types", which two `undefined`s are
   not, so equal is the reading that message supports — but that is inference,
@@ -1168,15 +1180,17 @@ fields; the client's half is `play::shock` (`cod11-shellshock.md`). The A/B is
 
 ## 10. Divergences kept as documentation, not code
 
-Eleven places where the implementation made a deliberate call the corpus
+Ten places where the implementation made a deliberate call the corpus
 cannot settle, recorded here rather than silently baked into behaviour that
-looks authoritative. Two more are gone. `delete()` used to free the entity
+looks authoritative. Three more are gone. `delete()` used to free the entity
 on the spot where retail defers it, and the entity think scheduler stage 3
 added closes that (section 14 of
 `docs/research/cod11-gsc-object-model.md`, and `probe_delete` in §9). A
 script handle used to be a bare entity number, so a stale one read whatever
 spawned into its slot next; it carries a generation now and reads as
-retail's dead entity (`probe_stale_handle` in §9).
+retail's dead entity (`probe_stale_handle` in §9). `game.foo` and
+`level["k"]` used to compile and fail at the line; the compiler refuses
+them now, as retail's does (§9, `probe_game_dotwrite`).
 
 - **Two `notify`s of the same event on the same target within one
   scheduling step coalesce; the second is lost.** The first wakes the
@@ -1218,24 +1232,6 @@ retail's dead entity (`probe_stale_handle` in §9).
   killing itself via a nested spawn's notify, mid-step) no corpus script
   seems to rely on either way; deferred to the next project. Pinned by
   `sched::tests::a_thread_killed_by_its_own_endon_mid_step_still_runs_to_its_next_suspend`.
-- **`game.foo = 1` and `level["k"] = "v"` compile in vcod; retail rejects
-  each at compile time.** Measured (`probe_game_dotwrite`,
-  `probe_level_bracket`): retail's compiler statically knows `game` is
-  array-typed and `level` is a struct, so the wrong access mode on either
-  bare identifier is a `script compile error` that voids the whole script
-  before `main()` runs, not a fault at the line that reaches it. vcod's
-  compiler (`crates/gsc/src/compile.rs`) does no such static typing of
-  `level`/`game`; both constructs compile and only fail once the
-  instruction loop reaches them (`Op::StoreField`/`Op::StoreIndex`
-  rejecting an array/struct operand), by which point any `logPrint` before
-  the failing line has already run — a real, observable divergence from
-  retail's all-or-nothing compile failure, not just message-text. Adding
-  static typing for these two identifiers to the compiler would fix it;
-  out of scope for the task that made `game` array-typed, since neither
-  construct appears anywhere in the corpus (`game.` and `level["` are both
-  zero-hit). `crates/gsc/tests/semantics_ab.rs`'s
-  `KNOWN_GAPS_OUT_OF_SCOPE` skips both probes rather than asserting a false
-  pass.
 - **A runtime error aborts the thread, where retail kills the server.**
   Every fatal in §9 — a non-numeric condition, `"str" + undefined`,
   `undefined == 0`, `"a" < "b"`, `1 / 0` — raises the equivalent
