@@ -1444,6 +1444,14 @@ pub struct ProbeHold {
     /// a drop's airborne prone body is the one its last airborne cmd
     /// starts at (cod15-movement.md 4).
     pub framed: bool,
+    /// Cmds on a 60 Hz grid of the server's clock, 16, 17 and 17 ms apart
+    /// from each frame's time, as the net probe's loop sends them in the
+    /// `--probe-uo-weapon` captures that log them (`!cmd` lines), in place
+    /// of an even [`PROBE_CMD_MS`]: a held trigger fires on the cmds, and
+    /// the thompson's 85 ms fires every sixth one, 100 ms apart here and 96
+    /// at 16 ms, which is what decides whether the 1.5 and UO gun kick
+    /// settles between rounds (cod15-movement.md 6).
+    pub sixty: bool,
 }
 
 /// `--probe-cmd-ms`'s default.
@@ -1469,8 +1477,19 @@ impl ProbeHold {
             let f = s.server_time;
             times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
         } else {
-            while t + PROBE_CMD_MS <= s.server_time + FRAME_MS as i32 {
-                t += PROBE_CMD_MS;
+            let next = |t: i32| match self.sixty {
+                true => {
+                    let tick = |k: i32| (50 * k).div_euclid(3);
+                    let mut k = (3 * t).div_euclid(50);
+                    while tick(k) <= t {
+                        k += 1;
+                    }
+                    tick(k)
+                }
+                false => t + PROBE_CMD_MS,
+            };
+            while next(t) <= s.server_time + FRAME_MS as i32 {
+                t = next(t);
                 times.push(t);
             }
         }

@@ -1205,8 +1205,8 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
     capture).
   - Traces toward the seated rider that miss him stop on the tank, entity
     186, at fraction 0.69 to 0.83 (VERIFIED capture).
-  - The retail probe client (`--probe-uo-weapon hold`) sends a cmd every
-    16 ms holding the view it saw at its placement, rebased on each
+  - The retail probe client (`--probe-uo-weapon hold`) sends cmds at
+    60 Hz (cod15-movement.md 6) holding the view it saw at its placement, rebased on each
     snapshot's `delta_angles`, and the gsc's `setPlayerAngles` writes the
     view and `delta_angles` against the last cmd every frame. Over a real
     link the rebase lags, so the rounds land between the two views by the

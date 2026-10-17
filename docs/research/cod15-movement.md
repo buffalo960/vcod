@@ -496,6 +496,21 @@ from 15 to 81, each a few units across, the spring at its 4-degree
 `gunMaxPitch`. Ours replays the cmds on retail's level times and lands every
 round within a unit of retail's on all three.
 
+Measured, VERIFIED (live, retail UO 1.51b, 2026-10-17): the
+`vehicle_armor_ab` sweep recipe on mp_cassino with the shooter's
+`--save-slope` on, its thompson file's spread zeroed and the kick left
+stock (`adsGunKickPitch` -55..-50, yaw -60..90). The net probe sends its
+cmds on a 60 Hz grid, 0, 16 and 32 or 33 ms past each frame's time, so
+the 85 ms `fireTime` fires on every sixth cmd, 100 ms apart, and every
+round left within 0.3 degrees of the view the gsc set. With the kick
+pinned as above in the same recipe the rounds sat 3.0 to 3.35 degrees
+above the view. The spring's balance turns on the round spacing: at
+100 ms a stock round's kick settles before the next, at 96 ms (even
+16 ms cmds, the sixth at 96) the remainder adds up to `gunMaxPitch`
+over about 12 s (INFERRED, the spring stepped by hand both ways; vcod's
+spring lands the same at each spacing). A gate whose held trigger fires under
+the kick sends the probe's 60 Hz cmds (`ProbeHold::sixty`).
+
 **As implemented.** `ClientSim::fire_recoil` (`crates/server/src/spectate.rs`)
 draws the four off the server's RNG for each fire event a cmd's pmove
 raised, under `MoveRules::v15()` only, and `ClientSim::update_aim` steps
