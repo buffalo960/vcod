@@ -1350,10 +1350,32 @@ at 0.01 over 1.01, the rest (pelvis, legs) the legs clip alone; between
 two torso anims the torso node stays at 1 and the two clips blend inside
 it, so no legs pose shows through. vcod: `PoseBuffer::blend_nodes`, the
 node weights in `ChannelClock::node_weights`, `pose_player` for the
-server's hit and tag poses and the client's drawn bodies. VERIFIED, vcod
-measurement: none of the committed bone captures (`legs_ab`,
-`linkto_ab`) carries a torso anim, so the gates hold the legs path only;
-the rule above rests on the reads.
+server's hit and tag poses and the client's drawn bodies.
+
+VERIFIED, live (retail 1.1d, 2026-10-17, `client-probes/probe_torso`,
+`movers/mp_carentan-dm-torso.txt` beside `-legs-client-torso.txt`): fourteen
+tags from the pelvis through both arms to `tag_weapon_right` and the feet,
+logged every frame while the body fires standing, running, strafing, crouched
+and aimed and reloads backing, strafing and crouched. Ours replays the cmds
+(`legs_ab::a_body_firing_and_reloading_on_the_move_is_posed_like_retail`)
+and every tag sits within 0.04 units and 0.13 degrees of retail's on all 559
+frames, blends included, so the per-bone node rule above holds. Two things
+had to change for that, besides the anim selection
+(player-model-anim-system.md, "Walk against run" and "The weapon event's
+movetype"):
+
+- The sums are signed. VERIFIED, `cod_lnxded` 0x080b7160 (the xanim
+  loader): a per-track bit in the bitset ahead of the z-only one negates the
+  track's first rotation key (the `uVar26 & 1` arms after the key
+  rebuilds that return to 0x080b7a96 and 0x080b7dc5), then each key is put on its predecessor's hemisphere
+  (xanim-v14-format.md). The sampler and the node walk add those raw. Where a
+  torso clip's hand and the legs clip's sit on opposite hemispheres, the
+  reload's blend-out swings the hand the long way: retail's `bip01 l hand`
+  turned 178 degrees off the short way's at 32000. vcod dropped the bitset
+  and aligned every sum to its first contributor until then.
+  vcod: `xanim::parse`, `skeleton::clip_sums`, `PoseBuffer::blend_nodes`.
+- The idle's phase: the capture's placement is message 352, and ours'
+  idle set at 7600 fits it (below).
 
 **The spawn idle's phase.** INFERRED, off the setter above: the idle
 (`pb_stand_alert`, 6.267 s, no `moveSpeed`) takes no phase and restarts
@@ -1371,6 +1393,9 @@ first row: the placement snapshot is the client's netchan message 389 at
 5600 and the spawn a few frames after. INFERRED: retail's spawn set the
 idle at 5750; nothing on the server picks the idle's phase. `legs_ab`
 starts ours' client so its spawn lands on 5750 and asserts it does.
+VERIFIED, the torso capture: its placement snapshot is message 352, and the
+same rule (the idle 4 messages after the join, 50 ms a message) gives 7600,
+which fits its settle to 0.08 degrees where 7500 and 7700 read 11 off.
 
 **`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`
 (0x2e970): the yaw comes from `vectoangles` (0x2eac4, 0x3de94: `atan2`, plus
