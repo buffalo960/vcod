@@ -2627,7 +2627,14 @@ pub fn check_prone(world: &MoveWorld, q: ProneQuery) -> Option<ProneBody> {
     }
     let chest = t.endpos;
     let bend = angle_subtract(vectopitch(feet - hips), vectopitch(hips - chest));
-    if !(-50.0..=70.0).contains(&bend) {
+    // Legs bent up past the hips: 1.1 and 1.5 allow 50 degrees (rodata 0x701a8,
+    // 1.5 0x74fb8), UO 45 (0x9a9e8; coduo-movement.md 17).
+    let bend_up = if q.rules == MoveRules::Uo {
+        -45.0
+    } else {
+        -50.0
+    };
+    if !(bend_up..=70.0).contains(&bend) {
         return missed();
     }
     // Nothing between the three samples, 5 units up.
@@ -8022,6 +8029,35 @@ mod tests {
                 rules,
             },
         )
+    }
+
+    /// UO's `BG_CheckProneValid` lets the legs bend up 45 degrees past the
+    /// hips (0x9a9e8), where 1.1 and 1.5 allow 50 (coduo-movement.md 17):
+    /// the feet on a 30-unit step behind bend them about 48.
+    #[test]
+    fn a_uo_body_refuses_legs_bent_up_past_45_degrees() {
+        let step = |height: f32| {
+            test_world(&[
+                (
+                    Vec3::new(-200.0, -200.0, -16.0),
+                    Vec3::new(200.0, 200.0, 0.0),
+                ),
+                (
+                    Vec3::new(-200.0, -200.0, 0.0),
+                    Vec3::new(-54.0, 200.0, height),
+                ),
+            ])
+        };
+        let o = Vec3::new(0.0, 0.0, 0.125);
+        let high = step(30.0);
+        let w = MoveWorld::bare(&high);
+        for rules in [MoveRules::V1_1, MoveRules::V1_5] {
+            let body = prone_on(&w, o, true, rules).expect("a fit");
+            assert!((45.0..50.0).contains(&body.waist_pitch), "{body:?}");
+        }
+        assert!(prone_on(&w, o, true, MoveRules::Uo).is_none());
+        let low = step(20.0);
+        assert!(prone_on(&MoveWorld::bare(&low), o, true, MoveRules::Uo).is_some());
     }
 
     /// 1.5's `BG_CheckProneValid` refuses a body whose samples land on a

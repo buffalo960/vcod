@@ -1021,25 +1021,7 @@ fn the_predictor_replays_walks_against_patches() {
         let r = replay(p, rules, &parse(p, &text), &world, &weapons);
         print(file, &r);
         assert!(r.compared > 300, "{file}: only {} snapshots", r.compared);
-        let gaps = if file.ends_with("pillar-uo.txt") {
-            PILLAR_UO_GAPS
-        } else {
-            &[]
-        };
-        failures.extend(over(&r, gaps).into_iter().map(|f| format!("{file}: {f}")));
+        failures.extend(over(&r, &[]).into_iter().map(|f| format!("{file}: {f}")));
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
-
-/// The pillar run's crawl along the brick wall at (956.9, 600) on UO:
-/// from ct 34625 retail refuses every cmd past y 599.77 (the body put back,
-/// velocity 0) where 1.1d and 1.5b crawl on to 600.34 and ours, under
-/// either rules, to 600.24; the 16 snapshots after are rebased on that
-/// refusal, and the bob runs one step apart on 12. No patch is near: the
-/// legs sweep meets the clip brushes behind (971, 974, 975). UO's
-/// `BG_CheckProneValid` (game.mp.uo 0x2162c) adds a water bit to the mask
-/// (0x810031), skips the steep test on a water hit and refuses a chest
-/// sample more than 24 off the origin; none of those fires on this dry,
-/// flat floor, and its mask on our check moves nothing. The refusing test
-/// is not found yet (coduo-movement.md, "The prone check").
-const PILLAR_UO_GAPS: &[(&str, usize)] = &[("origin.xy", 16), ("velocity", 5), ("bobCycle", 12)];

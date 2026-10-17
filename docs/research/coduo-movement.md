@@ -650,13 +650,21 @@ and a chest sample more than 24 (0x9a9e0, a double) off the origin plus 6
 refuses. `PM_VerifyPronePosition` (0x2e3b0) passes the fourteenth 0, so the
 prone move's check sees water.
 
+VERIFIED, rodata: the bend test after the chest sample (the legs' pitch,
+feet less hips, `AngleSubtract`ed from the torso's, hips less chest) keeps
+70.0 (0x9a9ec) as its top but reads -45.0 (0x9a9e8) as its bottom, where
+1.1d reads -50.0 (0x701a8) and 1.5b -50.0 (0x74fb8). A UO body refuses
+legs bent up more than 45 degrees past the hips; 1.1 and 1.5 allow 50.
+
 VERIFIED, retail capture (`mp_carentan-dm-slope-8ms-patchwalk-pillar-uo.txt`,
 2026-10-17): crawling forward and left along the brick wall at x 971.9 on
 mp_carentan from (956.9, 588), UO refuses every cmd past y 599.77 from ct
 34625 (the snapshot keeps 599.76776, velocity 0), where 1.1d and 1.5b
-crawl on to 600.36 and 600.34 on the same script. vcod, under UO's rules,
-crawls to 600.24 before its check refuses, as under 1.5's. INFERRED: none
-of the three additions above fires there (a dry, flat brush floor, no
-vehicle, the bipod's sweep not asked), and a test run with the water mask
-on our check moved nothing; the refusing test is not identified. The
-gate tolerates those 16 snapshots (`moves_ab.rs`, `PILLAR_UO_GAPS`).
+crawl on to 600.36 and 600.34 on the same script. VERIFIED, ours under the
+same samples: between y 599.77 and 599.9 the feet sample, 51 behind the origin, lands on
+top of brush 640 (z 46.125, 32 over the floor) instead of the floor, and
+the legs' bend reads -49.7 at y 599.9 to -49.9 at 600.34, inside 1.5's
+-50 and outside UO's -45. With UO's bound ours refuses the same cmds and
+the pillar run matches all 372 snapshots (`moves_ab.rs`,
+`the_predictor_replays_walks_against_patches`, no gap rows;
+`pmove::tests::a_uo_body_refuses_legs_bent_up_past_45_degrees`).
