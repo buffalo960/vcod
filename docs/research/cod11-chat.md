@@ -182,10 +182,29 @@ escaped. A part fills the first open slot in what came before it, or is
 appended when there is none. A `\x16` after a separator (or standing as
 one) makes the next part's `%s` literal. vcod: `Localized::message`.
 
-INFERRED, 0x300229b0: after localizing, the cgame replaces the first
-`[{command}]` with the key bound to the command, keeping the brackets, and
-leaves the text alone when the command is unbound. vcod fills
-`[{+activate}]` with its use key F.
+VERIFIED, 0x300229b0 (its body): after localizing (trap `0x39`), the
+cgame finds the first `[{` with at least five bytes from it, then the
+first `}]` after it, and replaces the command between them with its key
+text, keeping the brackets. Only that first one is tried: no `}]`, a
+command with no key, or a result past 1023 bytes (`String too long to add
+key binding: %s`) returns the text as it was. Callers: the centre print,
+the game and bold game messages, hudelem text and labels (`"hudelem
+string"`), the cursor hint string and the scoreboard's objective.
+
+VERIFIED, the key text: `0x30046590` rescans a fixed table of 24-byte rows
+(1.1 `0x3006f150`..`0x3006f5ff`, 50 rows; 1.5 `0x30071150`, 50 rows,
+`messagesquad` where 1.1 has `messagemode4`; UO `0x3008adb8`, 55 rows,
+adding `mp_quickmap`, `mp_purchase`, `weaponslot satchel`, `weaponslot
+binocular` and `+sprint`), filling each row's first two keys from key 0
+up whose binding equals the row's command case-blind (`0x300464e0`, trap
+`0xb0`). `0x30046860` finds the command's row case-blind; a command in no
+row, or a row with no key, reads unbound (`0x30046940` returns 0). The
+text is the key name (trap `0xac`) localized when the table has it
+(`KEY_SPACE` "Space"), two keys joined by `" %s "` (`0x30060710`) of
+`KEY_OR`. 1.5's cgame (`0x30023c90`) and UO's (`0x3002d850`) keep the
+same pass (their decompilations, the same string). vcod: `hud::bind_keys` and `hud::bind_commands`, the key text
+`Shell::key_text` (the stance hints, the vote line and the weapon strip
+use the same lookup).
 
 ### 3.2 The chat (0x3002c920, drawn by 0x300150b0)
 
@@ -197,6 +216,14 @@ counted), back at its last space, and the text after that space is read
 again onto the next line, which opens with `^` and the last colour read.
 Lines beyond the height drop the oldest; each frame drops at most one line
 older than `cg_chatTime`.
+
+VERIFIED, 1.5's `CG_AddToTeamChat` (cgame 0x3002de50) has the same
+0x10f ring and the same `> 0x59` wrap, but takes `^0`..`^9` as codes; so
+does UO's (0x30039390, its ring at 0x3044ade8). VERIFIED, UO's
+continuation line opens with two codes: `^` and the first colour the
+line read, then `^` and the last one (the first starts as byte 0xff,
+which the renderer does not read as a code). vcod opens it with the last
+code only, which draws the same unless no code came before the wrap.
 
 INFERRED, the draw, newest first, row `k` = -1, -2, ...:
 
@@ -253,7 +280,8 @@ the call returns for the next part. The width is the trap's second
 argument: `cg_gameMessageWidth` (vmCvar 0x301dfc20, default `70`) for
 game messages, `cg_gameBoldMessageWidth` (0x3020d700, `60`) for bold
 ones, both archived (cgame cvar table rows 0x300750c0, 0x300750d0); 1.5's
-and UO's cgames have the same defaults. A width of 0 or one over the
+(0x300770b0, 0x300770c0) and UO's (0x30085950, 0x30085960) rows are the
+same, flags 1 included. A width of 0 or one over the
 console's line width (0x142ef54, `max(vidWidth, 640) / 8 - 2`, set at
 0x4088f0) is clamped to that, so 70 and 60 hold. In 0x408f80, for
 windows 1 and 2:
@@ -279,8 +307,10 @@ Each ended line takes a ring slot (0x408d00, 0x408be0) like a whole
 message. VERIFIED: 1.5's 0x409760 and UO's 0x409dc0 have the same shape
 but take `^0`..`^9` as colour pairs. INFERRED, not read: the window draw
 ignores the blanks after a line's text, so vcod measures a bold line
-without its trailing space. vcod: `messages::wrap`, at 1.1's `^0`..`^7`
-on all three protocols.
+without its trailing space. vcod: `messages::wrap`, at `^0`..`^9` on 1.5
+and UO (`hud::font::is_colour_code`, cod11-hud-protocol.md 7), at the
+two cvars, which the client registers with the cgame's defaults and
+flags and reads each frame (`messages::line_width` holds the clamp).
 
 ## 4. The chat field
 

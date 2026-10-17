@@ -121,10 +121,21 @@ fn ours(map: &str, cvars: &[(&str, &str)], riders: usize) -> Option<Vec<String>>
             let buttons = if taps[k] { BUTTON_USE } else { 0 };
             let cmd = placed_yaw(sv.script_log(), k).and_then(|yaw| facing(cl, yaw, buttons));
             match cmd {
-                Some(mut c) => {
-                    c.server_time = c.server_time.max(last[k] + 1);
-                    last[k] = c.server_time;
-                    cl.send_cmds(&[c]);
+                Some(c) => {
+                    // The probe client's cmds of a frame, 16, 16 and 18 ms
+                    // apart (`ProbeHold::framed`): a corpse in the hull
+                    // gets out of it a cmd at a time (coduo-vehicles.md 11.6).
+                    let f = c.server_time;
+                    let cmds: Vec<UserCmd> = [f, f + 16, f + 32]
+                        .into_iter()
+                        .filter(|&t| t > last[k])
+                        .map(|t| UserCmd {
+                            server_time: t,
+                            ..c
+                        })
+                        .collect();
+                    last[k] = last[k].max(f + 32);
+                    cl.send_cmds(&cmds);
                 }
                 None => {
                     cl.send_frame(&UserCmd::default());
@@ -225,21 +236,37 @@ fn subject(l: &str) -> Option<&str> {
 /// 3.3 units apart at it.
 const GUNNER_TOL: f32 = 4.0;
 
-/// A dismounted rider's fall a frame on: the probe client's cmds cover
-/// part of the frame on retail and all of it on ours, so the fall and the
-/// knockback run apart by up to 2.2 units.
-const CMD_CLOCK: &str = "the probe client's cmd clock";
+/// A line let differ from retail's, for `why`, by at most `within` a
+/// number.
+struct Drift {
+    why: &'static str,
+    within: f32,
+}
 
-/// A rider killed where he sat: retail's corpse slides off the hull, ours
-/// stays where the seat left it, its velocity gone on the first cmd. Open
-/// (coduo-vehicles.md 11.2).
-const STUCK_CORPSE: &str = "a corpse left in a seat's place does not slide";
+/// A dismounted rider's fall a frame on, and a corpse getting out of the
+/// hull: the probe client's cmds sit on retail's frames by its own clock
+/// and on ours 16, 16 and 18 ms apart (`ProbeHold::framed`'s), so the fall
+/// and the knockback run apart by up to 2.2 units, and a corpse, which
+/// leaves the hull a cmd at a time (coduo-vehicles.md 11.6), by up to 1.
+const CMD_CLOCK: Drift = Drift {
+    why: "the probe client's cmd clock",
+    within: 2.2,
+};
+
+/// The gunner's corpse half a second on: it slides out of the hull from
+/// where the kill found him, up to [`GUNNER_TOL`] off retail's, and the
+/// push out runs along the line from the hull's origin, so it ends up to
+/// 6.2 off.
+const GUNNER_SLIDE: Drift = Drift {
+    why: "the gunner's corpse slides from his mid-turn spot",
+    within: 6.5,
+};
 
 /// Retail's lines against ours from the kill on, one for one, numbers
 /// exact but the gunner's ([`GUNNER_TOL`]). A line holding one of
 /// `drift`'s headers (`frame 0`: the frame line of rider 0) is let differ
-/// for its reason, and must still differ; everything else must match.
-fn compare(retail: &[String], ours: &[String], drift: &[(&str, &str)]) {
+/// by its [`Drift`], and must still differ; everything else must match.
+fn compare(retail: &[String], ours: &[String], drift: &[(&str, Drift)]) {
     let (r, o) = (from_kill(retail), from_kill(ours));
     if std::env::var_os("DIE_REPORT").is_some() {
         for l in &r {
@@ -264,26 +291,36 @@ fn compare(retail: &[String], ours: &[String], drift: &[(&str, &str)]) {
                 .collect()
         };
         let (wa, wb) = (words(a), words(b));
-        let same = wa.len() == wb.len()
-            && wa.iter().zip(&wb).all(|(x, y)| {
-                // `inf`, the inflictor's tag, parses as a float too.
-                let num = |w: &str| w.parse::<f32>().ok().filter(|v| v.is_finite());
-                match (num(x), num(y)) {
-                    (Some(x), Some(y)) => (x - y).abs() <= tol,
-                    _ => x == y,
-                }
-            });
-        if same {
+        let same = |tol: f32| {
+            wa.len() == wb.len()
+                && wa.iter().zip(&wb).all(|(x, y)| {
+                    // `inf`, the inflictor's tag, parses as a float too.
+                    let num = |w: &str| w.parse::<f32>().ok().filter(|v| v.is_finite());
+                    match (num(x), num(y)) {
+                        (Some(x), Some(y)) => (x - y).abs() <= tol,
+                        _ => x == y,
+                    }
+                })
+        };
+        if same(tol) {
             continue;
         }
         let d = drift.iter().find(|(h, _)| a.contains(h));
         assert!(d.is_some(), "retail {a}\nours   {b}");
-        drifted.push(d.unwrap().0);
+        let (h, d) = d.unwrap();
+        assert!(
+            same(d.within),
+            "{h} past {} ({})\nretail {a}\nours   {b}",
+            d.within,
+            d.why
+        );
+        drifted.push(*h);
     }
-    for (h, why) in drift {
+    for (h, d) in drift {
         assert!(
             drifted.contains(h),
-            "{h} now matches retail; drop it from the drift ({why})"
+            "{h} now matches retail; drop it from the drift ({})",
+            d.why
         );
     }
 }
@@ -298,10 +335,9 @@ fn the_tank_killed_by_itself_puts_both_riders_out_where_they_sit() {
         &r,
         &o,
         &[
-            ("frame 0", STUCK_CORPSE),
-            ("later 0", STUCK_CORPSE),
-            ("frame 1", STUCK_CORPSE),
-            ("later 1", STUCK_CORPSE),
+            ("frame 0", CMD_CLOCK),
+            ("later 0", CMD_CLOCK),
+            ("later 1", GUNNER_SLIDE),
         ],
     );
 }
@@ -322,7 +358,7 @@ fn the_tank_killed_by_its_gunner_dismounts_the_driver() {
         &[
             ("frame 0", CMD_CLOCK),
             ("later 0", CMD_CLOCK),
-            ("later 1", STUCK_CORPSE),
+            ("later 1", GUNNER_SLIDE),
         ],
     );
 }

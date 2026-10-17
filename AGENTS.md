@@ -119,8 +119,8 @@ check.
   hold ladder top and mp_hurtgen's crease (a graph build each). With
   `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
-  mp_cassino six-bot tdm run (the file ~12 s, 60 s of CPU); with a 1.1 install
-  they return at once. `cargo run
+  mp_cassino six-bot tdm run and its walled-in spawns test (the file
+  ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
@@ -131,6 +131,10 @@ check.
   is not a regression.
 - `Server::new` seeds its RNG with a constant; only `main.rs` passes the clock
   through `Server::with_seed`. Tests that depend on spawn picks rely on that.
+  Under `new` every level's script draws start from `RNG_SEED` again; under
+  `with_seed` each load steps a fresh seed, as retail's `G_InitGame` does
+  (`cod11-map-cycle.md` 4.8). `gametypes_ab` runs `with_seed` and replays
+  retail's spawn picks through `Server::pin_spawns`.
 - Comments: one line where the code doesn't explain itself (an invariant, a
   unit or sign convention, a workaround and what it works around). Facts that
   live in a doc stay there; the comment is the pointer.
@@ -315,7 +319,9 @@ header of the fixture it produced.
   section).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
-- `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms
+- `--probe-uo-weapon` and `--probe-vehicle` send cmds at 60 Hz (0, 16
+  and 32 or 33 ms past each frame's time; `ProbeHold::sixty` where a held
+  trigger's fire rate matters, cod15-movement.md 6), each
   holding the view of their first spawned snapshot (or of the use tap),
   rebased on `delta_angles`. Against a gsc `setPlayerAngles` every frame
   that rebase lags by the link, so where the rounds go rides the client's
@@ -323,7 +329,10 @@ header of the fixture it produced.
   (`tests/common::ProbeHold`) only a frame's first cmd takes the gsc's
   view. `--probe-uo-weapon aim` (`ProbeHold::aim`) sends every cmd at the
   snapshot's view, which a gsc steers round for round: measure with that
-  (`coduo-vehicles.md` 13).
+  (`coduo-vehicles.md` 13). `--probe-uo-weapon direct` does the same and
+  takes its buttons, lean and stance from the gsc's `iPrintLn("PROBE_IN
+  ...")` lines, so a phase starts on the server's clock
+  (`client-probes/probe_leanhit`).
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
@@ -351,7 +360,7 @@ header of the fixture it produced.
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
   `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
-  `probe_hqtime` and `probe_bastime` have run there. On UO's mp_carentan the
+  `probe_hqtime`, `probe_bastime` and `probe_domtime` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -603,9 +612,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
   collision on 1.5 and UO"), and so does the patch capsule arm; pmove's fall stores its gravity,
   its tail and the trace's end point (`cod15-movement.md` 7). A 1.5 or
-  UO server, and the client on one, sets
-  `CollisionWorld::set_arith(Arith::for_protocol(..))`; a replay world
-  in a test sets it too.
+  UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
+  a replay world in a test sets it too. The client's world runs
+  `Arith::for_client()` on every protocol: the Windows clients are one
+  MSVC build that stores some of those and keeps the rest (8), so a
+  client replay of a Linux capture corrects in the last bits.
 - A sweep, point or capsule, that meets a model-0 patch is clipped again
   in retail's BSP leaf order (`leafwalk.rs`): a patch clips only from a
   leaf on the path that lists it (mp_carentan's 69, 109, 283 and 284 are
@@ -670,6 +681,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   rests on a player's posed bones with his number as its ground. 1.5 and
   UO drop a resting missile whose ground is not the world once nothing is
   under it (`Missile::falls`, combat doc 12.6); 1.1 leaves it hanging.
+- A player's head model and his helmet each carry a `bip01 head` box,
+  and the trace scores both: the grafted skeleton keeps an attachment's
+  second box on a merged bone as a box-only child (combat doc 3.6). A
+  standing body's torso yaw stays where his spawn left it until he moves,
+  fires or goes prone (16.4), so a hit-pose capture swings it first.
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
@@ -704,6 +720,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   14.7).
 - Blast victims are measured per turn, after earlier callbacks ran. A client
   killed this frame keeps `takedamage` until its own end frame.
+- `ClientEndFrame`'s dead arm (`pm_type` 6, no contents, off the wire)
+  keys on `sessionstate` `dead`, not on health: a `suicide()` that stays
+  `playing` keeps `pm_type` 0, and a test that kills through the vitals
+  sets the session too (`ClientSim::session`, combat doc 5.1).
 - `player_die` notifies the victim `death` with the attacker before the
   killed callback; UO's rank icon is destroyed on it (coduo-diff.md 22).
 - A killed gunner keeps the turret until its own end-frame turn;
@@ -765,6 +785,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   indexed (`Allocators::index_precached`), and `statusicon`, `headicon`
   and `shellshock` never index one, so a test that sets one fills its
   configstring first.
+- `attach` of a pair the entity already carries, or of a seventh model,
+  is a script error, and its tag indexes nothing: a player's tags take
+  their configstrings at his own end frame (`client_attachments`;
+  object-model doc 24). `addTestClient` runs the connect callback inside
+  the call and the `begin` waiters after the caller's step (25).
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc

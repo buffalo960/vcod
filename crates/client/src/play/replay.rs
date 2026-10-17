@@ -19,8 +19,9 @@ use glam::Vec3;
 use vcod_common::collision::CollisionWorld;
 use vcod_common::net::events::{EventTracker, GameEvent};
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
-use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V22, Protocol};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::snapshot::Snapshot;
+use vcod_common::patch::Arith;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::movers::SnapshotMovers;
 use vcod_common::pmove::predict;
@@ -321,6 +322,19 @@ fn replay_own(
     fs: &Pk3Fs,
     map: &str,
 ) -> (Tally, BTreeMap<i32, usize>) {
+    let (t, brought, _) = replay_own_as(p, file, fs, map, Arith::for_client());
+    (t, brought)
+}
+
+/// `replay_own` with the predictor's world on `arith`, and the
+/// predictor's corrections (`Predictor::corrections`).
+fn replay_own_as(
+    p: &'static Protocol,
+    file: &str,
+    fs: &Pk3Fs,
+    map: &str,
+    arith: Arith,
+) -> (Tally, BTreeMap<i32, usize>, (usize, usize)) {
     let text = std::fs::read_to_string(format!("{SLOPE_DIR}/{file}")).unwrap();
     // The 1.1 captures name none: retail's mp_carentan dm list.
     let cs7 = text
@@ -334,7 +348,7 @@ fn replay_own(
         .expect("a weapon list");
     let weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
     let world = load_world(fs, map);
-    world.set_arith(vcod_common::patch::Arith::for_protocol(p));
+    world.set_arith(arith);
     let mut client = Client::new(p, 0, &weapons, &[]);
     let mut ring = CmdRing::default();
     let mut newest: Option<Snapshot> = None;
@@ -358,7 +372,7 @@ fn replay_own(
             }
         }
     }
-    (client.tally, brought)
+    (client.tally, brought, client.predictor.corrections)
 }
 
 /// Every shot of an own-body replay played once, with its flash, its
@@ -420,6 +434,50 @@ fn a_1_1_moves_capture_plays_each_event_once() {
         "mp_carentan",
     );
     assert_each_shot_once("moves-1.1", &t, &brought, 8);
+}
+
+/// The own-body captures predicted as the Windows client computes
+/// (`Arith::Msvc`) against the same replay on the Linux server's
+/// arithmetic. Every capture was taken against a Linux server, so the
+/// client's build corrects more often in the last bits (1.5 moves 13 to 46,
+/// UO sprint 114 to 125, 1.1 moves 5 to 8 on 2026-10-17): ties the retail
+/// client loses too (cod15-movement.md 8). No correction it draws, one
+/// past `MISS_EPSILON`, may be added.
+#[test]
+fn the_windows_build_draws_no_new_correction() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    let v1 = v1_fs();
+    let mut runs: Vec<(&'static Protocol, &str, &Pk3Fs)> = vec![
+        (&PROTOCOL_V6, "mp_carentan-dm-slope-8ms-moves-1.5.txt", &fs),
+        (&PROTOCOL_V6, "mp_carentan-dm-slope-8ms-turns-1.5.txt", &fs),
+        (
+            &PROTOCOL_V22,
+            "mp_carentan-dm-slope-8ms-autofire-uo.txt",
+            &fs,
+        ),
+        (&PROTOCOL_V22, "mp_carentan-dm-slope-8ms-sprint-uo.txt", &fs),
+    ];
+    if let Some(v1) = &v1 {
+        for file in [
+            "mp_carentan-dm-slope-8ms-moves-1.1.txt",
+            "mp_carentan-dm-slope-8ms-turns-1.1.txt",
+            "mp_carentan-dm-slope-8ms-springfield-1.1.txt",
+        ] {
+            runs.push((&PROTOCOL_V1, file, v1));
+        }
+    }
+    let mut worse = Vec::new();
+    for (p, file, fs) in runs {
+        let (_, _, linux) = replay_own_as(p, file, fs, "mp_carentan", Arith::for_protocol(p));
+        let (_, _, msvc) = replay_own_as(p, file, fs, "mp_carentan", Arith::for_client());
+        println!("{file}: corrections, any and past 0.1: linux {linux:?}, msvc {msvc:?}");
+        if msvc.1 > linux.1 {
+            worse.push((file, linux, msvc));
+        }
+    }
+    assert!(worse.is_empty(), "{worse:?}");
 }
 
 /// The 1.1 ids of a ring's new slots, `prev..cur` (`eventSequence` counts

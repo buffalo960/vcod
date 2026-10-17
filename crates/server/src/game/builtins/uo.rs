@@ -26,7 +26,6 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("playlocalannouncersound", play_local_announcer_sound),
     ("rewindfx", rewind_fx),
     ("getstance", get_stance),
-    ("detach", detach),
     ("print3d", print_3d),
     ("dodamage", do_damage),
     ("dodamagemod", do_damage_mod),
@@ -495,48 +494,6 @@ pub fn get_stance(
     Ok(Value::String(cx.intern_exact(stance)))
 }
 
-/// `self detach(model[, tag])` (0x67cb0, `G_EntDetach` 0x7818a): drops the
-/// first attachment on `tag` (default `""`) whose model matches without
-/// case, shifting the rest down with their ignore-collision bits; no match
-/// is the error `failed to detach model '%s' from tag '%s'`. ctf's carried
-/// flag comes off this way.
-pub fn detach(
-    host: &mut GameHost,
-    cx: &mut Cx,
-    recv: Option<Target>,
-    args: &[Value],
-) -> Result<Value, ErrorKind> {
-    let id = entity_receiver(recv)?;
-    let Some(Value::String(model)) = args.first() else {
-        return Err(ErrorKind::BadType("detach takes a model"));
-    };
-    let model = cx.resolve(*model).to_string();
-    let tag = match args.get(1) {
-        Some(Value::String(t)) => cx.resolve(*t).to_string(),
-        Some(_) => return Err(ErrorKind::BadType("detach takes a tag name")),
-        None => String::new(),
-    };
-    let e = host
-        .ents
-        .get(id)
-        .ok_or(ErrorKind::BadType("no such entity"))?;
-    let hit = e.attachments.iter().position(|(m, t)| {
-        cx.resolve(*t).eq_ignore_ascii_case(&tag) && cx.resolve(*m).eq_ignore_ascii_case(&model)
-    });
-    let Some(i) = hit else {
-        return Err(ErrorKind::Custom(format!(
-            "failed to detach model '{model}' from tag '{tag}'"
-        )));
-    };
-    let e = host.ents.get_mut(id).expect("checked above");
-    e.attachments.remove(i);
-    let low = e.attach_ignore_collision & ((1u8 << i) - 1);
-    e.attach_ignore_collision = low | (e.attach_ignore_collision >> (i + 1) << i);
-    // `G_EntDetach` ends in `G_DObjUpdate` (1.1d 0x67fb0).
-    crate::game::link::model_changed(host, cx, id);
-    Ok(Value::Undefined)
-}
-
 /// `print3d(origin, text[, colour[, alpha[, scale]]])` (0x66eb4): a debug
 /// string for a local client's renderer (`trap_AddDebugString`), which a
 /// dedicated server never draws.
@@ -553,32 +510,6 @@ pub fn print_3d(
 mod tests {
     use super::*;
     use crate::game::testing::fixture;
-
-    /// `detach` drops the matching pair and shifts the rest, ignore bits
-    /// with them; a pair that is not there is an error.
-    #[test]
-    fn detach_drops_one_attachment_and_keeps_the_rest_in_order() {
-        let (mut vm, mut host) = fixture();
-        vm.with_cx(|cx| {
-            let e = host.ents.spawn(cx).unwrap();
-            let s = |cx: &mut Cx, t: &str| cx.intern_exact(t);
-            let pairs = [("a", "tag_a"), ("flag", "tag_flag"), ("c", "tag_c")];
-            let atoms: Vec<_> = pairs.iter().map(|(m, t)| (s(cx, m), s(cx, t))).collect();
-            let ent = host.ents.get_mut(e).unwrap();
-            ent.attachments = atoms.clone();
-            ent.attach_ignore_collision = 0b100;
-            let t = Some(Target::Entity(e));
-            let args = [
-                Value::String(s(cx, "FLAG")),
-                Value::String(s(cx, "tag_flag")),
-            ];
-            detach(&mut host, cx, t, &args).unwrap();
-            let ent = host.ents.get(e).unwrap();
-            assert_eq!(ent.attachments, vec![atoms[0], atoms[2]]);
-            assert_eq!(ent.attach_ignore_collision, 0b10);
-            assert!(detach(&mut host, cx, t, &args).is_err());
-        });
-    }
 
     /// A script model `setTakeDamage` opened takes `doDamage` as UO's `eType`
     /// 8 arm does: the six-argument notify, its `health` untouched.

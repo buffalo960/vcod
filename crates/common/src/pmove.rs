@@ -1251,7 +1251,7 @@ pub fn pmove(
     // Retail's `pm->oldcmd`: what the next step subtracts this one from.
     ps.last_cmd_angles = input.angles;
     ps.last_cmd_ads = input.ads;
-    clamp_velocity_to_move(ps, dt);
+    clamp_velocity_to_move(ps, world, dt);
     snap_velocity(ps);
     events
 }
@@ -1576,7 +1576,30 @@ fn walking_flag(ps: &PlayerState, input: &PmInput) -> bool {
 /// stack: a fall from rest moves exactly half its end velocity, and which
 /// way that tie goes rides the last bits of the origin (cod11-mantle.md,
 /// "The tail of the default arm").
-fn clamp_velocity_to_move(ps: &mut PlayerState, dt: f32) {
+fn clamp_velocity_to_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) {
+    if world.world.arith() == crate::patch::Arith::Msvc {
+        // Every Windows cgame (cgame_mp_x86.dll 1.1 0x3000c90d, 1.5
+        // 0x3000d6c4, UO 0x3000e64f) keeps x, the rate and the squared
+        // speed on its 53-bit stack and stores y and z; UO sums the speed
+        // from x, 1.1 and 1.5 from z (cod15-movement.md 8).
+        let ft = f64::from(dt);
+        let gap = |a: f32, b: f32| f64::from(a) - f64::from(b);
+        let dx = gap(ps.origin.x, ps.move_start.x);
+        let dy = f64::from(gap(ps.origin.y, ps.move_start.y) as f32);
+        let dz = f64::from(gap(ps.origin.z, ps.move_start.z) as f32);
+        let ratio = ((dz * dz + dy * dy) + dx * dx) / (ft * ft);
+        let v = ps.velocity.as_dvec3();
+        let speed2 = if ps.rules == MoveRules::Uo {
+            (v.x * v.x + v.y * v.y) + v.z * v.z
+        } else {
+            (v.z * v.z + v.y * v.y) + v.x * v.x
+        };
+        if speed2 * 0.25 > ratio {
+            let inv = 1.0 / ft;
+            ps.velocity = Vec3::new((inv * dx) as f32, (inv * dy) as f32, (inv * dz) as f32);
+        }
+        return;
+    }
     if ps.rules.v15() {
         // 1.5b's tail (0x288ad-0x289e3) stores the displacement, the rate
         // and the squared speed as floats; only the sums, the divide and
@@ -1679,7 +1702,7 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     let gap = VIEW_DEAD - ps.view_height_cur;
     ps.view_height_cur += gap.clamp(-step, step);
     // `pm_type` 6 takes the default arm, tail and snap included.
-    clamp_velocity_to_move(ps, dt);
+    clamp_velocity_to_move(ps, world, dt);
     snap_velocity(ps);
     events
 }
@@ -3958,9 +3981,10 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
         // rounds each store once (0x34811-0x34838).
         let mut end_z = f64::from(ps.velocity.z) - f64::from(GRAVITY) * f64::from(dt);
         end_velocity.z = end_z as f32;
-        if ps.rules.v15() {
+        if ps.rules.v15() || world.world.arith() == crate::patch::Arith::Msvc {
             // 1.5b stores it first (0x28e34) and averages the float
-            // (cod15-movement.md 7).
+            // (cod15-movement.md 7), and so does every Windows cgame
+            // (8).
             end_z = f64::from(end_velocity.z);
         }
         primal.z = end_velocity.z;
@@ -6057,14 +6081,19 @@ mod tests {
 
     #[test]
     fn a_frame_that_moved_under_half_its_velocity_takes_the_move_as_velocity() {
+        let world = crate::collision::synthetic_world(
+            &[("textures/test/solid", crate::collision::CONTENTS_SOLID, 0)],
+            &[(0, [-64.0, -64.0, -1100.0], [64.0, 64.0, -1000.0])],
+        );
+        let w = MoveWorld::bare(&world);
         let mut ps = PlayerState::spawn(Vec3::new(1.0, 0.0, 0.0), 0.0);
         ps.move_start = Vec3::ZERO;
         // 1 unit in 8 ms is 125 u/s: 200 is under twice that and stays.
         ps.velocity = Vec3::new(200.0, 0.0, 0.0);
-        clamp_velocity_to_move(&mut ps, 0.008);
+        clamp_velocity_to_move(&mut ps, &w, 0.008);
         assert_eq!(ps.velocity.x, 200.0);
         ps.velocity = Vec3::new(300.0, 0.0, 40.0);
-        clamp_velocity_to_move(&mut ps, 0.008);
+        clamp_velocity_to_move(&mut ps, &w, 0.008);
         assert!(ps.velocity.abs_diff_eq(Vec3::new(125.0, 0.0, 0.0), 1e-3));
     }
 
@@ -6073,7 +6102,8 @@ mod tests {
     /// `probe_spawnview`'s 66 + 34 ms spawn thinks on mp_carentan
     /// (cod11-gametypes-re-bel.md 8.5) fell 3.0888 from these heights and
     /// 4.0068 from the rest, and 1.5b's stored floats took it only at -2
-    /// and ended the fall from 4 at -0.00680161 (cod15-movement.md 7).
+    /// and ended the fall from 4 at -0.00680161 (cod15-movement.md 7); the
+    /// Windows clients fall as 1.1d on every patch (8).
     #[test]
     fn a_fall_from_rest_ties_the_tail_by_the_start_height() {
         let world = crate::collision::synthetic_world(
@@ -6081,19 +6111,38 @@ mod tests {
             &[(0, [-64.0, -64.0, -1100.0], [64.0, 64.0, -1000.0])],
         );
         let w = MoveWorld::bare(&world);
-        let end = |z: f32, rules: MoveRules| {
-            world.set_arith(if rules.v15() {
-                crate::patch::Arith::Stored
-            } else {
-                crate::patch::Arith::Kept
-            });
+        let end_as = |z: f32, rules: MoveRules, arith: crate::patch::Arith| {
+            world.set_arith(arith);
             let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, z), 0.0);
             ps.rules = rules;
             pmove(&mut ps, &PmInput::default(), &w, 0.066, &[]);
             pmove(&mut ps, &PmInput::default(), &w, 0.034, &[]);
             ps.origin.z
         };
+        let end = |z: f32, rules: MoveRules| {
+            let linux = if rules.v15() {
+                crate::patch::Arith::Stored
+            } else {
+                crate::patch::Arith::Kept
+            };
+            end_as(z, rules, linux)
+        };
         let fall = |z: f32, rules: MoveRules| ((z - end(z, rules)) * 10000.0).round() / 10000.0;
+        // The Windows client stores only y and z of the tail and keeps the
+        // trace's end: on every patch it falls as 1.1d does
+        // (cod15-movement.md 8).
+        for rules in [MoveRules::V1_1, MoveRules::V1_5, MoveRules::Uo] {
+            let msvc = |z: f32| {
+                let e = end_as(z, rules, crate::patch::Arith::Msvc);
+                ((z - e) * 10000.0).round() / 10000.0
+            };
+            for z in [-2.0, -1.0, 0.0, 1.0, 2.0, 4.0] {
+                assert_eq!(msvc(z), 3.0888, "{rules:?} on Windows from {z}");
+            }
+            for z in [-4.0, 8.0, 16.0, 100.0] {
+                assert_eq!(msvc(z), 4.0068, "{rules:?} on Windows from {z}");
+            }
+        }
         for z in [-2.0, -1.0, 0.0, 1.0, 2.0, 4.0] {
             assert_eq!(fall(z, MoveRules::V1_1), 3.0888, "1.1 from {z}");
         }

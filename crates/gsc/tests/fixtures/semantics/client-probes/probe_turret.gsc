@@ -10,6 +10,7 @@ main()
 	thread watch_delete();
 	thread watch_pose();
 	thread watch_respawn();
+	thread watch_hitlog();
 	maps\mp\gametypes\dm::main();
 }
 
@@ -50,7 +51,9 @@ probe_gun()
 
 //	With `probe_teleport 1`: every allied player is put 40 units behind the
 //	gun facing along it, every axis player 300 units in front facing back,
-//	once per spawn.
+//	once per spawn, the first frame its sessionstate reads "playing":
+//
+//	PROBE place <entity number> <team> <spot> <yaw> <time>
 watch_teleports()
 {
 	if (getcvar("probe_teleport") != "1")
@@ -99,7 +102,7 @@ try_place(gun)
 	self.probe_spot = spot;
 	self setorigin(spot);
 	self setplayerangles((0, yaw, 0));
-	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + "\n");
+	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + " " + getTime() + "\n");
 }
 
 //	With `probe_pose 1`: which pose a turret round meets on a body whose own
@@ -117,6 +120,60 @@ watch_pose()
 pose_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
 {
 	logPrint("PROBE hit " + gettime() + " " + self getEntityNumber() + " " + sHitLoc + " " + iDamage + " " + vPoint + "\n");
+}
+
+//	With `probe_hitlog 1`: every hit logs its point and direction to the
+//	float's last bit before the stock callback lands it. A component prints
+//	as <int>:<thousandths>:<millionths of a thousandth>, `%g` keeping too
+//	few digits of the float itself:
+//
+//	PROBE hitfine <time> <entity number> <hit location> <damage> <point> <dir>
+watch_hitlog()
+{
+	if (getcvar("probe_hitlog") != "1")
+		return;
+	wait 1;
+	level.probe_hit_next = level.callbackPlayerDamage;
+	level.callbackPlayerDamage = ::hitlog_damage;
+}
+
+hitlog_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
+{
+	logPrint("PROBE hitfine " + gettime() + " " + self getEntityNumber() + " " + sHitLoc + " " + iDamage + " " + fine(vPoint) + " " + fine(vDir) + "\n");
+	self [[level.probe_hit_next]](eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
+}
+
+fine(v)
+{
+	return fine1(v[0]) + "," + fine1(v[1]) + "," + fine1(v[2]);
+}
+
+//	The engine has no int(): whole() takes the whole part by halving steps,
+//	each subtraction exact, so only the * 1000 products round, well under
+//	the float's own step.
+fine1(x)
+{
+	sign = "";
+	if (x < 0)
+	{
+		sign = "-";
+		x = 0 - x;
+	}
+	n = whole(x);
+	r = (x - n) * 1000;
+	m = whole(r);
+	return sign + n + ":" + m + ":" + ((r - m) * 1000000);
+}
+
+whole(x)
+{
+	n = 0;
+	for (b = 8192; b >= 1; b = b / 2)
+	{
+		if (x - n >= b)
+			n = n + b;
+	}
+	return n;
 }
 
 //	With `probe_respawn 1`: a second after the allied gunner is on the gun

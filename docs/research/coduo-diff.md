@@ -2540,12 +2540,15 @@ clock ends, the defender's return and a rotation to another map:
 - **hq** (`probe_hqtime`, mp_cassino, `scr_hq_timelimit 0.5`). Nobody
   takes the radio; the time limit ends the map at 30100. The restarted
   level shows a different radio, (1903, -1314, 168) where the first showed
-  (658, -1782, 0) (VERIFIED, the captures' objective slot 0). vcod shows
-  the first level's radio again (VERIFIED, the gate's ours side). INFERRED,
-  off `hq_randomize_radioarray`'s `randomInt` and vcod's per-level
-  `GameHost` seeding `RNG_SEED`: retail's draws carry across a restart and
-  vcod's start over. `gametypes_ab` drops every hq radio's origin, as for
-  the first level's random pick.
+  (658, -1782, 0) (VERIFIED, the captures' objective slot 0). The draws
+  do not carry: `G_InitGame` reseeds `hq_randomize_radioarray`'s
+  `randomInt` from the wall clock at every load, a restart included
+  (VERIFIED, cod11-map-cycle.md 4.8). vcod used to seed every level with
+  `RNG_SEED` and showed the first radio again; the binary now steps a
+  level seed per load (`Server::with_seed`), which `gametypes_ab` runs,
+  replaying retail's spawn picks off the captures (cod11-map-cycle.md
+  4.8). `gametypes_ab` drops every hq radio's origin, as for the first
+  level's random pick.
 - **bas** (`probe_bastime`, mp_foy, `scr_bas_roundlength 0.5`,
   `scr_bas_roundlimit 1`, `scr_bas_startrounddelay 5`). Nobody breaches;
   the round clock runs out with three bases a side: `GMI_DOM_TIMEEXPIRED`,
@@ -2553,6 +2556,28 @@ clock ends, the defender's return and a rotation to another map:
   at 53650 (VERIFIED, the log and captures).
 All four match on vcod-server; `probe_ctftime` failed before
 `map_rotate` read the script's cvars (ours restarted mp_cassino).
+
+One more, 2026-10-17, port 32711, the same clients, `gametypes_ab`'s
+`uo_domination_round_clock_and_time_limit_match_retail`:
+- **dom** (`probe_domtime`, mp_cassino, `scr_dom_roundlength 0.5`,
+  `scr_dom_timelimit 0.5`, no score or round limit,
+  `scr_dom_startrounddelay 5`). The first level ends in dom's match-start
+  `map_restart(true)` (`n`). On the second, `startRound` runs at 13300 and
+  draws the round clock (`setTimer`, the timer element at 56,365 on the
+  wire);
+  the allied player holds flag1 (`dom_captured`, allies 1, his score 3,
+  18350) and goes home. The clock runs out 30 s on:
+  `GMI_DOM_TIMEEXPIRED`, and `startRound`'s flag count (1 to 0) gives the
+  round to allies, `GMI_DOM_ALLIEDMISSIONACCOMPLISHED`, `ended=1` at
+  42350. After `scr_dom_endrounddelay`'s 10 s, `endRound` logs `W;allies`,
+  `game["timepassed"]` reads 0.783333 (47 s since `startGame` over 60) and
+  `checkTimeLimit`, no longer held off by `level.roundstarted`, ends the
+  map: `MPSCRIPT_TIME_LIMIT_REACHED`, intermission at 52350,
+  `exitLevel(false)` 10 s on, `B`, and the restarted level opens with
+  dom's match-start restart again; its own round clock expires to a draw
+  (VERIFIED, the log and captures). No team point is scored for the round:
+  dom's team score is the flag count (`d 6 1`, then `d 6 0` at the
+  restart). vcod-server matched on the first run.
 
 ### Engine facts the gametypes reach
 
@@ -2693,9 +2718,7 @@ All four match on vcod-server; `probe_ctftime` failed before
   (cod11-map-cycle.md 4.5). VERIFIED, retail's burst at mp_foy's first
   restart (`mp_foy-bas-attacker-uo.txt`, `ms=19467`): `d 14 23300`, `d 13`
   with the fog, `d 3 n\ambient_mp_foy\t\23300`, then `n`.
-- Not measured: `doDamage` on a client; `dom`'s round clock and time
-  limit (the same `startRound` and `checkTimeLimit` shape as `ctf`'s,
-  which `probe_ctftime` measures).
+- Not measured: `doDamage` on a client.
 
 ## 23. HTTP downloads
 

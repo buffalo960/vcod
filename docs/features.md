@@ -68,7 +68,9 @@ something, the bullet links it.
   the client disconnects; LAN and Internet leave the client in the menus.
   The client kills any server it started when it exits.
 - The stock Options and Multiplayer Options screens: rebind keys, mouse
-  sensitivity and invert, player name, rate, master volume, video mode and
+  sensitivity, invert, free look and mouse smoothing (`cl_freelook`,
+  `m_filter`, with `+mlook` and `+strafe`), player name, rate, master
+  volume, video mode and
   full screen, brightness, texture detail, filter and quality, dynamic
   lights, sync, blood and sound quality, applied at the restarts retail
   applies them at. Choices land in the console's binds and cvars and persist in
@@ -82,11 +84,12 @@ something, the bullet links it.
   not the one the server lists is deleted before anything loads it, and a
   redirected one is asked for again, a later redirect of it refused so a
   1.5 server sends it over UDP. Pure servers take its pak
-  checksums. Modded servers work too: a server's `fs_game` layers its mod
-  directory over `main/` and swaps in the mod's menus, every systeminfo
-  key (`cl_allowDownload`, `rate`, `snaps`, ...) is forced into the
-  client's cvars as retail does, and a mod's script menus and `hud.menu`
-  text show up.
+  checksums. Modded servers work too: every systeminfo key
+  (`cl_allowDownload`, `rate`, `snaps`, `fs_game`, ...) is forced into the
+  client's cvars as retail does, the forced `fs_game` layers its mod
+  directory over `main/` and swaps in the mod's menus (and stays after you
+  leave, as retail's does), and a mod's script menus and `hud.menu` text
+  show up.
 - `--vanilla` (client and server) puts only the install patch's stock paks
   on the search path and ignores third-party maps, `zzz_*` mods, downloads
   and `fs_game`; the client downloads nothing under it
@@ -195,7 +198,9 @@ something, the bullet links it.
   direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon
-  and scope.
+  and scope. On 1.5 and UO `^8` and `^9` in any text draw in the server's
+  `g_TeamColor_Allies` and `g_TeamColor_Axis`, as 1.5's team chat uses
+  them.
 - Shows a running vote as retail's cgame does (what it's for, the seconds
   left, the yes and no counts with the keys to press) and plays its sound;
   F1 and F2 vote yes and no, and the call vote menu's restart, next map,
@@ -279,8 +284,8 @@ something, the bullet links it.
   plant, defuse and blast, and in all four the round end, the score or
   round limit, intermission and the restart `exitLevel` falls back to;
   `ctf`'s flag returned by a defender's touch, the round clock and time
-  limit in `ctf`, `bas`, `hq` and `tdm`, `tdm`'s killcam, and a rotation
-  a script sets that names another map (same doc, 22).
+  limit in `ctf`, `dom`, `bas`, `hq` and `tdm`, `tdm`'s killcam, and a
+  rotation a script sets that names another map (same doc, 22).
 - Hosts United Offensive's tanks and jeeps: they spawn with retail's
   entity numbers and configstrings, the use key boards the one you look
   at, `nextvehslot`/`prevvehslot` change seats, and they drive, aim, fire
@@ -292,7 +297,9 @@ something, the bullet links it.
   one wedged seven seconds destroys itself, a wreck's respawn included.
   A vehicle's death puts its riders out as retail's does: each takes the
   5-point probe hit through his damage callback, and one it leaves whole
-  looks for a dismount spot. A seated driver's and gunner's body meets a level ray where retail's
+  looks for a dismount spot; the others' corpses slide out of the hull.
+  A body inside a vehicle is pushed out of it before its move, as
+  retail's `ClientThink_real` does. A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes; a vehicle and its sound blends leave
@@ -315,7 +322,9 @@ something, the bullet links it.
   through the seams retail's does. A submodel's patches and terrain clip
   only while its entity is linked. Shots,
   swings and throws start from each patch's muzzle (1.1's truncated
-  point, 1.5's and UO's bobbed one). Melee works. Grenades are real
+  point, 1.5's and UO's bobbed one). On 1.5 and UO each shot kicks the
+  server's gun spring, so a sighted burst climbs as retail's does. Melee
+  works. Grenades are real
   missiles that bounce (off script models, and off a player's posed bones
   at an eighth of their speed), rest (on a player too, falling once he
   leaves on 1.5 and UO) and explode with retail's falloff, and a blast
@@ -323,7 +332,8 @@ something, the bullet links it.
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as
   retail's does; a missile at the sky is freed on 1.1 and 1.5 and flies
-  on through it on UO. A rocket or a swing hurts a UO `setTakeDamage`
+  on through it on UO, and one that drops fast into water splashes (UO
+  frees a smoke grenade there). A rocket or a swing hurts a UO `setTakeDamage`
   model directly, and a swing at nothing raises no event.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.
@@ -372,8 +382,10 @@ something, the bullet links it.
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
   (fetch a bazooka or panzerschreck lying about and breach a base with
   rockets from a spot with a shot at it, plant on a breached base and
-  defuse; they ignore vehicles). The nav graph is rebuilt when the script deletes walls,
-  as `bas` does to a breached base.
+  defuse; they ignore vehicles). The nav graph is rebuilt when the script
+  deletes walls, as `bas` does to a breached base. A bot jumps through a
+  window too low for a standing body with crouch held in the air, as
+  out of mp_cassino's axis room and two rooms on mp_streets.
 
 ## What it doesn't do
 
@@ -384,7 +396,7 @@ popups work. The options screens' texture detail, filter and quality,
 model detail, dynamic lights, sync, blood, wall marks, ejecting brass and
 sound quality take effect as retail applies them; the sound provider and
 NVIDIA fog are stored but ignored, and the language picker stays hidden.
-Show Compass and Team Overlay do nothing, as in retail 1.1. CD key prints
+Show Compass and Team Overlay do nothing, as in retail 1.1, 1.5 and UO. CD key prints
 "not in vcod yet".
 There is no listen server: Start New Server always runs a separate
 `vcod-server`, Dedicated No joins it as an ordinary client (it needs the
@@ -442,9 +454,6 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- A UO rider killed with his vehicle, where he sat, stays on the hull;
-  retail's corpse slides off it
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 11.2).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.

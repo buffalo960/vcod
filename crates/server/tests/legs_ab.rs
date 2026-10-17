@@ -13,6 +13,12 @@
 //! clip's rate and its first phase (`docs/research/cod11-movers.md` 15, "A
 //! moving body's clip").
 //!
+//! `movers/mp_carentan-dm-torso.txt` and `-legs-client-torso.txt` are the
+//! same placement under `client-probes/probe_torso.gsc` with fourteen tags
+//! from the pelvis up through both arms to the weapon tag, while the client
+//! fires, reloads and aims standing, running, strafing and crouched: the
+//! torso clips over the legs (cod11-movers.md 15, "Torso over legs").
+//!
 //! `LEGS_REPORT=1` prints every compared frame.
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
@@ -30,6 +36,8 @@ use vcod_common::net::{NetClient, NetEvent};
 const MAP: &str = "mp_carentan";
 const SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-legs.txt";
 const CLIENT: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client.txt";
+const TORSO_SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-torso.txt";
+const TORSO_CLIENT: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-torso.txt";
 
 /// The player's origin, to `logPrint`'s hundredth.
 const ORIGIN_TOL: f32 = 0.02;
@@ -58,10 +66,18 @@ const BLEND_MS: i32 = 250;
 /// before (cod11-movers.md 15, "The spawn idle's phase").
 const RETAIL_IDLE_MS: i32 = 5750;
 
+/// The torso capture's [`RETAIL_IDLE_MS`], 37 snapshots (1850 ms) later
+/// than the walk's as its placement snapshot is message 352 where the walk's
+/// is 389. The settle reads 0.08 degrees off there, 11 at 7500 and 7700.
+/// `TORSO_IDLE_MS` overrides it for a sweep.
+const TORSO_IDLE_MS: i32 = 7600;
+
 /// Ours' first snapshot showing the idle comes 800 ms after the client
 /// starts connecting on a fresh server, so the client starts this many
-/// frames in.
-const JOIN_FRAMES: u32 = (RETAIL_IDLE_MS as u32 - 800) / FRAME_MS as u32;
+/// frames in for an idle set at `idle_ms`.
+fn join_frames(idle_ms: i32) -> u32 {
+    (idle_ms as u32 - 800) / FRAME_MS as u32
+}
 
 fn report() -> bool {
     std::env::var("LEGS_REPORT").is_ok_and(|v| v == "1")
@@ -114,11 +130,61 @@ fn frames<'a>(lines: impl Iterator<Item = &'a str>) -> BTreeMap<i32, Frame> {
     out
 }
 
-/// The client half: every cmd, and each snapshot's `(serverTime,
-/// commandTime, script step, legsAnim)`.
+/// The torso log's frames: the player's origin, then the fourteen tags in
+/// `probe_torso.gsc`'s order.
+fn torso_frames<'a>(lines: impl Iterator<Item = &'a str>) -> BTreeMap<i32, Frame> {
+    let mut out: BTreeMap<i32, Frame> = BTreeMap::new();
+    for line in lines.filter(|l| !l.starts_with('#')) {
+        let Some(rest) = line.find("PROBE ").map(|i| &line[i + 6..]) else {
+            continue;
+        };
+        let t: Vec<&str> = rest.split_whitespace().collect();
+        let (Some(kind), Some(time)) = (t.first(), t.get(1).and_then(|s| s.parse().ok())) else {
+            continue;
+        };
+        let v = vectors(rest);
+        let f = out.entry(time).or_default();
+        match *kind {
+            "o" => f.origin = v[0],
+            "b" => f.bones.push((v[0], v[1])),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The torso log's tags, by index.
+const TORSO_TAGS: [&str; 14] = [
+    "pelvis",
+    "spine",
+    "spine2",
+    "neck",
+    "head",
+    "l upperarm",
+    "l forearm",
+    "l hand",
+    "r upperarm",
+    "r forearm",
+    "r hand",
+    "tag_weapon_right",
+    "l foot",
+    "r foot",
+];
+
+/// One snapshot of the client half.
+struct Snap {
+    t: i32,
+    ct: i32,
+    step: String,
+    legs: i32,
+    dir: i32,
+    torso: i32,
+}
+
+/// The client half: every cmd, and each snapshot.
 struct Walk {
     cmds: Vec<(UserCmd, [i32; 3])>,
-    snaps: Vec<(i32, i32, String, i32, i32)>,
+    snaps: Vec<Snap>,
 }
 
 fn walk(text: &str) -> Walk {
@@ -148,43 +214,67 @@ fn walk(text: &str) -> Walk {
             };
             cmds.push((cmd, v3("world")));
         } else if line.starts_with("!snap") {
-            snaps.push((
-                n("t"),
-                n("ct"),
-                kv["step"].to_string(),
-                n("legs"),
-                n("movementDir"),
-            ));
+            snaps.push(Snap {
+                t: n("t"),
+                ct: n("ct"),
+                step: kv["step"].to_string(),
+                legs: n("legs"),
+                dir: n("movementDir"),
+                torso: n("torso"),
+            });
         }
     }
     Walk { cmds, snaps }
 }
 
-/// Ours' bone log over the same walk, and its `legsAnim` by serverTime.
+/// Ours' bone log over the same walk, and its `(legsAnim, movementDir,
+/// torsoAnim)` by serverTime.
 struct Ours {
     log: Vec<String>,
-    legs: BTreeMap<i32, (i32, i32)>,
+    legs: BTreeMap<i32, (i32, i32, i32)>,
 }
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(run_ours).as_ref()
+    RUN.get_or_init(|| {
+        run_ours(
+            "probe_legs",
+            include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_legs.gsc"),
+            CLIENT,
+            RETAIL_IDLE_MS,
+        )
+    })
+    .as_ref()
 }
 
-fn run_ours() -> Option<Ours> {
+fn ours_torso() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        run_ours(
+            "probe_torso",
+            include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_torso.gsc"),
+            TORSO_CLIENT,
+            std::env::var("TORSO_IDLE_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(TORSO_IDLE_MS),
+        )
+    })
+    .as_ref()
+}
+
+/// Ours under `gametype` replaying the client half at `client`.
+fn run_ours(gametype: &str, script: &str, client: &str, idle_ms: i32) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs_11()?;
-    let walk = walk(&std::fs::read_to_string(CLIENT).unwrap());
+    let walk = walk(&std::fs::read_to_string(client).unwrap());
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_legs"), now);
-    sv.overlay_script(
-        "maps/mp/gametypes/probe_legs",
-        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_legs.gsc"),
-    );
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, gametype), now);
+    sv.overlay_script(&format!("maps/mp/gametypes/{gametype}"), script);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    for _ in 0..JOIN_FRAMES {
+    for _ in 0..join_frames(idle_ms) {
         now += Duration::from_millis(FRAME_MS as u64);
         sv.tick(now);
     }
@@ -192,10 +282,10 @@ fn run_ours() -> Option<Ours> {
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "m1carbine_mp");
     let p = &vcod_common::net::protocol::PROTOCOL_V1;
-    let placed = walk.snaps.first().expect("a snapshot").0;
-    let acked: BTreeMap<i32, i32> = walk.snaps.iter().map(|(t, ct, ..)| (*t, *ct)).collect();
+    let placed = walk.snaps.first().expect("a snapshot").t;
+    let acked: BTreeMap<i32, i32> = walk.snaps.iter().map(|s| (s.t, s.ct)).collect();
     let mut legs = BTreeMap::new();
-    let last = walk.snaps.last().unwrap().0;
+    let last = walk.snaps.last().unwrap().t;
     let mut next_cmd = 0;
     let mut last_st = i32::MIN;
     loop {
@@ -241,11 +331,11 @@ fn run_ours() -> Option<Ours> {
         }
         assert!(sv.script_aborts().is_empty(), "{:?}", sv.script_aborts());
         if let Some(s) = cl.snapshots().newest() {
-            if legs.values().all(|l: &(i32, i32)| l.0 == 0) {
+            if legs.values().all(|l: &(i32, i32, i32)| l.0 == 0) {
                 let l = s.ps.field_i32(p, "legsAnim");
                 assert!(
-                    l == 0 || s.server_time == RETAIL_IDLE_MS,
-                    "ours set the spawn idle at {}, not retail's {RETAIL_IDLE_MS}",
+                    l == 0 || s.server_time == idle_ms,
+                    "ours set the spawn idle at {}, not retail's {idle_ms}",
                     s.server_time
                 );
             }
@@ -254,6 +344,7 @@ fn run_ours() -> Option<Ours> {
                 (
                     s.ps.field_i32(p, "legsAnim"),
                     s.ps.field_i32(p, "movementDir"),
+                    s.ps.field_i32(p, "torsoAnim"),
                 ),
             );
         }
@@ -290,18 +381,15 @@ fn a_walking_body_is_posed_like_retail() {
     let retail = frames(std::fs::read_to_string(SERVER).unwrap().lines());
     let ours = frames(run.log.iter().map(String::as_str));
     let walk = walk(&std::fs::read_to_string(CLIENT).unwrap());
-    let step: BTreeMap<i32, &str> = walk
-        .snaps
-        .iter()
-        .map(|(t, _, s, ..)| (*t, s.as_str()))
-        .collect();
+    let step: BTreeMap<i32, &str> = walk.snaps.iter().map(|s| (s.t, s.step.as_str())).collect();
     let mut bad = Vec::new();
     // The anim selection first: the same index and movementDir on the same
     // frame, so a bone row that differs is the pose's doing.
-    for (t, _, _, l, dir) in &walk.snaps {
-        let o = run.legs.get(t);
-        let differs = o.is_some_and(|o| o.0 & 511 != l & 511 || o.1 != *dir);
-        if differs || report() && o != Some(&(*l, *dir)) {
+    for s in &walk.snaps {
+        let (t, l, dir) = (s.t, s.legs, s.dir);
+        let o = run.legs.get(&t).map(|o| (o.0, o.1));
+        let differs = o.is_some_and(|o| o.0 & 511 != l & 511 || o.1 != dir);
+        if differs || report() && o != Some((l, dir)) {
             println!("{t} legsAnim, movementDir: retail {l} {dir} ours {o:?}");
         }
         if differs {
@@ -314,8 +402,8 @@ fn a_walking_body_is_posed_like_retail() {
     let changes: std::collections::BTreeSet<i32> = walk
         .snaps
         .windows(2)
-        .filter(|w| w[0].3 != w[1].3)
-        .map(|w| w[1].0)
+        .filter(|w| w[0].legs != w[1].legs)
+        .map(|w| w[1].t)
         .collect();
     let mut worst: BTreeMap<String, (f32, f32)> = BTreeMap::new();
     let mut compared = 0;
@@ -523,4 +611,125 @@ fn a_drawn_body_off_the_arrivals_stays_within_a_frame_of_clip() {
     };
     assert!(compared > 2000, "only {compared} drawn frames compared");
     assert!(worst < 3.0, "feet {worst:.2} off the end frame's");
+}
+
+/// A bone's origin and turn off retail's, blends and the torso clips'
+/// blend-outs included: ours reads 0.04 and 0.13 at worst.
+const TORSO_TOL: f32 = 0.05;
+const TORSO_TURN: f32 = 0.2;
+
+/// Fire, reload and aim on the move: the anim selection on every snapshot
+/// and fourteen bones from the pelvis to the weapon tag on every frame
+/// (cod11-movers.md 15, "Torso over legs").
+#[test]
+fn a_body_firing_and_reloading_on_the_move_is_posed_like_retail() {
+    let Some(run) = ours_torso() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let retail = torso_frames(std::fs::read_to_string(TORSO_SERVER).unwrap().lines());
+    let ours = torso_frames(run.log.iter().map(String::as_str));
+    let walk = walk(&std::fs::read_to_string(TORSO_CLIENT).unwrap());
+    let step: BTreeMap<i32, &str> = walk.snaps.iter().map(|s| (s.t, s.step.as_str())).collect();
+    let mut bad = Vec::new();
+    for s in &walk.snaps {
+        let r = (s.legs, s.dir, s.torso);
+        let o = run.legs.get(&s.t);
+        let differs =
+            o.is_some_and(|o| o.0 & 511 != r.0 & 511 || o.1 != r.1 || o.2 & 511 != r.2 & 511);
+        if differs || report() && o != Some(&r) {
+            println!(
+                "{} {} legs, dir, torso: retail {r:?} ours {o:?}",
+                s.t, s.step
+            );
+        }
+        if differs {
+            bad.push(format!(
+                "{} {} legs, dir, torso: retail {r:?} ours {o:?}",
+                s.t, s.step
+            ));
+        }
+    }
+    let changes: std::collections::BTreeSet<i32> = walk
+        .snaps
+        .windows(2)
+        .filter(|w| w[0].legs != w[1].legs || w[0].torso != w[1].torso)
+        .map(|w| w[1].t)
+        .collect();
+    let mut worst: BTreeMap<String, (f32, f32)> = BTreeMap::new();
+    let mut worst_bone = [(0.0f32, 0.0f32); TORSO_TAGS.len()];
+    let mut compared = 0;
+    for (t, r) in &retail {
+        let Some(o) = ours.get(t).filter(|_| r.bones.len() == TORSO_TAGS.len()) else {
+            continue;
+        };
+        // The placement frame poses nothing yet.
+        if *t == walk.snaps[0].t {
+            continue;
+        }
+        compared += 1;
+        let label = step
+            .range(..=*t)
+            .next_back()
+            .map_or("?", |(_, s)| *s)
+            .to_string();
+        if off(r.origin, o.origin) > ORIGIN_TOL {
+            bad.push(format!(
+                "{t} {label} origin: retail {:?} ours {:?}",
+                r.origin, o.origin
+            ));
+        }
+        let (mut dp, mut da) = (0.0f32, 0.0f32);
+        for (k, (rb, ob)) in r.bones.iter().zip(&o.bones).enumerate() {
+            let (p, a) = (off(rb.0, ob.0), turn(rb.1, ob.1));
+            worst_bone[k].0 = worst_bone[k].0.max(p);
+            worst_bone[k].1 = worst_bone[k].1.max(a);
+            dp = dp.max(p);
+            da = da.max(a);
+        }
+        let w = worst.entry(label.clone()).or_default();
+        w.0 = w.0.max(dp);
+        w.1 = w.1.max(da);
+        let posed = t - FRAME_MS as i32;
+        let blending = changes
+            .range(..=posed)
+            .next_back()
+            .is_some_and(|c| posed - c < BLEND_MS);
+        if dp > TORSO_TOL || da > TORSO_TURN {
+            bad.push(format!(
+                "{t} {label}{}: bones off {dp:.2}, turned {da:.2}",
+                if blending { " (blending)" } else { "" }
+            ));
+        }
+        if report() {
+            println!(
+                "{t} {label} bones {dp:.2} angles {da:.2}{}",
+                if blending { " blending" } else { "" }
+            );
+            for (k, (rb, ob)) in r.bones.iter().zip(&o.bones).enumerate() {
+                let (p, a) = (off(rb.0, ob.0), turn(rb.1, ob.1));
+                if p > 0.05 || a > 0.3 {
+                    println!(
+                        "   {} retail {:?} {:?}\n   {} ours   {:?} {:?}",
+                        TORSO_TAGS[k], rb.0, rb.1, TORSO_TAGS[k], ob.0, ob.1
+                    );
+                }
+            }
+        }
+    }
+    if report() {
+        for (label, (p, a)) in &worst {
+            println!("{label}: worst bone origin {p:.2}, turn {a:.2}");
+        }
+        for (k, (p, a)) in worst_bone.iter().enumerate() {
+            println!("{}: worst origin {p:.2}, turn {a:.2}", TORSO_TAGS[k]);
+        }
+    }
+    assert!(compared > 500, "only {compared} frames compared");
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }

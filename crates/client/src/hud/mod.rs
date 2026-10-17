@@ -226,13 +226,24 @@ impl Hud {
     /// Net does not filter `ServerCommand`; `Scoreboard::on_server_command`
     /// ignores anything but `b`. `CG_ServerCommand` (0x3002e0d0) localizes
     /// a chat line or a message through `loc` before it is kept.
-    pub fn on_net_event(&mut self, ev: &NetEvent, now: f32, loc: &Localized) {
+    pub fn on_net_event(
+        &mut self,
+        ev: &NetEvent,
+        now: f32,
+        loc: &Localized,
+        bound: &dyn Fn(&str) -> Option<String>,
+    ) {
         let now_ms = (now * 1000.0) as i32;
         match ev {
             NetEvent::Chat { text, .. } => self.chat.push(&loc.message(text), now_ms),
             NetEvent::ServerCommand(tokens) => {
                 self.scoreboard.on_server_command(tokens);
-                let text = || bind_keys(&loc.message(tokens.get(1).map_or("", String::as_str)));
+                let text = || {
+                    bind_keys(
+                        &loc.message(tokens.get(1).map_or("", String::as_str)),
+                        bound,
+                    )
+                };
                 match tokens.first().map(String::as_str) {
                     Some("a") => self.weapon_selected(),
                     Some("m") => self
@@ -254,6 +265,14 @@ impl Hud {
     /// (0x300207b0, which the `e` and `f` commands also reach).
     pub fn game_message(&mut self, text: &str, now_ms: i32) {
         self.game_messages.push(text, now_ms);
+    }
+
+    /// `cg_gameMessageWidth` and `cg_gameBoldMessageWidth`, read as the
+    /// cgame's vmCvar integers each frame, for a window `vid_width` px wide
+    /// ([`messages::line_width`]).
+    pub fn set_message_widths(&mut self, game: i32, bold: i32, vid_width: u32) {
+        self.game_messages.width = messages::line_width(game, vid_width);
+        self.bold_messages.width = messages::line_width(bold, vid_width);
     }
 
     /// A weapon-select bind ran: the weapon name shows again.
@@ -416,6 +435,7 @@ impl Hud {
 
     /// This frame's quads from every element, at [`HUD_SCALE`].
     pub fn build(&mut self, f: &HudFrame) -> Vec<HudQuad> {
+        font::set_team_colours(f.protocol.team_colour_codes, f.cvar);
         let mut out = Vec::new();
         let screen = (f.screen_w, f.screen_h);
         let pm_type = |ps: &PlayerState| ps.field_i32(f.protocol, "pm_type");
@@ -458,6 +478,7 @@ impl Hud {
                 f.configstrings,
                 &f.protocol.cs,
                 f.localized,
+                f.bound_key,
                 &self.fonts,
                 f.server_time,
                 screen,
@@ -583,6 +604,7 @@ impl Hud {
             own_client: f.own_client,
             client: &client,
             cvar: f.cvar,
+            bound_key: f.bound_key,
             loc: f.localized,
             gametype,
             map: info("mapname"),
@@ -617,7 +639,7 @@ fn obituary_center_print(ob: &killfeed::Obituary, f: &HudFrame) -> Option<(Strin
     } else {
         centerprint::OBITUARY_Y
     };
-    Some((bind_keys(&f.localized.message(&msg)), y))
+    Some((bind_keys(&f.localized.message(&msg), f.bound_key), y))
 }
 
 /// A line being typed after `messagemode` (`say`) or `messagemode2`
@@ -628,13 +650,83 @@ pub struct ChatField {
     pub text: String,
 }
 
-/// The cgame's `[{command}]` pass over a localized message (0x300229b0):
-/// the key bound to the command, in its brackets. Only the use key is
-/// filled; any other command is left as written, which is what retail shows
-/// for an unbound one.
-pub fn bind_keys(text: &str) -> String {
-    text.replace("[{+activate}]", "[F]")
+/// The cgame's `[{command}]` pass over a localized message (1.1
+/// 0x300229b0, 1.5 and UO the same shape): the first `[{` with a `}]`
+/// after it has the command between them replaced by its key text
+/// (`bound`, 0x30046940), the brackets kept. An unbound command, a later
+/// `[{`, or a result past 1023 bytes leaves the text as written.
+pub fn bind_keys(text: &str, bound: &dyn Fn(&str) -> Option<String>) -> String {
+    let b = text.as_bytes();
+    // The scan stops with fewer than five bytes left from the `[`.
+    let Some(open) = (0..b.len().saturating_sub(4)).find(|&i| b[i] == b'[' && b[i + 1] == b'{')
+    else {
+        return text.to_string();
+    };
+    let Some(close) = (open..b.len() - 1).find(|&j| b[j] == b'}' && b[j + 1] == b']') else {
+        return text.to_string();
+    };
+    let Some(keys) = text.get(open + 2..close).and_then(bound) else {
+        return text.to_string();
+    };
+    let out = format!("{}{keys}{}", &text[..=open], &text[close + 1..]);
+    if out.len() > 1023 {
+        log::info!("String too long to add key binding: {text}");
+        return text.to_string();
+    }
+    out
 }
+
+/// The cgame's bind table (1.1 0x3006f150, 1.5 0x30071150, UO
+/// 0x3008adb8, 24-byte rows): the only commands its key lookup
+/// (0x30046860) names. Anything else reads unbound.
+pub fn bind_commands(p: &Protocol) -> &'static [&'static str] {
+    match p.version {
+        6 => BIND_COMMANDS_15,
+        22 => BIND_COMMANDS_UO,
+        _ => BIND_COMMANDS_11,
+    }
+}
+
+#[rustfmt::skip]
+const BIND_COMMANDS_11: &[&str] = &[
+    "+scores", "+speed", "+forward", "+back", "+moveleft", "+moveright", "+moveup",
+    "+movedown", "+left", "+right", "+strafe", "+lookup", "+lookdown", "+mlook",
+    "centerview", "+attack", "weapprev", "weapnext", "weapalt", "scoresUp", "scoresDown",
+    "messagemode", "messagemode2", "messagemode3", "messagemode4", "+activate", "+reload",
+    "help", "+leanleft", "+leanright", "vote yes", "vote no", "mp_QuickMessage",
+    "weaponslot primary", "weaponslot primaryb", "weaponslot pistol", "weaponslot grenade",
+    "weaponslot smokegrenade", "+melee", "+prone", "lowerstance", "raisestance",
+    "togglecrouch", "toggleprone", "goprone", "gocrouch", "+gostand", "toggle cl_run",
+    "screenshot", "screenshotJPEG",
+];
+
+/// 1.5's: `messagesquad` where 1.1 has `messagemode4`.
+#[rustfmt::skip]
+const BIND_COMMANDS_15: &[&str] = &[
+    "+scores", "+speed", "+forward", "+back", "+moveleft", "+moveright", "+moveup",
+    "+movedown", "+left", "+right", "+strafe", "+lookup", "+lookdown", "+mlook",
+    "centerview", "+attack", "weapprev", "weapnext", "weapalt", "scoresUp", "scoresDown",
+    "messagemode", "messagemode2", "messagemode3", "messagesquad", "+activate", "+reload",
+    "help", "+leanleft", "+leanright", "vote yes", "vote no", "mp_QuickMessage",
+    "weaponslot primary", "weaponslot primaryb", "weaponslot pistol", "weaponslot grenade",
+    "weaponslot smokegrenade", "+melee", "+prone", "lowerstance", "raisestance",
+    "togglecrouch", "toggleprone", "goprone", "gocrouch", "+gostand", "toggle cl_run",
+    "screenshot", "screenshotJPEG",
+];
+
+#[rustfmt::skip]
+const BIND_COMMANDS_UO: &[&str] = &[
+    "+scores", "+speed", "+forward", "+back", "+moveleft", "+moveright", "+moveup",
+    "+movedown", "+left", "+right", "+strafe", "+lookup", "+lookdown", "+mlook",
+    "centerview", "+attack", "weapprev", "weapnext", "weapalt", "scoresUp", "scoresDown",
+    "messagemode", "messagemode2", "messagemode3", "messagemode4", "+activate", "+reload",
+    "help", "+leanleft", "+leanright", "vote yes", "vote no", "mp_QuickMessage",
+    "mp_quickmap", "mp_purchase", "weaponslot primary", "weaponslot primaryb",
+    "weaponslot pistol", "weaponslot grenade", "weaponslot smokegrenade", "weaponslot satchel",
+    "weaponslot binocular", "+melee", "+prone", "lowerstance", "raisestance", "togglecrouch",
+    "toggleprone", "goprone", "gocrouch", "+gostand", "toggle cl_run", "+sprint", "screenshot",
+    "screenshotJPEG",
+];
 
 /// `pm_type` 4 is a free-flying spectator and 5 the intermission; any other,
 /// a follower's copy of its target included, draws the menu HUD.
@@ -987,6 +1079,45 @@ fn compass_vehicles(ps: &PlayerState, f: &HudFrame) -> Vec<uo::VehicleSighting> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0x300229b0: the first `[{command}]` takes the command's key text;
+    /// an unbound command, an unclosed one or a later one stays as written.
+    #[test]
+    fn bind_keys_fills_the_first_bound_command() {
+        let bound = |c: &str| match c {
+            "+activate" => Some("F".to_string()),
+            "vote yes" => Some("F1 or Y".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            bind_keys("Press [{+activate}] to plant", &bound),
+            "Press [F] to plant"
+        );
+        assert_eq!(bind_keys("[{vote yes}] Yes", &bound), "[F1 or Y] Yes");
+        assert_eq!(
+            bind_keys("[{+activate}] and [{+activate}]", &bound),
+            "[F] and [{+activate}]",
+            "only the first"
+        );
+        assert_eq!(
+            bind_keys("[{+melee}] then [{+activate}]", &bound),
+            "[{+melee}] then [{+activate}]",
+            "an unbound first one ends the pass"
+        );
+        assert_eq!(bind_keys("[{+activate", &bound), "[{+activate");
+        assert_eq!(bind_keys("x[{}]", &bound), "x[{}]");
+    }
+
+    /// Each cgame's bind table, as many rows as its loop bound.
+    #[test]
+    fn the_bind_tables_hold_retails_rows() {
+        use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6};
+        assert_eq!(bind_commands(&PROTOCOL_V1).len(), 50);
+        assert_eq!(bind_commands(&PROTOCOL_V6).len(), 50);
+        assert_eq!(bind_commands(&PROTOCOL_V22).len(), 55);
+        assert!(bind_commands(&PROTOCOL_V22).contains(&"+sprint"));
+        assert!(!bind_commands(&PROTOCOL_V1).contains(&"+sprint"));
+    }
     use vcod_common::net::msg::hud_field as msg_field;
     use vcod_common::net::protocol::PROTOCOL_V1;
 
@@ -1354,7 +1485,7 @@ mod tests {
 
         hud.player.damage.hit(hit(3), [0.0; 3], 1_000);
         let restart = NetEvent::ServerCommand(vec!["n".into()]);
-        hud.on_net_event(&restart, 1.1, &Localized::default());
+        hud.on_net_event(&restart, 1.1, &Localized::default(), &|_| None);
         assert_eq!(icons(&hud), 0);
         assert_eq!(hud.player.damage.flash_alpha(1_100), None);
         assert_eq!(hud.center_print.alpha(1_100), None);
@@ -1455,10 +1586,10 @@ mod tests {
         for restart in ["n", "B"] {
             let cmd =
                 |t: &[&str]| NetEvent::ServerCommand(t.iter().map(|s| s.to_string()).collect());
-            hud.on_net_event(&cmd(&["e", "hello"]), 1.0, &loc);
-            hud.on_net_event(&cmd(&["c", "round"]), 1.0, &loc);
+            hud.on_net_event(&cmd(&["e", "hello"]), 1.0, &loc, &|_| None);
+            hud.on_net_event(&cmd(&["c", "round"]), 1.0, &loc, &|_| None);
             assert!(!hud.game_messages.is_empty() && !hud.bold_messages.is_empty());
-            hud.on_net_event(&cmd(&[restart]), 1.1, &loc);
+            hud.on_net_event(&cmd(&[restart]), 1.1, &loc, &|_| None);
             assert!(hud.game_messages.is_empty(), "{restart}");
             assert!(hud.bold_messages.is_empty(), "{restart}");
         }

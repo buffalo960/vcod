@@ -555,7 +555,12 @@ impl Allocators {
     }
 
     /// A filled slot of `range` holding `name` under `strcasecmp`.
-    fn find_folded(&mut self, cs: &[String], range: CsRange, name: &str) -> Option<usize> {
+    pub(crate) fn find_folded(
+        &mut self,
+        cs: &[String],
+        range: CsRange,
+        name: &str,
+    ) -> Option<usize> {
         let lo = self.layout.bounds(range).0;
         let next = *self.next_mut(range);
         (lo..next).find(|&s| cs[s].eq_ignore_ascii_case(name))

@@ -181,6 +181,13 @@ pub struct Save {
     /// from a `client-probes/probe_uofoot` placement facing that world yaw,
     /// on United Offensive.
     pub uofoot: Option<f32>,
+    /// `--probe-crouchjump <yaw>`: the slope capture's walk is
+    /// [`crouchjump_script`] from a `client-probes/probe_crouchjump`
+    /// placement facing that world yaw, on United Offensive.
+    pub crouchjump: Option<f32>,
+    /// `--probe-crouchjump-stand`: the same script with no crouch, the
+    /// control run.
+    pub crouchjump_stand: bool,
     pub combat: bool,
     pub ads: bool,
     pub grenade: bool,
@@ -352,6 +359,8 @@ pub fn probe(
         sprint: probe_sprint,
         autofire: probe_autofire,
         uofoot: probe_uofoot,
+        crouchjump: probe_crouchjump,
+        crouchjump_stand,
         combat: save_combat,
         ads: save_ads,
         grenade: save_grenade,
@@ -419,7 +428,8 @@ pub fn probe(
         || probe_turns
         || probe_sprint
         || probe_autofire
-        || probe_uofoot.is_some();
+        || probe_uofoot.is_some()
+        || probe_crouchjump.is_some();
     let slope = slope || save_slope || prone_crawl;
     // A crew member's slope capture records its seats, not the route.
     let pvs = pvs || save_entities || (slope && !prone_crawl && probe_vehicle.is_none());
@@ -433,6 +443,8 @@ pub fn probe(
         ProneScript::new(0.0, autofire_script())
     } else if let Some(yaw) = probe_uofoot {
         ProneScript::switching(yaw, uofoot_script(), UOFOOT_SWITCHES)
+    } else if let Some(yaw) = probe_crouchjump {
+        ProneScript::new(yaw, crouchjump_script(!crouchjump_stand))
     } else {
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
@@ -586,7 +598,9 @@ pub fn probe(
     // with the gsc's `probe_overlap 1`.
     let mut bump = BumpProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("overlap")));
     let mut wrote_bump = false;
-    let mut legs = crate::legs_probe::LegsProbe::default();
+    // A tag starting `torso` fires and reloads on the move (probe_torso).
+    let mut legs =
+        crate::legs_probe::LegsProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("torso")));
     let mut wrote_legs = false;
     let mut shock = crate::shock_probe::ShockProbe::default();
     let mut wrote_shock = false;
@@ -1615,6 +1629,8 @@ pub fn probe(
                                 SlopeWalk::Autofire
                             } else if probe_uofoot.is_some() {
                                 SlopeWalk::UoFoot
+                            } else if probe_crouchjump.is_some() {
+                                SlopeWalk::CrouchJump
                             } else {
                                 SlopeWalk::Prone
                             },
@@ -1704,6 +1720,8 @@ pub fn probe(
                 SlopeWalk::Autofire
             } else if probe_uofoot.is_some() {
                 SlopeWalk::UoFoot
+            } else if probe_crouchjump.is_some() {
+                SlopeWalk::CrouchJump
             } else if prone_crawl {
                 SlopeWalk::Prone
             } else if probe_vehicle.is_some() {
@@ -7134,8 +7152,32 @@ impl SlopeCapture {
                 format!(" veh={}", fields.join(","))
             })
             .unwrap_or_default();
+        // Every bullet-impact temp entity on the snapshot, `num:x,y,z`
+        // `;`-separated: where the probe's own rounds struck. One impact
+        // rides several snapshots.
+        let impacts: Vec<String> = snap
+            .entities
+            .iter()
+            .filter(|(_, e)| {
+                p.event_of(e.field_i32(p, "eType"))
+                    .map(nearest_v1)
+                    .is_some_and(|ev| {
+                        ev == net::event_ids::EV_BULLET_HIT_SMALL
+                            || ev == net::event_ids::EV_BULLET_HIT_LARGE
+                    })
+            })
+            .map(|(num, e)| {
+                let at = vcod_common::net::trajectory::Trajectory::read(e, p, "pos").base;
+                format!("{num}:{},{},{}", at.x, at.y, at.z)
+            })
+            .collect();
+        let imp = if impacts.is_empty() {
+            String::new()
+        } else {
+            format!(" imp={}", impacts.join(";"))
+        };
         let line = format!(
-            "{line}{vang}{veh} wire={} ammo={} clip={}",
+            "{line}{vang}{veh}{imp} wire={} ammo={} clip={}",
             wire.join(","),
             slots(&snap.ps.arrays.ammo),
             slots(&snap.ps.arrays.ammoclip)
@@ -7158,6 +7200,7 @@ enum SlopeWalk {
     Autofire,
     Vehicle,
     UoFoot,
+    CrouchJump,
 }
 
 /// Writes the route walk as `<map>-<gametype>-slope-<cmd_ms>ms.txt`: `!cmd`
@@ -7195,7 +7238,14 @@ fn write_slope_fixture(
         join.team, join.weapon
     ));
     out.push_str("# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.\n");
-    if walk == SlopeWalk::UoFoot {
+    if walk == SlopeWalk::CrouchJump {
+        out.push_str(&format!(
+            "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_crouchjump {map}\n\
+             # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
+             # --probe-crouchjump <yaw> --probe-cmd-ms {cmd_ms}: crouchjump_script() from the\n\
+             # placement, facing the --probe-crouchjump yaw. !cmd is a\n"
+        ));
+    } else if walk == SlopeWalk::UoFoot {
         out.push_str(&format!(
             "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_uofoot {map}\n\
              # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
@@ -7256,6 +7306,8 @@ fn write_slope_fixture(
         "# every non-zero netfield as decoded (pm_flags in 1.1's layout), ammo and clip\n",
     );
     out.push_str("# the non-zero slots. The cmds ahead of the first !snap went out before it.\n");
+    out.push_str("# imp, where present, is every bullet-impact temp entity the snapshot carried\n");
+    out.push_str("# as entnum:x,y,z, ;-separated; one impact rides several snapshots.\n");
     out.push_str(&format!("# cmd_ms {cmd_ms}\n"));
     // The weapon list a replay loads its defs by, where it is not 1.1's.
     if protocol.version == 22 {
@@ -7657,6 +7709,36 @@ fn autofire_script() -> Vec<ProneStep> {
         step(10200, A),
         step(10250, 0),
         step(12000, 0),
+    ]
+}
+
+/// `--probe-crouchjump`, from a `client-probes/probe_crouchjump`
+/// placement facing a window too low for a standing body: a run at the
+/// wall under it, a jump, and crouch held from the cmd after the jump's
+/// for a second (none with `crouch` false, the control), then the run on
+/// through the window and down outside (bot-navigation.md, "Walled-in
+/// spawns"). A stance key holds `up` at -127, as a retail client does.
+fn crouchjump_script(crouch: bool) -> Vec<ProneStep> {
+    use net::msg::WBUTTON_CROUCH;
+    let c = if crouch { WBUTTON_CROUCH } else { 0 };
+    let step = |at_ms, wbuttons: u8, forward, up: i8| ProneStep {
+        at_ms,
+        buttons: 0,
+        wbuttons,
+        forward,
+        right: 0,
+        up: if wbuttons != 0 { -127 } else { up },
+        yaw: 0.0,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0),
+        step(1000, 0, 127, 0),
+        step(1900, 0, 127, 127),
+        step(1950, c, 127, 0),
+        step(2950, 0, 127, 0),
+        step(5000, 0, 0, 0),
+        step(7000, 0, 0, 0),
     ]
 }
 

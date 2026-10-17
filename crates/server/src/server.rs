@@ -1282,7 +1282,7 @@ struct Round {
     held: Option<u8>,
     switched: bool,
     /// Each event the round raised, with its cmd's `serverTime`.
-    events: Vec<(vcod_common::pmove::PmEvent, i32)>,
+    events: Vec<crate::spectate::AnimEvent>,
     last_cmd: Option<UserCmd>,
 }
 
@@ -1486,6 +1486,14 @@ pub struct Server {
     outbox: Vec<(SocketAddr, Vec<u8>)>,
     limiter: RateLimiter,
     rng: u64,
+    /// The next level's script seed, `G_InitGame`'s `Rand_Init` argument:
+    /// retail passes the wall clock at every load and restart, so no level
+    /// repeats the last one's draws (map-cycle doc 4.8). `None` under
+    /// [`Server::new`], whose every level draws from `RNG_SEED`, so a test's
+    /// spawn picks hold at each level; [`Server::with_seed`] steps it.
+    level_seed: Option<u64>,
+    /// [`Server::pin_spawns`]'s queues, handed to every level's script.
+    spawn_pins: Option<crate::game::host::SpawnPins>,
     /// The map's collision and spawn, loaded by the binary; tests run
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
@@ -1530,9 +1538,10 @@ pub struct Server {
     /// The blasts this frame's missile pass set off, for the radius damage
     /// pass to charge (`crate::game::missile::Explosion`).
     pending_explosions: Vec<crate::game::missile::Explosion>,
-    /// Retail's `+set name value`: applied last in `cvars`, over
-    /// `default_mp.cfg` and the config's own, so a run can turn a script
-    /// cvar such as `scr_friendlyfire` on without a code change.
+    /// Retail's `+set name value` as `Com_StartupVariable` applies it: last
+    /// in the first level's `cvars`, over `default_mp.cfg` and the config's
+    /// own, so a run can turn a script cvar such as `scr_friendlyfire` on
+    /// without a code change. Also where a latched `sv_maxclients` waits.
     cvar_overrides: Vec<(String, String)>,
     /// `bg_fallDamageMinHeight` and `bg_fallDamageMaxHeight` as the script's
     /// cvar table last read, what every move lands with and systeminfo
@@ -1604,6 +1613,9 @@ pub struct Server {
     /// `--bots` spawns on the first tick with scripts up, once; a map change
     /// finds the bots already in their slots and rejoins them.
     bots_spawned: bool,
+    /// `SV_AddTestClient`'s process-wide `bot%d` counter (cod_lnxded
+    /// 0x80e2f9c), which `addTestClient` advances through the host's copy.
+    test_client_counter: u32,
     /// Per bot, `(sv_time of the last look, the enemy that look found)`.
     /// A fresh LOS trace per bot per tick was the other half of the 24-bot
     /// CPU load; a bot does not need a new verdict every 50 ms.
@@ -1936,7 +1948,23 @@ impl Server {
     /// A server whose generator starts from a fixed seed, so a test run
     /// replays the same bot picks, script `randomInt`s and spawn choices.
     pub fn new(cfg: ServerConfig, now: Instant) -> Self {
-        Self::with_seed(cfg, now, 0x9e37_79b9_7f4a_7c15)
+        let mut sv = Self::with_seed(cfg, now, 0x9e37_79b9_7f4a_7c15);
+        sv.level_seed = None;
+        sv
+    }
+
+    /// Test-facing: each client slot's playing spawns, in order, go to these
+    /// `(origin, angles)` instead of the script's random pick (`None` keeps
+    /// the pick), across every later level. A gate replays a retail
+    /// capture's picks with it: retail seeds the script's draws from the
+    /// wall clock (map-cycle doc 4.8).
+    pub fn pin_spawns(&mut self, pins: Vec<Vec<crate::game::host::SpawnPin>>) {
+        let queues = pins.into_iter().map(Into::into).collect();
+        let pins = Rc::new(std::cell::RefCell::new(queues));
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.spawn_pins = Some(pins.clone());
+        }
+        self.spawn_pins = Some(pins);
     }
 
     /// `new` with the generator seeded from `seed`; the binary passes the
@@ -1976,6 +2004,8 @@ impl Server {
             outbox: Vec::new(),
             limiter: RateLimiter::new(now),
             rng: seed,
+            level_seed: Some(seed),
+            spawn_pins: None,
             world: None,
             sv_time_ms: 0,
             paused_ms: 0,
@@ -2012,6 +2042,7 @@ impl Server {
             fatal: None,
             bots: BTreeMap::new(),
             bots_spawned: false,
+            test_client_counter: 0,
             bot_enemies: BTreeMap::new(),
             bot_sidesteps: BTreeMap::new(),
             nav: None,
@@ -4416,6 +4447,7 @@ impl Server {
                             at.into(),
                             crate::bots::BACK_DOWN_HEIGHT,
                         );
+                    view.crouch_jump = view.jump && follower.crouch_jumping(&g);
                     view.lip = view.jump
                         && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
                             if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
@@ -4587,6 +4619,37 @@ impl Server {
             }
             log::info!("client {slot} {name:?} connected (bot, team {asks})");
         }
+    }
+
+    /// The `Client` behind an `addTestClient` slot, whose `ClientConnect` and
+    /// `ClientBegin` the builtin already ran: `CS_ACTIVE` at once, a
+    /// spectator sim at the origin `ClientConnect`'s zeroing leaves, the
+    /// userinfo `SV_AddTestClient` connects with (0x808759b) and no
+    /// netchan. It sends no cmds and no brain drives it.
+    fn install_test_client(
+        clients: &mut [Option<Client>],
+        slot: usize,
+        name: String,
+        proto: &'static Protocol,
+        sv_time_ms: i32,
+    ) {
+        let Some(entry) = clients.get_mut(slot) else {
+            return;
+        };
+        let userinfo = format!(
+            "\\cg_predictItems\\1\\cl_anonymous\\0\\handicap\\100\\color\\4\\head\\default\\model\\multi\\snaps\\20\\rate\\5000\\name\\{name}\\protocol\\{}\\ip\\bot",
+            proto.version
+        );
+        let addr = SocketAddr::from(([127, 0, 0, 1], 65000 - slot as u16));
+        let mut client = Client::new(addr, 0, 0, userinfo, Instant::now());
+        client.is_bot = true;
+        client.state = ClientState::Active;
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(proto);
+        client.sim = Some(sim);
+        client.last_processed_st = sv_time_ms;
+        log::info!("client {slot} {name:?} connected (test client)");
+        *entry = Some(client);
     }
 
     /// One slot's `StuckInClient` view: `None` for a free slot, `own_view`
@@ -4974,6 +5037,7 @@ impl Server {
             jump: false,
             leap: false,
             lip: false,
+            crouch_jump: false,
             stop: false,
             run_off: false,
             move_scale: def
@@ -5509,8 +5573,9 @@ impl Server {
     /// Past the first level the table comes from the one the outgoing level
     /// left ([`Self::carried_cvars`]) rather than from `default_mp.cfg`
     /// again: retail's is process-global and a script's `setCvar` survives
-    /// both boundaries. The config mirrors and the `+set` overrides are
-    /// replayed on top either way, so a `--set` still outranks a script.
+    /// both boundaries. The `--set`s go in at the first load only, as
+    /// `Com_StartupVariable` runs once; [`Self::set_cvar`] writes the
+    /// running table after that.
     fn cvars(&self, fs: &vcod_common::pk3::Pk3Fs) -> crate::cvars::Cvars {
         let mut cvars = match self.carried_cvars.clone() {
             Some(c) => c,
@@ -5537,14 +5602,24 @@ impl Server {
         // section 3 step 15), which a script's `getCvar("mapname")` reads.
         cvars.set("mapname", &self.cfg.map);
         cvars.set("sv_hostname", &self.cfg.hostname);
-        cvars.set("sv_maxclients", &self.cfg.max_clients.to_string());
+        // Latched: a `set` while a level ran waits in the overrides.
+        cvars.set(
+            "sv_maxclients",
+            &self.pending_cvar("sv_maxclients", &self.cfg.max_clients.to_string()),
+        );
         cvars.set("dedicated", &self.dedicated.to_string());
         cvars.set("sv_pure", "0");
         cvars.set("sv_running", "1");
         cvars.set("sv_serverid", &self.server_id.to_string());
         cvars.set("sv_cheats", if self.cheats { "1" } else { "0" });
-        for (name, value) in &self.cvar_overrides {
-            cvars.set(name, value);
+        // `Com_StartupVariable` runs from `Com_Init` only, never from
+        // `SV_SpawnServer`, so the command line's sets go in once, over
+        // `default_mp.cfg`; past that a script's `setCvar` stands
+        // (map-cycle doc 4.5).
+        if self.carried_cvars.is_none() {
+            for (name, value) in &self.cvar_overrides {
+                cvars.set(name, value);
+            }
         }
         if self.v15() {
             cvars.set_ui_cvars();
@@ -5739,7 +5814,12 @@ impl Server {
             area: carry.area.filter(|_| restart),
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
+            seed: self.level_seed,
+            spawn_pins: self.spawn_pins.clone(),
         };
+        if let Some(seed) = self.level_seed.as_mut() {
+            *seed = vcod_common::rng::xorshift(seed) | 1;
+        }
         let fs_paks = fs.clone();
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
@@ -5859,9 +5939,12 @@ impl Server {
         Some(self.script.as_ref()?.cvars().get(name).to_string())
     }
 
-    /// A `+set` for the next `load_scripts`. `sv_mapRotation` and
-    /// `g_gametype` also mirror into their own fields, so `--set` and
-    /// `map_rotate`'s `gametype` token both work through one value
+    /// `Cvar_Set`: before the first load a `+set` for it to stamp
+    /// (`Com_StartupVariable`), after it a write to the running table, or to
+    /// the carried one between levels. `g_gametype` and `sv_maxclients` are
+    /// latched and wait for the next load. `sv_mapRotation` and `g_gametype`
+    /// also mirror into their own fields, so `--set` and `map_rotate`'s
+    /// `gametype` token both work through one value
     /// (docs/research/cod11-map-cycle.md section 5).
     pub fn set_cvar(&mut self, name: &str, value: &str) {
         // 1.5b registers `sv_punkbuster` read-only ahead of the command
@@ -5879,6 +5962,15 @@ impl Server {
             None => self
                 .cvar_overrides
                 .push((name.to_string(), value.to_string())),
+        }
+        let latched =
+            name.eq_ignore_ascii_case("g_gametype") || name.eq_ignore_ascii_case("sv_maxclients");
+        if !latched {
+            if let Some(rt) = self.script.as_mut() {
+                rt.host.cvars.set(name, value);
+            } else if let Some(c) = self.carried_cvars.as_mut() {
+                c.set(name, value);
+            }
         }
         self.apply_engine_cvar(name, value);
         // Latched: serverinfo keeps the running level's value until a load,
@@ -6462,6 +6554,14 @@ impl Server {
         self.console.push_back(line.to_string());
     }
 
+    /// A command-line `+set` placed after `+map`: `Com_AddStartupCommands`
+    /// queues it behind the map, so it runs as a console `set` once the
+    /// level has loaded, over the script's load-time writes (map-cycle doc
+    /// 4.5).
+    pub fn push_set(&mut self, name: &str, value: &str) {
+        self.push_console(&format!("set {name} \"{value}\""));
+    }
+
     /// `Cbuf_Execute`: every queued line through [`Self::exec_console_line`].
     /// A command pushed by a builtin during the script pass runs here, at the
     /// top of the next tick, which is `EXEC_APPEND`. The frame loop runs it
@@ -7011,8 +7111,6 @@ impl Server {
     /// `Cvar_Set_f`: a read-only, init or (without `sv_cheats`) cheat cvar
     /// refuses, a latched one keeps its value until the next load and says
     /// so, anything else is written to the running level's table at once.
-    /// A `--set` override of the same name follows, so the next load does
-    /// not put the old value back.
     fn console_set(&mut self, name: &str, value: &str) {
         if let Some((canon, live, pending)) = self.latched_cvar(name) {
             let mut waiting = (pending != live).then_some(pending);
@@ -7031,23 +7129,13 @@ impl Server {
             }
         };
         match outcome {
-            crate::cvars::ConsoleSet::Refused(msg) => {
-                self.print(&msg);
-                return;
-            }
+            crate::cvars::ConsoleSet::Refused(msg) => self.print(&msg),
             crate::cvars::ConsoleSet::Latched(msg) => {
                 if let Some(msg) = msg {
                     self.print(&msg);
                 }
             }
             crate::cvars::ConsoleSet::Applied => self.apply_engine_cvar(name, value),
-        }
-        if let Some((_, v)) = self
-            .cvar_overrides
-            .iter_mut()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        {
-            *v = value.to_string();
         }
     }
 
@@ -7301,6 +7389,7 @@ impl Server {
         let mut ranks_dirty = false;
         // A client that dropped between the packet and here has nothing left
         // to run its command against.
+        let svs_now = self.svs_time_ms();
         let queued: Vec<(usize, ScriptCommand)> = std::mem::take(&mut self.pending_script_commands)
             .into_iter()
             .filter(|(slot, _)| self.clients[*slot].is_some())
@@ -7325,8 +7414,32 @@ impl Server {
                     }
                 }
             }
+            // `addTestClient` can run on any script entry (a load's settle
+            // frames too), so the counter is read back before it goes in.
+            let counter = self.test_client_counter.max(rt.host.test_clients.counter);
+            rt.host.test_clients.counter = counter;
+            rt.set_network_time(svs_now);
+            for (slot, name) in std::mem::take(&mut rt.host.test_clients.added) {
+                Self::install_test_client(
+                    &mut self.clients,
+                    slot,
+                    name,
+                    self.proto,
+                    self.sv_time_ms,
+                );
+            }
             mirror_roster(&self.clients, rt);
             rt.run_threads(self.sv_time_ms);
+            self.test_client_counter = rt.host.test_clients.counter;
+            for (slot, name) in std::mem::take(&mut rt.host.test_clients.added) {
+                Self::install_test_client(
+                    &mut self.clients,
+                    slot,
+                    name,
+                    self.proto,
+                    self.sv_time_ms,
+                );
+            }
             // The vehicle guns the threads fired (`fireTurret` and kin run
             // their rounds inside the call).
             vehicle_fire(
@@ -7815,13 +7928,15 @@ impl Server {
                 );
                 // `takedamage` off the session state (0x40ed9, 0x40f93,
                 // 0x4107c, and `SpectatorClientEndFrame` 0x40788).
-                if let Some(session) = rt.client_session(slot) {
+                let session = rt.client_session(slot);
+                if let Some(session) = session {
                     let playing = session.state == follow::SessionState::Playing;
                     rt.set_client_takedamage(slot, playing);
                 }
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
                 };
+                sim.session = session.map(|s| s.state);
                 sim.update_contents();
                 let live = sim.pm_type == PmType::Normal && !sim.dead && sim.health > 0;
                 if live {
@@ -8231,6 +8346,9 @@ impl Server {
     /// what each slot replayed, for the trace line `send_snapshots` writes.
     fn replay_moves(&mut self) -> Vec<MoveSummary> {
         use vcod_common::movetrace::{Body, MoveWorld};
+        use vcod_common::net::event_ids::{
+            EV_FIRE_WEAPON_MG42, EV_FIRE_WEAPONB, EV_UO_FIRE_WEAPONC,
+        };
         use vcod_common::pmove::weapon::{
             EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_WEAPON_ALT,
         };
@@ -8371,26 +8489,66 @@ impl Server {
                 frozen = sim.follow.on;
             }
             let mut raised = Vec::new();
+            // The movetype each of `raised` selects its anim by.
+            let mut raised_movetype = Vec::new();
             let mut take = None;
             if !frozen {
                 // The aim block runs once per cmd, on the whole cmd, before
                 // the chop (`ClientThink_real` 0x40169-0x40456).
                 sim.update_aim(dt_ms, now_ms, weapons.defs());
+                // A UO body inside a vehicle's collmap: the vehicle may sit
+                // out this cmd's pmove (coduo-vehicles.md 11.6).
+                let unlinked = match (collision, self.script.as_ref()) {
+                    (Some(w), Some(rt))
+                        if sim.ps.rules == vcod_common::pmove::MoveRules::Uo
+                            && spectating[slot].is_none() =>
+                    {
+                        sim.vehicle_overlap(MoveWorld::new(w, &bodies, slot as u32), |e| {
+                            let id = rt.host.ents.handle(e)?;
+                            let v = rt.host.vehicles.live.get(&id)?;
+                            Some((v.pose.origin.into(), v.velocity.into()))
+                        })
+                        .and_then(|e| w.unlink_model_instance(e))
+                    }
+                    _ => None,
+                };
                 // A hitching client's gap is simulated, not discarded: see
                 // `cmd::chop`.
                 vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd, |step, dt| {
-                    raised.extend(sim.step(
+                    let events = sim.step(
                         step,
                         dt,
                         collision.map(|w| {
                             MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
                         }),
                         weapons.defs(),
-                    ));
+                    );
+                    let movetype = sim.note_footsteps(step);
+                    raised_movetype.extend(events.iter().map(|_| movetype));
+                    raised.extend(events);
                     bodies.retain(|b| b.entity != slot as u32);
                     bodies.extend(sim.body(slot as u32));
                     sim.ps.jump_latched
                 });
+                if let (Some(u), Some(w)) = (unlinked, collision) {
+                    w.relink_model_instance(u);
+                }
+            }
+            // `BG_PlayerStateToEntityState` hands each new event to
+            // `G_PlayerEvent` after `Pmove`, ahead of `ClientEvents`: on 1.5
+            // and UO a fire event kicks the gun spring the next cmd's aim
+            // reads (cod15-movement.md 6).
+            for e in &raised {
+                if matches!(
+                    e.event,
+                    EV_FIRE_WEAPON
+                        | EV_FIRE_WEAPONB
+                        | EV_FIRE_WEAPON_LASTSHOT
+                        | EV_FIRE_WEAPON_MG42
+                        | EV_UO_FIRE_WEAPONC
+                ) {
+                    sim.fire_recoil(weapons.defs(), || rand_from(&mut self.rng));
+                }
             }
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
             // falls, in the order it raised them, fired below before its
@@ -8504,9 +8662,12 @@ impl Server {
                 }
             }
             let alt_switch = raised.iter().any(|e| e.event == EV_WEAPON_ALT);
-            round
-                .events
-                .extend(raised.iter().map(|&e| (e, cmd.server_time)));
+            round.events.extend(
+                raised
+                    .iter()
+                    .zip(raised_movetype)
+                    .map(|(&e, m)| (e, cmd.server_time, m)),
+            );
             round.switched |= sim.ps.weapon != held;
             let t = Touched {
                 slot,
@@ -9245,12 +9406,17 @@ impl Server {
                 if hidden {
                     None
                 } else if sim.linked() {
-                    Some((
-                        i as u32,
-                        copied.unwrap_or_else(|| {
-                            sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
-                        }),
-                    ))
+                    let mut e = copied.unwrap_or_else(|| {
+                        sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
+                    });
+                    // Killed after its end frame copied it, its session
+                    // still `playing` there: the corpse relink still lands.
+                    if sim.dead
+                        && let Some(f) = msg::EntityState::field_index(self.proto, "solid")
+                    {
+                        e.fields[f] = sim.linked_solid;
+                    }
+                    Some((i as u32, e))
                 } else if sim.dead {
                     let mut e = copied?;
                     if let Some(f) = msg::EntityState::field_index(self.proto, "solid") {
@@ -10668,6 +10834,73 @@ mod tests {
         assert_eq!(cvars.get("mapname"), "mp_carentan");
     }
 
+    /// Doc 4.5: `Com_StartupVariable` runs from `Com_Init` only, so a
+    /// `--set` goes into the first level's table and a script's later
+    /// `setCvar` of it survives a restart and a map change. Each load of
+    /// this gametype appends to the cvar; a replay of the `--set` at each
+    /// load would keep resetting it to one `x`.
+    #[test]
+    fn a_set_applies_once_and_a_scripts_write_outlives_later_loads() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let mut now = Instant::now();
+        let mut sv = Server::new(
+            ServerConfig {
+                gametype: "trail".into(),
+                ..cfg()
+            },
+            now,
+        );
+        sv.overlay_script(
+            "maps/mp/gametypes/trail",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
+             setCvar(\"vc_trail\", getCvar(\"vc_trail\") + \"x\"); }",
+        );
+        sv.set_cvar("vc_trail", "a");
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("ax"));
+        now += Duration::from_millis(50);
+        sv.push_console("map_restart");
+        sv.tick(now);
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("axx"));
+        sv.spawn_server("mp_brecourt").expect("the map load failed");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("axxx"));
+
+        // A set while the level runs is `Cvar_Set` on the live table, and
+        // the next load builds on it.
+        sv.set_cvar("vc_trail", "b");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("b"));
+        sv.spawn_server("mp_carentan").expect("the map load failed");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("bx"));
+    }
+
+    /// Doc 4.5: a `+set` after `+map` runs again once the level is up
+    /// (`Com_AddStartupCommands`), so it outranks the script's load-time
+    /// write, as `scr_allow_vote 0` read back on 1.1d over `dm.gsc`'s
+    /// `setCvar("scr_allow_vote", level.allowvote)`.
+    #[test]
+    fn a_set_after_the_map_outranks_the_scripts_load_time_write() {
+        // 1.1's dm.gsc writes scr_allow_vote at load; UO's does not.
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR is not a 1.1 install: skipping");
+            return;
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_cvar("scr_allow_vote", "0");
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        assert_eq!(
+            sv.script_cvar("scr_allow_vote").as_deref(),
+            Some("1"),
+            "dm.gsc no longer writes scr_allow_vote at load"
+        );
+        sv.push_set("scr_allow_vote", "0");
+        sv.drain_console(now);
+        assert_eq!(sv.script_cvar("scr_allow_vote").as_deref(), Some("0"));
+    }
+
     /// `map_rotate`'s `gametype` token is a `Cvar_Set` (doc section 5.2), so
     /// it has to outrank an earlier `--set g_gametype`: the token picks which
     /// gametype script loads, and the cvar table is what that script's own
@@ -10740,6 +10973,35 @@ mod tests {
             sv.script_cvar("sv_mapRotationCurrent").as_deref(),
             Some("map mp_carentan"),
         );
+    }
+
+    /// Map-cycle doc 4.8: `G_InitGame` reseeds the script's generator at
+    /// every load, a restart too, so a restarted level does not replay the
+    /// last one's draws (UO hq's radio pick, coduo-diff.md 22).
+    #[test]
+    fn a_restart_reseeds_the_script_draws() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR not at 1.1 install: skipping");
+            return;
+        };
+        let fs = Rc::new(fs);
+        let now = Instant::now();
+        let mut sv = Server::with_seed(cfg(), now, 7);
+        sv.set_cvar("g_gametype", "dm");
+        let path = fs.resolve_map("mp_carentan").expect("map in paks");
+        let bsp = vcod_common::bsp::parse(&fs.read(&path).expect("read bsp")).expect("parse bsp");
+        sv.load_world(World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs).expect("load scripts");
+        let draws = |sv: &mut Server| -> Vec<i32> {
+            let host = &mut sv.script.as_mut().unwrap().host;
+            (0..4).map(|_| host.rand_int()).collect()
+        };
+        let first = draws(&mut sv);
+        let id = sv.server_id;
+        sv.push_console("map_restart");
+        sv.tick(now);
+        assert_ne!(sv.server_id, id, "the restart did not run");
+        assert_ne!(draws(&mut sv), first, "the restart replayed the draws");
     }
 
     /// Doc section 4 step 3: a `g_gametype` that moved since the level
@@ -14252,6 +14514,8 @@ mod tests {
         let mut rig = FollowRig::new();
         rig.press(msg::BUTTON_ATTACK);
         rig.script().host.client_vitals[1].dead = true;
+        // What a stock killed callback writes; the dead arm keys on it.
+        rig.script().set_client_state_for_test(1, "dead");
         let s = rig.step(0);
         assert_eq!(ps_i32(&s, "clientNum"), 1);
         assert_eq!(s.ps.health(), 0);

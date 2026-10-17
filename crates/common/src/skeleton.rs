@@ -49,17 +49,43 @@ pub struct Skeleton {
 /// Track index -> skeleton bone index; `None` for bones the skeleton lacks.
 pub struct AnimBinding(pub(crate) Vec<Option<usize>>);
 
-/// A merged bone keeps whichever model gave it a box. The playerbody's own
-/// `bip01 head` and `bip01 neck` boxes are all-zero and the real ones ride in
-/// the attached head model, so the head is only hittable once the attachment
-/// hands its box to the body bone it merges onto.
-fn adopt_hit_box(slot: &mut SkelBone, from: &crate::xmodel::Bone) {
-    if slot.has_hit_box() || (from.hit_maxs - from.hit_mins).max_element() <= 0.0 {
-        return;
+/// A merged bone takes the box of the model that brings one. The
+/// playerbody's own `bip01 head` and `bip01 neck` boxes are all-zero and the
+/// real ones ride in the attached head model, so the head is only hittable
+/// once the attachment hands its box to the body bone it merges onto. A
+/// second box for a bone that has one already (the helmet's root on the head
+/// model's `bip01 head`) is its own part's bone on retail and traced as well
+/// (docs/research/cod11-combat.md 3.1): it comes back as a box-only bone to
+/// hang off `slot` at its origin.
+fn adopt_hit_box(slot: &mut SkelBone, from: &crate::xmodel::Bone) -> Option<SkelBone> {
+    if (from.hit_maxs - from.hit_mins).max_element() <= 0.0 {
+        return None;
+    }
+    if slot.has_hit_box() {
+        return Some(SkelBone {
+            name: from.name.clone(),
+            parent: -1,
+            local_pos: Vec3::ZERO,
+            local_rot: Quat::IDENTITY,
+            hit_mins: from.hit_mins,
+            hit_maxs: from.hit_maxs,
+            hit_location: from.hit_location,
+        });
     }
     slot.hit_mins = from.hit_mins;
     slot.hit_maxs = from.hit_maxs;
     slot.hit_location = from.hit_location;
+    None
+}
+
+/// [`adopt_hit_box`] onto `bones[si]`, a second box appended as a child of
+/// it. A name lookup (a clip's track, a tag) finds `bones[si]` first, so the
+/// extra bone keeps its identity local.
+fn extra_box(bones: &mut Vec<SkelBone>, si: usize, from: &crate::xmodel::Bone) {
+    if let Some(mut extra) = adopt_hit_box(&mut bones[si], from) {
+        extra.parent = si as i32;
+        bones.push(extra);
+    }
 }
 
 /// Code 0 (`none`) means "inherit", which retail resolves per bone against
@@ -105,7 +131,7 @@ impl Skeleton {
                     && bi > 0
                     && let Some(si) = bones[..base_len].iter().position(|s| s.name == b.name)
                 {
-                    adopt_hit_box(&mut bones[si], b);
+                    extra_box(&mut bones, si, b);
                     map.push(si);
                     continue;
                 }
@@ -125,7 +151,7 @@ impl Skeleton {
                                 model.lod
                             );
                         }
-                        adopt_hit_box(&mut bones[si], b);
+                        extra_box(&mut bones, si, b);
                         map.push(si);
                         continue;
                     }
@@ -214,8 +240,9 @@ fn clip_sums(n: usize, layers: &[ClipAt]) -> (Vec<glam::Vec4>, Vec<Vec3>, Vec<f3
         for (track, slot) in anim.tracks.iter().zip(&binding.0) {
             let Some(bi) = *slot else { continue };
             let (p, q) = track.sample(frame_pos);
+            // Signed as the loader left the track (`xanim::parse`): the
+            // sampler adds the raw keys.
             let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
-            let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
             rot[bi] += q * w;
             pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
             weight[bi] += w;
@@ -309,11 +336,11 @@ impl PoseBuffer {
                 if w[bi] <= 0.0 || r[bi] == glam::Vec4::ZERO {
                     continue;
                 }
-                // The loader keeps a track's keys on one hemisphere; across
-                // clips and nodes the sum is kept on the first one's.
-                let q = r[bi].normalize();
-                let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
-                rot[bi] += q * node_weight;
+                // Raw signed sums, no hemisphere alignment: two nodes on
+                // opposite hemispheres swing the long way round, as retail's
+                // reload blend-out does (cod11-movers.md 15, "Torso over
+                // legs").
+                rot[bi] += r[bi].normalize() * node_weight;
                 pos[bi] += p[bi] / w[bi] * node_weight;
                 weight[bi] += node_weight;
             }
@@ -510,6 +537,34 @@ mod tests {
         // a new bone with code 0 inherits its parent's
         assert_eq!(of("jaw"), (true, 2));
         assert!(skel.bone_index("lid").is_none());
+    }
+
+    /// The helmet's root merges onto the `head` the head model already gave
+    /// a box: both boxes stay, the helmet's on a box-only child that rides
+    /// the head and no clip binds.
+    #[test]
+    fn a_second_box_on_a_merged_bone_is_kept() {
+        let mut bb = vec![bone("tag_origin", -1, Vec3::ZERO, Quat::IDENTITY, &[])];
+        let b = hit_bone("head", 0, Vec3::Z, &bb, 0.0, 0);
+        bb.push(b);
+        let base = model(bb);
+        let head = model(vec![hit_bone("head", -1, Vec3::ZERO, &[], 3.0, 2)]);
+        let helmet = model(vec![hit_bone("head", -1, Vec3::ZERO, &[], 4.0, 2)]);
+        let skel = Skeleton::build(&[&base, &head, &helmet]);
+        let heads: Vec<(usize, &SkelBone)> = skel
+            .bones()
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.name == "head")
+            .collect();
+        assert_eq!(heads.len(), 2);
+        let ((first, a), (_, b)) = (heads[0], heads[1]);
+        assert_eq!((a.hit_maxs.x, a.hit_location), (3.0, 2));
+        assert_eq!((b.hit_maxs.x, b.hit_location), (4.0, 2));
+        assert_eq!(b.parent, first as i32);
+        assert_eq!((b.local_pos, b.local_rot), (Vec3::ZERO, Quat::IDENTITY));
+        let anim = one_track_anim("head", Vec3::X, Quat::IDENTITY);
+        assert_eq!(skel.bind(&anim).0, vec![Some(first)]);
     }
 
     #[test]

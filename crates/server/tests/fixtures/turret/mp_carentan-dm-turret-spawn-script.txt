@@ -1,0 +1,30 @@
+# Retail CoD 1.1d dedicated server log lines under the --save-turret client of
+# mp_carentan-dm-turret-spawn.txt beside this file. Captured 2026-10-17.
+# map mp_carentan, g_gametype probe_turret, probe_teleport 1, dedicated 1,
+# sv_maxclients 8, sv_pure 0, stock scr_* defaults, a homepath holding no pak.
+# Client 0 is a --probe-team axis net-probe standing as the target, client 1
+# the --save-turret --capture-tag spawn gunner (allies).
+#
+# Three shells, the gsc probe first:
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=32561 PROBE_SECS=230 \
+#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1
+#   cargo run -p vcod -- --net-probe 127.0.0.1:32561 --probe-team axis --probe-fall --probe-secs 200
+#   cargo run -p vcod -- --net-probe 127.0.0.1:32561 --save-turret --capture-tag spawn --probe-secs 190
+# The axis client started 10 s after the server and the gunner 5 s after it.
+#
+# PROBE turret <num> <origin> <angles>: a misc_mg42 at the startup census.
+# PROBE place <clientNum> <team> <origin> <yaw> <time>: a probe_teleport move,
+# made on the first script frame the player reads "playing", at getTime().
+# J; Q; D; K; are the engine's and the stock dm script's own.
+# Lines are copied from games_mp.log with the engine's m:ss stamp, leading
+# padding trimmed; every line past InitGame is here.
+0:01 PROBE turret 297 (-500.00, 1896.00, 175.00) (0.00, 295.00, 0.00)
+0:01 PROBE turret 298 (1712.00, 1830.00, 8.00) (0.00, 229.00, 0.00)
+0:11 J;0;vcod
+0:11 PROBE place 0 axis (1515.18, 1603.59, 8.00) 409 11500
+0:16 J;1;vcod
+0:16 PROBE place 1 allies (1738.24, 1860.19, 8.00) 229 16500
+0:30 D;0;axis;vcod;1;allies;vcod;m1carbine_mp;53;MOD_RIFLE_BULLET;torso_upper
+0:30 K;0;;vcod;1;;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
+0:36 Q;1;vcod
+3:30 Q;0;vcod

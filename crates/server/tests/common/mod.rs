@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
-use vcod_common::net::{NetClient, NetEvent, Transport};
+use vcod_common::net::{NetClient, NetEvent, NetState, Transport};
 use vcod_server::Server;
 
 pub const ADDR: SocketAddr =
@@ -193,15 +193,51 @@ pub fn join_pair_logged(
     a: (&str, &str),
     b: (&str, &str),
 ) -> (NetClient<ClientEnd>, NetClient<ClientEnd>, Join, Join) {
+    join_pair_stamped(sv, qa, qb, now, a, b, &[])
+}
+
+/// [`join_pair_logged`] with client `a`'s cmds, once it is in the game,
+/// stamped `stamps_a` (a retail client's, on a server whose clock runs on
+/// retail's level time): each frame sends those past its last and before
+/// the frame's time. Empty, every client sends one cmd a frame on its own
+/// clock.
+pub fn join_pair_stamped(
+    sv: &mut Server,
+    qa: &Rc<RefCell<Queues>>,
+    qb: &Rc<RefCell<Queues>>,
+    now: &mut Instant,
+    a: (&str, &str),
+    b: (&str, &str),
+    stamps_a: &[i32],
+) -> (NetClient<ClientEnd>, NetClient<ClientEnd>, Join, Join) {
     // Distinct qports: the server keys a peer by ip and qport, so two clients
     // sharing one read as a single client reconnecting and the second is
     // refused. A real client is one per process and gets this for free.
     let mut ca = NetClient::start_with_qport(ClientEnd(qa.clone()), *now, 0x2001);
     let mut cb = NetClient::start_with_qport(ClientEnd(qb.clone()), *now, 0x2002);
     let (mut ja, mut jb) = (Join::new(a.0, a.1), Join::new(b.0, b.1));
+    let mut last_a = i32::MIN;
     for _ in 0..600 {
         *now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        match ca.snapshots().newest().filter(|_| !stamps_a.is_empty()) {
+            Some(snap) if ca.state() == NetState::Active => {
+                let end = snap.server_time + FRAME_MS as i32;
+                let cmds = stamped(
+                    &ca,
+                    &vcod_common::net::msg::NULL_USERCMD,
+                    stamps_a,
+                    last_a,
+                    end,
+                );
+                if let Some(c) = cmds.last() {
+                    last_a = c.server_time;
+                }
+                ca.send_cmds(&cmds);
+            }
+            _ => {
+                ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+            }
+        }
         cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
         let (ea, eb) = step_pair(sv, (qa, &mut ca), (qb, &mut cb), *now);
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
@@ -218,6 +254,34 @@ pub fn join_pair_logged(
         }
     }
     (ca, cb, ja, jb)
+}
+
+/// `cmd` once for every stamp in `stamps` past `after` and before `end`, in
+/// order, its view rebased on the newest snapshot's `delta_angles` as
+/// `send_frame` does.
+pub fn stamped(
+    cl: &NetClient<ClientEnd>,
+    cmd: &UserCmd,
+    stamps: &[i32],
+    after: i32,
+    end: i32,
+) -> Vec<UserCmd> {
+    let p = cl.protocol();
+    let da = cl.snapshots().newest().map_or([0; 3], |s| {
+        [0, 1, 2].map(|i| s.ps.field_i32(p, &format!("delta_angles[{i}]")))
+    });
+    let mut last = after;
+    let mut out = Vec::new();
+    for &st in stamps {
+        if st > last && st < end {
+            let mut c = *cmd;
+            c.server_time = st;
+            c.angles = [0, 1, 2].map(|i| (cmd.angles[i] - da[i]) & 0xffff);
+            out.push(c);
+            last = st;
+        }
+    }
+    out
 }
 
 /// Three clients through the stock menus, as [`join_pair`] does two, at
@@ -1466,6 +1530,14 @@ pub struct ProbeHold {
     /// a drop's airborne prone body is the one its last airborne cmd
     /// starts at (cod15-movement.md 4).
     pub framed: bool,
+    /// Cmds on a 60 Hz grid of the server's clock, 16, 17 and 17 ms apart
+    /// from each frame's time, as the net probe's loop sends them in the
+    /// `--probe-uo-weapon` captures that log them (`!cmd` lines), in place
+    /// of an even [`PROBE_CMD_MS`]: a held trigger fires on the cmds, and
+    /// the thompson's 85 ms fires every sixth one, 100 ms apart here and 96
+    /// at 16 ms, which is what decides whether the 1.5 and UO gun kick
+    /// settles between rounds (cod15-movement.md 6).
+    pub sixty: bool,
 }
 
 /// `--probe-cmd-ms`'s default.
@@ -1491,8 +1563,19 @@ impl ProbeHold {
             let f = s.server_time;
             times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
         } else {
-            while t + PROBE_CMD_MS <= s.server_time + FRAME_MS as i32 {
-                t += PROBE_CMD_MS;
+            let next = |t: i32| match self.sixty {
+                true => {
+                    let tick = |k: i32| (50 * k).div_euclid(3);
+                    let mut k = (3 * t).div_euclid(50);
+                    while tick(k) <= t {
+                        k += 1;
+                    }
+                    tick(k)
+                }
+                false => t + PROBE_CMD_MS,
+            };
+            while next(t) <= s.server_time + FRAME_MS as i32 {
+                t = next(t);
                 times.push(t);
             }
         }

@@ -136,6 +136,14 @@ The penalty never reaches the accel, the wish speed or the cmd scale (no
 read in 0x1ed62, 0x1f08b, 0x1eec9; VERIFIED by absence). Because it runs on
 `pm_time`, `PM_SlideMove`'s tail (a running timer hands the primal velocity
 back) now applies for 1.2-1.8 s after every jump's landing (INFERRED).
+The airborne clear above takes 0x2000 off and leaves `pm_time` running,
+so a body that walks off a ledge inside the penalty falls with the timer
+on and no flag, and its velocity into a wall survives the slide. VERIFIED
+(retail UO 1.51b, `mp_streets-dm-slope-8ms-crouchjump-streets.txt`: off
+the sill at ct 21548 `pm_flags` lose 0x2000, `pm_time` 792 counts on, and
+the body falls down the wall at x 233.13 keeping `velocity[0]` -146).
+The predictor's `from_wire` keeps a 1.5 or UO `pm_time` with no flag for
+that reason; 1.1's still means nothing without 0x100 or 0x200.
 
 ## 3. Stance and the eye
 
@@ -432,7 +440,7 @@ probes' 16 ms holds.
   `G_PlayerEvent` (0x3b2e4) on fire events, into `gclient` past the
   playerstate: a server-side aim offset with the server's RNG, nothing on
   the wire, nothing to predict. The cgame's own view kick is 1.1's.
-  The call VERIFIED. The effect INFERRED.
+  VERIFIED, by a capture; the section below has the reads.
 - Bob: the cvars are `cg_bobAmplitudeStanding` 0.007, `cg_bobAmplitudeDucked`
   0.0075, `cg_bobAmplitudeProne` 0.03 and `cg_bobMax` 8; `bg_bob*` are the
   C variables behind them. VERIFIED. 1.1's cgame already registers the
@@ -452,6 +460,73 @@ probes' 16 ms holds.
   plus 8 (cgame 1.1 0x30032de5). VERIFIED.
 - `PM_Weapon`'s other states, the ADS flag, the walking flag and the spread
   are 1.1's (side-by-side decompile, INFERRED).
+
+### The server's gun kick
+
+1.1d's game module never kicks the gun-kick spring of `cod11-combat.md`
+15.2, so a 1.1 server's aim block adds nothing for it. 1.5b's does, and
+so does United Offensive's (both VERIFIED by the captures below).
+
+- `BG_PlayerStateToEntityState` (1.5b 0x1c449, which `ClientThink_real`,
+  0x39116, calls after `Pmove` and `ClientEndFrame`, 0x3ab2a, calls again)
+  hands every event from `entityEventSequence` to `eventSequence` to
+  `G_PlayerEvent(entnum, event)` before it copies it to the entity.
+  VERIFIED. `ClientThink_real` runs `ClientEvents`, which fires the shot,
+  after that copy. VERIFIED, the call order. So a shot's kick reaches the
+  aim of the next cmd, never its own. INFERRED.
+- `G_PlayerEvent` (1.5b 0x3b2e4) calls `BG_WeaponFireRecoil(ps,
+  &client+0x22c0, local)` for events 159, 160, 161 and 168
+  (`EV_FIRE_WEAPON`, `B`, `LASTSHOT`, `MG42`; 1.5's ids are 1.1's) and
+  nothing else. UO's (0x435cc) does the same for its 163..166 and 173,
+  which adds `EV_FIRE_WEAPONC`, with the spring at `client+0x4714`.
+  VERIFIED.
+- `BG_WeaponFireRecoil` (1.5b 0x3246c, UO 0x396bc) draws four `rand()`s,
+  each scaled by 1/2^31 (`.rodata` 0x77758 is 2147483648.0, UO 0x9d990):
+  the view kick's pitch and yaw, off the `ads` pair when `fWeaponPosFrac`
+  is exactly 1.0 (0x77754) and the `hip` pair otherwise, written into the
+  caller's local and dropped; then the gun kick's pitch and yaw, off the
+  `ads` pair when the fraction is above 0 (0x77760), added to the spring's
+  two speeds. `min + (max - min) * r` each. The 1.5 file offsets are 1.1's
+  plus 0xc (gun kick 0x35c..0x368 and 0x39c..0x3a8, view kick 0x37c..0x388
+  and 0x3bc..0x3c8); UO's sit at 0x3d4..0x448. VERIFIED.
+- The spring itself (1.5b 0x31940 stepping 0x3171a per axis) is 1.1's: 5 ms
+  substeps (0x77700) of `msec * 0.001`, the four keys blended hip to sight
+  by the fraction, settled under 0.25 degrees (0x776e8) and 1 a second
+  (0x776f0), and run only for an `aimDownSight` weapon. Its angles reach the
+  shot only down a sight with the fraction non-zero, through the aim
+  block's composition. VERIFIED, the reads and constants; INFERRED, the
+  order.
+
+Measured, VERIFIED: `gunkick_ab.rs`'s three captures
+(`mp_carentan-dm-slope-8ms-gunkick-{1.1,1.5,uo}.txt`) hold a thompson whose
+file has no spread and its gun-kick ranges pinned (pitch -60, yaw 40), held
+from the hip, then down the sight, at a wall 1091 units out. From the hip
+every round of all three strikes one spot. Down the sight 1.1d's thirteen
+rounds stay within two units of it; 1.5b's climb from z 18 to 81 and UO's
+from 15 to 81, each a few units across, the spring at its 4-degree
+`gunMaxPitch`. Ours replays the cmds on retail's level times and lands every
+round within a unit of retail's on all three.
+
+Measured, VERIFIED (live, retail UO 1.51b, 2026-10-17): the
+`vehicle_armor_ab` sweep recipe on mp_cassino with the shooter's
+`--save-slope` on, its thompson file's spread zeroed and the kick left
+stock (`adsGunKickPitch` -55..-50, yaw -60..90). The net probe sends its
+cmds on a 60 Hz grid, 0, 16 and 32 or 33 ms past each frame's time, so
+the 85 ms `fireTime` fires on every sixth cmd, 100 ms apart, and every
+round left within 0.3 degrees of the view the gsc set. With the kick
+pinned as above in the same recipe the rounds sat 3.0 to 3.35 degrees
+above the view. The spring's balance turns on the round spacing: at
+100 ms a stock round's kick settles before the next, at 96 ms (even
+16 ms cmds, the sixth at 96) the remainder adds up to `gunMaxPitch`
+over about 12 s (INFERRED, the spring stepped by hand both ways; vcod's
+spring lands the same at each spacing). A gate whose held trigger fires under
+the kick sends the probe's 60 Hz cmds (`ProbeHold::sixty`).
+
+**As implemented.** `ClientSim::fire_recoil` (`crates/server/src/spectate.rs`)
+draws the four off the server's RNG for each fire event a cmd's pmove
+raised, under `MoveRules::v15()` only, and `ClientSim::update_aim` steps
+the spring (`pmove::aim::GunKick`) before each cmd's aim block and hands it
+in. A spawn clears it with the rest of the aim state.
 
 ## 7. Stored floats
 
@@ -491,9 +566,87 @@ vcod: `pmove::clamp_velocity_to_move` and `slide_move`'s gravity take the
 stores under `MoveRules::v15()`; `collision::cm_endpos` takes the stored
 end under `Arith::Stored`, which the server sets on protocols 6 and 22 and
 the client's live world, `play::replay` and `play::loopback` set off the
-connection's protocol (`Arith::for_protocol`), so the predictor computes
-what a Linux 1.5b or UO server does. INFERRED: a Windows server's or
-cgame's arithmetic is MSVC's and was not read.
+connection's protocol (`Arith::for_protocol`). The client's
+predictor no longer follows them: it runs the Windows client's build
+(section 8).
+
+- The locational bone trace (1.5b `cod_lnxded` 0x80d2000, UO
+  `coduo_lnxded` 0x80c7394) stores every transformed point, slab distance
+  and entry fraction, where 1.1d's 0x80c4564 keeps them. VERIFIED. The
+  stores move a round's entry by about 3e-5 units. vcod ports none of
+  them (`cod11-turrets.md` 13.5).
+
+## 8. The Windows clients
+
+The retail clients are one MSVC build of the collision and pmove code on
+every patch, which stores some of the floats section 7's gcc build stores
+and keeps the rest, at 53-bit precision. vcod predicts with it
+(`Arith::Msvc`); the server keeps the Linux rules. Modules: 1.1
+`CoDMP.exe` and `cgame_mp_x86.dll`, 1.5 `CoDMP.exe` (Ghidra's
+`CoDMP15.exe`) and `cgame_mp_x86.dll`, UO 1.51 `CoDUOMP.exe` and
+`uo_cgame_mp_x86.dll`; addresses are VAs (exe base 0x400000, cgame
+0x30000000).
+
+- Precision: 1.5's exe calls `_controlfp(0x10000, 0x30000)` (`_PC_53`)
+  at 0x569040 and UO's at 0x5783fc; no game code loads a control word of
+  its own, and the CRT's trig wrappers test for 0x27f (1.5 0x5728a4).
+  VERIFIED. INFERRED: the call is the CRT's startup default, so a value
+  kept on the stack is an `f64`.
+- One build: 1.1's and 1.5's patch code (1.1 0x41a2a0-0x41f780, 1.5
+  0x41c1a0-0x421680), brush clip (1.1 0x4230c0, 1.5 0x424fc0) and
+  `CM_BoxTrace` (1.1 0x424530, 1.5 0x426430) match instruction for
+  instruction with addresses masked; UO's (brush clip 0x426a80) is another
+  MSVC's register allocation with the same stores. VERIFIED.
+- `PM_SlideMove`'s gravity: stored before the average, as 1.5b's (1.1
+  cgame 0x3000cc1c, 1.5 0x3000d9dd, UO 0x3000e9b1). 1.1d keeps it.
+  VERIFIED.
+- The default arm's tail (1.1 cgame 0x3000c90d, 1.5 0x3000d6c4, UO
+  0x3000e64f): x of the displacement stays on the stack, y and z are
+  stored, and the rate `((dz^2 + dy^2) + dx^2) / (ft * ft)` and the squared
+  speed stay on the stack; 1.1 and 1.5 sum the speed `(vz^2 + vy^2) + vx^2`,
+  UO `(vx^2 + vy^2) + vz^2`. The compare and `(1.0 / ft) * d` are 1.1d's.
+  VERIFIED.
+- `CM_BoxTrace`'s end point: the shifted end is kept (1.5 0x4264d6 `fsts`
+  with the delta taken off the stack at 0x4264da, UO 0x427f76), as 1.1d's;
+  the delta and the end point round as both Linux builds. VERIFIED.
+- The brush clip (1.5 0x424fc0, UO 0x426a80): stored are `d1`
+  (0x42503f), the enter path's `d1 - d2` (0x42506d), the enter fraction
+  (0x4250d1) and the leave fraction (0x425169); kept are `d2`
+  (0x425043), the leave path's `d1 - d2` (0x425146), `d1 - 0.125`
+  (0x4250b0) and the enter fraction in its compare with the leave one
+  (0x4250d5). On a slanted side `dist + radius` (0x4251c7) and the shifted
+  start (0x4251fb) are kept and only the shifted end is stored (0x42521e),
+  where both Linux builds store all three. VERIFIED.
+- The patch build, against bsp-ibsp59-format.md's table: stored as 1.5b's
+  are `VectorNormalize` (0x42fc00), `CM_AddFacetBevels`'s two distances
+  (0x41dcb8, 0x41dcdd), `BaseWindingForPlane`'s (0x42027b, the corners'
+  first steps 0x4203e3 and 0x420428) and `ChopWindingInPlace`'s distance
+  and split fraction (0x420a52, 0x420c2c), whose dot product it keeps;
+  kept are `CM_NeedsSubdivision` (0x41c500, the deviation and its length
+  too, which both gccs round), `CM_Subdivide` (0x41c560), `CM_FindPlane`
+  (0x41cf00) and `CM_PointOnPlaneSide` (0x41d0c0). UO's (0x41db40 on)
+  store alike. VERIFIED.
+- The patch traces: `CM_CheckFacetPlane` (1.5 0x41efe0, UO 0x420a70)
+  stores `d1` and `d2` (0x41f002, 0x41f01d) and keeps both fractions
+  through the clamp and the compare; the point trace (0x41ead0) stores
+  each plane's `d1` (0x41eb4d) and keeps its `d2` and the struck plane's
+  distances. VERIFIED.
+
+INFERRED, off those: a Windows client predicts a fall from rest as 1.1d
+falls on every patch (`a_fall_from_rest_ties_the_tail_by_the_start_height`),
+so on a 1.5 or UO server it misses the tail's tie wherever 1.5b's stores
+take the other side. VERIFIED, `play::replay::the_windows_build_draws_no_new_correction`
+(2026-10-17): over the 1.1, 1.5 and UO own-body captures, all taken
+against Linux servers, the Windows build adds last-bit corrections (1.5
+moves 13 to 46, UO sprint 114 to 125, 1.1 moves 5 to 8) and none past the
+predictor's 0.1 miss epsilon.
+
+Not read on Windows: the terrain point clip (`Terrain::point_clip_stored`
+is the Linux builds'; the client takes the kept one), the patch position
+test and the facet walk that answers only whether a facet stops a trace
+(1.5 0x41ee90, stores `d1`). Not modelled: the Windows dot products'
+order, `(z n2 + y n1) + x n0` in `CM_FindPlane` (0x41cf00), where vcod sums
+x first.
 
 The rest of the walk, read 2026-10-17 in 1.5b's `game.mp.i386.so`:
 

@@ -172,6 +172,43 @@ argument. INFERRED, off the branch on `0x1432a00 & 0xc000` (the mounted
 `eFlags` bits): there the rate is the double `2.5` (0x5690b8) for yaw, and
 pitch is `2 * my * m_pitch` with no sensitivity.
 
+VERIFIED, `CL_MouseMove` (0x40b240): `CL_MouseEvent` adds the motion to
+one of two slot pairs (`0x143a948`/`0x143a950`, index `0x143a958`). With
+`m_filter` (cvar `0x161732c`, read as its integer at `+0x20`) 0 the
+frame takes its own slot; otherwise the sum of both slots times 0.5
+(`0x568e70`). The index then flips and the new slot is cleared, so a
+filtered frame spends the mean of its motion and the last frame's. A
+frame whose two scaled axes are both 0 does nothing more (`0x40b3e8`).
+
+VERIFIED, same function: with `+strafe` held (its `active` word
+`0x87a0f8`; `+strafe` 0x40a8c0) the horizontal motion goes to
+`rightmove` instead of yaw: `rightmove + _ftol(mx * rate * m_side)`
+(`m_side` cvar `0x1617320`, `_ftol` 0x538be0, which truncates), clamped to
+-128..127 (`0x40b400`..`0x40b42a`). The vertical motion pitches the view
+when `+mlook` is held (`0x87a2f0`) or `cl_freelook` (cvar `0x1617354`) is
+non-zero, and `+strafe` is not (`0x40b4e6`..`0x40b507`); otherwise it goes
+to `forwardmove - _ftol(my * rate * m_forward)` (`m_forward` cvar
+`0x15ce840`), clamped the same way (`0x40b5c3`..`0x40b5f1`). On a mounted
+gun `my` is doubled in place of the rate, so `cl_freelook` 0 there moves
+by `2 * my * m_forward`.
+
+VERIFIED: `CL_Init` registers `cl_freelook` `"1"` (`0x5685e4`),
+`m_forward` and `m_side` `"0.25"` (`0x5668e8`) and `m_filter` `"0"`, all
+flags 1. `+mlook` (0x40a450) sets `0x87a2f0`; `-mlook` (0x40a460) clears
+it and, while `cl_freelook` is 0, stores `-(delta_angles[PITCH] *
+360/65536)` (`0x14329c8` times `0x568f64`) into `cl.viewangles[PITCH]`
+(`0x143a9a0`), Q3's `IN_CenterView`. VERIFIED: 1.5 (CoDMP.exe
+`0x40bd60`, `+mlook` 0x40af60, `+strafe` 0x40b3d0) and UO (CoDUOMP.exe
+`0x40c330`, `+mlook` 0x40b530, `+strafe` 0x40b990) read `m_filter` and
+`cl_freelook` at the same two points with the same branches (their
+decompilations).
+
+vcod: `play::input::MouseAccum` keeps the two slots and `App::mouse_frame`
+takes them once a frame; `MouseLook::moves` splits the motion, and
+`PlayInput` adds the move counts to the next cmd built, as vcod builds
+cmds on its own clock rather than one a frame. `-mlook` levels the pitch
+over the newest snapshot's `delta_angles`.
+
 VERIFIED, cgame: the fov function (0x30032e20) ends by storing `fov_x /
 cg_fov` (0x30032fe2, into 0x3020b5f4), and the frame passes it to trap 0x55
 (0x30033ede) with `cg_weaponSelect`, multiplied first by a second factor at

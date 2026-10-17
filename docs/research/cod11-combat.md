@@ -2051,9 +2051,13 @@ nearer hit and a start-solid returning at once;
 `bulletPriorityMap` off `rifleBullet`, keeps the link box as the broad phase
 only, and takes the first candidate whose bones the segment actually scores.
 The height-fraction partition that used to stand here is gone.
+1.5b's and UO's trace stores every float variable where 1.1d's keeps
+them; vcod's trace keeps them on every patch. The stores move an entry
+by about 3e-5 units (`cod11-turrets.md` 13.5).
 
 The victim is posed per shot, not per frame, out of the same grafted
-body-plus-head-plus-helmet skeleton the client draws
+body-plus-head-plus-helmet skeleton the client draws (an attachment's box
+on a bone that already has one rides on as a second box, 3.6)
 (`crates/server/src/game/hitrig.rs`): the legs and torso clips the animscript
 picked, each at the phase its channel started at, then the spine aim layer.
 The models, the clips, their start times, the pitch and the lean are the ones
@@ -2224,6 +2228,55 @@ where retail stops.
 VERIFIED: the parse spec it builds is 19 records of
 `{ name, offset = i*4, type = 6 }` against `g_fHitLocDamageMult`, and type 6
 is `float` in the same type vocabulary the weapon-def table uses.
+
+### 3.6 Measured: a leaning body, and the helmet's own box
+
+VERIFIED, live (retail 1.1d, mp_carentan tdm, 2026-10-17,
+`client-probes/probe_leanhit`, fixture
+`crates/server/tests/fixtures/leanhit/mp_carentan-leanhit.txt`): an axis
+target held 256 units from an allies shooter, 13 phases from level time
+20000 (standing, crouched and prone, each level and full lean either way,
+then the shooter leaning either way). Each phase a grid of level
+`bulletTrace`s with `hitCharacters` (2.7) crosses the target: 13 heights by
+11 columns along the shooter's facing and 13 by 15 across it, each cell
+the distance to where the ray stopped on him. Then the sighted
+`springfield_mp` fires once, aimed by the gsc from the shooter's eye
+moved by a full lean (19.2 across, 5.5 down, `pmove::aim::lean_offset`).
+All 13 rounds struck; the damage callback's location, damage and point are
+the fixture's `PROBE hit` lines.
+
+What the run showed, VERIFIED against ours by `crates/server/tests/leanhit_ab.rs`:
+
+- The helmet's box is traced as well as the head model's. VERIFIED, off
+  the paks: the head model (`xmodel/basehead_axis_a_01`) gives `bip01
+  head` a box spanning -0.43..9.04 along the bone, and
+  `xmodel/gear_german_helmet_falshrm_camo`'s root, also `bip01 head`,
+  carries its own, 0..10.35 along and a unit wider on one side. VERIFIED, the
+  fixture: a standing target's head stops a level ray 70 units up (and
+  ours, keeping only the first box, let it by), and with both boxes ours
+  matches the head cells in every phase. This is 3.1's per-part bone loop
+  with two parts' bones on one matrix; vcod's grafted skeleton now keeps
+  the second box as a box-only child of the merged bone
+  (`skeleton::adopt_hit_box`).
+- The lean pose of 16.4 holds as ported: with the helmet box in, every
+  prone phase and the standing lean right match to 0.03 units, the
+  crouched leans to 0.5 bar three cells, and every round's point lands
+  within 0.3 units of retail's with the same location and damage, a
+  leaning shooter's (2.1) included. Scaling any of 16.4's lean terms
+  (`tag_origin`'s roll and shift, the three back rolls) by 0.7 to 2 on ours
+  only moved the standing lean cells further off.
+- A body's torso yaw keeps whatever its spawn left it until something
+  swings it (16.4): the first capture, whose target never moved after his
+  placement, read a different torso on retail than on ours, which had
+  given him a different spawn point. The probe lays him prone and stands
+  him up first.
+
+Left open: 52 of about 1000 cells, all on standing or crouched bodies,
+sit 0.5 to 3 units off (one 8.6) or hit where the other misses, at the
+edges of arm, hand and head boxes (`leanhit_ab::CELL_GAPS`). INFERRED: a
+small pose difference in the arms and head the grid's edge cells magnify;
+the idle clip's phase is not it (ours with the target joined 50 ms later
+reads 7 cells apart from itself).
 
 ---
 
@@ -2612,6 +2665,38 @@ method (`0x45358`, entry 26 of `player_methods` at `0x733dc`, per
   `probe_bomb and probe_blastbody`). The `probe_glass` run of 2026-09-27,
   whose `--probe-target` sends `kill` every 45 s, logged
   `K;0;;vcod;0;;vcod;none;100000;MOD_SUICIDE;none` at 0:22 and 1:07.
+
+**A suicide that stays playing.** `player_die` writes no `pm_type` (step
+list above) and `ClientEndFrame` writes 6 only off `sessionState == 1`
+(0x41057..0x41079), with the contents, `takedamage` and `SVF_NOCLIENT`
+beside it (5.4 below). INFERRED, off those stores: a killed callback that
+leaves `sessionstate` at `playing` leaves a body at health 0 that the end
+frame treats as alive. VERIFIED live, `client-probes/probe_suicide` on
+retail mp_harbor 2026-10-17 (recipe in that directory's README): after
+`suicide()` slot 1's own `pm_type` stayed 0 and its `viewHeightCurrent` 60,
+and slot 0's snapshot kept carrying slot 1, `eFlags` unchanged, for the
+3 s the session stayed `playing`; the frame the script wrote `dead`,
+slot 1 read `pm_type` 6, its eye started down (51.18, 42, 33, ... 8), and
+it left slot 0's snapshot. The 2026-10-07 `probe_compass` run saw the same
+`pm_type` 0 then 6 (`cod11-hud-protocol.md` 9). INFERRED, UO's
+`ClientEndFrame` (`game.mp.uo.i386.so`, Ghidra output): the same compares
+of `sessionState` against 3, 2 and 1 pick the arm, and only the 1 arm
+stores 6 (7 linked) with the same `svFlags` and `takedamage` writes, so UO
+keeps a playing suicide at `pm_type` 0 too; not run live there.
+
+vcod keyed the dead arm on the health instead and sent `pm_type` 6 and no
+entity at the suicide. VERIFIED, ours before the fix:
+`a_suicide_that_stays_playing_keeps_pm_type_0`
+(`crates/server/tests/suicide_playing.rs`) failed. Fixed: the end frame
+reads the session (`ClientSim::session`, set in the end-frame loop): only
+`playing` keeps the body on the wire with contents, `dead` alone writes
+`pm_type` 6, and a sim no script client backs keeps the health rule. The
+death's own relink as a corpse (step 13) clears `solid` until the body's
+next link, so the suicide's frame goes out with `solid` 0 (INFERRED, off
+step 13; the probe logged no `solid`). VERIFIED, ours after
+the fix, the same probe pair against `vcod-server --gametype-script`:
+`pm_type` 0 and slot 1 in slot 0's snapshot until the `dead` write, then
+6 and gone on the same frame.
 
 ### 5.2 `G_SpawnPlayerClone` and the body queue
 
@@ -4429,6 +4514,38 @@ which are branch conditions.
   the trace is then re-run with the plain `ent->clipmask`. INFERRED: that is
   the water-entry splash, since the only content the mask gained was water and
   the re-trace is what drops it again.
+- VERIFIED, the disassembly: 1.1d ORs the 0x20 in at 0x540a0 and pushes
+  `0xAD` at 0x54115; 1.5b ORs it at 0x54ccb and stores `0xAD` at 0x54d8d,
+  the same arm. United Offensive's `G_RunMissile` ORs it at 0x5f08b and
+  stores `0xB2` (178, its `EV_BULLET_HIT`) at 0x5f14d, and also writes the
+  missile's `s.weapon` into the temp entity's (`+0xCC`); when the weapon's
+  `projExplosionType` (`+0x390`, 0x5f1f3) is 1, `smoke`, it then calls
+  `G_FreeEntity` (0x5f202) and returns, before the re-trace at 0x5f23f.
+  INFERRED, off the decompiles: in all three the `d[2]` fix multiplies a
+  negative z by a `.rodata` constant, which the captures below read as -1.
+  VERIFIED: the `+216` (`+0xDC` on UO) field is `_union.scale` in the
+  entity netfields (`crates/common/src/net/fields_v1.rs`, `fields_v22.rs`).
+- VERIFIED, live (2026-10-17, `crates/server/tests/fixtures/missiles/
+  mp_harbor-water-*.txt`, `client-probes/probe_skyshot` spot part on
+  mp_harbor's south sea wall over the harbor; the water's top is z -120,
+  material `textures/common/water`, surface flags 0x14040a0): a 1.1d
+  panzerfaust round 45 degrees down raises temp entity 74, event 173, parm
+  5 (straight up), `otherEntityNum` the rocket, `surfType` 20, `scale` 7,
+  at -90, its origin on the frame before the move that crosses -120, and
+  explodes on the harbor floor the next move as if the water were not
+  there. A frag thrown flat raises the same at -103 (`trDelta` z is the
+  throw's 120, past 30, though the grenade is falling by then) and then
+  bounces along the floor; its flight matches ours to the hundredth. On
+  retail UO 1.51b the same throws raise 178 with `weapon` set (5 the
+  bazooka, 18 the frag, 52 the smoke grenade), and the smoke grenade
+  leaves the wire on the snapshot that carries its splash, never popped.
+  vcod: `CollisionWorld::water_hit` (the water brushes with each side's
+  surface flags) and `Missile::step`'s `wet` arm, the temp entity spawned
+  on the missile's turn through `Missiles::take_splashes`; gated by
+  `crates/server/tests/missile_edge_ab.rs` (`a_frag_into_water_splashes`,
+  `a_rocket_into_water_splashes`, `a_uo_smoke_grenade_into_water_is_freed`)
+  and `a_missile_entering_water_fast_splashes`. Before 2026-10-17 no
+  missile splashed.
 - When `ent->methodOfDeath (+0x248) == 3` and the hit entity's
   `flags & 0x10000` (byte `gentity+0x17E`, bit 1) is set, the hit entity's
   `contents` (`+0x118`) is zeroed, the trace is run a third time, and the
@@ -4541,8 +4658,17 @@ the ordering and the conditions in it.
   `a_uo_missile_flies_through_the_sky` and
   `crates/server/tests/missile_edge_ab.rs`. Before 2026-10-17 every
   protocol's missile struck the sky: a rocket exploded on it, a grenade
-  bounced off. vcod applies only the sky-start arm of UO's `G_MissileTrace`;
-  the zeroed fraction on any other start-solid is not ported.
+  bounced off.
+- VERIFIED, the disassembly: on any other start-solid UO's `G_MissileTrace`
+  stores a fraction of 0 (0x5ee1e, 0x5ee27) and `VectorNormalize2(start -
+  end)` into the normal; 1.5b's (0x54a18) does the same at 0x54a5e with no
+  sky arm. 1.1d has no `G_MissileTrace`: its `G_RunMissile` zeroes only the
+  fraction, after the store into `r.currentOrigin` (0x5420c), and UO's
+  repeats that test at 0x5f367. INFERRED: a move that starts inside a brush
+  is a contact at its end point, which 1.5 and UO bounce straight back
+  along the move. vcod: `Missile::full_trace` under `falls` and the zeroing
+  in `Missile::step`, pinned by `a_start_solid_move_is_a_contact`; no
+  capture exercises it.
 - Otherwise `G_MissileImpact(ent, &tr, dir)` runs, and `G_RunThink(ent)`
   follows only when `s.eType` is still 4. VERIFIED: `G_MissileImpact`'s
   explode path sets `s.eType` to 0 (13.1), so the test is what stops a
@@ -4861,7 +4987,17 @@ The explode block, reached from all three arms:
   `ent->freeAfterEvent` (`+0x184`) takes 1, and `ent->s.eType` (`+0x4`) takes
   0 (`ET_GENERAL`).
 - `SnapVectorTowards(&tr.endpos, &ent->s.pos.trBase)` and
-  `G_SetOrigin(ent, &tr.endpos)` place it.
+  `G_SetOrigin(ent, &tr.endpos)` place it. VERIFIED, the disassembly:
+  1.1d's `SnapVectorTowards` (0x692d8) runs `frndint` in round-down mode
+  where the axis is not below the base and round-up where it is; 1.5b's
+  (0x6dd91) and UO's (0x7a745) call `floor` and `ceil` on the same test.
+  Q3's truncate-and-add-one is not what runs: it lands a unit off on a
+  negative axis. VERIFIED, live (`mp_harbor-water-rocket.txt`): the round
+  that meets the harbor floor explodes with its base at z -191 and y
+  -6648. INFERRED: the point trace stops at -191.875 over the floor at
+  -192, a fraction past y -6648 (vcod's replay strikes at y -6647.35), and
+  only `floor` and `ceil` give that base from there. vcod's `snap_towards` truncated until 2026-10-17 and put
+  that explode at -190 (`a_rocket_into_water_splashes`).
 - With `ent->+0x23C` non-zero, `G_RadiusDamage(&tr.endpos, ent, ent->parent,
   (float)ent->+0x23C, (float)ent->+0x240, (float)ent->+0x244, other,
   ent->+0x24C)`. VERIFIED: the ignored entity is `other`, the entity the
@@ -5116,7 +5252,7 @@ rocket, explode or splash. Pinned by
 `a_rocket_that_strikes_a_player_hits_him_directly`
 (`crates/server/tests/combat.rs`), and on the client by
 `the_panzer_capture_s_explode_draws_the_rocket_row`
-(`crates/client/src/fx/registry.rs`). Not ported: 12.1's water splash.
+(`crates/client/src/fx/registry.rs`). Its water splash is 12.1's.
 
 VERIFIED, `game.mp.uo.i386.so`: UO's `fire_rocket` (0x5fc74) stores
 `trType` 2 (0x5fde6) and a 15000 ms think, `Weapon_RocketLauncher_Fire`
@@ -6282,7 +6418,9 @@ condition. The output starts at zero and each term adds.
   spring, so on a server it reads zero for the whole of a life and the
   helper adds nothing; the kick a retail client sees after its own shot is
   the cgame's copy of the same state and never reaches the server's aim
-  (15.7).
+  (15.7). VERIFIED, a capture: a 1.1d sighted burst with the kick ranges
+  pinned strikes one spot. 1.5b's and UO's servers do kick it
+  (`cod15-movement.md` 6, "The server's gun kick").
 - Last, `out[0] = AngleSubtract(out[0], frame+0x44)` and `out[1] =
   AngleSubtract(out[1], frame+0x48)`, the sway angles of 15.3.
 
@@ -6408,7 +6546,8 @@ length before the 66 ms chop, off the view the previous cmd left, and keeps
 the state and the damage kick (`end_frame` now computes section 6's step 6
 angles as well as the bytes); `Attack::Shot`, `Swing` and `Throw` carry the
 aim, and `bullet_fire`, `melee_fire` and `throw_velocity` fire along it.
-Left out on purpose: the gun-kick spring (zero on a server), `eFlags 0xc000`
+Left out on purpose: the gun-kick spring on 1.1 (zero on its server; 1.5
+and UO kick it, `cod15-movement.md` 6), `eFlags 0xc000`
 (no mounted MG), and the shellshock scale (client-side).
 
 ### 15.7 The fire recoil: the view kick and the gun kick
@@ -6593,8 +6732,8 @@ the fire draw and the RNG, and steps the spring
 `OnlineView::frame`; `PlayInput::cmd_angles` adds the kick to the cmd and
 the drawn view, truncating the kick's units on their own (at most one unit
 off retail's single truncation). The gun kick turns the viewmodel about the
-eye and reaches the scope through `AimInput::gun_kick`; the server passes
-zero. The drawn view takes its roll from the cmd angles plus
+eye and reaches the scope through `AimInput::gun_kick`; a 1.1 server
+passes zero, a 1.5 or UO one its own spring (`cod15-movement.md` 6). The drawn view takes its roll from the cmd angles plus
 `delta_angles` (`own_view` in `crates/client/src/main.rs`), as the
 predicted `viewangles[2]`; a mounted gun's view keeps roll 0.
 `OnlineView::track_spawn` clears the kick on a new `(clientNum, stats[5])`

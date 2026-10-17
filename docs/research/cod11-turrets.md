@@ -1535,7 +1535,8 @@ What it lets through, each a `GAPS` line in the gate:
   back has moved for however much of its own cmd clock retail's frame ran,
   and the target is the other client, whose clock this capture does not
   carry. 13.3 measures it, and the replay that follows it matches the
-  round. The row stays in this capture's gate for want of that clock.
+  round. The row stays in this capture's gate for want of that clock;
+  13.4 closes it on a capture that logs it.
 - The crouch release's one-unit drop: at 38900 ours reads grounded 0.2 above
   the floor (z -23.66), where VERIFIED (fixture lines 1431 and 1436) retail reads
   `groundEntityNum` 1023 at the same printed height and 1022 at -23.9 on the
@@ -1771,6 +1772,102 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
   the snapshots, not read from 1.1d's `PM_AirMove`). The fixture prints
   origins to 0.1, so the 0.256 at 37350 is that drift where the print
   rounds it past the gate's 0.25; `GAPS_VICTIM` names that row.
+
+### 13.4 The target's spawn and cmds
+
+Three more runs of the recipe on 2026-10-17, each a `--capture-tag` run
+whose target is `--probe-team axis --probe-fall` (its stdout logs every cmd
+stamp it sent, `CMDS`, and its own playerstate, `FALL`) and whose gsc
+appends `getTime()` to each `PROBE place` line:
+`mp_carentan-dm-turret-spawn.txt` (1.1d), `-spawn-15.txt` (1.5b) and
+`-spawn-uo.txt` (UO 1.51b), each with a `-script.txt` (the server log) and
+a `-target.txt` (the target's `CMDS` and `FALL` lines) beside it.
+
+- VERIFIED, `-spawn-target.txt` lines 9-10: the target reads `pm_type` 4
+  and health 0 at 11400 and stands at the placed spot with health 100 at
+  11500, the time `-spawn-script.txt` line 24 gives the placement; `FALL`
+  prints on every health change, so the spawn and the placement share the
+  frame. The same holds at 12250 on 1.5b and 11850 on UO (their lines 9-10
+  and 24).
+- VERIFIED, `-spawn-target.txt` lines 11-18: the target falls from the
+  placement on its own 16-17 ms cmds, lands at `commandTime` 11832 with
+  `legsAnim` 99 (the `land` event's anim, `player-model-anim-system.md`) at 11850, and idles (634) by 11950.
+  vcod measurement: our join's 50 ms cmds landed it at 11850 with no land
+  anim, so its idle ran from another time than retail's.
+- VERIFIED, lines 37-38: the wound shows on 30150 (`pm_time` 50,
+  `pm_flags` 0x200, health 47) and the kill on 30200, 30 ms of the
+  target's cmds later (`pm_time` 20). The kill frame ran 49 ms on UO
+  (`-spawn-uo-target.txt` line 37, `pm_time` 1) and 48 on 1.5b
+  (`-spawn-15-target.txt` line 36, `pm_time` 2).
+
+vcod: `turret_ab`'s `rig_aligned` runs our server alone until the target's
+placement lands on retail's `PROBE place` time, sends the target's cmds at
+the stamps its `CMDS` lines list from its join on (`common::join_pair_stamped`,
+`Rig::target_cmds`), holds until our clock is retail's, and from there
+replays every frame at the level time of the retail snapshot it pairs
+with, the gunner's cmds on their own stamps. `spawn_gate` diffs every
+phase and the target's playerstate against its `FALL` lines on the
+snapshots that carry its entity.
+
+- vcod measurement: on 1.1d and 1.5b every row matches, the wounding and
+  the killing rounds' impacts included, which the earlier captures keep as
+  `ENTRY_POINT` and `KILLING_ROUND` rows for want of the spawn time and
+  the stamps. Before the target's stamps were replayed the 1.1d kill was
+  (1516, 1612) against retail's (1516, 1611); our entry point was 1612.054
+  in y.
+- vcod measurement: on UO the wound matches and the kill enters at x
+  1513.0006 against retail's 1512 after truncation, with the target's
+  entity and playerstate matching retail's at the kill. `GAPS_SPAWN_UO`
+  names the row. It is not the trace's arithmetic (13.5): the posed
+  bones sit up to 0.05 units off retail's.
+- VERIFIED, the gunner's own cmds, read off each snapshot's view: a cmd
+  stamped a ms past the snapshot time and followed by one stamped a ms
+  below it runs before that snapshot (1.1d 21551, UO 22101 and 22551), and
+  the one below never shows; 1.5b's 21184 and 21234 and UO's strafe 36284
+  reach the server a frame late. The gates list them (`EARLY_SPAWN*`,
+  `LATE_SPAWN*`). UO's 36284 matches only with its own stamp kept, which
+  the stamped replay does and the older gates' re-stamped one does not.
+
+### 13.5 The hit point to the last bit
+
+The `-spawn-uo` row is a whole unit apart only after truncation, so a
+fourth run of the recipe on 2026-10-17 logs each hit's point and
+direction with `probe_hitlog 1`. It is `mp_carentan-dm-turret-hitfine-uo.txt`
+with its `-script.txt` and `-target.txt`. `probe_turret.gsc` wraps
+`level.callbackPlayerDamage` and prints each component as whole,
+thousandths and the rest. The engine has no `int()`, so the gsc takes the
+whole part by halving steps (`whole`), each subtraction exact.
+
+- VERIFIED, `-hitfine-uo-script.txt`: the wound at 30150 enters
+  `torso_upper` at (1519.957764, 1612.592651, 22.911320) and the kill
+  at 30200 at (1513.656006, 1608.460938, 22.762277), both for 53.
+- vcod measurement (`the_hitlog_capture_matches_uo_on_mp_carentan`,
+  `TURRET_REPORT=1`): every wire row of the capture matches. Ours enters
+  the same bone (`bip01 l clavicle`, `torso_upper`) at (-0.0029, -0.0035,
+  -0.0001) off retail's on the wound and (+0.0367, +0.0413, +0.0011) on
+  the kill. Each difference lies almost along the round, so the box face
+  sits elsewhere and the ray does not. The directions agree to 6e-8.
+- VERIFIED, the locational bone trace in each build
+  (`SV_LocationalTraceModel`, cod11-combat.md 3.1): 1.1d `cod_lnxded`
+  0x80c4564 (18 float stores), 1.5b `cod_lnxded` 0x80d2000 and UO
+  `coduo_lnxded` 0x80c7394 (29 each). 1.5b and UO move each point through
+  helpers that store each difference and each product sum: into the bone's
+  frame at 1.5b 0x80d1f56 and UO 0x80c72ea, the sphere centre out of it at
+  UO 0x80c723e. Each slab distance `(p - plane) * sign` and each
+  `d1 / (d1 - d2)` is stored too.
+- vcod measurement: the `-spawn-uo` kill replayed through that slab form
+  enters at x 1513.000610 with every store rounded to f32 and 1513.000637
+  with none. `bonetrace.rs` gives 1513.000610. The stores move the entry
+  by 3e-5, against the 0.003 to 0.05 the pose is off. So the trace's
+  arithmetic is not ported; it cannot close the row.
+- vcod measurement: on the kill frame ours poses legs 157 starting that
+  frame at weight 0 over 1-2 idle clips (the knockback's first frame).
+  Moving our pose clock 1 to 40 ms either way moves the kill's entry
+  further from retail's, never onto it. INFERRED: the difference is in
+  the pose's inputs on 1.5's and UO's eased controllers or the clip blend,
+  not in the clock. UO has no `getTagOrigin` (coduo-vehicles.md), so no
+  script can log the bones there. The hit point is the only reading of
+  the pose a UO capture gives.
 
 ## 14. The client
 

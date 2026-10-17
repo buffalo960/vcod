@@ -614,6 +614,76 @@ fn the_predictor_replays_uo_sprint_and_bipod() {
     assert!(off > 50, "{off}");
 }
 
+/// The windows out of United Offensive's walled-in spawn rooms
+/// (`--probe-crouchjump`, `crouchjump_script` in `crates/client/src/probe.rs`,
+/// `client-probes/probe_crouchjump`, bot-navigation.md "Walled-in spawns"):
+/// a run at the wall under the window, a jump, crouch held in the air for
+/// a second (none in the `-stand` controls), then on through the window and
+/// down outside. At 8 ms cmds every run gets out; at 50 ms, a bot's frame,
+/// only the crouched ones do. Needs `COD_DIR` at a UO install, as the
+/// sprint gate does.
+const CROUCHJUMP_UO: [(&str, &str); 12] = [
+    (
+        "mp_cassino",
+        "mp_cassino-dm-slope-8ms-crouchjump-cassino.txt",
+    ),
+    (
+        "mp_cassino",
+        "mp_cassino-dm-slope-8ms-crouchjump-cassino-stand.txt",
+    ),
+    (
+        "mp_streets",
+        "mp_streets-dm-slope-8ms-crouchjump-streets.txt",
+    ),
+    (
+        "mp_streets",
+        "mp_streets-dm-slope-8ms-crouchjump-streets-stand.txt",
+    ),
+    ("mp_streets", "mp_streets-dm-slope-8ms-crouchjump-low.txt"),
+    (
+        "mp_streets",
+        "mp_streets-dm-slope-8ms-crouchjump-low-stand.txt",
+    ),
+    (
+        "mp_cassino",
+        "mp_cassino-dm-slope-50ms-crouchjump-cassino.txt",
+    ),
+    (
+        "mp_cassino",
+        "mp_cassino-dm-slope-50ms-crouchjump-cassino-stand.txt",
+    ),
+    (
+        "mp_streets",
+        "mp_streets-dm-slope-50ms-crouchjump-streets.txt",
+    ),
+    (
+        "mp_streets",
+        "mp_streets-dm-slope-50ms-crouchjump-streets-stand.txt",
+    ),
+    ("mp_streets", "mp_streets-dm-slope-50ms-crouchjump-low.txt"),
+    (
+        "mp_streets",
+        "mp_streets-dm-slope-50ms-crouchjump-low-stand.txt",
+    ),
+];
+
+#[test]
+fn the_predictor_replays_uo_jumps_through_low_windows() {
+    let mut failures = Vec::new();
+    for (map, file) in CROUCHJUMP_UO {
+        let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{file}")).unwrap();
+        let Some((world, weapons)) = uo_setup(&text, map) else {
+            return;
+        };
+        let lines = parse(&PROTOCOL_V22, &text);
+        let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+        print(file, &r);
+        assert!(r.compared > 120, "{file}: only {} snapshots", r.compared);
+        failures.extend(over(&r, &[]).into_iter().map(|f| format!("{file}: {f}")));
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 const AUTOFIRE_UO: &str = "mp_carentan-dm-slope-8ms-autofire-uo.txt";
 
 /// United Offensive's automatic fire (`--probe-autofire`, `autofire_script`

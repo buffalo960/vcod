@@ -227,6 +227,9 @@ pub struct BotView {
     pub leap: bool,
     /// On a jump edge, the body loses the ground next tick (`nav::lip_ahead`).
     pub lip: bool,
+    /// The jump edge is a crouched one (`nav::Follower::crouch_jumping`):
+    /// hold crouch from the cmd after the jump until the body lands.
+    pub crouch_jump: bool,
     /// [`Self::waypoint`] is a leap's foot: come to rest on it.
     pub stop: bool,
     /// [`Self::waypoint`] lies more than [`BACK_DOWN_HEIGHT`] down a drop
@@ -729,6 +732,8 @@ pub struct Bot {
     creep: crate::nav::Creep,
     /// The last cmd held the jump key; a second jump needs it released.
     jump_held: bool,
+    /// Jumped on a crouched jump edge and not yet landed: crouch is held.
+    crouch_air: bool,
     /// The waypoint the last cmd held a move key toward: a body not
     /// closing on its waypoint is pinned only against a key held at it.
     pressed: Option<[f32; 3]>,
@@ -1020,6 +1025,7 @@ impl Bot {
             menus: &WEAPON_MENUS,
             creep: crate::nav::Creep::default(),
             jump_held: false,
+            crouch_air: false,
             pressed: None,
             pinned_ticks: 0,
             pushed_off: None,
@@ -2025,12 +2031,41 @@ impl Bot {
             }
             cmd.angles = self.lob_angles(view);
         }
-        match self.stage {
-            Stage::ToGrenade => return self.think_grenade(view, cmd),
-            Stage::Cook { left, spoon } => return self.think_cook(view, cmd, left, spoon),
-            Stage::BackToRifle { weapon } => return self.think_back(view, cmd, weapon),
-            Stage::Wander => {}
+        // A throw under way runs from a live frag too: one that came back
+        // off a wall rolled to a bot standing through the switch back to
+        // its rifle (bot-objectives.md 6).
+        let mut staged = match self.stage {
+            Stage::ToGrenade => self.think_grenade(view, cmd),
+            Stage::Cook { left, spoon } => self.think_cook(view, cmd, left, spoon),
+            Stage::BackToRifle { weapon } => self.think_back(view, cmd, weapon),
+            Stage::Wander => {
+                return self.think_wander(view, cmd);
+            }
+        };
+        let yaw = (staged.angles[1] + view.delta_angles[1]) as f32 / ANGLE2SHORT;
+        self.flee(view, &mut staged, yaw);
+        staged
+    }
+
+    /// A live grenade near: the keys run from it whatever the fight wants,
+    /// the view stays where `yaw` (the cmd's own) has it.
+    fn flee(&self, view: &BotView, cmd: &mut UserCmd, yaw: f32) {
+        if let Some(f) = view.frag_near
+            && !view.deployed
+            && !self.objective_busy(view)
+        {
+            let away = (view.origin[1] - f[1])
+                .atan2(view.origin[0] - f[0])
+                .to_degrees();
+            let d = yaw_diff(away, yaw).to_radians();
+            cmd.forward = (d.cos() * 127.0).round() as i8;
+            cmd.right = (-d.sin() * 127.0).round() as i8;
+            cmd.up = 0;
+            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
         }
+    }
+
+    fn think_wander(&mut self, view: &BotView, mut cmd: UserCmd) -> UserCmd {
         if let Some(cmd) = self.think_objective(view, cmd) {
             return cmd;
         }
@@ -2241,6 +2276,15 @@ impl Bot {
         } else {
             self.pinned_ticks = 0;
         }
+        // A crouched jump edge: `PM_CheckJump` refuses a crouched body, so
+        // the crouch starts on the cmd after the jump's and is held, as a
+        // retail client holds it, until the body is on the ground again.
+        self.crouch_air &= !view.on_ground;
+        if self.crouch_air {
+            cmd.wbuttons |= msg::WBUTTON_CROUCH;
+            cmd.up = -127;
+        }
+        self.crouch_air |= view.crouch_jump && cmd.up > 0;
         // Off the rungs backwards onto a floor behind: jump facing out,
         // then brake facing the same way until the body lands, as
         // `nav::push_off` proved it.
@@ -2325,21 +2369,7 @@ impl Bot {
                 [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
             }
         }
-        // A live grenade near: the keys run from it whatever the fight
-        // wants, the view stays on the fight.
-        if let Some(f) = view.frag_near
-            && !view.deployed
-            && !self.objective_busy(view)
-        {
-            let away = (view.origin[1] - f[1])
-                .atan2(view.origin[0] - f[0])
-                .to_degrees();
-            let d = yaw_diff(away, yaw).to_radians();
-            cmd.forward = (d.cos() * 127.0).round() as i8;
-            cmd.right = (-d.sin() * 127.0).round() as i8;
-            cmd.up = 0;
-            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
-        }
+        self.flee(view, &mut cmd, yaw);
         // A switch ends when it lands, or when the weapon is gone (dropped,
         // or swapped at a pickup) and the byte would read as a holster for
         // good.
@@ -3376,6 +3406,7 @@ mod tests {
             jump: false,
             leap: false,
             lip: false,
+            crouch_jump: false,
             stop: false,
             run_off: false,
             move_scale: 1.0,
@@ -4137,6 +4168,37 @@ mod tests {
         v.waypoint = Some([30.0, 0.0, 84.0]);
         let ups: Vec<i8> = (0..2).map(|_| bot.think(&v).up).collect();
         assert_eq!(ups, [0, 127]);
+    }
+
+    /// On a crouched jump edge the cmd after the jump holds crouch, with
+    /// `upmove` -127, through the air, and lets it go on the ground.
+    #[test]
+    fn a_bot_on_a_crouched_jump_edge_crouches_in_the_air() {
+        use vcod_common::net::msg::WBUTTON_CROUCH;
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.stop = true;
+        v.waypoint = Some([2.0, 0.0, 64.0]);
+        bot.think(&v);
+        v.stop = false;
+        v.jump = true;
+        v.crouch_jump = true;
+        v.waypoint = Some([30.0, 0.0, 84.0]);
+        bot.think(&v);
+        let jump = bot.think(&v);
+        assert_eq!((jump.up, jump.wbuttons & WBUTTON_CROUCH), (127, 0));
+        v.on_ground = false;
+        for _ in 0..3 {
+            let air = bot.think(&v);
+            assert_eq!(
+                (air.up, air.wbuttons & WBUTTON_CROUCH),
+                (-127, WBUTTON_CROUCH)
+            );
+        }
+        v.on_ground = true;
+        v.jump = false;
+        v.crouch_jump = false;
+        assert_eq!(bot.think(&v).wbuttons & WBUTTON_CROUCH, 0, "landed");
     }
 
     /// A jump edge whose top is more than a jump below, the body still
@@ -5486,6 +5548,18 @@ mod tests {
         assert!(cmd.forward < -100, "{}", cmd.forward);
         let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
         assert!(yaw.abs() < 20.0, "the view stays on the enemy: {yaw}");
+    }
+
+    /// mp_cassino, seed 1: a frag thrown away from a close enemy came back
+    /// off the wall and rolled to the thrower, who stood through the switch
+    /// back to its rifle and took the blast. The keys run from it there too.
+    #[test]
+    fn a_bot_switching_back_from_a_throw_runs_from_a_live_frag() {
+        let (mut bot, mut v) = engaged(3);
+        v.frag_near = Some([60.0, 0.0, 0.0]);
+        bot.stage = Stage::BackToRifle { weapon: 10 };
+        let cmd = bot.think(&v);
+        assert!(cmd.forward < -100, "{}", cmd.forward);
     }
 
     /// No clear lob at the enemy (a wall, a ceiling or a body in the way):

@@ -67,7 +67,7 @@ const SURF_SKY: u32 = 0x4;
 pub(crate) const SURF_NOIMPACT: u32 = 0x10;
 /// UO's push along `-normal` (`.rodata 0xa180c`, -2.0).
 const UO_SKY_PUSH: f32 = 2.0;
-/// The sky brushes' contents bit: UO's `G_MissileTrace` (0x6ee17) reads a
+/// The sky brushes' contents bit: UO's `G_MissileTrace` (0x5edf4) reads a
 /// trace that starts inside one as clear.
 const CONTENTS_SKY: u32 = 0x800;
 /// How far the explode looks down for the normal its `eventParm` packs
@@ -79,6 +79,11 @@ const EXPLODE_TRACE_DOWN: f32 = 16.0;
 pub(crate) const MISSILE_MODEL_MASK: u32 = 0x0280_2091;
 /// `0x14`, the surface type the water branches of 12.1 and 13.2 both use.
 const WATER_SURF_TYPE: i32 = 0x14;
+/// 12.1: a move whose `trDelta[2]` is past this (`.rodata 0x75B50`) and
+/// that starts out of water traces water too, and splashes on it.
+const WATER_ENTRY_SPEED: f32 = 30.0;
+/// The surface type's bits in `surfaceFlags`.
+const SURF_TYPE_MASK: u32 = 0x1F0_0000;
 // How long an exploded missile stays on the wire before it is freed: the
 // capture's three explodes each ride exactly 300 ms of snapshots past their
 // event and are gone on the next (entity 176, serverTime 225150 to 225450).
@@ -243,6 +248,9 @@ pub struct Missile {
     free_at_ms: Option<i32>,
     /// UO's shootable grenade, the satchel charge.
     pub shootable: Option<Shootable>,
+    /// The water entry splash this step raised (12.1), which the pool
+    /// hands its caller to spawn.
+    splash: Option<crate::game::temp_entity::TempEntity>,
 }
 
 /// What UO's `fire_grenade` (0x5f7ad) gives a `takeDamage` grenade whose
@@ -302,10 +310,9 @@ pub struct Explosion {
     pub shell_damage: i32,
 }
 
-/// What one frame of the missile pass produced. `temp` is empty for a
-/// grenade: both explode paths write the event onto the missile's own
-/// entity rather than spawning a temp entity (13), and it is kept for the
-/// missiles that do not.
+/// What one frame of the missile pass produced. `temp` holds the water
+/// entry splashes (12.1) only: both explode paths write the event onto the
+/// missile's own entity rather than spawning a temp entity (13).
 pub struct MissileFrame {
     pub exploded: Vec<Explosion>,
     pub temp: Vec<crate::game::temp_entity::TempEntity>,
@@ -336,6 +343,9 @@ pub struct Missiles {
     /// `flrand`'s state for the launch tumble. Its own, so a throw draws the
     /// same numbers whatever else the frame did.
     rng: u64,
+    /// Water entry splashes raised since the caller last took them
+    /// ([`Missiles::take_splashes`]).
+    splashes: Vec<crate::game::temp_entity::TempEntity>,
 }
 
 impl Default for Missiles {
@@ -347,6 +357,7 @@ impl Default for Missiles {
             // xorshift degenerates on a zero state, so an unseeded pool
             // would tumble every grenade identically.
             rng: crate::game::host::RNG_SEED,
+            splashes: Vec::new(),
         }
     }
 }
@@ -514,7 +525,38 @@ impl Missile {
             hit.model = None;
             hit.model_body = false;
         }
+        // 1.5's and UO's `G_MissileTrace` (1.5b 0x54a5e, UO 0x5ee1e): any
+        // other start-solid reads as a contact at the start, its normal
+        // back along the move (combat doc 12.3).
+        if self.falls && hit.tr.startsolid {
+            hit.tr.fraction = 0.0;
+            hit.tr.normal = (from - to).normalize_or_zero();
+        }
         hit
+    }
+
+    /// 12.1's water entry splash, `G_TempEntity` at `r.currentOrigin`
+    /// before the move: `EV_BULLET_HIT_SMALL` (UO's 178) with the water
+    /// face's normal, the flight with its z made non-negative in `scale`,
+    /// surface type 0x14 and the missile's own number; UO's carries the
+    /// weapon too (1.1 0x54115, 1.5b 0x54d8d, UO 0x5f14d).
+    fn splash_at(&self, at: Vec3, normal: Vec3) -> crate::game::temp_entity::TempEntity {
+        let mut d = self.traj.delta.normalize_or_zero();
+        d.z = d.z.abs();
+        crate::game::temp_entity::TempEntity {
+            event: vcod_common::net::event_ids::EV_BULLET_HIT_SMALL,
+            parm: dir_to_byte(normal.into()),
+            surf_type: WATER_SURF_TYPE,
+            other: self.id.0,
+            attacker: 0,
+            weapon: if self.uo { self.weapon as i32 } else { 0 },
+            client_num: 0,
+            scale: dir_to_byte(d.into()),
+            origin: at.into(),
+            scope: crate::game::temp_entity::Scope::Pvs,
+            quake: None,
+            origin2: None,
+        }
     }
 
     /// One `G_RunMissile` (12): fly to where the arc says this frame, then
@@ -588,6 +630,11 @@ impl Missile {
         // struct: 12.3 reads the downward trace and not the move, which is
         // what makes a rolling grenade bounce off the floor below it every
         // frame.
+        // 12.1: a fast move out of water traces water too (mask | 0x20);
+        // one that meets water first splashes and is traced again without
+        // it, which is the plain trace.
+        let wet = self.traj.delta.z.abs() > WATER_ENTRY_SPEED
+            && world.point_contents(self.origin) & CONTENTS_WATER == 0;
         let MissileHit {
             mut tr,
             mut player,
@@ -595,10 +642,26 @@ impl Missile {
             mut model_takes_damage,
             mut model_body,
         } = self.full_trace(world, sims, models, bones.as_deref_mut(), self.origin, to);
+        if wet
+            && let Some(w) = world.water_hit(self.origin, to)
+            && w.fraction < tr.fraction
+            && w.surface_flags & SURF_TYPE_MASK == (WATER_SURF_TYPE as u32) << 20
+        {
+            self.splash = Some(self.splash_at(self.origin, w.normal));
+            // UO frees a smoke grenade on the splash (0x5f1f3).
+            if self.uo && self.explosion_type == SMOKE {
+                return Stepped::Freed;
+            }
+        }
         if self.uo && tr.surface_flags & SURF_SKY != 0 {
             tr.endpos -= tr.normal * UO_SKY_PUSH;
         }
         self.origin = tr.endpos;
+        // `r.currentOrigin` takes the end, then a start-solid move reads as
+        // a contact (1.1 0x5420c, UO 0x5f367).
+        if tr.startsolid {
+            tr.fraction = 0.0;
+        }
         // A shell carries no bounce bits (`fire_rocket` sets only 0x10000).
         if self.shell.is_none() && (tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z) {
             // The snap is a `trap_LocationalTrace` under `bulletPriorityMap`
@@ -990,10 +1053,12 @@ struct MissileHit {
     model_body: bool,
 }
 
-/// `SnapVectorTowards` on one axis: truncated, then a unit on toward `to`
-/// when `to` lies above.
+/// `SnapVectorTowards` on one axis: `floor` when `to` is not above, else
+/// `ceil` (1.1 0x692d8 under the x87 round-down and round-up modes, 1.5b
+/// 0x6dd91 and UO 0x7a745 through `floor` and `ceil`). Not Q3's truncate
+/// and add one, which lands a unit off on a negative axis (combat doc 13.1).
 fn snap_towards(v: f32, to: f32) -> f32 {
-    if to <= v { v.trunc() } else { v.trunc() + 1.0 }
+    if to <= v { v.floor() } else { v.ceil() }
 }
 
 /// UO's `fire_grenade` gives a `takeDamage` grenade a box only when its
@@ -1103,6 +1168,7 @@ impl Missiles {
             rocket: false,
             free_at_ms: None,
             shootable: None,
+            splash: None,
         });
         Ok(id)
     }
@@ -1242,6 +1308,7 @@ impl Missiles {
             rocket: false,
             free_at_ms: None,
             shootable: None,
+            splash: None,
         });
         Ok(id)
     }
@@ -1324,6 +1391,7 @@ impl Missiles {
             rocket: true,
             free_at_ms: None,
             shootable: None,
+            splash: None,
         });
         Ok(id)
     }
@@ -1351,6 +1419,7 @@ impl Missiles {
                 _ => {}
             }
         }
+        frame.temp = self.take_splashes();
         frame
     }
 
@@ -1371,6 +1440,7 @@ impl Missiles {
         if let Some(free_at) = m.free_at_ms {
             // A popped smoke grenade flies on; `G_FreeEntity` is its think.
             let stepped = m.step(world, sims, models, bones, now_ms);
+            self.splashes.extend(m.splash.take());
             if now_ms >= free_at || stepped == Stepped::Freed {
                 self.live.remove(i);
                 return Some(Turn::Freed);
@@ -1386,7 +1456,10 @@ impl Missiles {
             }
             return Some(Turn::Flew);
         }
-        match m.step(world, sims, models, bones, now_ms) {
+        let stepped = m.step(world, sims, models, bones, now_ms);
+        self.splashes.extend(m.splash.take());
+        let m = &mut self.live[i];
+        match stepped {
             Stepped::Struck(c) => return Some(Turn::Exploded(m.impact(world, c, now_ms))),
             Stepped::Freed => {
                 self.live.remove(i);
@@ -1415,6 +1488,12 @@ impl Missiles {
         if let Some(m) = self.live.iter_mut().find(|m| m.id == id) {
             m.eflags |= vcod_common::net::flags::EF_IN_VEHICLE_V22;
         }
+    }
+
+    /// The water entry splashes the turns since the last call raised, in
+    /// order: `G_TempEntity`s the caller spawns on the missile's turn.
+    pub fn take_splashes(&mut self) -> Vec<crate::game::temp_entity::TempEntity> {
+        std::mem::take(&mut self.splashes)
     }
 
     /// Whether `id` is a missile this pool runs.
@@ -2172,6 +2251,150 @@ mod tests {
                 assert!((x.at.z - (top + UO_BLAST_LIFT)).abs() < 1e-3, "{}", x.at);
             } else {
                 assert!(m.origin.z <= 8.0, "1.1 stays under: {}", m.origin);
+            }
+        }
+    }
+
+    /// A pool of water 64 deep on a floor, its material water's surface
+    /// type, for 12.1's splash.
+    fn pool() -> CollisionWorld {
+        use vcod_common::collision::{CONTENTS_SOLID, synthetic_world};
+        synthetic_world(
+            &[
+                ("textures/test/solid", CONTENTS_SOLID, 0),
+                (
+                    "textures/test/water",
+                    CONTENTS_WATER,
+                    SURF_TYPE_MASK & 0x140_0000,
+                ),
+            ],
+            &[
+                (0, [-1024.0, -1024.0, -16.0], [1024.0, 1024.0, 0.0]),
+                (1, [-512.0, -512.0, 0.0], [512.0, 512.0, 64.0]),
+            ],
+        )
+    }
+
+    /// 12.1: a missile whose `trDelta` z passes 30 and that starts out of
+    /// water raises `EV_BULLET_HIT_SMALL` on the move that enters it, at the
+    /// origin before that move, then flies on as if the water were not
+    /// there; one thrown slower does not, and neither does the next move,
+    /// which starts in the water.
+    #[test]
+    fn a_missile_entering_water_fast_splashes() {
+        let world = pool();
+        for (vz, splashes) in [(-600.0, true), (-20.0, false)] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles::default();
+            let start = Vec3::new(0.0, 0.0, 100.0);
+            let id = armed(
+                &mut ms,
+                &mut host,
+                &mut vm,
+                start,
+                Vec3::new(0.0, 100.0, vz),
+                0,
+            );
+            let mut temps = Vec::new();
+            let mut before = start;
+            let mut entered = None;
+            for f in 1..20 {
+                let was = ms.missiles()[0].origin;
+                let frame = ms.run(Some(&world), &[], &[], None, f * 50);
+                if !frame.temp.is_empty() && entered.is_none() {
+                    entered = Some(f);
+                    before = was;
+                }
+                temps.extend(frame.temp);
+            }
+            if !splashes {
+                assert!(temps.is_empty(), "{} splashes", temps.len());
+                continue;
+            }
+            assert_eq!(temps.len(), 1);
+            let t = &temps[0];
+            assert_eq!(t.event, vcod_common::net::event_ids::EV_BULLET_HIT_SMALL);
+            assert_eq!(t.surf_type, WATER_SURF_TYPE);
+            assert_eq!(t.other, id.0);
+            assert_eq!(t.origin, before.to_array());
+            assert!(before.z > 64.0, "{before}");
+            assert_eq!(t.parm, dir_to_byte([0.0, 0.0, 1.0]));
+            let d = Vec3::new(0.0, 100.0, 600.0).normalize();
+            assert_eq!(t.scale, dir_to_byte(d.into()));
+            assert_eq!(t.weapon, 0);
+        }
+    }
+
+    /// UO's splash carries the weapon, and frees a smoke grenade on the
+    /// spot (game.mp.uo 0x5f1f3).
+    #[test]
+    fn a_uo_smoke_grenade_is_freed_on_its_splash() {
+        let world = pool();
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let id = armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 100.0),
+            Vec3::new(0.0, 0.0, -600.0),
+            0,
+        );
+        ms.set_uo_kind(id, explosion_type("smoke"), false, 0);
+        let mut freed = None;
+        for f in 1..10 {
+            let frame = ms.run(Some(&world), &[], &[], None, f * 50);
+            if !frame.temp.is_empty() {
+                assert_eq!(frame.temp[0].weapon, 8);
+                assert_eq!(frame.freed, vec![id]);
+                freed = Some(f);
+                break;
+            }
+        }
+        assert!(freed.is_some());
+        assert!(!ms.contains(id));
+    }
+
+    /// `SnapVectorTowards` floors or ceils toward the base; a negative axis
+    /// snaps toward the base by less than a unit (combat doc 13.1).
+    #[test]
+    fn snap_towards_floors_and_ceils() {
+        assert_eq!(snap_towards(-191.875, 212.0), -191.0);
+        assert_eq!(snap_towards(-6647.35, -7036.0), -6648.0);
+        assert_eq!(snap_towards(10.5, 0.0), 10.0);
+        assert_eq!(snap_towards(10.5, 20.0), 11.0);
+        assert_eq!(snap_towards(-4.0, 20.0), -4.0);
+    }
+
+    /// 1.5's and UO's `G_MissileTrace` reads a start-solid trace as a
+    /// contact at the start whose normal points back along the move; 1.1's
+    /// `G_RunMissile` zeroes only the fraction (combat doc 12.3).
+    #[test]
+    fn a_start_solid_move_is_a_contact() {
+        use vcod_common::collision::{CONTENTS_SOLID, synthetic_world};
+        let world = synthetic_world(
+            &[("textures/test/solid", CONTENTS_SOLID, 0)],
+            &[(0, [-64.0, -64.0, -64.0], [64.0, 64.0, 64.0])],
+        );
+        for falls in [false, true] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                falls,
+                ..Missiles::default()
+            };
+            let from = Vec3::new(0.0, 0.0, 32.0);
+            let to = Vec3::new(0.0, 200.0, 32.0);
+            armed(&mut ms, &mut host, &mut vm, from, Vec3::ZERO, 0);
+            let m = &ms.missiles()[0];
+            let hit = m.full_trace(&world, &[], &[], None, from, to);
+            assert!(hit.tr.startsolid);
+            assert_eq!(hit.tr.fraction == 0.0, falls, "{:?}", hit.tr);
+            if falls {
+                assert_eq!(hit.tr.normal, -Vec3::Y);
             }
         }
     }

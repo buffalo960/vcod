@@ -16,10 +16,9 @@ use crate::weapon::{AimDef, WeaponDef};
 use glam::Vec3;
 
 /// `client+0x2278..0x22a8`: what the block keeps between cmds. The gun-kick
-/// springs at `+0x22ac` are left out: nothing in the server module ever
-/// kicks them, so on a server they hold zero for the whole of a life. The
-/// cgame's copy is [`GunKick`], which the client steps and hands in through
-/// [`AimInput::gun_kick`].
+/// spring at `+0x22ac` is [`GunKick`], kept by the caller and handed in
+/// through [`AimInput::gun_kick`]: the client steps the cgame's copy, and a
+/// 1.5 or UO server its own (1.1's never kicks it; cod15-movement.md 6).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct AimState {
     /// `ps.viewangles` the sway last saw (`+0x2278`).
@@ -68,7 +67,7 @@ pub struct AimInput<'a> {
     pub now_ms: i32,
     pub kick: DamageKick,
     /// The gun-kick spring's pitch and yaw ([`GunKick::angles`]), added to
-    /// the gun of an `aimDownSight` weapon. Zero on a server.
+    /// the gun of an `aimDownSight` weapon. Zero on a 1.1 server.
     pub gun_kick: [f32; 2],
     /// Multiplies the turn sway's four targets: 1 on a server, the client's
     /// `swayShellShockScale` eased in through a shellshock (cgame

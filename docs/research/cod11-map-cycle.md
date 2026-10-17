@@ -646,21 +646,49 @@ VERIFIED live on 1.1d, same run (`tools/run_server.sh` puts every `+set`
 after `+map`): 14 held the motd, and `scr_allow_vote 0` read back 0 over
 rcon and in the mirror (242) with `g_allowVote` at 1, where `dm.gsc`'s
 load-time `setCvar("scr_allow_vote", level.allowvote)` writes 1.
-INFERRED from those two and Q3's `Com_StartupVariable` /
-`Com_AddStartupCommands`: a command-line `set` runs once before the load
-(how `SP_worldspawn` saw `g_motd`) and again in order after `+map`
-(how the script's 1 was overwritten), so a `+set` placed before `+map`
-leaves the script's write standing. vcod's `--set` is applied before the
-load only, the before-`+map` case; the gates model a set placed after
-`+map` by running the sets again as console lines after the load.
+VERIFIED, `cod_lnxded` 1.1d `Com_Init` (0x806c654): the command line
+is split on `+` into console lines (0x806c6e3..0x806c71d), then
+`Com_StartupVariable(NULL)` (0x806bb0c; every line whose first token is
+`set` is `Cvar_Set` and flagged `0x80`) runs ahead of the four `exec`s
+(0x806c738) and again after `Cbuf_Execute` has run them (0x806c8da), so
+a `+set` outranks `default_mp.cfg` and the configs. At the end every
+non-empty line, `set` lines included, is `Cbuf_AddText` with a `"\n"` in
+command-line order (0x806cd80..0x806cdcb, the `Q_stricmpn(line, "set",
+3)` at 0x806cd9a feeding only the "added a command" flag), so a `+set`
+after `+map` runs again once `map` has loaded the level. VERIFIED:
+`Com_StartupVariable`'s other callers are `FS_InitFilesystem`'s
+(0x80624be..0x8062522, the `fs_*` names) and the journal's (0x806bcbe);
+nothing under `SV_SpawnServer` or `SV_MapRestart_f` calls it, so a
+command-line set is applied at startup only and a later load leaves the
+table as the outgoing level left it. VERIFIED, the same shape on 1.5b
+(`Com_StartupVariable` 0x8070184, called from `Com_Init` at 0x8070f86,
+0x8070f92 and 0x8071063 besides the filesystem and journal; the
+startup-command loop's `"set"` compare at 0x807029d) and UO 1.51b
+(0x80707bc; 0x80715dc, 0x80715e8, 0x80716b9; the loop at 0x80708d5).
+INFERRED, from the startup order and the live run: `SP_worldspawn` saw
+`g_motd` through the first pass, and the replay after `+map` overwrote
+`dm.gsc`'s 1.
+
+As implemented: `Server::set_cvar` before the first load records a
+`+set` that the first level's table takes over `default_mp.cfg`
+(`Server::cvars`), and is a plain `Cvar_Set` on the running (or carried)
+table after it; later loads never replay it, so a script's `setCvar`
+of the same cvar stands. `g_gametype` and `sv_maxclients` are latched
+and wait for the next load. `vcod-server`'s `--set` placed after the map
+argument is also queued as a console `set` behind the load
+(`Server::push_set`), retail's `+map x +set ...`; one placed before it is
+the `+set ... +map x` case. The configstring gates' motd rows push their
+sets after the load the same way, as `run_server.sh` placed them.
+`server::tests::a_set_applies_once_and_a_scripts_write_outlives_later_loads`
+and `a_set_after_the_map_outranks_the_scripts_load_time_write` pin both.
 
 One divergence on the wire:
 
 - The cvar table is carried from the outgoing level rather than rebuilt from
   `default_mp.cfg`, on this path and on the map change alike, because
   retail's `Cvar_Set` writes a process-global table that neither boundary
-  clears. A `+set` override is replayed on top either way, so it still
-  outranks a script's `setCvar`.
+  clears. A `+set` goes in at the first load only, so a script's
+  `setCvar` of it outlives both boundaries, as on retail.
 
 ### 4.6 What the engine keeps across a restart
 
@@ -814,6 +842,47 @@ after. This is vcod's own cost; it says nothing about whether retail
 recompiles.
 
 ---
+
+### 4.8 The script's random draws start over at every load
+
+VERIFIED, `game.mp.i386.so` 1.1d: `randomInt` (builtin 0x5e470) is
+`irand(0, n)` (0x3d47c) and `randomFloat` (0x5e4bc) `flrand(0, f)`
+(0x3d43c). Both step one 32-bit state at 0x7dcd8 as `s = s * 0x343fd +
+0x269ec3` and draw its bits 17..31, `irand` as `min + (r * (max - min) >>
+15)`. VERIFIED: `G_InitGame` (0x4fb14) calls `srand(randomSeed)` at
+0x4fb63 and then `Rand_Init(trap_Milliseconds())` at 0x4fb6e..0x4fb74;
+`Rand_Init` (0x3d42c) only stores its argument into 0x7dcd8. VERIFIED, the
+same three calls in 1.5b (`G_InitGame` 0x4f10a: `srand` 0x4f168,
+`trap_Milliseconds` 0x4f16d, `Rand_Init` 0x4f175; `randomInt` 0x5f6a8 calls
+`irand` 0x38153 at 0x5f702) and UO 1.51b (`G_InitGame` 0x586cf: 0x5872d,
+0x58732, 0x5873a; `randomInt` 0x6b397 calls `irand` 0x3f3a3 at 0x6b3f1),
+with the same constants in `irand`. VERIFIED, `cod_lnxded` 1.1d: both
+`G_InitGame` calls (3 step 19 at 0x808919f, 4.1 at 0x80893b0) pass the
+return of 0x806d988 as `randomSeed`, a function that drains the event
+queue at 0x8112040 and returns the last event's time. INFERRED, off that
+shape against Q3's: it is `Com_Milliseconds`, the `srand` seed feeds only
+libc `rand()`, which `randomInt` does not read.
+
+So a script's draws are neither carried across a level boundary nor
+repeated: every `G_InitGame`, a `map_restart` included, seeds them from the
+wall clock. VERIFIED, `crates/server/tests/fixtures/gametypes/mp_cassino-hqtime-*-uo.txt`:
+the level after the time limit's restart shows a different hq radio from
+the first (coduo-diff.md 22).
+
+As implemented: `Server::with_seed`, which the binary calls with the wall
+clock, keeps a level seed that seeds `GameHost::rng` at each load through
+`Carry::seed` and steps after it, so every level, restarts included, draws
+anew. `Server::new` hands no seed and every level draws from `RNG_SEED`,
+so a test's spawn picks hold on every level. `gametypes_ab` does not
+lean on that: it runs `Server::with_seed` and replays each probe's retail
+spawn picks (`Server::pin_spawns`, read off the captures' first playing
+snapshot of each life), since no seed reproduces a wall-clock draw. Before
+that, the UO probes that restart (`tdmend`, `ctftime`, `bas`, `bastime`,
+`basend`) matched retail's second level only because ours repeated the
+first level's draws, and all five failed under a stepped seed. vcod keeps its xorshift generator, not `irand`'s LCG;
+the missiles' tumble keeps its own state, reset at every load
+(`Missiles::rng`). `server.rs`'s `a_restart_reseeds_the_script_draws`
+fails without the seed.
 
 ## 5. `SV_MapRotate_f` and the rotation grammar
 

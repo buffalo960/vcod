@@ -342,7 +342,9 @@ struct Args {
     /// every usercmd and snapshot to
     /// `crates/server/tests/fixtures/movers/<map>-dm-legs-client.txt`, which
     /// `legs_ab.rs` replays beside the gsc's bone log. Refuses to replace the
-    /// fixture without --overwrite-fixture.
+    /// fixture without --overwrite-fixture. A `--capture-tag` starting
+    /// `torso` fires, reloads and aims on the move instead, beside
+    /// `client-probes/probe_torso`, for `torso_ab.rs`.
     #[arg(long)]
     save_legs: bool,
     /// With `--net-probe` and `--probe-team`: the shellshock capture's
@@ -491,7 +493,9 @@ struct Args {
     /// sights and holds the trigger (`client-probes/probe_vehicle_armor`
     /// aims it), `aim` holds it at the view the gsc sets every frame, `throw`
     /// pulls a grenade back and lets go twice at that view (`aim` and
-    /// `throw` run on any patch: `client-probes/probe_scriptmodel`).
+    /// `throw` run on any patch: `client-probes/probe_scriptmodel`), and
+    /// `direct` holds that view with the buttons, lean and stance the gsc
+    /// sends it (`client-probes/probe_leanhit`).
     /// Writes no fixture; a following spectator records it (recipe in
     /// docs/research/coduo-diff.md section 19).
     #[arg(
@@ -605,6 +609,19 @@ struct Args {
     /// replays it under UO's rules.
     #[arg(long, allow_negative_numbers = true)]
     probe_uofoot: Option<f32>,
+    /// With --save-slope, on a United Offensive server: a run at the wall
+    /// under a window too low for a standing body, a jump and crouch held
+    /// in the air, from a placement of `client-probes/probe_crouchjump`
+    /// (`+set probe_teleport 1 +set probe_spot cassino|streets|low`). The
+    /// value is the world yaw to face: -128 for cassino, 180 for streets,
+    /// -90 for low. Tag the fixture `crouchjump-<spot>`; moves_ab.rs
+    /// replays it under UO's rules (bot-navigation.md, "Walled-in spawns").
+    #[arg(long, allow_negative_numbers = true)]
+    probe_crouchjump: Option<f32>,
+    /// With --probe-crouchjump: the same run and jump with no crouch, the
+    /// control (tag `crouchjump-<spot>-stand`).
+    #[arg(long, requires = "probe_crouchjump")]
+    probe_crouchjump_stand: bool,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -752,15 +769,10 @@ struct LivePhase {
 
 /// The live phase off `bsp`, with the weapons configstring 7 (`weapons_cs`)
 /// names read off `fs`.
-fn live_phase(
-    fs: &Pk3Fs,
-    bsp: &bsp::Bsp,
-    protocol: &'static net::protocol::Protocol,
-    weapons_cs: &str,
-) -> Phase {
+fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, weapons_cs: &str) -> Phase {
     let world = collision::CollisionWorld::build(bsp, &props::collision_tris(fs, &bsp.entities));
-    // Predict what the protocol's Linux server computes.
-    world.set_arith(vcod_common::patch::Arith::for_protocol(protocol));
+    // Predict as the retail Windows client does, not as the server.
+    world.set_arith(vcod_common::patch::Arith::for_client());
     // A brush model clips only through its snapshot entity
     // (`pmove::movers::SnapshotMovers::place`), as retail's cgame meets it.
     for model in 1..world.model_count() {
@@ -1111,6 +1123,8 @@ fn main() -> Result<()> {
                 sprint: args.probe_sprint,
                 autofire: args.probe_autofire,
                 uofoot: args.probe_uofoot,
+                crouchjump: args.probe_crouchjump,
+                crouchjump_stand: args.probe_crouchjump_stand,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
@@ -1345,7 +1359,6 @@ fn main() -> Result<()> {
         mod_dir: args.mod_dir.clone(),
         fs_game: None,
         fs_pure: None,
-        user_fs_game: None,
         connect_addr: args.connect.clone(),
         team: args.team.clone(),
         weapon: args.weapon.clone(),
@@ -1376,6 +1389,7 @@ fn main() -> Result<()> {
         render_ms: 0.0,
         fx_ms: 0.0,
         look_zoom: (1.0, false),
+        mouse: Default::default(),
         ignore_hw_gamma: false,
         textures: texture_settings::TextureSettings::default(),
         texture_mode_seen: String::new(),
@@ -1648,6 +1662,9 @@ fn start_loading(
     if let Some(hud) = hud {
         hud.on_gamestate();
     }
+    // The server's team colours reach `^8`/`^9` from the first HUD frame;
+    // until then they draw white, as a fresh 1.5 or UO client's do.
+    hud::font::set_team_colours(net.protocol().team_colour_codes, &|_| None);
     audio.set_protocol(net.protocol());
     audio.on_gamestate(&map);
     fx.clear();
@@ -1828,16 +1845,12 @@ fn read_map(fs: &Pk3Fs, map: &str) -> Result<bsp::Bsp> {
 
 /// The serverinfo's map and a fresh live phase off `fs`: the CPU half of
 /// [`App::reload_live_map`].
-fn reread_live_map(
-    fs: &Pk3Fs,
-    configstrings: &[String],
-    protocol: &'static net::protocol::Protocol,
-) -> Result<(bsp::Bsp, Phase)> {
+fn reread_live_map(fs: &Pk3Fs, configstrings: &[String]) -> Result<(bsp::Bsp, Phase)> {
     let cs = |i: usize| configstrings.get(i).map_or("", String::as_str);
     let map = net::info_value_for_key(cs(0), "mapname")
         .context("the server sent no mapname in its serverinfo")?;
     let bsp = read_map(fs, map)?;
-    let phase = live_phase(fs, &bsp, protocol, cs(7));
+    let phase = live_phase(fs, &bsp, cs(7));
     Ok((bsp, phase))
 }
 
@@ -1861,7 +1874,7 @@ fn load_map(
     if let Some(window) = window {
         window.set_title(title);
     }
-    let phase = live_phase(fs, &bsp, net.protocol(), net.configstring(7));
+    let phase = live_phase(fs, &bsp, net.configstring(7));
     r.load_world(&bsp, fs)?;
     if let Phase::Live(live) = &phase {
         r.set_hud_weapons(Some(&live.weapons));
@@ -2026,12 +2039,11 @@ struct App {
     /// Where downloads land and the pk3 path reopens from.
     game_dir: std::path::PathBuf,
     mod_dir: String,
-    /// The connection's systeminfo `fs_game`, layered over `mod_dir`.
+    /// The `fs_game` the search path was last opened with, layered over
+    /// `mod_dir`; the cvar ([`App::fs_game_cvar`]) is what it follows.
     fs_game: Option<String>,
     /// A pure server's `sv_paks`: only paks with these checksums load.
     fs_pure: Option<Vec<i32>>,
-    /// The mod the Mods menu picked, the search path between servers.
-    user_fs_game: Option<String>,
     /// The last server connected to: the connecting screen's text and what
     /// `reconnect` reconnects to.
     connect_addr: Option<String>,
@@ -2078,6 +2090,8 @@ struct App {
     /// Last frame's fov over `cg_fov` and whether the view rides a mounted
     /// gun: the mouse's sensitivity scale ([`play::input::MouseLook`]).
     look_zoom: (f32, bool),
+    /// The view's mouse motion since the last frame (`CL_MouseEvent`).
+    mouse: play::input::MouseAccum,
     /// `r_ignorehwgamma` as of the last window start or `vid_restart`
     /// (retail latches it): textures bake `r_gamma` at each world load and
     /// the frame pass only clamps.
@@ -2123,6 +2137,46 @@ impl App {
     }
 
     /// Gives the mouse to the view (`grabbed`) or takes it back.
+    /// `CL_MouseMove` (CoDMP.exe 0x40b240) once a frame: the motion since
+    /// the last frame, or with `m_filter` its mean with the last frame's,
+    /// turns the view or, online, moves the cmd (`MouseLook::moves`).
+    fn mouse_frame(&mut self) {
+        let filter = self.shell.cvar_f32("m_filter") as i32 != 0;
+        let (dx, dy) = self.mouse.take(filter);
+        if !self.grabbed {
+            self.mouse.clear();
+            return;
+        }
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let look = play::input::MouseLook {
+            sensitivity: self.shell.cvar_f32("sensitivity"),
+            m_yaw: self.shell.cvar_f32("m_yaw"),
+            m_pitch: self.shell.cvar_f32("m_pitch"),
+            m_forward: self.shell.cvar_f32("m_forward"),
+            m_side: self.shell.cvar_f32("m_side"),
+            freelook: self.shell.cvar_f32("cl_freelook") as i32 != 0,
+        };
+        match &mut self.mode {
+            Mode::Idle => {}
+            Mode::Fly(cam) => cam.look(look.degrees(dx, dy, 1.0, false)),
+            Mode::Online { join, .. } if join.stray_catcher() => {}
+            Mode::Online { input, .. } => {
+                let (zoom, mounted) = self.look_zoom;
+                let (mlook, strafe) = input.mlook_strafe();
+                input.mouse_move(look.moves(dx, dy, zoom, mounted, mlook, strafe));
+            }
+            Mode::Walk { ps, .. } => {
+                // the same turn and pitch clamp as FlyCamera::look
+                let [pitch, yaw] = look.degrees(dx, dy, 1.0, false);
+                ps.yaw += yaw.to_radians();
+                ps.pitch =
+                    (ps.pitch - pitch.to_radians()).clamp(camera::PITCH_MIN, camera::PITCH_MAX);
+            }
+        }
+    }
+
     fn set_grab(&mut self, grabbed: bool) {
         if self.window.is_none() {
             return;
@@ -2401,6 +2455,7 @@ impl App {
             self.disconnect(None);
         }
         self.server_process = None;
+        let player_mod = self.fs_game_cvar();
         let shell = &self.shell;
         let launched = (|| {
             let exe = create::server_exe()?;
@@ -2409,7 +2464,7 @@ impl App {
             let dirs = (
                 self.game_dir.as_path(),
                 self.mod_dir.as_str(),
-                self.user_fs_game.as_deref(),
+                player_mod.as_deref(),
                 self.fs.vanilla(),
             );
             let args = create::server_args(req, port, dirs, &value);
@@ -2575,8 +2630,16 @@ impl App {
                     _ => console::log::print(&format!("Unknown command \"{word}\"")),
                 },
                 Effect::Button(action, down) => {
-                    if let Mode::Online { input, .. } = &mut self.mode {
+                    let freelook = self.shell.cvar_f32("cl_freelook") as i32 != 0;
+                    if let Mode::Online { input, net, .. } = &mut self.mode {
                         input.key(action, down);
+                        if action == play::input::Action::MLook && !down && !freelook {
+                            let delta = net
+                                .snapshots()
+                                .newest()
+                                .map_or(0, |s| s.ps.field_i32(net.protocol(), "delta_angles[0]"));
+                            input.center_view(delta);
+                        }
                     }
                 }
                 Effect::Impulse(action) => {
@@ -2754,7 +2817,7 @@ impl App {
                     // A Mods pick the listen server refused takes effect now
                     // (`FS_Restart` on a modified `fs_game`, 0x40fd66).
                     if !matches!(self.mode, Mode::Online { .. }) {
-                        self.switch_fs_game(self.user_fs_game.clone());
+                        self.switch_fs_game(self.fs_game_cvar());
                     }
                     self.vid_restart_ui();
                     self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
@@ -2888,7 +2951,7 @@ impl App {
         let mut dirs: Vec<_> = self
             .fs_game
             .iter()
-            .chain(&self.user_fs_game)
+            .chain(&self.fs_game_cvar())
             .map(|g| self.game_dir.join(g))
             .chain([base])
             .map(|d| d.join("demos"))
@@ -3045,12 +3108,17 @@ impl App {
         self.enter_menu(reason.as_deref());
     }
 
-    /// Back to the player's own search path after a server's `fs_game` or
-    /// pure list. Retail keeps a server's mod until the next systeminfo names
-    /// another; vcod drops it with the connection
-    /// (docs/research/cod11-front-end.md, section 16).
+    /// Off a server's pure list at a disconnect. `CL_Disconnect` leaves
+    /// the `fs_game` cvar, so a server's mod stays until a systeminfo or the
+    /// Mods menu names another (docs/research/cod11-front-end.md, section 16).
     fn leave_fs_game(&mut self) {
-        self.switch_fs_game(self.user_fs_game.clone());
+        self.switch_fs_game(self.fs_game_cvar());
+    }
+
+    /// The `fs_game` cvar as the directory to layer over `mod_dir`: the
+    /// Mods menu's pick or the last systeminfo's, whichever forced it last.
+    fn fs_game_cvar(&self) -> Option<String> {
+        net::download::mod_dir(self.shell.cvar("fs_game").unwrap_or(""), &self.mod_dir)
     }
 
     /// Reopens the search path over `game` (no pure list) and rebuilds the
@@ -3115,7 +3183,7 @@ impl App {
     /// docs/research/cod11-front-end.md section 17).
     fn run_mod(&mut self, game: Option<String>) {
         log::info!("fs_game {}", game.as_deref().unwrap_or("(none)"));
-        self.user_fs_game = game.clone();
+        self.shell.force("fs_game", game.as_deref().unwrap_or(""));
         // `RunMod` sets `fs_game` before the `vid_restart` that refuses, so
         // the pick waits for the next restart or the end of the game.
         if self.refuse_vid_restart() {
@@ -3196,7 +3264,7 @@ impl App {
         else {
             return Ok(());
         };
-        let (bsp, live) = reread_live_map(&self.fs, net.configstrings(), net.protocol())?;
+        let (bsp, live) = reread_live_map(&self.fs, net.configstrings())?;
         *phase = live;
         self.audio
             .set_ambient(&self.fs, net::info_value_for_key(net.configstring(3), "n"));
@@ -3728,6 +3796,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 self.pace_frame();
+                self.mouse_frame();
                 let now = Instant::now();
                 let dt = (now - self.last_frame).as_secs_f32().min(0.1);
                 self.last_frame = now;
@@ -3884,7 +3953,10 @@ impl ApplicationHandler for App {
                         let mut gamestate_ready = false;
                         for ev in &events {
                             if let Some(hud) = &mut self.hud {
-                                hud.on_net_event(ev, time, &self.localized);
+                                let p = net.protocol();
+                                let bound =
+                                    |cmd: &str| bound_key(&self.shell, &self.localized, p, cmd);
+                                hud.on_net_event(ev, time, &self.localized, &bound);
                             }
                             match ev {
                                 // `player_talk` with every chat line, as
@@ -4128,20 +4200,22 @@ impl ApplicationHandler for App {
                             cmd_clock.reset();
                             ring.clear();
                             predictor.reset();
-                            // `CL_SystemInfoChanged` sets `fs_game` and the
-                            // pure list, and the gamestate parse restarts the
+                            // `CL_SystemInfoChanged` forced the `fs_game` cvar
+                            // (`system_info_changed` above) and sets the pure
+                            // list, and the gamestate parse restarts the
                             // search path when either changed
                             // (docs/research/cod11-front-end.md, section 16).
                             // A server with no `fs_game` sends no key, which
-                            // leaves the player's own mod in place.
-                            // A demo's systeminfo sets neither
-                            // (CoDMP.exe 0x415eb0).
+                            // leaves the cvar as it was. A demo's systeminfo
+                            // sets neither (CoDMP.exe 0x415eb0).
                             let (game, pure) = if net.is_demo() {
                                 (self.fs_game.clone(), self.fs_pure.clone())
                             } else {
                                 (
-                                    net::download::fs_game(net.configstring(1), &self.mod_dir)
-                                        .or_else(|| self.user_fs_game.clone()),
+                                    net::download::mod_dir(
+                                        self.shell.cvar("fs_game").unwrap_or(""),
+                                        &self.mod_dir,
+                                    ),
                                     net::download::pure_paks(net.configstring(1)),
                                 )
                             };
@@ -5334,7 +5408,9 @@ impl ApplicationHandler for App {
                                         turret_weapon,
                                         vehicle_turret_yaw,
                                         cvar: &client_cvar,
-                                        bound_key: &|cmd| self.shell.key_text(cmd, &self.localized),
+                                        bound_key: &|cmd| {
+                                            bound_key(&self.shell, &self.localized, p, cmd)
+                                        },
                                         draw: hud::DrawToggles {
                                             crosshair: self.shell.cvar_f32("cg_drawCrosshair")
                                                 as i32
@@ -5904,6 +5980,11 @@ impl ApplicationHandler for App {
 
                                     if let Some(hud) = &mut self.hud {
                                         let hud_t0 = Instant::now();
+                                        hud.set_message_widths(
+                                            self.shell.cvar_f32("cg_gameMessageWidth") as i32,
+                                            self.shell.cvar_f32("cg_gameBoldMessageWidth") as i32,
+                                            screen_w as u32,
+                                        );
                                         hud_quads = hud.build(&hud_frame);
                                         self.hud_ms = hud_t0.elapsed().as_secs_f32() * 1000.0;
                                         // The vote draw's `player_talk` on a
@@ -6365,32 +6446,26 @@ impl ApplicationHandler for App {
                 self.ui_effects(event_loop, effects);
                 return;
             }
-            if !self.grabbed {
-                return;
-            }
-            let look = play::input::MouseLook {
-                sensitivity: self.shell.cvar_f32("sensitivity"),
-                m_yaw: self.shell.cvar_f32("m_yaw"),
-                m_pitch: self.shell.cvar_f32("m_pitch"),
-            };
-            match &mut self.mode {
-                Mode::Idle => {}
-                Mode::Fly(cam) => cam.look(look.degrees(dx, dy, 1.0, false)),
-                Mode::Online { join, .. } if join.stray_catcher() => {}
-                Mode::Online { input, .. } => {
-                    let (zoom, mounted) = self.look_zoom;
-                    input.mouse(look.degrees(dx, dy, zoom, mounted));
-                }
-                Mode::Walk { ps, .. } => {
-                    // the same turn and pitch clamp as FlyCamera::look
-                    let [pitch, yaw] = look.degrees(dx, dy, 1.0, false);
-                    ps.yaw += yaw.to_radians();
-                    ps.pitch =
-                        (ps.pitch - pitch.to_radians()).clamp(camera::PITCH_MIN, camera::PITCH_MAX);
-                }
+            if self.grabbed {
+                self.mouse.add(dx, dy);
             }
         }
     }
+}
+
+/// The cgame's key text for `cmd` (0x30046940), for a command in its bind
+/// table only (`hud::bind_commands`).
+fn bound_key(
+    shell: &console::shell::Shell,
+    loc: &vcod_common::localize::Localized,
+    p: &net::protocol::Protocol,
+    cmd: &str,
+) -> Option<String> {
+    hud::bind_commands(p)
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(cmd))
+        .then(|| shell.key_text(cmd, loc))
+        .flatten()
 }
 
 /// `cg_fov` as cgame reads it, clamped to 80..160 (0x30032e20).
@@ -6694,9 +6769,8 @@ mod tests {
 
         let mut cs = vec![String::new(); 8];
         cs[0] = "\\mapname\\mp_carentan".into();
-        let proto = &net::protocol::PROTOCOL_V1;
         let models = |fs: &Pk3Fs| {
-            let (bsp, phase) = reread_live_map(fs, &cs, proto).unwrap();
+            let (bsp, phase) = reread_live_map(fs, &cs).unwrap();
             let Phase::Live(live) = phase else {
                 panic!("not live")
             };

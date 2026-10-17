@@ -61,7 +61,11 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
 - `--gametype` picks the script under `maps/mp/gametypes/` (default `dm`);
   `--max-clients` sets `sv_maxclients` (default 8).
 - `--set NAME=VALUE` is retail's `+set`, repeatable:
-  `--set scr_friendlyfire=1`, `--set sv_mapRotation="..."`.
+  `--set scr_friendlyfire=1`, `--set sv_mapRotation="..."`. Each is set
+  once, before the scripts load; one written after the map
+  (`vcod-server mp_carentan --set ...`) runs again once the level is up,
+  as retail's `+map x +set ...` does, so it outranks a script's load-time
+  `setCvar`. A later level never puts it back.
 - `--set fs_game=<dir>` runs a mod: its directory's paks go over `main/`,
   and clients are told to load it, as retail's `+set fs_game`.
 - `--vanilla` loads only the stock retail paks, as the client's does, so
@@ -168,7 +172,9 @@ without a leading `/` or `\` is chat, as in retail. `;` separates commands.
 Anything else goes to the server while connected (`callvote`, `kill`,
 `follownext`). Bindable commands and key names are retail's (`+attack`,
 `+speed`, `weaponslot pistol`, `MOUSE1`, `MWHEELUP`). The client cvars are
-`name`, `cl_run`, `sensitivity`, `m_yaw`, `m_pitch`, `cg_fov`
+`name`, `cl_run`, `sensitivity`, `m_yaw`, `m_pitch`, `m_filter`,
+`cl_freelook` (0 moves with the mouse's vertical motion unless `+mlook` is
+held; `m_forward`, and `m_side` under `+strafe`), `cg_fov`
 (cheat-protected, so 80 unless the server runs `sv_cheats 1`), `rate`
 (25000; retail's first-run 5000 starves snapshots), `snaps`,
 `scr_conspeed`, `mss_volume`, `r_mode` / `r_fullscreen` (applied at start

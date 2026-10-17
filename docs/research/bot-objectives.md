@@ -528,6 +528,22 @@ with that throw in it. With the release fix the gate passes on seeds 1
 to 15 odd. In release the gate runs in about 4 s (mp_cassino's graph
 builds in under 1 s), the full 1 800 ticks.
 
+On 2026-10-17 it failed on its frag assertion once more, at seed 1 on
+`fix/uo-spawn-connectivity` (whose graph changes move every route) and
+at seed 59 on master (2397f7a4; that game was not traced). VERIFIED
+(measured, ours, release, a temporary per-tick dump of bot4's body and every armed missile, seed 1):
+bot4 at (1485, -359, 72) at the foot of a stair, its enemy 193 units off
+and 124 up on the landing, turned its throw away, up and behind; the
+frag struck the wall at (1564, -196, 161), came back off it and rolled
+down the steps to (1431, -275, 114), 100 units off, by tick 899.
+bot4 stood still through tick 909: a thrower is in its grenade stages
+(`Stage::Cook`, then `Stage::BackToRifle` through the stick grenade's
+throw and the switch back), and `Bot::think` returned from those before
+the run from `frag_near`. It set off at 910 and took the blast at 928,
+222 units off. The run now applies to the grenade stages too
+(`Bot::flee`). With it seeds 1 and 59 pass, and seeds 1 to 63 odd show
+no own-frag kill.
+
 ## 7. United Offensive's `ctf`, `dom`, `hq` and `bas`
 
 Line numbers are `maps/mp/gametypes/<gt>.gsc` in `pakuo00.pk3`; the

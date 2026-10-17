@@ -241,6 +241,10 @@ pub struct Predictor {
     pub seat_angles: [f32; 3],
     #[cfg(test)]
     cmds_run: usize,
+    /// Snapshots whose correction was not zero, and those past
+    /// `MISS_EPSILON`: the replays' misprediction counts.
+    #[cfg(test)]
+    pub(crate) corrections: (usize, usize),
 }
 
 impl Predictor {
@@ -402,6 +406,11 @@ impl Predictor {
         if let (Some((_, before)), Some(after)) = (last, at_last) {
             let delta = after - before;
             self.max_correction = self.max_correction.max(delta.length());
+            #[cfg(test)]
+            {
+                self.corrections.0 += usize::from(delta != Vec3::ZERO);
+                self.corrections.1 += usize::from(delta.length() > MISS_EPSILON);
+            }
             if delta.length() > SNAP_DISTANCE {
                 self.error = Vec3::ZERO;
             } else if delta.length() > MISS_EPSILON {

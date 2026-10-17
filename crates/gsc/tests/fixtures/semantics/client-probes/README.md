@@ -1315,6 +1315,26 @@ The `PROBE step` lines carry slot 1's origin; slot 0's `COMPASS` lines carry
 what it was sent. Against ours: `vcod-server mp_harbor --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_compass.gsc`.
 
+## probe_suicide
+
+What `ClientEndFrame` does with a `suicide()` whose killed callback leaves
+`sessionstate` at `playing`, for `docs/research/cod11-combat.md` 5.1, "A
+suicide that stays playing". Both clients join allies at mp_harbor's first
+two tdm spawns; slot 1 suicides, stays `playing` 3 s, takes the dead session,
+then spawns again. Two probes with `--probe-compass`: slot 1's `COMPASS`
+lines carry its own `pm_type` and eye, slot 0's the players its snapshot
+holds:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=40 tools/run_probe.sh client-probes/probe_suicide mp_harbor
+# second and third shells, once the map is up, two seconds apart:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-compass --probe-secs 30
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-compass --probe-secs 28
+```
+
+Against ours: `vcod-server mp_harbor --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_suicide.gsc`.
+
 ## probe_tankcompass
 
 What United Offensive's `G_GetNonPVSTankInfo` packs into
@@ -2044,3 +2064,42 @@ The fixture is `crates/server/tests/fixtures/movers/mp_carentan-dm-anglesnap.txt
 (1.1d; 1.5b and UO 1.51b print the same lines), gated by `ride_ab.rs`'s
 `every_link_snaps_angles_like_retail` (cod11-movers.md 12, "The snap on
 every link").
+
+## probe_leanhit
+
+A leaning target's hit pose and a leaning shooter's rounds, for
+`docs/research/cod11-combat.md` 3.6. Two `--probe-uo-weapon direct`
+clients, an axis target and an allies `springfield_mp` shooter 256 units
+apart; the gsc sends each its buttons, lean and stance through
+`iPrintLn("PROBE_IN ...")` and runs 13 phases from level time 20000: the
+target standing, crouched and prone, each level and leaning both ways, then
+the shooter leaning both ways. Each phase logs a grid of `bulletTrace`
+cells across the target and the damage of one sighted round. The recipe is
+in the header of `crates/server/tests/fixtures/leanhit/mp_carentan-leanhit.txt`,
+gated by `crates/server/tests/leanhit_ab.rs`.
+
+Two things its first runs taught: the target's torso yaw stays where his
+spawn point left it until something swings it (16.4), so the probe lays him
+prone and stands him up before the phases; and a stance change needs the
+ground behind him clear, so the site asks for 80 level units past his spot.
+
+## probe_crouchjump
+
+United Offensive's spawn rooms whose only way out is a window too low for a
+standing body (`docs/research/bot-navigation.md`, "Walled-in spawns"). Under
+`probe_teleport 1` it puts every playing client facing the window:
+`probe_spot cassino` (mp_cassino's axis room), `streets` (mp_streets' axis
+room at z 101) or `low` (mp_streets' room at z -24). The client runs
+`--save-slope --probe-crouchjump <yaw>`: a run at the wall, a jump, and
+crouch held in the air for a second; `--probe-crouchjump-stand` is the same
+without the crouch.
+
+```
+COD_VERSION=uo PORT=<p> COD_DIR=<uo install> SECS=45 tools/run_probe.sh client-probes/probe_crouchjump mp_cassino +set probe_teleport 1 +set probe_spot cassino
+# second shell, about 12 s later (yaw -128 cassino, 180 streets, -90 low):
+vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:<p> --save-slope --probe-crouchjump=-128 --probe-cmd-ms 50 --capture-tag crouchjump-cassino --probe-secs 28
+```
+
+The twelve fixtures (8 and 50 ms cmds, crouched and standing, three rooms)
+are `crates/server/tests/fixtures/playerstate/*-crouchjump-*.txt`, gated by
+`moves_ab.rs`'s `the_predictor_replays_uo_jumps_through_low_windows`.

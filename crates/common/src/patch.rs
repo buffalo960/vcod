@@ -28,11 +28,14 @@ const SURFACE_CLIP_EPSILON: f64 = 0.125;
 /// Offensive's (gcc 3.2.3, unoptimized) store every assignment to a float
 /// in memory, rounding it, while each expression still runs at the
 /// stack's precision (docs/research/bsp-ibsp59-format.md, "Patch collision
-/// on 1.5 and UO").
+/// on 1.5 and UO"). The Windows clients (MSVC, every patch's `CoDMP.exe`,
+/// `CoDUOMP.exe` and cgame) store some of those and keep the rest, at the
+/// CRT's 53-bit precision (cod15-movement.md 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arith {
     Kept,
     Stored,
+    Msvc,
 }
 
 impl Arith {
@@ -46,11 +49,26 @@ impl Arith {
         }
     }
 
-    /// A float variable's value: rounded where the build stores it.
+    /// The build a retail client predicts with: the Windows one, whose
+    /// collision and pmove code is one MSVC build's on every patch
+    /// (cod15-movement.md 8).
+    pub fn for_client() -> Self {
+        Arith::Msvc
+    }
+
+    /// A float variable both stores keep: rounded under gcc 3.2.3 and MSVC.
     pub(crate) fn var(self, x: f64) -> f64 {
         match self {
             Arith::Kept => x,
+            Arith::Stored | Arith::Msvc => f64::from(x as f32),
+        }
+    }
+
+    /// A float variable only gcc 3.2.3 stores; MSVC keeps it on the stack.
+    pub(crate) fn gcc_var(self, x: f64) -> f64 {
+        match self {
             Arith::Stored => f64::from(x as f32),
+            Arith::Kept | Arith::Msvc => x,
         }
     }
 }
@@ -184,6 +202,14 @@ impl Grid {
         while i + 2 < self.width {
             let needs = (0..self.height).any(|j| {
                 let (a, b, c) = (self.at(i, j), self.at(i + 1, j), self.at(i + 2, j));
+                if arith == Arith::Msvc {
+                    // The Windows build keeps all of it (CoDMP15.exe
+                    // 0x41c500, CoDUOMP.exe 0x41db40).
+                    let dev = [0, 1, 2]
+                        .map(|k| (f64::from(a[k]) + f64::from(c[k])) - 2.0 * f64::from(b[k]));
+                    let len = (dev[0] * dev[0] + dev[1] * dev[1] + dev[2] * dev[2]).sqrt();
+                    return tol < len * 0.25;
+                }
                 let dev: V3 = std::array::from_fn(|k| {
                     ((f64::from(a[k]) + f64::from(c[k])) - 2.0 * f64::from(b[k])) as f32
                 });
@@ -207,7 +233,7 @@ impl Grid {
                 let mut p3 = [0.0f32; 3];
                 for c in 0..3 {
                     p1[c] = ((f64::from(prev[c]) + f64::from(mid[c])) * 0.5) as f32;
-                    let v = arith.var((f64::from(mid[c]) + f64::from(next[c])) * 0.5);
+                    let v = arith.gcc_var((f64::from(mid[c]) + f64::from(next[c])) * 0.5);
                     p3[c] = v as f32;
                     p2[c] = ((v + f64::from(p1[c])) * 0.5) as f32;
                 }
@@ -310,7 +336,7 @@ fn chop_winding(w: Winding, n: V3, dist: f32, epsilon: f32, arith: Arith) -> Opt
     let mut sides = Vec::with_capacity(w.len() + 1);
     let mut counts = [0usize; 3];
     for p in &w {
-        let d = arith.var(arith.var(dot(*p, n)) - f64::from(dist));
+        let d = arith.var(arith.gcc_var(dot(*p, n)) - f64::from(dist));
         dists.push(d as f32);
         let side = if d > eps {
             FRONT
@@ -434,7 +460,7 @@ impl Builder {
                 continue;
             }
             let on = |p: V3| {
-                let dd = self.arith.var(dot(p, pl.n) - f64::from(pl.d));
+                let dd = self.arith.gcc_var(dot(p, pl.n) - f64::from(pl.d));
                 (-PLANE_TRI_EPSILON..=PLANE_TRI_EPSILON).contains(&dd)
             };
             if on(p1) && on(p2) && on(p3) {
@@ -489,7 +515,7 @@ impl Builder {
             if b.plane != -1 {
                 let pl = self.plane(b.plane);
                 for p in &points {
-                    let d = self.arith.var(dot(*p, pl.n) - f64::from(pl.d));
+                    let d = self.arith.gcc_var(dot(*p, pl.n) - f64::from(pl.d));
                     if d > PLANE_TRI_EPSILON {
                         front += 1;
                     } else if d < -PLANE_TRI_EPSILON {
@@ -983,7 +1009,7 @@ impl PatchCollide {
                     return true;
                 }
                 if d1 > d2 {
-                    let raw = var((d1 - SURFACE_CLIP_EPSILON) / (d1 - d2));
+                    let raw = arith.gcc_var((d1 - SURFACE_CLIP_EPSILON) / (d1 - d2));
                     let f = raw.max(0.0);
                     if f > f64::from(enter) {
                         enter = f as f32;
@@ -994,7 +1020,9 @@ impl PatchCollide {
                         }
                     }
                 } else {
-                    let f = var((d1 + SURFACE_CLIP_EPSILON) / (d1 - d2)).min(1.0);
+                    let f = arith
+                        .gcc_var((d1 + SURFACE_CLIP_EPSILON) / (d1 - d2))
+                        .min(1.0);
                     if f < f64::from(leave) {
                         leave = f as f32;
                     }
@@ -1037,7 +1065,7 @@ impl PatchCollide {
         let var = |x| arith.var(x);
         for p in &self.planes {
             let d1 = var(dot(start, p.n) - f64::from(p.d));
-            let d2 = var(dot(end, p.n) - f64::from(p.d));
+            let d2 = arith.gcc_var(dot(end, p.n) - f64::from(p.d));
             front.push(d1 > 0.0);
             let mut t = 99999.0f32;
             if d1 != d2 {
@@ -1070,8 +1098,8 @@ impl PatchCollide {
                 continue;
             }
             let p = self.planes[s];
-            let d1 = var(dot(start, p.n) - f64::from(p.d));
-            let d2 = var(dot(end, p.n) - f64::from(p.d));
+            let d1 = arith.gcc_var(dot(start, p.n) - f64::from(p.d));
+            let d2 = arith.gcc_var(dot(end, p.n) - f64::from(p.d));
             let raw = ((d1 - SURFACE_CLIP_EPSILON) / (d1 - d2)) as f32;
             fraction = raw.max(0.0);
             best = Some(PatchHit {
@@ -1306,5 +1334,8 @@ mod tests {
         };
         assert_eq!(bits(Arith::Kept), Some(1056969342));
         assert_eq!(bits(Arith::Stored), Some(1056969341));
+        // Windows stores `d1` and `d2` as well (CoDMP15.exe 0x41f002,
+        // 0x41f01d), and they are what moves this one.
+        assert_eq!(bits(Arith::Msvc), Some(1056969341));
     }
 }
