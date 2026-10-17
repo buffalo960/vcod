@@ -181,9 +181,10 @@ fn run_cmd(
         return;
     }
     cmd::apply_view(ps, cmd.angles, da);
-    for (step, dt) in cmd::chop(*last_st, cmd) {
-        pmove(ps, &cmd::pm_input(&step), world, dt, weapons);
-    }
+    cmd::chop(*last_st, cmd, |step, dt| {
+        pmove(ps, &cmd::pm_input(step), world, dt, weapons);
+        ps.jump_latched
+    });
     *last_st = cmd.server_time;
     // `BUMP_TRACE=<ct>`: print every cmd within 60 ms before that clock.
     if let Some(at) = std::env::var("BUMP_TRACE")
