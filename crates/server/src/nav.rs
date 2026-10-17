@@ -4073,9 +4073,10 @@ impl Sim {
                 server_time,
                 ..*cmd
             };
-            for (step, dt) in chop(self.time, &cmd) {
-                player_step(ps, &mut self.delta, &mut self.ring, &step, dt, &mw, weapons);
-            }
+            chop(self.time, &cmd, |step, dt| {
+                player_step(ps, &mut self.delta, &mut self.ring, step, dt, &mw, weapons);
+                ps.jump_latched
+            });
             self.time = server_time;
         }
     }

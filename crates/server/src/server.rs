@@ -8152,9 +8152,9 @@ impl Server {
                 sim.update_aim(dt_ms, now_ms, weapons.defs());
                 // A hitching client's gap is simulated, not discarded: see
                 // `cmd::chop`.
-                for (step, dt) in vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd) {
+                vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd, |step, dt| {
                     raised.extend(sim.step(
-                        &step,
+                        step,
                         dt,
                         collision.map(|w| {
                             MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
@@ -8163,7 +8163,8 @@ impl Server {
                     ));
                     bodies.retain(|b| b.entity != slot as u32);
                     bodies.extend(sim.body(slot as u32));
-                }
+                    sim.ps.jump_latched
+                });
             }
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
             // falls, in the order it raised them, fired below before its

@@ -217,18 +217,19 @@ pub fn run_cmd(
     // Dead, spectator and intermission states are drawn from the snapshot.
     if predictable(pred.pm_type) {
         pred.ps.linked = pred.pm_type == PM_NORMAL_LINKED;
-        for (step, dt) in cmd::chop(pred.command_time, cmd) {
+        cmd::chop(pred.command_time, cmd, |step, dt| {
             let out = cmd::player_step(
                 &mut pred.ps,
                 &mut pred.delta_angles,
                 &mut pred.ring,
-                &step,
+                step,
                 dt,
                 world,
                 weapons,
             );
             pred.view_lerp_start = out.view_lerp_start;
-        }
+            pred.ps.jump_latched
+        });
     }
     pred.command_time = cmd.server_time;
 }
