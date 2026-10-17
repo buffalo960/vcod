@@ -66,6 +66,11 @@ pub enum WeaponScript {
     /// its first view and lets the rebase fight the gsc
     /// (docs/research/coduo-vehicles.md 13).
     Aim,
+    /// [`Self::Aim`]'s view with the buttons, `wbuttons` and `up` the gsc
+    /// last asked for through an `iPrintLn` of `PROBE_IN <buttons>
+    /// <wbuttons> <up>` (`client-probes/probe_leanhit`): the gsc sets the
+    /// lean, the stance and every trigger pull on the server's clock.
+    Direct,
     /// [`Self::Smoke`]'s pullback and throw at the newest snapshot's view,
     /// twice, 7 s apart: the grenade part of
     /// `client-probes/probe_scriptmodel`, any patch.
@@ -365,6 +370,9 @@ pub struct VehicleProbe {
     follow: bool,
     /// The client command of the step just entered, until taken.
     say: Option<&'static str>,
+    /// [`WeaponScript::Direct`]: the gsc's last `PROBE_IN` buttons,
+    /// `wbuttons` and `up`.
+    direct: Option<(u8, u8, i8)>,
 }
 
 impl VehicleProbe {
@@ -383,16 +391,21 @@ impl VehicleProbe {
     }
 
     pub fn on_foot(script: WeaponScript) -> VehicleProbe {
-        let follow = matches!(script, WeaponScript::Aim | WeaponScript::Throw);
+        let follow = matches!(
+            script,
+            WeaponScript::Aim | WeaponScript::Throw | WeaponScript::Direct
+        );
+        let direct = (script == WeaponScript::Direct).then_some((0, 0, 0));
         let script = match script {
             WeaponScript::Arty => ARTY,
             WeaponScript::Smoke => SMOKE,
             WeaponScript::Mg => MG,
-            WeaponScript::Hold | WeaponScript::Aim => HOLD,
+            WeaponScript::Hold | WeaponScript::Aim | WeaponScript::Direct => HOLD,
             WeaponScript::Throw => THROW,
         };
         VehicleProbe {
             follow,
+            direct,
             ..VehicleProbe::with(script, true)
         }
     }
@@ -409,6 +422,7 @@ impl VehicleProbe {
             skipped: 0,
             say: None,
             follow: false,
+            direct: None,
         }
     }
 
@@ -484,6 +498,11 @@ impl VehicleProbe {
         cmd.right = cur.right;
         cmd.up = cur.up;
         cmd.buttons = cur.buttons;
+        if let Some((buttons, wbuttons, up)) = self.direct {
+            cmd.buttons = buttons;
+            cmd.wbuttons = wbuttons;
+            cmd.up = up;
+        }
         cmd
     }
 
@@ -494,6 +513,12 @@ impl VehicleProbe {
 
     /// A server command: on foot, an `a <weapon>` select is taken.
     pub fn on_command(&mut self, cmd: &str) {
+        if self.direct.is_some()
+            && let Some(input) = direct_input(cmd)
+        {
+            println!("VEH input {input:?}");
+            self.direct = Some(input);
+        }
         if let Some(w) = cmd.strip_prefix("a ").and_then(|w| w.trim().parse().ok())
             && self.on_foot
         {
@@ -621,6 +646,18 @@ impl VehicleProbe {
 }
 
 const ET_MISSILE: i32 = 4;
+
+/// The buttons, `wbuttons` and `up` of a gsc `iPrintLn` line
+/// `f "PROBE_IN <buttons> <wbuttons> <up>"`.
+pub fn direct_input(cmd: &str) -> Option<(u8, u8, i8)> {
+    let rest = cmd.strip_prefix("f ")?.trim_matches('"');
+    let mut t = rest.strip_prefix("PROBE_IN ")?.split_whitespace();
+    Some((
+        t.next()?.parse().ok()?,
+        t.next()?.parse().ok()?,
+        t.next()?.parse().ok()?,
+    ))
+}
 
 /// ANGLE2SHORT: the wire's 16 bits over a full turn.
 fn deg_to_short(deg: f32) -> i32 {
