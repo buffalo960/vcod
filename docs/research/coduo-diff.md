@@ -787,6 +787,15 @@ by function and measures them against a capture.
   suicide, 22 `killIconDied` and 26 `gfx/icons/hud@bino_owned`, a 27th
   id whose `MOD_MELEE_BINOCULARS` string follows `MOD_FLAME` in `.rodata`
   (VERIFIED decompile and strings).
+  VERIFIED, the art: `killIconCrushTank` and `killIconCrushJeep` are
+  shaders in `pakuo01.pk3:scripts/gmi_hud.shader` mapping
+  `gfx/hud/tank_crunchy.dds` and `gfx/hud/jeep_crunchy.dds` (both in
+  `pakuo00.pk3`), the other `killIcon*` names are 1.1's `hud.shader`
+  blocks, and the artillery and binoculars rows name their image path
+  (`gfx/icons/hud@artillery.dds`, `hud@bino_owned.dds`, `pakuo00.pk3`).
+  No case reads 14 (`MOD_ARTILLERY_SPLASH`), which draws `killIconDied`.
+  vcod: `killfeed::mod_icon` takes UO's ids on a protocol 22 connection,
+  1.1's otherwise.
 - **Items.** `bg_itemlist` (0xa9880) has 134 entries against 1.5's 70:
   weapon slots 1..128, then two `stielhandgranate` ammo items and three
   health items (VERIFIED), so `MAX_WEAPONS` is 128 and the playerState

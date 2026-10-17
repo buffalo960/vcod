@@ -245,6 +245,43 @@ INFERRED, off 0x408be0 and 0x409920:
 INFERRED, not measured: the `y + 12` is the text baseline, as the other
 text traps take it.
 
+VERIFIED, the wrap. Trap 2 (0x401e52) and trap 3 (0x401fc2) cut the
+message at each `\n` (0x401ed7: a `\n` ends a line, an empty one too, and
+nothing follows a trailing one) and hand each part to 0x408f80 with
+window 1 or 2, the life, the cgame's width and the running colour, which
+the call returns for the next part. The width is the trap's second
+argument: `cg_gameMessageWidth` (vmCvar 0x301dfc20, default `70`) for
+game messages, `cg_gameBoldMessageWidth` (0x3020d700, `60`) for bold
+ones, both archived (cgame cvar table rows 0x300750c0, 0x300750d0); 1.5's
+and UO's cgames have the same defaults. A width of 0 or one over the
+console's line width (0x142ef54, `max(vidWidth, 640) / 8 - 2`, set at
+0x4088f0) is clamped to that, so 70 and 60 hold. In 0x408f80, for
+windows 1 and 2:
+
+- `len` is the part's length less `^0`..`^7` pairs, `\n` and `\r`
+  (0x4aa6c0). When it is over the width, the line count is
+  `ceil(len / width)` (0x408fd7) and a soft width `len / count`
+  (0x408fec), else the soft width is the width.
+- A `^0`..`^7` pair sets the colour and writes nothing.
+- Before every other character the rest of its word is counted: bytes
+  above `0x20` from it, at most the width (0x409059). When that count is
+  under the width and the column plus it is over the width, the line ends
+  first (0x40907d). The count runs from each character, not the word's
+  start, so a word longer than the width breaks where its last
+  `width - 1` characters start: 100 letters at 70 go out as 31 and 69.
+- A space at column 0 after any wrap is dropped (0x40909b). Any other
+  character is written; the line ends when the column reaches the width,
+  or reaches the soft width on a space (0x4090d8..0x4090eb), the space
+  kept at the line's end.
+- What is left ends a line at the end (0x40913f).
+
+Each ended line takes a ring slot (0x408d00, 0x408be0) like a whole
+message. VERIFIED: 1.5's 0x409760 and UO's 0x409dc0 have the same shape
+but take `^0`..`^9` as colour pairs. INFERRED, not read: the window draw
+ignores the blanks after a line's text, so vcod measures a bold line
+without its trailing space. vcod: `messages::wrap`, at 1.1's `^0`..`^7`
+on all three protocols.
+
 ## 4. The chat field
 
 VERIFIED, CoDMP.exe: `messagemode` (0x408440) and `messagemode2` open the
