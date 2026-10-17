@@ -1001,6 +1001,16 @@ impl GameHost {
         out
     }
 
+    /// Whether an entity with no client has `takedamage` (+0x171, UO
+    /// +0x17d): a turret, a UO vehicle, an entity `setTakeDamage` opened, or
+    /// a linked damageable `func_static`.
+    pub fn entity_takes_damage(&self, id: EntId) -> bool {
+        self.turrets.contains_key(&id)
+            || self.vehicles.live.contains_key(&id)
+            || self.script_takedamage.contains(&id)
+            || crate::game::mover::damageable_statics(self).contains(&id)
+    }
+
     /// A `script_model` or `script_brushmodel`, `eType` 8 on the wire.
     fn is_script_mover(&mut self, cx: &mut Cx, id: EntId) -> bool {
         let classname = cx.intern_folded("classname");

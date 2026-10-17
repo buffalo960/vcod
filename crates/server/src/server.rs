@@ -660,6 +660,7 @@ fn vehicle_fire(
                     shot.dir,
                     shell,
                     kind,
+                    true,
                     now,
                 ) {
                     log::warn!("vehicle {} shell not spawned: {e:?}", id.0);
@@ -7410,13 +7411,15 @@ impl Server {
                     };
                     rt.deliver_hits(vec![hit]);
                 }
-                // A UO vehicle the shell struck takes it the same way
-                // (`G_MissileImpact`'s `G_Damage`, game.mp.uo 0x5db67): the
-                // flight as the direction, the contact as the point.
+                // Any other entity the shell struck that takes damage (a UO
+                // vehicle, a `setTakeDamage` script model) takes it the same
+                // way (`G_MissileImpact`'s `G_Damage`, 1.1 0x53ab4, game.mp.uo
+                // 0x6db67, combat doc 13.1): the flight as the direction, the
+                // contact as the point.
                 if let Some(v) = x
                     .struck
                     .and_then(|n| rt.host.ents.handle(n))
-                    .filter(|v| rt.host.vehicles.live.contains_key(v))
+                    .filter(|&v| rt.host.entity_takes_damage(v))
                     && x.shell_damage > 0
                 {
                     rt.deliver_entity_hit(&crate::game::combat::EntityHit {
@@ -8601,6 +8604,7 @@ impl Server {
                 (end - muzzle).normalize_or_zero(),
                 shell,
                 kind,
+                false,
                 level_ms,
             ) {
                 log::warn!(
@@ -8856,6 +8860,7 @@ impl Server {
                     weapon,
                     aim,
                     &sims,
+                    &targets,
                     collision,
                     &models,
                     &self.hitlocs,
