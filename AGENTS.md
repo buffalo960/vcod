@@ -805,7 +805,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
-  15, "A bone asked for before the anim update").
+  15, "A bone asked for before the anim update"). Its `bulletTrace` and
+  `radiusDamage` pose bodies at that clock too (`GameHost::dobj_time_ms`,
+  combat doc 3.6). A gate replaying a `--probe-uo-weapon direct` capture
+  sends `ProbeHold::framed` cmds: on even ones `leanhit_ab`'s standing
+  cells read 0.1 off.
 
 ### Assets, rendering, sound
 

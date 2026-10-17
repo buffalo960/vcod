@@ -1,0 +1,841 @@
+# Retail CoD United Offensive 1.51b dedicated server, 2026-10-17: the PROBE
+# lines of client-probes/probe_leanhit on mp_carentan with probe_bones 1.
+# COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<abs> PORT=32786 SECS=100 tools/run_probe.sh client-probes/probe_leanhit mp_carentan +set probe_bones 1
+# vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32786 --probe-team axis --probe-uo-weapon direct --probe-secs 85   # 8 s in
+# vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32786 --probe-team allies --probe-weapon springfield_mp --probe-uo-weapon direct --probe-secs 80   # 3 s later
+# The target's first playing snapshot read serverTime 9750, the shooter's 12750.
+PROBE site 1050 (1000.00, 1216.00, -23.75) (1256.00, 1216.00, -23.75) 0
+PROBE models 0 xmodel/basehead_axis_a_01 xmodel/gear_german_helmet_falshrm_blk xmodel/gear_german_load3_falshrm xmodel/gear_german_bandolier
+PROBE phase 20000 level
+PROBE body 21250 level 0 0 0.00959778
+PROBE bone 21250 level bip01 pelvis 5.1698 -1.96851 35.0512
+PROBE bone 21250 level bip01 spine2 5.20081 -2.29138 45.2539
+PROBE bone 21250 level bip01 neck 1.69763 -2.2572 57.1385
+PROBE bone 21250 level bip01 head -0.313354 -2.21021 59.3731
+PROBE bone 21250 level bip01 l upperarm -3.72375 -7.84192 52.2749
+PROBE bone 21250 level bip01 r upperarm 7.48108 3.2489 54.0026
+PROBE bone 21250 level bip01 l forearm -7.53992 -5.00659 41.1546
+PROBE bone 21250 level bip01 r forearm 7.48926 14.6283 49.9075
+PROBE bone 21250 level bip01 l hand -17.088 0.816406 44.1244
+PROBE bone 21250 level bip01 r hand -1.34863 7.8114 46.8557
+PROBE bone 21250 level tag_weapon_right -6.20581 5.01465 48.1153
+PROBE body 21300 level 0 0 0.00959778
+PROBE bone 21300 level bip01 pelvis 5.14758 -1.97815 35.0512
+PROBE bone 21300 level bip01 spine2 5.1853 -2.29321 45.2547
+PROBE bone 21300 level bip01 neck 1.72754 -2.2196 57.1524
+PROBE bone 21300 level bip01 head -0.262939 -2.1416 59.4044
+PROBE bone 21300 level bip01 l upperarm -3.7467 -7.77795 52.3178
+PROBE bone 21300 level bip01 r upperarm 7.53369 3.24438 53.9876
+PROBE bone 21300 level bip01 l forearm -7.53235 -4.88647 41.2016
+PROBE bone 21300 level bip01 r forearm 7.573 14.6431 49.9464
+PROBE bone 21300 level bip01 l hand -17.0785 0.982788 44.0852
+PROBE bone 21300 level bip01 r hand -1.30298 7.89636 46.8493
+PROBE bone 21300 level tag_weapon_right -6.177 5.12891 48.1085
+PROBE body 21350 level 0 0 0.00959778
+PROBE bone 21350 level bip01 pelvis 5.12524 -1.98792 35.0512
+PROBE bone 21350 level bip01 spine2 5.16321 -2.29541 45.2554
+PROBE bone 21350 level bip01 neck 1.74463 -2.17322 57.164
+PROBE bone 21350 level bip01 head -0.224609 -2.04346 59.4323
+PROBE bone 21350 level bip01 l upperarm -3.7959 -7.68787 52.355
+PROBE bone 21350 level bip01 r upperarm 7.59094 3.23132 53.974
+PROBE bone 21350 level bip01 l forearm -7.53516 -4.729 41.2408
+PROBE bone 21350 level bip01 r forearm 7.69836 14.6488 49.9873
+PROBE bone 21350 level bip01 l hand -17.0555 1.20935 44.0674
+PROBE bone 21350 level bip01 r hand -1.23352 8 46.8397
+PROBE bone 21350 level tag_weapon_right -6.12903 5.26746 48.0917
+PROBE grid 21500 level f 4 - - - 77.8812 78.5835 81.3696 - 52.0185 - - -
+PROBE grid 21500 level f 10 - - - - 75.6143 78.352 57.9929 57.9205 - - -
+PROBE grid 21500 level f 16 - - - 73.8366 69.3182 75.2181 57.3186 62.3625 - - -
+PROBE grid 21500 level f 22 - - - - 67.88 72.7057 55.8799 - - - -
+PROBE grid 21500 level f 28 - - - - 67.9818 70.1934 58.4008 68.3882 - - -
+PROBE grid 21500 level f 34 - - - - 65.6794 62.3737 59.0679 68.6712 - - -
+PROBE grid 21500 level f 40 - - - - 66.3029 49.8862 54.8304 68.9542 - - -
+PROBE grid 21500 level f 46 - - - 63.7691 58.1939 45.8063 53.3227 68.599 - - -
+PROBE grid 21500 level f 52 - - - 68.2599 68.4002 61.0714 56.0247 59.8199 - - -
+PROBE grid 21500 level f 58 - - - - - 58.0567 65.7085 - - - -
+PROBE grid 21500 level f 64 - - - - - 55.1959 - - - - -
+PROBE grid 21500 level f 70 - - - - - 61.8816 - - - - -
+PROBE grid 21500 level f 76 - - - - - - - - - - -
+PROBE grid 21500 level s 4 - - - 37.0581 36.0665 36.1723 - - 47.2069 - - - - - -
+PROBE grid 21500 level s 10 - - - - 35.7246 35.592 - 50.3919 47.5481 - - - - - -
+PROBE grid 21500 level s 16 - - - - 36.2597 35.6415 53.3066 47.2048 51.4019 - - - - - -
+PROBE grid 21500 level s 22 - - - - 36.3091 36.1766 50.7516 46.8624 - - - - - - -
+PROBE grid 21500 level s 28 - - - - - 36.7116 36.5145 46.7615 - - - - - - -
+PROBE grid 21500 level s 34 - - - - - 37.2467 35.3828 46.2729 - - - - - - -
+PROBE grid 21500 level s 40 - - - 43.8579 44.1632 38.7162 35.4266 44.4113 - - - - - - -
+PROBE grid 21500 level s 46 - - 47.5014 47.5582 37.4897 39.254 36.7938 48.0012 - - - - - - -
+PROBE grid 21500 level s 52 - - - - 37.1946 36.224 43.6833 51.706 - - - - - - -
+PROBE grid 21500 level s 58 - - - - 48.3243 43.7223 44.5287 - - - - - - - -
+PROBE grid 21500 level s 64 - - - - 43.4099 43.8448 - - - - - - - - -
+PROBE grid 21500 level s 70 - - - - - 45.1341 - - - - - - - - -
+PROBE grid 21500 level s 76 - - - - - - - - - - - - - - -
+PROBE hit 21500 level axis dmg 96 loc torso_lower point (1256.00, 1217.33, 19.19)
+PROBE phase 23050 t_left
+PROBE body 24300 t_left 0 0 0.00959778
+PROBE bone 24300 t_left bip01 pelvis 5.21167 -5.79504 34.8981
+PROBE bone 24300 t_left bip01 spine2 4.63477 -11.3308 43.2265
+PROBE bone 24300 t_left bip01 neck 1.1532 -14.067 54.7984
+PROBE bone 24300 t_left bip01 head 0.10498 -13.3721 57.5294
+PROBE bone 24300 t_left bip01 l upperarm -5.86243 -15.3331 49.018
+PROBE bone 24300 t_left bip01 r upperarm 8.62524 -9.67053 52.6856
+PROBE bone 24300 t_left bip01 l forearm -7.79114 -10.6002 38.057
+PROBE bone 24300 t_left bip01 r forearm 11.4108 1.71191 49.6953
+PROBE bone 24300 t_left bip01 l hand -15.9755 -6.37549 45.0613
+PROBE bone 24300 t_left bip01 r hand 0.844971 -2.2998 47.2134
+PROBE bone 24300 t_left tag_weapon_right -4.1571 -4.9248 48.2566
+PROBE body 24350 t_left 0 0 0.00959778
+PROBE bone 24350 t_left bip01 pelvis 5.20972 -5.80298 34.9005
+PROBE bone 24350 t_left bip01 spine2 4.63147 -11.338 43.229
+PROBE bone 24350 t_left bip01 neck 1.1554 -14.072 54.8031
+PROBE bone 24350 t_left bip01 head 0.106445 -13.4109 57.5421
+PROBE bone 24350 t_left bip01 l upperarm -5.86011 -15.3486 49.0249
+PROBE bone 24350 t_left bip01 r upperarm 8.62317 -9.67224 52.6803
+PROBE bone 24350 t_left bip01 l forearm -7.82666 -10.6066 38.0746
+PROBE bone 24350 t_left bip01 r forearm 11.41 1.69324 49.627
+PROBE bone 24350 t_left bip01 l hand -15.9901 -6.45227 45.1451
+PROBE bone 24350 t_left bip01 r hand 0.821533 -2.31238 47.2335
+PROBE bone 24350 t_left tag_weapon_right -4.17078 -4.94531 48.3035
+PROBE body 24400 t_left 0 0 0.00959778
+PROBE bone 24400 t_left bip01 pelvis 5.2699 -5.78479 34.9014
+PROBE bone 24400 t_left bip01 spine2 4.69043 -11.3301 43.219
+PROBE bone 24400 t_left bip01 neck 1.16626 -14.0924 54.7717
+PROBE bone 24400 t_left bip01 head 0.0938721 -13.5615 57.53
+PROBE bone 24400 t_left bip01 l upperarm -5.80103 -15.433 48.9499
+PROBE bone 24400 t_left bip01 r upperarm 8.61389 -9.66248 52.6737
+PROBE bone 24400 t_left bip01 l forearm -7.84888 -10.5591 38.0727
+PROBE bone 24400 t_left bip01 r forearm 11.3499 1.72986 49.6751
+PROBE bone 24400 t_left bip01 l hand -16.0763 -6.23035 44.9619
+PROBE bone 24400 t_left bip01 r hand 0.725708 -2.08984 47.1395
+PROBE bone 24400 t_left tag_weapon_right -4.2793 -4.70728 48.188
+PROBE grid 24550 t_left f 4 - - - - 77.711 80.5724 - 52.0043 - - -
+PROBE grid 24550 t_left f 10 - - - - 81.451 76.9811 58.7448 57.0797 - - -
+PROBE grid 24550 t_left f 16 - - - - 70.9265 74.1689 57.6427 55.9777 - - -
+PROBE grid 24550 t_left f 22 - - - - 72.4218 71.8662 56.3397 55.9527 - - -
+PROBE grid 24550 t_left f 28 - - - - 74.4305 69.5635 58.935 58.0224 - - -
+PROBE grid 24550 t_left f 34 - - - - 69.4879 64.5886 59.6892 60.092 - - -
+PROBE grid 24550 t_left f 40 - - - - - 67.2532 48.3646 51.2188 65.0145 - -
+PROBE grid 24550 t_left f 46 - - - - - 63.0884 45.0577 55.0727 55.5339 - -
+PROBE grid 24550 t_left f 52 - - - - 75.4064 70.0911 69.6138 58.5917 57.5358 - -
+PROBE grid 24550 t_left f 58 - - - - - - - 58.3074 63.912 - -
+PROBE grid 24550 t_left f 64 - - - - - - - 55.8169 63.4383 - -
+PROBE grid 24550 t_left f 70 - - - - - - - - - - -
+PROBE grid 24550 t_left f 76 - - - - - - - - - - -
+PROBE grid 24550 t_left s 4 - - - 36.2414 34.0393 34.1425 - - 45.0063 - - - - - -
+PROBE grid 24550 t_left s 10 - - - - 34.6738 32.8961 - 49.8155 45.2095 - - - - - -
+PROBE grid 24550 t_left s 16 - - - - 35.287 34.7444 - 44.6117 47.3156 - - - - - -
+PROBE grid 24550 t_left s 22 - - - - 35.3934 33.6157 51.4533 43.3332 47.0537 - - - - - -
+PROBE grid 24550 t_left s 28 - - - - 36.0066 34.2289 36.6299 42.0876 - - - - - - -
+PROBE grid 24550 t_left s 34 - - - - - 34.8421 33.3666 40.7145 - - - - - - -
+PROBE grid 24550 t_left s 40 - - - 35.0188 31.7271 31.3497 34.6416 36.8576 - - - - - - -
+PROBE grid 24550 t_left s 46 - - 40.8184 41.242 27.8827 28.6908 29.6004 34.1695 - - - - - - -
+PROBE grid 24550 t_left s 52 - - - - 29.4415 28.5744 31.8894 36.6532 - - - - - - -
+PROBE grid 24550 t_left s 58 - - - - 31.1349 29.9831 - - - - - - - - -
+PROBE grid 24550 t_left s 64 - - - - 31.044 29.8922 - - - - - - - - -
+PROBE grid 24550 t_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 24550 t_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 24550 t_left axis dmg 96 loc torso_lower point (1250.71, 1204.73, 18.86)
+PROBE phase 26100 t_right
+PROBE body 27350 t_right 0 0 0.00959778
+PROBE bone 27350 t_right bip01 pelvis 5.30591 1.66492 35.1038
+PROBE bone 27350 t_right bip01 spine2 5.31433 5.11169 44.6029
+PROBE bone 27350 t_right bip01 neck 1.66174 7.86169 56.1187
+PROBE bone 27350 t_right bip01 head -0.373901 8.42554 58.2583
+PROBE bone 27350 t_right bip01 l upperarm -3.5813 1.16553 52.6679
+PROBE bone 27350 t_right bip01 r upperarm 7.36731 12.6104 51.8115
+PROBE bone 27350 t_right bip01 l forearm -7.59033 1.18201 41.2579
+PROBE bone 27350 t_right bip01 r forearm 7.33582 22.5861 44.9744
+PROBE bone 27350 t_right bip01 l hand -17.1215 7.5177 42.9629
+PROBE bone 27350 t_right bip01 r hand -1.43433 15.1294 43.8022
+PROBE bone 27350 t_right tag_weapon_right -6.25879 12.6661 45.7148
+PROBE body 27400 t_right 0 0 0.00959778
+PROBE bone 27400 t_right bip01 pelvis 5.25269 1.65308 35.1044
+PROBE bone 27400 t_right bip01 spine2 5.26794 5.10718 44.6004
+PROBE bone 27400 t_right bip01 neck 1.65979 7.89978 56.12
+PROBE bone 27400 t_right bip01 head -0.377808 8.45874 58.259
+PROBE bone 27400 t_right bip01 l upperarm -3.63696 1.23486 52.691
+PROBE bone 27400 t_right bip01 r upperarm 7.38916 12.6012 51.7945
+PROBE bone 27400 t_right bip01 l forearm -7.56372 1.21753 41.2523
+PROBE bone 27400 t_right bip01 r forearm 7.35693 22.5983 44.9887
+PROBE bone 27400 t_right bip01 l hand -17.109 7.53992 42.9284
+PROBE bone 27400 t_right bip01 r hand -1.41333 15.145 43.7954
+PROBE bone 27400 t_right tag_weapon_right -6.2384 12.6824 45.707
+PROBE body 27450 t_right 0 0 0.00959778
+PROBE bone 27450 t_right bip01 pelvis 5.19958 1.64111 35.105
+PROBE bone 27450 t_right bip01 spine2 5.22144 5.10254 44.5979
+PROBE bone 27450 t_right bip01 neck 1.6582 7.93738 56.1211
+PROBE bone 27450 t_right bip01 head -0.373047 8.49854 58.2657
+PROBE bone 27450 t_right bip01 l upperarm -3.69214 1.3042 52.7139
+PROBE bone 27450 t_right bip01 r upperarm 7.41089 12.5914 51.7775
+PROBE bone 27450 t_right bip01 l forearm -7.56409 1.3114 41.2566
+PROBE bone 27450 t_right bip01 r forearm 7.3783 22.6097 45.003
+PROBE bone 27450 t_right bip01 l hand -17.11 7.64648 42.8795
+PROBE bone 27450 t_right bip01 r hand -1.4082 15.1836 43.761
+PROBE bone 27450 t_right tag_weapon_right -6.2428 12.7347 45.666
+PROBE grid 27600 t_right f 4 - - - 76.7669 78.071 - 51.9577 - - - -
+PROBE grid 27600 t_right f 10 - - - - 74.5683 - 58.045 - - - -
+PROBE grid 27600 t_right f 16 - - - 71.085 71.7214 - 57.4176 - - - -
+PROBE grid 27600 t_right f 22 - - - 70.8127 69.5108 - 55.6544 - - - -
+PROBE grid 27600 t_right f 28 - - - 70.5403 64.1995 58.5251 58.2056 - - - -
+PROBE grid 27600 t_right f 34 - - - 67.0543 63.9392 60.8241 60.7568 - - - -
+PROBE grid 27600 t_right f 40 - - 65.1494 66.794 45.2025 54.4887 66.3745 - - - -
+PROBE grid 27600 t_right f 46 - 68.1706 62.4869 64.4095 60.8708 52.978 - - - - -
+PROBE grid 27600 t_right f 52 - - 71.9152 62.3754 58.9282 54.7972 - - - - -
+PROBE grid 27600 t_right f 58 - - - 61.3881 58.3451 61.6911 - - - - -
+PROBE grid 27600 t_right f 64 - - - 53.7417 55.648 - - - - - -
+PROBE grid 27600 t_right f 70 - - - - - - - - - - -
+PROBE grid 27600 t_right f 76 - - - - - - - - - - -
+PROBE grid 27600 t_right s 4 - - - 39.4444 38.1495 38.254 - - 49.2751 - - - - - -
+PROBE grid 27600 t_right s 10 - - - - 44.5941 37.9522 - 52.6402 49.8541 - - - - - -
+PROBE grid 27600 t_right s 16 - - - - 38.7313 38.2638 55.635 49.9364 54.3281 - - - - - -
+PROBE grid 27600 t_right s 22 - - - - 39.0429 39.0633 53.5353 49.8383 - - - - - - -
+PROBE grid 27600 t_right s 28 - - - - - 39.8628 43.1466 49.1127 - - - - - - -
+PROBE grid 27600 t_right s 34 - - - - - 40.6622 38.0829 49.614 - - - - - - -
+PROBE grid 27600 t_right s 40 - - 53.4847 49.608 50.2261 43.2668 40.0657 50.1154 - - - - - - -
+PROBE grid 27600 t_right s 46 - - 54.6601 - 44.7552 46.9675 44.0074 52.851 - - - - - - -
+PROBE grid 27600 t_right s 52 - - - - 45.9306 45.0728 52.8631 - - - - - - - -
+PROBE grid 27600 t_right s 58 - - - - 55.086 47.7749 - - - - - - - - -
+PROBE grid 27600 t_right s 64 - - - - 53.765 54.7995 - - - - - - - - -
+PROBE grid 27600 t_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 27600 t_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 27600 t_right axis dmg 96 loc torso_lower point (1258.14, 1226.71, 15.95)
+PROBE phase 29150 t_crouch
+PROBE body 30400 t_crouch 0 0 0.00959778
+PROBE bone 30400 t_crouch bip01 pelvis 12.5759 -3.01709 14.9064
+PROBE bone 30400 t_crouch bip01 spine2 11.8398 -3.32227 25.115
+PROBE bone 30400 t_crouch bip01 neck 8.85657 -2.02649 37.0706
+PROBE bone 30400 t_crouch bip01 head 7.57959 -1.10168 39.6307
+PROBE bone 30400 t_crouch bip01 l upperarm 3.10156 -7.33618 32.5164
+PROBE bone 30400 t_crouch bip01 r upperarm 13.9186 3.7251 35.5661
+PROBE bone 30400 t_crouch bip01 l forearm -6.03723 -3.59375 25.5349
+PROBE bone 30400 t_crouch bip01 r forearm 9.0437 12.4745 28.7876
+PROBE bone 30400 t_crouch bip01 l hand -13.2394 0.848633 33.427
+PROBE bone 30400 t_crouch bip01 r hand 1.40247 4.9375 33.1116
+PROBE bone 30400 t_crouch tag_weapon_right -3.58105 2.69434 34.8818
+PROBE body 30450 t_crouch 0 0 0.00959778
+PROBE bone 30450 t_crouch bip01 pelvis 12.5759 -3.01709 14.9064
+PROBE bone 30450 t_crouch bip01 spine2 11.8398 -3.32239 25.115
+PROBE bone 30450 t_crouch bip01 neck 8.85632 -2.02698 37.0706
+PROBE bone 30450 t_crouch bip01 head 7.57971 -1.10352 39.6314
+PROBE bone 30450 t_crouch bip01 l upperarm 3.10242 -7.33813 32.5165
+PROBE bone 30450 t_crouch bip01 r upperarm 13.917 3.72571 35.5659
+PROBE bone 30450 t_crouch bip01 l forearm -6.04468 -3.59216 25.548
+PROBE bone 30450 t_crouch bip01 r forearm 9.03821 12.4758 28.7913
+PROBE bone 30450 t_crouch bip01 l hand -13.2413 0.846436 33.4473
+PROBE bone 30450 t_crouch bip01 r hand 1.39978 4.93835 33.1195
+PROBE bone 30450 t_crouch tag_weapon_right -3.58252 2.69507 34.8927
+PROBE body 30500 t_crouch 0 0 0.00959778
+PROBE bone 30500 t_crouch bip01 pelvis 12.5759 -3.01709 14.9064
+PROBE bone 30500 t_crouch bip01 spine2 11.8398 -3.32251 25.115
+PROBE bone 30500 t_crouch bip01 neck 8.8562 -2.02759 37.0706
+PROBE bone 30500 t_crouch bip01 head 7.57983 -1.10522 39.632
+PROBE bone 30500 t_crouch bip01 l upperarm 3.10339 -7.33997 32.5167
+PROBE bone 30500 t_crouch bip01 r upperarm 13.9155 3.72632 35.5657
+PROBE bone 30500 t_crouch bip01 l forearm -6.047 -3.59131 25.5539
+PROBE bone 30500 t_crouch bip01 r forearm 9.03259 12.4772 28.795
+PROBE bone 30500 t_crouch bip01 l hand -13.2428 0.846436 33.4544
+PROBE bone 30500 t_crouch bip01 r hand 1.39709 4.93921 33.1274
+PROBE bone 30500 t_crouch tag_weapon_right -3.58411 2.69568 34.9037
+PROBE grid 30650 t_crouch f 4 - - 77.9736 72.7674 75.5318 78.7791 45.0009 - - - -
+PROBE grid 30650 t_crouch f 10 - - - 76.8309 73.8304 70.7192 51.7311 74.8027 - - -
+PROBE grid 30650 t_crouch f 16 - - - - 74.7083 70.5655 53.2495 53.7051 - - -
+PROBE grid 30650 t_crouch f 22 - - - - 74.5547 70.4118 54.768 55.8893 - - -
+PROBE grid 30650 t_crouch f 28 - - - 68.9698 74.1626 51.6499 55.5109 73.1725 - - -
+PROBE grid 30650 t_crouch f 34 - - - - 64.76 48.3269 63.2133 - - - -
+PROBE grid 30650 t_crouch f 40 - - - - - 65.8518 - - - - -
+PROBE grid 30650 t_crouch f 46 - - - - - 64.753 - - - - -
+PROBE grid 30650 t_crouch f 52 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 58 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 64 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 70 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 76 - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 4 - - 36.4482 37.2223 - - - 52.9838 43.6406 - - - - - -
+PROBE grid 30650 t_crouch s 10 - - - 38.4579 36.4475 - 36.6745 35.177 41.9536 - - - - - -
+PROBE grid 30650 t_crouch s 16 - - - - 35.5697 35.926 36.2823 34.4585 42.1762 - - - - - -
+PROBE grid 30650 t_crouch s 22 - - - - 35.1774 35.5337 40.0728 35.689 42.3503 - - - - - -
+PROBE grid 30650 t_crouch s 28 - - - 45.1014 40.126 37.1507 38.5454 36.6265 43.1533 - - - - - -
+PROBE grid 30650 t_crouch s 34 - - - 45.7676 - 37.8169 36.5928 43.3237 46.6566 - - - - - -
+PROBE grid 30650 t_crouch s 40 - - - - - - 43.3827 - - - - - - - -
+PROBE grid 30650 t_crouch s 46 - - - - - - 43.2259 - - - - - - - -
+PROBE grid 30650 t_crouch s 52 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 58 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 64 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 70 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 76 - - - - - - - - - - - - - - -
+PROBE hit 30650 t_crouch axis dmg 107 loc torso_upper point (1262.92, 1217.16, 6.79)
+PROBE phase 32200 t_crouch_left
+PROBE body 33450 t_crouch_left 0 0 0.00959778
+PROBE bone 33450 t_crouch_left bip01 pelvis 12.5759 -5.61951 14.7405
+PROBE bone 33450 t_crouch_left bip01 spine2 11.847 -11.2552 23.0803
+PROBE bone 33450 t_crouch_left bip01 neck 8.97681 -13.9674 34.8243
+PROBE bone 33450 t_crouch_left bip01 head 7.80347 -13.9127 37.5921
+PROBE bone 33450 t_crouch_left bip01 l upperarm 2.70752 -16.7238 28.8953
+PROBE bone 33450 t_crouch_left bip01 r upperarm 14.6245 -8.59338 35.2628
+PROBE bone 33450 t_crouch_left bip01 l forearm -6.06299 -10.8101 23.0327
+PROBE bone 33450 t_crouch_left bip01 r forearm 10.0146 2.0708 31.9033
+PROBE bone 33450 t_crouch_left bip01 l hand -12.6096 -9.79297 32.5195
+PROBE bone 33450 t_crouch_left bip01 r hand 2.16614 -6.28198 33.4921
+PROBE bone 33450 t_crouch_left tag_weapon_right -2.8855 -8.84277 34.4532
+PROBE body 33500 t_crouch_left 0 0 0.00959778
+PROBE bone 33500 t_crouch_left bip01 pelvis 12.5759 -5.61951 14.7405
+PROBE bone 33500 t_crouch_left bip01 spine2 11.8474 -11.2539 23.0813
+PROBE bone 33500 t_crouch_left bip01 neck 8.979 -13.9628 34.8266
+PROBE bone 33500 t_crouch_left bip01 head 7.80579 -13.9084 37.5944
+PROBE bone 33500 t_crouch_left bip01 l upperarm 2.70728 -16.7179 28.8998
+PROBE bone 33500 t_crouch_left bip01 r upperarm 14.6288 -8.5907 35.2626
+PROBE bone 33500 t_crouch_left bip01 l forearm -6.0614 -10.7964 23.0425
+PROBE bone 33500 t_crouch_left bip01 r forearm 10.022 2.07373 31.8995
+PROBE bone 33500 t_crouch_left bip01 l hand -12.5953 -9.77576 32.5377
+PROBE bone 33500 t_crouch_left bip01 r hand 2.17029 -6.27576 33.4896
+PROBE bone 33500 t_crouch_left tag_weapon_right -2.88306 -8.83301 34.4509
+PROBE body 33550 t_crouch_left 0 0 0.00959778
+PROBE bone 33550 t_crouch_left bip01 pelvis 12.5759 -5.61951 14.7405
+PROBE bone 33550 t_crouch_left bip01 spine2 11.8474 -11.2539 23.0813
+PROBE bone 33550 t_crouch_left bip01 neck 8.97852 -13.9637 34.8262
+PROBE bone 33550 t_crouch_left bip01 head 7.80371 -13.9115 37.5934
+PROBE bone 33550 t_crouch_left bip01 l upperarm 2.71069 -16.7253 28.8981
+PROBE bone 33550 t_crouch_left bip01 r upperarm 14.6233 -8.58655 35.263
+PROBE bone 33550 t_crouch_left bip01 l forearm -6.06067 -10.8064 23.0421
+PROBE bone 33550 t_crouch_left bip01 r forearm 10.0079 2.07239 31.8945
+PROBE bone 33550 t_crouch_left bip01 l hand -12.6047 -9.77942 32.5296
+PROBE bone 33550 t_crouch_left bip01 r hand 2.1626 -6.28369 33.4815
+PROBE bone 33550 t_crouch_left tag_weapon_right -2.88977 -8.84387 34.4402
+PROBE grid 33700 t_crouch_left f 4 - - - 72.0204 74.6791 77.3378 81.7187 44.2029 - - -
+PROBE grid 33700 t_crouch_left f 10 - - - 79.1536 72.9353 70.6201 59.703 52.0505 - - -
+PROBE grid 33700 t_crouch_left f 16 - - - - 76.5676 72.3621 63.5243 53.4968 75.3888 - -
+PROBE grid 33700 t_crouch_left f 22 - - - - - 74.104 69.8985 55.6611 70.9316 - -
+PROBE grid 33700 t_crouch_left f 28 - - - - - - 53.029 52.9066 60.5415 - -
+PROBE grid 33700 t_crouch_left f 34 - - - - - 67.1658 49.8852 51.6666 - - -
+PROBE grid 33700 t_crouch_left f 40 - - - - - - - 66.1939 70.8543 - -
+PROBE grid 33700 t_crouch_left f 46 - - - - - - - 65.532 68.0342 - -
+PROBE grid 33700 t_crouch_left f 52 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 58 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 64 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 70 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 76 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 4 - - 34.3453 35.1264 34.6683 - - 36.7689 41.4796 - - - - - -
+PROBE grid 33700 t_crouch_left s 10 - - - 36.6403 34.13 - 34.3313 33.1162 41.0652 - - - - - -
+PROBE grid 33700 t_crouch_left s 16 - - - - 33.1054 33.4492 33.7931 30.4188 38.979 - - - - - -
+PROBE grid 33700 t_crouch_left s 22 - - - - 32.5671 39.0731 31.1329 28.945 35.8684 - - - - - -
+PROBE grid 33700 t_crouch_left s 28 - - - 36.4685 36.1954 28.2126 26.3483 32.6039 33.7877 - - - - - -
+PROBE grid 33700 t_crouch_left s 34 - - - 34.9997 - 40.2794 33.0546 32.0098 34.5169 - - - - - -
+PROBE grid 33700 t_crouch_left s 40 - - - - - - 30.3878 32.9759 - - - - - - -
+PROBE grid 33700 t_crouch_left s 46 - - - - - 31.8315 29.1076 - - - - - - - -
+PROBE grid 33700 t_crouch_left s 52 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 58 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 64 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 33700 t_crouch_left axis dmg 96 loc torso_lower point (1258.02, 1204.38, 1.57)
+PROBE phase 35250 t_crouch_right
+PROBE body 36500 t_crouch_right 0 0 0.00959778
+PROBE bone 36500 t_crouch_right bip01 pelvis 12.5759 -0.407593 15.0365
+PROBE bone 36500 t_crouch_right bip01 spine2 11.8362 5.39331 22.8172
+PROBE bone 36500 t_crouch_right bip01 neck 8.78748 11.2439 33.3049
+PROBE bone 36500 t_crouch_right bip01 head 7.39233 12.6791 35.5486
+PROBE bone 36500 t_crouch_right bip01 l upperarm 3.31152 4.28894 31.3824
+PROBE bone 36500 t_crouch_right bip01 r upperarm 13.5504 16.1356 29.5162
+PROBE bone 36500 t_crouch_right bip01 l forearm -6.00293 4.71912 23.6805
+PROBE bone 36500 t_crouch_right bip01 r forearm 8.37109 21.2902 19.8794
+PROBE bone 36500 t_crouch_right bip01 l hand -13.4446 11.6969 29.1417
+PROBE bone 36500 t_crouch_right bip01 r hand 0.998779 15.8696 26.9618
+PROBE bone 36500 t_crouch_right tag_weapon_right -3.8905 14.3387 29.5601
+PROBE body 36550 t_crouch_right 0 0 0.00959778
+PROBE bone 36550 t_crouch_right bip01 pelvis 12.5759 -0.407593 15.0365
+PROBE bone 36550 t_crouch_right bip01 spine2 11.8364 5.39514 22.8156
+PROBE bone 36550 t_crouch_right bip01 neck 8.79187 11.2544 33.2998
+PROBE bone 36550 t_crouch_right bip01 head 7.39868 12.7155 35.5278
+PROBE bone 36550 t_crouch_right bip01 l upperarm 3.29004 4.32373 31.3633
+PROBE bone 36550 t_crouch_right bip01 r upperarm 13.5834 16.1272 29.5227
+PROBE bone 36550 t_crouch_right bip01 l forearm -6.00403 4.74146 23.6362
+PROBE bone 36550 t_crouch_right bip01 r forearm 8.41809 21.287 19.8812
+PROBE bone 36550 t_crouch_right bip01 l hand -13.4209 11.7311 29.1159
+PROBE bone 36550 t_crouch_right bip01 r hand 1.03357 15.877 26.9588
+PROBE bone 36550 t_crouch_right tag_weapon_right -3.86072 14.3544 29.5527
+PROBE body 36600 t_crouch_right 0 0 0.00959778
+PROBE bone 36600 t_crouch_right bip01 pelvis 12.5759 -0.407593 15.0365
+PROBE bone 36600 t_crouch_right bip01 spine2 11.8365 5.39697 22.8141
+PROBE bone 36600 t_crouch_right bip01 neck 8.79639 11.2648 33.2947
+PROBE bone 36600 t_crouch_right bip01 head 7.40576 12.7538 35.5058
+PROBE bone 36600 t_crouch_right bip01 l upperarm 3.26855 4.35876 31.3442
+PROBE bone 36600 t_crouch_right bip01 r upperarm 13.6163 16.1185 29.5292
+PROBE bone 36600 t_crouch_right bip01 l forearm -6.00513 4.76379 23.592
+PROBE bone 36600 t_crouch_right bip01 r forearm 8.46497 21.2836 19.883
+PROBE bone 36600 t_crouch_right bip01 l hand -13.397 11.7653 29.0901
+PROBE bone 36600 t_crouch_right bip01 r hand 1.06824 15.8842 26.9559
+PROBE bone 36600 t_crouch_right tag_weapon_right -3.83093 14.37 29.5454
+PROBE grid 36750 t_crouch_right f 4 - - 75.9775 73.5225 76.4382 79.84 43.9721 - - - -
+PROBE grid 36750 t_crouch_right f 10 - - - 74.0477 74.1271 70.7547 51.8202 - - - -
+PROBE grid 36750 t_crouch_right f 16 - - - - 72.0976 68.7252 53.4028 76.9969 - - -
+PROBE grid 36750 t_crouch_right f 22 - 75.6812 65.6526 71.7185 54.7011 66.6957 54.9854 - - - -
+PROBE grid 36750 t_crouch_right f 28 - - 64.7948 48.8161 55.3903 62.4077 - - - - -
+PROBE grid 36750 t_crouch_right f 34 - - - 68.501 64.2967 - - - - - -
+PROBE grid 36750 t_crouch_right f 40 - - 73.3046 65.1225 - - - - - - -
+PROBE grid 36750 t_crouch_right f 46 - - - 70.2818 - - - - - - -
+PROBE grid 36750 t_crouch_right f 52 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 58 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 64 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 70 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 76 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 4 - - 38.4497 39.2339 - - - 54.9017 45.8556 - - - - - -
+PROBE grid 36750 t_crouch_right s 10 - - - 39.4057 38.7746 - 39.0326 41.5536 42.5947 - - - - - -
+PROBE grid 36750 t_crouch_right s 16 - - - - 38.1214 38.4928 38.8642 36.6965 44.5615 - - - - - -
+PROBE grid 36750 t_crouch_right s 22 - - - - 37.953 38.3244 43.3135 39.1211 47.7308 - - - - - -
+PROBE grid 36750 t_crouch_right s 28 - - - 55.8052 50.3469 47.432 48.6958 45.4876 55.2537 - - - - - -
+PROBE grid 36750 t_crouch_right s 34 - - - - - 50.5878 49.4391 57.6344 - - - - - - -
+PROBE grid 36750 t_crouch_right s 40 - - - - - - 57.6278 - - - - - - - -
+PROBE grid 36750 t_crouch_right s 46 - - - - - - 58.7806 - - - - - - - -
+PROBE grid 36750 t_crouch_right s 52 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 58 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 64 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 36750 t_crouch_right axis dmg 107 loc torso_upper point (1259.79, 1227.00, 4.59)
+PROBE phase 38300 t_prone
+PROBE body 40550 t_prone 0 0 0.00959778
+PROBE bone 40550 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40550 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40550 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40550 t_prone bip01 head -1.32727 -2.64307 7.50082
+PROBE bone 40550 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40550 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40550 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40550 t_prone bip01 r forearm 1.79004 8.52039 -0.696392
+PROBE bone 40550 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40550 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40550 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE body 40600 t_prone 0 0 0.00959778
+PROBE bone 40600 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40600 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40600 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40600 t_prone bip01 head -1.32727 -2.64307 7.50082
+PROBE bone 40600 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40600 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40600 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40600 t_prone bip01 r forearm 1.79004 8.52039 -0.696392
+PROBE bone 40600 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40600 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40600 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE body 40650 t_prone 0 0 0.00959778
+PROBE bone 40650 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40650 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40650 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40650 t_prone bip01 head -1.32727 -2.64307 7.50082
+PROBE bone 40650 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40650 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40650 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40650 t_prone bip01 r forearm 1.79004 8.52039 -0.696392
+PROBE bone 40650 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40650 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40650 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE grid 40800 t_prone f 4 - - - 115.718 55.1037 40.4874 43.5151 51.7063 89.716 101.496 -
+PROBE grid 40800 t_prone f 10 - - - - 68.5156 56.1489 64.2328 72.63 - - -
+PROBE grid 40800 t_prone f 16 - - - - - 55.0257 - - - - -
+PROBE grid 40800 t_prone f 22 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 28 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 34 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 40 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 46 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 52 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 58 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 64 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 70 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 76 - - - - - - - - - - -
+PROBE grid 40800 t_prone s 4 - 48.5113 39.5955 35.0417 33.8596 33.1074 36.6714 35.3313 33.708 30.874 27.818 24.7619 28.5257 35.2133 32.6478
+PROBE grid 40800 t_prone s 10 - - - - 43.1045 39.3132 41.4192 34.9804 33.9497 31.7148 42.6751 - - - -
+PROBE grid 40800 t_prone s 16 - - - - 45.8682 45.1729 - - - - - - - - -
+PROBE grid 40800 t_prone s 22 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 28 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 34 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 40 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 46 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 52 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 58 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 64 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 70 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 76 - - - - - - - - - - - - - - -
+PROBE hit 40800 t_prone axis dmg 180 loc head point (1247.27, 1215.55, -10.51)
+PROBE phase 42350 t_prone_left
+PROBE body 43600 t_prone_left 0 0 0.00959778
+PROBE bone 43600 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43600 t_prone_left bip01 spine2 13.9933 -10.1636 5.47094
+PROBE bone 43600 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43600 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43600 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43600 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43600 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43600 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43600 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43600 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43600 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE body 43650 t_prone_left 0 0 0.00959778
+PROBE bone 43650 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43650 t_prone_left bip01 spine2 13.9933 -10.1636 5.47094
+PROBE bone 43650 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43650 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43650 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43650 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43650 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43650 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43650 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43650 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43650 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE body 43700 t_prone_left 0 0 0.00959778
+PROBE bone 43700 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43700 t_prone_left bip01 spine2 13.9933 -10.1636 5.47094
+PROBE bone 43700 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43700 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43700 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43700 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43700 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43700 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43700 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43700 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43700 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE grid 43850 t_prone_left f 4 - - - 115.624 92.0717 56.242 65.0568 41.3708 47.1023 99.3484 -
+PROBE grid 43850 t_prone_left f 10 - - - - - 69.2675 56.0374 41.4805 74.4522 - -
+PROBE grid 43850 t_prone_left f 16 - - - - - - 57.5008 - - - -
+PROBE grid 43850 t_prone_left f 22 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 28 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 34 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 40 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 46 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 52 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 58 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 64 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 70 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 76 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 4 - - 30.9028 29.8104 27.0962 26.9275 26.3735 30.051 31.8055 29.7803 26.7242 23.6681 27.4319 34.1196 31.5541
+PROBE grid 43850 t_prone_left s 10 - 38.5229 - - 34.6048 34.8008 34.5378 29.0641 30.0732 30.6211 33.4901 - - - -
+PROBE grid 43850 t_prone_left s 16 - - - - 36.9684 37.1643 - - - - - - - - -
+PROBE grid 43850 t_prone_left s 22 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 28 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 34 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 40 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 46 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 52 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 58 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 64 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 43850 t_prone_left axis dmg 180 loc head point (1248.32, 1206.15, -12.84)
+PROBE phase 45400 t_prone_right
+PROBE body 46650 t_prone_right 0 0 0.00959778
+PROBE bone 46650 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 46650 t_prone_right bip01 spine2 14.8746 0.19104 5.20977
+PROBE bone 46650 t_prone_right bip01 neck 3.43225 4.20178 7.7596
+PROBE bone 46650 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 46650 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 46650 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 46650 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 46650 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 46650 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 46650 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 46650 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE body 46700 t_prone_right 0 0 0.00959778
+PROBE bone 46700 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 46700 t_prone_right bip01 spine2 14.8746 0.19104 5.20977
+PROBE bone 46700 t_prone_right bip01 neck 3.43225 4.20178 7.7596
+PROBE bone 46700 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 46700 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 46700 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 46700 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 46700 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 46700 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 46700 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 46700 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE body 46750 t_prone_right 0 0 0.00959778
+PROBE bone 46750 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 46750 t_prone_right bip01 spine2 14.8746 0.19104 5.20977
+PROBE bone 46750 t_prone_right bip01 neck 3.43225 4.20178 7.7596
+PROBE bone 46750 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 46750 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 46750 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 46750 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 46750 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 46750 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 46750 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 46750 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE grid 46900 t_prone_right f 4 - - - 42.9549 43.1174 48.2103 59.0155 80.7991 91.8633 - -
+PROBE grid 46900 t_prone_right f 10 - - - 67.1749 58.0988 64.4052 72.9205 82.4149 - - -
+PROBE grid 46900 t_prone_right f 16 - - - - 62.252 - - - - - -
+PROBE grid 46900 t_prone_right f 22 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 28 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 34 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 40 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 46 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 52 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 58 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 64 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 70 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 76 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 4 - - 50.604 46.169 42.2695 40.6771 42.3805 40.6381 35.2278 31.3699 28.9117 25.8556 29.6194 36.3071 33.7416
+PROBE grid 46900 t_prone_right s 10 - - - - 51.8271 45.9201 47.8362 40.1247 36.2668 32.4088 41.5806 - - - -
+PROBE grid 46900 t_prone_right s 16 - - - - 55.0993 53.5481 - - - - - - - - -
+PROBE grid 46900 t_prone_right s 22 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 28 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 34 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 40 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 46 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 52 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 58 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 64 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 46900 t_prone_right axis dmg 180 loc head point (1250.74, 1226.81, -14.05)
+PROBE phase 48450 t_stand
+PROBE body 50700 t_stand 0 0 0.00959778
+PROBE bone 50700 t_stand bip01 pelvis 5.21704 -2.12622 35.0102
+PROBE bone 50700 t_stand bip01 spine2 4.70764 -2.38635 45.2134
+PROBE bone 50700 t_stand bip01 neck 0.998047 -1.21936 56.9776
+PROBE bone 50700 t_stand bip01 head -0.0957031 0.296387 59.3325
+PROBE bone 50700 t_stand bip01 l upperarm -5.92029 -4.28662 51.785
+PROBE bone 50700 t_stand bip01 r upperarm 8.52686 2.30579 53.7437
+PROBE bone 50700 t_stand bip01 l forearm -7.60657 -3.63599 39.8269
+PROBE bone 50700 t_stand bip01 r forearm 11.1813 12.3632 47.5741
+PROBE bone 50700 t_stand bip01 l hand -15.9175 2.97839 44.4173
+PROBE bone 50700 t_stand bip01 r hand 0.918335 7.31799 45.8108
+PROBE bone 50700 t_stand tag_weapon_right -4.15332 5.151 47.4182
+PROBE body 50750 t_stand 0 0 0.00959778
+PROBE bone 50750 t_stand bip01 pelvis 5.22034 -2.13184 35.0159
+PROBE bone 50750 t_stand bip01 spine2 4.70166 -2.3822 45.218
+PROBE bone 50750 t_stand bip01 neck 1.0199 -1.19116 56.9884
+PROBE bone 50750 t_stand bip01 head -0.0682373 0.32959 59.3428
+PROBE bone 50750 t_stand bip01 l upperarm -5.91113 -4.26794 51.8183
+PROBE bone 50750 t_stand bip01 r upperarm 8.54211 2.323 53.7283
+PROBE bone 50750 t_stand bip01 l forearm -7.61707 -3.62988 39.8623
+PROBE bone 50750 t_stand bip01 r forearm 11.2003 12.344 47.5011
+PROBE bone 50750 t_stand bip01 l hand -15.9191 2.97278 44.4854
+PROBE bone 50750 t_stand bip01 r hand 0.916748 7.31702 45.8066
+PROBE bone 50750 t_stand tag_weapon_right -4.14758 5.15039 47.4369
+PROBE body 50800 t_stand 0 0 0.00959778
+PROBE bone 50800 t_stand bip01 pelvis 5.22351 -2.13745 35.0217
+PROBE bone 50800 t_stand bip01 spine2 4.69958 -2.38147 45.2226
+PROBE bone 50800 t_stand bip01 neck 1.05005 -1.17114 57.0011
+PROBE bone 50800 t_stand bip01 head -0.0317383 0.353516 59.356
+PROBE bone 50800 t_stand bip01 l upperarm -5.89478 -4.25732 51.8553
+PROBE bone 50800 t_stand bip01 r upperarm 8.56384 2.33289 53.71
+PROBE bone 50800 t_stand bip01 l forearm -7.62537 -3.62805 39.9024
+PROBE bone 50800 t_stand bip01 r forearm 11.234 12.3242 47.4406
+PROBE bone 50800 t_stand bip01 l hand -15.918 2.95947 44.5638
+PROBE bone 50800 t_stand bip01 r hand 0.918579 7.33801 45.8215
+PROBE bone 50800 t_stand tag_weapon_right -4.13953 5.17627 47.4777
+PROBE grid 50950 t_stand f 4 - - - 78.2027 78.678 81.5379 - - - - -
+PROBE grid 50950 t_stand f 10 - - - - 75.1814 78.129 58.0406 61.2788 - - -
+PROBE grid 50950 t_stand f 16 - - - - 71.9754 75.3458 56.7699 62.4352 - - -
+PROBE grid 50950 t_stand f 22 - - - - 69.7051 73.0756 54.9735 - - - -
+PROBE grid 50950 t_stand f 28 - - - - 68.9836 70.8053 57.342 66.6104 - - -
+PROBE grid 50950 t_stand f 34 - - - - 67.793 61.7852 59.7106 66.5048 - - -
+PROBE grid 50950 t_stand f 40 - - - - 68.2048 49.7081 55.8088 66.3991 - - -
+PROBE grid 50950 t_stand f 46 - - - 64.8015 44.7744 48.3391 53.318 - - - -
+PROBE grid 50950 t_stand f 52 - - - - 69.4189 57.9879 53.7879 - - - -
+PROBE grid 50950 t_stand f 58 - - - - - 58.3778 - - - - -
+PROBE grid 50950 t_stand f 64 - - - - 56.4488 55.6749 - - - - -
+PROBE grid 50950 t_stand f 70 - - - - - 61.6684 - - - - -
+PROBE grid 50950 t_stand f 76 - - - - - - - - - - -
+PROBE grid 50950 t_stand s 4 - - - 37.8448 36.1766 36.2793 - - 47.0518 - - - - - -
+PROBE grid 50950 t_stand s 10 - - - - 36.9815 35.1854 - 51.7901 47.5972 - - - - - -
+PROBE grid 50950 t_stand s 16 - - - - 37.8372 37.6705 - 47.3482 50.0623 - - - - - -
+PROBE grid 50950 t_stand s 22 - - - - 38.1834 36.3873 53.4751 46.4525 50.1618 - - - - - -
+PROBE grid 50950 t_stand s 28 - - - - 39.0391 37.243 38.6233 44.6155 - - - - - - -
+PROBE grid 50950 t_stand s 34 - - - - - 38.0987 38.212 44.2043 - - - - - - -
+PROBE grid 50950 t_stand s 40 - - - 44.8783 40.7354 38.4051 37.8008 43.793 - - - - - - -
+PROBE grid 50950 t_stand s 46 - - 49.788 42.996 39.2455 38.0533 39.1453 48.322 - - - - - - -
+PROBE grid 50950 t_stand s 52 - - - - 38.817 40.6133 43.7093 45.0669 - - - - - - -
+PROBE grid 50950 t_stand s 58 - - - - - 44.7141 44.6122 - - - - - - - -
+PROBE grid 50950 t_stand s 64 - - - - 47.4106 45.8896 - - - - - - - - -
+PROBE grid 50950 t_stand s 70 - - - - - 47.4687 - - - - - - - - -
+PROBE grid 50950 t_stand s 76 - - - - - - - - - - - - - - -
+PROBE hit 50950 t_stand axis dmg 96 loc torso_lower point (1250.60, 1214.34, 19.23)
+PROBE phase 52500 s_left
+PROBE body 53750 s_left 0 0 0.00959778
+PROBE bone 53750 s_left bip01 pelvis 6.04968 -1.94604 35.0512
+PROBE bone 53750 s_left bip01 spine2 5.93457 -2.24927 45.2455
+PROBE bone 53750 s_left bip01 neck 1.86438 -1.88049 56.9422
+PROBE bone 53750 s_left bip01 head 0.395996 -1.26233 59.4921
+PROBE bone 53750 s_left bip01 l upperarm -3.92285 -6.75488 51.7478
+PROBE bone 53750 s_left bip01 r upperarm 8.41736 2.92786 54.0693
+PROBE bone 53750 s_left bip01 l forearm -9.30945 -2.4834 41.7978
+PROBE bone 53750 s_left bip01 r forearm 9.68567 13.7087 48.7376
+PROBE bone 53750 s_left bip01 l hand -17.6122 4.69763 45.4569
+PROBE bone 53750 s_left bip01 r hand -0.849609 9.42273 46.6095
+PROBE bone 53750 s_left tag_weapon_right -5.91235 7.32715 48.3352
+PROBE body 53800 s_left 0 0 0.00959778
+PROBE bone 53800 s_left bip01 pelvis 5.97241 -1.93872 35.0512
+PROBE bone 53800 s_left bip01 spine2 5.87012 -2.25281 45.2457
+PROBE bone 53800 s_left bip01 neck 1.82031 -1.97144 56.9519
+PROBE bone 53800 s_left bip01 head 0.27002 -1.41614 59.4676
+PROBE bone 53800 s_left bip01 l upperarm -3.86487 -6.98169 51.7739
+PROBE bone 53800 s_left bip01 r upperarm 8.24329 2.99048 54.1241
+PROBE bone 53800 s_left bip01 l forearm -9.28735 -2.80396 41.8037
+PROBE bone 53800 s_left bip01 r forearm 9.323 13.8802 48.9756
+PROBE bone 53800 s_left bip01 l hand -17.7173 4.21814 45.4801
+PROBE bone 53800 s_left bip01 r hand -1.05139 9.22571 46.8311
+PROBE bone 53800 s_left tag_weapon_right -6.08716 7.02454 48.5031
+PROBE body 53850 s_left 0 0 0.00959778
+PROBE bone 53850 s_left bip01 pelvis 5.89514 -1.93127 35.0512
+PROBE bone 53850 s_left bip01 spine2 5.80725 -2.255 45.246
+PROBE bone 53850 s_left bip01 neck 1.79065 -2.05261 56.9653
+PROBE bone 53850 s_left bip01 head 0.165771 -1.5614 59.447
+PROBE bone 53850 s_left bip01 l upperarm -3.80835 -7.17871 51.807
+PROBE bone 53850 s_left bip01 r upperarm 8.09583 3.04114 54.1529
+PROBE bone 53850 s_left bip01 l forearm -9.19128 -3.10242 41.7735
+PROBE bone 53850 s_left bip01 r forearm 9.01184 14.0425 49.214
+PROBE bone 53850 s_left bip01 l hand -17.7489 3.79114 45.3982
+PROBE bone 53850 s_left bip01 r hand -1.18726 9.05835 46.9716
+PROBE bone 53850 s_left tag_weapon_right -6.20752 6.77112 48.5733
+PROBE grid 54000 s_left f 4 - - - 78.0841 78.6102 81.4428 - 52.051 - - -
+PROBE grid 54000 s_left f 10 - - - - 75.75 78.4277 58.1634 58.4304 - - -
+PROBE grid 54000 s_left f 16 - - - - 70.3426 75.5401 57.4646 62.2152 - - -
+PROBE grid 54000 s_left f 22 - - - - 68.1319 73.2375 56.0175 - - - -
+PROBE grid 54000 s_left f 28 - - - - 68.5273 70.9349 58.6059 68.8504 - - -
+PROBE grid 54000 s_left f 34 - - - - 66.3996 62.8127 59.2259 69.1379 - - -
+PROBE grid 54000 s_left f 40 - - - - 67.0403 49.8906 54.7096 69.4253 - - -
+PROBE grid 54000 s_left f 46 - - - 62.6008 42.4598 46.6175 52.08 69.5607 - - -
+PROBE grid 54000 s_left f 52 - - 71.5263 67.4172 68.5005 61.3949 56.5779 63.9625 - - -
+PROBE grid 54000 s_left f 58 - - - - - 60.1669 59.8572 - - - -
+PROBE grid 54000 s_left f 64 - - - - - 56.5498 57.7016 - - - -
+PROBE grid 54000 s_left f 70 - - - - - 62.8158 - - - - -
+PROBE grid 54000 s_left f 76 - - - - - - - - - - -
+PROBE grid 54000 s_left s 4 - - - 38.9005 36.0639 36.1701 - - 47.1116 - - - - - -
+PROBE grid 54000 s_left s 10 - - - - 36.0351 35.5455 - 50.8025 47.528 - - - - - -
+PROBE grid 54000 s_left s 16 - - - - 36.6853 35.7077 54.3954 47.4691 50.9887 - - - - - -
+PROBE grid 54000 s_left s 22 - - - - 36.8475 36.3579 51.7374 46.5507 - - - - - - -
+PROBE grid 54000 s_left s 28 - - - - - 37.0081 36.2092 46.1993 - - - - - - -
+PROBE grid 54000 s_left s 34 - - - - - 37.6583 35.4872 45.1741 - - - - - - -
+PROBE grid 54000 s_left s 40 - - - 44.054 46.2407 39.2268 35.6582 43.6626 - - - - - - -
+PROBE grid 54000 s_left s 46 - - 48.4681 41.6819 37.1337 39.515 35.7223 - - - - - - - -
+PROBE grid 54000 s_left s 52 - - - - 36.9995 35.9757 43.5238 46.9975 - - - - - - -
+PROBE grid 54000 s_left s 58 - - - - 45.4457 43.2917 44.4009 - - - - - - - -
+PROBE grid 54000 s_left s 64 - - - - 41.4463 43.2765 - - - - - - - - -
+PROBE grid 54000 s_left s 70 - - - - - 44.8791 - - - - - - - - -
+PROBE grid 54000 s_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 54000 s_left axis dmg 107 loc torso_upper point (1252.19, 1212.09, 23.84)
+PROBE phase 55550 s_right
+PROBE body 56800 s_right 0 0 0.00959778
+PROBE bone 56800 s_right bip01 pelvis 5.2063 -2.10754 34.991
+PROBE bone 56800 s_right bip01 spine2 4.73328 -2.40247 45.1959
+PROBE bone 56800 s_right bip01 neck 1.00684 -1.23511 56.9547
+PROBE bone 56800 s_right bip01 head -0.0891113 0.281006 59.3084
+PROBE bone 56800 s_right bip01 l upperarm -5.90649 -4.29443 51.7507
+PROBE bone 56800 s_right bip01 r upperarm 8.54504 2.28259 53.7184
+PROBE bone 56800 s_right bip01 l forearm -7.62598 -3.56335 39.802
+PROBE bone 56800 s_right bip01 r forearm 11.1753 12.4047 47.6448
+PROBE bone 56800 s_right bip01 l hand -15.9137 3.09363 44.3727
+PROBE bone 56800 s_right bip01 r hand 0.934204 7.34521 45.7972
+PROBE bone 56800 s_right tag_weapon_right -4.15137 5.19604 47.384
+PROBE body 56850 s_right 0 0 0.00959778
+PROBE bone 56850 s_right bip01 pelvis 5.20959 -2.11316 34.9968
+PROBE bone 56850 s_right bip01 spine2 4.72827 -2.40027 45.2016
+PROBE bone 56850 s_right bip01 neck 1.01038 -1.24219 56.964
+PROBE bone 56850 s_right bip01 head -0.0843506 0.271973 59.3196
+PROBE bone 56850 s_right bip01 l upperarm -5.90564 -4.30127 51.7634
+PROBE bone 56850 s_right bip01 r upperarm 8.54407 2.28149 53.7286
+PROBE bone 56850 s_right bip01 l forearm -7.61597 -3.60071 39.8116
+PROBE bone 56850 s_right bip01 r forearm 11.1681 12.3948 47.6378
+PROBE bone 56850 s_right bip01 l hand -15.9122 3.04358 44.3854
+PROBE bone 56850 s_right bip01 r hand 0.931152 7.32251 45.8023
+PROBE bone 56850 s_right tag_weapon_right -4.14832 5.16052 47.3915
+PROBE body 56900 s_right 0 0 0.00959778
+PROBE bone 56900 s_right bip01 pelvis 5.21277 -2.11877 35.0025
+PROBE bone 56900 s_right bip01 spine2 4.72314 -2.39807 45.2073
+PROBE bone 56900 s_right bip01 neck 1.01392 -1.24915 56.9733
+PROBE bone 56900 s_right bip01 head -0.0797119 0.263062 59.3307
+PROBE bone 56900 s_right bip01 l upperarm -5.90466 -4.30811 51.7762
+PROBE bone 56900 s_right bip01 r upperarm 8.54321 2.28027 53.7387
+PROBE bone 56900 s_right bip01 l forearm -7.60583 -3.63794 39.8213
+PROBE bone 56900 s_right bip01 r forearm 11.175 12.3767 47.6233
+PROBE bone 56900 s_right bip01 l hand -15.9105 2.99353 44.3981
+PROBE bone 56900 s_right bip01 r hand 0.927368 7.31519 45.8182
+PROBE bone 56900 s_right tag_weapon_right -4.14807 5.15088 47.417
+PROBE grid 57050 s_right f 4 - - - 78.2033 78.6857 81.5481 - - - - -
+PROBE grid 57050 s_right f 10 - - - - 75.1617 78.1378 58.0119 61.271 - - -
+PROBE grid 57050 s_right f 16 - - - - 71.9849 75.3554 56.7279 62.448 - - -
+PROBE grid 57050 s_right f 22 - - - - 69.7153 73.0858 54.9277 - - - -
+PROBE grid 57050 s_right f 28 - - - - 68.9551 70.8162 57.3134 66.6149 - - -
+PROBE grid 57050 s_right f 34 - - - - 67.7866 61.7477 59.6991 66.5076 - - -
+PROBE grid 57050 s_right f 40 - - - - 68.1991 49.2019 55.754 66.4003 - - -
+PROBE grid 57050 s_right f 46 - - - 65.0712 44.6387 48.336 53.2592 - - - -
+PROBE grid 57050 s_right f 52 - - - 76.5533 69.3654 58.0085 53.7077 - - - -
+PROBE grid 57050 s_right f 58 - - - - - 58.3105 - - - - -
+PROBE grid 57050 s_right f 64 - - - - 56.3867 55.5876 - - - - -
+PROBE grid 57050 s_right f 70 - - - - - 60.9808 - - - - -
+PROBE grid 57050 s_right f 76 - - - - - - - - - - -
+PROBE grid 57050 s_right s 4 - - - 36.8442 36.1749 36.277 - - 47.0526 - - - - - -
+PROBE grid 57050 s_right s 10 - - - - 36.9803 35.1821 - 51.8057 47.6019 - - - - - -
+PROBE grid 57050 s_right s 16 - - - - 37.8427 37.8117 - 47.3566 50.0719 - - - - - -
+PROBE grid 57050 s_right s 22 - - - - 38.1954 36.3972 53.4932 46.4659 50.1733 - - - - - -
+PROBE grid 57050 s_right s 28 - - - - 39.0578 37.2596 38.6632 44.6246 - - - - - - -
+PROBE grid 57050 s_right s 34 - - - - - 38.122 38.2533 44.2147 - - - - - - -
+PROBE grid 57050 s_right s 40 - - - 44.8633 40.6165 38.4188 37.8433 43.8048 - - - - - - -
+PROBE grid 57050 s_right s 46 - - 49.7279 42.9604 39.1812 38.0357 39.137 48.9669 - - - - - - -
+PROBE grid 57050 s_right s 52 - - - - 38.7261 40.6022 43.6654 45.0177 - - - - - - -
+PROBE grid 57050 s_right s 58 - - - - - 44.5316 44.5322 - - - - - - - -
+PROBE grid 57050 s_right s 64 - - - - 47.1416 45.6875 - - - - - - - - -
+PROBE grid 57050 s_right s 70 - - - - - 47.7017 - - - - - - - - -
+PROBE grid 57050 s_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 57050 s_right axis dmg 96 loc torso_lower point (1262.05, 1222.68, 21.33)
+PROBE phase 58600 s_left_t_right
+PROBE body 59850 s_left_t_right 0 0 0.00959778
+PROBE bone 59850 s_left_t_right bip01 pelvis 6.25781 1.62061 35.106
+PROBE bone 59850 s_left_t_right bip01 spine2 6.11438 5.13123 44.5449
+PROBE bone 59850 s_left_t_right bip01 neck 2.06946 8.60803 55.7283
+PROBE bone 59850 s_left_t_right bip01 head 0.813721 9.9906 58.0844
+PROBE bone 59850 s_left_t_right bip01 l upperarm -4.14294 3.20398 51.6738
+PROBE bone 59850 s_left_t_right bip01 r upperarm 9.09705 11.8788 51.6906
+PROBE bone 59850 s_left_t_right bip01 l forearm -8.98779 4.62292 40.684
+PROBE bone 59850 s_left_t_right bip01 r forearm 10.7974 20.5643 43.4485
+PROBE bone 59850 s_left_t_right bip01 l hand -17.0305 12.764 42.3955
+PROBE bone 59850 s_left_t_right bip01 r hand -0.0664062 16.8484 42.0126
+PROBE bone 59850 s_left_t_right tag_weapon_right -5.16296 15.5183 44.3051
+PROBE body 59900 s_left_t_right 0 0 0.00959778
+PROBE bone 59900 s_left_t_right bip01 pelvis 6.2052 1.63074 35.1055
+PROBE bone 59900 s_left_t_right bip01 spine2 6.06836 5.13232 44.5505
+PROBE bone 59900 s_left_t_right bip01 neck 2.00781 8.52209 55.7549
+PROBE bone 59900 s_left_t_right bip01 head 0.72229 9.87256 58.1136
+PROBE bone 59900 s_left_t_right bip01 l upperarm -4.08167 2.9397 51.756
+PROBE bone 59900 s_left_t_right bip01 r upperarm 8.9032 12.0077 51.746
+PROBE bone 59900 s_left_t_right bip01 l forearm -9.11877 4.51172 40.874
+PROBE bone 59900 s_left_t_right bip01 r forearm 10.4999 20.8344 43.634
+PROBE bone 59900 s_left_t_right bip01 l hand -17.2181 12.5891 42.6204
+PROBE bone 59900 s_left_t_right bip01 r hand -0.293457 16.8733 42.3272
+PROBE bone 59900 s_left_t_right tag_weapon_right -5.38342 15.4695 44.5904
+PROBE body 59950 s_left_t_right 0 0 0.00959778
+PROBE bone 59950 s_left_t_right bip01 pelvis 6.15271 1.64087 35.105
+PROBE bone 59950 s_left_t_right bip01 spine2 6.02246 5.13342 44.5561
+PROBE bone 59950 s_left_t_right bip01 neck 1.94812 8.43579 55.7816
+PROBE bone 59950 s_left_t_right bip01 head 0.587158 9.73499 58.1267
+PROBE bone 59950 s_left_t_right bip01 l upperarm -4.01282 2.67859 51.8374
+PROBE bone 59950 s_left_t_right bip01 r upperarm 8.70447 12.1323 51.8023
+PROBE bone 59950 s_left_t_right bip01 l forearm -9.22522 4.39136 41.0596
+PROBE bone 59950 s_left_t_right bip01 r forearm 10.191 21.0989 43.8241
+PROBE bone 59950 s_left_t_right bip01 l hand -17.3866 12.4022 42.8228
+PROBE bone 59950 s_left_t_right bip01 r hand -0.52002 16.8794 42.6574
+PROBE bone 59950 s_left_t_right tag_weapon_right -5.60266 15.4083 44.8941
+PROBE grid 60100 s_left_t_right f 4 - - - 76.7632 77.6311 - 51.9493 - - - -
+PROBE grid 60100 s_left_t_right f 10 - - - - 75.663 - 57.9601 - - - -
+PROBE grid 60100 s_left_t_right f 16 - - - 71.8018 73.146 - 57.1315 - - - -
+PROBE grid 60100 s_left_t_right f 22 - - - 72.201 71.178 56.5531 55.1279 - - - -
+PROBE grid 60100 s_left_t_right f 28 - - - 72.6002 65.5379 59.0371 57.612 - - - -
+PROBE grid 60100 s_left_t_right f 34 - - - 69.1997 64.9398 60.6799 60.9091 - - - -
+PROBE grid 60100 s_left_t_right f 40 - - 63.7709 46.1603 47.7597 60.0817 66.7578 - - - -
+PROBE grid 60100 s_left_t_right f 46 - 71.4161 61.9117 42.8326 54.7254 54.0866 - - - - -
+PROBE grid 60100 s_left_t_right f 52 - - 74.239 62.8763 58.4363 56.0533 - - - - -
+PROBE grid 60100 s_left_t_right f 58 - - - 61.3057 59.4127 62.7526 - - - - -
+PROBE grid 60100 s_left_t_right f 64 - - - 56.6301 57.5679 - - - - - -
+PROBE grid 60100 s_left_t_right f 70 - - - - - - - - - - -
+PROBE grid 60100 s_left_t_right f 76 - - - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 4 - - - 38.9385 38.1464 38.251 - - 49.0778 - - - - - -
+PROBE grid 60100 s_left_t_right s 10 - - - - 38.7055 37.7222 - 53.551 49.8835 - - - - - -
+PROBE grid 60100 s_left_t_right s 16 - - - - 39.7727 38.7894 58.1913 50.1977 53.2835 - - - - - -
+PROBE grid 60100 s_left_t_right s 22 - - - - 40.3423 39.359 55.5694 49.3103 53.9143 - - - - - -
+PROBE grid 60100 s_left_t_right s 28 - - - - 41.4095 40.4262 43.8426 47.0908 - - - - - - -
+PROBE grid 60100 s_left_t_right s 34 - - - - - 41.4934 39.0901 47.541 - - - - - - -
+PROBE grid 60100 s_left_t_right s 40 - - 60.8262 50.4703 50.2002 44.0502 39.9326 48.3835 - - - - - - -
+PROBE grid 60100 s_left_t_right s 46 - - 57.102 49.7369 46.3187 47.4633 43.6039 51.5647 - - - - - - -
+PROBE grid 60100 s_left_t_right s 52 - - - - 46.3795 45.1776 52.7175 58.9447 - - - - - - -
+PROBE grid 60100 s_left_t_right s 58 - - - - 56.5539 49.0666 - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 64 - - - - 53.2189 55.1003 - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 60100 s_left_t_right axis dmg 96 loc torso_lower point (1252.04, 1219.46, 20.79)
+PROBE done 61650

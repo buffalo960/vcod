@@ -2361,43 +2361,84 @@ What the run showed, VERIFIED against ours by `crates/server/tests/leanhit_ab.rs
   given him a different spawn point. The probe lays him prone and stands
   him up first.
 
-Left open: 52 of about 1000 cells, all on standing or crouched bodies,
-sit 0.5 to 3 units off (one 8.6) or hit where the other misses, at the
-edges of arm, hand and head boxes (`leanhit_ab::CELL_GAPS`).
+The 52 cells once left open (`leanhit_ab::CELL_GAPS`, removed
+2026-10-17) were two things, neither the boxes nor the lean:
 
-What the 52 are, measured 2026-10-17 (vcod measurement, `leanhit_ab` with
-every cell counted, not only those past 0.5):
+- The clock the grid poses at. VERIFIED, `game.mp.i386.so`: `G_RunFrame`'s
+  first `Scr_RunCurrentThreads` (0x50653) runs before
+  `trap_DObjInitServerTime` and `G_DObjUpdateServerTime` (0x5069f,
+  0x506ed; cod11-movers.md 15, "A bone asked for before anim update").
+  VERIFIED, `cod_lnxded`: the time step 0x080bbab0 adds `dtime * rate *
+  frequency` to a node's old time (`+0x2c`, copied from the time by the
+  weight step 0x080bb130 first) for every node whose weight is not 0,
+  and the goal weight setter 0x080bd674 raises a zero weight to `0.001 *
+  goal`, so a clip set at an end frame advances from the next frame's
+  update on; no clip starts a frame late. INFERRED, off those: the
+  probe's grid thread, due on the last frame's clock (its `wait` lands on
+  a frame time), traces bodies posed at the last frame's level time.
+  vcod's `bulletTrace`, and the script `radiusDamage` walk, posed them at
+  this frame's; they now pose at `GameHost::dobj_time_ms`. VERIFIED, 1.5b and UO:
+  the frame's one thread pass runs before the update as well, and a UO
+  spawn's DObj runs a frame ahead (`cod11-turrets.md` 13.7). VERIFIED, vcod
+  measurement: the standing cells' median drops from 0.13 to 0.02, the
+  cells past 0.5 from 52 to 32.
+- The cmd times. The gate sent even 16 ms cmds; the net probe in its
+  `direct` mode sends 16, 16 and 18 ms ones, the last on the frame's time
+  (`ProbeHold::framed`). VERIFIED, vcod measurement: with those every cell
+  of the first capture matches, and every cell, bone and round of a
+  second 1.1d capture (below) does to 0.0007.
 
-- They are the pose's clock. The prone phases match to 0.0002 (median
-  cell) and the standing ones read 0.13 off, every cell, not only the
-  edges; the 52 are the edge cells that magnify it. With ours' target
-  pose a frame earlier (its clips' clock 50 ms back) the standing medians
-  drop to 0.02 and the cells past 0.5 from 52 to 32. Neither the boxes,
-  the controllers (all 0 on a standing body), the head draw (an `a` head
-  in place of ours' `b` one makes it worse, 55) nor slerp against
-  retail's lerp of the keys (0.01 in total) is it.
-- A second 1.1d run of the probe (ports 32751) kept both clients' stdout:
-  the shooter's `VEH rider` lines carry the target's `legsAnim` on every
-  snapshot. Its stance changes land on the same frames on ours, our join
-  set to match (crouch 15200, stand 15600, crouch 29200, prone 38350,
-  crouch 48500, stand 48900), and still the standing cells read 0.13 to
-  0.26 off. With every legs clip ours sets at an end frame starting its
-  clock a frame later, 0.01 to 0.04, and the cells past 0.5 drop from 57
-  to 27; the same shift on UO's run of the probe (ports 32753) helps its
-  standing phases alike.
-- VERIFIED, UO's legs setter (`game.mp.uo.i386.so` 0x2ce5f): a still clip
-  gets no `XAnimSetTime`, only a movement clip whose weight reads 0 does;
-  the old clip's `XAnimClearGoalWeight` and the new one's
-  `XAnimSetCompleteGoalWeight` set weights only. INFERRED: a clip that
-  blends in from no weight starts its clock a frame after the end frame
-  that set it, when its node first has weight; one set at full weight does
-  not (a spawn's idle, `cod11-turrets.md` 13.6, matches to 0.001 with no
-  shift on 1.1d; UO's runs a frame ahead for another reason, 13.7). Not ported: it moves every blended clip on every patch,
-  and the 0.01 to 0.04 still left on standing cells, where prone reads
-  0.0002, says the rule is not whole yet.
-- UO's run of the probe also reads its leaning phases 0.4 to 12 units off
-  (prone leaning worst) where 1.1d's match: the `Split::Later` lean terms
-  (16.4), unmeasured until now. Not gated.
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-17,
+`probe_leanhit` with `probe_bones 1`, fixtures `mp_carentan-leanhit-bones.txt`,
+`-1.5.txt` and `-uo.txt`): before each grid the probe links a
+script_origin to eleven of the target's bones (pelvis, spine2, neck,
+head, both upper arms, forearms and hands, `tag_weapon_right`) and logs
+them and his origin, each as an offset from his spot, on three frames.
+Against ours (`leanhit_ab`, cmds as above, each capture's join times):
+
+- 1.1d: every bone and the origin within 0.0007 units, every cell and
+  round as retail's.
+- UO: every bone, the origin and every cell likewise, the standing,
+  crouched and prone leans included, so the `Split::Later` lean terms of
+  16.4 hold as ported. One round differs: the crouched target leaning
+  left takes it in `torso_lower` 0.06 higher where ours takes
+  `torso_upper` a unit nearer, the ray along the seam of the two boxes;
+  1.5b's capture reads the same (`leanhit_ab::ROUND_GAPS_15_UO`). Open:
+  it is the shooter's ray, since the target's bones and the phase's cells
+  match.
+- 1.5b: the target's origin stands 0.0402 under ours (offset -0.0306
+  against ours' 0.0096) in both 1.5b runs; every bone of a standing or
+  crouched body carries the same offset and none else (to 0.0006), and a
+  prone body's bones match without it. The hold's `setOrigin` raises him
+  a unit and he drops to the ground over the next cmds. VERIFIED, vcod
+  measurement: ours' landing rides the cmd split, from 0.013 over the
+  spot to 0.125 under it as one cmd moves a millisecond, and the 16, 16,
+  18 split lands the 1.1d and UO targets on retail's height to the bit.
+  The net probe logs no cmd times, so whether 1.5b's split differs or
+  its fall does is open (`leanhit_ab::STAND_DZ_15`, five grazing cells in
+  `CELL_GAPS_15`).
+- The head and the gear are random draws (`PROBE models`): the 1.1d and
+  UO captures' target wore `basehead_axis_a_01`, ours `b_08`, and the
+  cells match all the same. A `detachAll` and re-`attach` of the same
+  list on ours moved 150 cells on UO, so the gate leaves ours' draw.
+  Open: what ours' re-attach changes in the hit rig.
+
+**The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
+2026-10-17, `client-probes/probe_leanpvs`, fixture
+`crates/server/tests/fixtures/leanpvs/mp_carentan-leanpvs.txt`): an allies
+watcher held at (1368, 2608, -23.875) facing 90 and an axis target at
+(1080, 3488, -23.875), the watcher's lean driven in two-second phases
+(level, right, level, left, right, level from level time 15000). Retail's
+snapshots to the watcher carry the target throughout except from 21050,
+a frame into the left lean, to 23350, 350 ms into the right lean that
+follows. VERIFIED, vcod measurement, `leanpvs_ab` (same recipe, the net
+probe's cmds): ours drops and restores the target on the same two
+snapshots. Ours' snapshot eye there reads x 1362.74 leaned left, in
+cluster 284, which does not see the target, and x 1368.03 level and
+leaned right, in cluster 280, which does: a wall at +x stops the right
+lean, the left one stops at 5.3 units, and the cluster boundary runs
+between. So `SV_BuildClientSnapshot`'s eye takes the lean as clipped by
+pmove (`ClientSim::eye_origin`, `spectate.rs`), on retail as on ours.
 
 ---
 
