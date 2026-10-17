@@ -872,17 +872,26 @@ the first (coduo-diff.md 22).
 As implemented: `Server::with_seed`, which the binary calls with the wall
 clock, keeps a level seed that seeds `GameHost::rng` at each load through
 `Carry::seed` and steps after it, so every level, restarts included, draws
-anew. `Server::new` hands no seed and every level draws from `RNG_SEED`,
-so a test's spawn picks hold on every level. `gametypes_ab` does not
-lean on that: it runs `Server::with_seed` and replays each probe's retail
-spawn picks (`Server::pin_spawns`, read off the captures' first playing
-snapshot of each life), since no seed reproduces a wall-clock draw. Before
-that, the UO probes that restart (`tdmend`, `ctftime`, `bas`, `bastime`,
-`basend`) matched retail's second level only because ours repeated the
-first level's draws, and all five failed under a stepped seed. vcod keeps its xorshift generator, not `irand`'s LCG;
-the missiles' tumble keeps its own state, reset at every load
-(`Missiles::rng`). `server.rs`'s `a_restart_reseeds_the_script_draws`
-fails without the seed.
+anew. `Server::new` is `with_seed` from the constant `RNG_SEED`: a test's
+first level draws the same every run and every later level draws anew, as
+on retail. Until 2026-10-18 `new` handed no seed and every level repeated
+`RNG_SEED`'s draws; the UO `gametypes_ab` probes that restart (`tdmend`,
+`ctftime`, `bas`, `bastime`, `basend`) matched retail's second level only
+because of that, so that gate runs `with_seed` and replays each probe's
+retail spawn picks (`Server::pin_spawns`, read off the captures' first
+playing snapshot of each life), since no seed reproduces a wall-clock
+draw. With `new` stepping, every test binary of `vcod-server` that
+restarts or changes map (killcam, killcam_ab, mapchange_ab,
+restart_first_snapshot, roundrestart_ab, votes_ab, demos, gametypes_ab,
+configstrings_ab, configstrings_uo_ab, movers_ab, playsound_broadcast,
+push_ab, ride_ab, semantics_ents, turret_ab, two_clients, bots) passes at
+the 1.1 and UO installs, and again under a second seed stream (each step
+xored with a constant), and the 1.5 restart gates at a 1.5 install: none
+rides a repeated draw on a later level, so none needs pins (INFERRED, off
+those runs). vcod keeps its xorshift generator, not `irand`'s LCG; the
+missiles' tumble keeps its own state, reset at every load
+(`Missiles::rng`). `server.rs`'s `a_restart_reseeds_the_script_draws`, on
+`Server::new`, fails without the step.
 
 ## 5. `SV_MapRotate_f` and the rotation grammar
 
