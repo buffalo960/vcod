@@ -1625,6 +1625,14 @@ fn start_loading(
     if let Some(window) = window {
         window.set_title(title);
     }
+    // A demo sets no pak list (`CL_SystemInfoChanged` returns first while
+    // one plays, CoDMP.exe 0x415eb0), so nothing is fetched, and a map
+    // missing here fails as `CM_LoadMap` does (0x419c90).
+    if net.is_demo() {
+        return Ok(Phase::Loading {
+            loader: loading::MapLoader::without_downloads(map.clone(), couldnt_load(&map)),
+        });
+    }
     // Same candidate order as the old blocking downloader; `MapLoader` caps it.
     let systeminfo = net.configstring(1).to_string();
     let exists = |rel: &std::path::Path| game_dir.join(rel).exists();
@@ -1699,6 +1707,12 @@ fn start_loading(
     Ok(Phase::Loading {
         loader: loading::MapLoader::new(map, candidates),
     })
+}
+
+/// `CM_LoadMap`'s drop for a map no pak holds (CoDMP.exe 0x419c90): the
+/// localized `Couldn't load maps/mp/<map>.bsp`.
+fn couldnt_load(map: &str) -> String {
+    format!("EXE_ERR_COULDNT_LOAD\u{15}maps/mp/{map}.bsp")
 }
 
 /// The front end off `fs`, with the favourites file and the Mods menu's
@@ -3993,9 +4007,17 @@ impl ApplicationHandler for App {
                             // (docs/research/cod11-front-end.md, section 16).
                             // A server with no `fs_game` sends no key, which
                             // leaves the player's own mod in place.
-                            let game = net::download::fs_game(net.configstring(1), &self.mod_dir)
-                                .or_else(|| self.user_fs_game.clone());
-                            let pure = net::download::pure_paks(net.configstring(1));
+                            // A demo's systeminfo sets neither
+                            // (CoDMP.exe 0x415eb0).
+                            let (game, pure) = if net.is_demo() {
+                                (self.fs_game.clone(), self.fs_pure.clone())
+                            } else {
+                                (
+                                    net::download::fs_game(net.configstring(1), &self.mod_dir)
+                                        .or_else(|| self.user_fs_game.clone()),
+                                    net::download::pure_paks(net.configstring(1)),
+                                )
+                            };
                             if game != self.fs_game || pure != self.fs_pure {
                                 log::info!(
                                     "fs_game {}{}: restarting the search path",
@@ -6259,6 +6281,26 @@ fn parse_probe_say(s: &str) -> Result<(f32, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A demo whose map no pak holds drops with retail's text, not a wait
+    /// on a download.
+    #[test]
+    fn a_demo_without_its_map_says_couldnt_load() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let l = vcod_common::localize::Localized::load(&fs);
+        assert_eq!(
+            l.message(&couldnt_load("mp_nowhere")),
+            "Couldn't load maps/mp/mp_nowhere.bsp"
+        );
+        let mut loader =
+            loading::MapLoader::without_downloads("mp_nowhere".into(), couldnt_load("mp_nowhere"));
+        assert_eq!(
+            loader.step(&[], None, false, Instant::now()),
+            loading::Action::Failed(couldnt_load("mp_nowhere"))
+        );
+    }
 
     fn make_pk3(dir: &std::path::Path, file: &str, entries: &[(&str, &[u8])]) {
         use std::io::Write;
