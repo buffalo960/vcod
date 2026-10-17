@@ -987,29 +987,55 @@ spawned there leaves by and never needs again.
     both changes switched off; its floor of 154 was stale).
   `bots.rs`'s `uo_bots_leave_their_walled_in_spawns` places a bot in the
   cassino floor and the streets rooms; each leaves within 30 s.
-- Still walled in: spawns whose only way out needs a crouch. VERIFIED
-  (measured, player hull sweeps, standing 70 and crouched 50):
+- Crouched jumps (2026-10-17). Three rooms still held 22 spawns after
+  the two fixes above, each walled in by a window whose sill is a jump
+  up and whose lintel stops a standing body's rise. VERIFIED (measured,
+  player hull sweeps, standing 70 and crouched 50):
   - mp_cassino's axis room (5256..5576, -1708..-1272, 128), 6 spawns
     (`mp_uo_spawn_axis`, sd and re): two windows in its south-west
-    wall, sills at 160 and tops about 231, where no standing body fits
-    at any height and a crouched one with its feet between 163 and 180
-    and 8 units across. With crouch held from the jump on, a scratch
-    walk from (5340, -1510) jumps onto the sill, goes through crouched
-    and lands outside at 24.
-  - mp_streets' axis room (290..570, -6900..-6570, 101), 11 spawns: no
-    standing body leaves it from any spot or height a jump reaches; the
-    crouched one does over the west sills at 125. One window there,
-    (292, -6660), is closed by patch 391 against a body inside, which a
-    sweep from outside passes through.
+    wall, sills at 160.
+  - mp_streets' axis room (290..570, -6900..-6570, 101), 11 spawns:
+    the west sills at 127. One window there, (292, -6660), is closed
+    by patch 391 against a body inside, which a sweep from outside
+    passes through (not looked into).
   - mp_streets' room at (450..710, -3420..-3078, -24), 5 spawns: its
-    south window at (536, -3424), sill 0, takes a standing body only
-    with its feet within 4 units of 0 and 16 across. One of
-    `link_pockets`' runs found a way through from (615, -3393), but no
-    run aimed at the rest arrives, and a bot placed in the room never
-    left it, so the pass keeps it out.
-  Following those needs a crouched jump edge in the graph and a bot
-  that holds crouch on it (INFERRED: CoD's `PM_CheckDuck` takes the
-  crouch in the air; not measured on retail).
+    south window at (536, -3424), sill 0.
+  What retail does at the wall under each window. VERIFIED (retail UO
+  1.51b, `client-probes/probe_crouchjump` and `--probe-crouchjump`,
+  twelve captures in `crates/server/tests/fixtures/playerstate/
+  *-crouchjump-*.txt`): run at the wall, jump, and hold crouch from
+  the cmd after the jump's for a second, or don't (`-stand`). At 8 ms
+  cmds all six runs get onto the sill and out: the standing body's rise
+  stops under the lintel (mp_cassino: z 143.8 at ct 21991, `velocity[2]`
+  -13), and the step up has it on the sill at 160.125 by the next snapshot.
+  At 50 ms cmds, a bot's frame, the three standing runs fall back to
+  the floor (mp_cassino: peak 167.1, back at 128.125) and the three
+  crouched ones get out. `moves_ab.rs`'s
+  `the_predictor_replays_uo_jumps_through_low_windows` replays all
+  twelve under UO's rules with no field off.
+  - `Gait::CrouchJump`: the forward walk with its jump's room read at
+    the crouched height (`jump_clear`), and crouch, with `upmove` -127
+    as a retail client sends it, held from the cmd after the jump's
+    (`PM_CheckJump` refuses a crouched body) until the body is on the
+    ground again. `NavGraph::link_pockets` tries it on every run of a
+    cut-off node that arrives no other way, and on the node-to-node
+    walk again; an edge it proves goes in `NavGraph::crouch_jumps`
+    (and `jumps`). A crouched rest where a standing body does not fit
+    is no node (`stands`): every walk on from a node starts standing.
+    The rest on each of these sills holds a standing body.
+  - A bot on a crouched jump edge (`BotView::crouch_jump`,
+    `Follower::crouch_jumping`) jumps on the jump edges' cue and holds
+    crouch the same way; `Follower::edge_holds` walks it again in the
+    same gait.
+  - Gains (release `nav_build` `UO=1 GAMETYPE=tdm`, reach it): mp_cassino
+    174 to 180 (4 crouched jump edges), mp_streets 210 to 226 (53). No
+    other UO map and no 1.1 map moves. `bots.rs`'s
+    `uo_bots_leave_their_walled_in_spawns` places a bot in each of the
+    three rooms; each leaves within 30 s, and none does with the crouch
+    taken off the bot.
+  - The captures also showed the client's predictor dropping a `pm_time`
+    that 1.5's penalty left running without its flag
+    (`cod15-movement.md` 2).
 
 The sprint. A UO bot holds `+sprint` (`buttons` 0x8) while following its
 path on the ground with no enemy in sight, keys straight ahead, and

@@ -836,11 +836,13 @@ fn uo_bots_fight_and_sprint_in_tdm() {
 /// United Offensive's walled-in spawns: mp_cassino's allied upper floor at
 /// (180, 1150, 208), whose way down is a window sill 240 over the street,
 /// and mp_streets' allied rooms at (-260, -6900, 8), left by a window
-/// whose sill a standing body fits on only off every lattice line. A bot
-/// placed in each leaves within 30 s of game time (bot-navigation.md, "Other rules"). Needs `COD_DIR` at a
-/// UO install.
+/// whose sill a standing body fits on only off every lattice line, and
+/// the three rooms left only by a crouched jump through a window
+/// (mp_cassino's axis room, mp_streets' at z 101 and -24). A bot placed in
+/// each leaves within 30 s of game time (bot-navigation.md, "Other
+/// rules"). Needs `COD_DIR` at a UO install.
 #[test]
-#[ignore = "builds mp_cassino's and mp_streets' UO graphs and runs a bot in each, ~8 s in release; run with --ignored"]
+#[ignore = "builds mp_cassino's and mp_streets' UO graphs and runs a bot in five rooms, ~6 s in release; run with --ignored"]
 fn uo_bots_leave_their_walled_in_spawns() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         return;
@@ -848,7 +850,7 @@ fn uo_bots_leave_their_walled_in_spawns() {
     let fs = Rc::new(fs);
     // A map, a spot, and the box the bot has to leave.
     type Case = (&'static str, [f32; 3], [f32; 3], [f32; 3]);
-    let cases: [Case; 2] = [
+    let cases: [Case; 5] = [
         (
             "mp_cassino",
             [180.0, 1150.0, 224.0],
@@ -860,6 +862,26 @@ fn uo_bots_leave_their_walled_in_spawns() {
             [-230.0, -6860.0, 24.0],
             [-370.0, -7080.0, 0.0],
             [-155.0, -6780.0, 100.0],
+        ),
+        // The rooms left only by a crouched jump through a window: the
+        // bot is out once it is below the sill's floor.
+        (
+            "mp_cassino",
+            [5420.0, -1500.0, 144.0],
+            [5200.0, -1760.0, 100.0],
+            [5620.0, -1220.0, 300.0],
+        ),
+        (
+            "mp_streets",
+            [430.0, -6740.0, 117.0],
+            [240.0, -6950.0, 90.0],
+            [620.0, -6520.0, 300.0],
+        ),
+        (
+            "mp_streets",
+            [580.0, -3250.0, -8.0],
+            [440.0, -3415.0, -40.0],
+            [720.0, -3070.0, 60.0],
         ),
     ];
     for (map, spot, lo, hi) in cases {

@@ -227,6 +227,9 @@ pub struct BotView {
     pub leap: bool,
     /// On a jump edge, the body loses the ground next tick (`nav::lip_ahead`).
     pub lip: bool,
+    /// The jump edge is a crouched one (`nav::Follower::crouch_jumping`):
+    /// hold crouch from the cmd after the jump until the body lands.
+    pub crouch_jump: bool,
     /// [`Self::waypoint`] is a leap's foot: come to rest on it.
     pub stop: bool,
     /// [`Self::waypoint`] lies more than [`BACK_DOWN_HEIGHT`] down a drop
@@ -713,6 +716,8 @@ pub struct Bot {
     creep: crate::nav::Creep,
     /// The last cmd held the jump key; a second jump needs it released.
     jump_held: bool,
+    /// Jumped on a crouched jump edge and not yet landed: crouch is held.
+    crouch_air: bool,
     /// The waypoint the last cmd held a move key toward: a body not
     /// closing on its waypoint is pinned only against a key held at it.
     pressed: Option<[f32; 3]>,
@@ -982,6 +987,7 @@ impl Bot {
             menus: &WEAPON_MENUS,
             creep: crate::nav::Creep::default(),
             jump_held: false,
+            crouch_air: false,
             pressed: None,
             pinned_ticks: 0,
             pushed_off: None,
@@ -2103,6 +2109,15 @@ impl Bot {
         } else {
             self.pinned_ticks = 0;
         }
+        // A crouched jump edge: `PM_CheckJump` refuses a crouched body, so
+        // the crouch starts on the cmd after the jump's and is held, as a
+        // retail client holds it, until the body is on the ground again.
+        self.crouch_air &= !view.on_ground;
+        if self.crouch_air {
+            cmd.wbuttons |= msg::WBUTTON_CROUCH;
+            cmd.up = -127;
+        }
+        self.crouch_air |= view.crouch_jump && cmd.up > 0;
         // Off the rungs backwards onto a floor behind: jump facing out,
         // then brake facing the same way until the body lands, as
         // `nav::push_off` proved it.
@@ -3175,6 +3190,7 @@ mod tests {
             jump: false,
             leap: false,
             lip: false,
+            crouch_jump: false,
             stop: false,
             run_off: false,
             move_scale: 1.0,
@@ -3935,6 +3951,37 @@ mod tests {
         v.waypoint = Some([30.0, 0.0, 84.0]);
         let ups: Vec<i8> = (0..2).map(|_| bot.think(&v).up).collect();
         assert_eq!(ups, [0, 127]);
+    }
+
+    /// On a crouched jump edge the cmd after the jump holds crouch, with
+    /// `upmove` -127, through the air, and lets it go on the ground.
+    #[test]
+    fn a_bot_on_a_crouched_jump_edge_crouches_in_the_air() {
+        use vcod_common::net::msg::WBUTTON_CROUCH;
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.stop = true;
+        v.waypoint = Some([2.0, 0.0, 64.0]);
+        bot.think(&v);
+        v.stop = false;
+        v.jump = true;
+        v.crouch_jump = true;
+        v.waypoint = Some([30.0, 0.0, 84.0]);
+        bot.think(&v);
+        let jump = bot.think(&v);
+        assert_eq!((jump.up, jump.wbuttons & WBUTTON_CROUCH), (127, 0));
+        v.on_ground = false;
+        for _ in 0..3 {
+            let air = bot.think(&v);
+            assert_eq!(
+                (air.up, air.wbuttons & WBUTTON_CROUCH),
+                (-127, WBUTTON_CROUCH)
+            );
+        }
+        v.on_ground = true;
+        v.jump = false;
+        v.crouch_jump = false;
+        assert_eq!(bot.think(&v).wbuttons & WBUTTON_CROUCH, 0, "landed");
     }
 
     /// A jump edge whose top is more than a jump below, the body still

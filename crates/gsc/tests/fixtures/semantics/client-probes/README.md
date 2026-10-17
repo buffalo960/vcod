@@ -2082,3 +2082,24 @@ Two things its first runs taught: the target's torso yaw stays where his
 spawn point left it until something swings it (16.4), so the probe lays him
 prone and stands him up before the phases; and a stance change needs the
 ground behind him clear, so the site asks for 80 level units past his spot.
+
+## probe_crouchjump
+
+United Offensive's spawn rooms whose only way out is a window too low for a
+standing body (`docs/research/bot-navigation.md`, "Walled-in spawns"). Under
+`probe_teleport 1` it puts every playing client facing the window:
+`probe_spot cassino` (mp_cassino's axis room), `streets` (mp_streets' axis
+room at z 101) or `low` (mp_streets' room at z -24). The client runs
+`--save-slope --probe-crouchjump <yaw>`: a run at the wall, a jump, and
+crouch held in the air for a second; `--probe-crouchjump-stand` is the same
+without the crouch.
+
+```
+COD_VERSION=uo PORT=<p> COD_DIR=<uo install> SECS=45 tools/run_probe.sh client-probes/probe_crouchjump mp_cassino +set probe_teleport 1 +set probe_spot cassino
+# second shell, about 12 s later (yaw -128 cassino, 180 streets, -90 low):
+vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:<p> --save-slope --probe-crouchjump=-128 --probe-cmd-ms 50 --capture-tag crouchjump-cassino --probe-secs 28
+```
+
+The twelve fixtures (8 and 50 ms cmds, crouched and standing, three rooms)
+are `crates/server/tests/fixtures/playerstate/*-crouchjump-*.txt`, gated by
+`moves_ab.rs`'s `the_predictor_replays_uo_jumps_through_low_windows`.

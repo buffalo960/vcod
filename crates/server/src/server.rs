@@ -4447,6 +4447,7 @@ impl Server {
                             at.into(),
                             crate::bots::BACK_DOWN_HEIGHT,
                         );
+                    view.crouch_jump = view.jump && follower.crouch_jumping(&g);
                     view.lip = view.jump
                         && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
                             if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
@@ -5011,6 +5012,7 @@ impl Server {
             jump: false,
             leap: false,
             lip: false,
+            crouch_jump: false,
             stop: false,
             run_off: false,
             move_scale: def
