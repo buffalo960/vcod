@@ -468,7 +468,7 @@ fn report(rows: &[Row], spot: Vec3) {
 
 /// Loads the map the way the slope gate does, with `dm`'s gameobject rule.
 fn load() -> Option<(CollisionWorld, vcod_server::weapons::WeaponTable)> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs
         .resolve_map("mp_carentan")
         .expect("map in the mounted paks");

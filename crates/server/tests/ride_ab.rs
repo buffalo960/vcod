@@ -159,7 +159,7 @@ fn ours() -> Option<&'static Ours> {
 /// The probe on ours with one allied client standing still, run to its
 /// `PROBE done`.
 fn run_ours() -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
@@ -566,7 +566,7 @@ fn yaw_rows<'a>(lines: impl Iterator<Item = &'a str>) -> BTreeMap<String, Vec<St
 /// client.
 #[test]
 fn a_rotated_brush_model_keeps_retails_quantized_angles() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
@@ -662,7 +662,7 @@ impl Crush {
 /// `probe_crush` on ours, the client's cmds held back from every frame
 /// that ran without one on retail; the script log.
 fn run_crush(retail: &Crush) -> Option<Vec<String>> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
@@ -766,7 +766,7 @@ const ANGLESNAP: &str = "tests/fixtures/movers/mp_carentan-dm-anglesnap.txt";
 /// alone, no client.
 #[test]
 fn every_link_snaps_angles_like_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

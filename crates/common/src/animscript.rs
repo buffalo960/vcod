@@ -1134,7 +1134,7 @@ land
     /// (`pb_combatrun_forward_loop`). Needs the paks.
     #[test]
     fn the_real_script_picks_what_retail_played() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let anims = crate::animtree::PlayerAnims::load(&fs).unwrap();
@@ -1170,7 +1170,7 @@ land
     /// Needs the paks.
     #[test]
     fn the_event_blocks_pick_the_indices_the_combat_captures_read() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let anims = crate::animtree::PlayerAnims::load(&fs).unwrap();

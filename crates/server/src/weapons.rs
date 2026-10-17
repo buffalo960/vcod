@@ -262,7 +262,7 @@ mod tests {
     /// a retaken capture moves the expectation with it.
     #[test]
     fn the_first_index_handed_out_is_one() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let path = concat!(

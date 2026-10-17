@@ -287,7 +287,7 @@ fn a_player_entity_carries_the_fields_retail_sets() {
 /// about it. Walking matters: a standing player's velocity and trajectory
 /// fields are legitimately zero and would read as missing.
 fn a_moving_player() -> Option<Vec<EntityState>> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp_bytes = fs.read(&bsp_path).expect("read the bsp");
     let bsp = vcod_common::bsp::parse(&bsp_bytes).expect("parse the bsp");

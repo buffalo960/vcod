@@ -383,12 +383,9 @@ fn assert_each_shot_once(name: &str, t: &Tally, brought: &BTreeMap<i32, usize>, 
     );
 }
 
-/// A 1.1 install's paks: `main/` with no `uo/` beside it.
+/// A 1.1 install's paks, `None` at a 1.5 or UO one.
 fn v1_fs() -> Option<Pk3Fs> {
-    vcod_common::testing::uo_fs()
-        .is_none()
-        .then(vcod_common::testing::game_fs)
-        .flatten()
+    vcod_common::testing::game_fs_11()
 }
 
 /// United Offensive's mp44 held from the hip, held down the sight, then

@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn stock_list_matches_the_retail_spawn_line() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         // configstring 7 as retail sends it on mp_carentan dm
