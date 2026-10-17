@@ -63,9 +63,9 @@ impl GameHost {
             .layout()
             .match_timeout
             .unwrap_or(CS_TIMEOUT_MS);
-        self.configstrings[at] = ms.to_string();
+        self.configstrings.set(at, ms);
         if let Some(t) = text {
-            self.configstrings[at + 1] = t.to_string();
+            self.configstrings.set(at + 1, t);
         }
     }
 

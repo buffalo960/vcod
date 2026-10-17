@@ -142,6 +142,10 @@ pub enum LinkKind {
     ScriptBrush,
     /// Filed under its model's bounds once it has a model.
     ScriptModel,
+    /// A UO vehicle paired with a collmap: `SetBrushModel` sets `r.bmodel`,
+    /// so it links as a brush model (a cube once turned), with no clip of
+    /// its own here (coduo-vehicles.md 10.3).
+    Vehicle,
 }
 
 /// `hudelem_t`'s owner field (`+0x70`) for an element every client is drawn:

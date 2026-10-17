@@ -60,7 +60,7 @@ pub fn set_team_score(
         _ => return Err(ErrorKind::BadType("setTeamScore takes a number")),
     };
     host.team_scores[i] = n;
-    host.configstrings[cs] = n.to_string();
+    host.configstrings.set(cs, n.to_string());
     host.ranks_dirty = true;
     Ok(Value::Undefined)
 }
