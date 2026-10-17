@@ -402,7 +402,6 @@ console.
   Neither does retail's.
 - A mod's UI DLL is ignored; only its menu files count
   ([cod11-front-end.md](research/cod11-front-end.md) sections 16-17).
-  Switching mods in a game keeps the loaded map's geometry.
 
 **Server**
 
