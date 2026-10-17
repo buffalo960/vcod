@@ -290,7 +290,9 @@ something, the bullet links it.
   one wedged seven seconds destroys itself, a wreck's respawn included.
   A vehicle's death puts its riders out as retail's does: each takes the
   5-point probe hit through his damage callback, and one it leaves whole
-  looks for a dismount spot. A seated driver's and gunner's body meets a level ray where retail's
+  looks for a dismount spot; the others' corpses slide out of the hull.
+  A body inside a vehicle is pushed out of it before its move, as
+  retail's `ClientThink_real` does. A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes; a vehicle and its sound blends leave
@@ -436,9 +438,6 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- A UO rider killed with his vehicle, where he sat, stays on the hull;
-  retail's corpse slides off it
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 11.2).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.
