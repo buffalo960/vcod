@@ -836,11 +836,13 @@ fn uo_bots_fight_and_sprint_in_tdm() {
 /// United Offensive's walled-in spawns: mp_cassino's allied upper floor at
 /// (180, 1150, 208), whose way down is a window sill 240 over the street,
 /// and mp_streets' allied rooms at (-260, -6900, 8), left by a window
-/// whose sill a standing body fits on only off every lattice line. A bot
-/// placed in each leaves within 30 s of game time (bot-navigation.md, "Other rules"). Needs `COD_DIR` at a
-/// UO install.
+/// whose sill a standing body fits on only off every lattice line, and
+/// the three rooms left only by a crouched jump through a window
+/// (mp_cassino's axis room, mp_streets' at z 101 and -24). A bot placed in
+/// each leaves within 30 s of game time (bot-navigation.md, "Other
+/// rules"). Needs `COD_DIR` at a UO install.
 #[test]
-#[ignore = "builds mp_cassino's and mp_streets' UO graphs and runs a bot in each, ~8 s in release; run with --ignored"]
+#[ignore = "builds mp_cassino's and mp_streets' UO graphs and runs a bot in five rooms, ~6 s in release; run with --ignored"]
 fn uo_bots_leave_their_walled_in_spawns() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         return;

@@ -68,7 +68,7 @@ fn every_stock_maps_spawns_stay_in_one_component() {
 const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
     ("mp_arnhem", 265, 332, 332),
     ("mp_berlin", 202, 303, 303),
-    ("mp_cassino", 94, 174, 180),
+    ("mp_cassino", 94, 180, 180),
     ("mp_foy", 386, 391, 391),
     ("mp_italy", 371, 371, 371),
     ("mp_kharkov", 187, 402, 402),
@@ -78,7 +78,7 @@ const UO_FLOORS: [(&str, usize, usize, usize); 19] = [
     ("mp_sicily", 236, 241, 241),
     ("mp_uo_stanjel", 366, 380, 380),
     ("mp_peaks", 113, 128, 128),
-    ("mp_streets", 180, 210, 226),
+    ("mp_streets", 180, 226, 226),
     ("mp_uo_carentan", 285, 285, 285),
     ("mp_uo_dawnville", 195, 249, 249),
     ("mp_uo_depot", 275, 351, 351),
