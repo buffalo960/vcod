@@ -274,11 +274,12 @@ fn ours_pair_on(
     prone_yaw: Option<f32>,
 ) -> Vec<String> {
     let fs = vcod_common::testing::game_fs_11().expect("checked by the caller");
-    ours_pair_in(fs, map, part, throw, ms, prone_yaw)
+    ours_pair_in(fs, map, part, throw, ms, prone_yaw, None)
 }
 
 /// [`ours_pair_on`] on `fs`'s install, its server speaking the install's
-/// protocol.
+/// protocol. With `thrower_at` (where retail's spawn left him) the thrower
+/// spawns on the spawn point under it instead of the script's pick.
 fn ours_pair_in(
     fs: vcod_common::pk3::Pk3Fs,
     map: &str,
@@ -286,6 +287,7 @@ fn ours_pair_in(
     throw: bool,
     ms: i64,
     prone_yaw: Option<f32>,
+    thrower_at: Option<[f32; 3]>,
 ) -> Vec<String> {
     let prone = prone_yaw.is_some();
     let mut missiles = Vec::new();
@@ -298,7 +300,13 @@ fn ours_pair_in(
     sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_scriptmodel", SCRIPT);
     sv.set_cvar("probe_part", part);
-    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
+    if let Some(at) = thrower_at {
+        // The target joins first, slot 0; the thrower is slot 1.
+        let spot = placed_spawn_under(&world, common::spawn_points(&fs, map), at);
+        sv.pin_spawns(vec![Vec::new(), vec![Some(spot)]]);
+    }
+    sv.load_world(world);
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     common::run_alone(&mut sv, &mut now, TARGET_JOIN_MS);
     let (qa, qb) = (
@@ -311,8 +319,13 @@ fn ours_pair_in(
         Join::new("allies", "thompson_mp"),
         Join::new("axis", "kar98k_mp"),
     );
+    // 1.5's and UO's thrower sends the net probe's cmds, three a frame from
+    // each snapshot's time: how far he falls before the script's next
+    // `setOrigin` check decides whether it puts him back (cod11-combat.md
+    // 2.1, "The thrower's slide"). 1.1's captures log no thrower.
     let aim = || common::ProbeHold {
         aim: true,
+        framed: proto.version != PROTOCOL_V1.version,
         ..Default::default()
     };
     let (mut ha, mut hb) = (aim(), aim());
@@ -451,6 +464,36 @@ fn ours_pair_in(
     let mut out = sv.script_log().to_vec();
     out.extend(missiles);
     out
+}
+
+/// The spawn point under `at`, where a spawn's think left a body, as the
+/// gametype hands it to `spawn`: dropped onto the floor by
+/// `placeSpawnpoint`'s player box (its ceiling check, then the fall).
+fn placed_spawn_under(
+    world: &vcod_server::world::World,
+    points: Vec<([f32; 3], [f32; 3])>,
+    at: [f32; 3],
+) -> ([f32; 3], [f32; 3]) {
+    use glam::Vec3;
+    use vcod_server::game::trigger::{PLAYER_MAXS, PLAYER_MINS};
+    let (origin, angles) = points
+        .into_iter()
+        .filter(|(p, _)| {
+            (p[0] - at[0]).hypot(p[1] - at[1]) < 2.0 && (-2.0..128.0).contains(&(p[2] - at[2]))
+        })
+        .min_by(|a, b| a.0[2].total_cmp(&b.0[2]))
+        .expect("a spawn point under the body");
+    let (mins, maxs) = (Vec3::from(PLAYER_MINS), Vec3::from(PLAYER_MAXS));
+    let start = Vec3::from(origin);
+    let c = &world.collision;
+    let up = c.box_trace(start, start + Vec3::new(0.0, 0.0, 128.0), mins, maxs);
+    let down = c.box_trace(
+        up.endpos,
+        up.endpos - Vec3::new(0.0, 0.0, 262144.0),
+        mins,
+        maxs,
+    );
+    (down.endpos.into(), angles)
 }
 
 fn line_time(l: &str) -> i32 {
@@ -758,12 +801,10 @@ fn shooter_origins(lines: &[String]) -> Vec<[f32; 3]> {
 /// mp_carentan on 1.5b: each frag leaves from the thrower's unsnapped
 /// origin plus the eye's 60, untruncated, where 1.1d truncates the origin
 /// and the point (docs/research/cod11-combat.md 2.1, "1.5 and United
-/// Offensive"). Retail's and ours' throwers slide off the site by different
-/// amounts before the throw (0.14 and 0.25), so each side's start is
-/// checked against its own thrower, and ours' against retail's within the
-/// slide. Each frag
-/// rests with retail's ground (12.6). Runs only with `COD_DIR` at a 1.5
-/// install.
+/// Offensive"). The thrower spawns where retail's did, lands on its grade
+/// moving and slides off the site to retail's float (2.1, "The thrower's
+/// slide"), so both frags leave from retail's point. Each frag rests with
+/// retail's ground (12.6). Runs only with `COD_DIR` at a 1.5 install.
 #[test]
 fn a_frag_leaves_15s_untruncated_muzzle() {
     let Some(fs) = vcod_common::testing::game_fs() else {
@@ -778,18 +819,26 @@ fn a_frag_leaves_15s_untruncated_muzzle() {
     );
 }
 
-/// How far ours' frag may strike and rest off retail's on 1.5's prone
-/// back: the throws leave up to 0.25 apart (the throwers slide
-/// differently).
-const PRONE_15_NEAR: f32 = 0.3;
-/// [`PRONE_15_NEAR`] on UO, whose thrower stays on the site where ours
-/// slides 0.35 off it.
-const PRONE_UO_NEAR: f32 = 0.5;
+/// Where a thrower's spawn left him on retail, for the captures that log
+/// no `PROBE thrower` line, read off the throw captures' runs
+/// (cod11-combat.md 2.1, "The thrower's slide"): 1.5b's spawn at (976,
+/// -864) lands moving and slides him to (1368.03, 2608.14, -23.8748), as
+/// `-prone-rest-1.5.txt`'s `PROBE shooter` reads; a level spawn lands him
+/// still, and he settles at -23.852, as `-prone-1.5.txt`'s and
+/// `-prone-rest-uo.txt`'s frags (36.148 up) and shooter line read.
+const SLIDING_SPAWN_15: [f32; 3] = [976.016, -863.939, -5.89044];
+const LEVEL_SPAWN_15: [f32; 3] = [1080.0, 3488.0, -23.875];
+const LEVEL_SPAWN_UO: [f32; 3] = [1800.0, 2696.0, -23.875];
+
+/// How far ours' frag may strike and rest off retail's on a prone back,
+/// both throwers spawned alike: the strike's z lands a float step off
+/// retail's (-10.666934 against -10.666932).
+const BACK_NEAR: f32 = 0.0001;
 
 /// mp_carentan on 1.5b, the target lying still with the body his drop
 /// left (cod15-movement.md 4, "The airborne prone body"): the first frag
 /// strikes his back and comes to rest on it, his number its ground, each
-/// within [`PRONE_15_NEAR`] of retail's, not snapped 1.5 up onto his bones
+/// within [`BACK_NEAR`] of retail's, not snapped 1.5 up onto his bones
 /// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
 /// which drops it to the floor (12.6), where it bounces at 1.5's half of
 /// the reflection (12.4) and rests. Every snapshot of both frags carries
@@ -798,9 +847,15 @@ const PRONE_UO_NEAR: f32 = 0.5;
 /// install.
 #[test]
 fn a_frag_rests_on_a_prone_players_back_on_15() {
-    for fixture in [
-        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5.txt"),
-        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-1.5.txt"),
+    for (fixture, thrower_at) in [
+        (
+            include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5.txt"),
+            SLIDING_SPAWN_15,
+        ),
+        (
+            include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-1.5.txt"),
+            LEVEL_SPAWN_15,
+        ),
     ] {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
@@ -808,7 +863,7 @@ fn a_frag_rests_on_a_prone_players_back_on_15() {
         if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
             return;
         }
-        prone_back_gate(fs, fixture, true, PRONE_15_NEAR);
+        prone_back_gate(fs, fixture, thrower_at, true, BACK_NEAR);
     }
 }
 
@@ -825,8 +880,9 @@ fn a_frag_strikes_a_prone_players_back_on_uo() {
     prone_back_gate(
         fs,
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo.txt"),
+        LEVEL_SPAWN_UO,
         false,
-        PRONE_UO_NEAR,
+        BACK_NEAR,
     );
 }
 
@@ -834,8 +890,22 @@ fn a_frag_strikes_a_prone_players_back_on_uo() {
 /// first strike on the target (his number its ground), with `rests` its
 /// first rest on him, and its first four bases, each within `near` of
 /// retail's; both frags end on the floor.
-fn prone_back_gate(fs: vcod_common::pk3::Pk3Fs, fixture: &str, rests: bool, near: f32) {
-    let ours = ours_pair_in(fs, "mp_carentan", "prone", true, 12_000, Some(225.0));
+fn prone_back_gate(
+    fs: vcod_common::pk3::Pk3Fs,
+    fixture: &str,
+    thrower_at: [f32; 3],
+    rests: bool,
+    near: f32,
+) {
+    let ours = ours_pair_in(
+        fs,
+        "mp_carentan",
+        "prone",
+        true,
+        12_000,
+        Some(225.0),
+        Some(thrower_at),
+    );
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
     report(&retail, &ours);
     let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
@@ -906,9 +976,8 @@ fn prone_back_gate(fs: vcod_common::pk3::Pk3Fs, fixture: &str, rests: bool, near
     }
 }
 
-/// [`a_frag_leaves_15s_untruncated_muzzle`] on United Offensive 1.51b,
-/// whose thrower stays on the site where ours slides 0.35 off it. Runs
-/// only with `COD_DIR` at a UO install.
+/// [`a_frag_leaves_15s_untruncated_muzzle`] on United Offensive 1.51b.
+/// Runs only with `COD_DIR` at a UO install.
 #[test]
 fn a_frag_leaves_uos_untruncated_muzzle() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
@@ -920,16 +989,58 @@ fn a_frag_leaves_uos_untruncated_muzzle() {
     );
 }
 
-/// The prone part on `fs`'s install against `fixture`: both frags' first
-/// base, each side's against its own `PROBE shooter` origin plus 60 and
-/// ours' against retail's, and where each comes to rest on.
+/// Each `PROBE thrower` line's origin and its offset from the site in
+/// thousandths, in order.
+fn thrower_lines(lines: &[String]) -> Vec<([f32; 3], [f32; 3])> {
+    lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("PROBE thrower "))
+        .map(|l| {
+            let v: Vec<f32> = l.split(' ').skip(1).map(|x| x.parse().unwrap()).collect();
+            ([v[0], v[1], v[2]], [v[3], v[4], v[5]])
+        })
+        .collect()
+}
+
+/// The prone part on `fs`'s install against `fixture`, the thrower spawned
+/// on the spawn point under retail's first `PROBE thrower` line: every
+/// frame of his first second on retail's float, both frags' first base on
+/// retail's (each side's his origin plus 60), and where each comes to rest.
 fn compare_throw_starts(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
-    let ours = ours_pair_in(fs, "mp_carentan", "prone", true, 12_000, Some(225.0));
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    let rt = thrower_lines(&retail);
+    let landed = rt.first().expect("a PROBE thrower line").0;
+    let ours = ours_pair_in(
+        fs,
+        "mp_carentan",
+        "prone",
+        true,
+        12_000,
+        Some(225.0),
+        Some(landed),
+    );
     report(&retail, &ours);
     let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
     if std::env::var_os("SM_REPORT").is_some() {
         eprintln!("retail {r:?}\nours   {o:?}");
+    }
+    // The origins print at six significant digits, the offsets at six too.
+    let near = |a: [f32; 3], b: [f32; 3], d: f32| (0..3).all(|i| (a[i] - b[i]).abs() <= d);
+    let ot = thrower_lines(&ours);
+    assert_eq!(ot.len(), rt.len(), "thrower frames: ours {ot:?}");
+    assert!(
+        near(ot[0].0, rt[0].0, 0.001),
+        "the spawn's landing: retail {:?}, ours {:?}",
+        rt[0].0,
+        ot[0].0
+    );
+    for (f, (a, b)) in rt.iter().zip(&ot).enumerate().skip(1) {
+        assert!(
+            near(a.1, b.1, 0.002),
+            "thrower frame {f}, off the site in thousandths: retail {:?}, ours {:?}",
+            a.1,
+            b.1
+        );
     }
     let (rs, os) = (shooter_origins(&retail), shooter_origins(&ours));
     assert_eq!(r.len(), 2);
@@ -937,9 +1048,7 @@ fn compare_throw_starts(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
     assert_eq!((rs.len(), os.len()), (2, 2), "retail {rs:?}, ours {os:?}");
     for g in 0..2 {
         let (rb, ob) = (r[g][0].1, o[g][0].1);
-        // The origin prints at six significant digits.
         let eye = |s: [f32; 3]| [s[0], s[1], s[2] + 60.0];
-        let near = |a: [f32; 3], b: [f32; 3], d: f32| (0..3).all(|i| (a[i] - b[i]).abs() <= d);
         assert!(
             near(rb, eye(rs[g]), 0.01),
             "retail grenade {g}: {rb:?} from {:?}",
@@ -950,10 +1059,7 @@ fn compare_throw_starts(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
             "ours grenade {g}: {ob:?} from {:?}",
             os[g]
         );
-        assert!(
-            near(ob, rb, 0.5),
-            "grenade {g}'s start: retail {rb:?}, ours {ob:?}"
-        );
+        assert_eq!(ob, rb, "grenade {g}'s start");
         let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
         assert_eq!(or.0, 0, "grenade {g} never came to rest: {:?}", o[g]);
         assert_eq!(

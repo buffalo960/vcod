@@ -360,7 +360,12 @@ two (a pistol round that hits a seat on retail misses on ours); at 1.1
 has to be the one its capture's `CMDS` lines show, so `framed` stays a
 per-gate choice: on for a capture taken with the fall probe's 16/16/18
 cmds whose result rides an airborne cmd's start, off for the vehicle
-probes' 16 ms holds.
+probes' 16 ms holds. VERIFIED, live (1.5b and UO 1.51b, 2026-10-17, the
+`--probe-uo-weapon throw` thrower's cmd times logged): that mode's cmds
+also run 16 or 17 ms apart from each snapshot's time (12000, 12016,
+12032 before the 12050 frame), so `scriptmodel_ab`'s 1.5 and UO thrower
+takes `framed`, which lands him on retail's float after the script's
+`setOrigin` (cod11-combat.md 2.1, "The thrower's slide").
 
 ## 5. Ground, step, ladder, landing
 
