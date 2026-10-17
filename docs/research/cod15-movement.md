@@ -742,6 +742,16 @@ each against the line before):
   arithmetic the same dot read -4.6e-8 and matched by chance. INFERRED:
   a last bit upstream of that dot (the walk's velocity into the slide,
   or a plane) differs; not found. `moves_ab.rs`, `CROUCHJUMP_LOW_GAPS`.
+- The air wish direction. VERIFIED, 1.5b `PM_AirMove` (0x1fe8d): it
+  zeroes `pml.forward[2]` and `pml.right[2]`, runs both through
+  `VectorNormalize`, sums `right * rightmove + forward * forwardmove` in x
+  and y with z 0, and normalizes that. vcod's air wish takes x and y
+  straight off the cosine and sine of the yaw. Ported the 1.5b way it
+  moves no snapshot of any 1.5 or UO capture (every count above the same,
+  measured 2026-10-17), so vcod keeps the plain form. The walk's
+  `pml.forward` already comes from `AngleVectors` as 1.5b computes it
+  (`pmove::view_vectors`: the angles to radians as floats, `fsincos`
+  stored, the products rounded once, 0x43e18).
 
 ## Unchanged
 
