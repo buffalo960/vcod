@@ -2833,6 +2833,33 @@ raised. So the queue records which client each body was born from, and
 sim once, at the snapshot build, after the frame's sim ops have been applied.
 A body born on an earlier frame is never re-read.
 
+**The corpse as a script entity.** VERIFIED, `game.mp.i386.so`:
+`cloneplayer` (0x4450c) ends in `GScr_AddEntity(body)` (0x446d1), so the
+method returns the corpse. `G_SpawnPlayerClone` (0x67888) names it through
+`scr_const+0x56` (0x678e6), the constant `G_InitGentity` (0x6783c) writes,
+which vcod reads as `noclass`. Nothing on the clone path writes
+`s.eventSequence` or `s.events`, and `G_FreeEntity` zeroes a reused slot,
+so a corpse is born with an empty ring. `G_PlaySoundAlias` (0x67b30)
+appends `EV_SOUND_ALIAS` (172) to `s.events` of any entity with no client,
+a corpse included. VERIFIED (capture), retail 1.1d mp_carentan,
+2026-10-17, `client-probes/probe_dyingpose`, whose killed callback runs
+`body = self cloneplayer(); body playsound("MP_bomb_plant");`: the killed
+line named entity 64, and the client's first snapshot holding it
+(`crates/common/tests/fixtures/net/snapshots-dyingpose.bin`, 11500) carried
+`eventSequence` 1, events `[172, 0, 0, 0]`, parms `[4, 0, 0, 0]`, `eFlags`
+0x818 and `apos` yaw 90. A client that first sees a fresh corpse replays its
+ring from 0 (`cod11-events-and-fx.md` 1, "An entity enters the snapshot"),
+so such a sound plays for a spectator who walks into view within the
+250 ms. VERIFIED (capture): the stock 1.1 and UO captures' corpses all carry
+`eventSequence` 0, and no stock gametype touches the body it clones.
+
+Ours: `cloneplayer` returns `ObjectTable::spawn_body`'s entity at the body's
+number; the snapshot build writes that entity's ring into the queue's state
+(`ScriptRuntime::body_entities`), `playSound` on it broadcasts it as on any
+entity, and a `delete` frees the queue's slot (`BodyQueue::free`).
+`dyingpose_ab::a_sound_played_on_a_corpse_rides_its_ring` compares the ring,
+`eFlags` and yaw with the capture's.
+
 **As implemented**, `dropItem` (same file). VERIFIED that retail's
 `PlayerCmd_dropItem` (`.so` 0x43684) resolves the name through
 `BG_GetWeaponIndexForName` and calls `Drop_Weapon` (0x4dd40), which takes the
@@ -7289,15 +7316,50 @@ for the updater and its conditions. `Controllers::new` and
 `AnimScript::anim_records`. `ClientSim::commit_pose` sets the movetype from
 its own pmove selection, then steps and updates. The client steps
 per drawn player per rendered frame, off the lerped `apos`, `angles2[1]`,
-`eFlags` and the legs anim's record. GAP: neither side runs the controllers
-on a dying body (`eFlags & 1`): its `L[1]` is the legs' world yaw. What
-frame retail draws a dying body in was not read. `fTorsoHeight`,
+`eFlags` and the legs anim's record. A dying body runs them too (below,
+"The dying body"). `fTorsoHeight`,
 `fTorsoPitch` and `fWaistPitch` come from `BG_CheckProneValid`'s ground
 samples and reach the entity through `BG_PlayerStateToEntityState`
 (0x2ce55..0x2cea3), scaled by the eye's leg, only when prone
 (cod11-mantle.md, "The ground samples"); ours sends them and poses its hit
 bodies with the entity's copy. Player `eFlags` 0x400, which narrows the
 torso clamp to 45, is 16.5.
+
+**The dying body.** VERIFIED, `game.mp.i386.so`: `ClientEndFrame` arms the
+controller hook (`ent+0x220` = 0x416c0, 0x41261) on every `eType` 1 entity,
+a dead session's included, and `BG_Player_DoControllers` (0x2b7f8) returns
+early only on `eFlags & 0xc000`; its one test of `eFlags & 1` (0x2b9f5..)
+skips the `AngleSubtract(legs yaw, viewangles[1])`, so a dead body's
+`tag_origin` yaw is the legs' world yaw. `G_DObjGetWorldTagMatrix`
+(0x6746c) then turns the posed tag by `r.currentAngles` (`ent+0x140`), the
+view yaw: the body is turned by the yaw twice. INFERRED: no trace meets
+that pose, since a dead body's contents are 0 or CORPSE (5.1), so a tag
+lookup is what reads it. VERIFIED, 1.5b's (0x1a389, the
+`eFlags & 1` test beside the subtract) and UO's (0x1e761, with the rider's
+0x100000 beside it) hooks skip the same subtract. VERIFIED, 1.5b's ease
+(0x1ad71) steps toward that target with no dead test; UO's was not read.
+
+VERIFIED (capture), retail 1.1d mp_carentan, 2026-10-17,
+`client-probes/probe_dyingpose` (fixture
+`crates/server/tests/fixtures/dyingpose/mp_carentan-dm.txt`): a body held
+at world yaw 90 with a script_origin linked to each of eight bones, then
+`suicide()` into the dead session. The ten live frames and the death frame
+matched ours to the hundredth. From the second dead frame on (the death
+clip, `legsAnim` 20, already at its last frame) retail's bones sat at ours
+turned another 90 degrees about the origin: pelvis (-3.72, -0.04) off the
+origin where ours read (-0.04, 3.72), head (20.48, 5.30) where ours read
+(5.30, -20.48). Ours had skipped the controllers on `EF_DEAD`. A body facing
+0 cannot tell the two apart: an earlier run at yaw 0 matched.
+
+VERIFIED, `cgame_mp_x86.dll`: `CG_Player` (0x30028210) draws no `EF_DEAD`
+player (cod11-movers.md 15) and the hook call at 0x3001d460 is for `eType`
+1 only, so the client never poses a dying body; a corpse (`eType` 2) runs no
+controllers.
+
+Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
+and UO like any other; `dyingpose_ab::a_dying_body_poses_like_retail`
+holds every bone of all 60 frames within 0.05 of retail's. Not captured on
+1.5b or UO.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 

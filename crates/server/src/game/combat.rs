@@ -1005,7 +1005,6 @@ impl BodyPose {
         now_ms: i32,
     ) -> vcod_common::playerpose::PoseInputs<'a> {
         let mounted = self.input.eflags & vcod_common::net::flags::EF_MOUNTED != 0;
-        let dead = self.input.eflags & vcod_common::net::flags::EF_DEAD != 0;
         vcod_common::playerpose::PoseInputs {
             anims,
             legs: self.legs,
@@ -1017,12 +1016,7 @@ impl BodyPose {
             // placement blend descends an aim group.
             group_pitch: vcod_common::pmove::aim::angle_normalize_180(self.input.view[0]),
             turret_leaves: self.turret_leaves.as_deref().filter(|_| mounted),
-            // A dead body's `tag_origin` takes the legs' world yaw, not its
-            // yaw off the view, which this pose's frame would turn twice.
-            controllers: match self.eased {
-                Some(c) if !dead => Some(c),
-                _ => self.target_controllers(),
-            },
+            controllers: self.eased.or_else(|| self.target_controllers()),
             seat_leaves: match self.seat_ramp.at(now_ms) {
                 Some(ramped) => Some(ramped),
                 None => self
@@ -1034,13 +1028,11 @@ impl BodyPose {
     }
 
     /// The controls the hook aims at this frame: a rider's off his seat,
-    /// anyone else's off the swings; `None` for a dead body, and for a
-    /// mounted one under 1.1.
+    /// anyone else's off the swings; `None` for a mounted one under 1.1. A
+    /// dead body runs them too, its `tag_origin` turned by the legs' world
+    /// yaw on top of the body's frame (combat doc 16.4, "The dying body").
     pub fn target_controllers(&self) -> Option<vcod_common::playerpose::Controllers> {
         use vcod_common::playerpose::Controllers;
-        if self.input.eflags & vcod_common::net::flags::EF_DEAD != 0 {
-            return None;
-        }
         match &self.seat {
             Some(seat) => Some(Controllers::rider(&self.input, seat, &self.slope)),
             None => Controllers::target(self.rules, &self.angles, &self.input, &self.slope),
