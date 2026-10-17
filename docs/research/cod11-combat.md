@@ -541,6 +541,16 @@ conditions.
   (`EV_RELOAD_FROM_EMPTY`, 152); otherwise `WEAP_RELOAD`, `weaponTime` from
   `reloadTime` and event `0x97` (`EV_RELOAD`, 151). `weaponstate` becomes 6
   when it was 8 and 5 otherwise.
+- VERIFIED, the same two tests in 1.5b's `game.mp.i386.so` (the
+  begin-reload at 0x3df40, `ammoclip` against 0 and `weaponDef+0x70`
+  against 0) and UO's `game.mp.uo.i386.so` (0x34585 and 0x3459b, UO's
+  `weaponType` at `+0x7c` and `reloadEmptyTime` at `+0x244`, its event
+  0x9a). VERIFIED, `pakuo00.pk3`: `bazooka_mp` and `panzerschreck_mp` are
+  `weaponType projectile` with `reloadTime 6` and no `reloadEmptyTime`.
+  INFERRED: a dry rocket launcher reloads over `reloadTime` with
+  `EV_RELOAD`. vcod took the empty branch on any weapon until 2026-10-17
+  (`WeaponDef::is_bullet`, `a_dry_rocket_launcher_reloads_over_reload_time`),
+  so a UO launcher ran a 0 ms reload that never loaded its clip.
 - dll `0x30010b00`, on the frame the reload's `weaponDelay` expires: with
   `weaponDef->boltAction` set and the weapon's `ps->weaponrechamber` bit set
   it clears that bit and raises event `0xA3` (`EV_EJECT_BRASS`, 163), then

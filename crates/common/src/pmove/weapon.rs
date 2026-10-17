@@ -1152,7 +1152,10 @@ fn begin_reload(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>
 
 /// One reload of the clip, or one segment of a segmented reload.
 fn begin_reload_proper(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) -> bool {
-    let empty = ps.ammoclip[def.clip_index] == 0;
+    // Only a bullet weapon (`weaponType` 0) reloads from empty: a rocket's
+    // dry reload takes `reloadTime` (combat doc 1.7; 1.1 cgame 0x30010330,
+    // 1.5b and UO alike).
+    let empty = ps.ammoclip[def.clip_index] == 0 && def.is_bullet();
     let (anim, time, event) = if empty {
         (
             WEAP_RELOAD_EMPTY,
@@ -1974,6 +1977,28 @@ mod tests {
         assert_eq!(ps.weaponstate, WEAPON_READY);
         assert_eq!(ps.ammoclip[1], 15);
         assert_eq!(ps.ammo[1], 15);
+    }
+
+    /// A rocket launcher's dry clip reloads as a partial one, over
+    /// `reloadTime` with 151: the empty branch wants `weaponType` 0, and UO's
+    /// `bazooka_mp` sets no `reloadEmptyTime`, which read as a 0 ms reload
+    /// that never loaded (section 1.7).
+    #[test]
+    fn a_dry_rocket_launcher_reloads_over_reload_time() {
+        let mut d = def(0.63, 0.0, 6.0, 0.4, 1, false);
+        d.weapon_type = "projectile".into();
+        d.reload_empty_time = 0.0;
+        d.reload_add_time = 0.0;
+        let (mut ps, w) = armed(&d);
+        ps.ammo[1] = 2;
+        let mut events = run(&mut ps, &w, true, 1);
+        events.extend(run(&mut ps, &w, false, 14));
+        assert_eq!(events[1..], [EV_RELOAD]);
+        assert_eq!(ps.weaponstate, WEAPON_RELOADING);
+        assert_eq!(ps.ammoclip[1], 0);
+        run(&mut ps, &w, false, 120);
+        assert_eq!(ps.weaponstate, WEAPON_READY);
+        assert_eq!((ps.ammoclip[1], ps.ammo[1]), (1, 1));
     }
 
     /// The reload key on a partly full clip is an ordinary reload, 151, since

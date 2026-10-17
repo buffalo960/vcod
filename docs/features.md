@@ -365,8 +365,9 @@ something, the bullet links it.
   and run from live ones, and play
   the objectives of UO's `sd`, `ctf` (take, carry, return), `dom` (stand
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
-  (plant on a breached base and defuse; they can't breach one, since they
-  ignore vehicles). The nav graph is rebuilt when the script deletes walls,
+  (fetch a bazooka or panzerschreck lying about and breach a base with
+  rockets from a spot with a shot at it, plant on a breached base and
+  defuse; they ignore vehicles). The nav graph is rebuilt when the script deletes walls,
   as `bas` does to a breached base.
 
 ## What it doesn't do

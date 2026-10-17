@@ -253,6 +253,9 @@ pub struct BotView {
     pub unpin: Option<f32>,
     /// A held pistol's configstring index, when one is in the kit.
     pub pistol: Option<u8>,
+    /// A held rocket launcher (`weaponClass rocketlauncher`) with a round
+    /// left, clip or reserve: what breaches a `bas` base.
+    pub rocket: Option<u8>,
     /// Ms from a dry reload's start to the held weapon's next shot; 0 when
     /// unknown.
     pub reload_ms: i32,
@@ -456,10 +459,14 @@ pub struct HqRadioView {
 #[derive(Clone, Debug)]
 pub struct BasView {
     pub bases: Vec<BasBaseView>,
+    /// Rocket launchers lying about to be picked up with the use key: the
+    /// maps' `mpweapon_bazooka`, `_panzerschreck` and `_panzerfaust`, which
+    /// respawn 15 s after a pickup, and drops.
+    pub launchers: Vec<[f32; 3]>,
     pub rank: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BasBaseView {
     pub at: [f32; 3],
     pub ours: bool,
@@ -471,6 +478,24 @@ pub struct BasBaseView {
     /// 150-unit reach) and the middle of the trigger the view has to rest
     /// on.
     pub charge: Option<BombView>,
+    /// With [`BotView::rocket`] held, a point a rocket fired at from where
+    /// the bot stands bursts within [`BREACH_NEAR`] of, the base's own
+    /// origin among them (`Server::breach_shot`); only for the other
+    /// side's bases still standing.
+    pub shot: Option<[f32; 3]>,
+    /// With [`BotView::rocket`] held, the graph's spots round the base a
+    /// standing bot has such a shot from (`Server::breach_stands`).
+    pub stands: Vec<[f32; 3]>,
+}
+
+/// What the server deals a `bas` bot's view from, once a tick
+/// (`Server::bot_uo_view`).
+pub(crate) struct Breach<'a> {
+    /// The bot holds a loaded rocket launcher ([`BotView::rocket`]).
+    pub rocket: bool,
+    pub launchers: &'a [[f32; 3]],
+    /// The script models round the bases, which a rocket strikes.
+    pub models: &'a [crate::game::combat::PlacedModel],
 }
 
 /// Where a bot wants to go. The brain names it from its view; the server
@@ -774,6 +799,9 @@ struct Objective {
     /// The domination flag this life is set on, by its index, until its
     /// team holds it.
     zone: Option<usize>,
+    /// Ticks stood at a breach stand with no shot from it; past
+    /// [`BREACH_IDLE_TICKS`] the next stand is tried (`pick`).
+    idle: u32,
 }
 
 /// What the objective wants of the bot right now.
@@ -815,6 +843,13 @@ enum ObjTarget {
     /// Walk the carrier's likely way backwards, from the goal side to where
     /// the objective was taken, once per carry.
     Sweep([f32; 3]),
+    /// Fire rockets at a `bas` base: walk toward it, and from where a shot
+    /// bursts at it (`aim`) stand and fire (bot-objectives.md 7.2).
+    Breach {
+        base: [f32; 3],
+        stand: Option<[f32; 3]>,
+        aim: Option<[f32; 3]>,
+    },
 }
 
 /// `level.planttime` is 5 s (`sd.gsc` `bombzones`); a hold this long that
@@ -865,6 +900,20 @@ const BAS_REACH: f32 = 112.0;
 const BAS_BLAST: f32 = 520.0;
 /// An attacker this near a charge on its own base turns back to defuse it.
 const BAS_DEFUSE_NEAR: f32 = 2000.0;
+/// A rocket's burst counts at a base this near its origin: the base links
+/// as a point with the turret's box round it (`GameHost::blast_entities`),
+/// and the rocket's 256-unit splash falls off from 100 to 10.
+pub const BREACH_NEAR: f32 = 64.0;
+/// A rocket is fired at a base from this far at least, clear of its own
+/// 256-unit splash, and at most this far.
+pub const BREACH_MIN: f32 = 400.0;
+pub const BREACH_RANGE: f32 = 1500.0;
+/// A base's own launchers (`mpweapon_*` with `script_gameobjectname bas`)
+/// lie in its bunker, this near its origin, behind the walls a breach
+/// deletes (about 145 units on mp_foy).
+const BAS_BUNKER: f32 = 300.0;
+/// Stood this long at a breach stand with no shot, the bot tries another.
+const BREACH_IDLE_TICKS: u32 = 40;
 /// Inset from a bombzone's edges before the bot counts as inside it.
 const SITE_MARGIN: f32 = 8.0;
 /// The standing player's box height, for the zone's z overlap.
@@ -1305,10 +1354,47 @@ impl Bot {
                         reach: BAS_REACH,
                         ticks: BAS_PLANT_TICKS,
                     },
-                    _ => guard(t.at),
+                    _ if t.breached => guard(t.at),
+                    // Standing: rockets breach it. Without one, the nearest
+                    // launcher lying about first.
+                    _ if view.rocket.is_some() => ObjTarget::Breach {
+                        base: t.at,
+                        stand: self.breach_stand(&mine, t),
+                        aim: t.shot,
+                    },
+                    // Those in a standing base of theirs lie behind its
+                    // walls.
+                    _ => match b
+                        .launchers
+                        .iter()
+                        .filter(|l| {
+                            theirs
+                                .iter()
+                                .all(|x| x.breached || dist_sq(**l, x.at) > BAS_BUNKER * BAS_BUNKER)
+                        })
+                        .min_by(|x, y| {
+                            dist_sq(view.origin, **x).total_cmp(&dist_sq(view.origin, **y))
+                        }) {
+                        Some(&l) => ObjTarget::Pickup { aim: l, from: l },
+                        None => guard(t.at),
+                    },
                 })
             }
         }
+    }
+
+    /// The breach stand a bot with a rocket walks to: the stands nearest
+    /// its own side's nearest base first, one given up on (`pick`) for the
+    /// next.
+    fn breach_stand(&self, mine: &[&BasBaseView], t: &BasBaseView) -> Option<[f32; 3]> {
+        let home = mine
+            .iter()
+            .map(|m| m.at)
+            .min_by(|a, b| dist_sq(*a, t.at).total_cmp(&dist_sq(*b, t.at)))
+            .unwrap_or(t.at);
+        let mut stands = t.stands.clone();
+        stands.sort_by(|a, b| dist_sq(*a, home).total_cmp(&dist_sq(*b, home)));
+        (!stands.is_empty()).then(|| stands[self.obj.pick as usize % stands.len()])
     }
 
     /// The domination flag a bot sets out for: among those its team does
@@ -1366,6 +1452,7 @@ impl Bot {
             // at.
             ObjTarget::Deliver(_) | ObjTarget::Chase(_) => false,
             ObjTarget::Sweep(at) => arrived(o, *at),
+            ObjTarget::Breach { aim, .. } => aim.is_some(),
         }
     }
 
@@ -1387,7 +1474,17 @@ impl Bot {
             ObjTarget::Defuse { bomb, .. } => Goal::To(bomb.origin),
             ObjTarget::Occupy(s) => Goal::To(s.stand),
             ObjTarget::Radio { at, .. } => Goal::To(at),
-            ObjTarget::Pickup { from: at, .. }
+            ObjTarget::Breach {
+                stand: Some(at), ..
+            } => Goal::To(at),
+            // Inside its own splash of the base: off, then back.
+            ObjTarget::Breach { base, .. }
+                if dist_sq(view.origin, base) < BREACH_MIN * BREACH_MIN =>
+            {
+                Goal::Away(base)
+            }
+            ObjTarget::Breach { base: at, .. }
+            | ObjTarget::Pickup { from: at, .. }
             | ObjTarget::Deliver(at)
             | ObjTarget::Chase(at)
             | ObjTarget::Sweep(at) => Goal::To(at),
@@ -1505,12 +1602,70 @@ impl Bot {
                 }
                 Some(cmd)
             }
+            Some(ObjTarget::Breach {
+                stand: Some(st),
+                aim: None,
+                ..
+            }) if arrived(view.origin, st) => {
+                self.obj.idle += 1;
+                if self.obj.idle >= BREACH_IDLE_TICKS {
+                    self.obj.idle = 0;
+                    self.obj.pick = self.obj.pick.wrapping_add(1);
+                }
+                None
+            }
+            Some(ObjTarget::Breach {
+                aim: Some(spot), ..
+            }) if at => {
+                let rocket = view.rocket?;
+                // A visible enemy comes first.
+                if self.shoot && view.enemy.is_some() {
+                    self.obj.settled = 0;
+                    return None;
+                }
+                Some(self.breach(view, cmd, rocket, spot))
+            }
             _ => {
                 self.obj.held = 0;
                 self.obj.settled = 0;
                 None
             }
         }
+    }
+
+    /// One tick of a stand at a base: the launcher out, the view on `spot`,
+    /// a round fired once the view has rested on it, a reload after.
+    fn breach(&mut self, view: &BotView, mut cmd: UserCmd, rocket: u8, spot: [f32; 3]) -> UserCmd {
+        self.disengage();
+        self.restart_stall(view.origin);
+        let (tp, ty) = aim_angles(view, spot);
+        let aim = self.turn_toward(view, [tp, ty]);
+        let cur = [yaw_diff(view.view[0], 0.0), view.view[1]];
+        let off = yaw_diff(tp, cur[0]).hypot(yaw_diff(ty, cur[1]));
+        self.obj.settled = if off < SETTLE_DEG {
+            self.obj.settled + 1
+        } else {
+            0
+        };
+        cmd.angles = cmd_angles(view, aim);
+        if view.weapon != rocket {
+            self.switch_to = Some(rocket);
+            cmd.weapon = rocket;
+            return cmd;
+        }
+        self.switch_to = None;
+        cmd.weapon = rocket;
+        if view.busy_ms != 0 {
+            return cmd;
+        }
+        if view.clip == 0 {
+            cmd.wbuttons |= msg::WBUTTON_RELOAD;
+        } else if self.obj.settled >= SETTLE_TICKS && self.fire_cooldown == 0 {
+            cmd.buttons |= msg::BUTTON_ATTACK;
+            // The bit comes up between rounds.
+            self.fire_cooldown = 2;
+        }
+        cmd
     }
 
     /// Use down, no move keys, the view at `aim`. Nothing else runs: the
@@ -3014,6 +3169,7 @@ mod tests {
             push_off: None,
             unpin: None,
             pistol: None,
+            rocket: None,
             reload_ms: 2500,
             draw_ms: 750,
             loaded: (1 << 10) | (1 << 6),
@@ -5168,5 +5324,95 @@ mod tests {
                 "stage {start_stage}: a bot killed mid-grenade-phase never pressed use"
             );
         }
+    }
+
+    /// Base assault with the bot's one base at home and the other side's
+    /// standing 2000 units off down +x, a launcher lying in its bunker and
+    /// another near the bot.
+    fn bas_view() -> BotView {
+        let mut v = view();
+        let base = |at: [f32; 3], ours: bool| BasBaseView {
+            at,
+            ours,
+            breached: false,
+            planted: false,
+            charge: None,
+            shot: None,
+            stands: Vec::new(),
+        };
+        v.uo = Some(UoView::Bas(BasView {
+            bases: vec![
+                base([-2000.0, 0.0, 0.0], true),
+                base([2000.0, 0.0, 0.0], false),
+            ],
+            launchers: vec![[2100.0, 50.0, 8.0], [300.0, 200.0, 8.0]],
+            rank: 0,
+        }));
+        v
+    }
+
+    fn their_base(v: &mut BotView) -> &mut BasBaseView {
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        &mut b.bases[1]
+    }
+
+    /// Without a rocket the attacker fetches a launcher, the near one, not
+    /// the one in the standing base's bunker behind its walls.
+    #[test]
+    fn a_bas_attacker_without_a_rocket_fetches_a_launcher() {
+        let bot = Bot::new("allies", false, 1);
+        let v = bas_view();
+        assert_eq!(bot.goal(&v), Goal::To([300.0, 200.0, 8.0]));
+    }
+
+    /// With a rocket and no shot it walks to the breach stand nearest its
+    /// own side; at one with a shot it stands, draws the launcher, fires
+    /// once the view rests on the aim and reloads the dry clip.
+    #[test]
+    fn a_bas_attacker_with_a_rocket_walks_to_a_stand_and_fires() {
+        let mut bot = Bot::new("allies", false, 1);
+        bot.skill.turn_deg = 360.0;
+        let mut v = bas_view();
+        v.rocket = Some(20);
+        v.weapons_held |= 1 << 20;
+        their_base(&mut v).stands = vec![[2600.0, 0.0, 0.0], [1400.0, 0.0, 0.0]];
+        assert_eq!(bot.goal(&v), Goal::To([1400.0, 0.0, 0.0]));
+
+        v.origin = [1400.0, 0.0, 0.0];
+        their_base(&mut v).shot = Some([2000.0, 0.0, 40.0]);
+        assert_eq!(bot.goal(&v), Goal::Hold);
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.weapon, 20, "the launcher comes out");
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0);
+
+        v.weapon = 20;
+        v.clip = 1;
+        let (pitch, yaw) = aim_angles(&v, [2000.0, 0.0, 40.0]);
+        v.view = [pitch, yaw, 0.0];
+        let fired = (0..4).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
+        assert!(fired, "no round at the base");
+
+        v.clip = 0;
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0);
+        assert_ne!(cmd.wbuttons & WBUTTON_RELOAD, 0, "the dry launcher reloads");
+    }
+
+    /// A breached base is planted as before, rocket or not.
+    #[test]
+    fn a_breached_base_is_planted_not_shot() {
+        let bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        v.rocket = Some(20);
+        let b = their_base(&mut v);
+        b.breached = true;
+        b.shot = Some([2000.0, 0.0, 40.0]);
+        b.charge = Some(BombView {
+            origin: [2000.0, 0.0, -176.0],
+            aim: [2000.0, 0.0, -160.0],
+        });
+        assert_eq!(bot.goal(&v), Goal::To([2000.0, 0.0, -176.0]));
     }
 }
