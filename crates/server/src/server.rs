@@ -4248,6 +4248,9 @@ impl Server {
                 } else {
                     self.bot_enemies.get(slot)?.1
                 };
+                // One the brain gave up on (`Bot::ignores`) is left out.
+                let enemy =
+                    enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
                 view.noise = crate::bots::loudest(&noises, *slot, view.origin);
                 let held = self.bot_sidesteps.remove(slot);
@@ -10003,8 +10006,40 @@ fn breach_aim(
             && match best.1 {
                 Some(o) => o == base,
                 None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
-            };
+            }
+            && spread_clear(world, models, muzzle, dir);
         ok.then_some(spot.into())
+    })
+}
+
+/// The launchers' sighted spread standing (`adsSpread`: 4 for the
+/// bazooka and the panzerschreck, 3.5 for the panzerfaust).
+const BREACH_SPREAD_DEG: f32 = 4.0;
+
+/// Whether rockets along the edge of the sighted spread cone round `dir`
+/// meet nothing within [`crate::bots::BREACH_CLEAR`] of the muzzle: the
+/// line's middle alone left a bot now and then killed by a rocket the
+/// spread carried into the cover by its stand. Only the near part of the
+/// cone counts; where the rest bursts the base's checks already rule.
+fn spread_clear(
+    world: &vcod_common::collision::CollisionWorld,
+    models: &[crate::game::combat::PlacedModel],
+    muzzle: glam::Vec3,
+    dir: glam::Vec3,
+) -> bool {
+    use crate::bots::BREACH_CLEAR;
+    let right = dir.cross(glam::Vec3::Z).normalize_or(glam::Vec3::X);
+    let up = right.cross(dir);
+    let r = BREACH_SPREAD_DEG.to_radians().tan();
+    (0..8).all(|k| {
+        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+        let ray = (dir + (right * a.cos() + up * a.sin()) * r).normalize();
+        let end = muzzle + ray * BREACH_CLEAR;
+        world.missile_trace(muzzle, end).fraction >= 1.0
+            && models.iter().all(|m| {
+                m.clip(muzzle, end, crate::game::missile::MISSILE_MODEL_MASK, 1.0)
+                    .is_none()
+            })
     })
 }
 
