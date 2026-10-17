@@ -1146,7 +1146,7 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
 
 #[test]
 fn predictor_replays_retail_slope_runs() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let weapons = vcod_common::weapon_table::from_configstring(&fs, retail_cs7());
@@ -1326,7 +1326,7 @@ fn brush_entity(
 
 #[test]
 fn predictor_rides_retail_movers() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let cs7 = retail_cs7();
@@ -1415,7 +1415,7 @@ const COPY: u32 = 171;
 /// (docs/research/cod11-movers.md 20).
 #[test]
 fn predictor_rides_a_retail_world_copy() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let cs7 = retail_cs7();

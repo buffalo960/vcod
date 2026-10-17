@@ -178,7 +178,7 @@ fn the_retail_capture_reads_as_the_rule() {
 /// after its first archived frame.
 #[test]
 fn ours_trims_and_ends_the_killcam_as_retail_does() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

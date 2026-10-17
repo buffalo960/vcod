@@ -130,7 +130,7 @@ fn ours(
 }
 
 fn check(map: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping {map}");
         return;
     };

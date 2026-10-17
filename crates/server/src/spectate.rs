@@ -4080,7 +4080,7 @@ mod tests {
     /// (0, 0, -0) (docs/protocol-1.1.md, "Spectator").
     #[test]
     fn a_spectator_steps_onto_the_sill_retail_s_did() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let path = fs.resolve_map("mp_carentan").expect("map in the paks");
