@@ -2377,7 +2377,9 @@ The 52 cells once left open (`leanhit_ab::CELL_GAPS`, removed
   probe's grid thread, due on the last frame's clock (its `wait` lands on
   a frame time), traces bodies posed at the last frame's level time.
   vcod's `bulletTrace`, and the script `radiusDamage` walk, posed them at
-  this frame's; they now pose at `GameHost::dobj_time_ms`. VERIFIED, vcod
+  this frame's; they now pose at `GameHost::dobj_time_ms`. VERIFIED, 1.5b and UO:
+  the frame's one thread pass runs before the update as well, and a UO
+  spawn's DObj runs a frame ahead (`cod11-turrets.md` 13.7). VERIFIED, vcod
   measurement: the standing cells' median drops from 0.13 to 0.02, the
   cells past 0.5 from 52 to 32.
 - The cmd times. The gate sent even 16 ms cmds; the net probe in its

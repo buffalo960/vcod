@@ -853,8 +853,9 @@ fn body_hit(
             fs,
             anims,
             rigs: &mut host.hit_rigs,
-            // A thread due on the last frame's clock traces the pose the
-            // DObj update has not advanced yet (combat doc 3.6).
+            // A thread runs ahead of the frame's anim update and traces the
+            // pose the DObjs were last advanced to: on 1.1d the first pass,
+            // on 1.5 and UO their one (combat doc 3.6, cod11-turrets.md 13.7).
             now_ms: host.dobj_time_ms,
         }),
         _ => None,

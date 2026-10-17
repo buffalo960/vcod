@@ -2848,10 +2848,16 @@ impl ScriptRuntime {
             }
         }
         self.trigger_rounds();
-        self.host.dobj_time_ms = now_ms;
+        // 1.1's second thread pass follows `G_DObjUpdateServerTime`; 1.5's
+        // and UO's one pass runs before `G_XAnimUpdate` (1.5b 0x50821,
+        // 0x50840; UO 0x59e4d, 0x59e6c), on the last frame's DObjs.
+        if !self.host.patch_1_5 {
+            self.host.dobj_time_ms = now_ms;
+        }
         for e in self.vm.run_frame(&mut self.host, now_ms) {
             log::warn!("script error: {e:?}");
         }
+        self.host.dobj_time_ms = now_ms;
     }
 
     /// `G_RunFrame`'s trigger queue (0x50540..0x50665), on the clock of the

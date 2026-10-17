@@ -795,6 +795,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   their configstrings at his own end frame (`client_attachments`;
   object-model doc 24). `addTestClient` runs the connect callback inside
   the call and the `begin` waiters after the caller's step (25).
+- On 1.5 and UO every script thread runs before the frame's anim update,
+  so a script `bulletTrace` poses bodies at the last frame's time
+  (`GameHost::dobj_time_ms`); a UO spawn's `setModel` rebuilds the DObj
+  in the thread, so its clips run a frame ahead (`ClientSim::dobj_ahead`,
+  `cod11-turrets.md` 13.7). The two cancel until clips change.
 - A thread due on the last frame's clock runs before the frame's anim
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
