@@ -799,7 +799,92 @@ into `eType` 13 `script_vehicle_corpse`; no stock MP script calls it
   `ClientDisconnect`, a team change (VERIFIED decompile).
 - `Scr_Vehicle_Die` (0x8dccb) probes each rider with a 5-point
   `MOD_EXPLOSIVE` hit (health padded by 10) and dismounts one it did not
-  hurt, the rest in place (VERIFIED decompile).
+  hurt, the rest in place (VERIFIED decompile). The death below.
+
+#### The death's riders: `Scr_Vehicle_Die`
+
+`G_Damage` (0x4fedb) runs the die callback after the `damage` and `death`
+notifies, as `(self, inflictor, attacker, damage, mod, inflictor's
+s.weapon, &dir, hitloc)`, with a NULL inflictor or attacker already the
+world (VERIFIED decompile). `Scr_Vehicle_Die` (0x8dccb):
+
+- For seats 1 to 6 in order, each seat whose entity is a client: its
+  `health` (+0x240) goes up 10, then `G_Damage(rider, attacker, attacker,
+  vec3_origin, ps.origin, 5, 0, MOD_EXPLOSIVE (0x17), 0)`. The rider is
+  shielded when his health still reads the padded value. Then his health
+  goes back to what it was, whatever the hit did, and `VEH_UnlinkPlayer`
+  (0x89fb2) runs with `voluntary` set to shielded (VERIFIED decompile).
+- After the unlink, `G_SetOrigin` puts `r.currentOrigin` 32 (f32 at
+  0xa7624) above where the unlink left it (VERIFIED decompile and bytes).
+  The playerstate keeps the old origin, so only reads of
+  `r.currentOrigin` before the rider's end frame see the lift: the
+  `origin` field and a `radiusDamage` measure do, a `doDamage`'s
+  direction does not (VERIFIED capture below).
+- `G_DamageClient` (0x4fd4b) decides the probe like any hit. A tank's
+  driver is shielded from every attacker but his own tank (13, the
+  invulnerability), so the stuck kill and a tank that is its own attacker
+  put him out where he sits. A damage callback that never calls
+  `finishPlayerDamage` (stock tdm's friendly fire 0) shields its rider too
+  (VERIFIED capture below).
+- A shielded rider's unlink searches a dismount spot, as a use exit does
+  (the exit delay is skipped: the vehicle's health is under 1), and a
+  blocked search refuses and leaves him seated (VERIFIED decompile). A
+  dismount sets the origin through `SetClientOrigin` and pops a tank's
+  driver up at 200 while the tank coasts (11.2 above).
+- Last, an attacker whose `s.weapon` is a grenade (type 1) or a
+  projectile (2) jolts the hull along the hit's direction, scale 1
+  (0x8d492) (VERIFIED decompile).
+- `PlayerCmd_isInVehicle` (0x46ca0) reads the entity state's `eFlags`
+  0x100000, not the playerstate's: a rider put out where he sat reads 1
+  until his end frame, one a dismount moved reads 0 at once (VERIFIED
+  decompile and capture below).
+- UO's `radiusDamage` (0x6c229) takes an attacker and an inflictor after
+  its four arguments, by count: the attacker the world when absent, the
+  inflictor NULL (VERIFIED decompile). `_tankdrive_gmi`'s death blast
+  passes both, so its victims' callbacks name the tank's last attacker
+  and its weapon. The damage callback's weapon is the inflictor's
+  `s.weapon`, else the attacker's (`G_DamageClient`, VERIFIED
+  decompile).
+- Stock tdm's `Callback_PlayerKilled` reads `level.teamkill_penalty`,
+  which nothing sets, for a death to something not a player. A tank that
+  is its own attacker has `tank_death_player_damage` kill its driver so,
+  and on `run_probe.sh`'s retail server that is a fatal script error
+  (VERIFIED capture, the probe's first run).
+
+Measured, retail UO 1.51b, 2026-10-17, `client-probes/probe_vehdie`
+(fixtures `crates/server/tests/fixtures/vehicles/*-die-*-uo.txt`, recipes
+in their headers): a `--probe-vehicle driver` and a `--probe-vehicle
+gunner` client board, and a frame after the second seat the gsc kills the
+vehicle with `doDamage(10000, ..., by, by, "MOD_EXPLOSIVE")` (VERIFIED,
+capture):
+
+- The Panzer IV, its own attacker: both riders' callbacks run with 5,
+  flags 0, the tank as inflictor and attacker, `panzeriv_turret_mp`,
+  their own origins as the point, a zero direction, `none`, health 110.
+  Both read health 100 after, `isInVehicle` 1 and their origin 32 up;
+  the gunner's `vehicle_deactivated` waiter runs before the driver's.
+- The Panzer IV killed by its gunner: the driver's callback never runs,
+  he reads `isInVehicle` 0 at a spot 227 units ahead of the hull's
+  origin, 32 up; the gunner's runs (his own `kar98k_mp`) and he stays put.
+- The Willys, its driver alone, killed by a teammate on foot under
+  friendly fire 0: the callback runs, tdm returns, the health stays 110,
+  and the driver is dismounted.
+
+vcod walks the riders in `vehicle::die`: inside the builtin that killed
+the vehicle each rider's callback is a `spawn_then` (`DIE_TOKEN`), and a
+death outside a builtin (a round, a blast, a collision) is walked at
+`ScriptRuntime::vehicle_deaths` with each callback run to its first
+`wait`. A rider put out in place is held in `Vehicles::stale_seated` and
+the lifted origin's unlifted one in `Vehicles::lifted` until his origin
+is next mirrored. The seats the frame's threads left are applied ahead of
+the script's sim ops, so a dismount's pop sets the velocity and a hit
+after it adds its knockback. `vehicle_die_ab` replays the three captures
+on ours: every line from the kill on matches retail's, the death blast's
+victims and their damage included, but the gunner's body within 4 units
+(the kill comes mid-turn of his gun; retail's three runs put him 3.3
+apart), a dismounted driver's first fall frame (the probe client's cmd
+clock), and two corpses killed in place: retail's slide off the hull
+over the next half second, ours stay where the seat left them (open).
 
 ### 11.3 Changing seats
 
@@ -1496,7 +1581,15 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
 - `VEH_PlayerCollision` (0x8213f): a body a probe strikes is knocked away
   and, at most every 500 ms, takes `150 min(speed / 400, 1)` under
   `MOD_CRUSH_JEEP` or `MOD_CRUSH_TANK`, the driver the attacker (VERIFIED
-  decompile).
+  decompile). The 500 ms runs off `client+0x4728`, which every strike past
+  it restarts: `VEH_PlayerDamage` (0x81ffd) runs on 0 damage too (a
+  vehicle moving away from him), through the damage callback (VERIFIED
+  decompile). Then, unless `ps.pm_flags` has 1, the vehicle file's
+  `vehicle_hit_person` alias (`info+0x33b`) plays at the body's
+  `r.currentOrigin`, `1500 (1 - min(speed / 400, 1))` up, broadcast
+  (`svFlags |= 8`) (VERIFIED decompile, constants 0xa6b68 0.0, 0xa6b70
+  1500.0 and 0xa6b50 1.0). vcod reads bit 1 as the prone stance (INFERRED:
+  1.1's `PMF_PRONE`) and does the same (no retail capture of a run-over).
 
 ## 14. What vcod-server does, and what it measured
 
@@ -1601,9 +1694,9 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   `vehicle_armor_ab` with the probe client's cmd stream), shell
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
 - **Not done.** The path methods; `closespeed` and
-  `harc` read 0; the probe hit in
-  `Scr_Vehicle_Die`; `vehicle_hit_person`; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13).
+  `harc` read 0; the model arm's whole-model bounds reject (0x80c6b36,
+  section 13); a corpse killed in a seat's place does not slide (11.2,
+  "The death's riders").
 - **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
   clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
   and blend time 0, then sets each goal weight at the rate `1 / (10 |weight
