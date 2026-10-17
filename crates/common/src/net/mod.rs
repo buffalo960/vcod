@@ -206,6 +206,8 @@ pub enum NetEvent {
 /// A demo being written (`clc.demorecording`, CoDMP.exe 0x15ef000).
 struct Recording {
     writer: demo::DemoWriter<Box<dyn std::io::Write + Send>>,
+    /// `clc.demoName` (0x15eefc0): the name `record` was given or chose.
+    name: String,
     /// `clc.demowaiting` (0x15ef008): nothing is written until a snapshot
     /// that deltas from no frame, which the cmds ask for meanwhile.
     waiting: bool,
@@ -532,7 +534,11 @@ impl<T: Transport> NetClient<T> {
     /// `record` (`CL_Record_f`, CoDMP.exe 0x40e540): opens the demo on a
     /// gamestate built from what the client holds now. Refused, with
     /// retail's text, unless in a level and not recording or playing.
-    pub fn start_recording(&mut self, out: Box<dyn std::io::Write + Send>) -> anyhow::Result<()> {
+    pub fn start_recording(
+        &mut self,
+        out: Box<dyn std::io::Write + Send>,
+        name: &str,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(self.recording.is_none(), "Already recording.");
         let in_level = self.demo.is_none()
             && self.state == NetState::Active
@@ -557,6 +563,7 @@ impl<T: Transport> NetClient<T> {
         writer.write_message(self.netchan.incoming_sequence, &msg)?;
         self.recording = Some(Recording {
             writer,
+            name: name.to_string(),
             waiting: true,
         });
         Ok(())
@@ -564,6 +571,14 @@ impl<T: Transport> NetClient<T> {
 
     pub fn is_recording(&self) -> bool {
         self.recording.is_some()
+    }
+
+    /// The recording's name and the bytes written so far, what
+    /// `SCR_DrawDemoRecording` (CoDMP.exe 0x416b10) prints.
+    pub fn recording_status(&self) -> Option<(&str, u64)> {
+        self.recording
+            .as_ref()
+            .map(|r| (r.name.as_str(), r.writer.written()))
     }
 
     /// `stoprecord` (`CL_StopRecord_f`, CoDMP.exe 0x40e430): the trailer,

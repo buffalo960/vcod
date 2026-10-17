@@ -1371,6 +1371,7 @@ fn main() -> Result<()> {
         os_cursor: true,
         captured: false,
         server_process: None,
+        timedemo: Default::default(),
         exec_depth: 0,
         error: None,
     };
@@ -1489,7 +1490,7 @@ fn start_record(
     dir: &std::path::Path,
     name: Option<&str>,
 ) {
-    let path = play::demos::record_path(dir, name, net.protocol());
+    let (path, name) = play::demos::record_path(dir, name, net.protocol());
     let file = std::fs::create_dir_all(dir).and_then(|_| std::fs::File::create(&path));
     // Refused before the file is made, as retail checks first.
     if net.is_recording() {
@@ -1503,7 +1504,7 @@ fn start_record(
             return;
         }
     };
-    match net.start_recording(Box::new(std::io::BufWriter::new(file))) {
+    match net.start_recording(Box::new(std::io::BufWriter::new(file)), &name) {
         Ok(()) => console::log::print(&format!("recording to {}.", path.display())),
         Err(e) => {
             let _ = std::fs::remove_file(&path);
@@ -1624,6 +1625,14 @@ fn start_loading(
     if let Some(window) = window {
         window.set_title(title);
     }
+    // A demo sets no pak list (`CL_SystemInfoChanged` returns first while
+    // one plays, CoDMP.exe 0x415eb0), so nothing is fetched, and a map
+    // missing here fails as `CM_LoadMap` does (0x419c90).
+    if net.is_demo() {
+        return Ok(Phase::Loading {
+            loader: loading::MapLoader::without_downloads(map.clone(), couldnt_load(&map)),
+        });
+    }
     // Same candidate order as the old blocking downloader; `MapLoader` caps it.
     let systeminfo = net.configstring(1).to_string();
     let exists = |rel: &std::path::Path| game_dir.join(rel).exists();
@@ -1698,6 +1707,12 @@ fn start_loading(
     Ok(Phase::Loading {
         loader: loading::MapLoader::new(map, candidates),
     })
+}
+
+/// `CM_LoadMap`'s drop for a map no pak holds (CoDMP.exe 0x419c90): the
+/// localized `Couldn't load maps/mp/<map>.bsp`.
+fn couldnt_load(map: &str) -> String {
+    format!("EXE_ERR_COULDNT_LOAD\u{15}maps/mp/{map}.bsp")
 }
 
 /// The front end off `fs`, with the favourites file and the Mods menu's
@@ -2043,6 +2058,8 @@ struct App {
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
+    /// The playing demo's `timedemo` count.
+    timedemo: play::demos::TimeDemo,
     /// Nested `exec`s running.
     exec_depth: u8,
     error: Option<anyhow::Error>,
@@ -2859,9 +2876,30 @@ impl App {
         self.ui.close_all();
         self.mode = online_mode(net, None, None);
         self.connect_addr = None;
+        self.timedemo = Default::default();
         self.set_title(format!("{} — demo {name}", version_tag()));
         if self.console.open {
             self.toggle_console();
+        }
+    }
+
+    /// `CL_DemoCompleted` (CoDMP.exe 0x40e920): the `timedemo` line, the
+    /// disconnect, then `CL_NextDemo` (0x40ed80), which runs `nextdemo`
+    /// once and clears it.
+    fn demo_completed(&mut self, event_loop: &ActiveEventLoop, now_ms: i32) {
+        if self.shell.cvar_f32("timedemo") != 0.0
+            && let Some(line) = self.timedemo.report(now_ms)
+        {
+            console::log::print(&line);
+        }
+        self.disconnect(None);
+        let next = self.shell.cvar("nextdemo").unwrap_or("").to_string();
+        log::debug!("CL_NextDemo: {next}");
+        if !next.is_empty() {
+            let effects = self.shell.execute("set nextdemo \"\"");
+            self.apply(event_loop, effects);
+            let effects = self.shell.execute(&next);
+            self.apply(event_loop, effects);
         }
     }
 
@@ -3099,7 +3137,9 @@ impl App {
             return;
         };
         let mut out = Vec::new();
-        if matches!(phase, Phase::Live(_)) {
+        // A demo's Esc opens the main menu (`UI_SetActiveMenu` 1,
+        // CoDMP.exe 0x40dc30).
+        if matches!(phase, Phase::Live(_)) && !net.is_demo() {
             match join
                 .main_menu(net.configstrings())
                 .filter(|n| self.ui.has_menu(n))
@@ -3117,6 +3157,17 @@ impl App {
         self.ui_pending.extend(out);
         self.grab_before_console = false;
         self.sync_menu_mouse();
+    }
+
+    fn playing_demo(&self) -> bool {
+        matches!(&self.mode, Mode::Online { net, .. } if net.is_demo())
+    }
+
+    /// A key under 128 or MOUSE1 in a demo with no menu, console or chat
+    /// field up is Esc, and clears `nextdemo` (CoDMP.exe 0x40dc30).
+    fn demo_key(&mut self) {
+        self.shell.execute("set nextdemo \"\"");
+        self.escape();
     }
 
     /// Esc with no menu up: the in-game menus online, a mouse release
@@ -3353,6 +3404,14 @@ impl ApplicationHandler for App {
                 if pressed && self.chat_key(code, event.text.as_deref()) {
                     return;
                 }
+                if pressed
+                    && self.playing_demo()
+                    && console::keys::key_name(code)
+                        .is_some_and(|k| console::keys::number(k) < 0x80)
+                {
+                    self.demo_key();
+                    return;
+                }
                 if pressed && !event.repeat && self.eat_stray_key() {
                     return;
                 }
@@ -3474,6 +3533,10 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if self.console_active() {
+                    return;
+                }
+                if button == MouseButton::Left && pressed && self.playing_demo() {
+                    self.demo_key();
                     return;
                 }
                 // the click that captures the mouse must not also fire
@@ -3682,6 +3745,21 @@ impl ApplicationHandler for App {
                         join,
                     } => {
                         let mut vm = None;
+                        // `timedemo` counts the frames drawn once the first
+                        // snapshot is in; `cl_freezeDemo` holds the time.
+                        let demo_clock = play::clock::DemoClock {
+                            freeze: self.shell.cvar_f32("cl_freezeDemo") != 0.0,
+                            timedemo_frames: match &*phase {
+                                Phase::Live(live)
+                                    if net.is_demo()
+                                        && live.clock.started()
+                                        && self.shell.cvar_f32("timedemo") != 0.0 =>
+                                {
+                                    Some(self.timedemo.step(local_ms as i32))
+                                }
+                                _ => None,
+                            },
+                        };
                         // A demo is read up to the clock (`CL_SetCGameTime`,
                         // CoDMP.exe 0x404d60), nothing while a map loads.
                         let events = if net.is_demo() {
@@ -3691,6 +3769,7 @@ impl ApplicationHandler for App {
                                         .time_at(
                                             local_ms as i32,
                                             self.shell.cvar_f32("cl_timeNudge") as i32,
+                                            demo_clock,
                                         )
                                         .unwrap_or(i32::MIN),
                                 ),
@@ -3953,9 +4032,17 @@ impl ApplicationHandler for App {
                             // (docs/research/cod11-front-end.md, section 16).
                             // A server with no `fs_game` sends no key, which
                             // leaves the player's own mod in place.
-                            let game = net::download::fs_game(net.configstring(1), &self.mod_dir)
-                                .or_else(|| self.user_fs_game.clone());
-                            let pure = net::download::pure_paks(net.configstring(1));
+                            // A demo's systeminfo sets neither
+                            // (CoDMP.exe 0x415eb0).
+                            let (game, pure) = if net.is_demo() {
+                                (self.fs_game.clone(), self.fs_pure.clone())
+                            } else {
+                                (
+                                    net::download::fs_game(net.configstring(1), &self.mod_dir)
+                                        .or_else(|| self.user_fs_game.clone()),
+                                    net::download::pure_paks(net.configstring(1)),
+                                )
+                            };
                             if game != self.fs_game || pure != self.fs_pure {
                                 log::info!(
                                     "fs_game {}{}: restarting the search path",
@@ -4004,8 +4091,12 @@ impl ApplicationHandler for App {
                                 (&mut *phase, net.snapshots().newest())
                         {
                             let nudge = self.shell.cvar_f32("cl_timeNudge") as i32;
-                            live.clock
-                                .update_demo(local_ms as i32, s.server_time, nudge);
+                            live.clock.update_demo(
+                                local_ms as i32,
+                                s.server_time,
+                                nudge,
+                                demo_clock,
+                            );
                         }
                         if matches!(phase, Phase::Live(_))
                             && !gamestate_ready
@@ -6066,7 +6157,7 @@ impl ApplicationHandler for App {
                 // A drop or a failed load ends the session, not the program:
                 // retail falls back to its console and menus.
                 if demo_over && fatal.is_none() {
-                    self.disconnect(None);
+                    self.demo_completed(event_loop, local_ms as i32);
                     return;
                 }
                 if let Some(err) = fatal {
@@ -6075,6 +6166,21 @@ impl ApplicationHandler for App {
                         w.request_redraw();
                     }
                     return;
+                }
+                // Over the game, under the menus (CoDMP.exe 0x416b10, drawn
+                // in `CA_ACTIVE` only).
+                if let Mode::Online {
+                    net,
+                    phase: Phase::Live(_),
+                    ..
+                } = &self.mode
+                    && let Some((name, bytes)) = net.recording_status()
+                {
+                    let v1 = net.protocol().version == net::protocol::PROTOCOL_V1.version;
+                    let show_name = v1 || self.shell.cvar_f32("cg_showdemoname") as i32 == 1;
+                    let text = console::recording_text(name, bytes, show_name);
+                    let (w, h) = r.screen_size();
+                    hud_quads.extend(self.console.recording_line(&text, v1, w, h));
                 }
                 if self.ui.active() {
                     if let Mode::Online { net, .. } = &self.mode {
@@ -6204,6 +6310,26 @@ fn parse_probe_say(s: &str) -> Result<(f32, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A demo whose map no pak holds drops with retail's text, not a wait
+    /// on a download.
+    #[test]
+    fn a_demo_without_its_map_says_couldnt_load() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let l = vcod_common::localize::Localized::load(&fs);
+        assert_eq!(
+            l.message(&couldnt_load("mp_nowhere")),
+            "Couldn't load maps/mp/mp_nowhere.bsp"
+        );
+        let mut loader =
+            loading::MapLoader::without_downloads("mp_nowhere".into(), couldnt_load("mp_nowhere"));
+        assert_eq!(
+            loader.step(&[], None, false, Instant::now()),
+            loading::Action::Failed(couldnt_load("mp_nowhere"))
+        );
+    }
 
     fn make_pk3(dir: &std::path::Path, file: &str, entries: &[(&str, &[u8])]) {
         use std::io::Write;
