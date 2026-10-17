@@ -20,7 +20,8 @@
 //!
 //! `MOVES_REPORT=1` prints every miss, `MOVES_TRACE=<commandTime>` the
 //! prediction cmd by cmd up to that snapshot, `MOVES_EXACT=1` how many
-//! snapshots' origins match retail's to the bit.
+//! snapshots' origins match retail's to the bit, and `MOVES_INEXACT=1`
+//! each one that does not.
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
