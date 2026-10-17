@@ -235,6 +235,10 @@ pub struct ClientSim {
     /// record's `movetype` condition, which the end frame's angle updater
     /// reads (combat doc 16.4).
     movetype: vcod_common::animscript::Movetype,
+    /// The `movetype` condition as the last pmove's `PM_Footsteps` wrote it,
+    /// cmd by cmd: what a weapon event raised in the next pmove selects by
+    /// on 1.1 (player-model-anim-system.md, "The weapon event's movetype").
+    pub footsteps_movetype: vcod_common::animscript::Movetype,
     /// The turret placement's leaf blend for the gun this client mans,
     /// which its legs pose by while mounted.
     pub gunner_leaves: Option<Vec<(usize, f32)>>,
@@ -490,6 +494,10 @@ fn weapon_anim_event(event: i32) -> Option<&'static str> {
     })
 }
 
+/// A weapon event one pmove raised: the event, its cmd's `serverTime` and
+/// the `movetype` condition it selects by ([`ClientSim::note_footsteps`]).
+pub type AnimEvent = (PmEvent, i32, vcod_common::animscript::Movetype);
+
 /// Horizontal speed below which the animscript sees an idle player, whatever
 /// the input. A player pressed into geometry keeps a few units a second and
 /// retail's capture animates it standing; the value sits between that
@@ -530,6 +538,7 @@ impl ClientSim {
             was_airborne: false,
             strafing: None,
             movetype: Default::default(),
+            footsteps_movetype: Default::default(),
             gunner_leaves: None,
             jumped: false,
             jump_time: 0,
@@ -1303,68 +1312,29 @@ impl ClientSim {
         Vec::new()
     }
 
-    /// Picks this frame's animation from the state the moves just produced.
-    /// Called once per frame after the moves.
+    /// The movetype `PM_Footsteps` (1.1 0x322c8, 1.5 0x24ae8, UO 0x297e4)
+    /// selects by off the state the moves left and the cmd behind them.
     ///
     /// Retail's shape, read out of the selection function at `game.mp.i386.so`
     /// 0x322c8: below 10 units/s of horizontal speed the player is idle
     /// whatever it asked for, above it the movetype is the stance crossed with
-    /// the backpedal latch, and off the ground nothing is selected at all. The
-    /// usercmd reaches the selection only through two latches, `pm_flags` 0x40
-    /// in pmove and the `strafing` condition here; the selection itself never
-    /// reads it (docs/research/player-model-anim-system.md, "How retail picks
-    /// the movetype").
-    ///
-    /// A spectator animates nothing; it is sent to nobody and its own
-    /// playerstate carries zeros in the capture.
-    /// `hold_ms` is the clock the anim timers run on, the newest cmd's
-    /// `serverTime`, and each event carries the `serverTime` of the cmd
-    /// that raised it: retail sets and runs down `torsoTimer` and
-    /// `legsTimer` inside each cmd's pmove (`BG_PlayAnim`, 1.1d 0x3c338).
-    pub fn update_anims(
-        &mut self,
-        inputs: &AnimInputs,
-        cmd: &UserCmd,
-        (now_ms, hold_ms): (i32, i32),
-        events: &[(PmEvent, i32)],
-        rng: &mut u64,
-    ) {
-        use vcod_common::animscript::{Conditions, Movetype, Side};
-        // A dead body keeps the death anim `take_damage` chose: retail's
-        // selection returns on `pm_type > 5`, and only the corpse clone reads
-        // the channels after that.
-        if self.pm_type != PmType::Normal || self.dead {
-            return;
-        }
-        // The linked arm never calls the selection (0x322c8), so a linked
-        // player's legs, strafe and ground edges hold; its weapon events
-        // still play (object-model doc, 23.2). 1.5 and UO select the
-        // stance's idle for one, airborne or not (`PM_Footsteps` 1.5
-        // 0x24ae8, UO 0x297e4: `pm_type == 1` skips the airborne return and
-        // takes the idle arm), which is how a rider leaves a seat standing
-        // (coduo-vehicles.md 11.2).
-        let linked = self.ps.linked;
-        let linked_idle = linked && self.ps.rules.v15();
-        // Retail's condition 8 (@0x32504): any forward component clears the
-        // strafe, diagonals included; a cmd that is sideways only sets the
-        // side; a cmd asking for neither leaves the condition as it was.
-        if linked {
-            // held
-        } else if cmd.forward != 0 {
-            self.strafing = None;
-        } else if cmd.right != 0 {
-            self.strafing = Some(if cmd.right < 0 {
-                Side::Left
-            } else {
-                Side::Right
-            });
-        }
+    /// the backpedal latch and the walk bit (docs/research/player-model-anim-system.md,
+    /// "How retail picks the movetype").
+    fn footsteps_movetype_of(&self, cmd: &UserCmd) -> vcod_common::animscript::Movetype {
+        use vcod_common::animscript::Movetype;
+        let linked_idle = self.ps.linked && self.ps.rules.v15();
         // Retail's compare is `xyspeed < 10.0`, so the constant itself is
         // moving.
         let xyspeed = self.ps.velocity.truncate().length();
         let moving = xyspeed >= ANIM_IDLE_SPEED;
         let stopping = cmd.forward == 0 && cmd.right == 0 && xyspeed <= ANIM_STOP_SPEED;
         let back = self.ps.backwards_run;
+        // `pm_flags` 0x80, the ADS walk, read once at 0x32499 (1.5 adds a
+        // lean, 0x24e6f; UO does not, 0x29ba4): the arms below pass the
+        // `walk` family for it (player-model-anim-system.md, "Walk against
+        // run").
+        let walk =
+            self.ps.walking || self.ps.rules == pmove::MoveRules::V1_5 && self.ps.lean != 0.0;
         // The stance crossed with the backpedal latch, every frame. CoD 1 has
         // no walk key, so retail's walk bit is never set and the `walk*`
         // blocks are unreachable; the prone arm never reads that bit at all
@@ -1425,18 +1395,107 @@ impl ClientSim {
             _ if stopping && idle != Movetype::Idle => idle,
             (pmove::Stance::Prone, true, true) => Movetype::WalkProneBk,
             (pmove::Stance::Prone, true, false) => Movetype::WalkProne,
+            (pmove::Stance::Crouch, true, true) if walk => Movetype::WalkCrBk,
+            (pmove::Stance::Crouch, true, false) if walk => Movetype::WalkCr,
             (pmove::Stance::Crouch, true, true) => Movetype::RunCrBk,
             (pmove::Stance::Crouch, true, false) => Movetype::RunCr,
+            (pmove::Stance::Stand, true, true) if walk => Movetype::WalkBk,
+            (pmove::Stance::Stand, true, false) if walk => Movetype::Walk,
             (pmove::Stance::Stand, true, true) => Movetype::RunBk,
             (pmove::Stance::Stand, true, false) => Movetype::Run,
         };
         // A rider's legs come off its seat (`BG_AnimUpdatePlayerStateConditions`
         // game.mp.uo 0x1c973): it stands idle in it.
-        let movetype = if self.seat.is_some() {
+        if self.seat.is_some() {
             Movetype::Idle
         } else {
             movetype
-        };
+        }
+    }
+
+    /// Whether the moves just run reach `PM_Footsteps`' selection, which
+    /// writes the `movetype` condition: off the ground it returns first
+    /// unless climbing, mounted or seated, and 1.1's linked arm never calls
+    /// it (`update_anims`).
+    fn footsteps_select(&self) -> bool {
+        let linked = self.ps.linked;
+        linked && self.ps.rules.v15()
+            || !linked
+                && (self.ps.on_ground
+                    || self.ps.on_ladder
+                    || self.mounted_on.is_some()
+                    || self.seat.is_some())
+    }
+
+    /// After one pmove of `cmd`: the `movetype` condition its `PM_Footsteps`
+    /// left. Returns the movetype a weapon event the same pmove raised
+    /// selects by: 1.1's `PmoveSingle` calls `PM_Weapon` (0x34331) ahead of
+    /// `PM_Footsteps` (0x34336), so its events read the last pmove's; 1.5's
+    /// main arm calls the footsteps first (0x28889, then `PM_Weapon` at
+    /// 0x2888e), and so does UO's (0x2e04e, 0x2e053).
+    pub fn note_footsteps(&mut self, cmd: &UserCmd) -> vcod_common::animscript::Movetype {
+        let before = self.footsteps_movetype;
+        if self.pm_type == PmType::Normal && !self.dead && self.footsteps_select() {
+            self.footsteps_movetype = self.footsteps_movetype_of(cmd);
+        }
+        match self.ps.rules {
+            pmove::MoveRules::V1_1 => before,
+            _ => self.footsteps_movetype,
+        }
+    }
+
+    /// Picks this frame's animation from the state the moves just produced.
+    /// Called once per frame after the moves. Off the ground nothing is
+    /// selected at all. The usercmd reaches the selection only through two
+    /// latches, `pm_flags` 0x40 in pmove and the `strafing` condition here
+    /// ([`Self::footsteps_movetype_of`]). Each weapon event carries the
+    /// movetype its pmove selected it by ([`Self::note_footsteps`]).
+    ///
+    /// A spectator animates nothing; it is sent to nobody and its own
+    /// playerstate carries zeros in the capture.
+    /// `hold_ms` is the clock the anim timers run on, the newest cmd's
+    /// `serverTime`, and each event carries the `serverTime` of the cmd
+    /// that raised it: retail sets and runs down `torsoTimer` and
+    /// `legsTimer` inside each cmd's pmove (`BG_PlayAnim`, 1.1d 0x3c338).
+    pub fn update_anims(
+        &mut self,
+        inputs: &AnimInputs,
+        cmd: &UserCmd,
+        (now_ms, hold_ms): (i32, i32),
+        events: &[AnimEvent],
+        rng: &mut u64,
+    ) {
+        use vcod_common::animscript::{Conditions, Side};
+        // A dead body keeps the death anim `take_damage` chose: retail's
+        // selection returns on `pm_type > 5`, and only the corpse clone reads
+        // the channels after that.
+        if self.pm_type != PmType::Normal || self.dead {
+            return;
+        }
+        // The linked arm never calls the selection (0x322c8), so a linked
+        // player's legs, strafe and ground edges hold; its weapon events
+        // still play (object-model doc, 23.2). 1.5 and UO select the
+        // stance's idle for one, airborne or not (`PM_Footsteps` 1.5
+        // 0x24ae8, UO 0x297e4: `pm_type == 1` skips the airborne return and
+        // takes the idle arm), which is how a rider leaves a seat standing
+        // (coduo-vehicles.md 11.2).
+        let linked = self.ps.linked;
+        let linked_idle = linked && self.ps.rules.v15();
+        // Retail's condition 8 (@0x32504): any forward component clears the
+        // strafe, diagonals included; a cmd that is sideways only sets the
+        // side; a cmd asking for neither leaves the condition as it was.
+        if linked {
+            // held
+        } else if cmd.forward != 0 {
+            self.strafing = None;
+        } else if cmd.right != 0 {
+            self.strafing = Some(if cmd.right < 0 {
+                Side::Left
+            } else {
+                Side::Right
+            });
+        }
+        let movetype = self.footsteps_movetype_of(cmd);
         self.movetype = movetype;
         let (seat_mounted, vehicle, vehicle_motion) = seat_conditions(self.seat);
         let conditions = Conditions {
@@ -1487,7 +1546,11 @@ impl ClientSim {
                 Self::play_event(&mut self.anim, &sel, (now_ms, hold_ms), resolve, length);
             }
             (false, false) if jumped && !self.ps.on_ladder => {
-                let event = if back { "jumpbk" } else { "jump" };
+                let event = if self.ps.backwards_run {
+                    "jumpbk"
+                } else {
+                    "jump"
+                };
                 let sel = script.select_event(event, &conditions);
                 Self::play_event(&mut self.anim, &sel, (now_ms, hold_ms), resolve, length);
             }
@@ -1497,9 +1560,13 @@ impl ClientSim {
         // entering a state, and the `EVENTS` block's own clauses pick the
         // torso index by stance, weapon and class
         // (docs/research/player-model-anim-system.md, "The weapon channel").
-        for &(e, at) in events {
+        for &(e, at, movetype) in events {
             let Some(name) = weapon_anim_event(e.event) else {
                 continue;
+            };
+            let conditions = Conditions {
+                movetype,
+                ..conditions.clone()
             };
             // `meleeattack` is the one weapon clause that lists several anims
             // per channel, and retail draws among them (animscript.rs).
