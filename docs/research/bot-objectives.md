@@ -600,6 +600,11 @@ first everywhere.
   `BaseAssault_bomb_countdown` (3586-3664) blows after `scr_bas_bombtime`
   with a 1000-damage `radiusDamage` on every player within 500 units,
   and kills the base.
+- VERIFIED (`bas.gsc` 330-345): `scr_bas_planttime` 15,
+  `scr_bas_defusetime` 10 and `scr_bas_bombtime` 60 by default.
+  INFERRED (`BaseAssault_bomb_countdown`, 3591-3598, loop body): the
+  base's `countdowntime` starts at the bomb time and drops by one after
+  each `wait 1`, so it reads the whole seconds left on a charge.
 - VERIFIED (mp_foy's entity lump, and the same on mp_italy, mp_kursk,
   mp_ponyri and mp_rhinevalley by the charges' heights): each base's
   charge sits in a room under the bunker, 176 units under the base's
@@ -634,8 +639,12 @@ first everywhere.
   breached one with no charge on it is planted: walk within 112 of the
   objective model, rest the view on the trigger's middle, hold use
   15.5 s (S&D's defuse, section 3, with its reach and hold as
-  parameters). A charged one is guarded from outside the blast, 520 to
-  670 units off. A defender guards its own bases by rank and defuses a
+  parameters). A charged one is guarded from within 250 units of the
+  charge, in its room or the bunker over it, the way any defuser has to
+  come, while `countdowntime` reads more than 8 s; then from outside the
+  blast, 520 to 670 units off, the bot leaving the room by the graph's
+  flee (`Goal::Away`). Guarded from outside the blast all along, every
+  plant was defused unseen once each side had a defender. A defender guards its own bases by rank and defuses a
   charge on one (10.5 s), and so does an attacker within 2000 units of
   it. A standing base is breached with rockets (below); bots ride no
   tank.
@@ -657,7 +666,10 @@ first everywhere.
   the live check (`Server::breach_shot`, from its own muzzle, 400 to 1500
   off) finds a shot, it stops, draws the launcher, rests the view on the
   aim, fires and reloads, until the launcher is dry; then it fetches
-  another. A visible enemy comes first with shoot on.
+  another. A visible enemy comes first with shoot on. A rocket goes at
+  no enemy within 320 units (the launchers' 256-unit splash, with room
+  for a miss), and the pistol comes out over the launcher against one;
+  a bot killed itself with its own `bazooka_mp` splash before.
 - The way into a breached base opens only when its walls go, after the
   graph was built. The server builds the graph without the `rubble`
   brushes (`World::rubble`; out of the way except over a dead base) and
@@ -715,3 +727,11 @@ dying on the way. Before the reload fix (`cod11-combat.md`, the reload begin in 
 fired one rocket and stood for good on a launcher that never reloaded;
 before the shell direct hit (missiles2) a rocket struck the base's
 model and took it nothing.
+
+VERIFIED (measured, ours, 2026-10-17, same setup, after the planter
+held its charge's room and the close-rocket rule went in): two bots,
+shoot off, round over by its bases at tick 14739 (five breached, five
+gone off, none defused); four bots, shoot on, gate
+`four_shooting_uo_bots_end_a_bas_round`: first breach at tick 2377,
+four breached, three planted and gone off, none defused, round over at
+tick 14359 (12 min), nine kills and none by a bot's own rocket.

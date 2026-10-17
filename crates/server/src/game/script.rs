@@ -3316,7 +3316,16 @@ impl ScriptRuntime {
                     Some(UoObjectives::Hq { radios, next })
                 }
                 "bas" => {
-                    let [list, team, health, alive, status, objective, model] = [
+                    let [
+                        list,
+                        team,
+                        health,
+                        alive,
+                        status,
+                        objective,
+                        model,
+                        countdown,
+                    ] = [
                         "bases",
                         "script_team",
                         "health",
@@ -3324,6 +3333,7 @@ impl ScriptRuntime {
                         "status",
                         "objective",
                         "objectivemodel",
+                        "countdowntime",
                     ]
                     .map(|n| f(cx, n));
                     let Value::Array(list) = cx.get_field(level, list) else {
@@ -3355,11 +3365,13 @@ impl ScriptRuntime {
                                 _ => None,
                             });
                         let t = host.get_field(cx, b, team);
+                        let planted = status == "bomb_planted" || status == "bomb_defusing";
                         bases.push(BasBase {
                             team: team_of(cx, t),
                             at,
                             breached: number(host.get_field(cx, b, health)) <= 0.0,
-                            planted: status == "bomb_planted" || status == "bomb_defusing",
+                            planted,
+                            blows_in: planted.then(|| number(host.get_field(cx, b, countdown))),
                             charge: trigger
                                 .map(|t| entity_abs_bounds(host, cx, t))
                                 .and_then(live)
@@ -3426,6 +3438,9 @@ pub struct BasBase {
     pub breached: bool,
     /// A charge ticks on it.
     pub planted: bool,
+    /// While planted, `countdowntime`: whole seconds before the charge
+    /// blows (`BaseAssault_bomb_countdown` counts it down once a second).
+    pub blows_in: Option<f32>,
     /// The plant trigger (a `trigger_lookat` or `trigger_use`) and the
     /// objective model the plant and defuse measure 150 units from.
     pub charge: Option<(Bounds, [f32; 3])>,
