@@ -3934,7 +3934,10 @@ impl ApplicationHandler for App {
                         let mut gamestate_ready = false;
                         for ev in &events {
                             if let Some(hud) = &mut self.hud {
-                                hud.on_net_event(ev, time, &self.localized);
+                                let p = net.protocol();
+                                let bound =
+                                    |cmd: &str| bound_key(&self.shell, &self.localized, p, cmd);
+                                hud.on_net_event(ev, time, &self.localized, &bound);
                             }
                             match ev {
                                 // `player_talk` with every chat line, as
@@ -5384,7 +5387,9 @@ impl ApplicationHandler for App {
                                         turret_weapon,
                                         vehicle_turret_yaw,
                                         cvar: &client_cvar,
-                                        bound_key: &|cmd| self.shell.key_text(cmd, &self.localized),
+                                        bound_key: &|cmd| {
+                                            bound_key(&self.shell, &self.localized, p, cmd)
+                                        },
                                         draw: hud::DrawToggles {
                                             crosshair: self.shell.cvar_f32("cg_drawCrosshair")
                                                 as i32
@@ -6425,6 +6430,21 @@ impl ApplicationHandler for App {
             }
         }
     }
+}
+
+/// The cgame's key text for `cmd` (0x30046940), for a command in its bind
+/// table only (`hud::bind_commands`).
+fn bound_key(
+    shell: &console::shell::Shell,
+    loc: &vcod_common::localize::Localized,
+    p: &net::protocol::Protocol,
+    cmd: &str,
+) -> Option<String> {
+    hud::bind_commands(p)
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(cmd))
+        .then(|| shell.key_text(cmd, loc))
+        .flatten()
 }
 
 /// `cg_fov` as cgame reads it, clamped to 80..160 (0x30032e20).
