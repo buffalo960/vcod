@@ -382,6 +382,21 @@ mod tests {
         assert_eq!(a.notes, vec![("fire".to_string(), 2)]);
     }
 
+    /// Bitset A negates a track's first key, and the keys after it follow
+    /// it onto that hemisphere: the sampler sums them signed.
+    #[test]
+    fn bitset_a_negates_the_first_key_and_the_track_follows() {
+        let mut d = fixture();
+        assert_eq!(d[9], 0b00);
+        d[9] = 0b01;
+        let a = parse("flip", &d).unwrap();
+        let k = &a.tracks[0].rot_keys;
+        assert_eq!(k[0].1, -Quat::IDENTITY);
+        let q = -Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        assert!(k[1].1.abs_diff_eq(q, 1e-3), "{:?}", k[1].1);
+        assert!(a.tracks[1].rot_keys[0].1.w > 0.0);
+    }
+
     #[test]
     fn rejects_frame_lists_that_are_not_ascending() {
         // bone 0's rot index list [0, 2] sits at bytes 23..25
