@@ -39,6 +39,8 @@ pub struct Loader {
     /// reference cycle terminates and a file shared by two callers
     /// compiles once.
     loaded: HashSet<String>,
+    /// Every `#using_animtree` name the loaded files declare, folded.
+    animtrees: BTreeSet<String>,
 }
 
 impl Loader {
@@ -46,7 +48,14 @@ impl Loader {
         Loader {
             source,
             loaded: HashSet::new(),
+            animtrees: BTreeSet::new(),
         }
+    }
+
+    /// The animtrees the loaded files name in `#using_animtree`, lowercase
+    /// and sorted: the engine reads each one's `animtrees/<name>.atr`.
+    pub fn animtrees(&self) -> impl Iterator<Item = &str> {
+        self.animtrees.iter().map(String::as_str)
     }
 
     pub fn loaded_count(&self) -> usize {
@@ -113,6 +122,8 @@ impl Loader {
             msg: e.msg,
         })?;
 
+        self.animtrees
+            .extend(ast.animtrees.iter().map(|t| t.to_ascii_lowercase()));
         let fns =
             crate::compile::compile_file(&ast, path, vm.interner_mut()).map_err(|e| LoadError {
                 path: path.to_string(),
@@ -234,6 +245,17 @@ mod tests {
         let f = vm.func_ref("maps/mp/mp_pavlov", "main");
         vm.call_now(&mut host, f, None, vec![]).unwrap();
         assert!(host.calls.iter().any(|(n, _)| n == "loaded"));
+    }
+
+    #[test]
+    fn the_loader_lists_every_file_s_animtree() {
+        let src = source(&[
+            ("a", r#"#using_animtree("Flak88"); main() { b::f(); }"#),
+            ("b", r#"#using_animtree("multiplayer"); f() { }"#),
+        ]);
+        let mut l = Loader::new(Box::new(src));
+        l.load(&mut Vm::new(), "a").unwrap();
+        assert_eq!(l.animtrees().collect::<Vec<_>>(), ["flak88", "multiplayer"]);
     }
 
     /// A bare `::name` pointer with no call around it (`x = file::fn;`)

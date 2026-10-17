@@ -653,7 +653,7 @@ mod tests {
     /// as the map load does; they build the nodes the players land in.
     #[test]
     fn the_tree_replays_probe_blastorder_on_mp_carentan() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let bytes = fs.read("maps/mp/mp_carentan.bsp").unwrap();

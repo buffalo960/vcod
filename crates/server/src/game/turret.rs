@@ -1038,7 +1038,7 @@ mod tests {
     /// retail sent. `(line, legsAnim, angles2, origin)` per snapshot.
     #[test]
     fn every_captured_gunner_origin_replays() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let anims = vcod_common::animtree::PlayerAnims::load(&fs).unwrap();

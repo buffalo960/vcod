@@ -2827,6 +2827,9 @@ thread_local! {
     static SPARE_CORE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The movement rules every walk's body moves by ([`with_rules`]).
     static RULES: std::cell::Cell<MoveRules> = const { std::cell::Cell::new(MoveRules::V1_1) };
+    /// Set inside [`walk_to`]: a forward run that stalls bobbing on a steep
+    /// face jumps on its next tick on the ground ([`walk_sliding`]).
+    static BOB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` with every walk's body moving by `rules`: a graph built for
@@ -3344,7 +3347,9 @@ fn walk(
     walk_to(world, ladders, from, target, None)
 }
 
-/// [`walk`], arriving only on `floor` when given.
+/// [`walk`], arriving only on `floor` when given. Only these runs jump
+/// out of a bob ([`BOB`]): the flood proves such a way as a jump edge,
+/// where a bot's walk on from its body would read one as a way it walks.
 fn walk_to(
     world: &CollisionWorld,
     ladders: &[(Vec3, Vec3)],
@@ -3356,7 +3361,15 @@ fn walk_to(
         if gait == Gait::Creep && !ladder_near(ladders, from) {
             return None;
         }
-        match walk_as(world, from, target, floor, gait) {
+        let walked = if gait == Gait::Forward {
+            BOB.set(true);
+            let w = walk_as(world, from, target, floor, gait);
+            BOB.set(false);
+            w
+        } else {
+            walk_as(world, from, target, floor, gait)
+        };
+        match walked {
             Walked::Arrived(p, jumped) => return Some((p, jumped)),
             Walked::Blocked => return None,
             Walked::Fell => {}
@@ -3549,6 +3562,7 @@ fn walk_sliding(
     let mut jumped = false;
     let mut jump = false;
     let mut fell_before_jump = false;
+    let mut bobbing = false;
     // A body in the air when the budget runs out is let land: a drop down
     // a steep companionway is slower than the run it replaced.
     while tick < budget || (airborne && tick < budget + FALL_TICKS) {
@@ -3636,6 +3650,19 @@ fn walk_sliding(
             budget = budget.max(tick + JUMP_TICKS + rest);
             continue;
         }
+        // Pinned under a face too steep to stand on, the step lifts the
+        // body onto it and it slides back down, so it is on the ground one
+        // tick in a few: it jumps on the next one (mp_berlin's roof gutter,
+        // bot-navigation.md "Jumps").
+        if bobbing && !jumped && ps.on_ground && jump_clear(world, &ps, target) {
+            jumped = true;
+            jump = true;
+            fell_before_jump = fell;
+            stalled = 0;
+            let rest = run_ticks(target.distance(ps.origin.truncate()));
+            budget = budget.max(tick + JUMP_TICKS + rest);
+            continue;
+        }
         // A climb is slower than a run and straight up, so the budget
         // stretches while it goes on, with the run still left past the top,
         // and progress is the height gained.
@@ -3667,6 +3694,11 @@ fn walk_sliding(
                     stalled = 0;
                     let rest = run_ticks(target.distance(ps.origin.truncate()));
                     budget = budget.max(tick + JUMP_TICKS + rest);
+                    continue;
+                }
+                if gait == Gait::Forward && !jumped && !bobbing && ps.sliding() && BOB.get() {
+                    bobbing = true;
+                    stalled = 0;
                     continue;
                 }
                 break;
@@ -3936,7 +3968,7 @@ fn jump_clear(world: &CollisionWorld, ps: &PlayerState, target: glam::Vec2) -> b
     let (mins, maxs) = (ps.mins(), ps.maxs());
     let up = world.box_trace(
         ps.origin,
-        ps.origin + Vec3::Z * vcod_common::pmove::JUMP_HEIGHT,
+        ps.origin + Vec3::Z * (vcod_common::pmove::JUMP_HEIGHT + JUMP_SLACK),
         mins,
         maxs,
     );
@@ -3950,6 +3982,11 @@ fn jump_clear(world: &CollisionWorld, ps: &PlayerState, target: glam::Vec2) -> b
     let ahead = world.box_trace(top, top + dir * 16.0, mins, maxs);
     !ahead.startsolid && ahead.fraction == 1.0
 }
+
+/// The room over [`JUMP_HEIGHT`](vcod_common::pmove::JUMP_HEIGHT) that
+/// [`jump_clear`] allows: a jump out of mp_berlin's roof gutter from z
+/// 612.26 lands on its ledge at 652.42, 40.2 up (UO rules, measured).
+const JUMP_SLACK: f32 = 2.0;
 
 /// Whether `p` lies beneath a sheet of ground. Terrain and patches are
 /// surfaces, not solids, so a run that finds a gap at a sheet's edge can
@@ -4036,9 +4073,10 @@ impl Sim {
                 server_time,
                 ..*cmd
             };
-            for (step, dt) in chop(self.time, &cmd) {
-                player_step(ps, &mut self.delta, &mut self.ring, &step, dt, &mw, weapons);
-            }
+            chop(self.time, &cmd, |step, dt| {
+                player_step(ps, &mut self.delta, &mut self.ring, step, dt, &mw, weapons);
+                ps.jump_latched
+            });
             self.time = server_time;
         }
     }
@@ -5509,7 +5547,10 @@ mod tests {
     /// edge leads: mp_ship's ledge at (3686, -354, 400), narrow over the
     /// hold at 92, is reached only by the risky back down from (3647, -353,
     /// 611), and three bots that roamed to it on seeds 2305-4607 missed it
-    /// and died. A start already past such an edge roams as before.
+    /// and died. A start already past such an edge roams as before. Since
+    /// the air accelerate's floor (cod11-mantle.md, "The walk's accel
+    /// floor") the drops onto (3647, -353, 611) read risky too; its deck
+    /// neighbour at (3648, -317, 618) is in the safe part.
     #[test]
     fn a_roam_never_ends_where_only_a_risky_edge_leads() {
         let nodes = (0..3)
@@ -5534,7 +5575,7 @@ mod tests {
         let g = graph_for("mp_ship", &world);
         let node = |p: [f32; 3]| g.nearest(p).unwrap();
         assert!(!g.safe[node([3647.6, -352.0, 400.125]) as usize]);
-        assert!(g.safe[node([3647.0, -352.9, 611.1]) as usize]);
+        assert!(g.safe[node([3647.9, -316.9, 618.5]) as usize]);
     }
 
     fn map_world(map: &str) -> Option<crate::world::World> {
@@ -5918,7 +5959,7 @@ mod tests {
         };
         let low = Vec3::new(3369.1, 495.1, 154.7);
         assert!(
-            near(g.nearest(low.into()), [3426.9, 545.6, 127.7]),
+            near(g.nearest(low.into()), [3423.4, 546.8, 128.7]),
             "behind the climber"
         );
         assert!(
@@ -6332,6 +6373,35 @@ mod tests {
         let mut g = NavGraph::from_parts(vec![foot, head, top], vec![vec![], vec![0], vec![]]);
         g.link_leaps(w);
         assert!(g.leaps.contains(&(1, 2)), "{:?}", g.leaps);
+    }
+
+    /// mp_berlin's roof gutter under UO's rules: the slope node a drop off
+    /// the roof spawns lands on, at (-674, 4131, 616). The run south pins
+    /// under the steep face, the step lifts the body onto it and it slides
+    /// back, off the ground most ticks; only a jump from a tick on the
+    /// ground takes it onto the ledge 40 up (bot-navigation.md "Jumps").
+    #[test]
+    fn a_run_bobbing_under_a_steep_face_jumps_out_of_the_gutter() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let entry = fs.resolve_map("mp_berlin").unwrap();
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let w = &world.collision;
+        let slope = Vec3::new(-673.7223, 4131.117, 616.0533);
+        let ledge = glam::Vec2::new(-720.0, 4080.0);
+        with_rules(MoveRules::Uo, || {
+            assert!(!matches!(
+                walk_as(w, slope, ledge, None, Gait::Forward),
+                Walked::Arrived(..)
+            ));
+            let out = walk_to(w, &[], slope, ledge, None);
+            assert!(
+                out.is_some_and(|(p, jumped)| jumped && p.z > 645.0),
+                "{out:?}"
+            );
+        });
     }
 
     /// mp_ship's hull beam: a body stands on its side's edge 16 under the

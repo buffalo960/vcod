@@ -205,9 +205,16 @@ change"), and vcod's `move_stance` is that test.
 VERIFIED: the latch is set by the jump (0x2ec36) and cleared in
 `PmoveSingle` when `cmd.upmove` is 9 or less (0x3412d-0x34135), and `Pmove`
 writes 20 into `cmd.upmove` after each `PmoveSingle` while 0x8 is set
-(0x344f2-0x344f8). INFERRED: a cmd chopped into several steps keeps the
-latch through all of them, and its later steps' air wish reads `upmove` 20
-rather than 127. vcod ports the latch and not the 20.
+(0x344f2-0x344f8; 1.5b 0x28ad5-0x28ae7 and UO 0x2e29a-0x2e2ac test the
+same bit and store the same byte). The write lands in `pm->cmd`, `Pmove`'s
+own copy, so it lasts to the end of that cmd's chop and never reaches the
+next cmd. INFERRED: a cmd chopped into several steps keeps the latch
+through all of them (20 is above the clear's 9), and its later steps' air
+and ladder wish (`PM_CmdScale`, "The wish speed") reads `upmove` 20 rather
+than 127: a forward-held jump's air wish goes from 134 to 188. vcod ports
+both in `pmove::cmd::chop`, whose step callback hands back the latch;
+`a_latched_jump_reads_upmove_20_on_the_later_steps` pins it. No capture
+covers it: a cmd is chopped only past 66 ms.
 
 VERIFIED: 0x800 is set in `ClientSpawn` (0x429d6) and cleared in
 `PmoveSingle` (0x34000) behind tests of `pm_type` and the attack bit
@@ -326,7 +333,7 @@ zeroes on every hit. `step_slide_move` takes the entry gate, the revert and
 the speed cap above. The server sends `jumpTime` and `fJumpPeak`, and the
 predictor reads both back. Not modelled: the 0x800 and 0x2000 gates (both
 unreachable; 0x2000's other reader, `PM_Friction`'s doubled control, is in
-`cod11-player-clip.md` 8.7) and the chop's `upmove` 20. `crates/server/tests/bump_ab.rs` holds every row of
+`cod11-player-clip.md` 8.7). `crates/server/tests/bump_ab.rs` holds every row of
 the walker's three jumps to 0.000, and `playerstate_motion_ab.rs` the
 takeoff's fields and the `land` anim, which needs the probe's 16 ms cmds:
 at one cmd a 50 ms frame the landing frame starts at -210, short of the
@@ -1867,9 +1874,22 @@ ground entity, and the result is capped at what the wish still lacks, both
 before and after the division. Q3's `PM_Accelerate` has no floor: a wish
 under 100, the 89.7 of a sighted walk or the 28.5 of a crawl, gains at 100's
 rate and stops at its own speed. 0x70908 has no other reference in the pmove
-range 0x2e400-0x35e00 (`objdump` byte scan), so the air and water
-accelerations do not take it. The ladder's inline accelerate has the same
-floor through its own 100.0 at 0x70ccc ("Ladders").
+range 0x2e400-0x35e00 (`objdump` byte scan). The ladder's inline accelerate
+has the same floor through its own 100.0 at 0x70ccc ("Ladders"), and so
+does `PM_AirMove`'s through 100.0 at 0x708ec. VERIFIED, `objdump` of
+0x2f119-0x2f1cd: the wish speed is `VectorNormalize`'s length times the
+stored scale, left on the stack; nothing is added when it less the
+velocity along the wish is not above 0 (0x2f14b); 0x2f159-0x2f16e take
+the larger of 100.0 and the wish speed, 0x2f16e-0x2f174 multiply it by
+the frame time (`pm_airaccelerate`'s 1.0 folded away), and it is capped
+at the lack, divided by `ps.friction` with a ground entity (0x2f18e) and
+capped again; each component is rounded once (0x2f1b0-0x2f1c5). An earlier
+read of this paragraph had the air accelerate without the floor, off the
+missing 0x70908 reference. In the air a wish under 100 comes only off the
+walk scale: the sight drops off the ground (`PM_UpdateAimDownSightFlag`),
+so it is the walk key, or 1.5's lean (`cod15-movement.md` 7). vcod:
+`pmove::air_accelerate`
+(`pmove::tests::a_wish_under_100_in_the_air_accelerates_at_100s_rate`).
 
 VERIFIED, off `mp_carentan-dm-slope-8ms.txt`: a sighted diagonal walk from
 rest reads `vel` -8, -18, -32, -42, -56 and -63 per axis on consecutive
@@ -1997,7 +2017,7 @@ cmd stream on vcod's mover (`crates/server/tests/playerstate_slope_ab.rs`):
 the sight-held route walk of every `--save-slope` capture settles at 63 per
 axis on a diagonal, 89.7 units/s, where vcod wished 190, and the ADS
 capture's plain walk at 224 (`mp_carentan-dm-ads.txt`, `walk`: velocity
-163, 154). Neither is `g_speed`.
+-5, 224 on the 2026-10-17 recapture, 163, 154 before). Neither is `g_speed`.
 
 VERIFIED: `PM_WalkMove` (0x2f258) calls the cmd scale at 0x2e690 with a
 copy of the cmd (0x2f2bf), and `PM_AirMove` (0x2f03c) calls the one at

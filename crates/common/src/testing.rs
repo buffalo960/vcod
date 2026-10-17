@@ -43,6 +43,35 @@ pub fn real_bsp() -> Option<Vec<u8>> {
     game_fs()?.read("maps/mp/mp_pavlov.bsp")
 }
 
+/// An IBSP59 map with `"<key>" "<value>"` added to its worldspawn, as
+/// `tools/bsp_worldspawn_key.py` builds it for a retail run: the grown
+/// entity lump (29) goes at the end of the file and the directory points
+/// there.
+pub fn bsp_with_worldspawn_key(bsp: &[u8], key: &str, value: &str) -> Vec<u8> {
+    let dir = 8 + 29 * 8;
+    let word = |o: usize| u32::from_le_bytes(bsp[o..o + 4].try_into().unwrap()) as usize;
+    let (len, off) = (word(dir), word(dir + 4));
+    let ents = &bsp[off..off + len];
+    let ents = &ents[..ents.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1)];
+    let tag = b"\"classname\" \"worldspawn\"";
+    let at = ents
+        .windows(tag.len())
+        .position(|w| w == tag)
+        .expect("a worldspawn")
+        + tag.len();
+    let mut lump = ents[..at].to_vec();
+    lump.extend(format!("\n\"{key}\" \"{value}\"").bytes());
+    lump.extend(&ents[at..]);
+    lump.push(0);
+    let mut out = bsp.to_vec();
+    out.resize(out.len().next_multiple_of(4), 0);
+    let start = out.len();
+    out.extend(&lump);
+    out[dir..dir + 4].copy_from_slice(&(lump.len() as u32).to_le_bytes());
+    out[dir + 4..dir + 8].copy_from_slice(&(start as u32).to_le_bytes());
+    out
+}
+
 /// A committed capture under this crate's `tests/fixtures/`, by relative path.
 pub fn fixture(rel: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -124,11 +153,18 @@ pub struct Frame {
 /// A one-entry stored pk3 (`maps/mp/foo.bsp`), for tests that need a
 /// transfer to pass validation.
 pub fn pk3_bytes() -> Vec<u8> {
+    pk3_with(&[("maps/mp/foo.bsp", b"IBSP")])
+}
+
+/// A stored pk3 holding `entries`, in order.
+pub fn pk3_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
     use std::io::{Cursor, Write};
     let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let opts =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    w.start_file("maps/mp/foo.bsp", opts).unwrap();
-    w.write_all(b"IBSP").unwrap();
+    for (name, bytes) in entries {
+        w.start_file(*name, opts).unwrap();
+        w.write_all(bytes).unwrap();
+    }
     w.finish().unwrap().into_inner()
 }

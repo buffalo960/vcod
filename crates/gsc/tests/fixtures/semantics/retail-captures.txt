@@ -206,6 +206,7 @@ PROBE at game_persist
 PROBE game_persist_after_wait russian
 
 # probe_game_dotwrite
+PROBE_ERROR script compile error
 
 # probe_late_attach
 PROBE at late_attach
@@ -274,6 +275,7 @@ PROBE at level_dot_write
 PROBE level_dot_read 1
 
 # probe_level_bracket
+PROBE_ERROR script compile error
 
 # probe_level_size
 PROBE level_size_after_one_field 1
@@ -318,6 +320,13 @@ PROBE notify_frame resume late 6
 PROBE notify_frame resume late_wait0 6
 PROBE notify_frame past_wait0 late_wait0 6
 PROBE notify_frame done 20
+
+# probe_notify_twice
+PROBE notify_twice pumped
+PROBE notify_twice chain_first
+PROBE notify_twice twice_1 1
+PROBE notify_twice once 1
+PROBE notify_twice done
 
 # probe_persist_exit
 PROBE before_game_str kept
@@ -458,6 +467,9 @@ PROBE self_ptr_mark marked
 PROBE at self_threaded_call
 PROBE self_threaded_defined 1
 PROBE self_threaded_mark marked
+
+# probe_self_bracket
+PROBE_ERROR script compile error
 
 # probe_size
 PROBE size_array 3

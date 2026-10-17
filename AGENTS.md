@@ -111,14 +111,15 @@ check.
   and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
   rebuilds the rolling `nightly` release on master pushes that touch code
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
-- Ignored tests to run when you touch their area: `nav_census` (all stock nav
-  graphs, ~3 min: `cargo test -p vcod-server --test nav_census -- --ignored`)
-  and the ignored tests in `server/tests/bots.rs`: three mp_ship six-bot
-  runs (~1-2 min together), mp_ship's boat, mp_ship's head-on ladder pair,
-  mp_ship's hold ladder top and mp_hurtgen's crease (a graph build each,
-  ~1.5 min). With `COD_DIR` at a UO install the same two files carry UO's:
-  `nav_census`'s 19-map UO census (~20 s release, 330 s of CPU) and
-  `bots.rs`'s mp_cassino six-bot tdm run (~5 s release); with a 1.1 install
+- Ignored tests to run when you touch their area, in release: `nav_census`
+  (all stock nav graphs, ~8 s, 65 s of CPU: `cargo test --release -p
+  vcod-server --test nav_census -- --ignored`) and the ignored tests in
+  `server/tests/bots.rs` (~5 s together, 40 s of CPU): three mp_ship
+  six-bot runs, mp_ship's boat, mp_ship's head-on ladder pair, mp_ship's
+  hold ladder top and mp_hurtgen's crease (a graph build each). With
+  `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
+  19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
+  mp_cassino six-bot tdm run (the file ~12 s, 60 s of CPU); with a 1.1 install
   they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
@@ -349,7 +350,8 @@ header of the fixture it produced.
   `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
-  `probe_bas` and their `*end` endings have run there. On UO's mp_carentan the
+  `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
+  `probe_hqtime` and `probe_bastime` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -458,7 +460,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   has to write: the predictor rebuilds from the snapshot each time, and a
   field left 0 replays differently from the server. A missing
   `iFatigueSoundTime` breathed on every snapshot and played rounds twice
-  (coduo-movement.md 15).
+  (coduo-movement.md 15); `predict_ab`'s 1.5 and UO side-by-side gates
+  catch the next one.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
@@ -721,7 +724,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A `trigger_lookat` is never touched; it fires off `ClientEndFrame`'s aim
   trace. A `trigger_use` is never touched either (contents 0x200000); it
   fires off the use key's aim pick. A trigger-woken thread runs on the next
-  frame's clock.
+  frame's clock. A trigger's own `"trigger"` (touch, hurt, lookat) goes
+  through `G_RunFrame`'s queue, one per entity a round
+  (`host.trigger_fires`); what retail notifies on the spot (a touch, the
+  use key, an item take, a mover's end) goes in `host.engine_notifies`
+  (`cod11-gsc-language.md`, "Engine notifies and the trigger queue").
 
 ### Script
 

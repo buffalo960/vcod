@@ -70,6 +70,9 @@ pub enum WeaponScript {
     /// twice, 7 s apart: the grenade part of
     /// `client-probes/probe_scriptmodel`, any patch.
     Throw,
+    /// A melee tap every 1.5 s at the newest snapshot's view, any patch
+    /// (`client-probes/probe_missileedge`).
+    Melee,
 }
 
 /// One step: how long it holds, the moves, the buttons, and the view as
@@ -330,6 +333,17 @@ const THROW: &[Step] = &[
     foot("hold", 60_000, 0, [0.0, 0.0]),
 ];
 
+/// A 100 ms melee tap every 1.5 s.
+const MELEE: &[Step] = &[
+    foot("settle", 3000, 0, [0.0, 0.0]),
+    foot("swing", 100, BUTTON_MELEE, [0.0, 0.0]),
+    foot("after", 1400, 0, [0.0, 0.0]),
+    foot("swing2", 100, BUTTON_MELEE, [0.0, 0.0]),
+    foot("after2", 1400, 0, [0.0, 0.0]),
+    foot("swing3", 100, BUTTON_MELEE, [0.0, 0.0]),
+    foot("hold", 60_000, 0, [0.0, 0.0]),
+];
+
 /// Sighted, the trigger held for the whole run.
 const HOLD: &[Step] = &[
     foot("settle", 1000, 0, [0.0, 0.0]),
@@ -365,6 +379,8 @@ pub struct VehicleProbe {
     follow: bool,
     /// The client command of the step just entered, until taken.
     say: Option<&'static str>,
+    /// Entities seen as missiles, still reported once they explode.
+    missiles: std::collections::BTreeSet<i32>,
 }
 
 impl VehicleProbe {
@@ -383,13 +399,17 @@ impl VehicleProbe {
     }
 
     pub fn on_foot(script: WeaponScript) -> VehicleProbe {
-        let follow = matches!(script, WeaponScript::Aim | WeaponScript::Throw);
+        let follow = matches!(
+            script,
+            WeaponScript::Aim | WeaponScript::Throw | WeaponScript::Melee
+        );
         let script = match script {
             WeaponScript::Arty => ARTY,
             WeaponScript::Smoke => SMOKE,
             WeaponScript::Mg => MG,
             WeaponScript::Hold | WeaponScript::Aim => HOLD,
             WeaponScript::Throw => THROW,
+            WeaponScript::Melee => MELEE,
         };
         VehicleProbe {
             follow,
@@ -409,6 +429,7 @@ impl VehicleProbe {
             skipped: 0,
             say: None,
             follow: false,
+            missiles: Default::default(),
         }
     }
 
@@ -548,6 +569,9 @@ impl VehicleProbe {
         );
         let vehicle = vcod_common::net::flags::ET_VEHICLE_V22;
         let seated = vcod_common::net::flags::EF_IN_VEHICLE_V22;
+        // A freed missile's number goes back to the pool.
+        self.missiles
+            .retain(|n| s.entities.contains_key(&(*n as _)));
         for (num, e) in &s.entities {
             let i = |n: &str| e.field_i32(p, n);
             let f = |n: &str| e.field_f32(p, n);
@@ -580,11 +604,23 @@ impl VehicleProbe {
                     i("eFlags"),
                     i("eventSequence"),
                 );
-            } else if i("eType") == ET_MISSILE {
+            } else if let Some(ev) = p.event_of(i("eType")) {
+                println!(
+                    "VEH {} temp {num} ev {ev} parm {} other {} pos {:.1} {:.1} {:.1}",
+                    s.server_time,
+                    i("eventParm"),
+                    i("otherEntityNum"),
+                    o[0],
+                    o[1],
+                    o[2],
+                );
+            } else if i("eType") == ET_MISSILE || self.missiles.contains(&(*num as i32)) {
+                self.missiles.insert(*num as i32);
+                let slot = (i("eventSequence") - 1) & 3;
                 // The base's bits, for a rest height to the last bit.
                 println!(
                     "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} bits {:#x} {:#x} {:#x} \
-                     ground {} weapon {}",
+                     ground {} weapon {} etype {} evseq {} ev {} parm {}",
                     s.server_time,
                     i("pos.trType"),
                     f("pos.trBase[0]"),
@@ -595,6 +631,10 @@ impl VehicleProbe {
                     i("pos.trBase[2]"),
                     i("groundEntityNum"),
                     i("weapon"),
+                    i("eType"),
+                    i("eventSequence"),
+                    i(&format!("events[{slot}]")),
+                    i(&format!("eventParms[{slot}]")),
                 );
             } else if i("eFlags") & seated != 0 || i("eType") == vcod_common::net::flags::ET_PLAYER
             {

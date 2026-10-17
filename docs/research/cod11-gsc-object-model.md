@@ -2775,7 +2775,10 @@ Still different:
   threads the lookat queue woke before the timed waits due that frame (the
   drain's own `Scr_RunCurrentThreads` sits ahead of `Scr_SetTime`, 23.1), and
   resumed the plant's `wait 0.05` loop ahead of the probe's older poller;
-  vcod steps every runnable thread in one pass, in start order.
+  vcod stepped every runnable thread in one pass, in start order. It runs
+  the queue's rounds as retail does now (`cod11-gsc-language.md`, "Engine
+  notifies and the trigger queue"); no run of this recipe has been taken
+  against ours since.
 - VERIFIED, off retail run 9's defender probe log (not kept in the repo):
   retail interleaves `d` and `s` in the order the script made them (`d 531`,
   `d 532`, `s 8`, `d 533` at the plant). VERIFIED, vcod measurement (run 3):

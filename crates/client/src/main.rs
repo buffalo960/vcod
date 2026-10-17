@@ -219,6 +219,16 @@ struct Args {
     /// the respawn land whether or not the shooter ever gets a shot off.
     #[arg(long)]
     probe_target: bool,
+    /// With --probe-target: each `kill` goes out with exactly N usercmds
+    /// behind it, one message each, sent back to back so they reach the
+    /// server inside one frame, and then no cmd for 150 ms, so the next one
+    /// lands past the frame's end. The list is cycled kill by kill (`1,3`),
+    /// a kill every 8 s. Measures how many of a death frame's cmds run
+    /// before `ClientEndFrame` makes the player dead (combat doc 9.2).
+    /// Writes the target fixture with a `!kill` line per kill; tag it
+    /// `killcmds`, `killcmds-1.5` or `killcmds-uo`.
+    #[arg(long, requires = "probe_target", value_delimiter = ',')]
+    probe_kill_cmds: Vec<usize>,
     /// Join a team, stand still and record what the wire does across a map
     /// end and the rotation that follows: every gamestate with its serverId,
     /// every serverCommand with its reliable sequence, every out-of-band
@@ -740,7 +750,9 @@ struct LivePhase {
     seat_frac: f32,
 }
 
-fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport>) -> Phase {
+/// The live phase off `bsp`, with the weapons configstring 7 (`weapons_cs`)
+/// names read off `fs`.
+fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, weapons_cs: &str) -> Phase {
     let world = collision::CollisionWorld::build(bsp, &props::collision_tris(fs, &bsp.entities));
     // Predict as the retail Windows client does, not as the server.
     world.set_arith(vcod_common::patch::Arith::for_client());
@@ -755,7 +767,7 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
         // weapon setup (0x3000ef10) and `CG_ConfigStringModified` has no
         // case for it (docs/research/cod11-hud-protocol.md, after the
         // configstring table).
-        weapons: vcod_common::weapon_table::from_configstring(fs, net.configstring(7)),
+        weapons: vcod_common::weapon_table::from_configstring(fs, weapons_cs),
         scene: entities::EntityScene::new(),
         events: net::events::EventTracker::new(),
         predicted_events: play::events::PredictedEvents::default(),
@@ -1116,6 +1128,7 @@ fn main() -> Result<()> {
                 follow: args.probe_follow,
                 killcam: args.probe_killcam,
                 killcam_skip_ms: args.probe_killcam_skip_ms,
+                kill_cmds: args.probe_kill_cmds.clone(),
                 fall: args.probe_fall,
                 fall_walk: args.probe_fall_walk,
                 fall_prone: args.probe_fall_prone,
@@ -1346,6 +1359,7 @@ fn main() -> Result<()> {
         client_bullets: fx::client_bullet::ClientBullets::default(),
         start: Instant::now(),
         last_frame: Instant::now(),
+        frame_ms: 0,
         debug_overlay: args.debug_overlay,
         cull_mode: renderer::CullMode::On,
         hud_stats: hud_text::HudStats::new(),
@@ -1459,6 +1473,17 @@ fn ignore_hw_gamma(shell: &console::shell::Shell) -> bool {
 /// moment with `r_ignorehwgamma 1`, none with the device ramp.
 fn image_gamma(shell: &mut console::shell::Shell, ignore_hw: bool) -> Option<f32> {
     ignore_hw.then(|| gamma_cvar(shell))
+}
+
+/// `Com_Frame`'s shortest frame in ms (CoDMP.exe 0x438040): `1000 /
+/// com_maxfps` when it is above 0, else 1. Nothing lifts it, `timedemo`
+/// included; the `dedicated` test never holds on a client.
+fn frame_min_ms(maxfps: i32) -> u64 {
+    if maxfps > 0 {
+        (1000 / maxfps) as u64
+    } else {
+        1
+    }
 }
 
 /// `r_mode`'s size (Q3's mode table, which the stock video mode list picks
@@ -1745,12 +1770,10 @@ fn download_dirs<'a>(mod_dir: &'a str, fs_game: &'a Option<String>) -> Vec<&'a s
     std::iter::once(mod_dir).chain(fs_game.as_deref()).collect()
 }
 
-/// `cl_allowDownload`: the systeminfo's value when the server sets one
-/// (`CL_SystemInfoChanged` copies every systeminfo key into a cvar), the
-/// client's own otherwise.
-fn allow_download(shell: &console::shell::Shell, systeminfo: &str) -> bool {
-    net::download::server_allows_download(systeminfo)
-        .unwrap_or_else(|| shell.cvar_f32("cl_allowDownload") != 0.0)
+/// `cl_allowDownload`, which a server's systeminfo sets like any other key
+/// (`system_info_changed`).
+fn allow_download(shell: &console::shell::Shell) -> bool {
+    shell.cvar_f32("cl_allowDownload") != 0.0
 }
 
 /// Reopens the pk3 search path after a download. Everything read off the old
@@ -1786,6 +1809,29 @@ fn reopen_fs(
     Ok(())
 }
 
+/// `maps/mp/<map>.bsp` off the search path, parsed: what `CM_LoadMap`
+/// (CoDMP.exe 0x419c90) and `R_LoadWorldMap` read.
+fn read_map(fs: &Pk3Fs, map: &str) -> Result<bsp::Bsp> {
+    let Some(path) = fs.resolve_map(map) else {
+        bail!("map '{map}' did not resolve in the pk3 search path");
+    };
+    let data = fs
+        .read(&path)
+        .with_context(|| format!("cannot read {path}"))?;
+    bsp::parse(&data).with_context(|| format!("cannot parse {path}"))
+}
+
+/// The serverinfo's map and a fresh live phase off `fs`: the CPU half of
+/// [`App::reload_live_map`].
+fn reread_live_map(fs: &Pk3Fs, configstrings: &[String]) -> Result<(bsp::Bsp, Phase)> {
+    let cs = |i: usize| configstrings.get(i).map_or("", String::as_str);
+    let map = net::info_value_for_key(cs(0), "mapname")
+        .context("the server sent no mapname in its serverinfo")?;
+    let bsp = read_map(fs, map)?;
+    let phase = live_phase(fs, &bsp, cs(7));
+    Ok((bsp, phase))
+}
+
 /// Parse the map, upload it to the GPU and hand back the live phase.
 #[allow(clippy::too_many_arguments)]
 fn load_map(
@@ -1798,13 +1844,7 @@ fn load_map(
     window: Option<&Window>,
     title: &mut String,
 ) -> Result<Phase> {
-    let Some(path) = fs.resolve_map(map) else {
-        bail!("map '{map}' did not resolve in the pk3 search path");
-    };
-    let data = fs
-        .read(&path)
-        .with_context(|| format!("cannot read {path}"))?;
-    let bsp = bsp::parse(&data).with_context(|| format!("cannot parse {path}"))?;
+    let bsp = read_map(fs, map)?;
     // The ambient rides configstring 3 (docs/research/cod11-sound-system.md,
     // section 9); a fresh gamestate may have changed it.
     audio.set_ambient(fs, net::info_value_for_key(net.configstring(3), "n"));
@@ -1812,7 +1852,7 @@ fn load_map(
     if let Some(window) = window {
         window.set_title(title);
     }
-    let phase = live_phase(fs, &bsp, net);
+    let phase = live_phase(fs, &bsp, net.configstring(7));
     r.load_world(&bsp, fs)?;
     if let Phase::Live(live) = &phase {
         r.set_hud_weapons(Some(&live.weapons));
@@ -2010,6 +2050,8 @@ struct App {
     /// Origin of the clock effects are timed against.
     start: Instant,
     last_frame: Instant,
+    /// `com_frameTime`'s last frame, ms since `start` (`Com_Frame`'s pace).
+    frame_ms: u64,
     debug_overlay: bool,
     cull_mode: renderer::CullMode,
     hud_stats: hud_text::HudStats,
@@ -2883,6 +2925,21 @@ impl App {
         }
     }
 
+    /// `Com_Frame`'s wait (CoDMP.exe 0x437f40): a frame starts once the
+    /// millisecond clock has moved `frame_min_ms(com_maxfps)` past the last.
+    fn pace_frame(&mut self) {
+        let min = frame_min_ms(self.shell.cvar_f32("com_maxfps") as i32);
+        loop {
+            let now_ms = (Instant::now() - self.start).as_millis() as u64;
+            if now_ms >= self.frame_ms + min {
+                self.frame_ms = now_ms;
+                return;
+            }
+            let due = self.start + std::time::Duration::from_millis(self.frame_ms + min);
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        }
+    }
+
     /// `CL_DemoCompleted` (CoDMP.exe 0x40e920): the `timedemo` line, the
     /// disconnect, then `CL_NextDemo` (0x40ed80), which runs `nextdemo`
     /// once and clears it.
@@ -3080,6 +3137,10 @@ impl App {
             if let Some(r) = &mut self.renderer {
                 r.reopen(&self.fs);
             }
+            if let Err(e) = self.reload_live_map() {
+                self.disconnect(Some(format!("{e:#}")));
+                return;
+            }
         }
         if let Err(e) = self.restart_ui() {
             self.disconnect(Some(e));
@@ -3087,10 +3148,22 @@ impl App {
         }
         self.after_menu();
         if let Mode::Online {
-            net, view, phase, ..
+            net,
+            view,
+            input,
+            phase,
+            ..
         } = &mut self.mode
         {
             view.reopen();
+            if let Phase::Live(_) = phase {
+                // The restarted cgame's first snapshot runs a load's resets.
+                view.new_gamestate();
+                input.new_gamestate();
+                if let Some(r) = &mut self.renderer {
+                    prewarm_viewmodels(view, r, &self.fs, net.configstrings());
+                }
+            }
             // `CL_InitCGame` and `CL_SendPureChecksums` run only past
             // `CA_LOADING`; before that the load sends `cp` itself.
             if matches!(phase, Phase::Live(_)) {
@@ -3098,6 +3171,32 @@ impl App {
                 net.send_reliable(&self.fs.pure_command(feed, net.protocol().pure_dlls));
             }
         }
+    }
+
+    /// A live game's map read again off the reopened search path, as
+    /// `vid_restart`'s `CL_InitCGame` (CoDMP.exe 0x4049c0) has the cgame's
+    /// `CG_Init` (0x30022f90) load the collision map and the world anew: a
+    /// mod's own `maps/mp/<map>.bsp` replaces the stock one. The live state
+    /// starts fresh, as the cgame's does; snapshots keep flowing.
+    fn reload_live_map(&mut self) -> Result<()> {
+        let Mode::Online {
+            net,
+            phase: phase @ Phase::Live(_),
+            ..
+        } = &mut self.mode
+        else {
+            return Ok(());
+        };
+        let (bsp, live) = reread_live_map(&self.fs, net.configstrings())?;
+        *phase = live;
+        self.audio
+            .set_ambient(&self.fs, net::info_value_for_key(net.configstring(3), "n"));
+        if let (Some(r), Phase::Live(live)) = (&mut self.renderer, &*phase) {
+            r.load_world(&bsp, &self.fs)?;
+            r.set_hud_weapons(Some(&live.weapons));
+        }
+        self.world = Some(World { bsp });
+        Ok(())
     }
 
     /// Drops the map, its sounds and effects, between servers.
@@ -3619,6 +3718,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                self.pace_frame();
                 let now = Instant::now();
                 let dt = (now - self.last_frame).as_secs_f32().min(0.1);
                 self.last_frame = now;
@@ -3745,37 +3845,30 @@ impl ApplicationHandler for App {
                         join,
                     } => {
                         let mut vm = None;
-                        // `timedemo` counts the frames drawn once the first
-                        // snapshot is in; `cl_freezeDemo` holds the time.
-                        let demo_clock = play::clock::DemoClock {
-                            freeze: self.shell.cvar_f32("cl_freezeDemo") != 0.0,
-                            timedemo_frames: match &*phase {
-                                Phase::Live(live)
-                                    if net.is_demo()
-                                        && live.clock.started()
-                                        && self.shell.cvar_f32("timedemo") != 0.0 =>
-                                {
-                                    Some(self.timedemo.step(local_ms as i32))
-                                }
-                                _ => None,
-                            },
-                        };
                         // A demo is read up to the clock (`CL_SetCGameTime`,
                         // CoDMP.exe 0x404d60), nothing while a map loads.
+                        let mut demo_clock = play::clock::DemoClock::default();
                         let events = if net.is_demo() {
-                            let until = match &*phase {
-                                Phase::Live(live) => Some(
-                                    live.clock
-                                        .time_at(
-                                            local_ms as i32,
-                                            self.shell.cvar_f32("cl_timeNudge") as i32,
-                                            demo_clock,
-                                        )
-                                        .unwrap_or(i32::MIN),
-                                ),
-                                _ => None,
+                            let knobs = play::demos::DemoKnobs {
+                                freeze: self.shell.cvar_f32("cl_freezeDemo") != 0.0,
+                                timedemo: self.shell.cvar_f32("timedemo") != 0.0,
+                                nudge: self.shell.cvar_f32("cl_timeNudge") as i32,
                             };
-                            net.pump_demo(now, until)
+                            match &mut *phase {
+                                Phase::Live(live) => {
+                                    let (events, how) = play::demos::read_frame(
+                                        net,
+                                        &mut live.clock,
+                                        &mut self.timedemo,
+                                        now,
+                                        local_ms as i32,
+                                        knobs,
+                                    );
+                                    demo_clock = how;
+                                    events
+                                }
+                                _ => net.pump_demo(now, None),
+                            }
                         } else {
                             net.pump()
                         };
@@ -3966,12 +4059,12 @@ impl ApplicationHandler for App {
                                     gamestate_ready = true;
                                     predictor.fall_heights =
                                         pmove::FallHeights::from_systeminfo(net.configstring(1));
-                                    self.shell.set_cheats(sv_cheats(net.configstring(1)));
+                                    system_info_changed(&mut self.shell, net, &self.config_path);
                                 }
                                 net::NetEvent::ConfigstringChanged(1) => {
                                     predictor.fall_heights =
                                         pmove::FallHeights::from_systeminfo(net.configstring(1));
-                                    self.shell.set_cheats(sv_cheats(net.configstring(1)));
+                                    system_info_changed(&mut self.shell, net, &self.config_path);
                                 }
                                 _ => {}
                             }
@@ -4171,7 +4264,7 @@ impl ApplicationHandler for App {
                                         &mut self.title,
                                         &self.game_dir,
                                         &download_dirs(&self.mod_dir, &self.fs_game),
-                                        allow_download(&self.shell, net.configstring(1)),
+                                        allow_download(&self.shell),
                                         self.fs.vanilla(),
                                     ) {
                                         Ok(next) => *phase = next,
@@ -4310,7 +4403,7 @@ impl ApplicationHandler for App {
                                         &mut self.title,
                                         &self.game_dir,
                                         &download_dirs(&self.mod_dir, &self.fs_game),
-                                        allow_download(&self.shell, net.configstring(1)),
+                                        allow_download(&self.shell),
                                         self.fs.vanilla(),
                                     ) {
                                         Ok(next) => *phase = next,
@@ -6168,12 +6261,13 @@ impl ApplicationHandler for App {
                     return;
                 }
                 // Over the game, under the menus (CoDMP.exe 0x416b10, drawn
-                // in `CA_ACTIVE` only).
+                // in `CA_ACTIVE` with no fullscreen menu up, cod11-demos.md 8).
                 if let Mode::Online {
                     net,
                     phase: Phase::Live(_),
                     ..
                 } = &self.mode
+                    && !self.ui.fullscreen()
                     && let Some((name, bytes)) = net.recording_status()
                 {
                     let v1 = net.protocol().version == net::protocol::PROTOCOL_V1.version;
@@ -6295,9 +6389,29 @@ fn cg_fov(shell: &console::shell::Shell) -> f32 {
     shell.cvar_f32("cg_fov").clamp(weapon::CG_FOV, 160.0)
 }
 
-/// The systeminfo's `sv_cheats`, as `CL_SystemInfoChanged` reads it.
-fn sv_cheats(systeminfo: &str) -> bool {
-    net::info_value_for_key(systeminfo, "sv_cheats") == Some("1")
+/// `CL_SystemInfoChanged` (CoDMP.exe 0x415eb0) at a gamestate or a `d 1`:
+/// every systeminfo key becomes a client cvar. A demo sets none. A forced
+/// userinfo cvar (`rate`, `snaps`) goes back to the server as a userinfo
+/// change, an archived one into the config, as `cvar_modifiedFlags` does.
+fn system_info_changed(
+    shell: &mut console::shell::Shell,
+    net: &mut net::NetClient<net::UdpTransport>,
+    config_path: &std::path::Path,
+) {
+    if net.is_demo() {
+        return;
+    }
+    for effect in shell.apply_systeminfo(net.configstring(1)) {
+        match effect {
+            console::shell::Effect::Userinfo => net.set_userinfo(shell.userinfo()),
+            console::shell::Effect::SaveConfig => {
+                if let Err(e) = std::fs::write(config_path, shell.config_text()) {
+                    log::warn!("cannot write {}: {e}", config_path.display());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// `--probe-say`'s `SECS:COMMAND`.
@@ -6310,6 +6424,17 @@ fn parse_probe_say(s: &str) -> Result<(f32, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Com_Frame`'s integer wait: retail's default 85 is 11 ms frames
+    /// (90 fps), past 1000 no wait at all, and 0 or less the 1 ms floor.
+    #[test]
+    fn com_maxfps_paces_in_whole_milliseconds() {
+        assert_eq!(frame_min_ms(85), 11);
+        assert_eq!(frame_min_ms(125), 8);
+        assert_eq!(frame_min_ms(2000), 0);
+        assert_eq!(frame_min_ms(0), 1);
+        assert_eq!(frame_min_ms(-5), 1);
+    }
 
     /// A demo whose map no pak holds drops with retail's text, not a wait
     /// on a download.
@@ -6540,6 +6665,39 @@ mod tests {
             [fx::registry::Resolved::Spawn { path, .. }] => assert_eq!(path, "fx/mod/hit.efx"),
             other => panic!("impact table from the new pak: {other:?}"),
         }
+    }
+
+    /// A Mods pick in a game reads the map again off the mod's paks, as
+    /// `CL_InitCGame`'s `CM_LoadMap` does with no local server: a mod that
+    /// ships its own `maps/mp/mp_carentan.bsp` replaces the stock geometry
+    /// and collision.
+    #[test]
+    fn a_mod_switch_in_a_game_reads_the_mods_map() {
+        let Some(stock) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let base = vcod_common::testing::game_dir().join("main");
+        let harbor = stock.read("maps/mp/mp_harbor.bsp").unwrap();
+        let mods = tempfile::tempdir().unwrap();
+        let game = mods.path().join("modharbor");
+        std::fs::create_dir(&game).unwrap();
+        make_pk3(&game, "z_mod.pk3", &[("maps/mp/mp_carentan.bsp", &harbor)]);
+
+        let mut cs = vec![String::new(); 8];
+        cs[0] = "\\mapname\\mp_carentan".into();
+        let models = |fs: &Pk3Fs| {
+            let (bsp, phase) = reread_live_map(fs, &cs).unwrap();
+            let Phase::Live(live) = phase else {
+                panic!("not live")
+            };
+            assert_eq!(live.world.model_count(), bsp.models.len());
+            (bsp.models.len(), bsp.entities.len())
+        };
+        let before = models(&Pk3Fs::open_search(&base, None, None, false).unwrap());
+        let after = models(&Pk3Fs::open_search(&base, Some(&game), None, false).unwrap());
+        let harbor = bsp::parse(&harbor).unwrap();
+        assert_ne!(before, after);
+        assert_eq!(after, (harbor.models.len(), harbor.entities.len()));
     }
 
     #[test]

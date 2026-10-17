@@ -1,0 +1,27 @@
+# Retail CoD United Offensive 1.51b dedicated server, mp_carentan tdm, client-probes/probe_takedamage, the spawn weapon's melee at a setTakeDamage barrel 40 out, captured 2026-10-17:
+#   COD_VERSION=uo PORT=32502 PROBE_SECS=40 tools/run_probe.sh client-probes/probe_takedamage mp_carentan +set probe_dist 40
+#   vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:32502 --probe-team allies --probe-uo-weapon melee --probe-secs 25
+# Each swing: EV_MELEE_MISS (167) naming the barrel and G_Damage meleeDamage + rand()%5 as MOD_MELEE (combat doc 2.5).
+# Retail server PROBE lines, then the shooter probe's VEH missile and temp lines (vehicle_probe.rs report).
+PROBE site 1050 (1368.00, 2608.00, -23.75) 45 170 (1396.28, 2636.28, -23.88)
+PROBE mdamage 13600 71 MOD_MELEE (1386.52, 2626.51, 9.86)
+PROBE mdamage 15100 73 MOD_MELEE (1386.52, 2626.51, 9.86)
+PROBE mdamage 16600 73 MOD_MELEE (1386.52, 2626.51, 9.86)
+VEH 13600 temp 171 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 13650 temp 171 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 13700 temp 171 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 13750 temp 171 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 13800 temp 171 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 13850 temp 171 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 15100 temp 172 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 15150 temp 172 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 15200 temp 172 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 15250 temp 172 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 15300 temp 172 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 15350 temp 172 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 16600 temp 173 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 16650 temp 173 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 16700 temp 173 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 16750 temp 173 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 16800 temp 173 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0
+VEH 16850 temp 173 ev 167 parm 145 other 170 pos 1386.0 2626.0 9.0

@@ -24,7 +24,7 @@ const PROBE_SRC: &str = "../gsc/tests/fixtures/semantics/client-probes/probe_pla
 
 #[test]
 fn a_sounded_player_rides_every_snapshot_until_the_restart() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

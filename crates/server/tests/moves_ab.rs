@@ -19,7 +19,8 @@
 //! must fail: that is what shows the gate can tell the two apart.
 //!
 //! `MOVES_REPORT=1` prints every miss, `MOVES_TRACE=<commandTime>` the
-//! prediction cmd by cmd up to that snapshot.
+//! prediction cmd by cmd up to that snapshot, `MOVES_EXACT=1` how many
+//! snapshots' origins match retail's to the bit.
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
@@ -256,6 +257,10 @@ fn compare(pred: &Predicted, truth: &Predicted) -> Vec<Field> {
 /// Per field, the snapshots predicted wrong, and how many were compared.
 struct Report {
     compared: usize,
+    /// Snapshots whose predicted origin is retail's to the bit, past the
+    /// gate's tolerance: what `MOVES_EXACT=1` prints, the measure for an
+    /// arithmetic port too small for `compare` to see.
+    exact: usize,
     misses: BTreeMap<&'static str, Vec<String>>,
 }
 
@@ -332,6 +337,7 @@ fn replay(
     let mw = MoveWorld::bare(world);
     let mut report = Report {
         compared: 0,
+        exact: 0,
         misses: BTreeMap::new(),
     };
     for pair in snaps.windows(2) {
@@ -371,6 +377,9 @@ fn replay(
             continue;
         }
         report.compared += 1;
+        if pred.ps.origin == to.ps.origin {
+            report.exact += 1;
+        }
         let mut bad = compare(&pred, &to);
         // UO's new events by id, both rings in 1.1's numbering: the spoon, the throw,
         // the breaths and the sprint's own footsteps.
@@ -400,6 +409,12 @@ fn replay(
 
 fn print(name: &str, r: &Report) {
     println!("{name}: {} snapshots compared", r.compared);
+    if std::env::var_os("MOVES_EXACT").is_some() {
+        println!(
+            "exact {name}: origin to the bit {} of {}",
+            r.exact, r.compared
+        );
+    }
     for (field, misses) in &r.misses {
         println!("  {field}: {} wrong, first {}", misses.len(), misses[0]);
         if std::env::var_os("MOVES_REPORT").is_some() {
@@ -482,11 +497,12 @@ fn the_predictor_replays_each_patch_under_its_own_rules() {
         return;
     };
     let mut failures = Vec::new();
-    // The springfield's file differs on 1.5's paks (its sight's lerp), and a
-    // UO install's `main/` is 1.5's.
-    let springfield = vcod_common::testing::game_fs_11().is_some();
+    // A 1.1 capture replays on 1.1's paks only: the springfield's file
+    // differs on 1.5's (its sight's lerp), and a UO install's `main/` is
+    // 1.5's.
+    let install_11 = vcod_common::testing::game_fs_11().is_some();
     for c in CAPTURES {
-        if (c.file == SPRINGFIELD_1_1 || c.file == SPRINGFIELD_HELD_1_1) && !springfield {
+        if c.rules == MoveRules::V1_1 && !install_11 {
             continue;
         }
         let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{}", c.file)).unwrap();

@@ -590,9 +590,11 @@ pub struct WeaponDef {
     /// `useHintString`: the `serverCursorHintString` a mount ahead of a UO
     /// LMG shows, empty on every stock file (coduo-movement.md 11).
     pub use_hint_string: String,
-    /// `weaponType`, lowercased: `bullet` or `grenade` on every stock file.
-    /// Retail's `PM_Weapon` keys its grenade branches on this being type 1
-    /// (docs/research/cod11-combat.md, section 1.11).
+    /// `weaponType`, lowercased: `bullet` or `grenade` on every stock 1.1
+    /// file, and `projectile` (the rocket launchers), `gas` or `binoculars`
+    /// on some of United Offensive's. Retail's `PM_Weapon` keys its grenade
+    /// branches on this being type 1 (docs/research/cod11-combat.md,
+    /// section 1.11), and the dry reload on type 0 ([`Self::is_bullet`]).
     pub weapon_type: String,
     pub hip_spread_stand_min: f32,
     pub hip_spread_ducked_min: f32,
@@ -722,6 +724,11 @@ pub struct WeaponDef {
 }
 
 impl WeaponDef {
+    /// `weaponType` 0, `bullet`, which an absent key leaves it at.
+    pub fn is_bullet(&self) -> bool {
+        matches!(self.weapon_type.as_str(), "bullet" | "")
+    }
+
     /// The spread a client-traced round draws in, degrees: the minimum and
     /// the span added at random (`uo_cgame_mp_x86.dll` 0x30045930). A
     /// turret file's `minSpread` and `maxSpread` fill the same slots as

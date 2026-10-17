@@ -510,7 +510,7 @@ turning
     /// its dumped `animations[]`.
     #[test]
     fn player_anim_index_matches_the_wire() {
-        let Some(fs) = crate::testing::game_fs() else {
+        let Some(fs) = crate::testing::game_fs_11() else {
             return;
         };
         let anims = PlayerAnims::load(&fs).unwrap();

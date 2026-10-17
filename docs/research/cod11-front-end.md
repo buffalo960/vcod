@@ -1338,16 +1338,34 @@ vertex lighting.
   whatever extension the name gave. VERIFIED: 0x4eeae0, the image lookup
   that prints `image '%s' requested mipmaps, but they aren't available`,
   loads a 2D (`0xde1`) image it has not cached through it. INFERRED: so a script's `.tga` name loads a `.dds` of the
-  same base when one exists (`assets::resolve_bundle_image`). INFERRED, the
-  branches after the load: an image found at `(w + 1) >> 1` by
-  `(h + 1) >> 1` is copied in as the level and the name keeps its new
-  number, so the next level looks for the number after; found at another
-  size it prints `WARNING: custom mipmap image '%s' should have dimensions
-  %i x %i instead of %i x %i, refusing to load` and the upload fails; not
-  found, the box filter runs. VERIFIED (pak listings): 158 stock files carry
+  same base when one exists (`assets::resolve_bundle_image`). VERIFIED,
+  0x4eb1d0: the `"%i%s"` print writes over the name's digits in place
+  (the name is 0x4ebf20's local copy, shared by its picmip and mip
+  loops) before the load, so the next level looks for the number after
+  whether this one was found or not. VERIFIED, the branches after the
+  load: an image found at `(w + 1) >> 1` by `(h + 1) >> 1` is copied in
+  as the level; found at another size it prints `WARNING: custom mipmap
+  image '%s' should have dimensions %i x %i instead of %i x %i, refusing
+  to load` and returns 0; not found, the box filter runs. VERIFIED, the
+  refusal's path up: 0x4ebf20 returns 0 on a 0 from either loop, so does
+  0x4ec490, and 0x4ec730 then frees the image (0x4ec430) and returns 0;
+  0x4eeae0 hands that 0 to the shader stage, which prints `Couldn't load
+  image '%s' in shader %s` and fails (0x4f3410), and a deferred load
+  (0x4ee8a0) copies the `*default` image (0x16c4d58) over the image
+  instead. INFERRED: so on 1.1 the whole image draws as the default
+  image or its shader as `<default>`. VERIFIED: 1.5's CoDMP.exe
+  (0x50ba60) has the same refusal; United Offensive's CoDUOMP.exe
+  (0x505520) prints the warning and falls through to the filter for
+  that level, with the name stepped on as 1.1 steps it. VERIFIED (pak listings): 158 stock files carry
   a `#` (foliage and wood skins, wire and fence textures, `...#0` with
   `#1`, `#2` and up beside them), each level half the size of the one
-  above. INFERRED: the level is copied as loaded, so the texture gamma
+  above. VERIFIED (pak listings): United Offensive's `uo/pakuo01.pk3`
+  ships `skins/foliage_masked@bushwallfill#01`, `bushwallsparse#01`,
+  `deadtreehoriz#01` and `deadtreevert#01` at 1.1's level 0 size, and
+  their next name `#2` is 1.1's `#2` in `main/pak3.pk3`, a quarter of the
+  size: UO warns on each and filters all four whole chains, since level
+  2 looks for `#3`. No 1.1 or 1.5 stock image reaches the refusal.
+  INFERRED: the level is copied as loaded, so the texture gamma
   (`cod11-gamma.md` section 3) reaches level 0 and the levels filtered
   from it only.
 - Model skins. VERIFIED: the xmodel surface registration (CoDMP.exe
@@ -1457,8 +1475,10 @@ vertex lighting.
   side is 4 or less, the sheet path's rule: wgpu needs whole 4x4 blocks
   in level 0, where retail's plain path would go down to `width >>
   picmip`. A
-  `#N` level of the wrong size falls back to the box where retail fails
-  the image. `r_simpleMipMaps 0` and `r_weightMipMaps` in (0, 1] swap the
+  `#N` level of the wrong size falls back to the box as United
+  Offensive's does (logged at debug, since stock UO skins hit it); 1.1
+  and 1.5 fail the image there, which vcod does not port: no stock 1.1 or
+  1.5 image reaches it. `r_simpleMipMaps 0` and `r_weightMipMaps` in (0, 1] swap the
   box for the kernel and the weighted step above, latched to
   `vid_restart`; `r_colorMipLevels` is not ported. Effect images take
   `r_picmip` and the chain like world ones. The sky box takes flags 0x33
@@ -1602,11 +1622,33 @@ them as a spectator for 10-25 s each.
 
 ### The systeminfo sets client cvars
 
-- `CL_SystemInfoChanged` (`0x415eb0`) reads `sv_serverid`, the `sv_cheats`
-  state and the pure and referenced pak lists, then, when no local server
-  runs (`sv_running` 0), calls `Cvar_Set` (`0x439650`) for every key/value
-  pair of the systeminfo. INFERRED (the loop's shape). So `fs_game`,
-  `cl_allowDownload`, `rate`, `snaps` and the rest become client cvars.
+- `CL_SystemInfoChanged` (`0x415eb0`) reads `sv_serverid`, then returns
+  while a demo plays (`clc.demoplaying`, `0x15ef004`). VERIFIED (the
+  compare). Otherwise a systeminfo `sv_cheats` whose `atol` is 0 (a
+  missing key included) runs `Cvar_SetCheatState` (`0x439bd0`), which
+  puts every `CVAR_CHEAT` (0x200) cvar off its reset string back on it.
+  VERIFIED. The pure and referenced pak lists go to the filesystem next.
+- Then, when `sv_running` is 0, the function walks the systeminfo with an
+  inline `Info_NextPair` (one leading `\` skipped per pair, an empty key
+  ends the walk, a key with no value reads `""`) and calls `Cvar_Set2`
+  (`0x439650`) on each pair with `force` 1 (`mov eax, 1` at `0x415ff9`).
+  VERIFIED (asm). `force` skips `Cvar_Set2`'s read-only (0x40), write
+  protect (0x10), cheat (0x200, against `sv_cheats`) and latch (0x20)
+  branches and drops a pending latched string; a cvar the client never
+  registered is made with flags 0, not `CVAR_USER_CREATED` (0x80). VERIFIED
+  (`0x439650`'s body). The set ORs the cvar's flags into
+  `cvar_modifiedFlags` (`0x163b40c`), so a forced userinfo cvar goes back to
+  the server and an archived one into the config. VERIFIED (the OR);
+  INFERRED (the readers, Q3's). No key is refused: `fs_game`,
+  `cl_allowDownload`, `rate`, `snaps`, `sv_serverid`, `sv_paks` and the
+  rest all become client cvars.
+- 1.5 and UO keep the function unchanged: CoDMP.exe 1.5 `0x4176f0` (its
+  `Cvar_Set2` `0x43bbb0`, `mov eax, 1` at `0x417839`), CoDUOMP.exe 1.51
+  `0x418b80` (`Cvar_Set2` `0x43dc50` takes `force` as a third argument,
+  `push 0x1` at `0x418cad`). VERIFIED (asm).
+- `sv_cheats` is registered `"0"`, flags 0x48 (`CVAR_SYSTEMINFO |
+  CVAR_ROM`), in `Com_Init` (call at `0x437636`), so only a systeminfo moves
+  it. VERIFIED.
 - `fs_game` is registered with flags 0x18 (`CVAR_SYSTEMINFO | CVAR_INIT`)
   at `0x42cdb0`. VERIFIED. After `CL_SystemInfoChanged`, the gamestate
   parse (`0x416050`) restarts the filesystem (`0x42d2b0`) when no local
@@ -1633,11 +1675,13 @@ them as a spectator for 10-25 s each.
 
 ### vcod
 
-- The server's `cl_allowDownload` decides when its systeminfo has one, the
-  client's own cvar (default 1, archived) otherwise. vcod applies the
-  server's value to the connection only rather than writing it into the
-  client's cvar the way retail's `Cvar_Set` does. With downloads off it
-  logs the missing paks and loads the map if it resolves.
+- Every systeminfo key is forced into the client's cvars at the gamestate
+  and at each `d 1`, as retail does, except during a demo
+  (`Shell::apply_systeminfo`). vcod's client never runs a server in its
+  own process, so the `sv_running` test always passes. A server's
+  `cl_allowDownload 0` therefore lands in the client's archived cvar and
+  stays after it leaves, as on retail; vcod's own default is 1. With
+  downloads off it logs the missing paks and loads the map if it resolves.
 - `fs_game` from the systeminfo layers `<game_dir>/<fs_game>` over the base
   directory (`Pk3Fs::open_layered`) at the gamestate, before the download
   check; downloads land in either directory and never overwrite a file.
@@ -1716,6 +1760,21 @@ carries its label.
   re-sends `cp`; a pure server that does not list the mod's paks keeps
   them out of the search path. VERIFIED (calls); INFERRED (the state
   numbering, which is CoD's own).
+- Before the restart `vid_restart` clears the whole hunk (`Hunk_Clear`
+  `0x432090`, `Hunk_Clear: reset the hunk ok`). `CL_InitCGame` builds
+  `maps/mp/%s.bsp` off the serverinfo's map and calls the cgame's
+  `CG_Init` (`0x30022f90` in `cgame_mp_x86.dll`), which loads the
+  `collision map` (syscall 0x1f) and then the world (syscall 0x2c) under
+  their `LOADING... %s` lines and parses configstring 7's weapons again
+  (`0x3000ef10`). VERIFIED (strings, calls).
+- `CM_LoadMap` (`0x419c90`, `CM_LoadMap( %s, %i )`) reuses the loaded map
+  for a client load only while a local server runs (the cvar
+  `vid_restart` refuses on). VERIFIED (asm). Otherwise it zeroes the
+  collision state (0xa15c bytes) and reads the file again through
+  `0x42a8b0`, a `(name, &buffer) -> length` read off the search path.
+  INFERRED (its shape). So an in-game mod switch reads the map off the
+  mod's paks: a mod that ships its own `maps/mp/<map>.bsp` replaces the
+  stock geometry and collision. INFERRED (the two above together).
 
 ### vcod
 
@@ -1729,9 +1788,13 @@ carries its label.
 - In a game the switch keeps the connection: the search path reopens under
   the server's pure list, the renderer's shaders, the HUD, sounds, effects
   and viewmodels reload, the front end is rebuilt closed and the game has
-  the mouse again, and a live map sends `cp` once more. The map's world
-  geometry stays as loaded. The next gamestate puts a server's own
-  `fs_game` back.
+  the mouse again, and a live map sends `cp` once more. The map is read
+  again off the new search path (`reread_live_map`): the world, its
+  collision, the ambient and configstring 7's weapons, with a fresh
+  entity scene and the first snapshot's resets, as the restarted cgame's.
+  A `vid_restart` with the mod unchanged keeps the loaded map, which
+  reads the same files. The next gamestate puts a server's own `fs_game`
+  back.
 - A server that names no `fs_game` keeps the player's mod; one that names
   another replaces it for the connection, and leaving goes back to the
   player's.

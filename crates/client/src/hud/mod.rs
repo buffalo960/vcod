@@ -271,7 +271,11 @@ impl Hud {
     /// centre print, the complaint and the vote lines, the weapon strip's
     /// slot scales and clock, the hit icons and flash, a held scoreboard;
     /// and `cg.mapRestart`, so the next snapshot runs the respawn reset.
+    /// The engine's own `n`/`B` case empties the message windows first
+    /// (cod11-hud-protocol.md 1.1).
     fn on_map_restart(&mut self, now: f32) {
+        self.game_messages.clear();
+        self.bold_messages.clear();
         self.center_print.clear();
         self.complaint.clear();
         self.vote.on_map_restart();
@@ -316,10 +320,7 @@ impl Hud {
         if ev.event != EV_OBITUARY {
             return;
         }
-        let mut ob = killfeed::decode_obituary(ev);
-        if ob.mod_ >= 0 {
-            ob.mod_ = (f.protocol.mod_to_v1)(ob.mod_);
-        }
+        let ob = killfeed::decode_obituary(ev);
         if let Some((text, y)) = obituary_center_print(&ob, f) {
             self.center_print.print(&text, y, (f.now * 1000.0) as i32);
         }
@@ -341,7 +342,8 @@ impl Hud {
             .then(|| self.weapon_kill_icon(f.fs, f.configstrings, ob.weapon))
             .flatten();
         let icon_wide = kill_icon.as_ref().is_some_and(|(_, wide)| *wide);
-        let icon = killfeed::icon_for(&ob, kill_icon.as_ref().map(|(path, _)| path.as_str()));
+        let uo = f.protocol.version == PROTOCOL_V22.version;
+        let icon = killfeed::icon_for(&ob, kill_icon.as_ref().map(|(path, _)| path.as_str()), uo);
 
         let line = messages::KillLine {
             attacker,
@@ -1442,6 +1444,26 @@ mod tests {
         assert!(!hud.chat.is_empty());
     }
 
+    /// `n` and `B` empty both message windows, kill lines included.
+    #[test]
+    fn a_restart_empties_the_message_windows() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = Hud::new(&fs).expect("hud");
+        let loc = Localized::default();
+        for restart in ["n", "B"] {
+            let cmd =
+                |t: &[&str]| NetEvent::ServerCommand(t.iter().map(|s| s.to_string()).collect());
+            hud.on_net_event(&cmd(&["e", "hello"]), 1.0, &loc);
+            hud.on_net_event(&cmd(&["c", "round"]), 1.0, &loc);
+            assert!(!hud.game_messages.is_empty() && !hud.bold_messages.is_empty());
+            hud.on_net_event(&cmd(&[restart]), 1.1, &loc);
+            assert!(hud.game_messages.is_empty(), "{restart}");
+            assert!(hud.bold_messages.is_empty(), "{restart}");
+        }
+    }
+
     /// An obituary becomes a kill line in the game message window, names
     /// stripped of colour codes and coloured by team.
     #[test]
@@ -1480,7 +1502,7 @@ mod tests {
             lines,
             [&messages::KillLine {
                 attacker: Some(("Me".into(), [1.0, 0.5, 0.5])),
-                icon: "gfx/hud/death_melee".into(),
+                icon: "killIconMelee".into(),
                 icon_wide: false,
                 victim: ("Bob".into(), [0.5, 0.5, 1.0]),
             }]

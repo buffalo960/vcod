@@ -1237,15 +1237,17 @@ pub fn pmove(
     }
     set_water_level(ps, world);
 
-    // PM_Footsteps @0x322c8 runs once per move, after the final ground trace.
-    footsteps(ps, input, world, dt, &mut events);
-    weapon::pm_weapon(
-        ps,
-        input,
-        weapons,
-        (dt * 1000.0).round() as i32,
-        &mut events,
-    );
+    // PM_Footsteps @0x322c8 runs once per move, after the final ground trace:
+    // after `PM_Weapon` on 1.1 (0x34331, 0x34336), before it on 1.5
+    // (0x28889, 0x2888e) and UO (0x2e04e, 0x2e053).
+    let dt_ms = (dt * 1000.0).round() as i32;
+    if ps.rules == MoveRules::V1_1 {
+        weapon::pm_weapon(ps, input, weapons, dt_ms, &mut events);
+        footsteps(ps, input, world, dt, &mut events);
+    } else {
+        footsteps(ps, input, world, dt, &mut events);
+        weapon::pm_weapon(ps, input, weapons, dt_ms, &mut events);
+    }
     // Retail's `pm->oldcmd`: what the next step subtracts this one from.
     ps.last_cmd_angles = input.angles;
     ps.last_cmd_ads = input.ads;
@@ -3412,16 +3414,16 @@ fn view_vectors(ps: &PlayerState) -> (Vec3, Vec3) {
 /// `PM_AirMove` at 0x2f083): the magnitude rule over forward, right and up,
 /// and the walk/run pick, with no stance, lean, weapon or wade factor. The
 /// cmd's `upmove` dilutes the horizontal wish the way Q3's does.
-fn wish_air(ps: &PlayerState, input: &PmInput) -> (Vec3, f32) {
+fn wish_air(ps: &PlayerState, input: &PmInput) -> (Vec3, f32, f32) {
     let (f, r, u) = (input.forward * 127.0, input.right * 127.0, input.up * 127.0);
     if f.abs().max(r.abs()).max(u.abs()) <= 0.0 {
-        return (Vec3::ZERO, 0.0);
+        return (Vec3::ZERO, 0.0, 0.0);
     }
     let scale = cmd_scale(ps, input);
     let fwd = Vec3::new(ps.yaw.cos(), ps.yaw.sin(), 0.0);
     let right = Vec3::new(ps.yaw.sin(), -ps.yaw.cos(), 0.0);
     let wishvel = fwd * f + right * r;
-    (wishvel.normalize_or_zero(), wishvel.length() * scale)
+    (wishvel.normalize_or_zero(), wishvel.length(), scale)
 }
 
 /// Retail's Q3-shaped `PM_CmdScale` (0x2e5bc), shared by the air and ladder
@@ -3447,15 +3449,35 @@ fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
     scale
 }
 
-/// Q3 `bg_pmove.c` `PM_Accelerate`.
-fn accelerate(ps: &mut PlayerState, wishdir: Vec3, wishspeed: f32, accel: f32, dt: f32) {
-    let current = ps.velocity.dot(wishdir);
+/// 1.5b's `PM_Accelerate` (0x1ed62), which its walk, air and ladder moves
+/// all call: the speed along the wish and what it still lacks stored as
+/// floats, the rate floored at `pm_stopspeed` (100) and stored once, capped
+/// at the lack, and each component rounded once. The ground term's
+/// `1 / ps.friction` is 1 (cod11-mantle.md, "The walk's accel floor").
+fn accelerate_stored(ps: &mut PlayerState, wishdir: Vec3, wishspeed: f32, accel: f32, dt: f32) {
+    let current = x87::dot(ps.velocity, wishdir) as f32;
     let add = wishspeed - current;
     if add <= 0.0 {
         return;
     }
-    let accel_speed = (accel * dt * wishspeed).min(add);
-    ps.velocity += wishdir * accel_speed;
+    let control = wishspeed.max(PM_STOPSPEED);
+    let speed = ((f64::from(accel) * f64::from(dt) * f64::from(control)) as f32).min(add);
+    ps.velocity = (wishdir.as_dvec3() * f64::from(speed) + ps.velocity.as_dvec3()).as_vec3();
+}
+
+/// 1.1d's air accelerate, inline in `PM_AirMove` (0x2f14b-0x2f1cd): Q3's
+/// with the walk's floor, the rate `max(wishspeed, 100)` (rodata 0x708ec)
+/// times the frame time (`pm_airaccelerate` 1 folded away), capped at the
+/// lack; the wish speed, the dot and the rate stay on the x87 stack and
+/// each component is rounded once (cod11-mantle.md, "The walk's accel
+/// floor").
+fn air_accelerate(ps: &mut PlayerState, wishdir: Vec3, wishspeed: f64, dt: f32) {
+    let add = wishspeed - x87::dot(ps.velocity, wishdir);
+    if add <= 0.0 {
+        return;
+    }
+    let speed = (wishspeed.max(f64::from(PM_STOPSPEED)) * f64::from(dt)).min(add);
+    ps.velocity = (wishdir.as_dvec3() * speed + ps.velocity.as_dvec3()).as_vec3();
 }
 
 /// `vectoyaw`: the yaw of a direction, in degrees.
@@ -3561,12 +3583,17 @@ fn walk_move(
     // sighted wish of under 100 still gains 100's worth per frame, capped
     // at the wish (docs/research/cod11-mantle.md, "The walk's accel floor").
     // All of it on the x87 stack, the velocity rounded once per component
-    // (0x2f4e4-0x2f57c).
-    let add = wishspeed - x87::dot(ps.velocity, dir);
-    if add > 0.0 {
-        let rate = wishspeed.max(f64::from(WALK_ACCEL_FLOOR));
-        let speed = (accel * f64::from(dt) * rate).min(add);
-        ps.velocity = (dir.as_dvec3() * speed + ps.velocity.as_dvec3()).as_vec3();
+    // (0x2f4e4-0x2f57c). 1.5b stores the wish speed (0x203f5) and calls its
+    // `PM_Accelerate`.
+    if ps.rules.v15() {
+        accelerate_stored(ps, dir, wishspeed as f32, accel as f32, dt);
+    } else {
+        let add = wishspeed - x87::dot(ps.velocity, dir);
+        if add > 0.0 {
+            let rate = wishspeed.max(f64::from(WALK_ACCEL_FLOOR));
+            let speed = (accel * f64::from(dt) * rate).min(add);
+            ps.velocity = (dir.as_dvec3() * speed + ps.velocity.as_dvec3()).as_vec3();
+        }
     }
     // Q3's slick-or-knockback gravity, which the clip below turns into
     // ground speed.
@@ -3915,8 +3942,14 @@ fn air_move(
     // `PM_AirMove` opens with `PM_Friction` (0x2f045): off the ground only
     // its sub-unit stop and the water term can bite.
     friction(ps, dt);
-    let (dir, wishspeed) = wish_air(ps, input);
-    accelerate(ps, dir, wishspeed, PM_AIRACCELERATE, dt);
+    let (dir, len, scale) = wish_air(ps, input);
+    if ps.rules.v15() {
+        // 1.5b stores the product (0x1ffbb) and accelerates through the
+        // walk's `PM_Accelerate`, floor and all (0x1ffd7).
+        accelerate_stored(ps, dir, len * scale, PM_AIRACCELERATE, dt);
+    } else {
+        air_accelerate(ps, dir, f64::from(len) * f64::from(scale), dt);
+    }
     // A plane too steep to stand on still steers the fall (0x2f1d3).
     if let Some(n) = ps.ground_plane {
         ps.velocity = clip_velocity(ps.velocity, n);
@@ -4690,6 +4723,39 @@ mod tests {
         }
     }
 
+    /// The air accelerate floors its rate at 100 as the walk's does: 1.1d's
+    /// inline one at 0x2f159 (rodata 0x708ec), 1.5b's and UO's
+    /// `PM_Accelerate` (0x1ed62, `pm_stopspeed`). 1.5's air wish takes a
+    /// lean as the walk (0x1eec9): a jump while leaning wishes 76 until
+    /// the lean has eased back, and gains 100's 5 units in a 50 ms frame,
+    /// not Q3's 3.8 (the snap rounds that to 4). 1.1's walk key does the
+    /// same.
+    #[test]
+    fn a_wish_under_100_in_the_air_accelerates_at_100s_rate() {
+        let world = test_world(&[]);
+        let w = MoveWorld::bare(&world);
+        for rules in [MoveRules::V1_1, MoveRules::V1_5, MoveRules::Uo] {
+            let input = PmInput {
+                forward: 1.0,
+                walk_slow: rules == MoveRules::V1_1,
+                lean_left: rules.v15(),
+                ..Default::default()
+            };
+            let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 4000.0), 0.0);
+            ps.rules = rules;
+            // A lean carried off the ground, easing back in the air.
+            ps.lean = 0.25;
+            pmove(&mut ps, &input, &w, 0.05, &[]);
+            assert!(!ps.on_ground, "{rules:?}");
+            assert_eq!(
+                ps.velocity.truncate(),
+                glam::Vec2::new(5.0, 0.0),
+                "{rules:?} lean {}",
+                ps.lean
+            );
+        }
+    }
+
     /// Standing to prone is two legs of the eye, 150 ms down to the crouch
     /// height and 400 ms on along a curve that dips to 15 at half way, and the
     /// walk scale is prone's through the first and blends from crouch's
@@ -5193,6 +5259,52 @@ mod tests {
         }
         assert!(!ids.is_empty());
         assert!(ids.iter().all(|&e| e == EV_FOOTSTEP_RUN_WATER), "{ids:?}");
+    }
+
+    /// 1.1 runs `PM_Weapon` ahead of `PM_Footsteps` (0x34331, 0x34336), 1.5
+    /// and UO behind it: a step that both fires and steps rings the shot
+    /// first on 1.1 only.
+    #[test]
+    fn the_shot_and_the_footstep_ring_in_each_versions_order() {
+        let def = WeaponDef {
+            clip_size: 200,
+            fire_time: 0.001,
+            clip_index: 1,
+            ammo_index: 1,
+            ..WeaponDef::default()
+        };
+        let weapons = [None, Some(def)];
+        let w = dirt_flat();
+        let w = MoveWorld::bare(&w);
+        let run = PmInput {
+            forward: 1.0,
+            attack: true,
+            weapon: 1,
+            ..PmInput::default()
+        };
+        for (rules, shot_first) in [(MoveRules::V1_1, true), (MoveRules::V1_5, false)] {
+            let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.125), 0.0);
+            ps.rules = rules;
+            weapon::give(&mut ps, 1, 1);
+            ps.weapon = 1;
+            ps.ammoclip[1] = 200;
+            let both = (0..125)
+                .map(|_| pmove(&mut ps, &run, &w, 0.008, &weapons))
+                .find(|ev| {
+                    ev.iter().any(|e| e.event == weapon::EV_FIRE_WEAPON)
+                        && ev.iter().any(|e| e.event == EV_FOOTSTEP_RUN_BASE + 6)
+                })
+                .expect("a step that fires and steps");
+            let first = both
+                .iter()
+                .find(|e| e.event == weapon::EV_FIRE_WEAPON || e.event == EV_FOOTSTEP_RUN_BASE + 6)
+                .unwrap();
+            assert_eq!(
+                first.event == weapon::EV_FIRE_WEAPON,
+                shot_first,
+                "{rules:?} {both:?}"
+            );
+        }
     }
 
     /// The airborne ladder branch probes into the wall face; a miss or a

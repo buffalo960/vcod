@@ -444,18 +444,21 @@ pub fn pm_weapon(
     dt_ms: i32,
     events: &mut Vec<PmEvent>,
 ) {
-    if let Some(def) = weapon_def(weapons, ps.weapon)
-        && cook(ps, input, def, dt_ms, events)
-    {
-        return;
+    // `PM_UpdateAimDownSightLerp` opens the machine, ahead of the grenade
+    // and the timers (1.1 0x39143, 1.5 0x30467, UO `PM_Weapon`'s first
+    // call), so it reads the timers and the state the frame starts with. The
+    // fraction rides on the held weapon's own transition times, so it stands
+    // still while the weapon has no def to read them from.
+    if let Some(def) = weapon_def(weapons, ps.weapon) {
+        advance_ads(ps, def, dt_ms);
+        if cook(ps, input, def, dt_ms, events) {
+            return;
+        }
     }
     // The timers run whether or not the current weapon resolves: an index with
     // no def, weapon 0 on a ladder among them, must not freeze them.
     let delay_expired = advance_timers(ps, weapon_def(weapons, ps.weapon), input, dt_ms);
-    // The fraction rides on the held weapon's own transition times, so it
-    // stands still while the weapon has no def to read them from.
     if let Some(def) = weapon_def(weapons, ps.weapon) {
-        advance_ads(ps, def, dt_ms);
         deploy_driver(ps, def, events);
     }
 
@@ -525,27 +528,42 @@ pub fn pm_weapon(
         }
         return;
     }
-    if ps.weapon_time_ms != 0 {
-        return;
-    }
-    // UO's deploy and breakdown end once both timers are out (0x350c2,
-    // 0x35120).
-    if matches!(ps.weaponstate, WEAPON_DEPLOY | WEAPON_BREAKDOWN)
-        && (delay_expired || ps.weapon_delay_ms == 0)
-    {
-        ps.weaponstate = WEAPON_READY;
-        set_anim(ps, WEAP_IDLE);
+    // Retail's gate (0x3925a): a running `weaponTime` or `weaponDelay` ends
+    // the frame unless the delay ran out on it. The swing's and the bolt's
+    // delay edges are spent above, so the one that gets past here is a shot
+    // waiting out its delay (section 1.5).
+    let shot_due = delay_expired && ps.weaponstate == WEAPON_FIRING;
+    if ps.weapon_time_ms != 0 && !shot_due {
         return;
     }
     if grenade_hold(ps, input, def, events) {
         return;
     }
-    // Releasing the trigger (section 1.6).
+    if ps.weapon_delay_ms != 0 && !delay_expired {
+        return;
+    }
+    // The melee finish's second arm (0x38f15): the swing relaxes into the
+    // idle pose on the first frame both timers are out, and that frame
+    // fires nothing (section 1.10).
+    if ps.weaponstate == WEAPON_MELEE_RELAX {
+        hold_anim(ps, WEAP_IDLE);
+        ps.weaponstate = WEAPON_READY;
+        return;
+    }
+    // UO's deploy and breakdown end once both timers are out (0x350c2,
+    // 0x35120).
+    if matches!(ps.weaponstate, WEAPON_DEPLOY | WEAPON_BREAKDOWN) {
+        ps.weaponstate = WEAPON_READY;
+        set_anim(ps, WEAP_IDLE);
+        return;
+    }
+    // Releasing the trigger (section 1.6): whatever state got this far,
+    // a rechamber the timer left standing among them, ends here.
     if !input.attack && !delay_expired {
         if ps.weaponstate == WEAPON_FIRING {
-            ps.weaponstate = WEAPON_READY;
             hold_anim(ps, WEAP_IDLE);
         }
+        ps.weaponstate = WEAPON_READY;
         return;
     }
     if !uo_may_fire(ps, def) {
@@ -736,17 +754,9 @@ fn advance_timers(
         ps.weaponstate = WEAPON_READY;
         return delay_expired;
     }
-    match ps.weaponstate {
-        WEAPON_RECHAMBERING => ps.weaponstate = WEAPON_READY,
-        // The swing relaxing into the idle pose (section 1.10). Retail's
-        // `melee_tap` reads `weapAnim` 520 through the swing and a bare 0
-        // after, so the write flips the toggle like every other one.
-        WEAPON_MELEE_RELAX => {
-            ps.weaponstate = WEAPON_READY;
-            set_anim(ps, WEAP_IDLE);
-        }
-        _ => {}
-    }
+    // Unlatched, the timer only zeroes `weaponTime` (0x388d0): a rechamber
+    // (4) ends in the trigger-release check or the next shot, and a swing's
+    // relax (11) in the melee finish, both later in `PM_Weapon`.
     delay_expired
 }
 
@@ -1142,7 +1152,10 @@ fn begin_reload(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>
 
 /// One reload of the clip, or one segment of a segmented reload.
 fn begin_reload_proper(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) -> bool {
-    let empty = ps.ammoclip[def.clip_index] == 0;
+    // Only a bullet weapon (`weaponType` 0) reloads from empty: a rocket's
+    // dry reload takes `reloadTime` (combat doc 1.7; 1.1 cgame 0x30010330,
+    // 1.5b and UO alike).
+    let empty = ps.ammoclip[def.clip_index] == 0 && def.is_bullet();
     let (anim, time, event) = if empty {
         (
             WEAP_RELOAD_EMPTY,
@@ -1375,9 +1388,6 @@ fn grenade_hold(
 /// Section 1.5, and the anim pick of 1.2, which reads the ADS fraction
 /// rather than the usercmd's sight bit.
 fn fire(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
-    if ps.weapon_delay_ms != 0 {
-        return;
-    }
     let grenade = def.weapon_type == WEAPON_TYPE_GRENADE;
     // A grenade's first trigger pulls the pin; the throw is a later frame,
     // through the rest of this function ([`grenade_hold`]).
@@ -1395,6 +1405,13 @@ fn fire(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
     if !grenade {
         ps.weapon_delay_ms = ms(def.fire_delay);
         ps.weapon_time_ms = ms(def.fire_time);
+        // An `adsFire` weapon's shot waits out whatever is left of the raise
+        // (`.so` 0x38b23, section 1.5 step 1).
+        if def.ads_fire {
+            ps.weapon_delay_ms = ((1.0 - ps.weapon_pos_frac)
+                * trans_ms(def.ads_trans_in, ADS_TRANS_IN_DEFAULT_MS))
+                as i32;
+        }
         if def.bolt_action && (ps.weapon as u32) < u64::BITS {
             ps.weapon_rechamber |= 1u64 << ps.weapon;
         }
@@ -1414,17 +1431,16 @@ fn fire(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent>) {
         }
         return;
     }
+    // Step 3: a delay the arm left stops the shot. It fires on the frame the
+    // delay runs out, through `pm_weapon`'s expired-delay path, which arms
+    // again: by then the sight is up and an `adsFire` delay comes out 0.
+    if ps.weapon_delay_ms != 0 {
+        return;
+    }
     ps.ammoclip[ci] -= 1;
     if grenade {
         ps.weaponstate = WEAPON_FIRING;
         ps.weapon_time_ms = ms(def.fire_time);
-    }
-    // An `adsFire` weapon's shot waits out whatever is left of the raise
-    // (`.so` 0x38b23, section 1.5 step 1).
-    if def.ads_fire {
-        ps.weapon_delay_ms = ((1.0 - ps.weapon_pos_frac)
-            * trans_ms(def.ads_trans_in, ADS_TRANS_IN_DEFAULT_MS))
-            as i32;
     }
     // The shot's own spread add (step 8), skipped from a settled sight.
     if ps.weapon_pos_frac != 1.0 {
@@ -1963,6 +1979,28 @@ mod tests {
         assert_eq!(ps.ammo[1], 15);
     }
 
+    /// A rocket launcher's dry clip reloads as a partial one, over
+    /// `reloadTime` with 151: the empty branch wants `weaponType` 0, and UO's
+    /// `bazooka_mp` sets no `reloadEmptyTime`, which read as a 0 ms reload
+    /// that never loaded (section 1.7).
+    #[test]
+    fn a_dry_rocket_launcher_reloads_over_reload_time() {
+        let mut d = def(0.63, 0.0, 6.0, 0.4, 1, false);
+        d.weapon_type = "projectile".into();
+        d.reload_empty_time = 0.0;
+        d.reload_add_time = 0.0;
+        let (mut ps, w) = armed(&d);
+        ps.ammo[1] = 2;
+        let mut events = run(&mut ps, &w, true, 1);
+        events.extend(run(&mut ps, &w, false, 14));
+        assert_eq!(events[1..], [EV_RELOAD]);
+        assert_eq!(ps.weaponstate, WEAPON_RELOADING);
+        assert_eq!(ps.ammoclip[1], 0);
+        run(&mut ps, &w, false, 120);
+        assert_eq!(ps.weaponstate, WEAPON_READY);
+        assert_eq!((ps.ammoclip[1], ps.ammo[1]), (1, 1));
+    }
+
     /// The reload key on a partly full clip is an ordinary reload, 151, since
     /// neither fixture weapon sets `noPartialReload` (section 1.7).
     #[test]
@@ -2018,18 +2056,69 @@ mod tests {
         assert_eq!(run(&mut ps, &w, true, 1), vec![EV_NOAMMO]);
     }
 
-    /// `weaponDelay` skips the shot outright even with `weaponTime` at 0
-    /// (section 1.5, step 3).
+    /// The arm stores `fireDelay` before step 3 tests it, and arms again on
+    /// the frame it runs out, so a gun with one never fires (section 1.5).
+    /// Only grenades, which skip the arm, carry one in the stock files.
     #[test]
-    fn a_weapon_delay_holds_the_next_shot_off() {
+    fn a_fire_delay_rearms_on_every_pull_and_never_fires() {
         let mut d = def(0.0, 0.0, 2.0, 0.5, 15, false);
         d.semi_auto = false;
         d.fire_delay = 0.2;
         let (mut ps, w) = armed(&d);
-        let events = run(&mut ps, &w, true, 4);
-        assert_eq!(events, vec![EV_FIRE_WEAPON], "one shot inside fireDelay");
-        assert_eq!(ps.ammoclip[1], 14);
-        // The delay expires on the fifth frame and the shot runs again.
+        assert!(run(&mut ps, &w, true, 10).is_empty());
+        assert_eq!(ps.ammoclip[1], 15);
+        assert_eq!(ps.weaponstate, WEAPON_FIRING);
+    }
+
+    /// An `adsFire` weapon pulled from the hip arms `weaponDelay` for the
+    /// rest of the sight's raise and fires nothing; the delay forces the
+    /// sight up, and the shot goes on the frame it runs out, trigger held or
+    /// not (section 1.5, step 1 and 3; 0x3925a's gate).
+    #[test]
+    fn an_ads_fire_shot_waits_for_the_sight() {
+        let mut d = carbine_ads();
+        d.ads_fire = true;
+        d.fire_time = 1.0;
+        let (mut ps, w) = armed(&d);
+        assert!(run(&mut ps, &w, true, 1).is_empty());
+        assert_eq!((ps.weapon_delay_ms, ps.weaponstate), (300, WEAPON_FIRING));
+        assert_eq!(ps.ammoclip[1], 15);
+        assert!(run(&mut ps, &w, false, 5).is_empty());
+        assert_eq!(run(&mut ps, &w, false, 1), vec![EV_FIRE_WEAPON]);
+        assert_eq!(ps.weapon_pos_frac, 1.0);
+        assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_ADS_ATTACK);
+        assert_eq!((ps.weapon_delay_ms, ps.ammoclip[1]), (0, 14));
+        // From a settled sight the delay comes out 0 and the pull fires.
+        let (mut ps, w) = armed(&d);
+        step(&mut ps, &w, &held(true), 6);
+        let pull = PmInput {
+            attack: true,
+            ads: true,
+            ..Default::default()
+        };
+        assert_eq!(step(&mut ps, &w, &pull, 1), vec![EV_FIRE_WEAPON]);
+    }
+
+    /// Unlatched, the timer leaves a swing's relax standing; the melee
+    /// finish ends it on the next pass and that frame fires nothing, so a
+    /// held trigger on an automatic shoots a frame later (0x388d0, 0x38f15).
+    #[test]
+    fn a_held_trigger_fires_the_frame_after_the_relax_ends() {
+        let mut d = with_melee(carbine());
+        d.semi_auto = false;
+        let (mut ps, w) = armed(&d);
+        let swing = PmInput {
+            melee: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            step(&mut ps, &w, &swing, 3),
+            vec![EV_MELEE_SWIPE, EV_FIRE_MELEE]
+        );
+        assert!(run(&mut ps, &w, true, 11).is_empty());
+        assert_eq!(ps.weaponstate, WEAPON_MELEE_RELAX);
+        assert!(run(&mut ps, &w, true, 1).is_empty());
+        assert_eq!((ps.weaponstate, ps.weapon_time_ms), (WEAPON_READY, 0));
         assert_eq!(run(&mut ps, &w, true, 1), vec![EV_FIRE_WEAPON]);
     }
 
@@ -2097,7 +2186,8 @@ mod tests {
 
     /// The sight stays down for all of a reload but its last
     /// `adsReloadTransTime`: 600 ms of the carbine's 2650, so the fraction
-    /// leaves 0 only once `weaponTime` is inside that window.
+    /// leaves 0 only once `weaponTime` is inside that window. The lerp runs
+    /// ahead of the timers, so it reads the time the frame starts with.
     #[test]
     fn the_reload_pins_the_sight_down_until_its_last_ads_reload_trans_time() {
         let (mut ps, w) = armed(&carbine_ads());
@@ -2114,9 +2204,12 @@ mod tests {
         assert_eq!(ps.weapon_time_ms, 650);
         assert_eq!(ps.weapon_pos_frac, 0.0);
         assert!(ps.ads_active, "the flag is set for the whole reload");
-        // The next frame reaches 600 and the sight starts up.
+        // The next frame reaches 600 behind the lerp; the one after starts
+        // the sight up.
         step(&mut ps, &w, &ads, 1);
         assert_eq!(ps.weapon_time_ms, 600);
+        assert_eq!(ps.weapon_pos_frac, 0.0);
+        step(&mut ps, &w, &ads, 1);
         assert!(ps.weapon_pos_frac > 0.0);
     }
 

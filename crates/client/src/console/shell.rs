@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use vcod_common::localize::Localized;
-use vcod_common::net::Userinfo;
+use vcod_common::net::{self, Userinfo};
 
 use crate::play::input::Action;
 
@@ -90,6 +90,23 @@ const USERINFO: u32 = 0x2;
 const LATCH: u32 = 0x20;
 const ROM: u32 = 0x40;
 const CHEAT: u32 = 0x200;
+
+/// C's `atoi`: leading blanks, a sign, then digits; anything else reads 0.
+fn atoi(s: &str) -> i32 {
+    let s = s.trim_start();
+    let (neg, digits) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let n = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i32, |n, d| {
+            n.wrapping_mul(10).wrapping_add(i32::from(d - b'0'))
+        });
+    if neg { -n } else { n }
+}
 
 /// The client commands, for `cmdlist` and completion.
 const COMMANDS: &[&str] = &[
@@ -302,9 +319,6 @@ pub struct Shell {
     cvars: BTreeMap<String, Cvar>,
     /// Keyed by canonical key name ([`keys::canonical`]).
     binds: BTreeMap<String, String>,
-    /// The server's `sv_cheats`; off until a systeminfo says otherwise, as
-    /// CoDMP.exe registers it `"0"`.
-    cheats: bool,
     /// Cvars set for this run only ([`Shell::set_for_run`]), keyed like
     /// `cvars`, with the value the config keeps for them.
     run_only: BTreeMap<String, String>,
@@ -322,10 +336,12 @@ impl Shell {
         let mut s = Shell {
             cvars: BTreeMap::new(),
             binds: BTreeMap::new(),
-            cheats: false,
             run_only: BTreeMap::new(),
         };
         s.register("name", "vcod", ARCHIVE | USERINFO);
+        // Com_Init (CoDMP.exe 0x437636): "0", CVAR_SYSTEMINFO | CVAR_ROM; only
+        // a systeminfo moves it, and `Cvar_Set2`'s cheat check reads it.
+        s.register("sv_cheats", "0", ROM);
         // CoDMP.exe registers both with these defaults
         // (docs/research/cod11-console.md, section 4).
         s.register("cl_run", "1", ARCHIVE);
@@ -373,6 +389,10 @@ impl Shell {
         // flags, `cl_freezeDemo` "0" CVAR_TEMP (cod11-demos.md, "Playback").
         s.register("timedemo", "0", 0);
         s.register("cl_freezeDemo", "0", 0);
+        // Com_Init (CoDMP.exe 0x437807): "85",
+        // archived; `Com_Frame` paces every frame by it, `timedemo` too
+        // (cod11-demos.md 5).
+        s.register("com_maxfps", "85", ARCHIVE);
         // CoDMP.exe registers `password` CVAR_USERINFO, not archived
         // (0x4123ea); the browser's password popup edits it.
         s.register("password", "", USERINFO);
@@ -478,15 +498,68 @@ impl Shell {
         );
     }
 
-    /// The server's `sv_cheats` changed. Turning it off puts every cheat
-    /// cvar back to its default, as `Cvar_SetCheatState` does.
-    pub fn set_cheats(&mut self, on: bool) {
-        self.cheats = on;
-        if !on {
+    /// `CL_SystemInfoChanged` (CoDMP.exe 0x415eb0; 1.5 0x4176f0, UO
+    /// 0x418b80): a systeminfo `sv_cheats` of 0 (or none) puts every cheat
+    /// cvar back to its default (`Cvar_SetCheatState`, 0x439bd0), then every
+    /// key/value pair is set as a cvar with `force`, whatever its flags. A
+    /// demo sets nothing; the caller skips it.
+    pub fn apply_systeminfo(&mut self, info: &str) -> Vec<Effect> {
+        let mut out = Vec::new();
+        if atoi(net::info_value_for_key(info, "sv_cheats").unwrap_or("")) == 0 {
             for c in self.cvars.values_mut().filter(|c| c.cheat) {
-                c.value.clone_from(&c.default);
+                if c.value != c.default {
+                    c.value.clone_from(&c.default);
+                    if c.archive {
+                        out.push(Effect::SaveConfig);
+                    }
+                }
             }
         }
+        for (key, value) in net::info_pairs(info) {
+            self.set_forced(key, value, &mut out);
+        }
+        let mut once = Vec::new();
+        for e in out {
+            if !once.contains(&e) {
+                once.push(e);
+            }
+        }
+        once
+    }
+
+    /// `Cvar_Set2` with `force` (CoDMP.exe 0x439650, `eax` 1): no read-only,
+    /// write-protect, cheat or latch check; a pending latched value is
+    /// dropped. A cvar the client never registered is made with no flags.
+    fn set_forced(&mut self, name: &str, value: &str, out: &mut Vec<Effect>) {
+        let key = name.to_ascii_lowercase();
+        self.run_only.remove(&key);
+        let c = self.cvars.entry(key).or_insert_with(|| Cvar {
+            name: name.to_string(),
+            value: value.to_string(),
+            default: value.to_string(),
+            archive: false,
+            userinfo: false,
+            cheat: false,
+            latch: false,
+            rom: false,
+            latched: None,
+        });
+        c.latched = None;
+        if c.value == value {
+            return;
+        }
+        c.value = value.to_string();
+        if c.userinfo {
+            out.push(Effect::Userinfo);
+        }
+        if c.archive {
+            out.push(Effect::SaveConfig);
+        }
+    }
+
+    /// `sv_cheats` as `Cvar_Set2` reads it: its integer value.
+    fn cheats(&self) -> bool {
+        atoi(self.cvar("sv_cheats").unwrap_or("")) != 0
     }
 
     /// The userinfo the cvars make.
@@ -843,6 +916,7 @@ impl Shell {
     /// `set` creates a cvar the client does not know, as retail does;
     /// `seta` marks it archived as well.
     fn set(&mut self, name: &str, value: &str, archive: bool, out: &mut Vec<Effect>) {
+        let cheats = self.cheats();
         let key = name.to_ascii_lowercase();
         // An explicit set makes a run-only value the user's own.
         self.run_only.remove(&key);
@@ -861,7 +935,7 @@ impl Shell {
             out.push(Effect::Print(format!("{} is read only.", c.name)));
             return;
         }
-        if c.cheat && !self.cheats && c.value != value {
+        if c.cheat && !cheats && c.value != value {
             out.push(Effect::Print(format!("{} is cheat protected.", c.name)));
             return;
         }
@@ -1357,11 +1431,44 @@ mod tests {
             [Effect::Print("cg_fov is cheat protected.".into())]
         );
         assert_eq!(s.cvar("cg_fov"), Some("80"));
-        s.set_cheats(true);
+        assert_eq!(
+            s.execute("sv_cheats 1"),
+            [Effect::Print("sv_cheats is read only.".into())]
+        );
+        s.apply_systeminfo(r"\sv_cheats\1");
         assert_eq!(s.execute("cg_fov 95"), [Effect::SaveConfig]);
         assert_eq!(s.cvar("cg_fov"), Some("95"));
-        s.set_cheats(false);
+        assert_eq!(s.apply_systeminfo(r"\sv_cheats\0"), [Effect::SaveConfig]);
         assert_eq!(s.cvar("cg_fov"), Some("80"), "sv_cheats 0 resets it");
+        s.apply_systeminfo(r"\sv_cheats\1");
+        s.execute("cg_fov 95");
+        s.apply_systeminfo(r"\sv_pure\1");
+        assert_eq!(s.cvar("cg_fov"), Some("80"), "no sv_cheats reads 0");
+    }
+
+    /// `CL_SystemInfoChanged` forces every key: read-only, cheat and
+    /// latched cvars too, and keys the client never registered.
+    #[test]
+    fn the_systeminfo_forces_every_key() {
+        let mut s = Shell::new();
+        let out = s.apply_systeminfo(
+            r"\cl_allowDownload\0\rate\5000\vc_vanilla\1\cg_fov\90\r_picmip\2\fs_game\genesis\sv_serverid\16",
+        );
+        assert_eq!(out, [Effect::SaveConfig, Effect::Userinfo]);
+        assert_eq!(s.cvar("cl_allowDownload"), Some("0"));
+        assert_eq!(s.cvar("rate"), Some("5000"));
+        assert_eq!(s.cvar("vc_vanilla"), Some("1"));
+        assert_eq!(s.cvar("cg_fov"), Some("90"), "forced past the cheat check");
+        assert_eq!(s.cvar("r_picmip"), Some("2"), "no latch");
+        assert_eq!(s.cvar("fs_game"), Some("genesis"));
+        assert_eq!(s.cvar("sv_serverid"), Some("16"));
+        // A cvar the systeminfo made is not archived.
+        assert!(!s.config_text().contains("sv_serverid"));
+        // Keys already at their values change nothing; without `sv_cheats`
+        // the forced `cg_fov` goes back to its default.
+        assert!(s.apply_systeminfo(r"\sv_cheats\1\rate\5000").is_empty());
+        assert_eq!(s.apply_systeminfo(r"\rate\5000"), [Effect::SaveConfig]);
+        assert_eq!(s.cvar("cg_fov"), Some("80"));
     }
 
     #[test]

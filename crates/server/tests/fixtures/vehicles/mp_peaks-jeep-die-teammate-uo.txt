@@ -1,0 +1,23 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-17: PROBE lines of
+# client-probes/probe_vehdie on mp_peaks (willyjeep_mp), the driver alone, killed by a teammate on foot under friendly fire 0.
+# COD_VERSION=uo PORT=32521 SECS=45 tools/run_probe.sh client-probes/probe_vehdie
+#   mp_peaks +set probe_vehicletype willyjeep_mp +set probe_die_by gunner
+#   +set probe_side 75 +set scr_friendlyfire 0 +set probe_riders 1
+# 6 s in: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:32521
+#   --probe-team axis --probe-vehicle driver --probe-secs 32
+# 2 s later: the same with --probe-vehicle gunner --probe-secs 30
+PROBE vehicle 110 willyjeep_mp (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE place 6700 0 (-4087.56, 142.59, -102.52) 164.998
+PROBE place 8700 1 (-4232.44, 181.41, -102.52) 344.998
+PROBE activated 8750 110 seat 1 by 0
+PROBE rider 8800 before 0 veh 1 health 100 (-4180.27, 166.85, -73.74)
+PROBE kill 8800 110 2900 by 1
+PROBE dmg 8800 0 inf 1 att 1 5 flags 0 MOD_EXPLOSIVE kar98k_mp (-4180.27, 166.85, -73.74) (0.00, 0.00, 0.00) none health 110 veh 1
+PROBE rider 8800 after 0 veh 0 health 100 (-4259.78, 98.57, -43.29)
+PROBE deact 8800 0 110
+PROBE death 8800 1
+PROBE dmg 8800 0 inf 1 att 1 16 flags 1 MOD_EXPLOSIVE kar98k_mp (-4160.00, 162.00, -85.52) (-99.78, -63.43, 66.23) none health 100 veh 0
+PROBE rider 8850 frame 0 veh 0 health 100 (-4259.78, 98.57, -75.76)
+PROBE rider 9350 later 0 veh 0 health 100 (-4259.78, 98.57, -95.88)
+PROBE dmg 19300 1 inf undefined att 1022 59 flags 1 MOD_EXPLOSIVE none (-4164.09, 162.12, -85.11) (-68.23, 19.26, -1.86) none health 100 veh 0
+PROBE dmg 19300 0 inf undefined att 1022 49 flags 1 MOD_EXPLOSIVE none (-4164.09, 162.12, -85.11) (-95.69, -63.55, 13.23) none health 100 veh 0

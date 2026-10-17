@@ -627,8 +627,32 @@ VERIFIED, `game.mp.i386.so`: 4 is `G_SpawnString("message", "")`
 writes the same two at 0x66a24 and 0x66a3d (14), its key `message` at
 0x7e60b; UO at 0x72c1f and 0x72c38 (15, past its start time at 14), the
 key at 0xa51eb. The stock fixtures carry
-neither: no stock worldspawn has a `message` key and `g_motd` defaults
-to `""`, so both slots read empty on retail and vcod alike.
+neither: no stock worldspawn has a `message` key (none in 1.1's, 1.5's or
+UO's paks) and `g_motd` defaults to `""`, so both slots read empty on
+retail and vcod alike.
+
+VERIFIED live 2026-10-17 on 1.1d, 1.5b and UO 1.51b
+(`crates/server/tests/fixtures/configstrings/*-motd*.txt`, recipe in
+their headers): a homepath `zzz_` pak holding the stock map with
+`"message" "vcod worldspawn message"` added to its worldspawn
+(`tools/bsp_worldspawn_key.py`), and `+set g_motd "Welcome to vcod"`,
+read back 4 as the key's value and 14 (UO 15) as the motd at the
+gamestate. The same runs set `sv_hostname` and `sv_privateClients` (both
+in 0) and `scr_motd` (1.1's mirror value at 244, 1.5's and UO's
+`ui_motd` at 250 and 353). Each `configstrings_*_ab` gate has a row for
+its version.
+
+VERIFIED live on 1.1d, same run (`tools/run_server.sh` puts every `+set`
+after `+map`): 14 held the motd, and `scr_allow_vote 0` read back 0 over
+rcon and in the mirror (242) with `g_allowVote` at 1, where `dm.gsc`'s
+load-time `setCvar("scr_allow_vote", level.allowvote)` writes 1.
+INFERRED from those two and Q3's `Com_StartupVariable` /
+`Com_AddStartupCommands`: a command-line `set` runs once before the load
+(how `SP_worldspawn` saw `g_motd`) and again in order after `+map`
+(how the script's 1 was overwritten), so a `+set` placed before `+map`
+leaves the script's write standing. vcod's `--set` is applied before the
+load only, the before-`+map` case; the gates model a set placed after
+`+map` by running the sets again as console lines after the load.
 
 One divergence on the wire:
 
@@ -854,6 +878,18 @@ the ordering and the branch conditions.
   and returns.
 - Anything else prints `"Unknown keyword '%s' in sv_mapRotation.\n"`
   (`0x80d3c40`), reads the next token and loops (`0x8084260..0x8084278`).
+
+VERIFIED (UO 1.51b, `probe_ctftime`, 2026-10-17,
+`tests/fixtures/gametypes/mp_cassino-ctftime-*-uo.txt`): a gametype
+script's `setCvar("sv_mapRotation", ...)` drives the next `map_rotate`:
+the probe writes `gametype probe_ctftime map mp_foy` at load, and the
+`exitLevel(false)` at its map end loads mp_foy. INFERRED, off section 5's
+`Cvar_Set` calls and the game module's `setCvar` being a `trap_Cvar_Set`:
+both rotation cvars are the one engine table, so a script can also read
+or rewrite `sv_mapRotationCurrent`. vcod's `map_rotate` reads both from
+the script's cvar table when a level is loaded and writes the queue back
+there (`Server::run_console`, `console::Command::MapRotate`); before, it
+read only its own copy, which `--set` and rcon fill.
 
 INFERRED, off the `VM_Call(gvm, 15, 0)` arm: a gametype change in the rotation
 drops whatever persistence the outgoing level asked to keep, because the flag
