@@ -23,12 +23,49 @@
 //	PROBE vdamage <time> <amount> <mod>
 //	PROBE collision <time> <point> <normal>
 //
+//	With `probe_victim` `stand` or `prone`, a run-over
+//	(coduo-vehicles.md 11.6, 13): client 0 is the victim, put once
+//	`probe_victim_ahead` units (default 150) ahead of the vehicle on its
+//	line, 8 up, facing it, and again a second later from rest; under `prone` he is told to lie down through
+//	`iPrintLn("PROBE_IN 0 64 -127")` (`--probe-uo-weapon direct`). Client 1
+//	is the driver. Every frame from the victim's placement on, his origin,
+//	health and session, and every damage callback before tdm's runs:
+//
+//	PROBE victim <time> <num> <spot> <yaw>
+//	PROBE replace <time> <num> <spot> <yaw>
+//	PROBE v <time> <origin> <health> <sessionstate>
+//	PROBE dmg <time> <victim> inf <n> att <n> <damage> flags <f> <mod> <weapon> <point> <dir> <hitloc> health <h>
+//
 //	UO only.
 
 main()
 {
 	thread watch_places();
 	maps\mp\gametypes\tdm::main();
+	level.probe_tdm_damage = level.callbackPlayerDamage;
+	level.callbackPlayerDamage = ::probe_damage;
+}
+
+num(e)
+{
+	if (!isdefined(e))
+		return "undefined";
+	return e getEntityNumber();
+}
+
+probe_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
+{
+	if (getcvar("probe_victim") != "")
+	{
+		point = "undefined";
+		if (isdefined(vPoint))
+			point = vPoint;
+		dir = "undefined";
+		if (isdefined(vDir))
+			dir = vDir;
+		logPrint("PROBE dmg " + gettime() + " " + self getEntityNumber() + " inf " + num(eInflictor) + " att " + num(eAttacker) + " " + iDamage + " flags " + iDFlags + " " + sMeansOfDeath + " " + sWeapon + " " + point + " " + dir + " " + sHitLoc + " health " + self.health + "\n");
+	}
+	[[level.probe_tdm_damage]](eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
 }
 
 probe_vehicle()
@@ -117,6 +154,13 @@ watch_places()
 		players = getentarray("player", "classname");
 		for (i = 0; i < players.size; i++)
 		{
+			if (getcvar("probe_victim") != "" && players[i] getEntityNumber() == 0)
+			{
+				players[i] try_victim(veh);
+				if (isdefined(level.probe_victim))
+					logPrint("PROBE v " + gettime() + " " + players[i].origin + " " + players[i].health + " " + players[i].sessionstate + "\n");
+				continue;
+			}
 			players[i] try_place(veh);
 			if (isdefined(players[i].probe_placed))
 				placed = true;
@@ -158,4 +202,36 @@ try_place(veh)
 	self setorigin(spot);
 	self setplayerangles((10, yaw, 0));
 	logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
+}
+
+//	The victim, once: on the vehicle's line, facing it.
+try_victim(veh)
+{
+	if (isdefined(level.probe_victim))
+		return;
+	if (!isdefined(self.sessionstate) || self.sessionstate != "playing")
+		return;
+	level.probe_victim = self;
+	ahead = getcvarint("probe_victim_ahead");
+	if (ahead == 0)
+		ahead = 150;
+	fwd = anglestoforward(veh.angles);
+	spot = veh.origin + (fwd[0] * ahead, fwd[1] * ahead, 8);
+	yaw = vectortoangles(veh.origin - spot)[1];
+	self setorigin(spot);
+	self setplayerangles((0, yaw, 0));
+	if (getcvar("probe_victim") == "prone")
+		self iprintln("PROBE_IN 0 64 -127");
+	logPrint("PROBE victim " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
+	self thread replace_victim(spot, yaw);
+}
+
+//	A second time from rest: the first placement keeps whatever velocity
+//	the spawn left him.
+replace_victim(spot, yaw)
+{
+	wait 1;
+	self setorigin(spot);
+	self setplayerangles((0, yaw, 0));
+	logPrint("PROBE replace " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
 }

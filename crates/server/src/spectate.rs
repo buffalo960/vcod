@@ -184,6 +184,20 @@ pub struct EndFrame {
     pub client_num: i32,
 }
 
+/// What [`ClientSim::vehicle_overlap`] found: a body inside a vehicle's
+/// hull, whether the vehicle sits out the cmd's pmove, the run-over a
+/// moving one dealt, and whether the body lies prone, which takes
+/// `VEH_PlayerDamage`'s 10 points every cmd (coduo-vehicles.md 11.6), all
+/// at `at`, the body's origin ahead of the pmove.
+#[derive(Clone, Copy, Debug)]
+pub struct VehicleOverlap {
+    pub entity: u32,
+    pub unlink: bool,
+    pub struck: Option<crate::game::vehicle::physics::PlayerPush>,
+    pub prone: bool,
+    pub at: Vec3,
+}
+
 pub struct ClientSim {
     pub ps: pmove::PlayerState,
     pub pm_type: PmType,
@@ -864,16 +878,17 @@ impl ClientSim {
     /// starts inside a vehicle (`eType` 12) gets out of it. The vehicle is
     /// unlinked for this cmd's pmove while the client is slower than 1 or
     /// moves away from it (the flat dot of the two directions past 0.8);
-    /// one slower than 1 and not prone is also pushed off it at 200 along
-    /// the flat direction from the vehicle's origin, with a 200 ms damage
-    /// timer. `vehicle` gives a vehicle entity's `r.currentOrigin` and
-    /// world velocity. Returns the vehicle to unlink until the cmd's
-    /// pmove is done.
+    /// one slower than 1 and not prone is also pushed off it, by a moving
+    /// vehicle's `VEH_PlayerCollision` (its run-over damage and sound are
+    /// the caller's, [`VehicleOverlap::struck`]) or at 200 along the flat
+    /// direction from a resting one's origin, with a 200 ms damage timer.
+    /// `vehicle` gives a vehicle entity's `r.currentOrigin` and world
+    /// velocity.
     pub fn vehicle_overlap(
         &mut self,
         world: MoveWorld<'_>,
         vehicle: impl Fn(u32) -> Option<(Vec3, Vec3)>,
-    ) -> Option<u32> {
+    ) -> Option<VehicleOverlap> {
         if self.seat.is_some() || self.pm_type == PmType::Intermission {
             return None;
         }
@@ -906,19 +921,26 @@ impl ClientSim {
         dir.z = 0.0;
         along.z = 0.0;
         let dot = f64::from(dir.x) * f64::from(along.x) + f64::from(dir.y) * f64::from(along.y);
-        if !(speed < 1.0 || dot > f64::from(0.8f32)) {
-            return None;
+        let prone = self.ps.stance == pmove::Stance::Prone;
+        let mut out = VehicleOverlap {
+            entity: ent,
+            unlink: speed < 1.0 || dot > f64::from(0.8f32),
+            struck: None,
+            prone,
+            at,
+        };
+        if !out.unlink {
+            return Some(out);
         }
-        if self.ps.stance != pmove::Stance::Prone && speed < 1.0 {
+        if !prone && speed < 1.0 {
             if unit(velocity).1 > 1.0 {
-                // `VEH_PlayerCollision`'s push. Its run-over damage and
-                // sound are not dealt from here (open, 11.6).
-                if let Some(push) = crate::game::vehicle::physics::player_push(
+                out.struck = crate::game::vehicle::physics::player_push(
                     origin,
                     velocity,
                     at,
                     self.ps.velocity,
-                ) {
+                );
+                if let Some(push) = out.struck {
                     self.ps.velocity = push.velocity;
                 }
                 let (v, l) = unit(self.ps.velocity);
@@ -931,7 +953,7 @@ impl ClientSim {
             self.ps.knockback_ms = 200.0;
             self.ps.knockback_flags |= pmove::PMF_TIME_DAMAGE;
         }
-        Some(ent)
+        Some(out)
     }
 
     /// The live and spectating arms of the spawn's own think, which
