@@ -410,8 +410,8 @@ fn rebase_from(retail_da: [i32; 3], cl: &NetClient<ClientEnd>) -> [i32; 3] {
 }
 
 fn shifted(mut c: UserCmd, base: [i32; 3]) -> UserCmd {
-    for i in 0..3 {
-        c.angles[i] = (c.angles[i] + base[i]) & 0xffff;
+    for (a, b) in c.angles.iter_mut().zip(base) {
+        *a = (*a + b) & 0xffff;
     }
     c
 }
