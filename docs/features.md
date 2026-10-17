@@ -376,8 +376,11 @@ something, the bullet links it.
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
   (fetch a bazooka or panzerschreck lying about and breach a base with
   rockets from a spot with a shot at it, plant on a breached base and
-  defuse; they ignore vehicles). The nav graph is rebuilt when the script deletes walls,
-  as `bas` does to a breached base.
+  defuse; they ignore vehicles). The nav graph is rebuilt when the script
+  deletes walls, as `bas` does to a breached base. Bots never crouch on
+  the move, so a UO spawn room whose only way out is a crouched jump
+  through a window (mp_cassino's axis room, two on mp_streets) holds a
+  bot spawned there.
 
 ## What it doesn't do
 

@@ -29,8 +29,9 @@ where a body run from `a` through the shared cmd step
 (`vcod_common::pmove::cmd::{chop, player_step}`, one 50 ms usercmd per tick,
 standing, no weapon) ends on the ground within 8 units of `b`'s column centre.
 Capsule size, step-up, slopes, clip brushes and ladders therefore come from the
-same code a player moves with. Edges are directed: a drop of up to 200 units
-(under `bg_fallDamageMinHeight`, 256) is an edge with no way back.
+same code a player moves with. Edges are directed: a drop is an edge with no
+way back, up to a fall of 250 units from the highest the body rose (under
+`bg_fallDamageMinHeight`, 256, section "Other rules").
 
 ### Spacing
 
@@ -62,7 +63,8 @@ measured).
   at the target every tick, and gives up after two ticks of moving under 2
   units or at twice the run time plus four ticks.
 - A walk still in the air when its budget runs out gets up to 16 ticks more
-  to land (a 200-unit drop takes 14), and, landed past its budget, the run
+  to land (18 since 2026-10-17; a 250-unit fall takes 16), and, landed
+  past its budget, the run
   back to the target from there. VERIFIED (measured, `mp_ship`): the stair
   from the deck at z 168 down to the hull at z 104 by x 3430-3472, y 288
   rises about 48 units in 17, so a run down it leaves the top step and
@@ -931,8 +933,83 @@ spawned there leaves by and never needs again.
   out (VERIFIED, measured 2026-10-16). In the test profile it takes 14 minutes and
   8 000 s of CPU (VERIFIED, measured); it returns at once without a UO
   install, so the 1.1 census costs what it did.
-- Not looked into: why `mp_cassino`'s 12 spawns and `mp_kharkov`'s none
-  short of all reach the main component, and `mp_rhinevalley`'s 42 off it.
+- Walled-in spawns (2026-10-17). `nav_build`'s `LOST=1` lists the spawns
+  whose node does not reach the census's main component (`GAMETYPE=tdm`
+  builds the census's graph). On master c3d1e90b mp_cassino lost 12,
+  mp_streets 29 and mp_uo_dawnville none (its floor of 243 was stale).
+  Each was a small cluster of nodes no walk left, and each had one of
+  two causes:
+  - A fall deeper than the walk allowed. VERIFIED (measured, point
+    traces and a traced walk): mp_cassino's allied upper floor
+    (146..193, 1008..1296, 208), 6 spawns of `mp_uo_spawn_allies`, sd
+    and re, leaves only by a window sill at 240.1 on its west wall
+    (x 140..162, y 1047..1257); the walk jumps onto the sill and walks
+    off it into the street at 0.1, a 240-unit fall, and the walk gave up
+    past 200. VERIFIED (the binaries): `bg_fallDamageMinHeight` is 256
+    in 1.1d's `gameCvarTable` and in UO's (`game.mp.uo.i386.so`
+    `tools/re/dump_cvars.py` rows 103 and 104, 256 and 480, flags
+    0x208), and `PM_CrashLand` measures the fall from where the body's
+    rise ends (`pmove::crash_land`, the height out of the landing's
+    speed). A walk now gives up at a fall of 250 from the highest point
+    since it last stood (`nav::MAX_DROP`), measured on the landing tick
+    too, where the old test read only the ticks in the air. The
+    follower's walks again from a bot's own pace keep the old test, a
+    fall past 200 under where the body last stood read in the air
+    (`nav::PACED_DROP`): at 250 the back down onto mp_ship's ledge 211
+    under the deck node (3647, -352.9, 611.1) lands at the 190 a bot came
+    along the deck with, and a bot that did fell past it (section 3),
+    so a bot moving onto a drop that deep is still held to take it from
+    rest. Gains
+    (`nav_build` `UO=1 GAMETYPE=tdm`, reach it): mp_cassino 162 to 174,
+    mp_berlin 299 to 303, mp_kharkov 400 to 402; mp_ship gains about
+    400 nodes of drops and keeps its 112.
+  - A way out through a gap off every lattice line. The flood aims at
+    column centres, and a window whose standing room lies between two
+    lattice lines is never walked through. VERIFIED (measured, player
+    hull sweeps): mp_streets' allied rooms at (-360..-160,
+    -7068..-6788, 8), 14 spawns (`mp_teamdeathmatch_spawn`,
+    `mp_deathmatch_spawn`, `mp_uo_spawn_allies_secondary`, sd and re),
+    leave only by a window in the east wall at x -160 whose sill stands
+    at 36; a standing body fits in it with its feet within 2 units of
+    38 and 16 units across, about y -6862, between the lattice lines at
+    -6848 and -6880. `NavGraph::link_pockets` now runs every node that
+    reaches no node of the largest strongly connected component in 32
+    headings, 48 and 80 units out; a rest on a floor no node holds that
+    the run aimed at the rest itself also reaches becomes a node and
+    floods on, and a rest on another node's floor is walked again node
+    to node. It repeats up to three times. Gains (reach it, the census):
+    mp_streets 197 to 210, mp_arnhem 287 to 332, mp_foy 383 to 391,
+    mp_kursk 270 to 282, mp_rhinevalley 383 to 386, mp_sicily 238 to
+    241, mp_uo_stanjel 378 to 380, mp_peaks 126 to 128, mp_uo_hurtgen
+    282 to 286, mp_uo_powcamp 254 to 258; in one component mp_arnhem
+    253 to 265, mp_foy 379 to 386, mp_kursk 270 to 273, mp_rhinevalley
+    359 to 362. The 1.1 census does not move (mp_depot's 158 holds with
+    both changes switched off; its floor of 154 was stale).
+  `bots.rs`'s `uo_bots_leave_their_walled_in_spawns` places a bot in the
+  cassino floor and the streets rooms; each leaves within 30 s.
+- Still walled in: spawns whose only way out needs a crouch. VERIFIED
+  (measured, player hull sweeps, standing 70 and crouched 50):
+  - mp_cassino's axis room (5256..5576, -1708..-1272, 128), 6 spawns
+    (`mp_uo_spawn_axis`, sd and re): two windows in its south-west
+    wall, sills at 160 and tops about 231, where no standing body fits
+    at any height and a crouched one with its feet between 163 and 180
+    and 8 units across. With crouch held from the jump on, a scratch
+    walk from (5340, -1510) jumps onto the sill, goes through crouched
+    and lands outside at 24.
+  - mp_streets' axis room (290..570, -6900..-6570, 101), 11 spawns: no
+    standing body leaves it from any spot or height a jump reaches; the
+    crouched one does over the west sills at 125. One window there,
+    (292, -6660), is closed by patch 391 against a body inside, which a
+    sweep from outside passes through.
+  - mp_streets' room at (450..710, -3420..-3078, -24), 5 spawns: its
+    south window at (536, -3424), sill 0, takes a standing body only
+    with its feet within 4 units of 0 and 16 across. One of
+    `link_pockets`' runs found a way through from (615, -3393), but no
+    run aimed at the rest arrives, and a bot placed in the room never
+    left it, so the pass keeps it out.
+  Following those needs a crouched jump edge in the graph and a bot
+  that holds crouch on it (INFERRED: CoD's `PM_CheckDuck` takes the
+  crouch in the air; not measured on retail).
 
 The sprint. A UO bot holds `+sprint` (`buttons` 0x8) while following its
 path on the ground with no enemy in sight, keys straight ahead, and
