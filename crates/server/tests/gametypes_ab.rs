@@ -893,3 +893,8 @@ fn uo_capture_the_flag_touch_return_time_limit_and_rotation_match_retail() {
 fn uo_team_deathmatch_killcam_and_time_limit_match_retail() {
     uo_gametype(&UO, "tdmend", 50, 45_000);
 }
+
+#[test]
+fn uo_base_assault_round_clock_and_round_limit_match_retail() {
+    uo_gametype(&UO_FOY, "bastime", 80, 75_000);
+}
