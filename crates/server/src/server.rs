@@ -5,7 +5,9 @@
 //! tests own a queue. Ported from RTCW-MP sv_main.c / sv_client.c; reply
 //! strings come from docs/research/cod11-server-handshake.md.
 
-use crate::client::{Client, ClientState, CmdKind, Queued, QueuedCmd, sanitize_name};
+use crate::client::{
+    Client, ClientState, CmdKind, PacketCommand, Queued, QueuedCmd, sanitize_name,
+};
 use crate::compass;
 use crate::configstrings;
 use crate::console;
@@ -3177,8 +3179,10 @@ impl Server {
             // with it (combat doc, 9.2).
             "kill" => {
                 let packet = self.packet_seq;
-                if let Some(c) = self.clients[slot].as_mut() {
-                    c.kill_at.get_or_insert(packet);
+                if let Some(c) = self.clients[slot].as_mut()
+                    && !c.commands_at.iter().any(|(_, k)| *k == PacketCommand::Kill)
+                {
+                    c.commands_at.push((packet, PacketCommand::Kill));
                 }
             }
             // `Cmd_MenuResponse_f`: the client answering a menu `openMenu`
@@ -3196,16 +3200,15 @@ impl Server {
             // intermission return (docs/research/cod11-votes.md).
             "callvote" | "vote" => self.vote_command(slot, trimmed),
             // `Cmd_NextVehSlot_f` / `Cmd_PrevVehSlot_f` (game.mp.uo 0x4ed9b,
-            // 0x4ede1): a living rider changes seats.
+            // 0x4ede1): a living rider changes seats, in the move pass
+            // after the cmds of every earlier packet, so the seat's
+            // `SetClientViewAngle` bases `delta_angles` on the last of them.
             "nextvehslot" | "prevvehslot" if self.proto.version == PROTOCOL_V22.version => {
-                if let Some(rt) = self.script.as_mut()
-                    && rt.client_vitals(slot).health > 0
-                {
-                    let back = word == "prevvehslot";
-                    rt.with_host(|host, cx| {
-                        crate::game::vehicle::seat::cycle(host, cx, slot, back)
-                    });
-                    apply_seat_ops(&mut self.clients, rt);
+                let packet = self.packet_seq;
+                let back = word == "prevvehslot";
+                if let Some(c) = self.clients[slot].as_mut() {
+                    c.commands_at
+                        .push((packet, PacketCommand::CycleSeat { back }));
                 }
             }
             // UO's `Cmd_FlameDamageClient_f` (0x4ee2c): the one argument
@@ -8457,10 +8460,10 @@ impl Server {
                     continue;
                 };
                 if c.sim.is_none() {
-                    c.kill_at = None;
+                    c.commands_at.clear();
                     continue;
                 }
-                let kill = c.kill_at.map(|p| (p, false));
+                let kill = c.commands_at.first().map(|(p, _)| (*p, false));
                 let cmd = c
                     .pending
                     .first()
@@ -8476,9 +8479,14 @@ impl Server {
                 break;
             };
             if !is_cmd {
-                self.clients[slot].as_mut().unwrap().kill_at = None;
-                self.close_round(slot, &mut rounds[slot]);
-                self.run_kill(slot, &weapons);
+                let (_, command) = self.clients[slot].as_mut().unwrap().commands_at.remove(0);
+                match command {
+                    PacketCommand::Kill => {
+                        self.close_round(slot, &mut rounds[slot]);
+                        self.run_kill(slot, &weapons);
+                    }
+                    PacketCommand::CycleSeat { back } => self.cycle_seat(slot, back),
+                }
                 relink(&mut bodies, &self.clients, slot);
                 continue;
             }
@@ -8931,6 +8939,16 @@ impl Server {
     /// run: the drop takes the weapon they switch away from, and `EV_DEATH`
     /// goes on the ring ahead of their events. `pm_type` stays until the end
     /// frame, so they still move alive (combat doc, 9.2).
+    /// `G_VEH_CycleSlot` for a living rider (coduo-vehicles.md 11.3).
+    fn cycle_seat(&mut self, slot: usize, back: bool) {
+        if let Some(rt) = self.script.as_mut()
+            && rt.client_vitals(slot).health > 0
+        {
+            rt.with_host(|host, cx| crate::game::vehicle::seat::cycle(host, cx, slot, back));
+            apply_seat_ops(&mut self.clients, rt);
+        }
+    }
+
     fn run_kill(&mut self, slot: usize, weapons: &crate::weapons::WeaponTable) {
         let proto = self.proto;
         let now_ms = self.sv_time_ms;

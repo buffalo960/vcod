@@ -346,10 +346,7 @@ fn replay_with(
     // One rebase a seat: retail's `delta_angles` onto ours at the capture's
     // first snapshot, and again at the first snapshot both show a changed
     // seat on. In between each cmd goes out as the probe sent it, so a
-    // clamp push moves ours as it moved retail's, cmd for cmd. The seat
-    // change itself rides no cmd: ours runs it a frame or more after
-    // retail's, under a hull that has turned on, and its
-    // `SetClientViewAngle` lands that much apart.
+    // clamp push moves ours as it moved retail's, cmd for cmd.
     let mut base = rebase_from(first_da, &cl);
     let mut reanchor = false;
     let mut out = Vec::new();
@@ -379,10 +376,8 @@ fn replay_with(
                 }
                 // The probe's `nextvehslot` rides no cmd: a seat change in
                 // the capture is where it went.
-                if seat != 0 && last_seat != 0 && seat != last_seat {
-                    cl.send_reliable("nextvehslot");
-                    reanchor = true;
-                }
+                let mut change = seat != 0 && last_seat != 0 && seat != last_seat;
+                reanchor |= change;
                 last_seat = seat;
                 let want = s.t + offset;
                 // The cmds retail's frame had run by this snapshot.
@@ -402,7 +397,27 @@ fn replay_with(
                         .map(|(c, _)| shifted(*c, base))
                         .collect();
                     pending.retain(|(c, _)| c.server_time > ran);
-                    cl.send_cmds(&due);
+                    if std::mem::take(&mut change) {
+                        // The probe says `nextvehslot` as a step starts, in
+                        // the packet with the step's first cmd, and a `say`
+                        // step holds the view the last one ended on: the
+                        // change runs after the frame's cmds up to that held
+                        // run, and `SetClientViewAngle` bases the seat's
+                        // `delta_angles` on the last of them.
+                        let held = due
+                            .iter()
+                            .rev()
+                            .take_while(|c| due.last().is_some_and(|l| l.angles == c.angles))
+                            .count();
+                        let (before, after) = due.split_at(due.len() - held);
+                        if !before.is_empty() {
+                            cl.send_cmds(before);
+                        }
+                        cl.send_reliable("nextvehslot");
+                        cl.send_cmds(after);
+                    } else {
+                        cl.send_cmds(&due);
+                    }
                     for e in step(&mut sv, &q, &mut cl, now) {
                         if let NetEvent::ServerCommand(tokens) = e {
                             join.on_server_command(&tokens, &mut cl, now);
@@ -585,13 +600,6 @@ impl Gap {
     }
 }
 
-/// The probe's `nextvehslot` rides no cmd, so ours changes seat in another
-/// frame than retail's, and the seat's `SetClientViewAngle` reads the view
-/// tag where that frame has the turret: the change's snapshot reads the
-/// view apart, and the next one's cone the turn the rebase onto the new
-/// seat's `delta_angles` makes.
-const SEAT_CHANGE: &str = "the seat change, a frame apart from retail's";
-
 #[derive(Clone, Copy)]
 enum Kind {
     Int,
@@ -721,18 +729,7 @@ fn the_tank_seats_replay_on_ours() {
     let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[], &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[
-        Gap {
-            field: "viewangles",
-            snaps: 468..=468,
-            why: SEAT_CHANGE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 469..=469,
-            why: SEAT_CHANGE,
-        },
-    ]);
+    tally(&lines, &ours).assert_within(&[]);
 }
 
 const JEEP_SEATS: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-seats-uo.txt";
@@ -745,11 +742,7 @@ fn the_jeep_seats_replay_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[Gap {
-        field: "viewangles",
-        snaps: 468..=468,
-        why: SEAT_CHANGE,
-    }]);
+    tally(&lines, &ours).assert_within(&[]);
 }
 
 const TANK_DRIVE: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-drive-uo.txt";

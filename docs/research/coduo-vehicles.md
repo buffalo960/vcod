@@ -897,6 +897,23 @@ free; a tank's first change after a use entry is never refused; inside
 6 to 1), stamped 1500 ms ahead, so changes are 1750 ms apart and the
 script sees `deactivated` then `activated` (VERIFIED decompile).
 
+The cycle is a client command, so it runs where `SV_ExecuteClientMessage`
+runs its packet's commands: after every earlier packet's usercmds and
+before its own packet's. `SetClientViewAngle` (0x54301) writes
+`delta_angles` as `ANGLE2SHORT(view) - client+0x452c`, the angles of the
+last cmd run (VERIFIED decompile), so where in the frame's cmds the
+command lands moves the seat's `delta_angles` and every view after it.
+Both seats captures fit a change after the last cmd that still turns and
+before the held run the probe's `say` step starts: the tank's
+`delta_angles` (23003, 63172) at the driver's seat are `tag_player`'s
+view (8.88, -27.60) less cmd 41000's (44149, 62875), the jeep's (13195,
+41447) at the passenger's `tag_body` (-11.21, 76.53) less cmd 39700's,
+to a short (VERIFIED, capture). vcod-server queues the cycle with its
+packet and runs it in the move pass ahead of that packet's cmds, as it
+runs `kill` (`client::PacketCommand`); it used to run it on arrival,
+ahead of the cmds of packets queued before it, and the seat's view
+stood off retail's by up to 0.84 degrees on the change's snapshot.
+
 ### 11.4 Every frame
 
 - `G_RunClient` (0x41dfc) puts a linked player in `pm_type` 1, 7 dead
@@ -1614,9 +1631,38 @@ runs lie 1.1 units apart.
       at the seat: the offset is not ported (it moves the link box and
       what links to him, never the rays or the snapshot).
     - The 400 ms after a seat change also part. Retail's bones glide to
-      the new seat over eight frames, the same pose twice every other
-      frame; ours arrive in four (up to 6 units apart on the way)
-      (VERIFIED, `tank` run). Not traced.
+      the new seat over eight frames; ours arrived in four (up to 6 units
+      apart on the way) (VERIFIED, `tank` run). The cause is the setter
+      (UO 0x2ce5f, 1.5b 0x28ced): when the legs anim changes crouch or
+      prone class (`BG_IsCrouchingAnim` 0x2cdac, movetype mask 0xc4;
+      `BG_IsProneAnim` 0x2ce04, 0x308) it stores `bg.time + 400` in the
+      client info (`ci+0x4c0`, 1.5b `ci+0x4a4`), and every later blend of
+      either channel is at least what is left of that. Its other floors are 1.1's, without 1.1's
+      200/250 stance rule (VERIFIED decompile). 1.1d has no such window
+      (no `bg.time + 400` store in the `game.mp.i386.so` decompile,
+      VERIFIED decompile). The gunner's
+      `standMG42` legs are of another class than a seat's, so a change
+      in or out of seat 2 blends over 400 ms. vcod ports it
+      (`animclock::ChannelClock::update_windowed`, the server's 1.5 and
+      UO end frames). Measured 2026-10-17 (retail UO 1.51b, `tank` run
+      on port 32775, `probe_bones 1`): the change into the gunner's seat
+      now matches retail's every frame within 0.21, but for one frame
+      where retail repeats the last pose (41850); the change back into
+      the driver's takes eight frames on both, but ours dips up to 3.5
+      units below retail's path (VERIFIED, replay). Not traced: a blend
+      out of a node the first change's window still held, or the fading
+      clips' order.
+    - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
+      fresh retail jeep run (seat changes at 41550 and 53550, port
+      32776) meets the passenger's stint up to 1.07 off ours, where the
+      committed fixture (changes at 41500 and 53500) matches at 0.00.
+      Starting the clips of an end frame that changes the torso anim a
+      frame ahead, as a spawn's, matches the fresh run at 0.01 and puts
+      the fixture's 0.57 off (VERIFIED, replay). Some rebuild inside the
+      thread pass decides it, which neither rule names; not ported.
+      A delayed `wait 0.1` thread of `maps/mp/_jeepdrive_gmi.gsc`
+      (`delayed_process_activate`) runs on every seat change and is a
+      candidate (INFERRED).
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
   within a quarter unit, the stints after the gunner's seat included.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
@@ -1726,11 +1772,11 @@ runs lie 1.1 units apart.
   per-cmd `delta_angles` pushes included: they move ours cmd for cmd as
   they moved retail's (VERIFIED, replay; until 2026-10-17 the replay
   rebased every cmd on our newest `delta_angles`, which put each push a
-  snapshot apart and opened the cone on the jump, 9 tolerated rows). Gap:
-  each seat change's snapshot, and on the tank the next one's cone. The
-  probe's `nextvehslot` rides no cmd, so ours changes seat in another
-  frame than retail's and its `SetClientViewAngle` reads the view tag as
-  that frame poses the turret (INFERRED, the replay's timing).
+  snapshot apart and opened the cone on the jump, 9 tolerated rows).
+  The replay sends `nextvehslot` in its own packet ahead of the held run
+  of cmds that ends the change's frame (11.3), and every seat change's
+  view and cone match (VERIFIED, replay; the three rows it tolerated
+  until 2026-10-17 were the server running the cycle on arrival).
   The driver's feedback from the tank's own shell matches (13, "A blast
   on a hull"). `delta_angles` is not compared: its absolute value
   rides the replaying client's own cmd angles. The jeep driver's legs

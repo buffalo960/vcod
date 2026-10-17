@@ -32,6 +32,18 @@ pub struct QueuedCmd {
     pub cmd: UserCmd,
 }
 
+/// A client command that runs in the move pass, ahead of its packet's
+/// usercmds and behind every earlier packet's, as `SV_ExecuteClientMessage`
+/// (0x80872ec) runs a packet's client commands before its usercmds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketCommand {
+    /// `Cmd_Kill_f` (combat doc, section 8).
+    Kill,
+    /// UO's `Cmd_NextVehSlot_f` / `Cmd_PrevVehSlot_f`, `back` for the
+    /// latter (coduo-vehicles.md 11.3).
+    CycleSeat { back: bool },
+}
+
 impl From<UserCmd> for QueuedCmd {
     fn from(cmd: UserCmd) -> Self {
         QueuedCmd { packet: 0, cmd }
@@ -156,10 +168,9 @@ pub struct Client {
     /// Usercmds received but not yet replayed, oldest first. Bounded so a
     /// flooded client cannot build unbounded latency.
     pub pending: Vec<QueuedCmd>,
-    /// A `kill` this client sent, as the packet it came in: retail runs a
-    /// packet's client commands before its usercmds, so the death lands
-    /// ahead of that packet's cmds and behind every earlier packet's.
-    pub kill_at: Option<u64>,
+    /// The [`PacketCommand`]s this client sent, each with the packet it
+    /// came in, in arrival order.
+    pub commands_at: Vec<(u64, PacketCommand)>,
     /// UO's `fdc <entnum>` (`Cmd_FlameDamageClient_f`, game.mp.uo 0x4ee2c):
     /// whose flame the client says it stands in and the `level.time` it
     /// said so.
@@ -240,7 +251,7 @@ impl Client {
             message_ack: 0,
             last_processed_st: 0,
             pending: Vec::new(),
-            kill_at: None,
+            commands_at: Vec::new(),
             flame: None,
             last_cmd: NULL_USERCMD,
             sim: None,
@@ -263,7 +274,7 @@ impl Client {
         self.sim = None;
         self.frames = vec![None; SV_PACKET_BACKUP];
         self.pending.clear();
-        self.kill_at = None;
+        self.commands_at.clear();
         self.last_cmd = NULL_USERCMD;
         self.last_processed_st = 0;
     }
@@ -278,7 +289,7 @@ impl Client {
         self.sim = None;
         self.frames = vec![None; SV_PACKET_BACKUP];
         self.pending.clear();
-        self.kill_at = None;
+        self.commands_at.clear();
     }
 
     /// `SV_AddServerCommand` (cod_lnxded 0x808b680) without the overflow's

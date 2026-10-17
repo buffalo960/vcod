@@ -246,9 +246,37 @@ impl ChannelClock {
     /// snapped origin, moved since the last measurement. `legs` picks the
     /// legs lerp frame, whose setter blends by stance (0x2a6ff).
     pub fn update(&mut self, anims: &PlayerAnims, legs: bool, wire: i32, seen: &Seen, at: Times) {
+        self.update_in(anims, legs, wire, seen, at, None);
+    }
+
+    /// [`Self::update`] under 1.5's and UO's setter, whose blends a crouch
+    /// or prone change stretches: `window` is the client's end of that
+    /// stretch (`ci+0x4a4` 1.5b, `ci+0x4c0` UO), shared by both channels,
+    /// the legs first.
+    pub fn update_windowed(
+        &mut self,
+        anims: &PlayerAnims,
+        legs: bool,
+        wire: i32,
+        seen: &Seen,
+        at: Times,
+        window: &mut i32,
+    ) {
+        self.update_in(anims, legs, wire, seen, at, Some(window));
+    }
+
+    fn update_in(
+        &mut self,
+        anims: &PlayerAnims,
+        legs: bool,
+        wire: i32,
+        seen: &Seen,
+        at: Times,
+        window: Option<&mut i32>,
+    ) {
         let index = wire & !TOGGLE;
         if wire != self.anim {
-            self.set(anims, wire, legs, seen, at.clock_ms);
+            self.set(anims, wire, legs, seen, at.clock_ms, window);
         }
         if index == 0 {
             return;
@@ -309,7 +337,15 @@ impl ChannelClock {
     /// `trap_XAnimSetTime` 0x2aa5a). A death anim on a body not freshly
     /// cloned goes straight to its last frame at full weight, every other
     /// clip on the channel dropped (0x2a97b..0x2aa5a, cgame 0x3000395d..0x300039f5).
-    fn set(&mut self, anims: &PlayerAnims, wire: i32, legs: bool, seen: &Seen, now_ms: i32) {
+    fn set(
+        &mut self,
+        anims: &PlayerAnims,
+        wire: i32,
+        legs: bool,
+        seen: &Seen,
+        now_ms: i32,
+        window: Option<&mut i32>,
+    ) {
         let motion = |i: i32| anims.motion(i).filter(|_| i != 0);
         let (old_index, new_index) = (self.anim & !TOGGLE, wire & !TOGGLE);
         let (old, new) = (motion(old_index), motion(new_index));
@@ -335,7 +371,10 @@ impl ChannelClock {
             },
             _ => 0.0,
         };
-        let blend = blend_ms(anims, old_index, new_index, legs) as f32;
+        let blend = match window {
+            None => blend_ms(anims, old_index, new_index, legs),
+            Some(w) => blend_ms_windowed(anims, old_index, new_index, legs, now_ms, w),
+        } as f32;
         // `XAnimClearGoalWeight` (0x080bf53c) sends the old node to 0 over
         // the whole blend time; the clips already fading keep their own.
         let old_weight = self.weight.at(now_ms);
@@ -444,6 +483,47 @@ fn blend_ms(anims: &PlayerAnims, old: i32, new: i32, legs: bool) -> i32 {
     } else {
         still(o)
     }
+}
+
+/// The blend of 1.5's and UO's setter (1.5b 0x28ced, UO 0x2ce5f): the
+/// anim's own, else 170 into a still clip, 250 into one out of a movement
+/// clip and 120 into a movement clip, 200 into no anim, and never under
+/// what is left of `window`. A legs change of crouch or prone class opens a
+/// new 400 ms one, which the torso's change in the same end frame reads
+/// too. The legs blend in at once from no anim at all.
+fn blend_ms_windowed(
+    anims: &PlayerAnims,
+    old: i32,
+    new: i32,
+    legs: bool,
+    now_ms: i32,
+    window: &mut i32,
+) -> i32 {
+    let record = |i: i32| (i != 0).then(|| anims.motion(i).unwrap_or_default());
+    let (o, n) = (record(old), record(new));
+    if n.is_some() && legs {
+        let crouched = movetype_bit("idlecr") | movetype_bit("walkcr") | movetype_bit("walkcrbk");
+        let prone =
+            movetype_bit("idleprone") | movetype_bit("walkprone") | movetype_bit("walkpronebk");
+        let class = |i: i32| {
+            let m = anims.record(i).movetypes;
+            (m & crouched != 0, m & prone != 0)
+        };
+        if class(old) != class(new) {
+            *window = now_ms.wrapping_add(400);
+        }
+    }
+    if o.is_none() && legs {
+        return 0;
+    }
+    let own = n.map_or(200, |n| n.blend_ms);
+    let rule = match n {
+        Some(n) if n.blend_ms >= 1 => -1,
+        Some(n) if n.move_speed != 0 => 120,
+        _ if o.is_some_and(|o| o.move_speed != 0) => 250,
+        _ => 170,
+    };
+    own.max(rule.max(window.wrapping_sub(now_ms)))
 }
 
 /// `((bg.time / 100 + clientNum * 360) % 1000) * 0.001`, the normalized time
@@ -630,6 +710,35 @@ mod tests {
         let w = c.node_weights(2000 + (blend / 2.0) as i32);
         assert!((w.torso - 0.5).abs() < 1e-6, "{w:?}");
         assert!((w.legs - 0.51).abs() < 1e-6, "{w:?}");
+    }
+
+    /// 1.5's and UO's setter: a legs change into a crouch opens a 400 ms
+    /// window, and a fire anim the torso starts inside it blends in over
+    /// what is left of it instead of its own 30 ms (UO 0x2ce5f).
+    #[test]
+    fn a_crouch_stretches_the_next_blends_to_400_ms() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let (stand, crouch) = (
+            anims.wire_of("pb_stand_alert").unwrap(),
+            anims.wire_of("pb_crouch_alert").unwrap(),
+        );
+        let fire = event_anim(&anims, "fireweapon", true);
+        let at = |t| Times::end_frame(t);
+        let weight = |c: &ChannelClock, t| c.layers(t).last().unwrap().weight;
+        let (mut legs, mut torso, mut window) =
+            (ChannelClock::default(), ChannelClock::default(), 0);
+        legs.update_windowed(&anims, true, stand, &seen(0.0, 0), at(1000), &mut window);
+        legs.update_windowed(&anims, true, crouch, &seen(0.0, 0), at(2000), &mut window);
+        assert_eq!(window, 2400);
+        torso.update_windowed(&anims, false, fire, &seen(0.0, 0), at(2100), &mut window);
+        assert!((weight(&torso, 2250) - 0.5).abs() < 1e-6);
+        // 1.1's setter keeps the fire anim's own blend.
+        let mut plain = ChannelClock::default();
+        plain.update(&anims, false, fire, &seen(0.0, 0), at(2100));
+        assert_eq!(weight(&plain, 2130), 1.0);
     }
 
     /// A `FIREWEAPON` anim carries its own 30 ms blend (0x2888d).

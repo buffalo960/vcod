@@ -419,6 +419,9 @@ pub struct ClientSim {
     /// clips the spawn set advance in that frame's anim update, a frame ahead
     /// of 1.1's and 1.5's (cod11-turrets.md 13.7). The next end frame takes it.
     pub dobj_ahead: bool,
+    /// 1.5's and UO's `ci+0x4a4` / `ci+0x4c0`: until when a crouch or
+    /// prone change stretches every blend (`animclock::ChannelClock::update_windowed`).
+    stance_window_ms: i32,
     /// The last frame a follow sent this spectator, the copy with its flags
     /// patched: the playerstate `StopFollowing` writes over.
     pub follow_wire: Option<msg::PlayerState>,
@@ -625,6 +628,7 @@ impl ClientSim {
             hud_cleared: false,
             respawned: false,
             dobj_ahead: false,
+            stance_window_ms: 0,
             follow_wire: None,
             residue: None,
             end_frame_wire: None,
@@ -2056,8 +2060,14 @@ impl ClientSim {
                     clock_ms: now_ms.wrapping_sub(ahead),
                     snapshot_ms: now_ms,
                 };
-                legs_clock.update(a, true, legs, &seen, at);
-                torso_clock.update(a, false, torso, &seen, at);
+                if self.ps.rules == vcod_common::pmove::MoveRules::V1_1 {
+                    legs_clock.update(a, true, legs, &seen, at);
+                    torso_clock.update(a, false, torso, &seen, at);
+                } else {
+                    let window = &mut self.stance_window_ms;
+                    legs_clock.update_windowed(a, true, legs, &seen, at, window);
+                    torso_clock.update_windowed(a, false, torso, &seen, at, window);
+                }
             }
             None => {
                 legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());

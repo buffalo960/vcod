@@ -186,9 +186,25 @@ watch_places()
 	}
 }
 
+//	`PROBE spawn <time> <client>` on each of the client's spawns, the
+//	frame its idle clip starts from.
+log_spawns()
+{
+	for (;;)
+	{
+		self waittill("spawned");
+		logPrint("PROBE spawn " + gettime() + " " + self getEntityNumber() + "\n");
+	}
+}
+
 //	Early returns: sessionstate is undefined before the first spawn.
 try_place(veh)
 {
+	if (!isdefined(self.probe_spawns))
+	{
+		self.probe_spawns = 1;
+		self thread log_spawns();
+	}
 	if (!isdefined(self.sessionstate))
 		return;
 	if (self.sessionstate != "playing")
@@ -242,23 +258,40 @@ log_profile()
 		seat = 0;
 		if (target isInVehicle() && isdefined(target.probe_seat))
 			seat = target.probe_seat;
-		right = anglestoright(self.angles);
-		fwd = anglestoforward(self.angles);
 		t = gettime();
 		logPrint("PROBE pose " + t + " " + seat + " " + target.origin + " " + target.angles + " " + self.angles + "\n");
-		for (z = -8; z <= 84; z += 4)
+		profile_rays(target, seat, "prof", "vprof");
+		if (getcvarint("probe_profile_mid"))
+			self thread profile_mid(target, seat);
+	}
+}
+
+//	With `probe_profile_mid` set, the same rays 25 ms later, from the
+//	frame's clock walk rather than its first thread pass, logged as `mprof`
+//	and `vmprof` under the first pass's time.
+profile_mid(target, seat)
+{
+	wait 0.025;
+	profile_rays(target, seat, "mprof", "vmprof");
+}
+
+profile_rays(target, seat, tag, vtag)
+{
+	right = anglestoright(self.angles);
+	fwd = anglestoforward(self.angles);
+	t = gettime();
+	for (z = -8; z <= 84; z += 4)
+	{
+		for (f = -24; f <= 24; f += 6)
 		{
-			for (f = -24; f <= 24; f += 6)
-			{
-				base = target.origin + (fwd[0] * f, fwd[1] * f, z);
-				start = base + (right[0] * 200, right[1] * 200, 0);
-				end = base - (right[0] * 60, right[1] * 60, 0);
-				trace = bullettrace(start, end, true, undefined);
-				if (isdefined(trace["entity"]) && trace["entity"] == target)
-					logPrint("PROBE prof " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
-				else if (isdefined(trace["entity"]) && trace["entity"] == self)
-					logPrint("PROBE vprof " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
-			}
+			base = target.origin + (fwd[0] * f, fwd[1] * f, z);
+			start = base + (right[0] * 200, right[1] * 200, 0);
+			end = base - (right[0] * 60, right[1] * 60, 0);
+			trace = bullettrace(start, end, true, undefined);
+			if (isdefined(trace["entity"]) && trace["entity"] == target)
+				logPrint("PROBE " + tag + " " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
+			else if (isdefined(trace["entity"]) && trace["entity"] == self)
+				logPrint("PROBE " + vtag + " " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
 		}
 	}
 }
