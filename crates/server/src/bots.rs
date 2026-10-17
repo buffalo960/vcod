@@ -1437,9 +1437,13 @@ impl Bot {
                         (!mine.is_empty()).then(|| guard(mine[(rank / 2) % mine.len()].at))
                     };
                 }
+                // Without shooting, a side's two bots split over the other
+                // side's bases: on one, its lone defender ran back and
+                // defused every plant (seed 7's 67 defuses).
+                let pick = if self.shoot { rank / 2 } else { rank };
                 let t = match backing {
                     Some(x) if defends => x,
-                    _ => theirs[(rank / 2 + self.deaths as usize) % theirs.len()],
+                    _ => theirs[(pick + self.deaths as usize) % theirs.len()],
                 };
                 Some(match t.charge {
                     // Our charge: hold its room against the defuse, then
@@ -5868,6 +5872,20 @@ mod tests {
         assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]));
         let calm = Bot::new("allies", false, 1);
         assert_eq!(calm.goal(&v), Goal::To([300.0, 200.0, 8.0]));
+        // With two bases of theirs it takes the one the first bot does not.
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        let mut other = b.bases[1].clone();
+        other.at = [2000.0, 3000.0, 0.0];
+        other.breached = true;
+        other.charge = Some(BombView {
+            origin: [2000.0, 3000.0, -176.0],
+            aim: [2000.0, 3000.0, -160.0],
+        });
+        b.bases.push(other);
+        assert_eq!(calm.goal(&v), Goal::To([2000.0, 3000.0, -176.0]));
+        assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]));
     }
 
     /// A defender with a charge of its side's ticking on the other side's

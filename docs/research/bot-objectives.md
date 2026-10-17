@@ -686,7 +686,9 @@ first everywhere.
   defused. A defender that does not shoot (`--bots-shoot` off) stops no
   plant from the room, and with a defender a side every plant was
   defused the moment it was down, for good: it attacks with the rest
-  and comes back only to defuse. Each side defuses a charge on one of
+  and comes back only to defuse, and a side's two such bots split over
+  the other side's bases by rank (shooting, both take the same one), so
+  two charges can tick at once on a side with one bot left to defuse. Each side defuses a charge on one of
   its bases (10.5 s): a defender, and an attacker within 2000 units of
   it. An attacker goes for the next of the other side's bases after
   each of its deaths, off the defender that killed it. A standing base
@@ -808,14 +810,23 @@ and 113 times and defused all but one or two, for 29 minutes. Two bots
 with shoot off, seed 7, ended the round on mp_italy (tick 21579),
 mp_kursk (10579), mp_ponyri (13679) and mp_rhinevalley (10539); nothing
 stalled there. After them, gate
-`four_uo_bots_end_a_bas_round_without_shooting` (seeds 1, 3, 5, 7):
-over at ticks 9139, 10359, 9919 and 11199, four or five bases gone
-off, up to six defuses. `four_shooting_uo_bots_end_a_bas_round` on
-mp_foy, seeds 1, 3, 5, 7: 17959, 32759, 12939 and 18839 (seed 3 within
-two minutes of the gate's 29), no own-rocket kill; seeds 9 and 11 at
-14019 and 14259. Shooting, seed 7, on the other maps (`BAS_MAP`):
-mp_italy 26179 (seed 3, 24439), mp_kursk 19999, mp_ponyri 12799,
-mp_rhinevalley 12419. The two-bot gate, seed 7: 11199. Before the
+`four_uo_bots_end_a_bas_round_without_shooting`, seeds 1, 3, 7, 9, 11:
+over at ticks 13919, 11439, 10799, 8979 and 6979, four or five bases
+gone off, up to eight defuses; mp_italy 10639, mp_kursk 7479 (seed 7).
+Seed 5 still never ends: with one base breached a side, each side's
+second bot was called home to defuse before it breached its standing
+target, 67 times. Without the split the same rules failed seed 7 that
+way instead. Nothing a bot that does not shoot can do stops a defuse
+once the defuser reaches the trigger: the hold ends only on release, a
+death, or 155 units (`BaseAssault_bomb_think` 3210), and a body in the
+lookat's line found no free floor on mp_foy's axis charge room, whose
+table runs to about 20 units of where its defender stood.
+`four_shooting_uo_bots_end_a_bas_round` on mp_foy, seeds 1, 3, 5, 7:
+17959, 32759, 12939 and 18839 (seed 3 within two minutes of the gate's
+29), no own-rocket kill; seeds 9 and 11 at 14019 and 14259. Shooting,
+seed 7, on the other maps (`BAS_MAP`): mp_italy 26179 (seed 3, 24439),
+mp_kursk 19999, mp_ponyri 12799, mp_rhinevalley 12419. The two-bot
+gate, seeds 1, 3, 5, 7: 11719, 22138, 10419, 11199. Before the
 futile-enemy rule the shooting seed 7 stood twenty minutes with both
 sides' last bases breached, an LMG bot facing a dry-pistol one; before
 the backing rule seed 5 ran out its 29 minutes on six defuses.
