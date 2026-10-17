@@ -3137,7 +3137,9 @@ impl App {
             return;
         };
         let mut out = Vec::new();
-        if matches!(phase, Phase::Live(_)) {
+        // A demo's Esc opens the main menu (`UI_SetActiveMenu` 1,
+        // CoDMP.exe 0x40dc30).
+        if matches!(phase, Phase::Live(_)) && !net.is_demo() {
             match join
                 .main_menu(net.configstrings())
                 .filter(|n| self.ui.has_menu(n))
@@ -3155,6 +3157,17 @@ impl App {
         self.ui_pending.extend(out);
         self.grab_before_console = false;
         self.sync_menu_mouse();
+    }
+
+    fn playing_demo(&self) -> bool {
+        matches!(&self.mode, Mode::Online { net, .. } if net.is_demo())
+    }
+
+    /// A key under 128 or MOUSE1 in a demo with no menu, console or chat
+    /// field up is Esc, and clears `nextdemo` (CoDMP.exe 0x40dc30).
+    fn demo_key(&mut self) {
+        self.shell.execute("set nextdemo \"\"");
+        self.escape();
     }
 
     /// Esc with no menu up: the in-game menus online, a mouse release
@@ -3391,6 +3404,14 @@ impl ApplicationHandler for App {
                 if pressed && self.chat_key(code, event.text.as_deref()) {
                     return;
                 }
+                if pressed
+                    && self.playing_demo()
+                    && console::keys::key_name(code)
+                        .is_some_and(|k| console::keys::number(k) < 0x80)
+                {
+                    self.demo_key();
+                    return;
+                }
                 if pressed && !event.repeat && self.eat_stray_key() {
                     return;
                 }
@@ -3512,6 +3533,10 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if self.console_active() {
+                    return;
+                }
+                if button == MouseButton::Left && pressed && self.playing_demo() {
+                    self.demo_key();
                     return;
                 }
                 // the click that captures the mouse must not also fire
