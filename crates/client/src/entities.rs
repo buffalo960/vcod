@@ -830,6 +830,16 @@ impl EntityAnim {
     }
 }
 
+/// The model of a compiled-in ammo or health item row, without the
+/// `xmodel/` prefix the table spells (`weapon_table::STATIC_ITEMS`).
+fn static_item_model(
+    p: &vcod_common::net::protocol::Protocol,
+    index: usize,
+) -> Option<&'static str> {
+    let (_, model) = vcod_common::weapon_table::static_item(p, index)?;
+    Some(model.strip_prefix("xmodel/").unwrap_or(model))
+}
+
 /// Loads+uploads an xmodel by name (no `xmodel/` prefix), caching failures as `None`.
 fn resolve_model(
     cache: &mut HashMap<String, Option<ModelHandle>>,
@@ -1815,7 +1825,7 @@ pub fn build_instances(
             EntityVisual::Item(index) => {
                 // Ammo and health rows (1.1 65-69, UO 129-133) carry their
                 // own world model; a mod's dropped health pack is one.
-                if let Some((_, model)) = vcod_common::weapon_table::static_item(p, index) {
+                if let Some(model) = static_item_model(p, index) {
                     if let Some(handle) = resolve_model(model_cache, renderer, fs, model) {
                         drawn.insert(
                             num,
@@ -2097,6 +2107,23 @@ pub fn build_instances(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// Every ammo and health row's model loads under the name the item
+    /// draw passes; the table's `xmodel/` prefix once made it look up
+    /// `xmodel/xmodel/health_medium` and draw nothing.
+    #[test]
+    fn static_item_models_load() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let p = vcod_common::net::protocol::install_protocol(&fs);
+        for index in
+            p.max_weapons + 1..p.max_weapons + 1 + vcod_common::weapon_table::STATIC_ITEMS.len()
+        {
+            let model = static_item_model(p, index).expect("a static item row");
+            xmodel::load(&fs, model).unwrap_or_else(|e| panic!("{model}: {e:#}"));
+        }
+    }
 
     #[test]
     fn constant_light_unpacks_intensity_and_colour_bytes() {
