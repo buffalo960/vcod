@@ -119,8 +119,8 @@ check.
   hold ladder top and mp_hurtgen's crease (a graph build each). With
   `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
-  mp_cassino six-bot tdm run (the file ~12 s, 60 s of CPU); with a 1.1 install
-  they return at once. `cargo run
+  mp_cassino six-bot tdm run and its walled-in spawns pair (the file
+  ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
@@ -318,7 +318,9 @@ header of the fixture it produced.
   section).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
-- `--probe-uo-weapon` and `--probe-vehicle` send a cmd every 16 ms
+- `--probe-uo-weapon` and `--probe-vehicle` send cmds at 60 Hz (0, 16
+  and 32 or 33 ms past each frame's time; `ProbeHold::sixty` where a held
+  trigger's fire rate matters, cod15-movement.md 6), each
   holding the view of their first spawned snapshot (or of the use tap),
   rebased on `delta_angles`. Against a gsc `setPlayerAngles` every frame
   that rebase lags by the link, so where the rounds go rides the client's

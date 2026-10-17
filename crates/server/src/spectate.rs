@@ -325,6 +325,10 @@ pub struct ClientSim {
     /// The last damage's kick, which the aim block plays out
     /// (`P_DamageFeedback` step 6, combat doc 6).
     kick: pmove::aim::DamageKick,
+    /// The gun-kick spring the aim block adds down the sight. Only 1.5's and
+    /// UO's servers kick it, off each fire event (`BG_WeaponFireRecoil`,
+    /// cod15-movement.md 6); on 1.1 it stays zero (combat doc 15.2).
+    gun_kick: pmove::aim::GunKick,
     /// `client+0x220c/0x2210`: where this client's next shot, swing or
     /// throw goes, computed once per cmd ahead of its moves.
     aim: [f32; 2],
@@ -538,6 +542,7 @@ impl ClientSim {
             view_angles: view,
             aim_state: Default::default(),
             kick: Default::default(),
+            gun_kick: Default::default(),
             aim: [view[0], view[1]],
             gun_offset: [0.0; 2],
             view_lerp_start: None,
@@ -761,6 +766,7 @@ impl ClientSim {
         // of the client.
         self.aim_state = Default::default();
         self.kick = Default::default();
+        self.gun_kick = Default::default();
         self.aim = [self.view_angles[0], self.view_angles[1]];
         self.gun_offset = [0.0; 2];
         // `ClientSpawn` calls `G_EntUnlink` on the spawning client
@@ -851,6 +857,81 @@ impl ClientSim {
             }
             _ => self.respawned = false,
         }
+    }
+
+    /// United Offensive's `ClientThink_real` ahead of `Pmove` (game.mp.uo
+    /// 0x415e4..0x419c3, coduo-vehicles.md 11.6): a client on foot whose box
+    /// starts inside a vehicle (`eType` 12) gets out of it. The vehicle is
+    /// unlinked for this cmd's pmove while the client is slower than 1 or
+    /// moves away from it (the flat dot of the two directions past 0.8);
+    /// one slower than 1 and not prone is also pushed off it at 200 along
+    /// the flat direction from the vehicle's origin, with a 200 ms damage
+    /// timer. `vehicle` gives a vehicle entity's `r.currentOrigin` and
+    /// world velocity. Returns the vehicle to unlink until the cmd's
+    /// pmove is done.
+    pub fn vehicle_overlap(
+        &mut self,
+        world: MoveWorld<'_>,
+        vehicle: impl Fn(u32) -> Option<(Vec3, Vec3)>,
+    ) -> Option<u32> {
+        if self.seat.is_some() || self.pm_type == PmType::Intermission {
+            return None;
+        }
+        let mask = if self.pm_dead {
+            vcod_common::movetrace::MASK_DEADSOLID
+        } else {
+            vcod_common::collision::MASK_PLAYERSOLID
+        };
+        let mut maxs = self.ps.maxs();
+        maxs.z = match self.ps.stance {
+            pmove::Stance::Prone => pmove::HEIGHT_PRONE,
+            pmove::Stance::Crouch => pmove::HEIGHT_CROUCH,
+            _ => maxs.z,
+        };
+        let at = self.ps.origin;
+        let t = world.box_trace(at, at, self.ps.mins(), maxs, mask);
+        if !t.startsolid && !t.allsolid {
+            return None;
+        }
+        let ent = world.entity_num(&t);
+        let (origin, velocity) = vehicle(ent)?;
+        // Both `VectorNormalize`d whole, then their z dropped unrenormalized.
+        let unit = |v: Vec3| {
+            let l = (f64::from(v.x).powi(2) + f64::from(v.y).powi(2) + f64::from(v.z).powi(2))
+                .sqrt() as f32;
+            (if l != 0.0 { v * (1.0 / l) } else { v }, l)
+        };
+        let (mut dir, _) = unit(at - origin);
+        let (mut along, speed) = unit(self.ps.velocity);
+        dir.z = 0.0;
+        along.z = 0.0;
+        let dot = f64::from(dir.x) * f64::from(along.x) + f64::from(dir.y) * f64::from(along.y);
+        if !(speed < 1.0 || dot > f64::from(0.8f32)) {
+            return None;
+        }
+        if self.ps.stance != pmove::Stance::Prone && speed < 1.0 {
+            if unit(velocity).1 > 1.0 {
+                // `VEH_PlayerCollision`'s push. Its run-over damage and
+                // sound are not dealt from here (open, 11.6).
+                if let Some(push) = crate::game::vehicle::physics::player_push(
+                    origin,
+                    velocity,
+                    at,
+                    self.ps.velocity,
+                ) {
+                    self.ps.velocity = push.velocity;
+                }
+                let (v, l) = unit(self.ps.velocity);
+                if l < 200.0 {
+                    self.ps.velocity = v * 200.0;
+                }
+            } else {
+                self.ps.velocity = dir * 200.0;
+            }
+            self.ps.knockback_ms = 200.0;
+            self.ps.knockback_flags |= pmove::PMF_TIME_DAMAGE;
+        }
+        Some(ent)
     }
 
     /// The live and spectating arms of the spawn's own think, which
@@ -2039,16 +2120,21 @@ impl ClientSim {
         if self.pm_type != PmType::Normal || self.dead {
             return;
         }
+        let def = weapons
+            .get(self.ps.weapon as usize)
+            .and_then(Option::as_ref);
+        let msec = msec.min(200);
+        if let Some(def) = def {
+            self.gun_kick
+                .step(def, self.ps.weapon_pos_frac, msec as f32 * 0.001);
+        }
         let input = pmove::aim::AimInput {
-            def: weapons
-                .get(self.ps.weapon as usize)
-                .and_then(Option::as_ref),
+            def,
             view: self.view_angles,
-            msec: msec.min(200),
+            msec,
             now_ms,
             kick: self.kick,
-            // Retail's server never kicks the spring (combat doc 15.2).
-            gun_kick: [0.0; 2],
+            gun_kick: self.gun_kick.angles,
             sway_scale: 1.0,
         };
         self.aim = pmove::aim::aim_angles(&self.ps, &mut self.aim_state, &input);
@@ -2057,6 +2143,33 @@ impl ClientSim {
             wrap(self.aim[0] - self.view_angles[0]),
             wrap(self.aim[1] - self.view_angles[1]),
         ];
+    }
+
+    /// `G_PlayerEvent`'s fire arm on a 1.5 or UO server (1.5b 0x3b2e4, UO
+    /// 0x435cc): `BG_WeaponFireRecoil` (1.5b 0x3246c, UO 0x396bc) draws the
+    /// view kick, which the server drops, then the gun kick, which it adds
+    /// to the spring's speeds: four `rand()`s, `rand` a draw in
+    /// `0..=0x7fff_ffff`. The ranges are the sight's when the fraction is
+    /// above 0 (cod15-movement.md 6). Nothing on 1.1.
+    pub fn fire_recoil(&mut self, weapons: &[Option<WeaponDef>], mut rand: impl FnMut() -> i32) {
+        if !self.ps.rules.v15() {
+            return;
+        }
+        let Some(def) = weapons
+            .get(self.ps.weapon as usize)
+            .and_then(Option::as_ref)
+        else {
+            return;
+        };
+        let mut draw = |[min, max]: [f32; 2]| min + (max - min) * (rand() as f32 / 2_147_483_648.0);
+        let a = &def.aim;
+        let view = usize::from(self.ps.weapon_pos_frac == 1.0);
+        draw(a.view_kick_pitch[view]);
+        draw(a.view_kick_yaw[view]);
+        let gun = usize::from(self.ps.weapon_pos_frac > 0.0);
+        let pitch = draw(a.gun_kick_pitch[gun]);
+        let yaw = draw(a.gun_kick_yaw[gun]);
+        self.gun_kick.kick(pitch, yaw);
     }
 
     /// How far the last cmd's shot left off the view it was aimed from,

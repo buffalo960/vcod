@@ -1858,12 +1858,41 @@ impl Bot {
             }
             cmd.angles = self.lob_angles(view);
         }
-        match self.stage {
-            Stage::ToGrenade => return self.think_grenade(view, cmd),
-            Stage::Cook { left, spoon } => return self.think_cook(view, cmd, left, spoon),
-            Stage::BackToRifle { weapon } => return self.think_back(view, cmd, weapon),
-            Stage::Wander => {}
+        // A throw under way runs from a live frag too: one that came back
+        // off a wall rolled to a bot standing through the switch back to
+        // its rifle (bot-objectives.md 6).
+        let mut staged = match self.stage {
+            Stage::ToGrenade => self.think_grenade(view, cmd),
+            Stage::Cook { left, spoon } => self.think_cook(view, cmd, left, spoon),
+            Stage::BackToRifle { weapon } => self.think_back(view, cmd, weapon),
+            Stage::Wander => {
+                return self.think_wander(view, cmd);
+            }
+        };
+        let yaw = (staged.angles[1] + view.delta_angles[1]) as f32 / ANGLE2SHORT;
+        self.flee(view, &mut staged, yaw);
+        staged
+    }
+
+    /// A live grenade near: the keys run from it whatever the fight wants,
+    /// the view stays where `yaw` (the cmd's own) has it.
+    fn flee(&self, view: &BotView, cmd: &mut UserCmd, yaw: f32) {
+        if let Some(f) = view.frag_near
+            && !view.deployed
+            && !self.objective_busy(view)
+        {
+            let away = (view.origin[1] - f[1])
+                .atan2(view.origin[0] - f[0])
+                .to_degrees();
+            let d = yaw_diff(away, yaw).to_radians();
+            cmd.forward = (d.cos() * 127.0).round() as i8;
+            cmd.right = (-d.sin() * 127.0).round() as i8;
+            cmd.up = 0;
+            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
         }
+    }
+
+    fn think_wander(&mut self, view: &BotView, mut cmd: UserCmd) -> UserCmd {
         if let Some(cmd) = self.think_objective(view, cmd) {
             return cmd;
         }
@@ -2158,21 +2187,7 @@ impl Bot {
                 [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
             }
         }
-        // A live grenade near: the keys run from it whatever the fight
-        // wants, the view stays on the fight.
-        if let Some(f) = view.frag_near
-            && !view.deployed
-            && !self.objective_busy(view)
-        {
-            let away = (view.origin[1] - f[1])
-                .atan2(view.origin[0] - f[0])
-                .to_degrees();
-            let d = yaw_diff(away, yaw).to_radians();
-            cmd.forward = (d.cos() * 127.0).round() as i8;
-            cmd.right = (-d.sin() * 127.0).round() as i8;
-            cmd.up = 0;
-            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
-        }
+        self.flee(view, &mut cmd, yaw);
         // A switch ends when it lands, or when the weapon is gone (dropped,
         // or swapped at a pickup) and the byte would read as a holster for
         // good.
@@ -5269,6 +5284,18 @@ mod tests {
         assert!(cmd.forward < -100, "{}", cmd.forward);
         let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
         assert!(yaw.abs() < 20.0, "the view stays on the enemy: {yaw}");
+    }
+
+    /// mp_cassino, seed 1: a frag thrown away from a close enemy came back
+    /// off the wall and rolled to the thrower, who stood through the switch
+    /// back to its rifle and took the blast. The keys run from it there too.
+    #[test]
+    fn a_bot_switching_back_from_a_throw_runs_from_a_live_frag() {
+        let (mut bot, mut v) = engaged(3);
+        v.frag_near = Some([60.0, 0.0, 0.0]);
+        bot.stage = Stage::BackToRifle { weapon: 10 };
+        let cmd = bot.think(&v);
+        assert!(cmd.forward < -100, "{}", cmd.forward);
     }
 
     /// No clear lob at the enemy (a wall, a ceiling or a body in the way):

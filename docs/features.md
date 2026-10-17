@@ -297,7 +297,9 @@ something, the bullet links it.
   one wedged seven seconds destroys itself, a wreck's respawn included.
   A vehicle's death puts its riders out as retail's does: each takes the
   5-point probe hit through his damage callback, and one it leaves whole
-  looks for a dismount spot. A seated driver's and gunner's body meets a level ray where retail's
+  looks for a dismount spot; the others' corpses slide out of the hull.
+  A body inside a vehicle is pushed out of it before its move, as
+  retail's `ClientThink_real` does. A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes; a vehicle and its sound blends leave
@@ -320,7 +322,9 @@ something, the bullet links it.
   through the seams retail's does. A submodel's patches and terrain clip
   only while its entity is linked. Shots,
   swings and throws start from each patch's muzzle (1.1's truncated
-  point, 1.5's and UO's bobbed one). Melee works. Grenades are real
+  point, 1.5's and UO's bobbed one). On 1.5 and UO each shot kicks the
+  server's gun spring, so a sighted burst climbs as retail's does. Melee
+  works. Grenades are real
   missiles that bounce (off script models, and off a player's posed bones
   at an eighth of their speed), rest (on a player too, falling once he
   leaves on 1.5 and UO) and explode with retail's falloff, and a blast
@@ -377,8 +381,11 @@ something, the bullet links it.
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
   (fetch a bazooka or panzerschreck lying about and breach a base with
   rockets from a spot with a shot at it, plant on a breached base and
-  defuse; they ignore vehicles). The nav graph is rebuilt when the script deletes walls,
-  as `bas` does to a breached base.
+  defuse; they ignore vehicles). The nav graph is rebuilt when the script
+  deletes walls, as `bas` does to a breached base. Bots never crouch on
+  the move, so a UO spawn room whose only way out is a crouched jump
+  through a window (mp_cassino's axis room, two on mp_streets) holds a
+  bot spawned there.
 
 ## What it doesn't do
 
@@ -447,9 +454,6 @@ console.
   console.
 - A heartbeat reaches the master, which probes back. I haven't seen vcod
   listed yet.
-- A UO rider killed with his vehicle, where he sat, stays on the hull;
-  retail's corpse slides off it
-  ([coduo-vehicles.md](research/coduo-vehicles.md) 11.2).
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.
