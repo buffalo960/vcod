@@ -2896,7 +2896,10 @@ impl CollisionWorld {
             }
             return;
         }
-        if let Some(h) = self.terrain.clip_capsule(&tp, &sweep, trace.fraction) {
+        if let Some(h) =
+            self.terrain
+                .clip_capsule(&tp, &sweep, trace.fraction, self.arith() == Arith::Stored)
+        {
             trace.fraction = h.fraction;
             trace.enter = h.fraction + crate::terrain::FRACTION_EPS;
             trace.normal = Vec3::from_array(h.normal);

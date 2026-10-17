@@ -702,6 +702,47 @@ that changes what a body does, the air accelerate's floor:
 `pmove::air_accelerate` for 1.1's air
 (`pmove::tests::a_wish_under_100_in_the_air_accelerates_at_100s_rate`).
 
+The slope misses, found 2026-10-17 (this round's `MOVES_EXACT=1` counts,
+each against the line before):
+
+- The terrain capsule clip. VERIFIED, 1.5b `cod_lnxded` 0x8055aab
+  (reached from 0x8056463 and 0x805648b), read in the disassembly: the
+  same steps as 1.1d's 0x8052a58 with every variable stored, `d_e` and
+  `d_s` (`fstps -0x20`, `-0x1c`), their difference (`-0x88`), the
+  near-pad fraction (`-0x24`), both barycentric distances (`-0x3c`,
+  `-0x40`); the corner sweep (0x8056695-0x8056920) stores the offset,
+  the separation, the dot and the discriminant; the edge sweep
+  (0x80562c5-0x8056690) stores the offset, its three frame dots, the
+  separation, the delta's two frame dots, `bq`, `aa`, the discriminant,
+  the run along the edge and both normal factors, and stores the normal
+  after its `u` term and again after its `v` term. It reads the triangle
+  records 0x8054176 builds, the planes the UO build's 0x805403e makes
+  (`Terrain::point_clip_stored` already read those). Ported as
+  `Terrain::clip_capsule`'s `stored` arm, which `CollisionWorld` takes
+  under `Arith::Stored`: 1.5 moves 1152 to 1218 of 1222, turns 1033 to
+  1098 of 1100, UO sprint 876 to 896 of 900. VERIFIED (measured).
+- `PM_ClipVelocity` (0x1e8e5) stores the dot, the backoff and each
+  component's change, and `VectorNormalize` (0x32f73, the one
+  `PM_SlideMove`'s and `PM_WalkMove`'s calls bind to through the PLT;
+  the copy at 0x42f73 in the export is the same code) stores the squared
+  length, the length and its reciprocal. VERIFIED, disassembly. With
+  the slide's crease (`CrossProduct`, the stored normalize, and the
+  stored dot at 0x296ad and 0x296f3), the stored plane test (0x293b5)
+  and the walk's flattened `pml.forward` and `pml.right` clipped and
+  normalized the stored way (0x2008c-0x203f5): 1.5 moves 1222 of 1222,
+  turns 1100 of 1100, UO's pole run 361 to 370 of 372 and the pillar run
+  372 of 372. VERIFIED (measured). `pmove::clip_velocity`'s `stored`
+  arm, `x87::normalize_stored`.
+- What stays: one snapshot of UO's 8 ms low-window jump
+  (`mp_streets-dm-slope-8ms-crouchjump-low.txt`, ct 22491). From ct
+  22466 the body slides along patch 462 over terrain 1536, and the
+  second bump's crease test (`dot(clipped, plane_i) >= 0`, kept on the
+  stack, 0x295c8-0x29623) reads +3.5e-8 in ours; retail takes the
+  crease and stops for a frame (velocity 0 at ct 22474). Under 1.1d's
+  arithmetic the same dot read -4.6e-8 and matched by chance. INFERRED:
+  a last bit upstream of that dot (the walk's velocity into the slide,
+  or a plane) differs; not found. `moves_ab.rs`, `CROUCHJUMP_LOW_GAPS`.
+
 ## Unchanged
 
 Every `pm_*` tunable (1.5 rodata 0x75624-0x75664 against 1.1's

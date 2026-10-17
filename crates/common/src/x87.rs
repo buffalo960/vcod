@@ -41,3 +41,16 @@ pub fn normalize_in_place(v: Vec3) -> Vec3 {
 pub fn scale(v: Vec3, s: f64) -> Vec3 {
     (v.as_dvec3() * DVec3::splat(s)).as_vec3()
 }
+
+/// 1.5b's `VectorNormalize` in place (game.mp 0x32f73), which United
+/// Offensive shares: the squared length, the length and its reciprocal each
+/// stored as a float, every component rounded once. A zero vector is left
+/// as it was.
+pub fn normalize_stored(v: Vec3) -> Vec3 {
+    let len = f64::from(dot(v, v) as f32).sqrt() as f32;
+    if len == 0.0 {
+        return v;
+    }
+    let inv = 1.0 / len;
+    (v.as_dvec3() * f64::from(inv)).as_vec3()
+}

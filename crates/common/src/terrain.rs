@@ -142,6 +142,20 @@ fn normalize_v22(v: &mut [f32; 3]) -> f32 {
     len
 }
 
+impl TerrainTri {
+    /// The record's own planes, 1.1d's build.
+    fn planes(&self) -> PointPlanes {
+        PointPlanes {
+            normal: self.normal,
+            dist: self.dist,
+            u: self.u,
+            ud: self.ud,
+            v: self.v,
+            vd: self.vd,
+        }
+    }
+}
+
 impl PointPlanes {
     /// `coduo_lnxded`'s record build (0x805403e, from the
     /// `PlaneFromPoints` call at 0x80547b8): the code keeps nothing on the
@@ -491,13 +505,17 @@ pub(crate) fn segment_bounds_meet(
 impl Terrain {
     /// The capsule clip (0x8052a58) of one partition against a trace whose
     /// fraction is `fraction`. Returns the last hit it recorded, if any.
+    /// `stored` is 1.5b's and UO's build (`cod_lnxded` 1.5b 0x8055aab), the
+    /// same steps with every variable stored as a float
+    /// (docs/research/cod15-movement.md 7).
     pub(crate) fn clip_capsule(
         &self,
         part: &TerrainPart,
         sw: &CapsuleSweep,
         fraction: f32,
+        stored: bool,
     ) -> Option<TerrainHit> {
-        self.clip_capsule_as(part, sw, fraction, true)
+        self.clip_capsule_as(part, sw, fraction, true, stored)
     }
 
     /// [`Self::clip_capsule`], with or without the bounds reject in front
@@ -508,7 +526,10 @@ impl Terrain {
         sw: &CapsuleSweep,
         mut fraction: f32,
         reject: bool,
+        stored: bool,
     ) -> Option<TerrainHit> {
+        // A variable 1.5b stores; 1.1d keeps it.
+        let st = |x: f64| if stored { d(r(x)) } else { x };
         // The sphere nearer the partition's faces: the lower one, or the
         // upper for a partition facing down only. `axis` reaches the other.
         let hr = d(sw.half_height) - d(sw.radius);
@@ -550,51 +571,53 @@ impl Terrain {
             {
                 continue;
             }
-            let n = t.normal.map(d);
-            let d_e = ((d(e[1]) * n[1] + d(e[0]) * n[0]) + d(e[2]) * n[2]) - d(t.dist);
+            // 1.5b and UO read the planes their own build made.
+            let pl = if stored { t.v22 } else { t.planes() };
+            let n = pl.normal.map(d);
+            let d_e = st(((d(e[1]) * n[1] + d(e[0]) * n[0]) + d(e[2]) * n[2]) - d(pl.dist));
             if d_e >= re {
                 continue;
             }
-            let d_s = ((d(s[1]) * n[1] + d(s[0]) * n[0]) + d(s[2]) * n[2]) - d(t.dist);
-            let dd = d_s - d_e;
+            let d_s = st(((d(s[1]) * n[1] + d(s[0]) * n[0]) + d(s[2]) * n[2]) - d(pl.dist));
+            let dd = st(d_s - d_e);
             if dd <= 0.0 {
                 continue;
             }
             let bary = |p: [f64; 3]| {
-                let u = ((p[0] * d(t.u[0]) + p[1] * d(t.u[1])) + p[2] * d(t.u[2])) - d(t.ud);
-                let v = ((p[0] * d(t.v[0]) + p[1] * d(t.v[1])) + p[2] * d(t.v[2])) - d(t.vd);
-                (u, v)
+                let u = ((p[0] * d(pl.u[0]) + p[1] * d(pl.u[1])) + p[2] * d(pl.u[2])) - d(pl.ud);
+                let v = ((p[0] * d(pl.v[0]) + p[1] * d(pl.v[1])) + p[2] * d(pl.v[2])) - d(pl.vd);
+                (st(u), st(v))
             };
             let outside = |u: f64, v: f64| u < 0.0 || v < 0.0 || u + v > 1.0;
 
             if d_s <= nre {
                 // Deep behind the face: solid where the capsule's axis
                 // crosses the triangle, at the near pad or the far one.
-                let far_d = d(axis) * n[2] + d_s;
+                let far_d = st(d(axis) * n[2] + d_s);
                 if far_d <= nre {
                     continue;
                 }
+                let tn = st((nre - d_s) / n[2]);
                 let (u0, v0) = bary(s.map(d));
-                let tn = (nre - d_s) / n[2];
-                let (un, vn) = (u0 + tn * d(t.u[2]), v0 + tn * d(t.v[2]));
+                let (un, vn) = (st(u0 + tn * d(pl.u[2])), st(v0 + tn * d(pl.v[2])));
                 if outside(un, vn) {
                     let tf = if d(r(far_d)) < re {
                         d(axis)
                     } else {
-                        (re - d_s) / n[2]
+                        st((re - d_s) / n[2])
                     };
-                    let (uf, vf) = (u0 + tf * d(t.u[2]), v0 + tf * d(t.v[2]));
+                    let (uf, vf) = (st(u0 + tf * d(pl.u[2])), st(v0 + tf * d(pl.v[2])));
                     if outside(uf, vf) {
                         continue;
                     }
                 }
-                return Some(solid(ti, t.normal));
+                return Some(solid(ti, pl.normal));
             }
 
             let (f, p) = if d_s < re {
                 (0.0, s)
             } else {
-                let f = (d_s - re) / dd;
+                let f = st((d_s - re) / dd);
                 if f > d(fraction) {
                     continue;
                 }
@@ -605,12 +628,12 @@ impl Terrain {
                 u32::from(u + v > 1.0) | (u32::from(u < 0.0) << 1) | (u32::from(v < 0.0) << 2);
             if bits == 0 {
                 if f <= d(FRACTION_EPS) {
-                    return Some(solid(ti, t.normal));
+                    return Some(solid(ti, pl.normal));
                 }
                 fraction = r(f - d(FRACTION_EPS));
                 hit = Some(TerrainHit {
                     fraction,
-                    normal: t.normal,
+                    normal: pl.normal,
                     tri: ti,
                     startsolid: false,
                 });
@@ -619,18 +642,20 @@ impl Terrain {
 
             for i in 0..3 {
                 let swept = if bits & (1 << i) == 0 {
-                    self.sweep_vertex(t.verts[i], &s, &dl, sw.delta_sq, r_eps, fraction)
+                    self.sweep_vertex(t.verts[i], &s, &dl, sw.delta_sq, r_eps, fraction, stored)
+                } else if stored {
+                    self.sweep_edge_stored(t.edges[i], &s, &dl, r_eps, fraction)
                 } else {
                     self.sweep_edge(t.edges[i], &s, &dl, r_eps, fraction)
                 };
                 match swept {
                     Sweep::Miss => {}
-                    Sweep::Inside => return Some(solid(ti, t.normal)),
+                    Sweep::Inside => return Some(solid(ti, pl.normal)),
                     Sweep::Hit(tt, normal) => {
                         // The binary tests the trace's fraction before this
                         // hit, not the hit's, against the epsilon.
                         if fraction <= FRACTION_EPS {
-                            return Some(solid(ti, t.normal));
+                            return Some(solid(ti, pl.normal));
                         }
                         fraction = r(d(tt) - d(FRACTION_EPS));
                         hit = Some(TerrainHit {
@@ -734,6 +759,7 @@ impl Terrain {
     }
 
     /// A corner swept as a sphere of radius `r_eps` (0x8053121-0x8053235).
+    #[allow(clippy::too_many_arguments)]
     fn sweep_vertex(
         &self,
         rec: u32,
@@ -742,21 +768,24 @@ impl Terrain {
         delta_sq: f32,
         r_eps: f32,
         fraction: f32,
+        stored: bool,
     ) -> Sweep {
         if rec == NONE {
             return Sweep::Miss;
         }
+        // 1.5b (0x8056695-0x8056920) stores every variable.
+        let st = |x: f64| if stored { d(r(x)) } else { x };
         let p = self.verts[rec as usize];
-        let q: [f64; 3] = std::array::from_fn(|i| d(s[i]) - d(p[i]));
-        let sep = ((q[0] * q[0] + q[1] * q[1]) + q[2] * q[2]) - d(r_eps) * d(r_eps);
+        let q: [f64; 3] = std::array::from_fn(|i| st(d(s[i]) - d(p[i])));
+        let sep = st(((q[0] * q[0] + q[1] * q[1]) + q[2] * q[2]) - d(r_eps) * d(r_eps));
         if sep <= 0.0 {
             return Sweep::Inside;
         }
-        let bq = (dl[0] * q[0] + dl[1] * q[1]) + dl[2] * q[2];
+        let bq = st((dl[0] * q[0] + dl[1] * q[1]) + dl[2] * q[2]);
         if bq >= 0.0 {
             return Sweep::Miss;
         }
-        let disc = bq * bq - d(delta_sq) * sep;
+        let disc = st(bq * bq - d(delta_sq) * sep);
         if disc < 0.0 {
             return Sweep::Miss;
         }
@@ -765,7 +794,7 @@ impl Terrain {
             return Sweep::Miss;
         }
         let inv = 1.0 / d(r_eps);
-        let normal = std::array::from_fn(|i| r((dl[i] * d(t) + q[i]) * inv));
+        let normal = std::array::from_fn(|i| r(st(dl[i] * d(t) + q[i]) * inv));
         Sweep::Hit(t, normal)
     }
 
@@ -818,6 +847,57 @@ impl Terrain {
         let k1 = (d(t) * d(du) + d(a)) / d(r_eps);
         let k2 = (d(bf) + d(t) * dv) / d(r_eps);
         let normal = std::array::from_fn(|i| r(d(ed.u[i]) * k1 + d(ed.v[i]) * k2));
+        Sweep::Hit(t, normal)
+    }
+
+    /// [`Self::sweep_edge`] as 1.5b builds it (0x80562c5-0x8056690): each
+    /// dot product summed x first on the stack and every variable stored,
+    /// the normal stored after its `u` term and again after its `v` term.
+    fn sweep_edge_stored(
+        &self,
+        rec: u32,
+        s: &[f32; 3],
+        dl: &[f64; 3],
+        r_eps: f32,
+        fraction: f32,
+    ) -> Sweep {
+        if rec == NONE {
+            return Sweep::Miss;
+        }
+        let st = |x: f64| d(r(x));
+        let dot = |a: &[f64; 3], b: [f32; 3]| (a[0] * d(b[0]) + a[1] * d(b[1])) + a[2] * d(b[2]);
+        let ed = &self.edges[rec as usize];
+        let q: [f64; 3] = std::array::from_fn(|i| st(d(s[i]) - d(ed.origin[i])));
+        let (a, b, c) = (st(dot(&q, ed.u)), st(dot(&q, ed.v)), st(dot(&q, ed.w)));
+        let sep = st((a * a + b * b) - d(r_eps) * d(r_eps));
+        if sep <= 0.0 {
+            return if c >= 0.0 && c <= d(ed.len) {
+                Sweep::Inside
+            } else {
+                Sweep::Miss
+            };
+        }
+        let (du, dv) = (st(dot(dl, ed.u)), st(dot(dl, ed.v)));
+        let bq = st(du * a + dv * b);
+        if bq >= 0.0 {
+            return Sweep::Miss;
+        }
+        let aa = st(du * du + dv * dv);
+        let disc = st(bq * bq - aa * sep);
+        if disc <= 0.0 {
+            return Sweep::Miss;
+        }
+        let t = r((-disc.sqrt() - bq) / aa);
+        if t >= fraction {
+            return Sweep::Miss;
+        }
+        let cw = st(d(t) * st(dot(dl, ed.w)) + c);
+        if cw < 0.0 || cw > d(ed.len) {
+            return Sweep::Miss;
+        }
+        let k1 = st((d(t) * du + a) / d(r_eps));
+        let k2 = st((d(t) * dv + b) / d(r_eps));
+        let normal = std::array::from_fn(|i| r(st(d(ed.u[i]) * k1) + d(ed.v[i]) * k2));
         Sweep::Hit(t, normal)
     }
 
@@ -1008,8 +1088,9 @@ mod tests {
             let sw = sweep(a, b);
             let f = if rnd() < 0.3 { rnd() } else { 1.0 };
             for part in &t.parts {
-                let x = t.clip_capsule_as(part, &sw, f, true);
-                let y = t.clip_capsule_as(part, &sw, f, false);
+                let stored = rnd() < 0.5;
+                let x = t.clip_capsule_as(part, &sw, f, true, stored);
+                let y = t.clip_capsule_as(part, &sw, f, false, stored);
                 let key = |h: &Option<TerrainHit>| {
                     h.as_ref().map(|h| {
                         (
@@ -1071,6 +1152,7 @@ mod tests {
                 &t.parts[0],
                 &sweep([50.0, 50.0, 85.0], [50.0, 50.0, 25.0]),
                 1.0,
+                false,
             )
             .expect("a hit");
         assert!(!hit.startsolid);
@@ -1121,6 +1203,7 @@ mod tests {
                 &t.parts[0],
                 &sweep([110.0, 50.0, 85.0], [110.0, 50.0, 25.0]),
                 1.0,
+                false,
             )
             .expect("an edge hit");
         let h = (15.125f64 * 15.125 - 100.0).sqrt();

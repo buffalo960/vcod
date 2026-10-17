@@ -3401,11 +3401,26 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
     let scale = scale as f32;
 
     let (forward, right) = view_vectors(ps);
-    let flat = |v: Vec3| x87::normalize(clip_velocity(v.with_z(0.0), ps.ground_normal));
+    let v15 = ps.rules.v15();
+    // 1.5b's walk (0x2008c-0x203f5) clips and normalizes through its
+    // stored `PM_ClipVelocity` and `VectorNormalize`.
+    let norm = |v: Vec3| {
+        if v15 {
+            x87::normalize_stored(v)
+        } else {
+            x87::normalize(v)
+        }
+    };
+    let flat = |v: Vec3| norm(clip_velocity(v.with_z(0.0), ps.ground_normal, v15));
     let (forward, right) = (flat(forward), flat(right));
     let wishvel = (forward.as_dvec3() * fd + right.as_dvec3() * rd).as_vec3();
-    let len = x87::dot(wishvel, wishvel).sqrt() as f32;
-    (x87::normalize(wishvel), f64::from(len) * f64::from(scale))
+    let sq = x87::dot(wishvel, wishvel);
+    let len = if v15 {
+        f64::from(sq as f32).sqrt() as f32
+    } else {
+        sq.sqrt() as f32
+    };
+    (norm(wishvel), f64::from(len) * f64::from(scale))
 }
 
 /// `AngleVectors`' forward and right (game.mp 0x3b228) for the view yaw and
@@ -3560,9 +3575,22 @@ fn set_movement_dir(ps: &mut PlayerState, input: &PmInput, dt: f32) {
 
 /// Q3 `bg_pmove.c` `PM_ClipVelocity` (game.mp 0x3460c): the dot, the
 /// overclip's product or quotient and each component's difference stay on
-/// the x87 stack, and only the stored component is rounded.
-fn clip_velocity(vel: Vec3, normal: Vec3) -> Vec3 {
+/// the x87 stack, and only the stored component is rounded. 1.5b's
+/// (0x1e8e5), which UO shares, stores the dot, the backoff and each
+/// component's change (`stored`).
+fn clip_velocity(vel: Vec3, normal: Vec3, stored: bool) -> Vec3 {
     let (v, n) = (vel.as_dvec3(), normal.as_dvec3());
+    if stored {
+        let r = |x: f64| f64::from(x as f32);
+        let dot = r((v.x * n.x + v.y * n.y) + v.z * n.z);
+        let backoff = r(if dot < 0.0 {
+            dot * f64::from(OVERCLIP)
+        } else {
+            dot / f64::from(OVERCLIP)
+        });
+        let c = |i: usize| (v[i] - r(n[i] * backoff)) as f32;
+        return Vec3::new(c(0), c(1), c(2));
+    }
     let dot = v.dot(n);
     let backoff = if dot < 0.0 {
         dot * f64::from(OVERCLIP)
@@ -3621,9 +3649,14 @@ fn walk_move(
     // still carries its fall turns it into ground speed.
     let before = ps.velocity;
     let speed = x87::dot(before, before).sqrt() as f32;
-    ps.velocity = clip_velocity(ps.velocity, ps.ground_normal);
+    ps.velocity = clip_velocity(ps.velocity, ps.ground_normal, ps.rules.v15());
     if x87::dot(ps.velocity, before) > 0.0 {
-        ps.velocity = x87::scale(x87::normalize(ps.velocity), f64::from(speed));
+        let dir = if ps.rules.v15() {
+            x87::normalize_stored(ps.velocity)
+        } else {
+            x87::normalize(ps.velocity)
+        };
+        ps.velocity = x87::scale(dir, f64::from(speed));
     }
     // Standing still skips the move but not the legs: retail jumps straight
     // to PM_SetMovementDir (@0x2f6db), which is what keeps a prone player's
@@ -3968,7 +4001,7 @@ fn air_move(
     }
     // A plane too steep to stand on still steers the fall (0x2f1d3).
     if let Some(n) = ps.ground_plane {
-        ps.velocity = clip_velocity(ps.velocity, n);
+        ps.velocity = clip_velocity(ps.velocity, n, ps.rules.v15());
     }
     step_slide_move(ps, world, dt, true, mask, events);
     set_movement_dir(ps, input, dt);
@@ -4006,7 +4039,7 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
         primal.z = end_velocity.z;
         ps.velocity.z = ((end_z + f64::from(ps.velocity.z)) * 0.5) as f32;
         if let Some(n) = ground {
-            ps.velocity = clip_velocity(ps.velocity, n);
+            ps.velocity = clip_velocity(ps.velocity, n, ps.rules.v15());
         }
     }
 
@@ -4015,8 +4048,14 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
     if let Some(n) = ground {
         planes.push(n);
     }
-    planes.push(x87::normalize(ps.velocity));
+    // 1.5b's `VectorNormalize2` (0x43216) stores its steps too.
+    planes.push(if ps.rules.v15() {
+        x87::normalize_stored(ps.velocity)
+    } else {
+        x87::normalize(ps.velocity)
+    });
 
+    let v15 = ps.rules.v15();
     let mut time_left = dt;
     let mut bumps = 0;
     for _ in 0..NUM_BUMPS {
@@ -4052,18 +4091,21 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
         planes.push(t.normal);
 
         for (i, &plane_i) in planes.iter().enumerate() {
-            if x87::dot(ps.velocity, plane_i) >= 0.1 {
+            // 1.5b stores this dot before the compare (0x293b5).
+            let into = x87::dot(ps.velocity, plane_i);
+            let into = if v15 { f64::from(into as f32) } else { into };
+            if into >= 0.1 {
                 continue;
             }
-            let mut clipped = clip_velocity(ps.velocity, plane_i);
-            let mut end_clipped = clip_velocity(end_velocity, plane_i);
+            let mut clipped = clip_velocity(ps.velocity, plane_i, v15);
+            let mut end_clipped = clip_velocity(end_velocity, plane_i, v15);
 
             for (j, &plane_j) in planes.iter().enumerate() {
                 if j == i || x87::dot(clipped, plane_j) >= 0.1 {
                     continue;
                 }
-                clipped = clip_velocity(clipped, plane_j);
-                end_clipped = clip_velocity(end_clipped, plane_j);
+                clipped = clip_velocity(clipped, plane_j, v15);
+                end_clipped = clip_velocity(end_clipped, plane_j, v15);
                 if x87::dot(clipped, plane_i) >= 0.0 {
                     continue;
                 }
@@ -4071,9 +4113,19 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
                 // Two opposed planes cross to a zero vector, which
                 // `VectorNormalize` leaves signed: head-on into a wall the
                 // velocity comes out (0, 0, -0) (protocol doc, "Spectator").
-                let crease = x87::normalize_in_place(x87::cross(plane_i, plane_j));
-                clipped = x87::scale(crease, x87::dot(crease, ps.velocity));
-                end_clipped = x87::scale(crease, x87::dot(crease, end_velocity));
+                // 1.5b stores the normalize's steps and each dot (0x29667-0x29714).
+                let cross = x87::cross(plane_i, plane_j);
+                let crease = if v15 {
+                    x87::normalize_stored(cross)
+                } else {
+                    x87::normalize_in_place(cross)
+                };
+                let along = |v: Vec3| {
+                    let d = x87::dot(crease, v);
+                    if v15 { f64::from(d as f32) } else { d }
+                };
+                clipped = x87::scale(crease, along(ps.velocity));
+                end_clipped = x87::scale(crease, along(end_velocity));
 
                 // three planes: nowhere left to go
                 if planes
@@ -4259,7 +4311,7 @@ fn step_slide(
         }
         if down.fraction < 1.0 {
             ps.origin = down.endpos;
-            ps.velocity = clip_velocity(ps.velocity, down.normal);
+            ps.velocity = clip_velocity(ps.velocity, down.normal, ps.rules.v15());
         } else {
             // Nothing within reach: the step is undone and the snap is not
             // a fall (0x353d0).
@@ -4289,7 +4341,7 @@ fn step_slide(
             let down = world.box_trace(ps.origin, ps.origin - Vec3::Z * snap, mins, maxs, mask);
             if down.fraction < 1.0 {
                 ps.origin = down.endpos;
-                ps.velocity = clip_velocity(ps.velocity, down.normal);
+                ps.velocity = clip_velocity(ps.velocity, down.normal, ps.rules.v15());
             }
         }
     }
