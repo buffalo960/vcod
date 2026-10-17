@@ -4511,6 +4511,38 @@ which are branch conditions.
   the trace is then re-run with the plain `ent->clipmask`. INFERRED: that is
   the water-entry splash, since the only content the mask gained was water and
   the re-trace is what drops it again.
+- VERIFIED, the disassembly: 1.1d ORs the 0x20 in at 0x540a0 and pushes
+  `0xAD` at 0x54115; 1.5b ORs it at 0x54ccb and stores `0xAD` at 0x54d8d,
+  the same arm. United Offensive's `G_RunMissile` ORs it at 0x5f08b and
+  stores `0xB2` (178, its `EV_BULLET_HIT`) at 0x5f14d, and also writes the
+  missile's `s.weapon` into the temp entity's (`+0xCC`); when the weapon's
+  `projExplosionType` (`+0x390`, 0x5f1f3) is 1, `smoke`, it then calls
+  `G_FreeEntity` (0x5f202) and returns, before the re-trace at 0x5f23f.
+  INFERRED, off the decompiles: in all three the `d[2]` fix multiplies a
+  negative z by a `.rodata` constant, which the captures below read as -1.
+  VERIFIED: the `+216` (`+0xDC` on UO) field is `_union.scale` in the
+  entity netfields (`crates/common/src/net/fields_v1.rs`, `fields_v22.rs`).
+- VERIFIED, live (2026-10-17, `crates/server/tests/fixtures/missiles/
+  mp_harbor-water-*.txt`, `client-probes/probe_skyshot` spot part on
+  mp_harbor's south sea wall over the harbor; the water's top is z -120,
+  material `textures/common/water`, surface flags 0x14040a0): a 1.1d
+  panzerfaust round 45 degrees down raises temp entity 74, event 173, parm
+  5 (straight up), `otherEntityNum` the rocket, `surfType` 20, `scale` 7,
+  at -90, its origin on the frame before the move that crosses -120, and
+  explodes on the harbor floor the next move as if the water were not
+  there. A frag thrown flat raises the same at -103 (`trDelta` z is the
+  throw's 120, past 30, though the grenade is falling by then) and then
+  bounces along the floor; its flight matches ours to the hundredth. On
+  retail UO 1.51b the same throws raise 178 with `weapon` set (5 the
+  bazooka, 18 the frag, 52 the smoke grenade), and the smoke grenade
+  leaves the wire on the snapshot that carries its splash, never popped.
+  vcod: `CollisionWorld::water_hit` (the water brushes with each side's
+  surface flags) and `Missile::step`'s `wet` arm, the temp entity spawned
+  on the missile's turn through `Missiles::take_splashes`; gated by
+  `crates/server/tests/missile_edge_ab.rs` (`a_frag_into_water_splashes`,
+  `a_rocket_into_water_splashes`, `a_uo_smoke_grenade_into_water_is_freed`)
+  and `a_missile_entering_water_fast_splashes`. Before 2026-10-17 no
+  missile splashed.
 - When `ent->methodOfDeath (+0x248) == 3` and the hit entity's
   `flags & 0x10000` (byte `gentity+0x17E`, bit 1) is set, the hit entity's
   `contents` (`+0x118`) is zeroed, the trace is run a third time, and the
@@ -4623,8 +4655,17 @@ the ordering and the conditions in it.
   `a_uo_missile_flies_through_the_sky` and
   `crates/server/tests/missile_edge_ab.rs`. Before 2026-10-17 every
   protocol's missile struck the sky: a rocket exploded on it, a grenade
-  bounced off. vcod applies only the sky-start arm of UO's `G_MissileTrace`;
-  the zeroed fraction on any other start-solid is not ported.
+  bounced off.
+- VERIFIED, the disassembly: on any other start-solid UO's `G_MissileTrace`
+  stores a fraction of 0 (0x5ee1e, 0x5ee27) and `VectorNormalize2(start -
+  end)` into the normal; 1.5b's (0x54a18) does the same at 0x54a5e with no
+  sky arm. 1.1d has no `G_MissileTrace`: its `G_RunMissile` zeroes only the
+  fraction, after the store into `r.currentOrigin` (0x5420c), and UO's
+  repeats that test at 0x5f367. INFERRED: a move that starts inside a brush
+  is a contact at its end point, which 1.5 and UO bounce straight back
+  along the move. vcod: `Missile::full_trace` under `falls` and the zeroing
+  in `Missile::step`, pinned by `a_start_solid_move_is_a_contact`; no
+  capture exercises it.
 - Otherwise `G_MissileImpact(ent, &tr, dir)` runs, and `G_RunThink(ent)`
   follows only when `s.eType` is still 4. VERIFIED: `G_MissileImpact`'s
   explode path sets `s.eType` to 0 (13.1), so the test is what stops a
@@ -4943,7 +4984,17 @@ The explode block, reached from all three arms:
   `ent->freeAfterEvent` (`+0x184`) takes 1, and `ent->s.eType` (`+0x4`) takes
   0 (`ET_GENERAL`).
 - `SnapVectorTowards(&tr.endpos, &ent->s.pos.trBase)` and
-  `G_SetOrigin(ent, &tr.endpos)` place it.
+  `G_SetOrigin(ent, &tr.endpos)` place it. VERIFIED, the disassembly:
+  1.1d's `SnapVectorTowards` (0x692d8) runs `frndint` in round-down mode
+  where the axis is not below the base and round-up where it is; 1.5b's
+  (0x6dd91) and UO's (0x7a745) call `floor` and `ceil` on the same test.
+  Q3's truncate-and-add-one is not what runs: it lands a unit off on a
+  negative axis. VERIFIED, live (`mp_harbor-water-rocket.txt`): the round
+  that meets the harbor floor explodes with its base at z -191 and y
+  -6648. INFERRED: the point trace stops at -191.875 over the floor at
+  -192, a fraction past y -6648 (vcod's replay strikes at y -6647.35), and
+  only `floor` and `ceil` give that base from there. vcod's `snap_towards` truncated until 2026-10-17 and put
+  that explode at -190 (`a_rocket_into_water_splashes`).
 - With `ent->+0x23C` non-zero, `G_RadiusDamage(&tr.endpos, ent, ent->parent,
   (float)ent->+0x23C, (float)ent->+0x240, (float)ent->+0x244, other,
   ent->+0x24C)`. VERIFIED: the ignored entity is `other`, the entity the
@@ -5198,7 +5249,7 @@ rocket, explode or splash. Pinned by
 `a_rocket_that_strikes_a_player_hits_him_directly`
 (`crates/server/tests/combat.rs`), and on the client by
 `the_panzer_capture_s_explode_draws_the_rocket_row`
-(`crates/client/src/fx/registry.rs`). Not ported: 12.1's water splash.
+(`crates/client/src/fx/registry.rs`). Its water splash is 12.1's.
 
 VERIFIED, `game.mp.uo.i386.so`: UO's `fire_rocket` (0x5fc74) stores
 `trType` 2 (0x5fde6) and a 15000 ms think, `Weapon_RocketLauncher_Fire`
