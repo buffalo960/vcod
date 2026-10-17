@@ -1532,7 +1532,10 @@ form. vcod: `GameHost::dobj_time_ms` (the last frame's time until
 `ScriptRuntime::run_threads` has run `Vm::run_current`), and
 `GameHost::dobj_posed`, the time each bone was posed this frame, cleared at
 the frame's start and past the entity loop; `link::client_bone` and
-`dropItem`'s tag go through it.
+`dropItem`'s tag go through it. `bulletTrace` and the script
+`radiusDamage` walk pose bodies at `dobj_time_ms` without the per-bone
+stamp (cod11-combat.md 3.6): a trace after a bone ask in one frame poses
+the whole body at the frame's clock where retail keeps the asked bones'.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 
