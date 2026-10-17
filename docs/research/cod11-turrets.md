@@ -1817,10 +1817,9 @@ snapshots that carry its entity.
   in y.
 - vcod measurement: on UO the wound matches and the kill enters at x
   1513.0006 against retail's 1512 after truncation, with the target's
-  entity and playerstate matching retail's at the kill. INFERRED: a
-  thousandth of a unit is the size of what UO's stored floats move
-  (`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO"), and
-  `bonetrace.rs` ports none of it; `GAPS_SPAWN_UO` names the row.
+  entity and playerstate matching retail's at the kill. `GAPS_SPAWN_UO`
+  names the row. It is not the trace's arithmetic (13.5): the posed
+  bones sit up to 0.05 units off retail's.
 - VERIFIED, the gunner's own cmds, read off each snapshot's view: a cmd
   stamped a ms past the snapshot time and followed by one stamped a ms
   below it runs before that snapshot (1.1d 21551, UO 22101 and 22551), and
@@ -1828,6 +1827,47 @@ snapshots that carry its entity.
   reach the server a frame late. The gates list them (`EARLY_SPAWN*`,
   `LATE_SPAWN*`). UO's 36284 matches only with its own stamp kept, which
   the stamped replay does and the older gates' re-stamped one does not.
+
+### 13.5 The hit point to the last bit
+
+The `-spawn-uo` row is a whole unit apart only after truncation, so a
+fourth run of the recipe on 2026-10-17 logs each hit's point and
+direction with `probe_hitlog 1`. It is `mp_carentan-dm-turret-hitfine-uo.txt`
+with its `-script.txt` and `-target.txt`. `probe_turret.gsc` wraps
+`level.callbackPlayerDamage` and prints each component as whole,
+thousandths and the rest. The engine has no `int()`, so the gsc takes the
+whole part by halving steps (`whole`), each subtraction exact.
+
+- VERIFIED, `-hitfine-uo-script.txt`: the wound at 30150 enters
+  `torso_upper` at (1519.957764, 1612.592651, 22.911320) and the kill
+  at 30200 at (1513.656006, 1608.460938, 22.762277), both for 53.
+- vcod measurement (`the_hitlog_capture_matches_uo_on_mp_carentan`,
+  `TURRET_REPORT=1`): every wire row of the capture matches. Ours enters
+  the same bone (`bip01 l clavicle`, `torso_upper`) at (-0.0029, -0.0035,
+  -0.0001) off retail's on the wound and (+0.0367, +0.0413, +0.0011) on
+  the kill. Each difference lies almost along the round, so the box face
+  sits elsewhere and the ray does not. The directions agree to 6e-8.
+- VERIFIED, the locational bone trace in each build
+  (`SV_LocationalTraceModel`, cod11-combat.md 3.1): 1.1d `cod_lnxded`
+  0x80c4564 (18 float stores), 1.5b `cod_lnxded` 0x80d2000 and UO
+  `coduo_lnxded` 0x80c7394 (29 each). 1.5b and UO move each point through
+  helpers that store each difference and each product sum: into the bone's
+  frame at 1.5b 0x80d1f56 and UO 0x80c72ea, the sphere centre out of it at
+  UO 0x80c723e. Each slab distance `(p - plane) * sign` and each
+  `d1 / (d1 - d2)` is stored too.
+- vcod measurement: the `-spawn-uo` kill replayed through that slab form
+  enters at x 1513.000610 with every store rounded to f32 and 1513.000637
+  with none. `bonetrace.rs` gives 1513.000610. The stores move the entry
+  by 3e-5, against the 0.003 to 0.05 the pose is off. So the trace's
+  arithmetic is not ported; it cannot close the row.
+- vcod measurement: on the kill frame ours poses legs 157 starting that
+  frame at weight 0 over 1-2 idle clips (the knockback's first frame).
+  Moving our pose clock 1 to 40 ms either way moves the kill's entry
+  further from retail's, never onto it. INFERRED: the difference is in
+  the pose's inputs on 1.5's and UO's eased controllers or the clip blend,
+  not in the clock. UO has no `getTagOrigin` (coduo-vehicles.md), so no
+  script can log the bones there. The hit point is the only reading of
+  the pose a UO capture gives.
 
 ## 14. The client
 

@@ -2051,6 +2051,9 @@ nearer hit and a start-solid returning at once;
 `bulletPriorityMap` off `rifleBullet`, keeps the link box as the broad phase
 only, and takes the first candidate whose bones the segment actually scores.
 The height-fraction partition that used to stand here is gone.
+1.5b's and UO's trace stores every float variable where 1.1d's keeps
+them; vcod's trace keeps them on every patch. The stores move an entry
+by about 3e-5 units (`cod11-turrets.md` 13.5).
 
 The victim is posed per shot, not per frame, out of the same grafted
 body-plus-head-plus-helmet skeleton the client draws (an attachment's box
