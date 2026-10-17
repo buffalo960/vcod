@@ -1346,6 +1346,7 @@ fn main() -> Result<()> {
         client_bullets: fx::client_bullet::ClientBullets::default(),
         start: Instant::now(),
         last_frame: Instant::now(),
+        frame_ms: 0,
         debug_overlay: args.debug_overlay,
         cull_mode: renderer::CullMode::On,
         hud_stats: hud_text::HudStats::new(),
@@ -1459,6 +1460,17 @@ fn ignore_hw_gamma(shell: &console::shell::Shell) -> bool {
 /// moment with `r_ignorehwgamma 1`, none with the device ramp.
 fn image_gamma(shell: &mut console::shell::Shell, ignore_hw: bool) -> Option<f32> {
     ignore_hw.then(|| gamma_cvar(shell))
+}
+
+/// `Com_Frame`'s shortest frame in ms (CoDMP.exe 0x438040): `1000 /
+/// com_maxfps` when it is above 0, else 1. Nothing lifts it, `timedemo`
+/// included; the `dedicated` test never holds on a client.
+fn frame_min_ms(maxfps: i32) -> u64 {
+    if maxfps > 0 {
+        (1000 / maxfps) as u64
+    } else {
+        1
+    }
 }
 
 /// `r_mode`'s size (Q3's mode table, which the stock video mode list picks
@@ -2010,6 +2022,8 @@ struct App {
     /// Origin of the clock effects are timed against.
     start: Instant,
     last_frame: Instant,
+    /// `com_frameTime`'s last frame, ms since `start` (`Com_Frame`'s pace).
+    frame_ms: u64,
     debug_overlay: bool,
     cull_mode: renderer::CullMode,
     hud_stats: hud_text::HudStats,
@@ -2883,6 +2897,21 @@ impl App {
         }
     }
 
+    /// `Com_Frame`'s wait (CoDMP.exe 0x437f40): a frame starts once the
+    /// millisecond clock has moved `frame_min_ms(com_maxfps)` past the last.
+    fn pace_frame(&mut self) {
+        let min = frame_min_ms(self.shell.cvar_f32("com_maxfps") as i32);
+        loop {
+            let now_ms = (Instant::now() - self.start).as_millis() as u64;
+            if now_ms >= self.frame_ms + min {
+                self.frame_ms = now_ms;
+                return;
+            }
+            let due = self.start + std::time::Duration::from_millis(self.frame_ms + min);
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        }
+    }
+
     /// `CL_DemoCompleted` (CoDMP.exe 0x40e920): the `timedemo` line, the
     /// disconnect, then `CL_NextDemo` (0x40ed80), which runs `nextdemo`
     /// once and clears it.
@@ -3619,6 +3648,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                self.pace_frame();
                 let now = Instant::now();
                 let dt = (now - self.last_frame).as_secs_f32().min(0.1);
                 self.last_frame = now;
@@ -6304,6 +6334,17 @@ fn parse_probe_say(s: &str) -> Result<(f32, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Com_Frame`'s integer wait: retail's default 85 is 11 ms frames
+    /// (90 fps), past 1000 no wait at all, and 0 or less the 1 ms floor.
+    #[test]
+    fn com_maxfps_paces_in_whole_milliseconds() {
+        assert_eq!(frame_min_ms(85), 11);
+        assert_eq!(frame_min_ms(125), 8);
+        assert_eq!(frame_min_ms(2000), 0);
+        assert_eq!(frame_min_ms(0), 1);
+        assert_eq!(frame_min_ms(-5), 1);
+    }
 
     /// A demo whose map no pak holds drops with retail's text, not a wait
     /// on a download.
