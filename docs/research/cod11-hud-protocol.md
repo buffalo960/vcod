@@ -338,11 +338,10 @@ decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
   5 s as an `iPrintLn`, and it takes a ring slot like any game message.
 - VERIFIED: 1.5 `CoDMP.exe` has the same case: `0x4022b5` writes the
   `0x1100` cell and the line ends through `0x4094e0` with `edx` 1, as 1.1's
-  does. INFERRED for UO: the
-  decompiled case 4 of `CoDUOMP.exe` makes the same calls in the same
-  order, but the window index is not visible there and no UO binary was on
-  hand to read the `edx`. UO's `CG_Obituary` calls trap 4 with the same
-  nine arguments and adds a MOD `0x1a` row, `gfx/icons/hud@bino_owned`.
+  does. VERIFIED for UO: `CoDUOMP.exe`'s case 4 writes the `0x1100` cell
+  at 0x4022e3 and ends the line through 0x409b40 with `edx` 1
+  (0x402337), the game window. UO's `CG_Obituary` calls trap 4 with the same
+nine arguments and adds a MOD `0x1a` row, `gfx/icons/hud@bino_owned`.
 - VERIFIED, the draw (refexport slot `0xdc`, `0x4dfa60`; the refexport is
   copied at `0x411ac5` from the table `0x4b4a30` fills at `0xca26c8`): the line splits at the first cell
   of colour 13, `0x10`, `0x11` or `0x12` (`0x4df5b0`), colours 10..12 set the
