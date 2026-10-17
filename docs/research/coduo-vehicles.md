@@ -1343,21 +1343,46 @@ text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
   torso clip loops over 9 s and its phase follows the seat change's
   timing (INFERRED, replay). Retail's target joined 18 s into the level
   and took the first seat at 29350 (VERIFIED, fixture); the replay used
-  to join at once and seat at 12750. Run alone 16.6 s first, ours seats
-  at 29350 and changes seat at retail's times to the frame, and the
-  passenger's 30 cells all meet him, 26 within a quarter unit and four
-  up to 0.57 off (VERIFIED, replay). What still parts those four is
-  open. `vehicle_ab`'s
+  to join at once and seat at 12750. Every retail fixture boards 10 050
+  ms after the target's placement and changes seat 12 000 or 12 050 apart
+  (VERIFIED, the six `*-armor*-uo.txt` and `*-silhouette-uo.txt`
+  fixtures); the replay's target now boards 10 050 after its placement
+  and, in the silhouette runs, joins late enough to be placed on
+  retail's level time and changes seat at the fixture's own times
+  (`schedule_of`). `vehicle_ab`'s
   `the_jeep_seats_replay_on_ours` compares `torsoAnim` through the seat
   capture; ours releases the fire anim 100 ms after retail (two
-  snapshots), the one torso gap. The Panzer driver is not compared: on
-  retail's level times 62 of his 90 cells stop more than a quarter unit
-  off retail's, up to 6.4, and six meet him on one side only (17.5 and
-  11 on the old timing) (VERIFIED, replay); no clause of
-  `playeranim.script` names a tank's driver. `vehicle_armor_ab`'s
-  silhouette tests run on retail's level times and compare the jeep's
-  driver and gunner and the tank's gunner ray for ray within a quarter
-  unit, and the passenger within 0.6.
+  snapshots), the one torso gap.
+  - **The tank driver.** No clause of `playeranim.script` names a tank's
+    driver, and none is needed: his legs play `pb_stand_alert` (185, the
+    wire's 697 with the toggle) on retail and ours alike, the on-foot
+    idle carried into the seat (VERIFIED, the tank seats capture's
+    `legsAnim`, section 8; `vehicle_ab`). What parted his cells was the
+    turret. The profile 2.7 s after the boarding catches the turret
+    still swinging onto the driver's view at 30 degrees a second, and
+    most of the rays that pass the driver meet the turret. Ours boarded
+    one frame early, 29300 against retail's 29350, so its turret was one
+    think (1.5 degrees) further round, and the cells stopped up to 6.4
+    off. Started one think later, every one of the stint's 88 cells
+    matches retail's to 0.01 (VERIFIED, replay); with the boarding on
+    retail's frame they do too.
+  - **Back from the gunner's seat.** On retail the tank driver's second
+    stint (phase 3, after the gunner's) does not repeat his first: the
+    rider cells stand up to 1.1 units apart, growing with the height
+    above the origin, a tilt of about 0.65 degrees, with the same seat
+    origin, view and vehicle angles (VERIFIED, fixture). Ours moves the
+    same way by about half: 11 of 84 cells stop up to 0.65 off retail's
+    and one meets one side only. The jeep passenger's stint, also the
+    one after the gunner's seat, is the one jeep stint off retail's (4 of
+    30 cells, up to 0.57). What the gunner's seat leaves on the body is
+    open. UO's anim setter (`game.mp.uo` 0x1ce5f) passes
+    `XAnimSetCompleteGoalWeight` a last argument of 0 for the channel
+    record at `ci+0x380` and 1 for the other, and sets a looping movement
+    clip's time only when its node's weight reads 0.0 (0xa95ec) (VERIFIED
+    decompile); which state the gunner's seat leaves is not traced.
+  `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
+  within a quarter unit, the two stints after the gunner's seat within
+  0.6 and 0.7 (`SILHOUETTE_GAPS`).
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
   the given inflictor, else the attacker; when that is the attacker, a
   client whose entity `eFlags` has 0x100000 and whose `vehPos`
