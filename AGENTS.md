@@ -458,7 +458,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   has to write: the predictor rebuilds from the snapshot each time, and a
   field left 0 replays differently from the server. A missing
   `iFatigueSoundTime` breathed on every snapshot and played rounds twice
-  (coduo-movement.md 15).
+  (coduo-movement.md 15); `predict_ab`'s 1.5 and UO side-by-side gates
+  catch the next one.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
