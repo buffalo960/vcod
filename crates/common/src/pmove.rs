@@ -3315,6 +3315,9 @@ fn friction(ps: &mut PlayerState, dt: f32) {
         }
         return;
     }
+    if ps.rules.v15() {
+        return friction_stored(ps, speed, dt);
+    }
     let (s, dt) = (f64::from(speed), f64::from(dt));
     let mut drop = 0.0;
     // Slick ground and a hit's knockback slide free of the ground term
@@ -3336,6 +3339,38 @@ fn friction(ps: &mut PlayerState, dt: f32) {
         drop += f64::from(ps.water_level) * s * f64::from(WATER_FRICTION) * dt;
     }
     let scale = (s - drop).max(0.0) / s;
+    ps.velocity = x87::scale(ps.velocity, scale);
+}
+
+/// 1.5b's `PM_Friction` past the stop (0x1ebba-0x1ed59), which UO shares:
+/// the control, the drop, the new speed and its ratio to the speed are each
+/// stored, and each component is the float times the stored ratio.
+fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32) {
+    let r = |x: f64| f64::from(x as f32);
+    let s = f64::from(speed);
+    let dt = f64::from(dt);
+    let mut drop = 0.0;
+    if ps.on_ground
+        && ps.water_level <= 1
+        && !on_slick(ps)
+        && ps.knockback_flags & PMF_TIME_DAMAGE == 0
+    {
+        let mut control = r(s.max(f64::from(PM_STOPSPEED)));
+        if ps.knockback_flags & PMF_TIME_KNOCKBACK != 0 {
+            control = r(control * f64::from(KNOCKBACK_FRICTION_SCALE));
+        } else if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
+            control = r(f64::from(jump_penalty_scale(ps.knockback_ms)) * control);
+        }
+        drop = r(control * f64::from(PM_FRICTION) * dt + drop);
+    }
+    if ps.water_level > 0 {
+        drop = r(s * f64::from(WATER_FRICTION) * f64::from(ps.water_level) * dt + drop);
+    }
+    let mut new = r(s - drop);
+    if new < 0.0 {
+        new = 0.0;
+    }
+    let scale = r(new / s);
     ps.velocity = x87::scale(ps.velocity, scale);
 }
 

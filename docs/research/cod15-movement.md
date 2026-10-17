@@ -674,7 +674,10 @@ The rest of the walk, read 2026-10-17 in 1.5b's `game.mp.i386.so`:
   (the air cmd scale takes a lean as the walk, 0x1eec9).
 - `PM_Friction` (0x1eab3) stores the speed (`sqrt` of the dot, as 1.1),
   the control, its knockback or jump penalty scale, the drop after each
-  term, the new speed and its ratio to the old. VERIFIED.
+  term, the new speed and its ratio to the old. VERIFIED (0x1ebde, 0x1ec02,
+  0x1ec3a, 0x1ec88, 0x1ecce, 0x1ecfa, 0x1ed03, 0x1ed25), and each
+  component is the float times that ratio, rounded once (0x1ed2e-0x1ed59).
+  VERIFIED. vcod: `pmove::friction_stored` under `MoveRules::v15()`.
 - `PM_StepSlideMove` (0x29942) forms the step-up's end on the stack
   (`stepSize + 1` plus the start's z, 0x29ccf-0x29ce2) and stores what
   the up trace left, `(stepSize + 1) * fraction - 1` (0x29d46-0x29d5f);
@@ -701,6 +704,8 @@ that changes what a body does, the air accelerate's floor:
 `pmove::accelerate_stored` for 1.5's and UO's walk and air,
 `pmove::air_accelerate` for 1.1's air
 (`pmove::tests::a_wish_under_100_in_the_air_accelerates_at_100s_rate`).
+The friction's stores went in later, once they moved a snapshot (the
+slope misses below, 2026-10-18).
 
 The slope misses, found 2026-10-17 (this round's `MOVES_EXACT=1` counts,
 each against the line before):
@@ -733,15 +738,22 @@ each against the line before):
   turns 1100 of 1100, UO's pole run 361 to 370 of 372 and the pillar run
   372 of 372. VERIFIED (measured). `pmove::clip_velocity`'s `stored`
   arm, `x87::normalize_stored`.
-- What stays: one snapshot of UO's 8 ms low-window jump
-  (`mp_streets-dm-slope-8ms-crouchjump-low.txt`, ct 22491). From ct
-  22466 the body slides along patch 462 over terrain 1536, and the
-  second bump's crease test (`dot(clipped, plane_i) >= 0`, kept on the
-  stack, 0x295c8-0x29623) reads +3.5e-8 in ours; retail takes the
-  crease and stops for a frame (velocity 0 at ct 22474). Under 1.1d's
-  arithmetic the same dot read -4.6e-8 and matched by chance. INFERRED:
-  a last bit upstream of that dot (the walk's velocity into the slide,
-  or a plane) differs; not found. `moves_ab.rs`, `CROUCHJUMP_LOW_GAPS`.
+- `PM_Friction`'s stores (the control, the drop, the new speed and its
+  ratio, below): with them in, `pmove::friction_stored`, the one snapshot
+  left, UO's 8 ms low-window jump (`mp_streets-dm-slope-8ms-crouchjump-low.txt`,
+  ct 22491), matches, and so do one more of UO's pole run (371 of 372)
+  and the 50 ms cassino crouch jump (136 of 136); no count drops at the
+  1.1 or the UO install. VERIFIED (measured 2026-10-18). From ct 22466
+  the body slides along patch 462 over terrain 1536, and the second
+  bump's crease test (`dot(clipped, plane_i) >= 0`, kept on the stack,
+  0x295c8-0x29623) reads a dot of a few 1e-8 whose sign any one-ulp change
+  in the walk's x or y velocity flips (a gcc -O0 x87 build of Q3's slide
+  on vcod's inputs gives vcod's +3.5e-8, so the slide itself was not the
+  source). VERIFIED, `client-probes/probe_slidenormals` on UO 1.51b:
+  `bulletTrace`'s normals on terrain 1536 and patch 462 are vcod's floats
+  to the bit, residual 0 in every component. Before 2026-10-18 vcod kept
+  1.1d's unrounded friction on every build, and the walk's velocity into
+  the slide sat an ulp off retail's.
 - The air wish direction. VERIFIED, 1.5b `PM_AirMove` (0x1fe8d): it
   zeroes `pml.forward[2]` and `pml.right[2]`, runs both through
   `VectorNormalize`, sums `right * rightmove + forward * forwardmove` in x
