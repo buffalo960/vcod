@@ -242,14 +242,11 @@ impl Console {
         }
         out.push(rect(0.0, y * sy, w, 2.0 * sy, SEPARATOR));
 
-        let Some(font) = &self.font else { return out };
-        // Text is laid out in window px: 8 px cells, 16 px rows, glyphs at a
-        // third of the font's own scale, each row's baseline 16 px below it.
-        let scale = 1.0 / (3.0 * font.unit_scale());
-        let glyph_top = font.max_height as f32 * font.glyph_scale / 3.0;
+        if self.font.is_none() {
+            return out;
+        }
         let text = |out: &mut Vec<HudQuad>, s: &str, x: f32, row_y: f32| {
-            let top = row_y + ROW_H - glyph_top;
-            font::layout_cells(font, s, x, top, scale, CHAR_W, WHITE, out);
+            self.text(out, s, x, row_y);
         };
 
         let version = concat!("vcod ", env!("VCOD_VERSION"));
@@ -288,10 +285,35 @@ impl Console {
         out
     }
 
+    /// One line of console text at window px (CoDMP.exe 0x416a30): 8 px
+    /// cells, glyphs at a third of the font's own scale, the baseline 16 px
+    /// below `row_y`.
+    fn text(&self, out: &mut Vec<HudQuad>, s: &str, x: f32, row_y: f32) {
+        let Some(font) = &self.font else { return };
+        let scale = 1.0 / (3.0 * font.unit_scale());
+        let glyph_top = font.max_height as f32 * font.glyph_scale / 3.0;
+        let top = row_y + ROW_H - glyph_top;
+        font::layout_cells(font, s, x, top, scale, CHAR_W, WHITE, out);
+    }
+
+    /// `SCR_DrawDemoRecording` (CoDMP.exe 0x416b10), drawn in a level
+    /// while `record` writes: the line at window px (5, 470), white, in
+    /// the console's font.
+    pub fn recording_line(&self, name: &str, bytes: u64) -> Vec<HudQuad> {
+        let mut out = Vec::new();
+        self.text(&mut out, &recording_text(name, bytes), 5.0, 470.0);
+        out
+    }
+
     /// The scrollback wrapped to `cols`, oldest first.
     fn rows(&self, cols: usize) -> Vec<String> {
         self.lines.iter().flat_map(|l| wrap(l, cols)).collect()
     }
+}
+
+/// `RECORDING %s: %ik`: the demo's name and its size so far in whole KiB.
+fn recording_text(name: &str, bytes: u64) -> String {
+    format!("RECORDING {name}: {}k", bytes / 1024)
 }
 
 fn rect(x: f32, y: f32, w: f32, h: f32, rgba: [f32; 4]) -> HudQuad {
@@ -482,6 +504,12 @@ mod tests {
         assert_eq!(q[1].verts[0], [0.0, 476.0]);
         assert_eq!(q[1].verts[2], [1280.0, 480.0]);
         assert_eq!(q[1].rgba, SEPARATOR);
+    }
+
+    #[test]
+    fn the_recording_line_counts_whole_kib() {
+        assert_eq!(recording_text("demo0003", 1023), "RECORDING demo0003: 0k");
+        assert_eq!(recording_text("x", 5000), "RECORDING x: 4k");
     }
 }
 

@@ -6,16 +6,17 @@ use std::path::{Path, PathBuf};
 use vcod_common::net::demo;
 use vcod_common::net::protocol::{PROTOCOL_V1, Protocol};
 
-/// `record`'s file under `dir` (the game directory's `demos/`): `name`
-/// with the protocol's `.dm_<n>`, or the first free `demoNNNN`.
-pub fn record_path(dir: &Path, name: Option<&str>, p: &Protocol) -> PathBuf {
+/// `record`'s file under `dir` (the game directory's `demos/`) and the
+/// name it keeps (`clc.demoName`): `name` with the protocol's `.dm_<n>`,
+/// or the first free `demoNNNN`.
+pub fn record_path(dir: &Path, name: Option<&str>, p: &Protocol) -> (PathBuf, String) {
     let ext = demo::extension_number(p);
     let file = |n: &str| dir.join(format!("{n}.dm_{ext}"));
     let name = match name {
         Some(n) => n.to_string(),
         None => demo::auto_name(|n| file(n).exists()),
     };
-    file(&name)
+    (file(&name), name)
 }
 
 /// `demo <name>`'s file and the protocol it was recorded under. Retail
@@ -116,15 +117,19 @@ mod tests {
     fn record_names_count_up_and_demo_finds_any_protocol() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path().to_path_buf();
-        assert_eq!(record_path(&d, None, &PROTOCOL_V1), d.join("demo0000.dm_1"));
-        std::fs::write(d.join("demo0000.dm_1"), b"").unwrap();
-        assert_eq!(record_path(&d, None, &PROTOCOL_V1), d.join("demo0001.dm_1"));
-        // The count is per extension, as the file name is.
+        let path = |name, p| record_path(&d, name, p).0;
         assert_eq!(
-            record_path(&d, None, &PROTOCOL_V22),
-            d.join("demo0000.dm_3")
+            record_path(&d, None, &PROTOCOL_V1),
+            (d.join("demo0000.dm_1"), "demo0000".to_string())
         );
-        assert_eq!(record_path(&d, Some("x"), &PROTOCOL_V6), d.join("x.dm_2"));
+        std::fs::write(d.join("demo0000.dm_1"), b"").unwrap();
+        assert_eq!(path(None, &PROTOCOL_V1), d.join("demo0001.dm_1"));
+        // The count is per extension, as the file name is.
+        assert_eq!(path(None, &PROTOCOL_V22), d.join("demo0000.dm_3"));
+        assert_eq!(
+            record_path(&d, Some("x"), &PROTOCOL_V6),
+            (d.join("x.dm_2"), "x".to_string())
+        );
 
         std::fs::write(d.join("x.dm_3"), b"").unwrap();
         let found = find(std::slice::from_ref(&d), "x").unwrap();

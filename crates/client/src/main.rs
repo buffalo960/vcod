@@ -1489,7 +1489,7 @@ fn start_record(
     dir: &std::path::Path,
     name: Option<&str>,
 ) {
-    let path = play::demos::record_path(dir, name, net.protocol());
+    let (path, name) = play::demos::record_path(dir, name, net.protocol());
     let file = std::fs::create_dir_all(dir).and_then(|_| std::fs::File::create(&path));
     // Refused before the file is made, as retail checks first.
     if net.is_recording() {
@@ -1503,7 +1503,7 @@ fn start_record(
             return;
         }
     };
-    match net.start_recording(Box::new(std::io::BufWriter::new(file))) {
+    match net.start_recording(Box::new(std::io::BufWriter::new(file)), &name) {
         Ok(()) => console::log::print(&format!("recording to {}.", path.display())),
         Err(e) => {
             let _ = std::fs::remove_file(&path);
@@ -6075,6 +6075,17 @@ impl ApplicationHandler for App {
                         w.request_redraw();
                     }
                     return;
+                }
+                // Over the game, under the menus (CoDMP.exe 0x416b10, drawn
+                // in `CA_ACTIVE` only).
+                if let Mode::Online {
+                    net,
+                    phase: Phase::Live(_),
+                    ..
+                } = &self.mode
+                    && let Some((name, bytes)) = net.recording_status()
+                {
+                    hud_quads.extend(self.console.recording_line(name, bytes));
                 }
                 if self.ui.active() {
                     if let Mode::Online { net, .. } = &self.mode {

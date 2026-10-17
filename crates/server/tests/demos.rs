@@ -85,9 +85,9 @@ fn a_recorded_demo_plays_back_the_frames_the_client_parsed() {
     cl.enable_capture();
 
     let sink = Shared::default();
-    cl.start_recording(Box::new(sink.clone()))
+    cl.start_recording(Box::new(sink.clone()), "ab")
         .expect("record in a level");
-    assert!(cl.start_recording(Box::new(Shared::default())).is_err());
+    assert!(cl.start_recording(Box::new(Shared::default()), "x").is_err());
 
     // Walk and fire; a restart halfway sends `map_restart`'s commands.
     let mut live = Seen::default();
@@ -118,6 +118,11 @@ fn a_recorded_demo_plays_back_the_frames_the_client_parsed() {
         }
     }
     let first_recorded = first_recorded.expect("no full frame after record");
+    // The `RECORDING` line's size is the file's, trailer aside.
+    assert_eq!(
+        cl.recording_status(),
+        Some(("ab", sink.0.lock().unwrap().len() as u64))
+    );
     assert!(cl.stop_recording().unwrap());
     assert!(!cl.stop_recording().unwrap());
     let bytes = sink.0.lock().unwrap().clone();
