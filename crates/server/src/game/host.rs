@@ -377,8 +377,8 @@ pub struct GameHost {
     /// (`docs/research/cod11-gsc-object-model.md`, 23.1).
     pub client_lookat: Vec<Option<EntId>>,
     /// `(trigger, toucher)` for every trigger that fired since the last
-    /// script frame, notified once that frame's clock is set
-    /// (`ScriptRuntime::run_frame`).
+    /// script frame: `G_RunFrame`'s trigger queue, handed out in rounds
+    /// once that frame's clock is set (`ScriptRuntime::trigger_rounds`).
     pub trigger_fires: Vec<(EntId, EntId)>,
     /// Each client's previous cmd buttons, for the use key's rising edge
     /// (`ClientThink_real` 0x40106..0x4011d).
@@ -386,10 +386,11 @@ pub struct GameHost {
     /// `setarchive`'s flag: whether the engine keeps a frame archive for
     /// the killcam (`crate::archive`).
     pub archive_on: bool,
-    /// `(entity, event, args)` for every `"touch"` and `"trigger"` the touch
-    /// pass raised and every `movedone`/`rotatedone` the entity pass raised
-    /// since the last script frame, notified at its start the way
-    /// `trigger_fires` are.
+    /// `(entity, event, args)` for every notify retail raises on the spot
+    /// outside a script step (the touch pass's `"touch"`, an item's or the
+    /// use key's `"trigger"`, the entity pass's `movedone`/`rotatedone`)
+    /// since the last script frame. Nothing runs between them on retail,
+    /// so delivering them at the frame's start wakes the same waiters.
     pub engine_notifies: Vec<(EntId, &'static str, Vec<Value>)>,
     /// Each client's `ps.grenadeTimeLeft`, mirrored in by
     /// `Server::replay_moves` with the entity states, which is the last read
@@ -1402,11 +1403,32 @@ impl GameHost {
         // it would start out on the dead one's trajectory.
         self.movers.forget(id);
         self.links.forget(id);
+        self.free_ground_refs(id.0);
         self.ents.free(id);
         // `G_FreeEntity` lets the children go where they stand
         // (0x669f1..0x66a9e), so a child later in the entity pass is never
         // re-anchored on a freed parent.
         crate::game::link::prune(self);
+    }
+
+    /// `G_FreeEntity`'s sweep (game.mp 0x66ad1..0x66b13): every entity in
+    /// use whose `s.groundEntityNum` names the freed number reads 1023 from
+    /// then on. A script model or a turret holds `G_Spawn`'s 0, entity 0,
+    /// so the first client's disconnect turns them all (protocol doc,
+    /// "The static fields"). A player's comes off its playerstate instead.
+    pub fn free_ground_refs(&mut self, num: u32) {
+        let num = num as i32;
+        for e in self.ents.iter_inuse_mut() {
+            if e.ground == num {
+                e.ground = ENTITYNUM_NONE;
+            }
+            if let Some(item) = e.item.as_mut()
+                && item.ground == num
+            {
+                item.ground = ENTITYNUM_NONE;
+            }
+        }
+        self.missiles.free_ground_refs(num);
     }
 
     /// Every due think at once, each `ThinkFn::Free` routed through
@@ -1764,6 +1786,8 @@ impl Host for GameHost {
     fn spawn_returned(&mut self, cx: &mut Cx, token: u32) {
         if token == crate::game::builtins::combat::BLAST_TOKEN {
             crate::game::builtins::combat::blast_step(self, cx);
+        } else if token == crate::game::vehicle::die::DIE_TOKEN {
+            crate::game::vehicle::die_next(self, cx);
         } else {
             self.player_die_walk(cx, token as usize);
         }
@@ -2252,6 +2276,22 @@ mod tests {
             .map(|(i, _)| *i)
             .collect();
         assert_eq!(slots, [3, 12]);
+    }
+
+    /// `G_FreeEntity`'s sweep (0x66b0e..0x66b13): a freed number goes out of
+    /// every `groundEntityNum` that names it, the zeroed one a script model
+    /// spawns with included, and no other.
+    #[test]
+    fn freeing_an_entity_clears_the_ground_that_names_it() {
+        let mut host = run_main(r#"main() { e = spawn("script_model", (0, 0, 0)); }"#).unwrap();
+        let grounds =
+            |h: &GameHost| -> Vec<i32> { h.ents.iter_inuse().map(|(_, e)| e.ground).collect() };
+        assert!(!grounds(&host).is_empty());
+        assert!(grounds(&host).iter().all(|g| *g == 0));
+        host.free_ground_refs(3);
+        assert!(grounds(&host).iter().all(|g| *g == 0));
+        host.free_ground_refs(0);
+        assert!(grounds(&host).iter().all(|g| *g == ENTITYNUM_NONE));
     }
 
     /// Runs `src`'s `main()` on a bare host and hands the host back, or the

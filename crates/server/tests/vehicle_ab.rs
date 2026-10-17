@@ -5,8 +5,8 @@
 //! and every snapshot's playerstate and, on the drive captures, the
 //! vehicle's whole entity state (`veh=`). The replay boards the same
 //! vehicle on ours through the same probe gametype and the use key, then
-//! sends the capture's cmds verbatim, rebased onto our clock, and diffs
-//! each snapshot (docs/research/coduo-vehicles.md, "The server").
+//! sends the capture's cmds verbatim, rebased onto our clock and, once a
+//! seat, onto our `delta_angles`, and diffs each snapshot (docs/research/coduo-vehicles.md, "The server").
 //!
 //! `VEHICLE_REPORT=1` prints every snapshot's differences. Needs `COD_DIR`
 //! at a UO install; without one it returns early.
@@ -308,6 +308,15 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
         ours_first = cl.snapshots().newest()?.server_time;
     }
     let offset = ours_first - first;
+    // One rebase a seat: retail's `delta_angles` onto ours at the capture's
+    // first snapshot, and again at the first snapshot both show a changed
+    // seat on. In between each cmd goes out as the probe sent it, so a
+    // clamp push moves ours as it moved retail's, cmd for cmd. The seat
+    // change itself rides no cmd: ours runs it a frame or more after
+    // retail's, under a hull that has turned on, and its
+    // `SetClientViewAngle` lands that much apart.
+    let mut base = rebase_from(first_da, &cl);
+    let mut reanchor = false;
     let mut out = Vec::new();
     // Each cmd with the `delta_angles` of the last retail snapshot ahead of
     // it, which the probe built it against.
@@ -337,6 +346,7 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
                 // the capture is where it went.
                 if seat != 0 && last_seat != 0 && seat != last_seat {
                     cl.send_reliable("nextvehslot");
+                    reanchor = true;
                 }
                 last_seat = seat;
                 let want = s.t + offset;
@@ -354,7 +364,7 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
                     let due: Vec<UserCmd> = pending
                         .iter()
                         .filter(|(c, _)| c.server_time <= ran)
-                        .map(|(c, da)| rebased(*c, *da, &cl))
+                        .map(|(c, _)| shifted(*c, base))
                         .collect();
                     pending.retain(|(c, _)| c.server_time > ran);
                     cl.send_cmds(&due);
@@ -363,6 +373,14 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
                             join.on_server_command(&tokens, &mut cl, now);
                         }
                     }
+                }
+                let ours_seat = cl
+                    .snapshots()
+                    .newest()
+                    .map_or(0, |n| n.ps.field_i32(&PROTOCOL_V22, "vehPos"));
+                if reanchor && ours_seat == seat {
+                    base = rebase_from(da, &cl);
+                    reanchor = false;
                 }
                 out.push(sample(&cl));
             }
@@ -379,6 +397,23 @@ fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) 
         log,
         offset,
     })
+}
+
+/// What turns a capture cmd's angles into ours: our `delta_angles` less
+/// retail's, both read at the capture's first snapshot.
+fn rebase_from(retail_da: [i32; 3], cl: &NetClient<ClientEnd>) -> [i32; 3] {
+    let p = &PROTOCOL_V22;
+    let ours = cl.snapshots().newest().map_or([0; 3], |s| {
+        ["delta_angles[0]", "delta_angles[1]", "delta_angles[2]"].map(|n| s.ps.field_i32(p, n))
+    });
+    std::array::from_fn(|i| retail_da[i] - ours[i])
+}
+
+fn shifted(mut c: UserCmd, base: [i32; 3]) -> UserCmd {
+    for (a, b) in c.angles.iter_mut().zip(base) {
+        *a = (*a + b) & 0xffff;
+    }
+    c
 }
 
 /// A capture cmd as the probe would have sent it to ours: it holds an
@@ -501,18 +536,12 @@ impl Gap {
     }
 }
 
-/// The replay rebases the probe's view on our `delta_angles`; past the
-/// seat's pitch clamp the per-cmd push runs a snapshot apart, and the
-/// barrel and the hull's jolt follow the view (vehicle_ab's own artifact,
-/// the clamp itself is moves_ab's).
-const CLAMP_REBASE: &str = "the view rebased past the pitch clamp";
-
-/// The same rebase's cmd angles jump where our `delta_angles` move (a
-/// clamp push, a seat's `SetClientViewAngle`) a snapshot apart from
-/// retail's, and `PM_AdjustAimSpreadScale`'s turn term opens the cone on
-/// the jump, which then decays. moves_ab gates the cone on the capture's
-/// own cmds.
-const CONE_REBASE: &str = "the cone opened by the rebased cmd angles' jump";
+/// The probe's `nextvehslot` rides no cmd, so ours changes seat in another
+/// frame than retail's, and the seat's `SetClientViewAngle` reads the view
+/// tag where that frame has the turret: the change's snapshot reads the
+/// view apart, and the next one's cone the turn the rebase onto the new
+/// seat's `delta_angles` makes.
+const SEAT_CHANGE: &str = "the seat change, a frame apart from retail's";
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -646,48 +675,13 @@ fn the_tank_seats_replay_on_ours() {
     tally(&lines, &ours).assert_within(&[
         Gap {
             field: "viewangles",
-            snaps: 47..=62,
-            why: CLAMP_REBASE,
-        },
-        Gap {
-            field: "viewangles",
-            snaps: 105..=106,
-            why: CLAMP_REBASE,
-        },
-        Gap {
-            field: "viewangles",
             snaps: 468..=468,
-            why: CLAMP_REBASE,
-        },
-        Gap {
-            field: "viewangles",
-            snaps: 582..=599,
-            why: CLAMP_REBASE,
-        },
-        Gap {
-            field: "origin",
-            snaps: 591..=607,
-            why: CLAMP_REBASE,
+            why: SEAT_CHANGE,
         },
         Gap {
             field: "aimSpreadScale",
-            snaps: 49..=69,
-            why: CONE_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 106..=106,
-            why: CONE_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 469..=472,
-            why: CONE_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 583..=608,
-            why: CONE_REBASE,
+            snaps: 469..=469,
+            why: SEAT_CHANGE,
         },
     ]);
 }
@@ -702,34 +696,11 @@ fn the_jeep_seats_replay_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[
-        Gap {
-            field: "viewangles",
-            snaps: 42..=67,
-            why: CLAMP_REBASE,
-        },
-        Gap {
-            field: "viewangles",
-            snaps: 468..=621,
-            why: "the view rebased past the passenger's yaw arcs, which push \
-                  delta_angles every cmd (moves_ab replays the same cmds within them)",
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 43..=74,
-            why: CONE_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 319..=324,
-            why: CONE_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 469..=621,
-            why: CONE_REBASE,
-        },
-    ]);
+    tally(&lines, &ours).assert_within(&[Gap {
+        field: "viewangles",
+        snaps: 468..=468,
+        why: SEAT_CHANGE,
+    }]);
 }
 
 const TANK_DRIVE: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-drive-uo.txt";
@@ -860,23 +831,7 @@ fn the_jeep_gun_replays_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[
-        Gap {
-            field: "viewangles",
-            snaps: 172..=201,
-            why: CLAMP_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 36..=41,
-            why: CONE_REBASE,
-        },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 172..=208,
-            why: CONE_REBASE,
-        },
-    ]);
+    tally(&lines, &ours).assert_within(&[]);
 }
 
 /// The client's own gunner draws his gun off his view, turned into the

@@ -629,7 +629,7 @@ fn compare_walk_rows(retail: &Retail, ours: &Ours, second: i32) -> Vec<String> {
 /// `sets` are the two bounds as retail's systeminfo carried them, `walk` the
 /// capture's `--probe-fall-walk` yaw.
 fn gate(fixture: &str, sets: &[(&str, &str)], walk: Option<f32>, hitch: Option<Hitch>) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let text = std::fs::read_to_string(fixture).unwrap_or_else(|e| panic!("read {fixture}: {e}"));
@@ -772,7 +772,7 @@ fn a_corpse_on_flat_terrain_sinks_as_retail_does() {
 /// aside. Retail must have pressed into the wall under the timer: rows on the
 /// wall's plane with 0x200 set and a velocity into it.
 fn slide_gate(fixture: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let text = std::fs::read_to_string(fixture).unwrap_or_else(|e| panic!("read {fixture}: {e}"));

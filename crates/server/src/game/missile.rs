@@ -1017,6 +1017,16 @@ const ROCKET_LIFE_MS_V1: i32 = 30_000;
 const ROCKET_EFLAGS_V1: i32 = 0x10000;
 
 impl Missiles {
+    /// `G_FreeEntity`'s ground sweep over the missiles
+    /// (`GameHost::free_ground_refs`).
+    pub fn free_ground_refs(&mut self, num: i32) {
+        for m in &mut self.live {
+            if m.ground == num {
+                m.ground = crate::game::host::ENTITYNUM_NONE;
+            }
+        }
+    }
+
     /// `fire_grenade` (11): the entity, the two trajectories and the fuse.
     /// `now_ms` is the `level.time` the throw ran at, which is the frame
     /// *before* the one the missile first moves on: retail executes a

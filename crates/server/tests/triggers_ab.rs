@@ -156,7 +156,7 @@ fn retail() -> Vec<String> {
 
 #[test]
 fn the_touch_pass_matches_retail_on_mp_pavlov() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let retail_lines = retail();

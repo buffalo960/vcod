@@ -827,9 +827,10 @@ impl ClientSim {
         }
         let own = self.last_cmd_angles;
         let start = cmd.server_time.wrapping_sub(SPAWN_THINK_MS as i32);
-        for (step, dt) in cmd::chop(start, cmd) {
-            self.step(&step, dt, Some(world), &[]);
-        }
+        cmd::chop(start, cmd, |step, dt| {
+            self.step(step, dt, Some(world), &[]);
+            self.ps.jump_latched
+        });
         self.last_cmd_angles = own;
     }
 
@@ -4080,7 +4081,7 @@ mod tests {
     /// (0, 0, -0) (docs/protocol-1.1.md, "Spectator").
     #[test]
     fn a_spectator_steps_onto_the_sill_retail_s_did() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             return;
         };
         let path = fs.resolve_map("mp_carentan").expect("map in the paks");

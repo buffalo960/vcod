@@ -3,6 +3,7 @@
 //! (docs/research/coduo-vehicles.md, "The server"). Addresses are
 //! `game.mp.uo.i386.so`'s.
 
+pub mod die;
 pub mod fire;
 pub mod info;
 pub mod physics;
@@ -203,8 +204,19 @@ pub struct Vehicles {
     /// `fireTurret`, `fireAltTurret` and `fireGunner` calls this frame, for
     /// the server to trace (it holds the bodies).
     pub fire_ops: Vec<(EntId, Gun)>,
-    /// Vehicles whose health ran out this frame, for `Scr_Vehicle_Die`.
-    pub deaths: Vec<EntId>,
+    /// Vehicles whose health ran out outside a builtin, for
+    /// `Scr_Vehicle_Die` ([`die::drain`]).
+    pub deaths: Vec<die::Death>,
+    /// The deaths whose riders are being walked, innermost last.
+    pub dying: Vec<die::Walk>,
+    /// The walk's unlink notifies, for whichever context runs it to raise.
+    pub die_notifies: Vec<(EntId, &'static str, Vec<Value>)>,
+    /// A rider the walk put out, by slot: his origin under `G_SetOrigin`'s
+    /// lift (`ps.origin`), until the next mirror of his origin.
+    pub lifted: HashMap<usize, [f32; 3]>,
+    /// Riders put out where they sat whose entity state still carries the
+    /// seat bit, until their next end frame's mirror.
+    pub stale_seated: std::collections::HashSet<usize>,
     /// Bodies the steps struck this frame, for the server to push
     /// (`VEH_PlayerCollision`).
     pub strikes: Vec<(EntId, physics::ClientStrike)>,
@@ -229,6 +241,10 @@ impl Default for Vehicles {
             live: HashMap::new(),
             fire_ops: Vec::new(),
             deaths: Vec::new(),
+            dying: Vec::new(),
+            die_notifies: Vec::new(),
+            lifted: HashMap::new(),
+            stale_seated: std::collections::HashSet::new(),
             riders: HashMap::new(),
             strikes: Vec::new(),
             crushed: HashMap::new(),
@@ -888,7 +904,11 @@ pub fn g_damage(
     dflags: i32,
     mod_: &str,
 ) {
-    let origin = crate::game::item::origin_of(host, cx, target);
+    // A player's own origin: a rider the die walk lifted reads unlifted.
+    let origin = match host.vehicles.lifted.get(&(target.0 as usize)) {
+        Some(o) if host.ents.get(target).is_some_and(|e| e.client.is_some()) => *o,
+        _ => crate::game::item::origin_of(host, cx, target),
+    };
     let d = glam::Vec3::from(origin) - glam::Vec3::from(point);
     let dir = d.normalize_or_zero().to_array();
     if host.vehicles.live.contains_key(&target) {
@@ -897,6 +917,13 @@ pub fn g_damage(
         ) {
             let event = cx.intern_folded(event);
             cx.notify(vcod_gsc::Target::Entity(target), event, args);
+        }
+        // The die callback runs inside `G_Damage`: the riders' probe hits
+        // before the builtin returns.
+        if let Some(i) = host.vehicles.deaths.iter().position(|d| d.id == target) {
+            let death = host.vehicles.deaths.remove(i);
+            die::begin(host, death);
+            die_next(host, cx);
         }
         return;
     }
@@ -934,10 +961,33 @@ pub fn g_damage(
     cx.spawn(callback, Some(vcod_gsc::Target::Entity(target)), args);
 }
 
+/// The walk's next rider callback, spawned to run before the calling
+/// builtin goes on; its return comes back through `GameHost::spawn_returned`.
+pub fn die_next(host: &mut GameHost, cx: &mut Cx) {
+    let next = die::step(host, cx);
+    for (on, event, args) in std::mem::take(&mut host.vehicles.die_notifies) {
+        let event = cx.intern_folded(event);
+        cx.notify(vcod_gsc::Target::Entity(on), event, args);
+    }
+    if let Some((victim, args)) = next {
+        let callback = cx.func_ref(
+            crate::game::script::CALLBACK_SETUP,
+            "CodeCallback_PlayerDamage",
+        );
+        cx.spawn_then(
+            callback,
+            Some(vcod_gsc::Target::Entity(victim)),
+            args,
+            die::DIE_TOKEN,
+        );
+    }
+}
+
 /// `G_Damage`'s vehicle branch: immunity, a blast under 100 dropped, the
 /// direction's scale, then the generic tail: `health` down, `damage` with
-/// six arguments, and at 0 `death` and `Scr_Vehicle_Die` (queued for the
-/// server, which holds the occupants).
+/// six arguments, and at 0 `death` and `Scr_Vehicle_Die`, queued: a builtin
+/// walks it at once ([`die_next`]), the frame's other paths at
+/// `ScriptRuntime::vehicle_deaths`.
 #[allow(clippy::too_many_arguments)]
 pub fn vehicle_damage(
     host: &mut GameHost,
@@ -996,7 +1046,7 @@ pub fn vehicle_damage(
     )];
     if left < 1 {
         notifies.push(("death", vec![Value::Entity(attacker)]));
-        host.vehicles.deaths.push(id);
+        host.vehicles.deaths.push(die::Death { id, attacker, dir });
     } else {
         // `Scr_Vehicle_Pain` (0x8d1ca): the attacker holding a grenade or a
         // launcher, `MOD_EXPLOSIVE`, or anything over 200 but a collision

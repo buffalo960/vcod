@@ -165,9 +165,10 @@ fn run_cmd(
         return;
     }
     let mut ring = EventRing::default();
-    for (step, dt) in cmd::chop(*last_st, cmd) {
-        cmd::player_step(ps, da, &mut ring, &step, dt, world, weapons);
-    }
+    cmd::chop(*last_st, cmd, |step, dt| {
+        cmd::player_step(ps, da, &mut ring, step, dt, world, weapons);
+        ps.jump_latched
+    });
     *last_st = cmd.server_time;
     // `SLOPE_TRACE=<ct>`: print every cmd within 60 ms before that clock.
     if let Some(at) = std::env::var("SLOPE_TRACE")
@@ -772,7 +773,7 @@ fn check(map: &str, gametype: &str, cmd_ms: u32) {
 
 /// `until` drops the rows from that `commandTime` on.
 fn check_path(map: &str, gametype: &str, path: &str, tol: &Tolerance, until: Option<i32>) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));

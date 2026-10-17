@@ -44,7 +44,7 @@ const AFTER_SPAWN: &[(&str, &str, u32)] = &[
 ];
 
 fn check(map: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");

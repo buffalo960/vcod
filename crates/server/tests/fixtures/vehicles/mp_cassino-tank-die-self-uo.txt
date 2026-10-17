@@ -1,0 +1,29 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-17: PROBE lines of
+# client-probes/probe_vehdie on mp_cassino (panzeriv_mp), killed by itself.
+# COD_VERSION=uo PORT=32521 SECS=45 tools/run_probe.sh client-probes/probe_vehdie
+#   mp_cassino +set probe_vehicletype panzeriv_mp
+# 6 s in: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:32521
+#   --probe-team axis --probe-vehicle driver --probe-secs 32
+# 2 s later: the same with --probe-vehicle gunner --probe-secs 30
+PROBE vehicle 186 panzeriv_mp (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00)
+PROBE place 7550 0 (4676.00, -1869.00, 0.12) 270
+PROBE activated 9600 186 seat 1 by 0
+PROBE place 9750 1 (4676.00, -2089.00, 0.12) 90
+PROBE activated 11300 186 seat 2 by 1
+PROBE rider 11350 before 0 veh 1 health 100 (4689.78, -1979.00, 109.08)
+PROBE rider 11350 before 1 veh 1 health 100 (4704.19, -1970.10, 82.63)
+PROBE kill 11350 186 2900 by 186
+PROBE dmg 11350 0 inf 186 att 186 5 flags 0 MOD_EXPLOSIVE panzeriv_turret_mp (4689.78, -1979.00, 109.08) (0.00, 0.00, 0.00) none health 110 veh 1
+PROBE dmg 11350 1 inf 186 att 186 5 flags 0 MOD_EXPLOSIVE panzeriv_turret_mp (4704.19, -1970.10, 82.63) (0.00, 0.00, 0.00) none health 110 veh 1
+PROBE rider 11350 after 0 veh 1 health 100 (4689.78, -1979.00, 141.08)
+PROBE rider 11350 after 1 veh 1 health 100 (4704.19, -1970.10, 114.63)
+PROBE deact 11350 1 186
+PROBE deact 11350 0 186
+PROBE death 11350 186
+PROBE dmg 11350 0 inf 186 att 186 10000 flags 0 MOD_EXPLOSIVE panzeriv_turret_mp (4676.00, -1979.00, -7.88) (0.12, 0.00, 0.99) none health 100 veh 1
+PROBE dmg 11350 0 inf 186 att 186 134 flags 1 MOD_EXPLOSIVE panzeriv_turret_mp (4676.00, -1979.00, 172.12) (13.78, 0.00, -7.04) none health 0 veh 1
+PROBE dmg 11350 1 inf 186 att 186 119 flags 1 MOD_EXPLOSIVE panzeriv_turret_mp (4676.00, -1979.00, 172.12) (28.19, 8.90, -33.50) none health 100 veh 1
+PROBE rider 11400 frame 0 veh 0 health -134 (4690.43, -1979.00, 108.77)
+PROBE rider 11400 frame 1 veh 0 health 0 (4707.15, -1969.16, 81.63)
+PROBE rider 11900 later 0 veh 0 health -134 (4698.50, -1979.00, 106.82)
+PROBE rider 11900 later 1 veh 0 health 0 (4726.67, -1963.00, 79.63)

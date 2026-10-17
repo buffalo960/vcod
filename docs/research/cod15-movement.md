@@ -392,6 +392,9 @@ probes' 16 ms holds.
   1.1 after, 0x34331/0x34336); the talk button keeps the sight bit
   (`buttons &= 0x12`, 0x27f5e); the ADS-prone move zeroing tests the
   effective stance; every non-normal arm clears the ladder flag. VERIFIED.
+  UO keeps 1.5's order (0x2e04e, 0x2e053). VERIFIED. `pmove::pmove` runs
+  each version's order, so a step that fires and steps rings the shot
+  first on 1.1 only (`the_shot_and_the_footstep_ring_in_each_versions_order`).
 - `PM_Footsteps` (0x24ae8): the rate formula is 1.1's
   (`cod11-sound-system.md` 9a), every intermediate stored as a float, K at
   rodata 0x75a2c-0x75a48, the stance the effective one. VERIFIED. A lean

@@ -84,7 +84,7 @@ fn sine_bsp(mut bytes: Vec<u8>) -> Vec<u8> {
 /// The probe on ours, the map's bytes through `patch`, with one client
 /// joined, for `frames` server frames or until the level drops.
 fn run_ours(patch: fn(Vec<u8>) -> Vec<u8>, frames: usize) -> Option<Ours> {
-    let mut fs = vcod_common::testing::game_fs()?;
+    let mut fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bytes = patch(fs.read(&bsp_path).unwrap());
     fs.overlay(&bsp_path, bytes.clone());

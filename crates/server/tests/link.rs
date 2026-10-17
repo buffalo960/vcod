@@ -29,7 +29,7 @@ const STATION: [f32; 3] = [-225.0, 2452.0, -21.875];
 const EF_TELEPORT: i32 = 0x8;
 
 fn server(now: Instant) -> Option<vcod_server::Server> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, "sd"), now);
@@ -250,7 +250,7 @@ fn a_client_linked_on_the_move_keeps_its_velocity() {
 fn set_origin_moves_a_player_a_unit_up_and_flips_the_teleport_bit() {
     let p = &PROTOCOL_V1;
     let mut now = Instant::now();
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
