@@ -2055,8 +2055,16 @@ branches:
   (mins) and `boxRecord+0x0c` (maxs).
 - On a hit at `0x80c4c21` onward: an equal `prio` is discarded unless it is
   nearer than the fraction already stored, and a differing one -- necessarily
-  greater, by the skip above -- raises `bestPriority` and takes the hit
-  regardless of distance. The result gets the fraction, the bone's name id, the
+  greater, by the skip above -- raises `bestPriority` and takes the hit.
+  VERIFIED, `cod_lnxded` `0x080c4564` and UO's `coduo_lnxded` `0x080c7394`:
+  each bone's slab test starts its exit bound at the stored fraction
+  (`*param_5`, the caller's fraction before any hit), so a box the segment
+  enters past the hit already stored is rejected whatever its priority.
+  INFERRED: a higher priority beats distance only when its bone comes first
+  in the walk; listed after a nearer lower-priority hit, it never scores.
+  VERIFIED, vcod measurement (`leanhit_ab`, 3.6): ours took the farther
+  higher-priority box, and with this rule the 1.5b and UO rounds that took
+  `torso_upper` where retail took `torso_lower` now match. The result gets the fraction, the bone's name id, the
   effective hit-location code, and a normal that is a signed row of the bone
   matrix.
 - A segment that starts inside a box sets the two flag bytes at `+0x18`/`+0x19`
@@ -2400,28 +2408,65 @@ Against ours (`leanhit_ab`, cmds as above, each capture's join times):
   round as retail's.
 - UO: every bone, the origin and every cell likewise, the standing,
   crouched and prone leans included, so the `Split::Later` lean terms of
-  16.4 hold as ported. One round differs: the crouched target leaning
-  left takes it in `torso_lower` 0.06 higher where ours takes
-  `torso_upper` a unit nearer, the ray along the seam of the two boxes;
-  1.5b's capture reads the same (`leanhit_ab::ROUND_GAPS_15_UO`). Open:
-  it is the shooter's ray, since the target's bones and the phase's cells
-  match.
+  16.4 hold as ported. One round differed, here and on 1.5b: the crouched
+  target leaning left took it in `torso_lower` where ours took
+  `torso_upper` a unit farther along the ray. VERIFIED, vcod measurement:
+  that is the hit-box walk's clip (3.1), which ours lacked; with it the
+  round matches on both (`ROUND_GAPS_15_UO` removed).
 - 1.5b: the target's origin stands 0.0402 under ours (offset -0.0306
   against ours' 0.0096) in both 1.5b runs; every bone of a standing or
   crouched body carries the same offset and none else (to 0.0006), and a
   prone body's bones match without it. The hold's `setOrigin` raises him
-  a unit and he drops to the ground over the next cmds. VERIFIED, vcod
-  measurement: ours' landing rides the cmd split, from 0.013 over the
-  spot to 0.125 under it as one cmd moves a millisecond, and the 16, 16,
-  18 split lands the 1.1d and UO targets on retail's height to the bit.
-  The net probe logs no cmd times, so whether 1.5b's split differs or
-  its fall does is open (`leanhit_ab::STAND_DZ_15`, five grazing cells in
-  `CELL_GAPS_15`).
-- The head and the gear are random draws (`PROBE models`): the 1.1d and
-  UO captures' target wore `basehead_axis_a_01`, ours `b_08`, and the
-  cells match all the same. A `detachAll` and re-`attach` of the same
-  list on ours moved 150 cells on UO, so the gate leaves ours' draw.
-  Open: what ours' re-attach changes in the hit rig.
+  a unit and he drops to the ground over the next cmds. The `-cmds`
+  captures below settle it as the split: `leanhit_ab::STAND_DZ_15` and the
+  five grazing cells of `CELL_GAPS_15` stay, as that capture logged no cmd
+  times to replay.
+- The head and the gear are random draws (`PROBE models`).
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-18, `probe_leanhit`
+with `probe_bones`, `probe_fall`, `probe_pin` and `probe_stamp` set,
+fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
+`-cmds-uo.txt`, each with both net probe clients' `CMDS` lines):
+
+- The drop. `probe_fall` logs each player's height off his spot for ten
+  frames after each `setOrigin` (`PROBE fall`). He settles in one frame,
+  and where rides the cmds: across four runs a server's target landed
+  anywhere from 0.125 under the spot to 0.024 over it, 1.1d included.
+  VERIFIED, vcod measurement: replaying each capture's own cmd times
+  (`ProbeHold::times`), every fall row and bone of ours sits on retail's
+  within the gate's 0.005 on all three servers, so 1.5b's fall is not the difference.
+- The spawn. `PROBE spawnat` names the spawn point a player stood on at
+  his first `setOrigin`, and the gate pins it (`Server::pin_spawns`): a
+  sloped one leaves the spawn think's velocity on him through the drop
+  (retail's shooter `trDelta` (1, 4, 0) off (976, -864)), and the drift it
+  leaves moves with the spawn point's z in the last hundredth, so the
+  probe logs the origin to six figures.
+- `detachAll` and re-`attach`. `probe_pin` puts a fixed head and gear on
+  the target (`basehead_axis_a_01`, the falshrm helmet, `load1`, the
+  bandolier) and, after the level phase's grid, takes every attachment off
+  and puts the same ones back on their tags, then runs the grid again in
+  that frame (`level_re`). VERIFIED: on all three servers `level_re`
+  reads cell for cell as `level`. VERIFIED, vcod measurement: so does
+  ours', and with the pin every cell of all three captures matches.
+- Bones a trace posed. `probe_stamp` crosses the target with one
+  `bulletTrace` right after the second of the three `bones` rows, in the
+  thread that logs them, which runs ahead of the anim update. VERIFIED: on
+  all three servers every bone's third row, `tag_weapon_right` included,
+  reads exactly the second, where the first two differ by up to 0.17. So
+  the trace posed every bone at the last frame's time and the frame's
+  entity pass, which moves the linked marks, read those poses (movers doc
+  15). VERIFIED, vcod measurement: ours re-posed the marks' bones at the
+  frame's own time (97 rows off); a script trace now stamps every bone of
+  each body it poses (`GameHost::dobj_posed`), and they match.
+- The rounds. The damage callback logs each round's direction
+  (`PROBE dir`). VERIFIED, vcod measurement: with the aim block on the
+  last frame's clock (15.1) and the hit-box clip (3.1), every round's part
+  and point match on all three servers. The directions match to 2e-5 but
+  for up to 8e-5 (0.02 units at the target) on the shooter's left lean
+  against the target's right on all three, every phase in which the target
+  leans or lies on 1.5b and UO, and two more on UO
+  (`leanhit_ab::DIR_GAPS_*`). Open: the aim point is the same script
+  vector on every server, so what moves those is not found.
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
@@ -6516,6 +6561,18 @@ order and every gate, which are control flow.
   `AxisToAngles` back into `aim` (`0x403c4`).
 - `0x4044a` / `0x40456`: `client+0x220c = aim[0]`, `client+0x2210 = aim[1]`.
 - `0x40466`: `Pmove`.
+
+The `level.time` the block reads is the one a cmd runs on, the last
+frame's: cmds run ahead of `G_RunFrame` (player-clip doc 8.12). VERIFIED,
+vcod measurement (`leanhit_ab`'s `-cmds` captures, 1.1d, 1.5b and UO, each
+round's direction logged by the damage callback): fed the frame's own
+time, ours' scoped rounds left 0.01 to 0.02 degrees off retail's in pitch
+and yaw. Read as a shift of the idle's sines, the pitch residual of 12
+of the 1.1d capture's 13 rounds, and the yaw residual of every round whose
+yaw moved more than 0.005 degrees, put retail's time 48.5 to 51.8 ms
+behind ours; the odd one is the shooter's left lean against the target's
+right (`s_left_t_right`). On the last frame's time every 1.1d round but
+that one leaves within 2e-5 of retail's direction.
 
 VERIFIED: `MatrixMultiply` (`0x3b5a8`) is the row product `out[i][j] =
 Σ in1[i][k] * in2[k][j]`, `AnglesToAxis` (`0x3ef3c`) is `AngleVectors` with

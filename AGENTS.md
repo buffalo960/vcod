@@ -690,6 +690,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   second box on a merged bone as a box-only child (combat doc 3.6). A
   standing body's torso yaw stays where his spawn left it until he moves,
   fires or goes prone (16.4), so a hit-pose capture swings it first.
+- The engine's hit-box walk clips each box to the fraction already found:
+  a higher priority beats a nearer box only when its bone comes first
+  (`bonetrace::bone_trace`'s `limit`, combat doc 3.1). The aim block's
+  sight sway reads the last frame's `level.time`, the cmd's (15.1).
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
@@ -806,10 +810,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
   15, "A bone asked for before the anim update"). Its `bulletTrace` and
-  `radiusDamage` pose bodies at that clock too (`GameHost::dobj_time_ms`,
+  `radiusDamage` pose bodies at that clock too and fix every bone they
+  pose for the frame, as a bone ask does (`GameHost::dobj_time_ms`,
   combat doc 3.6). A gate replaying a `--probe-uo-weapon direct` capture
   sends `ProbeHold::framed` cmds: on even ones `leanhit_ab`'s standing
-  cells read 0.1 off.
+  cells read 0.1 off. Where a `setOrigin` drop lands rides the exact cmd
+  times, which `--probe-uo-weapon` and `--probe-vehicle` log as `CMDS`
+  lines and `ProbeHold::times` replays.
 
 ### Assets, rendering, sound
 
