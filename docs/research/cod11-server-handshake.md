@@ -1735,6 +1735,10 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
 
 ### The client side
 
+- `CL_SystemInfoChanged` (`0x415eb0`) also forces every systeminfo key
+  into a client cvar, whatever its flags, while no demo plays and no local
+  server runs. VERIFIED (cod11-front-end.md 16, "The systeminfo sets
+  client cvars", with the 1.5 and UO addresses).
 - `CL_SystemInfoChanged` (`0x415eb0`) hands `sv_paks`/`sv_pakNames` to
   `FS_PureServerSetLoadedPaks` (`0x43c290`) and the referenced pair to
   `FS_ServerSetReferencedPaks` (`0x43c530`); both error `pak sum/name

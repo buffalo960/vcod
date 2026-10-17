@@ -1602,11 +1602,33 @@ them as a spectator for 10-25 s each.
 
 ### The systeminfo sets client cvars
 
-- `CL_SystemInfoChanged` (`0x415eb0`) reads `sv_serverid`, the `sv_cheats`
-  state and the pure and referenced pak lists, then, when no local server
-  runs (`sv_running` 0), calls `Cvar_Set` (`0x439650`) for every key/value
-  pair of the systeminfo. INFERRED (the loop's shape). So `fs_game`,
-  `cl_allowDownload`, `rate`, `snaps` and the rest become client cvars.
+- `CL_SystemInfoChanged` (`0x415eb0`) reads `sv_serverid`, then returns
+  while a demo plays (`clc.demoplaying`, `0x15ef004`). VERIFIED (the
+  compare). Otherwise a systeminfo `sv_cheats` whose `atol` is 0 (a
+  missing key included) runs `Cvar_SetCheatState` (`0x439bd0`), which
+  puts every `CVAR_CHEAT` (0x200) cvar off its reset string back on it.
+  VERIFIED. The pure and referenced pak lists go to the filesystem next.
+- Then, when `sv_running` is 0, the function walks the systeminfo with an
+  inline `Info_NextPair` (one leading `\` skipped per pair, an empty key
+  ends the walk, a key with no value reads `""`) and calls `Cvar_Set2`
+  (`0x439650`) on each pair with `force` 1 (`mov eax, 1` at `0x415ff9`).
+  VERIFIED (asm). `force` skips `Cvar_Set2`'s read-only (0x40), write
+  protect (0x10), cheat (0x200, against `sv_cheats`) and latch (0x20)
+  branches and drops a pending latched string; a cvar the client never
+  registered is made with flags 0, not `CVAR_USER_CREATED` (0x80). VERIFIED
+  (`0x439650`'s body). The set ORs the cvar's flags into
+  `cvar_modifiedFlags` (`0x163b40c`), so a forced userinfo cvar goes back to
+  the server and an archived one into the config. VERIFIED (the OR);
+  INFERRED (the readers, Q3's). No key is refused: `fs_game`,
+  `cl_allowDownload`, `rate`, `snaps`, `sv_serverid`, `sv_paks` and the
+  rest all become client cvars.
+- 1.5 and UO keep the function unchanged: CoDMP.exe 1.5 `0x4176f0` (its
+  `Cvar_Set2` `0x43bbb0`, `mov eax, 1` at `0x417839`), CoDUOMP.exe 1.51
+  `0x418b80` (`Cvar_Set2` `0x43dc50` takes `force` as a third argument,
+  `push 0x1` at `0x418cad`). VERIFIED (asm).
+- `sv_cheats` is registered `"0"`, flags 0x48 (`CVAR_SYSTEMINFO |
+  CVAR_ROM`), in `Com_Init` (call at `0x437636`), so only a systeminfo moves
+  it. VERIFIED.
 - `fs_game` is registered with flags 0x18 (`CVAR_SYSTEMINFO | CVAR_INIT`)
   at `0x42cdb0`. VERIFIED. After `CL_SystemInfoChanged`, the gamestate
   parse (`0x416050`) restarts the filesystem (`0x42d2b0`) when no local
@@ -1633,11 +1655,13 @@ them as a spectator for 10-25 s each.
 
 ### vcod
 
-- The server's `cl_allowDownload` decides when its systeminfo has one, the
-  client's own cvar (default 1, archived) otherwise. vcod applies the
-  server's value to the connection only rather than writing it into the
-  client's cvar the way retail's `Cvar_Set` does. With downloads off it
-  logs the missing paks and loads the map if it resolves.
+- Every systeminfo key is forced into the client's cvars at the gamestate
+  and at each `d 1`, as retail does, except during a demo
+  (`Shell::apply_systeminfo`). vcod's client never runs a server in its
+  own process, so the `sv_running` test always passes. A server's
+  `cl_allowDownload 0` therefore lands in the client's archived cvar and
+  stays after it leaves, as on retail; vcod's own default is 1. With
+  downloads off it logs the missing paks and loads the map if it resolves.
 - `fs_game` from the systeminfo layers `<game_dir>/<fs_game>` over the base
   directory (`Pk3Fs::open_layered`) at the gamestate, before the download
   check; downloads land in either directory and never overwrite a file.
