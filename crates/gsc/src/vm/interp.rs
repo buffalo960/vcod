@@ -446,6 +446,11 @@ impl Vm {
                 Op::LoadField(name) => {
                     let obj = pop!();
                     let v = match obj {
+                        // `.size` of any object but an array is 1 on retail
+                        // (cod_lnxded 0x080a2f28; cod11-gsc-language.md §9).
+                        Value::Struct(_) | Value::Entity(_) if name == self.size_atom => {
+                            Value::Int(1)
+                        }
                         Value::Struct(id) => self.heap.get_field(id, name),
                         Value::Entity(id) => {
                             if !host.is_live(id) {
@@ -466,7 +471,7 @@ impl Vm {
                             );
                             v
                         }
-                        // The only field an array or a string has. `_load.gsc` loops on it.
+                        // An array's key count, a string's length. `_load.gsc` loops on it.
                         Value::Array(id) if name == self.size_atom => {
                             Value::Int(self.heap.array_len(id) as i32)
                         }
