@@ -1007,10 +1007,42 @@ pub(crate) mod tests {
         assert_eq!(vm.interner_mut().resolve(a), "russian");
     }
 
+    /// Retail rejects the wrong access on a bare global when it compiles
+    /// (`probe_game_dotwrite`, `probe_level_bracket`); `.size` takes any.
     #[test]
-    fn game_dot_field_assignment_is_a_bad_type_error() {
-        let e = run_err("main() { game.foo = 1; }");
-        assert!(matches!(e, ErrorKind::BadType(_)));
+    fn a_bare_global_accessed_the_wrong_way_does_not_compile() {
+        let compiles = |src: &str| {
+            let ast = crate::parse::parse_file(src).unwrap();
+            crate::compile::compile_file(&ast, "test/script", Vm::new().interner_mut()).is_ok()
+        };
+        for src in [
+            "main() { game.foo = 1; }",
+            "main() { return game.foo; }",
+            "main() { game.foo[0] = 1; }",
+            "main() { level[\"k\"] = 1; }",
+            "main() { return level[\"k\"]; }",
+            "main() { self[\"k\"] = 1; }",
+            "main() { anim[0] = 1; }",
+        ] {
+            assert!(!compiles(src), "{src} compiled");
+        }
+        for src in [
+            "main() { return game.size + level.size + self.size; }",
+            "main() { game[\"k\"] = 1; level.k = 1; level.a[0] = 1; }",
+        ] {
+            assert!(compiles(src), "{src} did not compile");
+        }
+    }
+
+    /// `.size` of a struct or an entity is 1, whatever fields it carries.
+    #[test]
+    fn size_of_a_non_array_object_is_one() {
+        let (v, _, _) = run("main() { level.a = 1; level.b = 2; return level.size; }");
+        assert_eq!(v, Value::Int(1));
+        assert!(matches!(
+            run_err("main() { v = (1, 2, 3); return v.size; }"),
+            ErrorKind::BadType(_)
+        ));
     }
 
     // --- Auto-vivification: `x[i] = v` where `x` was `Undefined` becomes a

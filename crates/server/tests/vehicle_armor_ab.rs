@@ -17,8 +17,10 @@
 //! `probe_profile 1`: level `bulletTrace`s across the seated rider from
 //! the vehicle's right, which the silhouette tests compare ray for ray.
 //!
-//! `ARMOR_REPORT=1` prints both logs. Needs `COD_DIR` at a UO install;
-//! without one it returns early.
+//! `ARMOR_REPORT=1` prints both logs; in the silhouette runs
+//! `ARMOR_BONES=1` adds the probe's `probe_bones` lines, `ARMOR_FIXTURE=<path>`
+//! replays another capture's seat times and `ARMOR_LATE=<ms>` its join.
+//! Needs `COD_DIR` at a UO install; without one it returns early.
 
 mod common;
 
@@ -39,6 +41,8 @@ use vcod_common::net::protocol::PROTOCOL_V22;
 const SETTLE_MS: i64 = 10_050;
 const SEAT_MS: i64 = 12_000;
 const TAP_MS: i64 = 150;
+/// How long a target that never boards is replayed past its placement.
+const ON_FOOT_MS: i64 = 90_000;
 
 /// When the target acts, in ms from its placement: the use tap into seat
 /// 1, the two `nextvehslot`s, the use tap out.
@@ -141,7 +145,7 @@ fn holding(cl: &NetClient<common::ClientEnd>, buttons: u8, last: &mut i32) -> Us
 /// Our run of the probe on `map`, the target boarding a `vehicletype`; the
 /// script log. `aim`: the shooter is `--probe-uo-weapon aim`, else `hold`.
 fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)], aim: bool) -> Option<Vec<String>> {
-    ours_after(map, vehicletype, cvars, aim, 0, SIT)
+    ours_after(map, vehicletype, cvars, aim, 0, Some(SIT))
 }
 
 /// [`ours`] with the server run alone `late_ms` longer before the clients
@@ -152,7 +156,7 @@ fn ours_after(
     cvars: &[(&str, &str)],
     aim: bool,
     late_ms: i64,
-    at: Schedule,
+    at: Option<Schedule>,
 ) -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
@@ -193,6 +197,14 @@ fn ours_after(
         aim: true,
         ..Default::default()
     };
+    // With no schedule the target never boards and holds view (0, 0, 0),
+    // as a plain `--net-probe` does.
+    if at.is_none() {
+        target.aim = false;
+        target.base = Some([0.0; 3]);
+    }
+    let end_ms = at.map_or(ON_FOOT_MS, |at| at[3] + TAP_MS + SEAT_MS);
+    let at = at.unwrap_or([i64::MAX / 2; 4]);
     let mut shooter_placed = false;
     let mut placed_at: Option<i64> = None;
     let mut said = 0;
@@ -209,7 +221,7 @@ fn ours_after(
                 ta.send_reliable("nextvehslot");
                 said += 1;
             }
-            if ms >= at[3] + TAP_MS + SEAT_MS {
+            if ms >= end_ms {
                 break;
             }
         }
@@ -529,22 +541,29 @@ type Allowance = (f32, usize);
 /// Stints whose silhouette may differ from retail's, by map and phase (the
 /// fixture's `seat` line count): how far a ray may stop off retail's and
 /// how many cells may disagree outright, with the reason. Both are the
-/// stint after the gunner's seat; the first stint in every seat matches.
+/// stint after the gunner's seat. There retail's script `bulletTrace`
+/// poses the rider at the last frame's anim time: posed 50 ms earlier,
+/// ours matches every cell of both to 0.01 (tank) and 0.12 (jeep, as in
+/// its first stint), while the target's link pass, before boarding, the
+/// tank's first stint and 90 s on foot with no vehicle pose at the
+/// frame's own (coduo-vehicles.md 13, "Back from the gunner's seat"). What
+/// switches it is not traced, so nothing is ported.
 const SILHOUETTE_GAPS: &[(&str, usize, Allowance, &str)] = &[
     (
         "mp_peaks",
         3,
         (0.6, 0),
         "the jeep passenger after the gunner's seat: four of 30 cells stop up to 0.57 off \
-         retail's (coduo-vehicles.md 13, \"The silhouette\")",
+         retail's, which poses him a frame earlier there (coduo-vehicles.md 13, \
+         \"Back from the gunner's seat\")",
     ),
     (
         "mp_cassino",
         3,
         (0.7, 1),
         "the tank driver back from the gunner's seat: 11 of 84 cells stop up to 0.65 off \
-         retail's and one meets one side only, where his first stint matches to 0.01 \
-         (coduo-vehicles.md 13, \"The silhouette\")",
+         retail's and one meets one side only, all within 0.01 posed a frame earlier \
+         (coduo-vehicles.md 13, \"Back from the gunner's seat\")",
     ),
 ];
 
@@ -598,13 +617,21 @@ fn silhouettes(map: &str, vehicletype: &str, fixture: &str, late_ms: i64) {
     if vehicletype == "willyjeep_mp" {
         cvars.push(("probe_side", "75"));
     }
+    if std::env::var("ARMOR_BONES").is_ok() {
+        cvars.push(("probe_bones", "1"));
+    }
+    let alt = std::env::var("ARMOR_FIXTURE")
+        .ok()
+        .map(|p| std::fs::read_to_string(p).unwrap());
+    let fixture = alt.as_deref().unwrap_or(fixture);
+    let late_ms = std::env::var("ARMOR_LATE").map_or(late_ms, |v| v.parse().unwrap());
     let Some(log) = ours_after(
         map,
         vehicletype,
         &cvars,
         true,
         late_ms,
-        schedule_of(fixture),
+        Some(schedule_of(fixture)),
     ) else {
         return;
     };
@@ -632,4 +659,72 @@ fn the_tank_gunner_meets_the_rays_where_retails_does() {
         include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt"),
         LATE_MS,
     );
+}
+
+/// Every profile of a target that never boards, ray for ray at the
+/// fixture's times: each cell meets him on both servers, within a quarter
+/// unit of retail's.
+fn compare_on_foot(fixture: &str, ours: &[String]) {
+    /// Each profile's cells (whether the ray met the vehicle, `z`, `f`) by time.
+    type Rays = BTreeMap<i32, BTreeMap<(bool, i32, i32), [f32; 3]>>;
+    let rays = |log: &mut dyn Iterator<Item = &str>| {
+        let mut out = Rays::new();
+        for l in log {
+            let Some(rest) = l.trim().strip_prefix("PROBE ") else {
+                continue;
+            };
+            let t: Vec<&str> = rest.splitn(6, ' ').collect();
+            if t[0] != "prof" && t[0] != "vprof" {
+                continue;
+            }
+            let v: Vec<f32> = t[5]
+                .trim_matches(|c| c == '(' || c == ')')
+                .split(", ")
+                .map(|x| x.parse().unwrap())
+                .collect();
+            let cell = (
+                t[0] == "vprof",
+                t[3].parse().unwrap(),
+                t[4].parse().unwrap(),
+            );
+            out.entry(t[1].parse().unwrap())
+                .or_default()
+                .insert(cell, [v[0], v[1], v[2]]);
+        }
+        out
+    };
+    let retail = rays(&mut fixture.lines());
+    let ours = rays(&mut ours.iter().map(String::as_str));
+    assert!(!retail.is_empty(), "the fixture's profiles");
+    for (t, r) in &retail {
+        let o = ours
+            .get(t)
+            .unwrap_or_else(|| panic!("no profile at {t} on ours"));
+        let cells: std::collections::BTreeSet<_> = r.keys().chain(o.keys()).collect();
+        for cell in cells {
+            let (a, b) = (r.get(cell), o.get(cell));
+            let close =
+                matches!((a, b), (Some(a), Some(b)) if (0..3).all(|i| (a[i] - b[i]).abs() <= 0.25));
+            assert!(close, "{t} cell {cell:?}: retail {a:?}, ours {b:?}");
+        }
+    }
+}
+
+/// The jeep's flank with the target on foot for 90 s: his silhouette
+/// matches retail's frame for frame, the bulletTrace posing him at the
+/// frame's own time, where after a seat cycle retail's poses him a frame
+/// earlier (docs/research/coduo-vehicles.md 13, "The silhouette").
+#[test]
+fn a_target_on_foot_meets_the_rays_where_retails_does() {
+    let fixture = include_str!("fixtures/vehicles/mp_peaks-jeep-silhouette-foot-uo.txt");
+    let cvars = [
+        ("probe_aim_sweep", "1"),
+        ("probe_profile", "1"),
+        ("probe_side", "75"),
+        ("probe_shoot_dist", "600"),
+    ];
+    let Some(log) = ours_after("mp_peaks", "willyjeep_mp", &cvars, true, LATE_MS, None) else {
+        return;
+    };
+    compare_on_foot(fixture, &log);
 }
