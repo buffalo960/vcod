@@ -10795,8 +10795,9 @@ mod tests {
     /// `setCvar("scr_allow_vote", level.allowvote)`.
     #[test]
     fn a_set_after_the_map_outranks_the_scripts_load_time_write() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
-            eprintln!("COD_DIR unset or has no main/: skipping");
+        // 1.1's dm.gsc writes scr_allow_vote at load; UO's does not.
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR is not a 1.1 install: skipping");
             return;
         };
         let now = Instant::now();
