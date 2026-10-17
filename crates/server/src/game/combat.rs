@@ -1022,11 +1022,13 @@ impl BodyPose {
             turret_leaves: self.turret_leaves.as_deref().filter(|_| mounted),
             controllers: self.eased.or_else(|| self.target_controllers()),
             seat_leaves: match self.seat_ramp.at(now_ms) {
-                Some(ramped) => Some(ramped),
-                None => self
+                ramped if !ramped.is_empty() => ramped,
+                _ => self
                     .seat
                     .as_ref()
-                    .and_then(|seat| vcod_common::playerpose::seat_inputs(anims, self.legs, seat)),
+                    .and_then(|seat| vcod_common::playerpose::seat_inputs(anims, self.legs, seat))
+                    .into_iter()
+                    .collect(),
             },
         }
     }

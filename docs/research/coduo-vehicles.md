@@ -1647,22 +1647,66 @@ runs lie 1.1 units apart.
       UO end frames). Measured 2026-10-17 (retail UO 1.51b, `tank` run
       on port 32775, `probe_bones 1`): the change into the gunner's seat
       now matches retail's every frame within 0.21, but for one frame
-      where retail repeats the last pose (41850); the change back into
-      the driver's takes eight frames on both, but ours dips up to 3.5
-      units below retail's path (VERIFIED, replay). Not traced: a blend
-      out of a node the first change's window still held, or the fading
-      clips' order.
+      where retail repeats the last pose (41850).
+    - **The glide back.** The change back into the driver's seat also
+      takes eight frames on both, and ours dipped up to 6.55 units
+      (`bip01 r hand`) below retail's path on its second frame (VERIFIED,
+      replay of the `tank` run, 2026-10-18). The fading clip is the
+      gunner's `standMG42_aim` (wire 95), an aim group of three leaves.
+      In the gunner's seat `G_PlayerVehiclePositionAndBlend` had set its
+      leaf `pb_standMG42gunner_aim_forward_level` (node 261) to weight 1;
+      the driver's seat sets goals under its own legs anim only, so
+      nothing clears the old node's leaves and the clip fades out on
+      them (INFERRED, read of 0x9048f against the replay). vcod dropped
+      the seat blend at the change and descended the group by the view's
+      pitch (10 degrees) to its `_15down` leaf. `playerpose::SeatRamp` now
+      keeps the node it leaves, and `PoseInputs::seat_leaves` lists it
+      after the current seat's; the client's drawn rider keeps it the
+      same way (`entities.rs` `SeatLeaves`). With it every bone of the
+      glide sits within 0.02 of retail's (VERIFIED, replay,
+      `vehicle_armor_ab::the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail`,
+      fixture `mp_cassino-tank-glide-uo.txt`, cut from that run) but for
+      four frames its `GLIDE_GAPS` name:
+      - 54100 and 54250, where retail repeats the last frame's pose: a
+        `bulletTrace` in the first thread pass (the profile's at 54050,
+        the aim sweep's at 54200, both run in the next frame's first
+        pass) poses the body under the frame's DObj stamp, and the link
+        pass then reads those bones (`cod11-movers.md` 15, "A bone asked
+        for before the anim update"). vcod's script trace stamps nothing.
+        VERIFIED, replay: stamping every bone of each body a thread
+        `bulletTrace` meets at `dobj_time_ms` makes ours repeat the pose
+        at the profile's frame as retail does (the aim sweep's repeats
+        land a frame early on ours, where the replay's sweep thread runs
+        50 ms ahead of retail's). Not ported: the bones a trace stamps
+        are the per-bone stamp work of `cod11-combat.md` 3.6.
+      - 53900, every bone 21 units high on ours for one frame: the
+        probe's marks link to the rider, and `G_RunClient` (0x41dfc)
+        re-reads a linked player's `r.currentOrigin` off his link each
+        entity pass (the tank driver's link offset above); vcod's marks
+        read the change's placement, 21 up, until the end frame puts him
+        on the seat. The same unported refresh makes ours' marks on the
+        jeep's gunner lag retail's a frame while the gun swings (below).
+      - 54000, `bip01 head` 0.34 off: the neck and head controls ease
+        from 0 after the change; not traced.
     - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
       fresh retail jeep run (seat changes at 41550 and 53550, port
-      32776) meets the passenger's stint up to 1.07 off ours, where the
-      committed fixture (changes at 41500 and 53500) matches at 0.00.
-      Starting the clips of an end frame that changes the torso anim a
-      frame ahead, as a spawn's, matches the fresh run at 0.01 and puts
-      the fixture's 0.57 off (VERIFIED, replay). Some rebuild inside the
-      thread pass decides it, which neither rule names; not ported.
-      A delayed `wait 0.1` thread of `maps/mp/_jeepdrive_gmi.gsc`
-      (`delayed_process_activate`) runs on every seat change and is a
-      candidate (INFERRED).
+      32776) seemed to meet the passenger's stint up to 1.07 off ours,
+      where the committed fixture (changes at 41500 and 53500) matches
+      at 0.00. The replay joined it on the committed fixture's level
+      time, but the fresh run's target was placed 50 ms later (19350
+      against 19300), and a rider's clips run on level time. Joined 50
+      ms later, every seat's rays meet retail's within a quarter unit on
+      master (VERIFIED, replay, 2026-10-18; on the committed join one
+      cell reads 0.26 off). `ARMOR_FIXTURE` now shifts the join by the
+      capture's placement. The jeep run's bones still part inside the
+      glides: up to 12 units while boarding (ours a frame ahead), 4.3
+      into the gunner's seat (ours a frame behind while the gun swings
+      toward the view, 18 degrees a frame), 6.5 into the passenger's
+      (VERIFIED, replay); placing the gunner off the vehicle's
+      post-step controls closes the gunner's to 0.16 but breaks
+      `vehicle_ab`'s seated origins, so the lag is in what his marks
+      read (the `G_RunClient` refresh above), not in his placement
+      (INFERRED). Not ported.
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
   within a quarter unit, the stints after the gunner's seat included.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
