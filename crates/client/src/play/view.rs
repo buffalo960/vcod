@@ -395,6 +395,22 @@ impl OnlineView {
         self.shock.new_gamestate();
     }
 
+    /// An in-game `vid_restart` frees the cgame and starts it again
+    /// (docs/research/cod11-front-end.md section 17, "The cgame restart"):
+    /// everything it held starts fresh. The cvars (`cg_drawGun`, the
+    /// shellshock file `cg_shellshock` reuses), the connection's
+    /// configstring layout and the loaded rigs, which are assets, stay.
+    pub fn restart_cgame(&mut self) {
+        *self = OnlineView {
+            draw_gun: self.draw_gun,
+            shock: self.shock.restart_cgame(),
+            shock_command: self.shock_command.take(),
+            rigs: std::mem::take(&mut self.rigs),
+            cs_models: self.cs_models,
+            ..OnlineView::default()
+        };
+    }
+
     /// An `EV_EARTHQUAKE` or `EV_FIRE_WEAPON_MG42` arrived (`play::quake`)
     /// at `now_ms`, the render clock, before this frame's view.
     pub fn start_quake(&mut self, q: Quake, now_ms: i32) {
@@ -636,6 +652,24 @@ mod tests {
             eye: Vec3::ZERO,
             seat: None,
         }
+    }
+
+    /// An in-game `vid_restart` drops the cgame's view state (a landing
+    /// dip in flight) and keeps the connection's layout and `cg_drawGun`.
+    #[test]
+    fn a_cgame_restart_drops_the_view_state() {
+        let uo = vcod_common::net::protocol::PROTOCOL_V22;
+        let mut v = OnlineView {
+            draw_gun: DrawGun::Never,
+            ..OnlineView::default()
+        };
+        v.set_protocol(&uo);
+        v.land(-24.0, 1000);
+        assert!(v.land_dip(1100) < 0.0);
+        v.restart_cgame();
+        assert_eq!(v.land_dip(1100), 0.0);
+        assert_eq!(v.models(), uo.cs.models());
+        assert_eq!(v.draw_gun, DrawGun::Never);
     }
 
     #[test]

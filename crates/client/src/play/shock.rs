@@ -471,6 +471,15 @@ impl ShellShock {
         self.loaded.clear();
     }
 
+    /// A fresh cgame's state for an in-game `vid_restart`: only the last
+    /// file parsed, which the cvars hold, survives.
+    pub fn restart_cgame(&mut self) -> ShellShock {
+        ShellShock {
+            last: self.last.take(),
+            ..ShellShock::default()
+        }
+    }
+
     fn params(&mut self, fs: &Pk3Fs, name: &str) -> Option<&ShockParams> {
         if !self.loaded.contains_key(name) {
             let p = ShockParams::load(fs, name);

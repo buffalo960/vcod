@@ -330,6 +330,14 @@ impl Hud {
         self.spawn = None;
     }
 
+    /// An in-game `vid_restart`: a gamestate's resets, and the chat ring,
+    /// which lives in the cgame (cod11-chat.md 3.2) and goes with it
+    /// (cod11-front-end.md section 17, "The cgame restart").
+    pub fn restart_cgame(&mut self) {
+        self.on_gamestate();
+        self.chat = Chat::new();
+    }
+
     /// `EV_OBITUARY` to a kill line in the game message window. Entity
     /// number == clientNum for players (docs/research/cod11-hud-protocol.md,
     /// sections 1 and 1.1). An unresolved victim drops the row and counts toward `unknown`; an unresolved attacker
