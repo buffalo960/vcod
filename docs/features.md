@@ -317,7 +317,9 @@ something, the bullet links it.
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as
-  retail's does.
+  retail's does; a missile at the sky is freed on 1.1 and 1.5 and flies
+  on through it on UO. A rocket or a swing hurts a UO `setTakeDamage`
+  model directly, and a swing at nothing raises no event.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.
 - Search & Destroy end to end: plant, defuse, progress bar, compass

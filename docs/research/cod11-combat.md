@@ -1541,6 +1541,30 @@ number against 1022 and the entity's `takedamage`, and calls `G_Damage` with
 plus `rand() % 5`. INFERRED: the call is on the arm where the number differs
 from 1022 and `takedamage` is set.
 
+VERIFIED, `game.mp.i386.so`: after `G_CheckHitTriggerDamage` the function
+tests `trace.surfaceFlags & 0x10` (0x687a9) and the fraction against 1.0
+(0x687b3..0x687c2), both jumping to the return at 0x68886 past the temp
+entity and the damage; UO's `Weapon_Melee` (0x7a524) takes the same two
+tests (0x7a609, 0x7a620) and the `takedamage` (+0x17d) test at 0x7a6c7.
+INFERRED: a swing at nothing or at the sky spawns no event. VERIFIED, live
+(2026-10-17, `client-probes/probe_skyshot` air part,
+`fixtures/missiles/mp_carentan-skyshot-air.txt` on 1.1d and `-air-uo.txt`
+on UO 1.51b): three swings into open air (`weaponstate` 10 then 11) put no
+temp entity on the wire; the same swings 80 degrees down at the floor
+(`-floor.txt`, 1.1d) each raise 167 with parm 5 naming the world. VERIFIED,
+live (UO 1.51b, `client-probes/probe_takedamage`,
+`mp_carentan-takedamage-melee-uo.txt`): a swing at a `setTakeDamage(1)`
+script model raises 167 naming the model and takes it 71, 73 and 73 as
+`MOD_MELEE` with the M1 carbine. INFERRED, off the mask (0x2802031, the
+bullet's): a swing strikes a shootable grenade's box as a round does. vcod
+ports all four (`a_swing_damages_what_takes_damage`,
+`crates/server/tests/missile_edge_ab.rs`); before 2026-10-17 its swing at
+nothing raised a 167 at the reach's end, a model took no damage and a
+satchel was swung through. One gap stands: the floor swing's truncated
+event origin reads x 1375 on ours and 1374 on retail, y 2615 on both, from
+(1368, 2608.1) facing yaw 45; the start or the aim is a fraction of a unit
+off ours in a way that capture cannot pin (`FLOOR_POS_GAP`).
+
 **As implemented.** `melee_fire` (`crates/server/src/game/combat.rs`) shares
 `trace_attack` with `bullet_fire`, so the two cannot disagree about a
 player's box or its bones. Two divergences, both deliberate. The hit event's
@@ -4403,8 +4427,40 @@ the ordering and the conditions in it.
   frame.
 - Otherwise, when `tr.surfaceFlags & 0x10` is set, `G_FreeEntity(ent)` runs
   and the frame ends with no event, no explosion and no think.
-  UNVERIFIED: what that surface bit is called. INFERRED: it is the sky, since
-  freeing the missile silently is what a sky brush is for.
+  VERIFIED, `game.mp.i386.so` read with `tools/re/annotate_func.py`: the
+  test is `test [ebp-0x2c], 0x10` at 0x5432f ahead of the `G_FreeEntity`
+  call at 0x54339; 1.5b's is `and eax, 0x10` at 0x550e4 before its free at
+  0x550f1. VERIFIED, the material lumps of every stock 1.1 and UO map
+  (`crates/common/examples/flag_census.rs`): the only clip-brush materials
+  carrying 0x10 or 0x4 are the `textures/sky/*` ones, every one surface
+  0x434 and contents 0x801 (0x8000801 for `sky/sewer`). VERIFIED, live
+  (retail 1.1d, 2026-10-17, `fixtures/missiles/mp_carentan-skyshot-rocket.txt`,
+  `client-probes/probe_skyshot`): a panzerfaust round fired 80 degrees up
+  climbs 137 a frame to z 2225.8 and is gone from the script's entity list
+  and the wire on the frame its move meets the sky at 2304, with no explode.
+- **United Offensive.** VERIFIED, `game.mp.uo.i386.so`: right after the
+  move trace `G_RunMissile` tests `surfaceFlags & 0x4` (0x5f247) and on it
+  adds -2.0 (`.rodata 0xa180c`) times the plane's normal to the end point,
+  before the trigger re-trace and the store into `r.currentOrigin`; at the
+  end of the move the same 0x4 test (0x5f533) jumps past both the 0x10 free
+  (0x5f541) and `G_MissileImpact` to `G_RunThink`. VERIFIED: its
+  `G_MissileTrace` (0x5edae) clears a start-solid (`tr+0x2f`) and sets the
+  fraction to 1.0 when the trace's contents carry 0x800 (0x5edf4..0x5ee13),
+  and otherwise zeroes the fraction of a start-solid trace. INFERRED, off
+  the stores: a UO missile that meets the sky is put 2 units inside the sky
+  brush, and the next frame's trace, starting inside it, reads clear, so the
+  missile flies on above the map. VERIFIED, live (retail UO 1.51b,
+  2026-10-17, `mp_carentan-skyshot-rocket-uo.txt`): the bazooka round's
+  origin reads z 2305.88 on the contact frame, 2 past the face at 2303.88,
+  climbs on at 137 a frame on its line, and goes off on its 15 s think (13.6)
+  with 185 and parm 0 at z 41318, out past the map. vcod: `Missile::step`
+  (`SURF_SKY`, `SURF_NOIMPACT`, `UO_SKY_PUSH`, `CONTENTS_SKY`), pinned by
+  `a_missile_at_the_sky_is_freed_silently`,
+  `a_uo_missile_flies_through_the_sky` and
+  `crates/server/tests/missile_edge_ab.rs`. Before 2026-10-17 every
+  protocol's missile struck the sky: a rocket exploded on it, a grenade
+  bounced off. vcod applies only the sky-start arm of UO's `G_MissileTrace`;
+  the zeroed fraction on any other start-solid is not ported.
 - Otherwise `G_MissileImpact(ent, &tr, dir)` runs, and `G_RunThink(ent)`
   follows only when `s.eType` is still 4. VERIFIED: `G_MissileImpact`'s
   explode path sets `s.eType` to 0 (13.1), so the test is what stops a
@@ -4729,6 +4785,16 @@ The explode block, reached from all three arms:
   ent->+0x24C)`. VERIFIED: the ignored entity is `other`, the entity the
   missile hit. INFERRED: the direct-hit victim is deliberately kept out of the
   splash, having already been charged the direct damage.
+- VERIFIED, live (retail UO 1.51b, 2026-10-17,
+  `fixtures/missiles/mp_carentan-takedamage-rocket-uo.txt`,
+  `client-probes/probe_takedamage`): three bazooka rounds at a
+  `setTakeDamage(1)` barrel each give it one `damage` notify, 1000
+  `MOD_PROJECTILE` at the contact, and no splash, while the shooter 200
+  back takes 35 `MOD_PROJECTILE_SPLASH`. vcod hands the direct `G_Damage`
+  to any struck entity with `takedamage` (`GameHost::entity_takes_damage`:
+  turrets, UO vehicles, `setTakeDamage` entities, linked damageable
+  `func_static`s); before 2026-10-17 only a client or a UO vehicle took
+  it, and a struck script model took nothing, the splash skipping it.
 - `trap_LinkEntity(ent)` closes it.
 
 ### 13.2 `G_ExplodeMissile`, the fuse
@@ -4964,11 +5030,15 @@ rocket, explode or splash. Pinned by
 `a_rocket_that_strikes_a_player_hits_him_directly`
 (`crates/server/tests/combat.rs`), and on the client by
 `the_panzer_capture_s_explode_draws_the_rocket_row`
-(`crates/client/src/fx/registry.rs`). INFERRED, not ported: 12.3's sky free
-(vcod's collision world holds no sky faces, so a rocket fired at the sky
-flies its 30 s and goes off with 178 out of the world), 12.1's water
-splash, and a direct hit on a script entity that takes damage (only a
-client and a UO vehicle take it).
+(`crates/client/src/fx/registry.rs`). Not ported: 12.1's water splash.
+
+VERIFIED, `game.mp.uo.i386.so`: UO's `fire_rocket` (0x5fc74) stores
+`trType` 2 (0x5fde6) and a 15000 ms think, `Weapon_RocketLauncher_Fire`
+(0x7b3da) leaves it, and `Weapon_Artillery_Fire` (0x7b594), a vehicle main
+gun's fire, rewrites it to 5 (0x7b6c8). VERIFIED, live (retail UO 1.51b,
+2026-10-17, `mp_carentan-skyshot-rocket-uo.txt`): a player's bazooka round
+reads `trType` 2 and climbs an even 137 a frame. Before 2026-10-17 vcod
+flew every UO rocket on `trType` 5.
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 
@@ -5871,7 +5941,14 @@ seen are 0, 2 and 7.
 INFERRED, from the above: items lying in the world, triggers but a
 `spawnflags & 8` one with no 1, 2 or 4, `script_brushmodel`s and `script_model`s are in the
 tree from their spawn; missiles, temp entities, corpses, `script_origin`s
-and taken items never are. A `trigger_hurt` stays where its contents -1
+and taken items never are. VERIFIED, `tools/re/annotate_func.py`: 1.1's
+`fire_grenade` and `fire_rocket` store to `+0xf4` (0x88, at 0x54415 and
+0x54687) and `+0x198`, never to `r.contents` (+0x118); UO's `fire_grenade`
+writes `r.contents` 0x2000 (+0x120, 0x5fbc3) on the arm that makes a
+`takeDamage` grenade shootable, and its `fire_rocket` and `fire_artillery`
+write none. INFERRED: `G_RunMissile`'s `trap_LinkEntity` every frame is
+`SV_LinkEntity`'s unlink for every missile but UO's shootable grenades,
+which is why vcod links those alone (`GameHost::link_shootable`). A `trigger_hurt` stays where its contents -1
 link filed it and the walk tests its 0x405c0008; a `trigger_use` the same
 with 0x200000. A `notSolid` brush model stays linked with contents 0.
 

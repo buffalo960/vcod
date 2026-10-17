@@ -353,6 +353,23 @@ over the 18-unit step. Two kinds of edge use it, kept in
   landing at z 84 to the step at z 116 by (-1759, -603) the bot came in at
   an angle, slid along the step's face and ran off the stair's side at
   every try on the pinned cue alone; the cue under the waypoint takes it up.
+- A bobbing jump: the flood's forward run (`nav::walk_to`) pinned under a
+  face too steep to stand on, where the step lifts the body onto the face
+  and it slides back, so it is off the ground on most ticks and the
+  pinned jump above never fires. A run that stalls sliding jumps on its
+  next tick on the ground instead (`nav::BOB`). Only the flood's runs do:
+  the follower's walks on from a bot's body never take that jump, so a
+  way proved with one is a jump edge or nothing. VERIFIED (measured
+  2026-10-17, UO rules, walks): mp_berlin's roof gutter, a trough
+  between the roof at z 768 and a steep roof slope south-east of it, with
+  a ledge at 633-652 on its south side. The slope node a 149-unit drop off
+  the roof lands on, (-673.7, 4131.1, 616.1), runs south into the gutter
+  and bobs between z 612 and 630 under the face; a jump from a tick on
+  the ground lands on the ledge at (-718.7, 4086.4, 651.6)
+  (`nav::tests::a_run_bobbing_under_a_steep_face_jumps_out_of_the_gutter`).
+  `jump_clear` allows 2 units over the 39 (`nav::JUMP_SLACK`): that jump
+  from z 612.26 stands on the ledge at 652.42, 40.2 up, where a trace to
+  exactly 39 is blocked by the ledge's lip.
 - A leap (`NavGraph::link_leaps`, `NavGraph::leaps`): after the flood,
   ladders and walk-back passes, every node 2 columns off whose floor is
   between a step and a jump higher, that 3 edges do not already reach, is
@@ -854,7 +871,7 @@ spawned there leaves by and never needs again.
 | map | spacing | nodes | edges | ms | spawns in one component | reach it | leaps |
 |---|---|---|---|---|---|---|---|
 | mp_arnhem | 48 | 7640 | 49915 | 511 | 231 / 332 | 287 | 19 |
-| mp_berlin | 48 | 17679 | 123026 | 1833 | 202 / 303 | 303 (301) | 262 |
+| mp_berlin | 48 | 17679 | 123026 | 1833 | 202 / 303 | 303 | 262 |
 | mp_cassino | 48 | 8558 | 57393 | 707 | 94 / 180 | 168 | 11 |
 | mp_foy | 48 | 62126 | 470101 | 7924 | 317 / 391 | 341 | 178 |
 | mp_italy | 48 | 77171 | 590070 | 6130 | 361 / 371 | 361 | 192 |
@@ -870,21 +887,22 @@ spawned there leaves by and never needs again.
 | mp_uo_dawnville | 48 | 7666 | 52863 | 767 | 189 / 249 | 243 | 5 |
 | mp_uo_depot | 32 | 15655 | 109243 | 1638 | 275 / 351 | 351 | 184 |
 | mp_uo_harbor | 32 | 7842 | 54432 | 442 | 113 / 292 | 292 | 20 |
-| mp_uo_hurtgen | 48 | 27484 | 207848 | 2785 | 281 / 286 | 282 | 522 |
+| mp_uo_hurtgen | 48 | 27484 | 207848 | 2785 | 281 (282) / 286 | 282 | 522 |
 | mp_uo_powcamp | 48 | 6440 | 44020 | 333 | 226 / 258 | 254 | 2 |
 
-- `mp_berlin`'s 303 is 301 since 1.5's and UO's stored velocity tail
-  (`cod15-movement.md` 7), and the census floor with it. VERIFIED
-  (measured 2026-10-17, release census, the tail switched back by hand
-  for the comparison): the old tail reaches 303, the stored one 301. The
-  two spawns at (-483, 4415, 743) and (-667, 4414, 743) sit on a roof
-  whose one way out is a 149-unit drop from (-624, 4180.6, 768) onto a
-  slope; `settle` drops each grid sample from rest, which is the tail's
-  tie, and the slope node under the drop lands at (-673.7, 4131.1, 616.1)
-  where it landed at (-675.2, 4134.9, 619.3). The walk off the roof
-  arrives the same under both, but from the new node only the edge to
-  (-718.7, 4122.7, 629.5) proves, and that leads nowhere. INFERRED: the
-  graph's coverage of that slope is fragile, not the drop.
+- `mp_berlin`'s 303 went to 301 with 1.5's and UO's stored velocity tail
+  (`cod15-movement.md` 7) and came back with the bobbing jump ("Jumps"
+  above). VERIFIED (measured 2026-10-17, release census): the two spawns
+  at (-483, 4415, 743) and (-667, 4414, 743) sit on a roof whose one way
+  out is a 149-unit drop from (-624, 4180.6, 768) into the roof gutter.
+  Under the old tail the slope node landed at (-675.2, 4134.9, 619.3) and
+  a run from it happened to reach the ledge at (-723, 4078, 650); under
+  the stored one it lands at (-673.7, 4131.1, 616.1) and every run out
+  bobs under the gutter's face, so only the edge west along the gutter
+  proved. The bobbing jump proves the way onto the ledge from both nodes.
+  The same change joins one more spawn on `mp_uo_hurtgen` (281 to 282 in
+  one component, in brackets in the table); 1.1's census and the other
+  UO maps are unchanged.
 - `mp_ponyri`'s 242 is 240 since the UO vehicles merge (a7b99cd6), and
   the census floor with it. VERIFIED (measured 2026-10-15, release, the
   census's own build without the rubble unlink): 59 089 nodes, 447 994
