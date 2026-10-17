@@ -740,4 +740,39 @@ Tail
         // Grammar doc R10: 260 entries in the 1.1 paks.
         assert!(chained >= 260, "{chained}");
     }
+
+    /// `fx::sim` draws no quad for an element without `shaders`, where
+    /// retail draws `<default>` at the element's size (grammar doc R4):
+    /// the two agree only while every such stock element is zero-sized.
+    #[test]
+    fn every_stock_element_without_shaders_is_zero_sized() {
+        let paks = [
+            vcod_common::testing::game_fs(),
+            vcod_common::testing::uo_fs(),
+        ];
+        let mut seen = 0;
+        for fs in paks.iter().flatten() {
+            for name in fs.names_with_suffix(".efx") {
+                let text = String::from_utf8_lossy(&fs.read(&name).unwrap()).into_owned();
+                let eff = parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+                let drawn = ["Particle", "OrientedParticle", "Cylinder", "Tail", "Line"];
+                for em in eff
+                    .emitters
+                    .iter()
+                    .filter(|em| drawn.contains(&em.kind.as_str()))
+                {
+                    assert!(em.shaders.iter().all(|s| !s.is_empty()), "{name}");
+                    if !em.shaders.is_empty() {
+                        continue;
+                    }
+                    seen += 1;
+                    let zero =
+                        |c: &Curve| [c.start, c.end].iter().all(|r| r.a == 0.0 && r.b == 0.0);
+                    assert!(zero(&em.size) && zero(&em.length), "{name}: {:?}", em.name);
+                }
+            }
+        }
+        // 1.1: boom_dirt's `Particle {}` and fx/test/modeltest.efx.
+        assert!(paks[0].is_none() || seen >= 2, "{seen}");
+    }
 }

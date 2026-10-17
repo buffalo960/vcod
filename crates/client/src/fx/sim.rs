@@ -1006,7 +1006,10 @@ fn push_quads(
     out: &mut Vec<FxQuad>,
 ) {
     for p in pool {
-        if p.is_light || p.debris.is_some() || !live(p, now) {
+        // An element with no `shaders` list draws retail's shader handle 0,
+        // `<default>`, at its size; every stock one is zero-sized, so it
+        // draws nothing (grammar doc R4, "An element with no shaders").
+        if p.is_light || p.debris.is_some() || p.shader.is_empty() || !live(p, now) {
             continue;
         }
         let Some((pos, vel)) = world_state(p, bolts) else {
@@ -1650,6 +1653,16 @@ mod tests {
         assert!((q[0].rgba[3] - 0.5).abs() < 1e-3);
         s.step(0.6, 1.1, None); // past 1s life
         assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 1.1).is_empty());
+    }
+
+    #[test]
+    fn a_particle_without_shaders_lives_but_draws_no_quad() {
+        let mut e = simple_emitter();
+        e.shaders.clear();
+        let mut s = sys_with(e, SpawnAt::Point { pos: Vec3::ZERO });
+        s.step(0.1, 0.1, None);
+        assert_eq!(s.counts().0, 1);
+        assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 0.1).is_empty());
     }
 
     #[test]
