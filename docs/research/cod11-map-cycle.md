@@ -646,21 +646,49 @@ VERIFIED live on 1.1d, same run (`tools/run_server.sh` puts every `+set`
 after `+map`): 14 held the motd, and `scr_allow_vote 0` read back 0 over
 rcon and in the mirror (242) with `g_allowVote` at 1, where `dm.gsc`'s
 load-time `setCvar("scr_allow_vote", level.allowvote)` writes 1.
-INFERRED from those two and Q3's `Com_StartupVariable` /
-`Com_AddStartupCommands`: a command-line `set` runs once before the load
-(how `SP_worldspawn` saw `g_motd`) and again in order after `+map`
-(how the script's 1 was overwritten), so a `+set` placed before `+map`
-leaves the script's write standing. vcod's `--set` is applied before the
-load only, the before-`+map` case; the gates model a set placed after
-`+map` by running the sets again as console lines after the load.
+VERIFIED, `cod_lnxded` 1.1d `Com_Init` (0x806c654): the command line
+is split on `+` into console lines (0x806c6e3..0x806c71d), then
+`Com_StartupVariable(NULL)` (0x806bb0c; every line whose first token is
+`set` is `Cvar_Set` and flagged `0x80`) runs ahead of the four `exec`s
+(0x806c738) and again after `Cbuf_Execute` has run them (0x806c8da), so
+a `+set` outranks `default_mp.cfg` and the configs. At the end every
+non-empty line, `set` lines included, is `Cbuf_AddText` with a `"\n"` in
+command-line order (0x806cd80..0x806cdcb, the `Q_stricmpn(line, "set",
+3)` at 0x806cd9a feeding only the "added a command" flag), so a `+set`
+after `+map` runs again once `map` has loaded the level. VERIFIED:
+`Com_StartupVariable`'s other callers are `FS_InitFilesystem`'s
+(0x80624be..0x8062522, the `fs_*` names) and the journal's (0x806bcbe);
+nothing under `SV_SpawnServer` or `SV_MapRestart_f` calls it, so a
+command-line set is applied at startup only and a later load leaves the
+table as the outgoing level left it. VERIFIED, the same shape on 1.5b
+(`Com_StartupVariable` 0x8070184, called from `Com_Init` at 0x8070f86,
+0x8070f92 and 0x8071063 besides the filesystem and journal; the
+startup-command loop's `"set"` compare at 0x807029d) and UO 1.51b
+(0x80707bc; 0x80715dc, 0x80715e8, 0x80716b9; the loop at 0x80708d5).
+INFERRED, from the startup order and the live run: `SP_worldspawn` saw
+`g_motd` through the first pass, and the replay after `+map` overwrote
+`dm.gsc`'s 1.
+
+As implemented: `Server::set_cvar` before the first load records a
+`+set` that the first level's table takes over `default_mp.cfg`
+(`Server::cvars`), and is a plain `Cvar_Set` on the running (or carried)
+table after it; later loads never replay it, so a script's `setCvar`
+of the same cvar stands. `g_gametype` and `sv_maxclients` are latched
+and wait for the next load. `vcod-server`'s `--set` placed after the map
+argument is also queued as a console `set` behind the load
+(`Server::push_set`), retail's `+map x +set ...`; one placed before it is
+the `+set ... +map x` case. The configstring gates' motd rows push their
+sets after the load the same way, as `run_server.sh` placed them.
+`server::tests::a_set_applies_once_and_a_scripts_write_outlives_later_loads`
+and `a_set_after_the_map_outranks_the_scripts_load_time_write` pin both.
 
 One divergence on the wire:
 
 - The cvar table is carried from the outgoing level rather than rebuilt from
   `default_mp.cfg`, on this path and on the map change alike, because
   retail's `Cvar_Set` writes a process-global table that neither boundary
-  clears. A `+set` override is replayed on top either way, so it still
-  outranks a script's `setCvar`.
+  clears. A `+set` goes in at the first load only, so a script's
+  `setCvar` of it outlives both boundaries, as on retail.
 
 ### 4.6 What the engine keeps across a restart
 

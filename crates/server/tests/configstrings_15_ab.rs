@@ -79,7 +79,7 @@ fn ours_with(
     sv.load_scripts(fs).expect("load the scripts");
     if replay {
         for (k, v) in sets {
-            sv.push_console(&format!("set {k} \"{v}\""));
+            sv.push_set(k, v);
         }
         sv.drain_console(start);
         sv.tick(start + std::time::Duration::from_millis(50));

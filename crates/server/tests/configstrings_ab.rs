@@ -67,12 +67,13 @@ fn ours(
     fs: vcod_common::pk3::Pk3Fs,
     frames: u32,
 ) -> BTreeMap<usize, String> {
-    ours_with(map, gametype, fs, frames, &[], None, &[])
+    ours_with(map, gametype, fs, frames, &[], None, false)
 }
 
 /// [`ours`] with `+set`s ahead of the load and, when `message` is given,
-/// the map's worldspawn carrying that `message` key. `console` lines run
-/// after the load, ahead of the frames.
+/// the map's worldspawn carrying that `message` key. With `after_map` the
+/// sets run again after the load, ahead of the frames, as `vcod-server`
+/// runs a `--set` placed after the map (`Server::push_set`).
 fn ours_with(
     map: &str,
     gametype: &str,
@@ -80,7 +81,7 @@ fn ours_with(
     frames: u32,
     sets: &[(&str, &str)],
     message: Option<&str>,
-    console: &[String],
+    after_map: bool,
 ) -> BTreeMap<usize, String> {
     let mut fs = fs;
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
@@ -98,8 +99,10 @@ fn ours_with(
     let bsp = vcod_common::bsp::parse(&bsp_bytes).expect("parse the bsp");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
-    for line in console {
-        sv.push_console(line);
+    if after_map {
+        for (k, v) in sets {
+            sv.push_set(k, v);
+        }
     }
     sv.drain_console(start);
     for i in 1..=frames {
@@ -237,10 +240,6 @@ fn the_configstring_table_matches_retail_with_a_motd_and_a_message() {
     // mirror's `scr_allow_vote` reads 0 over `dm.gsc`'s
     // `setCvar("scr_allow_vote", level.allowvote)`. One frame rebuilds the
     // mirror.
-    let replay: Vec<String> = MOTD_SETS
-        .iter()
-        .map(|(k, v)| format!("set {k} \"{v}\""))
-        .collect();
     let ours = ours_with(
         "mp_carentan",
         "dm",
@@ -248,7 +247,7 @@ fn the_configstring_table_matches_retail_with_a_motd_and_a_message() {
         1,
         MOTD_SETS,
         Some(MOTD_MESSAGE),
-        &replay,
+        true,
     );
     diff("mp_carentan", "dm-motd", &retail, &ours, &[1]);
 }
