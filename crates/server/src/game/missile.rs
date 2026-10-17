@@ -58,6 +58,18 @@ const BOUNCE_EVENT_SPEED: f32 = 100.0;
 const GROUND_SNAP: f32 = 1.5;
 /// The lift off the surface a bounce that did not rest takes (12.4).
 const BOUNCE_NUDGE: f32 = 0.1;
+/// The sky's surface bits (every stock sky material reads 0x434): 1.1's and
+/// 1.5's `G_RunMissile` frees a missile whose move ends on 0x10 (1.1
+/// 0x5432f, 1.5b 0x550e4); UO's skips that test and the impact on 0x4 and
+/// pushes the contact 2 units into the sky (0x5f247, 0x5f533), combat doc
+/// 12.3.
+const SURF_SKY: u32 = 0x4;
+pub(crate) const SURF_NOIMPACT: u32 = 0x10;
+/// UO's push along `-normal` (`.rodata 0xa180c`, -2.0).
+const UO_SKY_PUSH: f32 = 2.0;
+/// The sky brushes' contents bit: UO's `G_MissileTrace` (0x6ee17) reads a
+/// trace that starts inside one as clear.
+const CONTENTS_SKY: u32 = 0x800;
 /// How far the explode looks down for the normal its `eventParm` packs
 /// (13.2).
 const EXPLODE_TRACE_DOWN: f32 = 16.0;
@@ -140,6 +152,8 @@ pub enum Stepped {
     Settled,
     /// A shell struck something; the caller explodes it on the contact.
     Struck(Contact),
+    /// Its move ended on the sky: `G_FreeEntity`, no event, no think.
+    Freed,
 }
 
 /// Where a shell struck (`G_MissileImpact`'s trace).
@@ -422,7 +436,13 @@ impl Missile {
     /// 0x2080 kerb brushes too.
     fn trace(&self, world: &CollisionWorld, from: Vec3, to: Vec3) -> vcod_common::collision::Trace {
         if self.uo {
-            world.point_trace(from, to, vcod_common::collision::MASK_BLAST, true)
+            let tr = world.point_trace(from, to, vcod_common::collision::MASK_BLAST, true);
+            // `G_MissileTrace`: start-solid in a sky brush is a clean miss,
+            // which is how a UO missile pushed into the sky flies on above it.
+            if tr.startsolid && world.point_contents(from) & CONTENTS_SKY != 0 {
+                return vcod_common::collision::Trace::clear(to);
+            }
+            tr
         } else {
             world.missile_trace(from, to)
         }
@@ -575,6 +595,9 @@ impl Missile {
             mut model_takes_damage,
             mut model_body,
         } = self.full_trace(world, sims, models, bones.as_deref_mut(), self.origin, to);
+        if self.uo && tr.surface_flags & SURF_SKY != 0 {
+            tr.endpos -= tr.normal * UO_SKY_PUSH;
+        }
         self.origin = tr.endpos;
         // A shell carries no bounce bits (`fire_rocket` sets only 0x10000).
         if self.shell.is_none() && (tr.fraction >= 1.0 || tr.normal.z > GROUND_NORMAL_Z) {
@@ -608,9 +631,14 @@ impl Missile {
             }
             return Stepped::Flew;
         }
-        // A sky brush frees the missile silently (12.3). Ours are not in the
-        // collision world at all, so a grenade thrown at the sky flies on
-        // and goes off on its fuse instead.
+        // 12.3: on UO a sky contact neither frees nor strikes, and the
+        // missile flies on past the sky; 1.1 and 1.5 free it silently.
+        if self.uo && tr.surface_flags & SURF_SKY != 0 {
+            return Stepped::Flew;
+        }
+        if !self.uo && tr.surface_flags & SURF_NOIMPACT != 0 {
+            return Stepped::Freed;
+        }
         // The material goes in the event parm and nowhere else: 13.1 step 5
         // leaves `s.surfType` to the explode, and the client keys the bounce
         // alias off `surfType` (`cod11-sound-system.md` section 7a).
@@ -1208,13 +1236,15 @@ impl Missiles {
         Ok(id)
     }
 
-    /// `fire_rocket` (0x5fc74) as `Weapon_Artillery_Fire` (0x7b594) calls it
-    /// for a UO vehicle's main gun: a `rocket` from `start` along `dir` at
+    /// `fire_rocket` (UO 0x5fc74): a `rocket` from `start` along `dir` at
     /// the weapon's `projectileSpeed`, the speed truncated per axis, on
-    /// `trType` 5 (z falls 400 t²) a frame behind, exploding on contact
-    /// with `projExplosionType`; `owner` is the driver, credited through
-    /// the vehicle (docs/research/coduo-vehicles.md 13). 1.1's (0x54614,
-    /// combat doc 13.6) flies straight (`trType` 2) for 30 s.
+    /// `trType` 2 a frame behind, exploding on contact with
+    /// `projExplosionType` or 15 s on. With `arc`, as `Weapon_Artillery_Fire`
+    /// (0x7b594) calls it for a UO vehicle's main gun, it is rewritten to
+    /// `trType` 5 (z falls 400 t²); `owner` is the driver, credited through
+    /// the vehicle (docs/research/coduo-vehicles.md 13). A player's
+    /// launcher (`Weapon_RocketLauncher_Fire`, 0x7b3da) keeps the line.
+    /// 1.1's (0x54614, combat doc 13.6) flies straight for 30 s.
     #[allow(clippy::too_many_arguments)]
     pub fn fire_rocket(
         &mut self,
@@ -1226,6 +1256,7 @@ impl Missiles {
         dir: Vec3,
         shell: Shell,
         explosion_type: i32,
+        arc: bool,
         now_ms: i32,
     ) -> Result<EntId, ErrorKind> {
         let id = ents.spawn(cx)?;
@@ -1239,7 +1270,7 @@ impl Missiles {
         let delta = (dir * shell.speed).trunc();
         let (tr_type, life_ms, eflags) = if self.uo {
             (
-                TR_GRAVITY,
+                if arc { TR_GRAVITY } else { TR_LINEAR },
                 ROCKET_LIFE_MS,
                 vcod_common::net::flags::eflags_v22_to_v1(SHELL_EFLAGS_V22),
             )
@@ -1329,8 +1360,8 @@ impl Missiles {
         let m = &mut self.live[i];
         if let Some(free_at) = m.free_at_ms {
             // A popped smoke grenade flies on; `G_FreeEntity` is its think.
-            m.step(world, sims, models, bones, now_ms);
-            if now_ms >= free_at {
+            let stepped = m.step(world, sims, models, bones, now_ms);
+            if now_ms >= free_at || stepped == Stepped::Freed {
                 self.live.remove(i);
                 return Some(Turn::Freed);
             }
@@ -1345,8 +1376,13 @@ impl Missiles {
             }
             return Some(Turn::Flew);
         }
-        if let Stepped::Struck(c) = m.step(world, sims, models, bones, now_ms) {
-            return Some(Turn::Exploded(m.impact(world, c, now_ms)));
+        match m.step(world, sims, models, bones, now_ms) {
+            Stepped::Struck(c) => return Some(Turn::Exploded(m.impact(world, c, now_ms))),
+            Stepped::Freed => {
+                self.live.remove(i);
+                return Some(Turn::Freed);
+            }
+            _ => {}
         }
         if now_ms >= m.explode_at_ms {
             if m.shootable.is_some_and(|s| s.leave_owner) {
@@ -1952,6 +1988,108 @@ mod tests {
         assert!(d.z > 0.0 && d.z < 0.5 * 450.0, "off the floor: {d}");
     }
 
+    /// A slab of sky 200..210 over the test floor: the stock sky materials'
+    /// contents 0x801 and surface bits 0x434.
+    fn sky_world() -> CollisionWorld {
+        vcod_common::collision::synthetic_world(
+            &[
+                (
+                    "textures/test/solid",
+                    vcod_common::collision::CONTENTS_SOLID,
+                    0,
+                ),
+                ("textures/sky/test", 0x801, 0x434),
+            ],
+            &[
+                (0, [-1024.0, -1024.0, -16.0], [1024.0, 1024.0, 0.0]),
+                (1, [-1024.0, -1024.0, 200.0], [1024.0, 1024.0, 210.0]),
+            ],
+        )
+    }
+
+    /// 12.3: a 1.1 or 1.5 missile whose move ends on the sky is freed on
+    /// that turn with no event and no explode, as retail 1.1d's rocket in
+    /// `client-probes/probe_skyshot` leaves the wire.
+    #[test]
+    fn a_missile_at_the_sky_is_freed_silently() {
+        let world = sky_world();
+        for falls in [false, true] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                falls,
+                ..Missiles::default()
+            };
+            let id = armed(
+                &mut ms,
+                &mut host,
+                &mut vm,
+                Vec3::new(0.0, 0.0, 60.0),
+                Vec3::new(0.0, 0.0, 900.0),
+                0,
+            );
+            let mut freed = None;
+            for f in 1..20 {
+                match ms.run_one(id, Some(&world), &[], &[], None, f * 50) {
+                    Some(Turn::Freed) => {
+                        freed = Some(f);
+                        break;
+                    }
+                    Some(Turn::Exploded(_)) => panic!("it went off at the sky"),
+                    _ => {}
+                }
+                let m = ms.missiles().iter().find(|m| m.id == id).unwrap();
+                assert_eq!(m.events.seq, 0, "no bounce off the sky");
+            }
+            assert!(freed.is_some(), "never freed");
+            assert!(!ms.contains(id));
+        }
+    }
+
+    /// 12.3 on UO: a sky contact is pushed 2 units into the sky, neither
+    /// frees nor strikes, and the trace that then starts inside the sky
+    /// brush reads clear, so the missile flies on above it (retail UO's
+    /// bazooka round in `client-probes/probe_skyshot`, 2 above the face on
+    /// the contact frame) and back down through it.
+    #[test]
+    fn a_uo_missile_flies_through_the_sky() {
+        let world = sky_world();
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let id = armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 60.0),
+            Vec3::new(0.0, 0.0, 600.0),
+            0,
+        );
+        let mut zs = Vec::new();
+        for f in 1..40 {
+            let turn = ms.run_one(id, Some(&world), &[], &[], None, f * 50);
+            assert!(!matches!(turn, Some(Turn::Freed)), "freed at the sky");
+            let m = ms.missiles().iter().find(|m| m.id == id).unwrap();
+            zs.push(m.origin.z);
+            if m.ground == ENTITYNUM_WORLD as i32 {
+                break;
+            }
+        }
+        let contact = zs
+            .iter()
+            .copied()
+            .find(|&z| z > 200.0)
+            .expect("never reached the sky");
+        assert!(
+            (contact - (200.0 - SURFACE_CLIP_EPSILON + UO_SKY_PUSH)).abs() < 1e-3,
+            "pushed 2 into the sky: {zs:?}"
+        );
+        assert!(zs.iter().any(|&z| z > 210.0), "above the sky: {zs:?}");
+        assert!(zs.last().unwrap() < &10.0, "back down on the floor: {zs:?}");
+    }
+
     /// A UO smoke grenade pops on its fuse with type 1, stays a missile
     /// (`eType` 4, no explode flag), raises no blast and is freed
     /// [`SMOKE_LIFE_MS`] after the pop.
@@ -2168,6 +2306,7 @@ mod tests {
                     Vec3::X,
                     shell,
                     6,
+                    true,
                     0,
                 )
             })
