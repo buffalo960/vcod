@@ -1,0 +1,14 @@
+# Retail 1.5b, 2026-10-17: a bulletTrace (hitCharacters false) 80 units
+# west from each spot through mp_neuville's lump-24 patches 68 (the first
+# three) and 69 (the last three), which no leaf lists: map, spot, `west`,
+# fraction, end x. Each patch is an upright arch in the plane x = -15480;
+# a trace it clipped would stop at x -15479.875 (fraction 0.498438), and
+# each one goes on to the wall behind it.
+# Recipe (dm, no client):
+#   COD_VERSION=1.5 COD_DIR=<1.5 install> tools/run_probe.sh client-probes/probe_neuvilleleaf mp_neuville
+mp_neuville -15440 4871 92.5 west 0.548437 -15483.88
+mp_neuville -15440 4870 93 west 0.548437 -15483.88
+mp_neuville -15440 4869 93.5 west 0.548437 -15483.88
+mp_neuville -15440 4825 92.5 west 0.548437 -15483.88
+mp_neuville -15440 4826 93 west 0.548437 -15483.88
+mp_neuville -15440 4827 93.5 west 0.548437 -15483.88
