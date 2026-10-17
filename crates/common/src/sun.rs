@@ -86,7 +86,7 @@ pub struct MapSun {
 pub fn load(fs: &Pk3Fs, sky: &Shader, bsp: &Bsp) -> Option<MapSun> {
     let name = sky.sunfile.as_ref()?;
     let Some(bytes) = fs.read(&format!("scripts/{name}.sun")) else {
-        log::warn!("sunfile: scripts/{name}.sun not found");
+        log::debug!("sunfile: scripts/{name}.sun not found");
         return None;
     };
     let light_dir = sun_light(bsp)?;

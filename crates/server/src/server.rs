@@ -10247,7 +10247,7 @@ mod tests {
     /// (docs/research/cod11-gsc-language.md, "The script clock").
     #[test]
     fn the_script_clock_matches_probe_startclock() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             eprintln!("COD_DIR unset or has no main/: skipping");
             return;
         };
@@ -10310,7 +10310,7 @@ mod tests {
     /// linked `SVF_NOCLIENT` and baselined all the same (map-cycle doc 3.3).
     #[test]
     fn the_first_maps_baselines_match_retail() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
             eprintln!("COD_DIR unset or has no main/: skipping");
             return;
         };

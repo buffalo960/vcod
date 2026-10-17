@@ -111,16 +111,16 @@ check.
   and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
   rebuilds the rolling `nightly` release on master pushes that touch code
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
-- Ignored tests to run when you touch their area: `nav_census` (all stock nav
-  graphs, ~3 min: `cargo test -p vcod-server --test nav_census -- --ignored`)
-  and the ignored tests in `server/tests/bots.rs`: three mp_ship six-bot
-  runs (~1-2 min together), mp_ship's boat, mp_ship's head-on ladder pair,
-  mp_ship's hold ladder top and mp_hurtgen's crease (a graph build each,
-  ~1.5 min). With `COD_DIR` at a UO install the same two files carry UO's:
-  `nav_census`'s 19-map UO census (~20 s release, 330 s of CPU) and
-  `bots.rs`'s mp_cassino six-bot tdm run (~5 s release) and its
-  walled-in spawns pair (~8 s release); with a 1.1 install
-  they return at once. `cargo run
+- Ignored tests to run when you touch their area, in release: `nav_census`
+  (all stock nav graphs, ~8 s, 65 s of CPU: `cargo test --release -p
+  vcod-server --test nav_census -- --ignored`) and the ignored tests in
+  `server/tests/bots.rs` (~5 s together, 40 s of CPU): three mp_ship
+  six-bot runs, mp_ship's boat, mp_ship's head-on ladder pair, mp_ship's
+  hold ladder top and mp_hurtgen's crease (a graph build each). With
+  `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
+  19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
+  mp_cassino six-bot tdm run and its walled-in spawns pair (the file
+  ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
@@ -459,7 +459,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   has to write: the predictor rebuilds from the snapshot each time, and a
   field left 0 replays differently from the server. A missing
   `iFatigueSoundTime` breathed on every snapshot and played rounds twice
-  (coduo-movement.md 15).
+  (coduo-movement.md 15); `predict_ab`'s 1.5 and UO side-by-side gates
+  catch the next one.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes

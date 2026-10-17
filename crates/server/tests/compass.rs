@@ -16,7 +16,7 @@ use vcod_common::net::protocol::PROTOCOL_V1;
 const MAP: &str = "mp_harbor";
 
 fn server(now: Instant) -> Option<vcod_server::Server> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, "tdm"), now);

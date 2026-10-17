@@ -118,7 +118,7 @@ struct Ours {
 /// The probe on ours with one allied client standing still, run to its
 /// `PROBE done`.
 fn run_ours() -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs()?;
+    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
