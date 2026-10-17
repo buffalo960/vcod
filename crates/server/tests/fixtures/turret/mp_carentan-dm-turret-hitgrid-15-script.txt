@@ -1,0 +1,50 @@
+# Retail CoD 1.5b dedicated server log lines under the --save-turret client of
+# mp_carentan-dm-turret-hitgrid-15.txt beside this file. Captured 2026-10-17.
+# The -spawn-15 recipe with probe_hitlog 1 and probe_hitgrid 1: every hit's
+# point and direction to the float's last bit, and a 9 by 9 bulletTrace grid
+# along the round inside the damage callback. map mp_carentan, g_gametype
+# probe_turret, probe_teleport 1, probe_hitlog 1, probe_hitgrid 1, dedicated 1,
+# sv_maxclients 8, sv_pure 0, a homepath holding no pak. Client 0 is a
+# --probe-team axis --probe-fall net-probe standing as the target, client 1
+# the --save-turret gunner.
+# 
+#   COD_VERSION=1.5 COD_LNXDED_HOME=<absolute, no '+'> PORT=32752 PROBE_SECS=230 \
+#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 +set probe_hitlog 1 +set probe_hitgrid 1
+#   cargo run -p vcod -- --game-dir <1.5 install, stock paks only> --net-probe 127.0.0.1:32752 --probe-team axis --probe-fall --probe-secs 200
+#   cargo run -p vcod -- --game-dir <1.5 install, stock paks only> --net-probe 127.0.0.1:32752 --save-turret --capture-tag hitgrid-15 --probe-secs 190
+# The axis client started 10 s after the server and the gunner 5 s after it.
+#
+# PROBE hitfine <time> <num> <hitloc> <damage> <point> <dir>, each component
+# <int>:<thousandths>:<millionths of a thousandth> (probe_turret.gsc fine1).
+# PROBE hitgrid <time> <num> <row> <cell>...: probe_turret.gsc hitgrid.
+# Lines are copied from games_mp.log, the m:ss stamp kept; every line past InitGame.
+  0:01 PROBE turret 297 (-500.00, 1896.00, 175.00) (0.00, 295.00, 0.00)
+  0:01 PROBE turret 298 (1712.00, 1830.00, 8.00) (0.00, 229.00, 0.00)
+  0:11 J;0;0;vcod
+  0:12 PROBE place 0 axis (1515.18, 1603.59, 8.00) 409 12050
+  0:16 J;0;1;vcod
+  0:16 PROBE place 1 allies (1738.24, 1860.19, 8.00) 229 16850
+  0:30 PROBE hitfine 30450 0 torso_upper 53 1519:844:360352,1612:464:233398,22:907:804504 -0:661:989075,-0:749:232666,-0:20:515554
+  0:30 PROBE hitgrid 30450 0 -4 46:76:431274 45:672:229736 45:842:479736 46:12:660980 46:183:13916 48:732:498169 48:742:912292 48:753:238647 50:859:363525
+  0:30 PROBE hitgrid 30450 0 -3 49:673:183472 45:604:801147 45:775:54931.6 45:945:335388 46:115:585327 46:285:770416 48:562:370300 48:572:696655 55:525:276184
+  0:30 PROBE hitgrid 30450 0 -2 66:749:649048 45:537:376404 45:707:622559 45:877:906799 46:48:160553 46:218:341827 48:381:832123 54:458:618164 60:228:27343.8
+  0:30 PROBE hitgrid 30450 0 -1 - 45:469:947815 45:640:197754 45:810:478210 48:180:549622 48:190:876007 48:201:290131 58:112:354279 60:599:933594
+  0:30 PROBE hitgrid 30450 0 0 - 47:968:856812 47:979:274780 47:989:685059 48:0:11444.1 48:10:337830 48:20:748138 58:484:260559 60:971:843750
+  0:30 PROBE hitgrid 30450 0 1 56:157:791138 53:98:815918 50:39:505005 47:809:143066 47:819:469482 47:829:879761 47:840:297730 58:856:94360.4 61:343:753815
+  0:30 PROBE hitgrid 30450 0 2 53:625:961304 52:122:879028 51:9:277344 54:175:37384 54:779:537231 53:149:810791 53:450:901032 59:228:4455.57 61:715:660095
+  0:30 PROBE hitgrid 30450 0 3 52:608:634949 51:105:560303 51:415:138245 52:637:245178 55:6:164551 55:610:702515 - - -
+  0:30 PROBE hitgrid 30450 0 4 51:591:304810 50:598:895996 51:821:6774.9 53:43:106079 54:265:213013 - - - -
+  0:30 D;0;0;axis;vcod;0;1;allies;vcod;m1carbine_mp;53;MOD_RIFLE_BULLET;torso_upper
+  0:30 PROBE hitfine 30500 0 torso_upper 53 1516:422:485352,1611:550:537109,22:847:127930 -0:666:930908,-0:744:837097,-0:20:515554
+  0:30 PROBE hitgrid 30500 0 -4 45:895:721436 46:59:848785 46:224:48614.5 46:388:175964 48:743:362427 48:698:36193.8 50:749:305725 50:718:894958 54:387:695312
+  0:30 PROBE hitgrid 30500 0 -3 45:845:35522.5 46:9:231567 46:173:259735 46:337:459564 48:557:426453 48:512:184143 56:281:116486 53:856:315613 60:446:44921.9
+  0:30 PROBE hitgrid 30500 0 -2 45:794:319153 45:958:518982 46:122:650146 46:286:846161 48:371:669769 48:326:423645 58:673:965454 61:6:885529 -
+  0:30 PROBE hitgrid 30500 0 -1 45:743:606567 45:907:802612 48:276:382446 48:231:140137 48:185:817718 48:517:787964 59:39:520264 61:372:444153 -
+  0:30 PROBE hitgrid 30500 0 0 48:181:102753 48:135:780334 48:90:534210 48:45:211792 47:999:965698 54:651:885986 59:405:78887.9 61:737:998962 -
+  0:30 PROBE hitgrid 30500 0 1 51:398:200989 48:73:204041 47:904:682129 47:859:359741 47:814:117432 57:437:713623 59:770:629883 62:103:614807 -
+  0:30 PROBE hitgrid 30500 0 2 51:545:143127 54:213:649750 54:666:191101 54:340:393066 51:15:647888 57:803:272217 60:136:184692 62:469:169617 -
+  0:30 PROBE hitgrid 30500 0 3 51:304:290772 52:422:912598 54:908:248901 55:360:786438 55:813:327759 - - - -
+  0:30 PROBE hitgrid 30500 0 4 51:704:486816 52:823:104858 53:941:715210 55:60:333252 - - - - -
+  0:30 K;0;0;;vcod;0;1;;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
+  0:36 Q;0;1;vcod
+  3:31 Q;0;0;vcod
