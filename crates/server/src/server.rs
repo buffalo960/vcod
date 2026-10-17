@@ -2034,6 +2034,13 @@ impl Server {
         self.sv_time_ms
     }
 
+    /// Starts a fresh server's game clock at `ms` rather than 0, before its
+    /// first load: a retail capture taken on a server that had been up a
+    /// while starts its level there (coduo-diff.md 20).
+    pub fn start_clock_at(&mut self, ms: i32) {
+        self.sv_time_ms = ms;
+    }
+
     /// `sv_serverid`. The high nibble is the map load, the low one the
     /// restart count (docs/research/cod11-map-cycle.md, section 3 step 16).
     pub fn server_id(&self) -> u8 {
@@ -5708,10 +5715,8 @@ impl Server {
         if let Some(slot) = self.configstrings.get_mut(0) {
             *slot = info.clone();
         }
-        if let Some(rt) = self.script.as_mut()
-            && let Some(slot) = rt.host.configstrings.get_mut(0)
-        {
-            *slot = info;
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.configstrings.set(0, info);
         }
     }
 
@@ -5738,9 +5743,7 @@ impl Server {
             v6.as_deref(),
         )
         .to_string();
-        if let Some(slot) = rt.host.configstrings.get_mut(1) {
-            slot.clone_from(&info);
-        }
+        rt.host.configstrings.set(1, info.clone());
         if let Some(slot) = self.configstrings.get_mut(1) {
             *slot = info;
         }
@@ -5977,22 +5980,22 @@ impl Server {
         // slot, and retail's settle frames flush them before step 9 does
         // (`tests/fixtures/netchan/mp_carentan-dm-mapchange.txt`, seq 40-42;
         // a team score the outgoing level's `ExitLevel` zeroed, coduo-diff.md
-        // 22). The load's logged writes go first in their order
-        // (`GameHost::load_writes`), then every other slot the level left
-        // different, in slot order where retail's is write order. The
+        // 22). The game's writes go in their order (`ConfigStrings::set`,
+        // from the load through the settle frames), then what the engine
+        // itself left different: the cvar mirror, in slot order. The
         // queue's squash keeps each slot's last `d` at its last position, so
         // the fog `G_setfog("0")` cleared and the map set again still goes
         // out. Slots 0 and 1 are the frame's cvar flush (4.3).
-        let load_writes = self
+        let game_writes = self
             .script
-            .as_ref()
-            .map(|rt| rt.host.load_writes.clone())
+            .as_mut()
+            .map(|rt| rt.host.configstrings.take_writes())
             .unwrap_or_default();
         let mut table = held;
         let mut writes: Vec<(usize, String)> = Vec::new();
-        for (i, v) in load_writes {
+        for (i, v) in game_writes {
             if i >= 2 && table.get(i) != Some(&v) {
-                table[i] = v.clone();
+                table[i].clone_from(&v);
                 writes.push((i, v));
             }
         }
@@ -6149,10 +6152,23 @@ impl Server {
     /// gamestate it pulls carries every slot allocated by then. UNVERIFIED:
     /// what retail's own broadcast does with such a client; its gate is on
     /// `sv.state`, not on the client's.
+    ///
+    /// The game's slots go in the order of their last write
+    /// (`ConfigStrings::writes`), as retail queues each `d` at its write;
+    /// the rest (the cvar mirror) after them, in slot order.
     fn broadcast_configstring_changes(&mut self) {
-        let changed: Vec<usize> = (0..self.configstrings.len())
+        let mut changed: Vec<usize> = (0..self.configstrings.len())
             .filter(|&i| self.sent_configstrings.get(i) != self.configstrings.get(i))
             .collect();
+        if let Some(rt) = self.script.as_ref() {
+            let writes = rt.host.configstrings.writes();
+            changed.sort_by_key(|&i| {
+                writes
+                    .iter()
+                    .rposition(|(w, _)| *w == i)
+                    .unwrap_or(usize::MAX)
+            });
+        }
         if changed.is_empty() {
             return;
         }
@@ -7891,6 +7907,9 @@ impl Server {
         // Ahead of the frame's client commands, so a slot the script just
         // allocated is named before anything points at it.
         self.broadcast_configstring_changes();
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.configstrings.take_writes();
+        }
         // Outside the borrow: `setClientCvar` and `openMenu` queue rather
         // than send, and this is where the queue reaches the netchan.
         for (slot, cmd) in client_commands {
@@ -9433,7 +9452,7 @@ mod tests {
     fn install_script(sv: &mut Server, mut rt: crate::game::script::ScriptRuntime) {
         for (i, cs) in sv.configstrings.iter().enumerate() {
             if rt.host.configstrings[i].is_empty() {
-                rt.host.configstrings[i] = cs.clone();
+                rt.host.configstrings.set(i, cs.clone());
             }
         }
         let mut cs = rt.configstrings().to_vec();
@@ -10565,6 +10584,47 @@ mod tests {
         assert!(
             matches!((d, n), (Some(d), Some(n)) if d < n),
             "no `d 6 0` ahead of the `n` in {seen:?}"
+        );
+    }
+
+    /// The burst goes in the incoming level's write order, not slot order:
+    /// `SV_SetConfigstring` queues each `d` as the game writes it (map-cycle
+    /// doc 4.5). The allies' 6 is written ahead of the axis' 5 here.
+    #[test]
+    fn a_restart_s_burst_keeps_the_write_order() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let huff = Huffman::new();
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.overlay_script(
+            "maps/mp/gametypes/dm",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
+             if (getcvar(\"probe_restarted\") == \"\") setcvar(\"probe_restarted\", \"1\"); \
+             else { setTeamScore(\"allies\", 3); setTeamScore(\"axis\", 2); } }",
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        let mut nc = begun(&mut sv, now);
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                server_commands(&mut nc, &pkt, &huff);
+            }
+        }
+        sv.map_restart().expect("the restart failed");
+        let mut seen: Vec<String> = Vec::new();
+        for _ in 0..4 {
+            sv.tick(now);
+            for (_, pkt) in sv.take_outgoing() {
+                seen.extend(server_commands(&mut nc, &pkt, &huff));
+            }
+        }
+        let at = |s: &str| seen.iter().position(|c| c == s);
+        assert!(
+            matches!((at("d 6 3"), at("d 5 2")), (Some(a), Some(b)) if a < b),
+            "the allies' `d 6` not ahead of the axis' `d 5` in {seen:?}"
         );
     }
 

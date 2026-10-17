@@ -74,12 +74,18 @@ pub fn spawn_entities_from_string(
     if world.get("classname").map(String::as_str) != Some("worldspawn") {
         return Err(ErrorKind::BadType("first entity block is not worldspawn"));
     }
-    // `SP_worldspawn` (0x61cec) writes 2, the start time, 3, 4, 14 and 11
-    // in that order; vcod has no `message` or `g_motd` to write.
-    let start = host.allocators.layout().level_start;
-    host.load_write(start, host.level_time_ms.to_string());
-    host.load_write(3, worldspawn_ambient(&world));
-    host.load_write(CS_NORTHYAW, worldspawn_northyaw(&world));
+    // `SP_worldspawn` (0x61cec) writes 2, the start time, 3, 4 (the
+    // `message` key, 0x61dcc), `g_motd` (0x61dde) and 11, in that order.
+    let layout = host.allocators.layout();
+    host.configstrings
+        .set(layout.level_start, host.level_time_ms.to_string());
+    host.configstrings.set(3, worldspawn_ambient(&world));
+    host.configstrings
+        .set(4, world.get("message").cloned().unwrap_or_default());
+    let motd = host.cvars.get("g_motd").to_string();
+    host.configstrings.set(layout.motd, motd);
+    host.configstrings
+        .set(CS_NORTHYAW, worldspawn_northyaw(&world));
     // `G_ParseScrVehicleInfo` runs ahead of every other alias of the level.
     crate::game::vehicle::load_level(host);
     for block in blocks {
@@ -1512,6 +1518,33 @@ mod tests {
         })
         .unwrap();
         assert_eq!(host.configstrings[11], "90");
+    }
+
+    /// `SP_worldspawn` writes the `message` key into 4 and `g_motd` into
+    /// the slot after the start time (0x61dcc, 0x61dde), between the
+    /// ambient's 3 and `northyaw`'s 11.
+    #[test]
+    fn worldspawn_writes_the_message_and_the_motd() {
+        let (mut vm, mut host) = fixture();
+        host.cvars.set("g_motd", "be nice");
+        vm.with_cx(|cx| {
+            super::spawn_entities_from_string(
+                &mut host,
+                cx,
+                "{\n\"classname\" \"worldspawn\"\n\"message\" \"Carentan\"\n\
+                 \"ambienttrack\" \"a\"\n}\n",
+            )
+        })
+        .unwrap();
+        assert_eq!(host.configstrings[4], "Carentan");
+        assert_eq!(host.configstrings[14], "be nice");
+        let slots: Vec<usize> = host
+            .configstrings
+            .writes()
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(slots, [13, 3, 4, 14, 11]);
     }
 
     /// A worldspawn block with no `northyaw` key at all is `mp_carentan`'s

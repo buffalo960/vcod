@@ -477,6 +477,9 @@ pub struct CsLayout {
     pub fog: usize,
     /// `level.startTime`.
     pub level_start: usize,
+    /// `g_motd`, which `SP_worldspawn` writes after the worldspawn's
+    /// `message` (4).
+    pub motd: usize,
     /// The `\winner\` info string `G_InitGame` resets.
     pub winner: usize,
 }
@@ -550,6 +553,7 @@ pub const CS_LAYOUT_V1: CsLayout = CsLayout {
     vote: 15,
     fog: CS_FOG_V1,
     level_start: CS_LEVEL_START_TIME,
+    motd: 14, // SP_worldspawn 0x61dde (1.5b 0x66a3d)
     winner: 20,
 };
 
@@ -579,6 +583,7 @@ pub const CS_LAYOUT_V22: CsLayout = CsLayout {
     vote: 16,
     fog: 13,
     level_start: 14,
+    motd: 15, // SP_worldspawn 0x72c38
     winner: 21,
 };
 

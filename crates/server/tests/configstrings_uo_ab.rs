@@ -20,11 +20,6 @@ use vcod_common::net::protocol::PROTOCOL_V22;
 /// second map load moves it again.
 const SKIPPED_KEYS: &[&str] = &["sv_serverid"];
 
-/// Slots that differ for a reason the doc names (coduo-diff.md 20): the
-/// level start time, which UO's clock starts at the server's uptime (3's
-/// `t` and 14).
-const GAPS: &[usize] = &[3, 14];
-
 fn retail() -> BTreeMap<usize, String> {
     use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
     let data = vcod_common::testing::fixture("net/gamestate-uo.bin");
@@ -56,15 +51,16 @@ fn table(name: &str) -> BTreeMap<usize, String> {
         .collect()
 }
 
-/// Ours after the load and `frames` frames: retail's table was read at a
-/// client's gamestate, seconds in.
+/// Ours after the load at `clock_ms` and `frames` frames: retail's table
+/// was read at a client's gamestate, seconds in.
 fn ours(
     fs: vcod_common::pk3::Pk3Fs,
     map: &str,
     gametype: &str,
     frames: u32,
+    clock_ms: i32,
 ) -> BTreeMap<usize, String> {
-    let sv = server(fs, map, gametype, frames);
+    let sv = server_with(fs, map, gametype, frames, &[], clock_ms);
     if let Ok(p) = std::env::var("CS_UO_DUMP") {
         let t: String = (0..2048)
             .filter(|i| !sv.configstring(*i).is_empty())
@@ -78,21 +74,13 @@ fn ours(
         .collect()
 }
 
-fn server(
-    fs: vcod_common::pk3::Pk3Fs,
-    map: &str,
-    gametype: &str,
-    frames: u32,
-) -> vcod_server::server::Server {
-    server_with(fs, map, gametype, frames, &[])
-}
-
 fn server_with(
     fs: vcod_common::pk3::Pk3Fs,
     map: &str,
     gametype: &str,
     frames: u32,
     sets: &[(&str, &str)],
+    clock_ms: i32,
 ) -> vcod_server::server::Server {
     let fs = std::rc::Rc::new(fs);
     let start = std::time::Instant::now();
@@ -108,6 +96,7 @@ fn server_with(
     };
     let mut sv = vcod_server::server::Server::new(cfg, start);
     sv.set_protocol(&PROTOCOL_V22);
+    sv.start_clock_at(clock_ms);
     for (k, v) in sets {
         sv.set_cvar(k, v);
     }
@@ -157,7 +146,14 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         return;
     };
-    check(retail(), ours(fs, "mp_cassino", "dm", 0), "mp_cassino dm");
+    // That server had been up half an hour: UO's level clock starts at the
+    // uptime, and its start time (14, and 3's `t`) reads 1810050
+    // (coduo-diff.md 20). Ours loads on the same clock.
+    check(
+        retail(),
+        ours(fs, "mp_cassino", "dm", 0, 1_810_050),
+        "mp_cassino dm",
+    );
 }
 
 /// UO's own gametypes, each on the first stock map whose arena lists it.
@@ -175,7 +171,7 @@ fn the_configstring_tables_match_uo_s_gametypes() {
         };
         check(
             retail_txt(map, gametype),
-            ours(fs, map, gametype, 20),
+            ours(fs, map, gametype, 20, 0),
             &format!("{map} {gametype}"),
         );
     }
@@ -195,7 +191,7 @@ fn a_pure_server_s_systeminfo_matches_uo() {
             eprintln!("no nsf_mp_j5outpost.pk3 in this install: skipped");
             return;
         }
-        let sv = server_with(fs, map, "dm", 0, &[("sv_pure", "1")]);
+        let sv = server_with(fs, map, "dm", 0, &[("sv_pure", "1")], 0);
         let retail = table(&format!("{map}-dm-uo-pure"));
         for i in [0, 1] {
             let (a, b) = (
@@ -211,9 +207,6 @@ fn check(mut retail: BTreeMap<usize, String>, mut ours: BTreeMap<usize, String>,
     for t in [&mut retail, &mut ours] {
         if let Some(s) = t.get_mut(&1) {
             *s = without(s, SKIPPED_KEYS);
-        }
-        for i in GAPS {
-            t.remove(i);
         }
     }
     let mut slots: Vec<usize> = retail.keys().chain(ours.keys()).copied().collect();
@@ -250,7 +243,7 @@ fn the_vehicle_baselines_match_uo_on_mp_cassino() {
     let mut r = MsgReader::new(&data[4..], &huff);
     let p = &PROTOCOL_V22;
     let gs = gamestate::parse(&mut r, p).expect("the UO gamestate");
-    let mut sv = server(fs, "mp_cassino", "dm", 0);
+    let mut sv = server_with(fs, "mp_cassino", "dm", 0, &[], 0);
     let mut ours = sv.all_entities();
     for e in ours.values_mut() {
         vcod_server::game::wire::entity_to_protocol(p, e);

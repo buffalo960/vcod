@@ -9,7 +9,7 @@ use vcod_gsc::{Cx, ErrorKind, Value};
 /// (docs/research/cod11-server-handshake.md, "Map-dependent"); the field's
 /// meaning is in docs/protocol-1.1.md, "Configstring indices".
 pub fn set_cull_fog(
-    cs: &mut [String],
+    cs: &mut crate::configstrings::ConfigStrings,
     slot: usize,
     cx: &Cx,
     args: &[Value],
@@ -27,7 +27,7 @@ pub fn set_cull_fog(
 /// density outside (0, 1), a colour outside [0, 1] and a negative time
 /// (docs/research/cod11-gametypes-re-bel.md, section 2).
 pub fn set_exp_fog(
-    cs: &mut [String],
+    cs: &mut crate::configstrings::ConfigStrings,
     slot: usize,
     cx: &Cx,
     args: &[Value],
@@ -59,7 +59,7 @@ fn floats(args: &[Value], err: &'static str) -> Result<Vec<f32>, ErrorKind> {
 /// which is `trap_SetConfigstring(12, ...)` (UO's 13, `CsLayout::fog`). Both
 /// builtins reject a colour outside [0, 1] and a negative time.
 fn write_fog(
-    cs: &mut [String],
+    cs: &mut crate::configstrings::ConfigStrings,
     slot: usize,
     cx: &Cx,
     head: [f32; 6],
@@ -78,7 +78,7 @@ fn write_fog(
         .map(|f| cx.format_number(Value::Float(*f)).expect("a float formats"))
         .collect();
     parts.push(format!("{:.0}", seconds * 1000.0));
-    cs[slot] = parts.join(" ");
+    cs.set(slot, parts.join(" "));
     Ok(Value::Undefined)
 }
 
@@ -88,7 +88,7 @@ fn write_fog(
 /// gsc call"). A restart re-sends slot 3 because `t` moves with the level
 /// clock (map-cycle doc 4.5).
 pub fn ambient_play(
-    cs: &mut [String],
+    cs: &mut crate::configstrings::ConfigStrings,
     level_time_ms: i32,
     cx: &Cx,
     args: &[Value],
@@ -121,6 +121,9 @@ pub fn ambient_play(
     if fade_ms < 0 {
         return Err(ErrorKind::BadType("ambientPlay: fade time must be >= 0"));
     }
-    cs[3] = format!("n\\{alias}\\t\\{}", level_time_ms.wrapping_add(fade_ms));
+    cs.set(
+        3,
+        format!("n\\{alias}\\t\\{}", level_time_ms.wrapping_add(fade_ms)),
+    );
     Ok(Value::Undefined)
 }

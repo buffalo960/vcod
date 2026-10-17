@@ -2060,13 +2060,13 @@ captures and the gates.
 
 ### Measured
 
-- `configstrings_uo_ab`: the whole table against `gamestate-uo.bin` but the
-  start time (UO's level clock starts at the server's uptime: 3's `t` and
-  14 read 1810050 there), configstring 8 (the vehicle weapons' bits), the
-  referenced pak pair and `sv_serverid`, which retail's first level reads
-  as 17 and vcod as 16 (VERIFIED, live; the extra low-nibble bump is the
-  restart path's, coduo_lnxded 0x8088325, which vcod does not take at
-  startup, INFERRED).
+- `configstrings_uo_ab`: the whole table against `gamestate-uo.bin`, the
+  start time included: UO's level clock starts at the server's uptime, 3's
+  `t` and 14 read 1810050 there, and the gate loads ours on that clock
+  (`Server::start_clock_at`). Only `sv_serverid` is left out, which
+  retail's first level reads as 17 and vcod as 16 (VERIFIED, live; the
+  extra low-nibble bump is the restart path's, coduo_lnxded 0x8088325,
+  which vcod does not take at startup, INFERRED).
 - `playerstate_uo_ab`: above.
 - `combat_uo_ab`: retail's `--save-combat` capture (kar98k: single shot,
   sustained fire, reload, crouched and prone shots) replayed on a protocol

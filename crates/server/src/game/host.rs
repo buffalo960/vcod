@@ -299,13 +299,7 @@ impl EntityHit {
 }
 
 pub struct GameHost {
-    pub configstrings: Vec<String>,
-    /// The level-wide configstring writes made while the level loads, in
-    /// order: `SP_worldspawn`'s, `G_InitGame`'s `G_setfog("0")`, and the
-    /// fog and `ambientPlay` builtins until the bootstrap's first wait. A
-    /// restart's burst replays them, so a slot written twice still queues
-    /// its `d` where its last write fell (map-cycle doc 4.5).
-    pub load_writes: Vec<(usize, String)>,
+    pub configstrings: crate::configstrings::ConfigStrings,
     pub ents: ObjectTable,
     /// Client lifecycle events the netcode raised, drained by `run_frame`
     /// before the think pass: a callback run inline from `SV_ClientCommand`
@@ -1174,19 +1168,11 @@ impl GameHost {
         self.client_weapon_ops.push((slot, op));
     }
 
-    /// A configstring write the engine makes at load, logged in
-    /// [`Self::load_writes`].
-    pub fn load_write(&mut self, index: usize, value: String) {
-        self.configstrings[index] = value.clone();
-        self.load_writes.push((index, value));
-    }
-
     pub fn new(configstrings: Vec<String>) -> GameHost {
         let allocators =
             Allocators::seeded(&configstrings, &vcod_common::net::protocol::PROTOCOL_V1.cs);
         GameHost {
-            configstrings,
-            load_writes: Vec::new(),
+            configstrings: crate::configstrings::ConfigStrings::new(configstrings),
             ents: ObjectTable::new(),
             client_events: Vec::new(),
             client_commands: Vec::new(),
@@ -1350,7 +1336,7 @@ impl GameHost {
                 }
             }
         }
-        self.configstrings[8] = self.items.bitstring();
+        self.configstrings.set(8, self.items.bitstring());
     }
 
     /// A uniform draw in `[0, 1)` off the host's own state.
@@ -1723,32 +1709,16 @@ impl Host for GameHost {
             return f(self, cx, recv, args);
         }
         match folded.as_str() {
-            "setcullfog" | "setexpfog" | "ambientplay" => {
+            "setcullfog" => {
                 let slot = self.allocators.layout().fog;
-                let (r, slot) = match folded.as_str() {
-                    "setcullfog" => (
-                        builtins::env::set_cull_fog(&mut self.configstrings, slot, cx, args),
-                        slot,
-                    ),
-                    "setexpfog" => (
-                        builtins::env::set_exp_fog(&mut self.configstrings, slot, cx, args),
-                        slot,
-                    ),
-                    _ => (
-                        builtins::env::ambient_play(
-                            &mut self.configstrings,
-                            self.level_time_ms,
-                            cx,
-                            args,
-                        ),
-                        3,
-                    ),
-                };
-                if r.is_ok() && self.initializing {
-                    self.load_writes
-                        .push((slot, self.configstrings[slot].clone()));
-                }
-                r
+                builtins::env::set_cull_fog(&mut self.configstrings, slot, cx, args)
+            }
+            "setexpfog" => {
+                let slot = self.allocators.layout().fog;
+                builtins::env::set_exp_fog(&mut self.configstrings, slot, cx, args)
+            }
+            "ambientplay" => {
+                builtins::env::ambient_play(&mut self.configstrings, self.level_time_ms, cx, args)
             }
             "iprintln" => builtins::io::iprint_line(self, cx, recv, args),
             "println" | "logprint" => builtins::io::print_line(self, cx, args),
@@ -2238,11 +2208,10 @@ mod tests {
     }
 
     /// `ambientPlay`'s `t` is `level.time` plus the fade's milliseconds
-    /// (`GScr_AmbientPlay` 0x5adc4), and while the level loads each write is
-    /// logged for a restart's burst in call order, the fog's after the
-    /// ambient's here.
+    /// (`GScr_AmbientPlay` 0x5adc4), and each write is logged in call order,
+    /// the fog's after the ambient's here.
     #[test]
-    fn ambientplay_stamps_the_level_time_and_load_writes_keep_call_order() {
+    fn ambientplay_stamps_the_level_time_and_writes_keep_call_order() {
         let mut vm = vcod_gsc::Vm::new();
         let mut host = GameHost::new(vec![String::new(); 2048]);
         host.level_time_ms = 70050;
@@ -2258,7 +2227,12 @@ mod tests {
         vm.call_now(&mut host, f, None, Vec::new()).unwrap();
 
         assert_eq!(host.configstrings[3], "n\\ambient_mp_carentan\\t\\71550");
-        let slots: Vec<usize> = host.load_writes.iter().map(|(i, _)| *i).collect();
+        let slots: Vec<usize> = host
+            .configstrings
+            .writes()
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
         assert_eq!(slots, [3, 12]);
     }
 
