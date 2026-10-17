@@ -3320,6 +3320,9 @@ fn friction(ps: &mut PlayerState, dt: f32) {
         }
         return;
     }
+    if ps.rules.v15() {
+        return friction_stored(ps, speed, dt);
+    }
     let (s, dt) = (f64::from(speed), f64::from(dt));
     let mut drop = 0.0;
     // Slick ground and a hit's knockback slide free of the ground term
@@ -3341,6 +3344,38 @@ fn friction(ps: &mut PlayerState, dt: f32) {
         drop += f64::from(ps.water_level) * s * f64::from(WATER_FRICTION) * dt;
     }
     let scale = (s - drop).max(0.0) / s;
+    ps.velocity = x87::scale(ps.velocity, scale);
+}
+
+/// 1.5b's `PM_Friction` past the stop (0x1ebba-0x1ed59), which UO shares:
+/// the control, the drop, the new speed and its ratio to the speed are each
+/// stored, and each component is the float times the stored ratio.
+fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32) {
+    let r = |x: f64| f64::from(x as f32);
+    let s = f64::from(speed);
+    let dt = f64::from(dt);
+    let mut drop = 0.0;
+    if ps.on_ground
+        && ps.water_level <= 1
+        && !on_slick(ps)
+        && ps.knockback_flags & PMF_TIME_DAMAGE == 0
+    {
+        let mut control = r(s.max(f64::from(PM_STOPSPEED)));
+        if ps.knockback_flags & PMF_TIME_KNOCKBACK != 0 {
+            control = r(control * f64::from(KNOCKBACK_FRICTION_SCALE));
+        } else if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
+            control = r(f64::from(jump_penalty_scale(ps.knockback_ms)) * control);
+        }
+        drop = r(control * f64::from(PM_FRICTION) * dt + drop);
+    }
+    if ps.water_level > 0 {
+        drop = r(s * f64::from(WATER_FRICTION) * f64::from(ps.water_level) * dt + drop);
+    }
+    let mut new = r(s - drop);
+    if new < 0.0 {
+        new = 0.0;
+    }
+    let scale = r(new / s);
     ps.velocity = x87::scale(ps.velocity, scale);
 }
 
@@ -4085,10 +4120,11 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
             ps.velocity = Vec3::ZERO;
             return Slide { blocked: true };
         }
-        // same plane again: nudge out along it (epsilon on non-axial planes)
+        // same plane again: nudge out along it (`> 0.999`, 1.1d 0x34ad9,
+        // 1.5b 0x291e4, UO 0x2ead8)
         if planes
             .iter()
-            .any(|p| x87::dot(t.normal, *p) > f64::from(0.99f32))
+            .any(|p| x87::dot(t.normal, *p) > f64::from(0.999f32))
         {
             ps.velocity += t.normal;
             continue;
@@ -6517,6 +6553,23 @@ mod tests {
             "the walk left the ground {airborne} frames, ending at {}",
             ps.origin
         );
+    }
+
+    /// `PM_SlideMove`'s same-plane test is `> 0.999` (1.1d rodata 0x70d7c,
+    /// 1.5b 0x75b80, UO 0x9ba40): a 5 degree ramp met from the flat floor
+    /// (0.9962 against the ground plane) is a new plane and clips the
+    /// velocity up the ramp, where a 0.99 test nudged the body off it.
+    #[test]
+    fn a_shallow_ramp_met_from_the_floor_is_a_new_plane() {
+        let w = crate::collision::ramp_test_world(5.0, 0.0, 300.0);
+        let w = MoveWorld::bare(&w);
+        let mut ps = PlayerState::spawn(Vec3::new(-60.0, 0.0, 1.0), 0.0);
+        tick(&mut ps, &PmInput::default(), &w, 40);
+        assert!(ps.on_ground && ps.ground_plane.is_some(), "{}", ps.origin);
+        ps.velocity = Vec3::new(320.0, 0.0, 0.0);
+        let slide = slide_move(&mut ps, &w, 0.25, false, MASK_PLAYERSOLID);
+        assert!(slide.blocked);
+        assert!(ps.velocity.z > 20.0, "velocity {}", ps.velocity);
     }
 
     /// Standing on a slope holds its height: the ground trace, the friction
