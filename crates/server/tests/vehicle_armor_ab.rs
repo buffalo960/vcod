@@ -665,8 +665,10 @@ fn the_tank_gunner_meets_the_rays_where_retails_does() {
 /// fixture's times: each cell meets him on both servers, within a quarter
 /// unit of retail's.
 fn compare_on_foot(fixture: &str, ours: &[String]) {
+    /// Each profile's cells (whether the ray met the vehicle, `z`, `f`) by time.
+    type Rays = BTreeMap<i32, BTreeMap<(bool, i32, i32), [f32; 3]>>;
     let rays = |log: &mut dyn Iterator<Item = &str>| {
-        let mut out: BTreeMap<i32, BTreeMap<(bool, i32, i32), [f32; 3]>> = BTreeMap::new();
+        let mut out = Rays::new();
         for l in log {
             let Some(rest) = l.trim().strip_prefix("PROBE ") else {
                 continue;
