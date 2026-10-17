@@ -1223,6 +1223,9 @@ pub fn probe(
             if save_shock {
                 shock.record(now, c);
             }
+            if save_combat {
+                combat.record(&c);
+            }
         }
         if save_slope && let Some(c) = sent {
             slope_capture.sent(c);
@@ -3763,6 +3766,9 @@ struct CombatSample {
     label: &'static str,
     elapsed_ms: u128,
     server_time: i32,
+    /// `ps.commandTime`: the last cmd the snapshot's frame ran, which says
+    /// which of the logged cmds reached it.
+    command_time: i32,
     /// The input in flight when the snapshot arrived, so a trace line can be
     /// lined up with the tap that produced it.
     buttons: u8,
@@ -3871,6 +3877,12 @@ struct CombatProbe {
     /// the spawn, so the impacts land far enough for the sway to be read off
     /// their whole-unit origins. `None` holds the spawn view.
     aim_yaw: Option<i32>,
+    /// Every cmd sent while a step was current, its wait for the weapon
+    /// included: the step, `serverTime`, `buttons` and `wbuttons`, so a
+    /// replay can run retail's cmds frame for frame.
+    sent: Vec<(&'static str, i32, u8, u8)>,
+    /// The newest snapshot's `serverTime` when each step became current.
+    start_times: Vec<(&'static str, i32)>,
 }
 
 impl Default for CombatProbe {
@@ -3897,6 +3909,8 @@ impl Default for CombatProbe {
             missiles: MissileWatch::default(),
             spawn_pose: None,
             aim_yaw: None,
+            sent: Vec::new(),
+            start_times: Vec::new(),
         }
     }
 }
@@ -4028,6 +4042,14 @@ impl CombatProbe {
         !self.done
     }
 
+    /// Logs a cmd as it went on the wire, once the script has begun.
+    fn record(&mut self, c: &net::msg::UserCmd) {
+        if let (Some(step), false) = (self.steps.get(self.idx), self.start_times.is_empty()) {
+            self.sent
+                .push((step.label, c.server_time, c.buttons, c.wbuttons));
+        }
+    }
+
     /// Holds the step's base input, and taps only once its clock runs: a step
     /// waiting for the weapon to read ready must not be tapping while it waits.
     /// A walk stands still until its clock runs too: `advance` used to walk
@@ -4098,6 +4120,9 @@ impl CombatProbe {
         };
         let (label, dur, wait_ready, fires) =
             (step.label, step.dur, step.wait_ready, step_fires(step));
+        if self.start_times.is_empty() {
+            self.start_times.push((label, snap.server_time));
+        }
         let p = wire();
         let weaponstate = snap.ps.field_i32(p, "weaponstate");
         // A step that taps starts from a weapon that can take the input. The
@@ -4146,6 +4171,7 @@ impl CombatProbe {
                 label,
                 elapsed_ms: elapsed.as_millis(),
                 server_time: snap.server_time,
+                command_time: snap.ps.field_i32(p, "commandTime"),
                 buttons: cmd.buttons,
                 wbuttons: cmd.wbuttons,
                 weaponstate,
@@ -4328,6 +4354,9 @@ viewHeightCurrent={} leanf={} viewangles={},{},{} eFlags={}\n",
             fields: snap.ps.fields.clone(),
         });
         self.idx += 1;
+        if let Some(next) = self.steps.get(self.idx) {
+            self.start_times.push((next.label, snap.server_time));
+        }
         self.started = None;
         self.waiting_since = None;
         self.ready_since = None;
@@ -4458,6 +4487,12 @@ fn write_combat_fixture(
     out.push_str("# Each trace also carries fWeaponPosFrac and aimSpreadScale as decimals,\n");
     out.push_str("# the sight fraction and the spread counter (combat doc, 1.13 and 2.1),\n");
     out.push_str("# grenadeTimeLeft and weaponDelay as ms.\n");
+    out.push_str("# !cmds lists every cmd sent while the step was current, including its wait\n");
+    out.push_str("# for a ready rifle: start= the newest snapshot's serverTime when it became\n");
+    out.push_str("# current, st= the first cmd's serverTime and d= the steps\n");
+    out.push_str("# to each next one, in= <index>:<buttons>/<wbuttons> for each cmd whose bits\n");
+    out.push_str("# differ from the !input base (the taps and presses). A trace's commandTime\n");
+    out.push_str("# is the last cmd its frame ran.\n");
     out.push_str("# Values are the raw i32 wire words, floats as their bit patterns.\n");
     // Where the script stood and looked at its first step. A replay that
     // starts anywhere else is looking somewhere else too, and `viewangles` is
@@ -4586,6 +4621,28 @@ hold_ms={} walks={} wait_ready={} weapon={}\n",
             // The weapon byte the step ran with, so a replay sends it too.
             mine.first().map_or(0, |s| s.weapon),
         ));
+        let sent: Vec<_> = combat.sent.iter().filter(|c| c.0 == r.label).collect();
+        if let (Some(first), Some((_, start))) = (
+            sent.first(),
+            combat.start_times.iter().find(|(l, _)| *l == r.label),
+        ) {
+            let d: Vec<String> = sent
+                .windows(2)
+                .map(|w| (w[1].1 - w[0].1).to_string())
+                .collect();
+            let held: Vec<String> = sent
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| (c.2, c.3) != (step.base.buttons, step.base.wbuttons))
+                .map(|(i, c)| format!("{i}:{}/{}", c.2, c.3))
+                .collect();
+            out.push_str(&format!(
+                "!cmds start={start} st={} d={} in={}\n",
+                first.1,
+                d.join(","),
+                held.join(",")
+            ));
+        }
         out.push_str(&format!(
             "!observed fire_step={} expected_shots={} fired={} shots_seen={} seq_delta={} \
 waited_ready_ms={} retried={} snapshots={} weaponstate={} legsAnim={} torsoAnim={} weapAnim={}\n",
@@ -4612,7 +4669,7 @@ waited_ready_ms={} retried={} snapshots={} weaponstate={} legsAnim={} torsoAnim=
 legsAnim={} torsoAnim={} eventSequence={} events[0]={} events[1]={} events[2]={} events[3]={} \
 fWeaponPosFrac={:.4} aimSpreadScale={:.2} grenadeTimeLeft={} weaponDelay={} pm_flags={} \
 groundEntityNum={} viewangles[0]={:.4} viewangles[1]={:.4} viewangles[2]={:.4} eFlags={} \
-leanf={:.4}\n",
+leanf={:.4} commandTime={}\n",
                 s.elapsed_ms,
                 s.server_time,
                 s.buttons,
@@ -4637,6 +4694,7 @@ leanf={:.4}\n",
                 s.viewangles[2],
                 s.e_flags,
                 s.leanf,
+                s.command_time,
             ));
             for m in &s.missiles {
                 out.push_str(&m.line(s.elapsed_ms));

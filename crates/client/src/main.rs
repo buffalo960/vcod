@@ -156,7 +156,9 @@ struct Args {
     /// the playerstate event ring holds four slots and overwrites as it fires.
     /// Each firing step waits for weaponstate to read ready before it taps, and
     /// the reload holds the weapon file's reloadTime, so a weapon still busy
-    /// from the step before cannot be recorded under a firing label. The
+    /// from the step before cannot be recorded under a firing label. Each step
+    /// also logs every cmd it sent (`!cmds`) and each snapshot its
+    /// commandTime, which `playerstate_combat_ab` replays frame for frame. The
     /// sequence takes about 40 s, inside the default --probe-secs.
     #[arg(long)]
     save_combat: bool,
