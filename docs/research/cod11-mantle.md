@@ -1327,6 +1327,29 @@ dxy went from 0.004 to 0.001 with the step, and the prone mound's free run
 from median dxy 0.176, max 19.79 to 0.163, 19.49; every other statistic
 of the four is unchanged.
 
+### The slide's same-plane test
+
+VERIFIED, `game.mp.i386.so` 1.1d `PM_SlideMove` (0x347c0): each bump's
+plane is dotted with every plane already listed (0x34aa7-0x34ad7, kept on
+the stack) and compared with the float at rodata 0x70d7c, 0.999
+(`fcomp` at 0x34ad9). Over it the normal is added to the velocity and the
+bump loop goes on (0x34b20-0x34b4d, 0x34b7f); otherwise the plane is
+listed (0x34b89). 1.5b's (0x28d7d) loads its 0.999 from 0x75b80
+(0x291e4) and UO's (`game.mp.uo.i386.so` 0x2e563) from 0x9ba40
+(0x2ead8), both keeping the dot on the stack. Q3's 0.99 is not CoD's.
+
+VERIFIED, vcod measurement (`moves_ab.rs`, `MOVES_EXACT=1`, 2026-10-18):
+under 0.999 the same-plane band 0.99..0.999 is a ground plane against a
+terrain or patch facet a few degrees off it (mp_carentan's slope
+captures, dots 0.9961-0.9989). The switch moves the 1.1 moves capture
+from 1217 to 1218 of 1222 bit-exact origins, the springfield run from
+1218 to 1220, 1.5's moves from 1220 to 1222, UO's sprint from 896 to
+897, and lowers no count at the 1.1 or the UO install. An earlier note
+had 0.999 breaking captures; at master 0f3ce28e and at fa9c8114 (before
+the stored terrain clip) neither install's `moves_ab` loses a snapshot
+with it. vcod: `slide_move`,
+`pmove::tests::a_shallow_ramp_met_from_the_floor_is_a_new_plane`.
+
 ### What the collider does to a walker on a terrain seam
 
 Everything under this heading is a measurement of vcod, not of retail:

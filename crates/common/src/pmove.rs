@@ -4080,10 +4080,11 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
             ps.velocity = Vec3::ZERO;
             return Slide { blocked: true };
         }
-        // same plane again: nudge out along it (epsilon on non-axial planes)
+        // same plane again: nudge out along it (`> 0.999`, 1.1d 0x34ad9,
+        // 1.5b 0x291e4, UO 0x2ead8)
         if planes
             .iter()
-            .any(|p| x87::dot(t.normal, *p) > f64::from(0.99f32))
+            .any(|p| x87::dot(t.normal, *p) > f64::from(0.999f32))
         {
             ps.velocity += t.normal;
             continue;
@@ -6512,6 +6513,23 @@ mod tests {
             "the walk left the ground {airborne} frames, ending at {}",
             ps.origin
         );
+    }
+
+    /// `PM_SlideMove`'s same-plane test is `> 0.999` (1.1d rodata 0x70d7c,
+    /// 1.5b 0x75b80, UO 0x9ba40): a 5 degree ramp met from the flat floor
+    /// (0.9962 against the ground plane) is a new plane and clips the
+    /// velocity up the ramp, where a 0.99 test nudged the body off it.
+    #[test]
+    fn a_shallow_ramp_met_from_the_floor_is_a_new_plane() {
+        let w = crate::collision::ramp_test_world(5.0, 0.0, 300.0);
+        let w = MoveWorld::bare(&w);
+        let mut ps = PlayerState::spawn(Vec3::new(-60.0, 0.0, 1.0), 0.0);
+        tick(&mut ps, &PmInput::default(), &w, 40);
+        assert!(ps.on_ground && ps.ground_plane.is_some(), "{}", ps.origin);
+        ps.velocity = Vec3::new(320.0, 0.0, 0.0);
+        let slide = slide_move(&mut ps, &w, 0.25, false, MASK_PLAYERSOLID);
+        assert!(slide.blocked);
+        assert!(ps.velocity.z > 20.0, "velocity {}", ps.velocity);
     }
 
     /// Standing on a slope holds its height: the ground trace, the friction
