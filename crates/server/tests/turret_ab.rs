@@ -1554,15 +1554,16 @@ const GAPS: &[(&str, &str)] = &[
 ];
 
 const KILLING_ROUND: &str = "the killing round meets a target the round before knocked back, \
-    moved by however many ms of its own cmds retail's frame ran, and the target is another \
-    client whose cmd clock this capture does not carry; the -victim captures log it (the \
-    target's pos.trTime) and their gates match the killing round (cod11-turrets.md 13.1)";
+    moved by however many ms of its own cmds retail's frame ran and posed off its spawn's \
+    landing; this capture logs neither the target's cmd stamps nor its spawn time, and the \
+    -spawn captures, which log both, match the killing round on 1.1d and 1.5b with no row \
+    (cod11-turrets.md 13.4)";
 const UO_BONE_ARITH: &str = "ours enters the target at x 1513.0006, a thousandth of a unit \
     past the whole unit retail's truncation stays under, with the target's entity matching \
     retail's and its playerstate matching the target's own log (origin, velocity, pm_time) at \
-    the kill; UO's engine stores every float variable (bsp-ibsp59-format.md, \"Patch \
-    collision on 1.5 and UO\") and the posed-bone trace (bonetrace.rs) has no stored-float \
-    arithmetic ported, which reads as that thousandth (cod11-turrets.md 13.3)";
+    the kill; UO's engine stores every float variable (bsp-ibsp59-format.md, Patch \
+    collision on 1.5 and UO) and the posed-bone trace (bonetrace.rs) has no stored-float \
+    arithmetic ported, which reads as that thousandth (cod11-turrets.md 13.4)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
     ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
     print, which reads as a smaller air acceleration across the face on retail; no cmd \
@@ -1571,8 +1572,10 @@ const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree f
     where the print rounds it past 0.25 (cod11-turrets.md 13.3)";
 const ENTRY_POINT: &str = "the round enters the target's body a truncation step off \
     retail's along the same ray: where it enters is the posed bone box the locational trace \
-    meets (cod11-combat.md 3.4), whose idle phase runs from the target's spawn, which the two \
-    joins do not put at the same time; not the turret";
+    meets (cod11-combat.md 3.4), whose idle runs from the landing after the target's spawn, \
+    and that landing from the target's own cmd stamps; this capture logs neither the spawn \
+    time nor the stamps, and the -spawn captures, which log both, match the round on all \
+    three servers (cod11-turrets.md 13.4)";
 /// When in a frame the target's cmds go out: the net probe sends one every
 /// 16 ms of its own clock, three a frame.
 const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
