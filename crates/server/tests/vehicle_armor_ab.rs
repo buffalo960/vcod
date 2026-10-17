@@ -34,9 +34,46 @@ use vcod_common::net::protocol::PROTOCOL_V22;
 
 /// `vehicle_probe.rs` `SIT`, from the target's placement: on foot, the use
 /// tap, each seat for 12 s, out.
-const SETTLE_MS: i64 = 10_000;
+/// Every retail fixture boards 10 050 after the placement, the probe
+/// client's 10 s settle counted from the snapshot that showed it.
+const SETTLE_MS: i64 = 10_050;
 const SEAT_MS: i64 = 12_000;
 const TAP_MS: i64 = 150;
+
+/// When the target acts, in ms from its placement: the use tap into seat
+/// 1, the two `nextvehslot`s, the use tap out.
+type Schedule = [i64; 4];
+
+const SIT: Schedule = [
+    SETTLE_MS,
+    SETTLE_MS + TAP_MS + SEAT_MS,
+    SETTLE_MS + TAP_MS + 2 * SEAT_MS,
+    SETTLE_MS + TAP_MS + 3 * SEAT_MS,
+];
+
+/// A fixture's own schedule: its `seat` and last `unseat` lines off
+/// client 0's `place`, so ours changes seat on retail's level times where
+/// the retail client's commands landed a frame off [`SIT`]'s.
+fn schedule_of(fixture: &str) -> Schedule {
+    let time = |l: &str| l.split(' ').nth(2).and_then(|t| t.parse::<i64>().ok());
+    let place = fixture
+        .lines()
+        .find(|l| l.starts_with("PROBE place ") && l.split(' ').nth(3) == Some("0"))
+        .and_then(time)
+        .expect("the target's placement");
+    let seats: Vec<i64> = fixture
+        .lines()
+        .filter(|l| l.starts_with("PROBE seat "))
+        .filter_map(time)
+        .collect();
+    let out = fixture
+        .lines()
+        .rev()
+        .filter(|l| l.starts_with("PROBE unseat "))
+        .find_map(time)
+        .expect("the exit");
+    [seats[0], seats[1], seats[2], out].map(|t| t - place)
+}
 
 /// Hits by (phase, seat): `phase` counts the rider's seat changes, so a
 /// seat met twice (a tank's driver after the cycle wraps) is two groups.
@@ -104,7 +141,7 @@ fn holding(cl: &NetClient<common::ClientEnd>, buttons: u8, last: &mut i32) -> Us
 /// Our run of the probe on `map`, the target boarding a `vehicletype`; the
 /// script log. `aim`: the shooter is `--probe-uo-weapon aim`, else `hold`.
 fn ours(map: &str, vehicletype: &str, cvars: &[(&str, &str)], aim: bool) -> Option<Vec<String>> {
-    ours_after(map, vehicletype, cvars, aim, 0)
+    ours_after(map, vehicletype, cvars, aim, 0, SIT)
 }
 
 /// [`ours`] with the server run alone `late_ms` longer before the clients
@@ -115,6 +152,7 @@ fn ours_after(
     cvars: &[(&str, &str)],
     aim: bool,
     late_ms: i64,
+    at: Schedule,
 ) -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
@@ -164,17 +202,14 @@ fn ours_after(
         let mut a_buttons = 0;
         if let Some(ms) = since {
             // The use taps: the entry, and after both seat changes the exit.
-            let exit = SETTLE_MS + TAP_MS + 3 * SEAT_MS;
-            if (SETTLE_MS..SETTLE_MS + TAP_MS).contains(&ms) || (exit..exit + TAP_MS).contains(&ms)
-            {
+            if (at[0]..at[0] + TAP_MS).contains(&ms) || (at[3]..at[3] + TAP_MS).contains(&ms) {
                 a_buttons = BUTTON_USE;
             }
-            let change = SETTLE_MS + TAP_MS + (said + 1) * SEAT_MS;
-            if said < 2 && ms >= change {
+            if said < 2 && ms >= at[1 + said] {
                 ta.send_reliable("nextvehslot");
                 said += 1;
             }
-            if ms >= SETTLE_MS + 2 * TAP_MS + 4 * SEAT_MS {
+            if ms >= at[3] + TAP_MS + SEAT_MS {
                 break;
             }
         }
@@ -488,28 +523,28 @@ fn profiles(log: &[String]) -> Vec<Profile> {
     out
 }
 
-/// Seats whose silhouette may differ from retail's: how far a ray may
-/// stop off retail's and how many cells may disagree outright (`None`:
-/// the seat is not compared), with the reason.
 /// A gap's ray tolerance and how many cells may disagree outright.
-type Allowance = Option<(f32, usize)>;
+type Allowance = (f32, usize);
 
-const SILHOUETTE_GAPS: &[(&str, i32, Allowance, &str)] = &[
+/// Stints whose silhouette may differ from retail's, by map and phase (the
+/// fixture's `seat` line count): how far a ray may stop off retail's and
+/// how many cells may disagree outright, with the reason. Both are the
+/// stint after the gunner's seat; the first stint in every seat matches.
+const SILHOUETTE_GAPS: &[(&str, usize, Allowance, &str)] = &[
     (
         "mp_peaks",
         3,
-        Some((0.6, 0)),
-        "the jeep passenger's torso plays the looping `c_mp_torso_stand_alert`: on retail's level \
-         times four of its 30 cells still stop up to 0.57 off retail's (coduo-vehicles.md 13, \
-         \"The silhouette\")",
+        (0.6, 0),
+        "the jeep passenger after the gunner's seat: four of 30 cells stop up to 0.57 off \
+         retail's (coduo-vehicles.md 13, \"The silhouette\")",
     ),
     (
         "mp_cassino",
-        1,
-        None,
-        "the tank driver, never sent and shot only through the open hatch: on retail's level \
-         times 62 of 90 cells stop up to 6.4 units off retail's and six meet one side only \
-         (coduo-vehicles.md 13)",
+        3,
+        (0.7, 1),
+        "the tank driver back from the gunner's seat: 11 of 84 cells stop up to 0.65 off \
+         retail's and one meets one side only, where his first stint matches to 0.01 \
+         (coduo-vehicles.md 13, \"The silhouette\")",
     ),
 ];
 
@@ -525,19 +560,15 @@ fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
     let (rp, op) = (profiles(&retail), profiles(ours));
     let seats = |p: &[Profile]| p.iter().map(|(s, _)| *s).collect::<Vec<_>>();
     assert_eq!(seats(&op), seats(&rp), "the seats profiled");
-    for ((seat, r), (_, o)) in rp.iter().zip(&op) {
+    for (phase, ((seat, r), (_, o))) in rp.iter().zip(&op).enumerate() {
         // On foot the rays pass the shooter, 25 units nearer them.
         if *seat == 0 {
             continue;
         }
-        let gap = SILHOUETTE_GAPS
+        let (tolerance, mut odd) = SILHOUETTE_GAPS
             .iter()
-            .find(|(m, s, ..)| *m == map && s == seat);
-        let (tolerance, mut odd) = match gap {
-            Some((.., None, _)) => continue,
-            Some((.., Some(g), _)) => *g,
-            None => (0.25, 0),
-        };
+            .find(|(m, p, ..)| *m == map && *p == phase)
+            .map_or((0.25, 0), |g| g.2);
         let cells: std::collections::BTreeSet<_> = r.keys().chain(o.keys()).collect();
         for cell in cells {
             let (a, b) = (r.get(cell), o.get(cell));
@@ -551,7 +582,7 @@ fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
             }
             assert!(
                 close,
-                "{map} seat {seat} cell {cell:?}: retail {a:?}, ours {b:?}"
+                "{map} phase {phase} seat {seat} cell {cell:?}: retail {a:?}, ours {b:?}"
             );
         }
     }
@@ -562,12 +593,19 @@ fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
 /// time, so the silhouettes replay on retail's.
 const LATE_MS: i64 = 16_600;
 
-fn silhouettes(map: &str, vehicletype: &str, fixture: &str) {
+fn silhouettes(map: &str, vehicletype: &str, fixture: &str, late_ms: i64) {
     let mut cvars = vec![("probe_aim_sweep", "1"), ("probe_profile", "1")];
     if vehicletype == "willyjeep_mp" {
         cvars.push(("probe_side", "75"));
     }
-    let Some(log) = ours_after(map, vehicletype, &cvars, true, LATE_MS) else {
+    let Some(log) = ours_after(
+        map,
+        vehicletype,
+        &cvars,
+        true,
+        late_ms,
+        schedule_of(fixture),
+    ) else {
         return;
     };
     compare_silhouettes(map, fixture, &log);
@@ -581,6 +619,7 @@ fn the_jeep_riders_meet_the_rays_where_retails_do() {
         "mp_peaks",
         "willyjeep_mp",
         include_str!("fixtures/vehicles/mp_peaks-jeep-silhouette-uo.txt"),
+        LATE_MS - 50,
     );
 }
 
@@ -591,5 +630,6 @@ fn the_tank_gunner_meets_the_rays_where_retails_does() {
         "mp_cassino",
         "panzeriv_mp",
         include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt"),
+        LATE_MS,
     );
 }

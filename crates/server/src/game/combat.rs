@@ -1594,6 +1594,11 @@ pub struct EntityVictim {
     /// than its origin, and `CanDamage`'s traces pass through it, the
     /// entity being their pass entity.
     pub brush: Option<vcod_common::collision::Pusher>,
+    /// A UO vehicle (`ent+0x164`, its record) with its last link's
+    /// `r.absmin`/`r.absmax`: the distance is to that box drawn in by
+    /// three quarters of `mins`/`maxs`, and `CanDamage` probes about its
+    /// middle.
+    pub vehicle_link: Option<(Vec3, Vec3)>,
 }
 
 impl EntityVictim {
@@ -1612,17 +1617,27 @@ impl EntityVictim {
 
     /// The middle of `r.absmin`/`r.absmax`, whose one-unit widening cancels.
     fn mid(&self) -> Vec3 {
-        self.origin + (self.mins + self.maxs) * 0.5
+        match self.vehicle_link {
+            Some((lo, hi)) => (lo + hi) * 0.5,
+            None => self.origin + (self.mins + self.maxs) * 0.5,
+        }
     }
 
     /// `G_RadiusDamage`'s distance (14.1): origin to origin, or for a brush
-    /// model the gap to `r.absmin`/`r.absmax` on each axis, 0 inside.
+    /// model the gap to `r.absmin`/`r.absmax` on each axis, 0 inside. A UO
+    /// vehicle's box is `r.absmin - 0.75 r.mins` to `r.absmax - 0.75
+    /// r.maxs` (`G_RadiusDamage`, game.mp.uo 0x5098b; coduo-vehicles.md 13).
     fn distance(&self, at: Vec3) -> f32 {
         if self.brush.is_none() {
             return (self.origin - at).length();
         }
-        let lo = self.origin + self.mins - Vec3::ONE;
-        let hi = self.origin + self.maxs + Vec3::ONE;
+        let (lo, hi) = match self.vehicle_link {
+            Some((lo, hi)) => (lo - self.mins * 0.75, hi - self.maxs * 0.75),
+            None => (
+                self.origin + self.mins - Vec3::ONE,
+                self.origin + self.maxs + Vec3::ONE,
+            ),
+        };
         (lo - at).max(at - hi).max(Vec3::ZERO).length()
     }
 }
@@ -1722,6 +1737,10 @@ impl Blast {
 
     /// [`Blast::reaches`] for an entity with no client.
     pub fn reaches_entity(&self, v: &EntityVictim) -> bool {
+        if let Some((lo, hi)) = v.vehicle_link {
+            let (slo, shi) = self.search_box();
+            return lo.cmple(Vec3::from(shi)).all() && hi.cmpge(Vec3::from(slo)).all();
+        }
         self.box_reaches(v.origin, v.mins, v.maxs)
     }
 

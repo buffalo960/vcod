@@ -572,20 +572,25 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
     out
 }
 
-/// Files the vehicle in the area tree with its contents and its box (the
-/// collmap's bounds, else the file's), where a blast's walk and
-/// `verifyPosition` find it.
+/// Files the vehicle in the area tree with its contents and its box, where
+/// a blast's walk and `verifyPosition` find it: with a collmap a brush
+/// model's link of its bounds (a cube of their radius once turned,
+/// `SV_LinkEntity` `coduo_lnxded` 0x8099dee), else the file's box.
 pub fn link(host: &mut GameHost, cx: &mut Cx, id: EntId) {
+    use crate::game::entity::LinkKind;
     let Some(v) = host.vehicles.live.get(&id) else {
         return;
     };
     let info = host.vehicles.info_of(v);
-    let (mins, maxs) = v
+    let (kind, (mins, maxs)) = match v
         .collmap
         .and_then(|n| host.model_bounds.get(n as usize).copied())
-        .unwrap_or((info.mins, info.maxs));
+    {
+        Some(b) => (LinkKind::Vehicle, b),
+        None => (LinkKind::Item, (info.mins, info.maxs)),
+    };
     let shape = crate::game::entity::LinkShape {
-        kind: crate::game::entity::LinkKind::Item,
+        kind,
         contents: v.contents,
         mins,
         maxs,
@@ -783,11 +788,14 @@ pub fn immune(info: &VehicleInfo, mod_: &str) -> bool {
 /// `Scr_Vehicle_DamageScale` (0x8ccad): the hit's direction off the hull
 /// picks the front, side or rear scale; splash blends two by the angle and
 /// takes 0.7 of it; bullets also take `dmgScaleBullet`. A grenade's splash
-/// takes 1.0 for its weapon's `vehiclescale` (not parsed yet).
+/// takes 1.0 for its weapon's `vehiclescale` (not parsed yet). `origin` and
+/// `angles` are the record's physics pose (`rec+0xb8`, `rec+0xd0`), the
+/// direction measured on `AnglesToAxis` of the whole angles; `maxs` is
+/// `r.maxs`.
 pub fn damage_scale(
     info: &VehicleInfo,
     origin: [f32; 3],
-    yaw: f32,
+    angles: [f32; 3],
     maxs: [f32; 3],
     point: [f32; 3],
     mod_: &str,
@@ -803,10 +811,10 @@ pub fn damage_scale(
     } else {
         [0.0, 0.0]
     };
-    let (s, c) = yaw.to_radians().sin_cos();
-    let fwd = v[0] * c + v[1] * s;
-    // `AngleVectors`' right is (sin, -cos): yaw 0 faces +x, right is -y.
-    let right = v[0] * s - v[1] * c;
+    let [f, l, _] = vcod_common::pmove::aim::angles_to_axis(angles);
+    let fwd = v[0] * f[0] + v[1] * f[1];
+    // The axis' second row is the left; only its size is read.
+    let right = v[0] * l[0] + v[1] * l[1];
     let forward_wins = fwd.abs() >= right.abs();
     let front_or_back = |d: f32| {
         0.01 * if d < 0.0 {
@@ -954,8 +962,18 @@ pub fn vehicle_damage(
         return Vec::new();
     }
     let origin = crate::game::item::origin_of(host, cx, id);
-    let yaw = crate::game::item::angles_of(host, cx, id)[1];
-    let scale = damage_scale(&info, origin, yaw, info.maxs, point, mod_);
+    let (pose, maxs) = host
+        .vehicles
+        .live
+        .get(&id)
+        .map_or(((origin, [0.0; 3]), info.maxs), |v| {
+            let maxs = v
+                .collmap
+                .and_then(|n| host.model_bounds.get(n as usize))
+                .map_or(info.maxs, |b| b.1);
+            ((v.phys.s.origin.into(), v.phys.s.angles.into()), maxs)
+        });
+    let scale = damage_scale(&info, pose.0, pose.1, maxs, point, mod_);
     // The f32 scale times the damage, `fistp` under a 0xc00 control word
     // (0x4ffbf..0x4ffd1): truncated; the generic arm then lifts 0 to 1.
     let damage = ((f64::from(scale) * f64::from(damage)).trunc() as i32).max(1);

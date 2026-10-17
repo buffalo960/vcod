@@ -514,12 +514,6 @@ const CLAMP_REBASE: &str = "the view rebased past the pitch clamp";
 /// own cmds.
 const CONE_REBASE: &str = "the cone opened by the rebased cmd angles' jump";
 
-/// The tank's own shell bursts beside it and `Scr_Vehicle_Pain` hands the
-/// hull's damage to the driver as feedback: retail charged 44 on the seats
-/// capture and 30 on the drive, ours 43 and 38, so the splash amount on the
-/// hull differs (coduo-vehicles.md 13, "The driver's feedback").
-const SPLASH_AMOUNT: &str = "the own shell's splash on the hull, 43 to 44 and 38 to 30";
-
 #[derive(Clone, Copy)]
 enum Kind {
     Int,
@@ -695,16 +689,6 @@ fn the_tank_seats_replay_on_ours() {
             snaps: 583..=608,
             why: CONE_REBASE,
         },
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 296..=296,
-            why: SPLASH_AMOUNT,
-        },
-        Gap {
-            field: "damageCount",
-            snaps: 296..=1015,
-            why: SPLASH_AMOUNT,
-        },
     ]);
 }
 
@@ -758,18 +742,7 @@ fn the_tank_drive_replays_on_ours() {
     let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[], &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[
-        Gap {
-            field: "aimSpreadScale",
-            snaps: 336..=337,
-            why: SPLASH_AMOUNT,
-        },
-        Gap {
-            field: "damageCount",
-            snaps: 336..=924,
-            why: SPLASH_AMOUNT,
-        },
-    ]);
+    tally(&lines, &ours).assert_within(&[]);
     // The engine pairs ride the first two blends while the driver runs it:
     // retail's crew capture has 187 on aliases 17/18 (idle) and 188 on
     // 19/20 (engine), the Panzer IV's four in the vehicle files' order.

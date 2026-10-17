@@ -302,6 +302,49 @@ pub fn static_configstrings(
 
 pub use vcod_common::net::protocol::CsRange;
 
+/// The game's configstring table. Every write goes through [`Self::set`],
+/// `SV_SetConfigstring`'s shape: a write that leaves its slot as it was is
+/// dropped, and one that changes it is logged in order, which is the order
+/// retail queues its `d`s in (a restart's burst, map-cycle doc 4.5).
+#[derive(Clone, Debug, Default)]
+pub struct ConfigStrings {
+    table: Vec<String>,
+    writes: Vec<(usize, String)>,
+}
+
+impl ConfigStrings {
+    pub fn new(table: Vec<String>) -> Self {
+        ConfigStrings {
+            table,
+            writes: Vec::new(),
+        }
+    }
+
+    pub fn set(&mut self, index: usize, value: impl Into<String>) {
+        let value = value.into();
+        if self.table[index] != value {
+            self.table[index].clone_from(&value);
+            self.writes.push((index, value));
+        }
+    }
+
+    /// The writes since the last [`Self::take_writes`], oldest first.
+    pub fn writes(&self) -> &[(usize, String)] {
+        &self.writes
+    }
+
+    pub fn take_writes(&mut self) -> Vec<(usize, String)> {
+        std::mem::take(&mut self.writes)
+    }
+}
+
+impl std::ops::Deref for ConfigStrings {
+    type Target = [String];
+    fn deref(&self) -> &[String] {
+        &self.table
+    }
+}
+
 /// One next-free cursor per range, named rather than kept in a `CsRange::ALL`-
 /// order array: `next_mut`'s match is exhaustive, so a range added to the enum
 /// without a matching field here is a compile error instead of a silent
@@ -420,7 +463,7 @@ impl Allocators {
     /// the same name.
     pub fn index(
         &mut self,
-        cs: &mut [String],
+        cs: &mut ConfigStrings,
         range: CsRange,
         name: &str,
     ) -> Result<usize, ErrorKind> {
@@ -432,7 +475,7 @@ impl Allocators {
         if next > hi {
             return Err(ErrorKind::BadType("configstring range exhausted"));
         }
-        cs[next] = name.to_string();
+        cs.set(next, name);
         *self.next_mut(range) = next + 1;
         Ok(next)
     }
@@ -447,7 +490,7 @@ impl Allocators {
     /// wait").
     pub fn index_precached(
         &mut self,
-        cs: &mut [String],
+        cs: &mut ConfigStrings,
         range: CsRange,
         name: &str,
         initializing: bool,
@@ -468,7 +511,7 @@ impl Allocators {
     /// it back through configstring `1244 + n`. "" is 0.
     pub fn localized_index(
         &mut self,
-        cs: &mut [String],
+        cs: &mut ConfigStrings,
         name: &str,
         initializing: bool,
     ) -> Result<i32, ErrorKind> {
@@ -484,7 +527,7 @@ impl Allocators {
     /// `1500 + n`.
     pub fn shader_index(
         &mut self,
-        cs: &mut [String],
+        cs: &mut ConfigStrings,
         name: &str,
         initializing: bool,
     ) -> Result<i32, ErrorKind> {
@@ -500,7 +543,7 @@ impl Allocators {
     /// carries, resolved through configstring `780 + n`.
     pub fn effect_index(
         &mut self,
-        cs: &mut [String],
+        cs: &mut ConfigStrings,
         name: &str,
         initializing: bool,
     ) -> Result<i32, ErrorKind> {
@@ -524,7 +567,7 @@ impl Allocators {
     /// (0x3001db80).
     pub fn fx_tag_index(
         &mut self,
-        cs: &mut [String],
+        cs: &mut ConfigStrings,
         id: i32,
         tag: &str,
     ) -> Result<i32, ErrorKind> {
@@ -586,14 +629,14 @@ pub fn hint_string_index(cs: &[String], layout: &CsLayout, name: &str) -> Option
 /// The scan order is VERIFIED by the mp_chateau `re` capture, whose two
 /// objectives' strings land in 1214 and 1215 behind the engine's 1212/1213
 /// (docs/research/cod11-gametypes-re-bel.md 4).
-pub fn hint_string_alloc(cs: &mut [String], layout: &CsLayout, name: &str) -> Option<i32> {
+pub fn hint_string_alloc(cs: &mut ConfigStrings, layout: &CsLayout, name: &str) -> Option<i32> {
     for i in 0..MAX_HINT_STRINGS {
-        let slot = &mut cs[layout.hint_strings + i];
+        let slot = &cs[layout.hint_strings + i];
         if slot == name {
             return Some(i as i32);
         }
         if slot.is_empty() {
-            *slot = name.to_string();
+            cs.set(layout.hint_strings + i, name);
             return Some(i as i32);
         }
     }
@@ -634,7 +677,7 @@ mod tests {
     /// it is allocated.
     #[test]
     fn index_precached_allocates_only_while_initializing() {
-        let mut cs = vec![String::new(); 2048];
+        let mut cs = ConfigStrings::new(vec![String::new(); 2048]);
         let mut a = Allocators::default();
         let slot = a
             .index_precached(&mut cs, CsRange::Model, "xmodel/crate", true)
@@ -791,7 +834,7 @@ mod tests {
     /// being a static table").
     #[test]
     fn an_allocator_interns_and_appends() {
-        let mut cs = vec![String::new(); 2048];
+        let mut cs = ConfigStrings::new(vec![String::new(); 2048]);
         let mut a = Allocators::default();
         let first = a.index(&mut cs, CsRange::Model, "xmodel/fx").unwrap();
         assert_eq!(first, 269);
@@ -860,7 +903,7 @@ mod tests {
     /// a map that precaches 256 models is broken and should say so.
     #[test]
     fn an_exhausted_range_is_an_error() {
-        let mut cs = vec![String::new(); 2048];
+        let mut cs = ConfigStrings::new(vec![String::new(); 2048]);
         let mut a = Allocators::default();
         let (lo, hi) = CsRange::Effect.bounds();
         for i in 0..=(hi - lo) {
