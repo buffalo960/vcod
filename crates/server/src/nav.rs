@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use vcod_common::collision::{CollisionWorld, MASK_PLAYERSOLID, Prim};
 use vcod_common::movetrace::MoveWorld;
-use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
+use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 use vcod_common::pmove::cmd::{ANGLE2SHORT, EventRing, chop, player_step};
 use vcod_common::pmove::{MoveRules, PlayerState};
 
@@ -91,6 +91,10 @@ pub struct NavGraph {
     /// The jump edges proved from a standstill at their foot, jumping at the
     /// lip ([`NavGraph::link_leaps`]): a bot comes to rest at the foot first.
     pub leaps: HashSet<(u32, u32)>,
+    /// The jump edges proved only with crouch held from the tick after the
+    /// jump until the body lands ([`Gait::CrouchJump`]), through a window
+    /// too low for a standing body ([`NavGraph::link_pockets`]).
+    pub crouch_jumps: HashSet<(u32, u32)>,
     /// Drops deeper than a jump whose walk from 4 units aside of their node
     /// falls, and walks down beside a fall that hurts whose forward walk
     /// does: a plan takes one only where there
@@ -166,6 +170,7 @@ impl NavGraph {
             edges: Vec::new(),
             jumps: HashSet::new(),
             leaps: HashSet::new(),
+            crouch_jumps: HashSet::new(),
             risky: HashSet::new(),
             perches: HashSet::new(),
             spacing: spacing.clamp(SPACING_MIN, SPACING_MAX),
@@ -614,23 +619,33 @@ impl NavGraph {
                 })
                 .collect();
             // A rest proves a way only where the run aimed at the rest itself,
-            // as a bot following the edge aims, arrives there too.
+            // as a bot following the edge aims, arrives there too. A run
+            // that arrives no other way is tried again crouching from its
+            // jump on: some rooms leave only by a window a standing body
+            // does not fit through.
             let ends = par_map(&jobs, |&(n, t)| {
                 let from = self.nodes[n as usize];
-                match walk_as(world, from, t, None, Gait::Forward) {
-                    Walked::Arrived(q, _) if !perched(world, q) => {
-                        match walk_as(world, from, q.truncate(), Some(q.z), Gait::Forward) {
-                            Walked::Arrived(_, jumped) => Some((q, jumped)),
-                            _ => None,
+                [Gait::Forward, Gait::CrouchJump]
+                    .into_iter()
+                    .find_map(|gait| match walk_as(world, from, t, None, gait) {
+                        Walked::Arrived(q, _)
+                            if !perched(world, q)
+                                && (gait == Gait::Forward || stands(world, q)) =>
+                        {
+                            match walk_as(world, from, q.truncate(), Some(q.z), gait) {
+                                Walked::Arrived(_, jumped) => {
+                                    Some((q, jumped, gait == Gait::CrouchJump && jumped))
+                                }
+                                _ => None,
+                            }
                         }
-                    }
-                    _ => None,
-                }
+                        _ => None,
+                    })
             });
             let mut fresh = Vec::new();
             let mut recheck = Vec::new();
             for (&(n, _), end) in jobs.iter().zip(ends) {
-                let Some((q, jumped)) = end else {
+                let Some((q, jumped, crouched)) = end else {
                     continue;
                 };
                 let c = self.column(q);
@@ -642,7 +657,7 @@ impl NavGraph {
                     }
                     _ if self.nodes.len() < MAX_NODES && inside(q) && !hazard(hazards, q) => {
                         let m = self.add(c, q);
-                        self.link_as(n, m, jumped);
+                        self.link_crouched(n, m, jumped, crouched);
                         fresh.push(m);
                     }
                     _ => {}
@@ -651,19 +666,20 @@ impl NavGraph {
             recheck.sort_unstable();
             recheck.dedup();
             let walked = par_map(&recheck, |&(n, m)| {
-                let to = self.nodes[m as usize];
-                walk_to(
-                    world,
-                    &self.ladder_boxes,
-                    self.nodes[n as usize],
-                    to.truncate(),
-                    Some(to.z),
-                )
+                let (from, to) = (self.nodes[n as usize], self.nodes[m as usize]);
+                walk_to(world, &self.ladder_boxes, from, to.truncate(), Some(to.z))
+                    .map(|(_, jumped)| (jumped, false))
+                    .or_else(|| {
+                        match walk_as(world, from, to.truncate(), Some(to.z), Gait::CrouchJump) {
+                            Walked::Arrived(_, true) => Some((true, true)),
+                            _ => None,
+                        }
+                    })
             });
             let mut linked = false;
             for (&(n, m), w) in recheck.iter().zip(walked) {
-                if let Some((_, jumped)) = w {
-                    self.link_as(n, m, jumped);
+                if let Some((jumped, crouched)) = w {
+                    self.link_crouched(n, m, jumped, crouched);
                     linked = true;
                 }
             }
@@ -922,6 +938,15 @@ impl NavGraph {
             }
         } else if !jumped {
             self.jumps.remove(&(a, b));
+            self.crouch_jumps.remove(&(a, b));
+        }
+    }
+
+    /// [`Self::link_as`], a crouched jump edge when `crouched`.
+    fn link_crouched(&mut self, a: u32, b: u32, jumped: bool, crouched: bool) {
+        self.link_as(a, b, jumped);
+        if crouched && self.jumps.contains(&(a, b)) {
+            self.crouch_jumps.insert((a, b));
         }
     }
 
@@ -1224,6 +1249,7 @@ impl NavGraph {
             edges,
             jumps: HashSet::new(),
             leaps: HashSet::new(),
+            crouch_jumps: HashSet::new(),
             risky: HashSet::new(),
             perches: HashSet::new(),
             spacing: SPACING_MIN,
@@ -2072,6 +2098,13 @@ impl Follower {
         };
         let jump = g.jumps.contains(&(a, b));
         let edge = (a, b);
+        // A crouched jump's walk is the gait that proved it: no other gets
+        // through the window.
+        let gait = if g.crouch_jumps.contains(&edge) {
+            Gait::CrouchJump
+        } else {
+            Gait::Forward
+        };
         let (a, b) = (g.nodes[a as usize], g.nodes[b as usize]);
         if at.z < a.z - ARRIVE {
             return true;
@@ -2120,14 +2153,7 @@ impl Follower {
         {
             return false;
         }
-        match walk_with(
-            world,
-            at,
-            Some(pace),
-            b.truncate(),
-            Some(b.z),
-            Gait::Forward,
-        ) {
+        match walk_with(world, at, Some(pace), b.truncate(), Some(b.z), gait) {
             Walked::Arrived(_, jumped) => jump || !jumped,
             _ => false,
         }
@@ -2718,6 +2744,19 @@ impl Follower {
         }
     }
 
+    /// Whether the way to the current waypoint is a crouched jump edge: the
+    /// bot holds crouch from the cmd after its jump until it lands, as
+    /// [`Gait::CrouchJump`] proved it.
+    pub fn crouch_jumping(&self, g: &NavGraph) -> bool {
+        let Some(i) = self.next.checked_sub(1) else {
+            return false;
+        };
+        match (self.path.get(i), self.path.get(self.next)) {
+            (Some(&a), Some(&b)) => g.crouch_jumps.contains(&(a, b)),
+            _ => false,
+        }
+    }
+
     /// On a jump edge with the body's jump still cooling down
     /// (`PM_CheckJump` refuses one inside `JUMP_COOLDOWN_MS` of the last)
     /// or under 1.5's penalty ([`jump_ready`]), the edge's foot to come to
@@ -3198,6 +3237,14 @@ fn perched(world: &CollisionWorld, p: Vec3) -> bool {
         && !footed(world, p)
 }
 
+/// Whether a standing body fits at `p`: a crouched jump's rest on a
+/// window's sill, where it cannot stand, is no node; a walk from a node
+/// starts standing.
+fn stands(world: &CollisionWorld, p: Vec3) -> bool {
+    let ps = body(p, 0.0);
+    !world.box_trace(p, p, ps.mins(), ps.maxs()).startsolid
+}
+
 /// Whether a body standing at `p` has ground right under its middle, not
 /// a ladder's: the floor beside a hatch, not the hole's rim.
 fn footed(world: &CollisionWorld, p: Vec3) -> bool {
@@ -3491,6 +3538,10 @@ enum Gait {
     Leap,
     Backward,
     Creep,
+    /// [`Gait::Forward`] that holds crouch from the tick after its jump
+    /// until the body lands again: through a window too low for a standing
+    /// body (`NavGraph::crouch_jumps`).
+    CrouchJump,
 }
 
 /// What a walk came to.
@@ -3734,6 +3785,7 @@ fn walk_sliding(
     let mut jump = false;
     let mut fell_before_jump = false;
     let mut bobbing = false;
+    let mut crouched = false;
     // A body in the air when the budget runs out is let land: a drop down
     // a steep companionway is slower than the run it replaced.
     while tick < budget || (airborne && tick < budget + FALL_TICKS) {
@@ -3741,7 +3793,7 @@ fn walk_sliding(
         let before = ps.origin;
         let to = target - ps.origin.truncate();
         let (yaw, forward) = match gait {
-            Gait::Forward | Gait::Leap => (to.y.atan2(to.x).to_degrees(), 127),
+            Gait::Forward | Gait::Leap | Gait::CrouchJump => (to.y.atan2(to.x).to_degrees(), 127),
             Gait::Backward => ((-to.y).atan2(-to.x).to_degrees(), -127),
             Gait::Creep => {
                 let forward = back_move(to.length(), ps.on_ladder);
@@ -3758,6 +3810,14 @@ fn walk_sliding(
             angles: [(pitch * ANGLE2SHORT) as i32, (yaw * ANGLE2SHORT) as i32, 0],
             ..NULL_USERCMD
         };
+        // `PM_CheckJump` refuses a crouched body, so the crouch starts on
+        // the cmd after the jump's, held as a retail client holds it.
+        crouched &= !ps.on_ground;
+        if crouched {
+            cmd.wbuttons |= msg::WBUTTON_CROUCH;
+            cmd.up = -127;
+        }
+        crouched |= gait == Gait::CrouchJump && cmd.up > 0;
         if gait == Gait::Leap && !jumped && ps.on_ground {
             // The lip ([`lip_ahead`]): the tick run without the jump, kept
             // when it stays on the ground, run again with it when it does not.
@@ -3814,12 +3874,12 @@ fn walk_sliding(
         // Right under a floor more than a step up, the jump a bot makes
         // there (`jump_cue`): re-aimed at a point overhead, the run only
         // jitters and never stalls.
-        if gait == Gait::Forward
+        if matches!(gait, Gait::Forward | Gait::CrouchJump)
             && !jumped
             && ps.on_ground
             && floor.is_some_and(|f| f - ps.origin.z > vcod_common::pmove::STEPSIZE)
             && target.distance(ps.origin.truncate()) < JUMP_UNDER
-            && jump_clear(world, &ps, target)
+            && jump_clear(world, &ps, target, gait == Gait::CrouchJump)
         {
             jumped = true;
             jump = true;
@@ -3833,7 +3893,7 @@ fn walk_sliding(
         // body onto it and it slides back down, so it is on the ground one
         // tick in a few: it jumps on the next one (mp_berlin's roof gutter,
         // bot-navigation.md "Jumps").
-        if bobbing && !jumped && ps.on_ground && jump_clear(world, &ps, target) {
+        if bobbing && !jumped && ps.on_ground && jump_clear(world, &ps, target, false) {
             jumped = true;
             jump = true;
             fell_before_jump = fell;
@@ -3862,10 +3922,10 @@ fn walk_sliding(
         if moved < least && !hanging {
             stalled += 1;
             if stalled == 2 {
-                if gait == Gait::Forward
+                if matches!(gait, Gait::Forward | Gait::CrouchJump)
                     && !jumped
                     && ps.on_ground
-                    && jump_clear(world, &ps, target)
+                    && jump_clear(world, &ps, target, gait == Gait::CrouchJump)
                 {
                     jumped = true;
                     jump = true;
@@ -4143,8 +4203,17 @@ pub fn push_off(
 /// ahead toward `target` at the top of the jump, or under a ceiling lower
 /// than the jump's height, as high as the body rises. A wall to the
 /// ceiling fails it, which keeps a jump off the walks that end at one.
-fn jump_clear(world: &CollisionWorld, ps: &PlayerState, target: glam::Vec2) -> bool {
-    let (mins, maxs) = (ps.mins(), ps.maxs());
+/// A `crouched` jump looks for room at the crouched body's height.
+fn jump_clear(
+    world: &CollisionWorld,
+    ps: &PlayerState,
+    target: glam::Vec2,
+    crouched: bool,
+) -> bool {
+    let (mins, mut maxs) = (ps.mins(), ps.maxs());
+    if crouched {
+        maxs.z = vcod_common::pmove::Stance::Crouch.height();
+    }
     let up = world.box_trace(
         ps.origin,
         ps.origin + Vec3::Z * (vcod_common::pmove::JUMP_HEIGHT + JUMP_SLACK),

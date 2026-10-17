@@ -73,15 +73,27 @@ fn main() {
         let on = seeds.iter().filter(|s| g.nearest(**s).is_some()).count();
         let (reach, leave) = g.spawn_census(&world.collision, &seeds);
         println!(
-            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {leave} reach it, {} leaps, digest {:016x}",
+            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {leave} reach it, {} leaps, {} crouched jumps, digest {:016x}",
             g.spacing,
             g.len(),
             g.edge_count(),
             on,
             seeds.len(),
             g.leaps.len(),
+            g.crouch_jumps.len(),
             digest(&g),
         );
+        if std::env::var("CROUCH").is_ok_and(|v| v == "1") {
+            let mut edges: Vec<_> = g.crouch_jumps.iter().copied().collect();
+            edges.sort_unstable();
+            for (a, b) in edges {
+                println!(
+                    "  crouched jump {a} {:?} -> {b} {:?}",
+                    g.nodes[a as usize].round(),
+                    g.nodes[b as usize].round()
+                );
+            }
+        }
         if std::env::var("LOST").is_ok_and(|v| v == "1") {
             for (i, n) in g.census_lost(&world.collision, &seeds).1 {
                 let s = seeds[i].map(f32::round);
