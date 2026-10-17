@@ -616,8 +616,17 @@ every cmd, the event ring read back through the wire's 8 bits included
 misses on the sprint run (VERIFIED, the gate on that revert).
 `predictor_matches_the_1_5_server_step` runs the 1.5 moves and turns
 captures the same way on protocol 6 (VERIFIED, 12 821 cmds, 0
-mismatches). The seats are not covered: a seated sim needs the server's
-vehicle.
+mismatches). The six seated captures (tank and jeep seats and drive, the
+jeep gun and rider runs) ride the same gate since 2026-10-18: at each
+snapshot the harness puts retail's seat on the sim, its vehicle's angles
+(`vang`) and its origin, since the boarding, the exit and the tag
+placement are the server's (`follow_seat`). Every read agrees on all six
+(VERIFIED, 33 648 cmds, 3 200 seated snapshots, 0 mismatches). Dropping
+`vehPos` from `to_wire` puts 367 and 381 `delta_angles` misreads on the
+jeep seats and rider runs, the passenger's arcs, and six
+`weapon_pos_frac` ones on the tank seats run (VERIFIED, the gate on that
+revert). Not covered: a death, a spectator, a turret mount and a link,
+which no UO capture holds.
 
 ## 16. The lean's footstep cadence
 

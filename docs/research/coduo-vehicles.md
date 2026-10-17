@@ -428,6 +428,11 @@ With the seat stripped from the playerstate the same replay misses
 `delta_angles` on 44 and 230 snapshots, `fWeaponPosFrac` and the
 driver's weapon state (VERIFIED, replay): the gate sees the seat.
 
+The server's half of the round trip (`ClientSim::to_wire`, the protocol
+map and the codec, then `from_wire`) is `predict_ab`'s UO gate over the
+same six captures, the seat put on the sim at each snapshot
+(`coduo-movement.md` 15).
+
 ## 8. Captures
 
 `crates/server/tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-seats-uo.txt`
