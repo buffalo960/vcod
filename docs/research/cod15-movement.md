@@ -495,12 +495,60 @@ connection's protocol (`Arith::for_protocol`), so the predictor computes
 what a Linux 1.5b or UO server does. INFERRED: a Windows server's or
 cgame's arithmetic is MSVC's and was not read.
 
+The rest of the walk, read 2026-10-17 in 1.5b's `game.mp.i386.so`:
+
+- `PM_Accelerate` is one function (0x1ed62), called by `PM_WalkMove`
+  (0x204c9), `PM_AirMove` (0x1ffd7), `PM_LadderMove` (0x27a7e) and
+  three more sites (0x1fe76, 0x20b0c, 0x20fb7). The speed along the wish
+  is stored (`[ebp-0x1c]`), the lack stored, the rate
+  `accel * frametime * max(wishspeed, pm_stopspeed)` (`pm_stopspeed`
+  through the GOT slot at ebx+0xbbc, 100) stored once, capped at the
+  lack, times `1 / ps.friction` with a ground entity, capped again, and
+  each component `speed * wishdir + velocity` rounded once. VERIFIED.
+  The walk's wish speed is `VectorNormalize`'s length times the scale,
+  stored (0x203ec-0x203f5), and the accel the stance picks, times the
+  knockback's 0.25, stored (0x204ac) before the call; the air's wish
+  speed likewise (0x1ffb2-0x1ffbb) with `pm_airaccelerate`. VERIFIED.
+  So 1.5's air accelerate takes the walk's floor of 100, as 1.1's own
+  inline one does (`cod11-mantle.md`, "The walk's accel floor"), and a
+  jump while leaning wishes the walk's 76 until the lean has eased back
+  (the air cmd scale takes a lean as the walk, 0x1eec9).
+- `PM_Friction` (0x1eab3) stores the speed (`sqrt` of the dot, as 1.1),
+  the control, its knockback or jump penalty scale, the drop after each
+  term, the new speed and its ratio to the old. VERIFIED.
+- `PM_StepSlideMove` (0x29942) forms the step-up's end on the stack
+  (`stepSize + 1` plus the start's z, 0x29ccf-0x29ce2) and stores what
+  the up trace left, `(stepSize + 1) * fraction - 1` (0x29d46-0x29d5f);
+  the down pass takes the step off the end and stores it, then the snap
+  of 9 when on a ground plane, stored again (0x29e83-0x29eac).
+  `PM_ClipVelocity` (0x1e8e5) stores the dot, the overclipped backoff and
+  each component's change; `VectorNormalize` (0x32f73) stores the squared
+  length, the length and its reciprocal. VERIFIED.
+
+Measured against the captures, with `moves_ab`'s `MOVES_EXACT=1` (how many
+snapshots' predicted origins are retail's to the bit, past the gate's
+0.05 tolerance): the 1.5 moves capture 1152 of 1222, its turns 1033 of
+1100, UO's sprint 876 of 900, both seat captures and the three uofoot
+ones the same, with and without each of these stores ported (each tried
+alone: the accelerate, the friction, the walk's stored wish speed, the
+clip, the down pass's two subtractions). VERIFIED (measured 2026-10-17).
+INFERRED: the per-frame velocity snap swallows the last bit of a
+velocity, so a store that only rounds it differently changes an origin
+once in thousands of frames. The 1.5 misses that stay are the ground's z,
+one or two ulps under retail's on the slope (the collision's own
+arithmetic with `Arith::Kept` drops the moves capture to 1118, so the
+stored trace is most of the way there), and are open. vcod ports the one
+that changes what a body does, the air accelerate's floor:
+`pmove::accelerate_stored` for 1.5's and UO's walk and air,
+`pmove::air_accelerate` for 1.1's air
+(`pmove::tests::a_wish_under_100_in_the_air_accelerates_at_100s_rate`).
+
 ## Unchanged
 
 Every `pm_*` tunable (1.5 rodata 0x75624-0x75664 against 1.1's
 0x70824-0x70864), jump height 39, the 500 ms jump gate, the 300 ms ladder
 re-grab, the spread kick of 64 capped at 255, `PM_SlideMove`,
-`PM_ClipVelocity`, the accelerate, `PM_LadderMove`, `PM_AirMove`, the dead
+`PM_ClipVelocity`, the accelerate's floor and caps, `PM_LadderMove`, `PM_AirMove`, the dead
 friction, `PM_SetWaterLevel`, the stun and fall damage. VERIFIED.
 
 ## What vcod does with this
