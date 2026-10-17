@@ -1378,9 +1378,10 @@ const LATE_VICTIM_UO: &[i32] = &[];
 /// first 23750, whose pitches -32 and -8 the snapshots at 23550 and 23750
 /// read.
 const EARLY_VICTIM_15: &[i32] = &[5284, 5483];
-/// The same on UO: cmd 20651 (145 at snapshot 20650) and the first 25150
-/// (pitch 4 at 25150).
-const EARLY_VICTIM_UO: &[i32] = &[1077, 5576];
+/// The same on UO: cmd 20651 (145 at snapshot 20650), the first 25150
+/// (pitch 4 at 25150) and the strafe's first 34800, whose 16 ms of
+/// running right the snapshot at 34800 carries.
+const EARLY_VICTIM_UO: &[i32] = &[1077, 5576, 15229];
 const GAPS_VICTIM: &[(&str, &str)] = &[];
 /// [`GAPS`] for the `-victim-15` capture: the wounding round.
 const GAPS_VICTIM_15: &[(&str, &str)] = &[
