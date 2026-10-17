@@ -364,8 +364,15 @@ impl Shell {
         s.register("cl_packetdup", "1", ARCHIVE);
         s.register("cl_timeNudge", "0", 0);
         // 1.5's and UO's cgame records on the server's `C` and stops on its
-        // `D` while this is 1 (cod11-demos.md, "Automatic demos").
+        // `D` while this is 1; their cvar table rows are "0", archived.
+        // `cg_showdemoname` 1, archived, names the demo on their
+        // `RECORDING` line (cod11-demos.md 6 and 8).
         s.register("cg_autodemo", "0", ARCHIVE);
+        s.register("cg_showdemoname", "1", ARCHIVE);
+        // CL_Init (CoDMP.exe 0x411fd8, 0x411f8e): `timedemo` "0" with no
+        // flags, `cl_freezeDemo` "0" CVAR_TEMP (cod11-demos.md, "Playback").
+        s.register("timedemo", "0", 0);
+        s.register("cl_freezeDemo", "0", 0);
         // CoDMP.exe registers `password` CVAR_USERINFO, not archived
         // (0x4123ea); the browser's password popup edits it.
         s.register("password", "", USERINFO);
@@ -1051,6 +1058,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nextdemo_holds_a_whole_line_and_clears() {
+        let mut s = Shell::new();
+        s.execute("set nextdemo \"demo b; set nextdemo demo a\"");
+        assert_eq!(s.cvar("nextdemo"), Some("demo b; set nextdemo demo a"));
+        s.execute("set nextdemo \"\"");
+        assert_eq!(s.cvar("nextdemo"), Some(""));
+    }
+
+    #[test]
     fn a_run_only_value_stays_out_of_the_config_until_set_again() {
         let mut s = Shell::new();
         s.set_for_run("vc_bloom", "1");
@@ -1247,6 +1263,7 @@ mod tests {
             [
                 "cl_allowDownload",
                 "cl_freelook",
+                "cl_freezeDemo",
                 "cl_language",
                 "cl_maxpackets",
                 "cl_packetdup",

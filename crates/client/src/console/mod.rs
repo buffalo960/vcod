@@ -242,14 +242,11 @@ impl Console {
         }
         out.push(rect(0.0, y * sy, w, 2.0 * sy, SEPARATOR));
 
-        let Some(font) = &self.font else { return out };
-        // Text is laid out in window px: 8 px cells, 16 px rows, glyphs at a
-        // third of the font's own scale, each row's baseline 16 px below it.
-        let scale = 1.0 / (3.0 * font.unit_scale());
-        let glyph_top = font.max_height as f32 * font.glyph_scale / 3.0;
+        if self.font.is_none() {
+            return out;
+        }
         let text = |out: &mut Vec<HudQuad>, s: &str, x: f32, row_y: f32| {
-            let top = row_y + ROW_H - glyph_top;
-            font::layout_cells(font, s, x, top, scale, CHAR_W, WHITE, out);
+            self.text(out, s, x, row_y);
         };
 
         let version = concat!("vcod ", env!("VCOD_VERSION"));
@@ -288,9 +285,50 @@ impl Console {
         out
     }
 
+    /// One line of console text at window px (CoDMP.exe 0x416a30): 8 px
+    /// cells, glyphs at a third of the font's own scale, the baseline 16 px
+    /// below `row_y`.
+    fn text(&self, out: &mut Vec<HudQuad>, s: &str, x: f32, row_y: f32) {
+        self.text_at(out, s, x, row_y + ROW_H, CHAR_W, 1.0);
+    }
+
+    /// Console-font text with its baseline at `baseline`, `cell` px a
+    /// character and the glyphs `k` times their window px size.
+    fn text_at(&self, out: &mut Vec<HudQuad>, s: &str, x: f32, baseline: f32, cell: f32, k: f32) {
+        let Some(font) = &self.font else { return };
+        let scale = k / (3.0 * font.unit_scale());
+        let glyph_top = k * font.max_height as f32 * font.glyph_scale / 3.0;
+        font::layout_cells(font, s, x, baseline - glyph_top, scale, cell, WHITE, out);
+    }
+
+    /// `SCR_DrawDemoRecording`, drawn in a level while `record` writes,
+    /// white in the console's font. 1.1 (CoDMP.exe 0x416b10) places it at
+    /// window px (5, 470), its baseline 16 px lower; 1.5 and UO
+    /// (CoDMP15.exe 0x4185a0, CoDUOMP.exe 0x419a60) at (5, 479) on the
+    /// 640x480 grid, scaled with the window.
+    pub fn recording_line(&self, text: &str, v1: bool, w: f32, h: f32) -> Vec<HudQuad> {
+        let mut out = Vec::new();
+        if v1 {
+            self.text(&mut out, text, 5.0, 470.0);
+        } else {
+            let (sx, sy) = (w / 640.0, h / 480.0);
+            self.text_at(&mut out, text, 5.0 * sx, 479.0 * sy, CHAR_W * sx, sy);
+        }
+        out
+    }
+
     /// The scrollback wrapped to `cols`, oldest first.
     fn rows(&self, cols: usize) -> Vec<String> {
         self.lines.iter().flat_map(|l| wrap(l, cols)).collect()
+    }
+}
+
+/// `RECORDING %s: %ik`, the demo's name and its size so far in whole
+/// KiB; 1.5 and UO drop the name unless `cg_showdemoname` is 1.
+pub fn recording_text(name: &str, bytes: u64, show_name: bool) -> String {
+    match show_name {
+        true => format!("RECORDING {name}: {}k", bytes / 1024),
+        false => format!("RECORDING: {}k", bytes / 1024),
     }
 }
 
@@ -482,6 +520,16 @@ mod tests {
         assert_eq!(q[1].verts[0], [0.0, 476.0]);
         assert_eq!(q[1].verts[2], [1280.0, 480.0]);
         assert_eq!(q[1].rgba, SEPARATOR);
+    }
+
+    #[test]
+    fn the_recording_line_counts_whole_kib() {
+        assert_eq!(
+            recording_text("demo0003", 1023, true),
+            "RECORDING demo0003: 0k"
+        );
+        assert_eq!(recording_text("x", 5000, true), "RECORDING x: 4k");
+        assert_eq!(recording_text("x", 5000, false), "RECORDING: 4k");
     }
 }
 
