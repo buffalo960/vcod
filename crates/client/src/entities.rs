@@ -35,8 +35,7 @@ use vcod_common::xmodel::{self, XModel};
 /// `legsAnim`/`torsoAnim`: anim index in the low 9 bits, restart toggle in bit 512.
 const ANIM_INDEX_MASK: i32 = 511;
 
-/// How long an entity's anim state survives unseen. Long enough to ride out PVS
-/// churn, short enough that a player who left drops.
+/// How long a turret's anim state and a pending assembly survive unseen.
 const STATE_TTL_MS: i32 = 5000;
 
 /// New xmodel load+upload pairs per [`build_instances`] call. One costs
@@ -791,7 +790,8 @@ impl Default for EntityScene {
     }
 }
 
-/// One entity's playback state, dropped once unseen for [`STATE_TTL_MS`].
+/// One player's or corpse's playback state, kept per entity number for the
+/// cgame's life as retail's `clientInfo` lerp frames are.
 struct EntityAnim {
     /// Assembly this pose was sized for; a change rebuilds against the new skeleton.
     key: Vec<String>,
@@ -802,7 +802,6 @@ struct EntityAnim {
     /// clips under them (cod11-movers.md 15, "The drawn body's clip").
     legs: ChannelClock,
     torso: ChannelClock,
-    last_seen_ms: i32,
     /// Roster-resolved visual from the last frame this entity resolved (body
     /// plus attachments, no held weapon). A corpse re-resolves through the
     /// dead client's live roster entry, which clears when they drop to limbo;
@@ -815,14 +814,13 @@ struct EntityAnim {
 }
 
 impl EntityAnim {
-    fn new(key: Vec<String>, skel: &Rc<Skeleton>, now_ms: i32) -> EntityAnim {
+    fn new(key: Vec<String>, skel: &Rc<Skeleton>) -> EntityAnim {
         EntityAnim {
             key,
             skeleton: skel.clone(),
             pose: PoseBuffer::new(skel),
             legs: ChannelClock::default(),
             torso: ChannelClock::default(),
-            last_seen_ms: now_ms,
             visual: EntityVisual::None,
             body: BodyAngles::default(),
             controls: None,
@@ -1565,12 +1563,13 @@ pub fn build_instances(
                     continue;
                 };
                 // A corpse keeps lerp frames of its own (cgame 0x30028400
-                // indexes them by entity number), so its death clip plays
+                // indexes them by body queue slot), so its death clip plays
                 // from the start while `eFlags` 0x800 marks it fresh, and
-                // shows its last frame otherwise.
-                states.entry(num).or_insert_with(|| {
-                    EntityAnim::new(key.clone(), &assembly.skeleton, render_time)
-                });
+                // shows its last frame otherwise. A player's are his
+                // client's. Neither expires while unseen (movers doc 15).
+                states
+                    .entry(num)
+                    .or_insert_with(|| EntityAnim::new(key.clone(), &assembly.skeleton));
                 let st = states.get_mut(&num).expect("inserted above");
                 if st.key != key {
                     // The clocks hold only anim indices and times, so carry
@@ -1582,14 +1581,12 @@ pub fn build_instances(
                         pose: PoseBuffer::new(&assembly.skeleton),
                         legs: st.legs,
                         torso: st.torso,
-                        last_seen_ms: st.last_seen_ms,
                         visual: EntityVisual::None,
                         body: st.body,
                         controls: st.controls,
                     };
                 }
                 st.visual = roster_visual;
-                st.last_seen_ms = render_time;
                 let (legs_wire, torso_wire) =
                     (ent.field_i32(p, "legsAnim"), ent.field_i32(p, "torsoAnim"));
                 stats.anim_restarts += u64::from(legs_wire != st.legs.anim())
@@ -2081,7 +2078,6 @@ pub fn build_instances(
             .or_insert_with(|| path.to_string());
     }
     // `abs` so a render clock that jumps backwards prunes instead of keeping everything.
-    states.retain(|_, s| (render_time - s.last_seen_ms).abs() < STATE_TTL_MS);
     turret_anims.retain(|_, s| (render_time - s.last_seen_ms).abs() < STATE_TTL_MS);
     assemblies.prune_stale(render_time);
     stats.pending_assemblies = assemblies.pending.len();
