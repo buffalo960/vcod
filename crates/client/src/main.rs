@@ -1648,6 +1648,9 @@ fn start_loading(
     if let Some(hud) = hud {
         hud.on_gamestate();
     }
+    // The server's team colours reach `^8`/`^9` from the first HUD frame;
+    // until then they draw white, as a fresh 1.5 or UO client's do.
+    hud::font::set_team_colours(net.protocol().team_colour_codes, &|_| None);
     audio.set_protocol(net.protocol());
     audio.on_gamestate(&map);
     fx.clear();
@@ -5904,6 +5907,11 @@ impl ApplicationHandler for App {
 
                                     if let Some(hud) = &mut self.hud {
                                         let hud_t0 = Instant::now();
+                                        hud.set_message_widths(
+                                            self.shell.cvar_f32("cg_gameMessageWidth") as i32,
+                                            self.shell.cvar_f32("cg_gameBoldMessageWidth") as i32,
+                                            screen_w as u32,
+                                        );
                                         hud_quads = hud.build(&hud_frame);
                                         self.hud_ms = hud_t0.elapsed().as_secs_f32() * 1000.0;
                                         // The vote draw's `player_talk` on a

@@ -342,7 +342,8 @@ fn rect(x: f32, y: f32, w: f32, h: f32, rgba: [f32; 4]) -> HudQuad {
 }
 
 /// Breaks `line` every `cols` printable characters; a row that starts
-/// mid-colour carries the colour code it inherits.
+/// mid-colour carries the colour code it inherits. The codes are the
+/// renderer's ([`crate::hud::font::is_colour_code`]).
 fn wrap(line: &str, cols: usize) -> Vec<String> {
     let mut rows = Vec::new();
     let mut row = String::new();
@@ -352,8 +353,7 @@ fn wrap(line: &str, cols: usize) -> Vec<String> {
     while let Some(c) = chars.next() {
         if c == '^'
             && let Some(&d) = chars.peek()
-            && d.is_ascii_digit()
-            && d <= '7'
+            && crate::hud::font::is_colour_code(d)
         {
             chars.next();
             row.push('^');

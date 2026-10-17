@@ -102,6 +102,11 @@ pub struct Protocol {
     /// The client game and UI modules whose paks open a pure `cp`
     /// (`CL_SendPureChecksums`, `SV_VerifyPaks_f`).
     pub pure_dlls: [&'static str; 2],
+    /// The client's text renderer takes `^8` and `^9` as colour codes, in
+    /// `g_TeamColor_Allies` and `g_TeamColor_Axis` (CoDMP.exe 1.5
+    /// 0x4ba8e0, CoDUOMP.exe 0x4c02f0); 1.1's prints them
+    /// (cod11-hud-protocol.md 7).
+    pub team_colour_codes: bool,
 }
 
 const HUD_V1: HudWire = HudWire {
@@ -143,6 +148,7 @@ pub const PROTOCOL_V1: Protocol = Protocol {
     id_pak_prefixes: &["pak", "mp_pak", "sp_pak"],
     skips_svr_paks: false,
     pure_dlls: ["cgame_mp_x86.dll", "ui_mp_x86.dll"],
+    team_colour_codes: false,
 };
 
 /// Patch 1.5: 1.1's wire with a wider, renumbered `pm_flags`
@@ -184,6 +190,7 @@ pub const PROTOCOL_V6: Protocol = Protocol {
     id_pak_prefixes: &["pak", "mp_pak", "sp_pak"],
     skips_svr_paks: true,
     pure_dlls: ["cgame_mp_x86.dll", "ui_mp_x86.dll"],
+    team_colour_codes: true,
 };
 
 const HEX_PAK_NUMBERS: &[&str] = &[
@@ -235,6 +242,7 @@ pub const PROTOCOL_V22: Protocol = Protocol {
     // Spelled obfuscated in both binaries: coduo_lnxded `SV_VerifyPaks_f`
     // 0x808cf23 and CoDUOMP.exe 0x42db37 (coduo-diff.md 23).
     pure_dlls: ["uo_cgame_mp_x86.dll", "uo_ui_mp_x86.dll"],
+    team_colour_codes: true,
 };
 
 /// United Offensive's means of death as 1.1's: `modNames`

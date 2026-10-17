@@ -367,6 +367,11 @@ impl Shell {
         // cgame's row at 0x30074c10: default "0", archived; gates the
         // weapon-select binds (docs/research/cod11-hud-protocol.md).
         s.register("cg_weaponCycleDelay", "0", ARCHIVE);
+        // cgame's rows at 0x300750c0 and 0x300750d0 (1.5 0x300770b0, UO
+        // 0x30085950): "70" and "60", archived. The game and bold message
+        // windows wrap at them (docs/research/cod11-chat.md 3.3).
+        s.register("cg_gameMessageWidth", "70", ARCHIVE);
+        s.register("cg_gameBoldMessageWidth", "60", ARCHIVE);
         // cgame's row at 0x30074a20: default "0", archived and CVAR_CHEAT.
         // 1 drops a blob under each player (crate::blob_shadow).
         s.register("cg_shadows", "0", ARCHIVE | CHEAT);

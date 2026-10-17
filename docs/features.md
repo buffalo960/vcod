@@ -195,7 +195,9 @@ something, the bullet links it.
   direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon
-  and scope.
+  and scope. On 1.5 and UO `^8` and `^9` in any text draw in the server's
+  `g_TeamColor_Allies` and `g_TeamColor_Axis`, as 1.5's team chat uses
+  them.
 - Shows a running vote as retail's cgame does (what it's for, the seconds
   left, the yes and no counts with the keys to press) and plays its sound;
   F1 and F2 vote yes and no, and the call vote menu's restart, next map,

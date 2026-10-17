@@ -198,6 +198,14 @@ again onto the next line, which opens with `^` and the last colour read.
 Lines beyond the height drop the oldest; each frame drops at most one line
 older than `cg_chatTime`.
 
+VERIFIED, 1.5's `CG_AddToTeamChat` (cgame 0x3002de50) has the same
+0x10f ring and the same `> 0x59` wrap, but takes `^0`..`^9` as codes; so
+does UO's (0x30039390, its ring at 0x3044ade8). VERIFIED, UO's
+continuation line opens with two codes: `^` and the first colour the
+line read, then `^` and the last one (the first starts as byte 0xff,
+which the renderer does not read as a code). vcod opens it with the last
+code only, which draws the same unless no code came before the wrap.
+
 INFERRED, the draw, newest first, row `k` = -1, -2, ...:
 
 - alpha 1, or `(cg_chatTime - age) * 0.005` (0x30069510) inside the last
@@ -253,7 +261,8 @@ the call returns for the next part. The width is the trap's second
 argument: `cg_gameMessageWidth` (vmCvar 0x301dfc20, default `70`) for
 game messages, `cg_gameBoldMessageWidth` (0x3020d700, `60`) for bold
 ones, both archived (cgame cvar table rows 0x300750c0, 0x300750d0); 1.5's
-and UO's cgames have the same defaults. A width of 0 or one over the
+(0x300770b0, 0x300770c0) and UO's (0x30085950, 0x30085960) rows are the
+same, flags 1 included. A width of 0 or one over the
 console's line width (0x142ef54, `max(vidWidth, 640) / 8 - 2`, set at
 0x4088f0) is clamped to that, so 70 and 60 hold. In 0x408f80, for
 windows 1 and 2:
@@ -279,8 +288,10 @@ Each ended line takes a ring slot (0x408d00, 0x408be0) like a whole
 message. VERIFIED: 1.5's 0x409760 and UO's 0x409dc0 have the same shape
 but take `^0`..`^9` as colour pairs. INFERRED, not read: the window draw
 ignores the blanks after a line's text, so vcod measures a bold line
-without its trailing space. vcod: `messages::wrap`, at 1.1's `^0`..`^7`
-on all three protocols.
+without its trailing space. vcod: `messages::wrap`, at `^0`..`^9` on 1.5
+and UO (`hud::font::is_colour_code`, cod11-hud-protocol.md 7), at the
+two cvars, which the client registers with the cgame's defaults and
+flags and reads each frame (`messages::line_width` holds the clamp).
 
 ## 4. The chat field
 
