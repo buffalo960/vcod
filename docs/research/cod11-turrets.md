@@ -1817,9 +1817,9 @@ snapshots that carry its entity.
   in y.
 - vcod measurement: on UO the wound matches and the kill enters at x
   1513.0006 against retail's 1512 after truncation, with the target's
-  entity and playerstate matching retail's at the kill. `GAPS_SPAWN_UO`
-  names the row. It is the pose, not the trace's arithmetic (13.5): UO's
-  target idles a frame ahead of ours (13.6).
+  entity and playerstate matching retail's at the kill, until the pose
+  fix of 13.7 put it on 1512. It was the pose, not the trace's arithmetic
+  (13.5): UO's target idles a frame ahead (13.6, 13.7).
 - VERIFIED, the gunner's own cmds, read off each snapshot's view: a cmd
   stamped a ms past the snapshot time and followed by one stamped a ms
   below it runs before that snapshot (1.1d 21551, UO 22101 and 22551), and
@@ -1847,6 +1847,7 @@ whole part by halving steps (`whole`), each subtraction exact.
   -0.0001) off retail's on the wound and (+0.0367, +0.0413, +0.0011) on
   the kill. Each difference lies almost along the round, so the box face
   sits elsewhere and the ray does not. The directions agree to 6e-8.
+  13.7 finds the cause and closes the row.
 - VERIFIED, the locational bone trace in each build
   (`SV_LocationalTraceModel`, cod11-combat.md 3.1): 1.1d `cod_lnxded`
   0x80c4564 (18 float stores), 1.5b `cod_lnxded` 0x80d2000 and UO
@@ -1914,11 +1915,11 @@ frame, at weight 0).
   `vehicle_armor_ab` (UO, mp_cassino) both clients spawn the same way, on
   idle 697 at 19350, and with the shift two of its silhouette gates fail
   (one cell 0.28 off, one ray missing the gunner) where without it they
-  pass. So the rule that puts the turret target's idle a frame ahead is
-  not this one. INFERRED candidates, unchecked: the turret target's fall
-  from the placement (40 units, airborne for 300 ms) or its join a second
-  before the spawn. Not ported; the UO rows stay in `GAPS_SPAWN_UO`,
-  `GAPS_HITFINE_UO` and `GAPS_HITGRID_UO`, each naming this section.
+  pass. The shift holds; it failed there because ours posed the
+  script trace at the frame's own time, which the shift alone leaves a
+  frame off on those bodies (13.7). The fall and the early join are not
+  the cause: the `-hitgrid-uo-ground` and `-hitgrid-uo-spawn2` reruns
+  (13.7) show the same frame ahead.
 - VERIFIED, the 1.1d head cells: `xmodelalias/head_axis.gsc` names twenty
   heads, `basehead_axis_a_01..10` on `xmodelparts/basehead_axis11` and
   `basehead_axis_b_01..10` on `basehead_axis21`, and the character script
@@ -1936,6 +1937,70 @@ frame, at weight 0).
 - vcod: `turret_ab`'s `hit_gate` replays each capture as `spawn_gate` does
   and holds the target's playerstate, each hit's point (0.02) and each grid
   cell (0.1) to retail's; the gunner's own rows are the `-spawn` gates'.
+
+### 13.7 The frame ahead: UO's spawn DObj and the script trace
+
+What 13.6 left open, read 2026-10-17. Addresses are module VAs as
+`annotate_func.py` prints them.
+
+- VERIFIED, `G_RunFrame`'s calls: 1.1d calls `Scr_RunCurrentThreads` at
+  0x50653, `G_DObjUpdateServerTime` at 0x506ed, after the second thread
+  pass at 0x506d0. 1.5b has one thread pass, at 0x50821, then
+  `G_XAnimUpdate` at 0x50840. UO's are at 0x59e4d and 0x59e6c.
+  INFERRED: on 1.5b and UO every script thread, a `bulletTrace` in a
+  damage callback included, reads the players' DObjs at the last frame's
+  anim time. On 1.1d the second pass reads them at the frame's own.
+- VERIFIED, UO `G_DObjUpdate` (0x77df9): for an entity with a client
+  (`cmp [ent+0x160],0` at 0x77e12) it calls `G_UpdateClientInfo` (0x77e21),
+  which rebuilds the DObj when the models changed (`G_SafeDObjFree`) and
+  runs `BG_UpdatePlayerDObj` and `BG_PlayerAnimation`. 1.5b's
+  `G_DObjUpdate` (0x6b71c) does nothing for a client. INFERRED: the stock
+  `spawnPlayer`'s `setModel` and `attach` calls (`_teams::model`, after
+  the `spawn`) rebuild a UO player's DObj and set its clips inside the
+  thread. `G_XAnimUpdate` then advances them a frame before the end frame
+  that 1.1d and 1.5b start them on. On 1.5b the end frame's
+  `G_UpdateClientInfo` sees the new models, frees the DObj and starts
+  fresh.
+- vcod measurement: together the two account for 13.6's frame ahead and
+  for the seat-change switch in `coduo-vehicles.md` 13 ("Back from the
+  gunner's seat"). A UO spawn's clips run a frame ahead, and a script
+  trace poses a frame behind, so the two cancel for clips the spawn set.
+  Before a seat change, every pose a script trace reads comes from the
+  spawn's clips. After one, the seat's clips start on an end frame and the
+  trace reads them a frame back. That is why `vehicle_armor_ab`'s bodies
+  matched with neither rule and broke with only the first (13.6).
+- vcod: a UO spawn sets `ClientSim::dobj_ahead`, and the next end frame
+  starts its clips a frame early (`commit_pose`). On 1.5 and UO,
+  `bulletTrace` poses bodies at `GameHost::dobj_time_ms`, which the thread
+  pass leaves at the last frame. 1.1d's traces stay at the frame's own
+  time in every pass: posed at the last frame in its first pass,
+  `leanhit_ab`'s 1.1d grids go off retail's by up to 11 units. Why
+  1.1d's first pass reads the new time is not traced. With both, every UO cell of the
+  `-hitgrid-uo` grids, the `-hitfine-uo` points and the `-spawn-uo` kill
+  match retail's (`GAPS_SPAWN_UO`, `GAPS_HITFINE_UO`, `GAPS_HITGRID_UO`
+  removed), and so do `vehicle_armor_ab`'s phase-3 silhouettes at a
+  quarter unit (`SILHOUETTE_GAPS` removed).
+- Two more runs of the recipe on 2026-10-17 test 13.6's candidates. Both
+  set `probe_spawnlog 1`, which logs the level time of the stock
+  `spawned` notify (`PROBE spawned`) and the spawn point at the
+  placement (`PROBE spawnat`). One is a plain rerun,
+  `mp_carentan-dm-turret-hitgrid-uo-spawn2.txt`. The other,
+  `-hitgrid-uo-ground.txt`, also sets `probe_ground 1`, which places the
+  target 0.125 over the ground under the spot instead of 40 units above it.
+  Each comes with its `-script.txt` and `-target.txt` (ports 32791-32792).
+  VERIFIED, `-script.txt`: on both runs the spawn and the placement share
+  a frame (11200), at spawn point (1872, 928) facing -180. VERIFIED,
+  `-target.txt`: the grounded target drops 1.1 units, with no land event.
+- vcod measurement: with the spawn point pinned, every grid cell and hit
+  point of both runs matches retail's within the gates' 0.1 and 0.02. So
+  the fall is not the cause, and the frame ahead holds with or without
+  it. An earlier pair of these runs, whose spawn point was not logged,
+  had the target spawn on a slope: retail's think there left a y velocity
+  of 1 that drifted him 0.33 units by the landing, and ours, spawned
+  elsewhere, did not. That is why the gates pin the spawn
+  (`Capture::target_spawn`). The rig's joins answer the team menu a frame
+  before the placement, where retail's probe spawned in the placement's
+  frame; the pose does not depend on it.
 
 ## 14. The client
 

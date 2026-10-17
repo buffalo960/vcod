@@ -1599,15 +1599,18 @@ runs lie 1.1 units apart.
       change, retail's script trace poses that rider at the last frame's
       anim time, where the link pass, after `G_XAnimUpdate` (game.mp.uo
       0x59983, called in `G_RunFrame` 0x59c21 after the first
-      `Scr_RunCurrentThreads`), poses him at the frame's. What switches
-      it is not traced. `G_XAnimUpdateEnt` (0x5992c) skips only an
-      entity with `flags` 0x4000 (VERIFIED decompile); no `or` of 0x4000
-      into `flags` appears in the module's disassembly, and the seat
-      cycle (`Cmd_NextVehSlot_f` 0x4ed9b, `G_VEH_CycleSlot` 0x8da1e:
-      `VEH_UnlinkPlayer` 0x89fb2, then the seat link 0x8998d) calls no
-      DObj time setter (INFERRED, read of the decompile). vcod poses
-      every script trace at the frame's time, which the on-foot gate
-      pins.
+      `Scr_RunCurrentThreads`), poses him at the frame's. What switches it is traced in
+      `cod11-turrets.md` 13.7. UO's thread pass runs before
+      `G_XAnimUpdate`, so every script trace poses at the last frame's
+      anim time. A spawn's `setModel` rebuilds the DObj inside the
+      thread, so the spawn's clips run a frame ahead. The two cancel
+      until a seat change starts clips on an end frame (INFERRED, read
+      of `G_RunFrame` and `G_DObjUpdate`). VERIFIED, replay: with both
+      ported, every stint and the on-foot run match at a quarter unit.
+      `G_XAnimUpdateEnt` (0x5992c) skips only an entity with `flags`
+      0x4000 (VERIFIED decompile). The seat cycle (`Cmd_NextVehSlot_f`
+      0x4ed9b, `G_VEH_CycleSlot` 0x8da1e) calls no DObj time setter
+      (INFERRED, read of the decompile).
     - **The tank driver's link offset.** The seat link
       (0x8998d) links the player with `G_EntLinkToWithOffset` at
       `BG_GetVehiclePosOffset(type, requested slot)` (0x230e5): a use
@@ -1632,8 +1635,7 @@ runs lie 1.1 units apart.
       frame; ours arrive in four (up to 6 units apart on the way)
       (VERIFIED, `tank` run). Not traced.
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
-  within a quarter unit, the two stints after the gunner's seat within
-  0.6 and 0.7 (`SILHOUETTE_GAPS`).
+  within a quarter unit, the stints after the gunner's seat included.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
   the given inflictor, else the attacker; when that is the attacker, a
   client whose entity `eFlags` has 0x100000 and whose `vehPos`

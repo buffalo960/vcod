@@ -1,0 +1,54 @@
+# Retail CoD United Offensive 1.51b dedicated server log lines under the --save-turret client of
+# mp_carentan-dm-turret-hitgrid-uo-ground.txt beside this file. Captured 2026-10-17.
+# The -hitgrid-uo recipe with probe_spawnlog 1 (each spawn's level time and spawn point) and
+# probe_ground 1: the target is placed 0.125 over the ground under the spot (z -31.75) and does not fall.
+# map mp_carentan, g_gametype probe_turret, probe_teleport 1, probe_hitlog 1, probe_hitgrid 1,
+# probe_spawnlog 1, dedicated 1, sv_maxclients 8, sv_pure 0, a homepath holding no pak. Client 0
+# is a --probe-team axis --probe-fall net-probe standing as the target, client 1 the
+# --save-turret gunner.
+#
+#   COD_VERSION=uo COD_LNXDED_HOME=<absolute, no '+'> PORT=32791 PROBE_SECS=230 \
+#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 +set probe_hitlog 1 +set probe_hitgrid 1 +set probe_spawnlog 1 +set probe_ground 1
+#   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32791 --probe-team axis --probe-fall --probe-secs 200
+#   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32791 --save-turret --capture-tag hitgrid-uo-ground --probe-secs 190
+# The axis client started 10 s after the server and the gunner 5 s after it.
+#
+# PROBE spawned <num> <time>: the level time of the stock spawnPlayer's `spawned` notify.
+# PROBE spawnat <num> <origin> <angles>: where the spawn put him, read at his placement.
+# PROBE hitfine and hitgrid: as in mp_carentan-dm-turret-hitgrid-uo-script.txt.
+# Lines are copied from games_mp.log, the m:ss stamp kept; every line past InitGame.
+  0:01 PROBE turret 297 (-500.00, 1896.00, 175.00) (0.00, 295.00, 0.00)
+  0:01 PROBE turret 298 (1712.00, 1830.00, 8.00) (0.00, 229.00, 0.00)
+  0:11 J;0;0;vcod
+  0:11 PROBE spawned 0 11200
+  0:11 PROBE spawnat 0 (1872.00, 928.00, -23.87) (0.00, -180.00, 0.00)
+  0:11 PROBE models 0 xmodel/basehead_axis_a_03 xmodel/gear_german_helmet_falshrm_blk xmodel/gear_german_load1_falshrm xmodel/gear_german_bandolier
+  0:11 PROBE place 0 axis (1515.18, 1603.59, -31.75) 409 11200
+  0:16 J;0;1;vcod
+  0:16 PROBE spawned 1 16750
+  0:16 PROBE spawnat 1 (-952.00, 2296.01, -21.43) (0.00, 45.00, 0.00)
+  0:16 PROBE place 1 allies (1738.24, 1860.19, 8.00) 229 16750
+  0:30 PROBE hitfine 30350 0 torso_upper 53 1520:69:91796.9,1612:718:627930,22:914:770142 -0:661:989075,-0:749:232666,-0:20:515554
+  0:30 PROBE hitgrid 30350 0 -4 46:682:891846 46:821:151733 46:959:487915 47:97:747803 48:985:988647 48:653:194458 50:452:621460 50:135:364532 50:862:258911
+  0:30 PROBE hitgrid 30350 0 -3 46:738:426208 46:876:686096 47:15:22277.8 47:153:381348 48:739:494324 48:406:707764 52:765:167236 57:87:959290 53:950:50354
+  0:30 PROBE hitgrid 30350 0 -2 46:793:968201 46:932:224243 47:70:560455 47:208:923340 48:493:3845.21 48:590:469360 54:251:518250 58:271:377563 60:15:792847
+  0:30 PROBE hitgrid 30350 0 -1 49:577:407837 49:244:613647 48:911:922485 48:579:200745 48:246:513367 50:76:835632 55:737:876892 58:580:394775 60:324:813843
+  0:30 PROBE hitgrid 30350 0 0 49:330:917358 48:998:222351 48:665:504456 48:332:809448 48:0:15258.8 51:563:194275 57:144:798279 58:889:419556 60:633:831055
+  0:30 PROBE hitgrid 30350 0 1 58:592:460632 54:264:530182 49:936:111450 48:86:322784 47:753:532410 53:49:282074 57:454:2380.37 59:198:417664 60:942:855835
+  0:30 PROBE hitgrid 30350 0 2 53:723:297119 52:421:852112 55:399:803162 55:387:435913 55:869:33813.5 54:535:644531 57:763:23376.5 59:507:434845 61:251:876831
+  0:30 PROBE hitgrid 30350 0 3 52:563:102722 52:811:988831 53:732:597351 55:623:882324 55:611:431152 - - - -
+  0:30 PROBE hitgrid 30350 0 4 52:281:211853 53:201:980591 54:122:596741 55:43:231964 55:963:844299 - - - -
+  0:30 D;0;0;axis;vcod;0;1;allies;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
+  0:30 PROBE hitfine 30400 0 torso_upper 53 1513:156:860352,1607:903:564453,22:746:675476 -0:666:930908,-0:744:837097,-0:20:515554
+  0:30 PROBE hitgrid 30400 0 -4 41:520:309448 41:690:353394 41:860:466003 43:636:222839 43:314:567566 45:131:752014 44:826:42175.3 47:323:390961 53:104:579926
+  0:30 PROBE hitgrid 30400 0 -3 41:589:824707 41:759:941101 41:929:882080 43:384:376526 43:451:614380 49:258:415222 50:543:685913 48:839:187622 54:620:376587
+  0:30 PROBE hitgrid 30400 0 -2 41:659:309387 41:829:425781 41:999:465942 43:132:602692 44:968:70983.9 50:774:871826 53:611:942261 55:383:991241 56:136:840820
+  0:30 PROBE hitgrid 30400 0 -1 43:845:828980 43:524:173706 43:202:407837 42:880:752564 46:484:115601 52:146:366119 53:918:437988 55:690:486938 -
+  0:30 PROBE hitgrid 30400 0 0 43:593:978882 43:272:224426 42:950:557739 42:628:799438 48:0:171661 52:452:857971 54:224:933624 55:996:982544 -
+  0:30 PROBE hitgrid 30400 0 1 47:311:351776 43:229:946136 42:698:711426 43:709:411621 49:516:216309 52:759:380371 54:531:429321 56:303:504944 -
+  0:30 PROBE hitgrid 30400 0 2 50:77:911377 50:76:129913 50:74:432373 49:214:630127 51:32:264709 53:65:876007 54:837:924927 56:609:996826 -
+  0:30 PROBE hitgrid 30400 0 3 47:649:70739.8 48:624:748230 50:304:412842 50:302:711487 - - - - -
+  0:30 PROBE hitgrid 30400 0 4 48:62:610626 49:38:291931 50:13:946533 50:989:624023 - - - - -
+  0:30 K;0;0;;vcod;0;1;;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
+  0:36 Q;0;1;vcod
+  3:30 Q;0;0;vcod
