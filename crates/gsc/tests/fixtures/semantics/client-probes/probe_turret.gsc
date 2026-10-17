@@ -50,7 +50,9 @@ probe_gun()
 
 //	With `probe_teleport 1`: every allied player is put 40 units behind the
 //	gun facing along it, every axis player 300 units in front facing back,
-//	once per spawn.
+//	once per spawn, the first frame its sessionstate reads "playing":
+//
+//	PROBE place <entity number> <team> <spot> <yaw> <time>
 watch_teleports()
 {
 	if (getcvar("probe_teleport") != "1")
@@ -99,7 +101,7 @@ try_place(gun)
 	self.probe_spot = spot;
 	self setorigin(spot);
 	self setplayerangles((0, yaw, 0));
-	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + "\n");
+	logPrint("PROBE place " + self getEntityNumber() + " " + self.pers["team"] + " " + spot + " " + yaw + " " + getTime() + "\n");
 }
 
 //	With `probe_pose 1`: which pose a turret round meets on a body whose own
