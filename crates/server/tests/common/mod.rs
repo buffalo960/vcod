@@ -397,6 +397,45 @@ pub fn cfg(map: &str, gametype: &str) -> vcod_server::ServerConfig {
     }
 }
 
+/// What the moving-shot captures' servers changed in a stock weapon file
+/// (`moveshot_ab.rs`, `vehicle_ab.rs`'s rider): no spread and no gun kick,
+/// so a round leaves along the view from the muzzle. Keys a file lacks are
+/// left out.
+pub const STEADY_WEAPON: &[(&str, &str)] = &[
+    ("adsSpread", "0"),
+    ("adsSpreadProne", "0"),
+    ("adsSpreadDucked", "0"),
+    ("hipSpreadStandMin", "0"),
+    ("hipSpreadDuckedMin", "0"),
+    ("hipSpreadProneMin", "0"),
+    ("hipSpreadMax", "0"),
+    ("hipGunKickPitchMin", "0"),
+    ("hipGunKickPitchMax", "0"),
+    ("hipGunKickYawMin", "0"),
+    ("hipGunKickYawMax", "0"),
+    ("adsGunKickPitchMin", "0"),
+    ("adsGunKickPitchMax", "0"),
+    ("adsGunKickYawMin", "0"),
+    ("adsGunKickYawMax", "0"),
+];
+
+/// Overlays `weapons/mp/<weapon>` with the stock file's
+/// [`STEADY_WEAPON`] keys changed (`WEAPONFILE\key\value...`).
+pub fn steady_weapon(fs: &mut vcod_common::pk3::Pk3Fs, weapon: &str) {
+    let path = format!("weapons/mp/{weapon}");
+    let stock = fs.read(&path).expect("the stock weapon file");
+    let text = String::from_utf8_lossy(&stock);
+    let mut parts: Vec<String> = text.split('\\').map(str::to_string).collect();
+    let mut i = 1;
+    while i + 1 < parts.len() {
+        if let Some((_, v)) = STEADY_WEAPON.iter().find(|(k, _)| *k == parts[i]) {
+            parts[i + 1] = v.to_string();
+        }
+        i += 2;
+    }
+    fs.overlay(&path, parts.join("\\").into_bytes());
+}
+
 /// How long a probe gate runs the server before its client connects. A
 /// client probe's watcher sleeps a second before it polls for a playing
 /// client, and retail's client joined seconds after the server started (each
