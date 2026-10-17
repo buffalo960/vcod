@@ -219,6 +219,16 @@ struct Args {
     /// the respawn land whether or not the shooter ever gets a shot off.
     #[arg(long)]
     probe_target: bool,
+    /// With --probe-target: each `kill` goes out with exactly N usercmds
+    /// behind it, one message each, sent back to back so they reach the
+    /// server inside one frame, and then no cmd for 150 ms, so the next one
+    /// lands past the frame's end. The list is cycled kill by kill (`1,3`),
+    /// a kill every 8 s. Measures how many of a death frame's cmds run
+    /// before `ClientEndFrame` makes the player dead (combat doc 9.2).
+    /// Writes the target fixture with a `!kill` line per kill; tag it
+    /// `killcmds`, `killcmds-1.5` or `killcmds-uo`.
+    #[arg(long, requires = "probe_target", value_delimiter = ',')]
+    probe_kill_cmds: Vec<usize>,
     /// Join a team, stand still and record what the wire does across a map
     /// end and the rotation that follows: every gamestate with its serverId,
     /// every serverCommand with its reliable sequence, every out-of-band
@@ -1123,6 +1133,7 @@ fn main() -> Result<()> {
                 follow: args.probe_follow,
                 killcam: args.probe_killcam,
                 killcam_skip_ms: args.probe_killcam_skip_ms,
+                kill_cmds: args.probe_kill_cmds.clone(),
                 fall: args.probe_fall,
                 fall_walk: args.probe_fall_walk,
                 fall_prone: args.probe_fall_prone,
