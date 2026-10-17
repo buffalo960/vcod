@@ -40,10 +40,13 @@ const POINT_NEAR: f32 = 0.5;
 /// [`CELL_NEAR`] off retail's, or hits where retail misses or the other way:
 /// a ray grazing an arm, hand or head box edge-on, 0.5 to 3 units along it
 /// (one 8.6), on standing and crouched bodies whether they lean or not.
-/// Prone and the leaning right phase match everywhere. Not explained: the
-/// idle clip's phase is not it (ours moved 50 ms reads 7 cells apart, not
-/// these), and the boxes and controllers are those every other cell
-/// matches (docs/research/cod11-combat.md 3.6).
+/// Prone matches everywhere. They are the edge cells of a pose clock: every
+/// standing cell reads 0.13 off (prone 0.0002), and with the target's legs
+/// clips starting their clock a frame after the end frame that set them
+/// the standing cells read 0.02 and 20 of these come within 0.5. That rule
+/// is INFERRED off UO's setter, which sets no time on a still clip, and is
+/// not ported: it moves every blended clip on every patch and leaves 0.01
+/// to 0.04 on standing cells (docs/research/cod11-combat.md 3.6).
 #[allow(clippy::type_complexity)]
 const CELL_GAPS: &[(&str, &[(char, u32, usize)])] = &[
     (

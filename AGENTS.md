@@ -737,6 +737,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   first entity pass more than 300 ms past its event (combat doc 14.7,
   "Entity numbers"). Engine notifies raised in the entity pass (`movedone`)
   wake their waiters on the next frame's threads.
+- A body's head is a random draw from `xmodelalias/head_*`, and the `a`
+  and `b` heads' boxes differ: a gate that reads head cells pins it
+  (`probe_turret`'s `probe_head`, `cod11-turrets.md` 13.6).
 - A `clipOnly` weapon (the frag) has no reserve entry on the wire.
 - An item's `count` of 0 means unset; a drop writes -1 for empty.
 - A `trigger_lookat` is never touched; it fires off `ClientEndFrame`'s aim
