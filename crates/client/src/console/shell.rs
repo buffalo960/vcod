@@ -407,10 +407,10 @@ impl Shell {
         // flags, `cl_freezeDemo` "0" CVAR_TEMP (cod11-demos.md, "Playback").
         s.register("timedemo", "0", 0);
         s.register("cl_freezeDemo", "0", 0);
-        // Com_Init (CoDMP.exe 0x437807): "85",
-        // archived; `Com_Frame` paces every frame by it, `timedemo` too
-        // (cod11-demos.md 5).
-        s.register("com_maxfps", "85", ARCHIVE);
+        // Com_Init (CoDMP.exe 0x437807) registers "85", archived; vcod
+        // defaults to 0 (1 ms floor) so high-refresh vsync isn't held near
+        // 90 fps. `Com_Frame` paces every frame by it (cod11-demos.md 5).
+        s.register("com_maxfps", "0", ARCHIVE);
         // CoDMP.exe registers `password` CVAR_USERINFO, not archived
         // (0x4123ea); the browser's password popup edits it.
         s.register("password", "", USERINFO);
