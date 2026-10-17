@@ -68,9 +68,9 @@ fn schedule_of(fixture: &str) -> Schedule {
         .collect();
     let out = fixture
         .lines()
+        .rev()
         .filter(|l| l.starts_with("PROBE unseat "))
-        .filter_map(time)
-        .last()
+        .find_map(time)
         .expect("the exit");
     [seats[0], seats[1], seats[2], out].map(|t| t - place)
 }
