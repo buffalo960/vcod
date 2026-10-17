@@ -295,6 +295,12 @@ pub(crate) enum Attack {
     /// A `projectile` weapon's fire: `Weapon_RocketLauncher_Fire` (0x68c40)
     /// launches a rocket along the spread aim (combat doc 13.6).
     Rocket(Shot),
+    /// UO's `ClientThink_real` found the body inside a vehicle ahead of
+    /// its pmove (coduo-vehicles.md 11.6).
+    Overlap {
+        slot: usize,
+        overlap: crate::spectate::VehicleOverlap,
+    },
 }
 
 /// `Weapon_RocketLauncher_Fire`'s push on the shooter along the view
@@ -818,13 +824,9 @@ fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime)
 }
 
 /// `VEH_PlayerCollision` (game.mp.uo 0x8213f) for every body a vehicle's
-/// probes struck this frame: knocked away along the vehicle's motion, and
-/// at most every 500 ms run over for `150 * min(speed / 400, 1)`, 0 when
-/// the vehicle moves away from him (`MOD_CRUSH_JEEP` off a four-wheel,
-/// `MOD_CRUSH_TANK` else), charged to the driver, the vehicle the
-/// inflictor, then the `vehicle_hit_person` alias.
+/// probes struck this frame: knocked away along the vehicle's motion, then
+/// [`run_over`].
 fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
-    const CRUSH_GAP_MS: i32 = 500;
     let now = rt.host.level_time_ms;
     for (veh, strike) in std::mem::take(&mut rt.host.vehicles.strikes) {
         let slot = strike.entity as usize;
@@ -847,69 +849,109 @@ fn crush(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
             continue;
         };
         sim.ps.velocity = push.velocity;
-        // `client+0x4728`, zero from the spawn: a body struck going away
-        // takes its 0 damage and the sound, and restarts the 500 ms too.
-        let last = rt.host.vehicles.crushed.get(&slot).copied().unwrap_or(0);
-        if last >= now - CRUSH_GAP_MS {
-            continue;
-        }
-        rt.host.vehicles.crushed.insert(slot, now);
         let prone = sim.ps.stance == vcod_common::pmove::Stance::Prone;
-        let Some(v) = rt.host.vehicles.live.get(&veh) else {
-            continue;
-        };
-        let hit_person = rt.host.vehicles.info_of(v).hit_person_index;
-        let four_wheel =
-            rt.host.vehicles.info_of(v).kind == crate::game::vehicle::info::KIND_FOUR_WHEEL;
-        let mod_ = if four_wheel {
-            "MOD_CRUSH_JEEP"
-        } else {
-            "MOD_CRUSH_TANK"
-        };
-        let weapon = v.wire.weapon as usize;
-        match v.seats[1] {
-            Some(driver) => {
-                let hit = crate::game::combat::Hit {
-                    victim: slot,
-                    attacker: driver,
-                    inflictor: Some(veh),
-                    damage: push.damage,
-                    dflags: 0,
-                    mod_,
-                    weapon: crate::items::item_name(rt.host.defs, weapon)
-                        .unwrap_or("none")
-                        .to_string(),
-                    point: sim.ps.origin.into(),
-                    dir: [0.0; 3],
-                    hitloc: "none",
-                };
-                rt.deliver_hits(vec![hit]);
-            }
-            None => rt.deliver_world_hit(slot, veh, push.damage, 0, mod_),
+        run_over(rt, slot, veh, push, prone, sim.ps.origin, now);
+    }
+}
+
+/// `VEH_PlayerCollision`'s tail once the push is dealt: at most every
+/// 500 ms the body is run over for `150 * min(speed / 400, 1)`, 0 when the
+/// vehicle moves away from him (`VEH_PlayerDamage`), then, unless he lies
+/// prone (`pm_flags` 1), the `vehicle_hit_person` alias at `at`, `1500 (1 -
+/// f)` up, broadcast (`svFlags |= 8`). The 500 ms runs off
+/// `client+0x4728`, zero from the spawn, which every strike past it
+/// restarts, a 0-damage one too (coduo-vehicles.md 13).
+fn run_over(
+    rt: &mut script::ScriptRuntime,
+    slot: usize,
+    veh: vcod_gsc::EntId,
+    push: crate::game::vehicle::physics::PlayerPush,
+    prone: bool,
+    at: glam::Vec3,
+    now: i32,
+) {
+    const CRUSH_GAP_MS: i32 = 500;
+    let last = rt.host.vehicles.crushed.get(&slot).copied().unwrap_or(0);
+    if last >= now - CRUSH_GAP_MS {
+        return;
+    }
+    rt.host.vehicles.crushed.insert(slot, now);
+    let Some(hit_person) = rt
+        .host
+        .vehicles
+        .live
+        .get(&veh)
+        .map(|v| rt.host.vehicles.info_of(v).hit_person_index)
+    else {
+        return;
+    };
+    vehicle_player_damage(rt, slot, veh, push.damage, at);
+    if !prone && hit_person != 0 {
+        rt.with_host(|host, cx| {
+            host.add_temp_entity(
+                cx,
+                crate::game::temp_entity::TempEntity {
+                    event: crate::game::script::EV_SOUND_ALIAS,
+                    parm: hit_person,
+                    surf_type: 0,
+                    other: 0,
+                    attacker: 0,
+                    weapon: 0,
+                    client_num: 0,
+                    scale: 0,
+                    origin: push.sound.to_array(),
+                    scope: crate::game::temp_entity::Scope::Broadcast,
+                    quake: None,
+                    origin2: None,
+                },
+            )
+        });
+    }
+}
+
+/// `VEH_PlayerDamage(player, vehicle, damage)` (game.mp.uo 0x91ffd):
+/// `G_Damage` with the vehicle as the inflictor and its `r.ownerNum` (the
+/// driver, 1023 without one: the vehicle itself) as the attacker, no
+/// direction, the body's `r.currentOrigin` `at` as the point, dflags 0 and
+/// `MOD_CRUSH_JEEP` off a four-wheel (`info+0x40` 1), `MOD_CRUSH_TANK`
+/// else.
+fn vehicle_player_damage(
+    rt: &mut script::ScriptRuntime,
+    slot: usize,
+    veh: vcod_gsc::EntId,
+    damage: i32,
+    at: glam::Vec3,
+) {
+    let Some(v) = rt.host.vehicles.live.get(&veh) else {
+        return;
+    };
+    let four_wheel =
+        rt.host.vehicles.info_of(v).kind == crate::game::vehicle::info::KIND_FOUR_WHEEL;
+    let mod_ = if four_wheel {
+        "MOD_CRUSH_JEEP"
+    } else {
+        "MOD_CRUSH_TANK"
+    };
+    let weapon = v.wire.weapon as usize;
+    match v.seats[1] {
+        Some(driver) => {
+            let hit = crate::game::combat::Hit {
+                victim: slot,
+                attacker: driver,
+                inflictor: Some(veh),
+                damage,
+                dflags: 0,
+                mod_,
+                weapon: crate::items::item_name(rt.host.defs, weapon)
+                    .unwrap_or("none")
+                    .to_string(),
+                point: at.into(),
+                dir: [0.0; 3],
+                hitloc: "none",
+            };
+            rt.deliver_hits(vec![hit]);
         }
-        // `vehicle_hit_person` at the body, `1500 (1 - f)` up, broadcast
-        // (`svFlags |= 8`), unless he lies prone (`pm_flags` 1).
-        if !prone && hit_person != 0 {
-            rt.with_host(|host, cx| {
-                host.add_temp_entity(
-                    cx,
-                    crate::game::temp_entity::TempEntity {
-                        event: crate::game::script::EV_SOUND_ALIAS,
-                        parm: hit_person,
-                        surf_type: 0,
-                        other: 0,
-                        attacker: 0,
-                        weapon: 0,
-                        client_num: 0,
-                        scale: 0,
-                        origin: push.sound.to_array(),
-                        scope: crate::game::temp_entity::Scope::Broadcast,
-                        quake: None,
-                        origin2: None,
-                    },
-                )
-            });
-        }
+        None => rt.deliver_world_hit(slot, veh, damage, 0, mod_),
     }
 }
 
@@ -8465,13 +8507,14 @@ impl Server {
             // The movetype each of `raised` selects its anim by.
             let mut raised_movetype = Vec::new();
             let mut take = None;
+            let mut overlap = None;
             if !frozen {
                 // The aim block runs once per cmd, on the whole cmd, before
                 // the chop (`ClientThink_real` 0x40169-0x40456).
                 sim.update_aim(dt_ms, now_ms, weapons.defs());
                 // A UO body inside a vehicle's collmap: the vehicle may sit
                 // out this cmd's pmove (coduo-vehicles.md 11.6).
-                let unlinked = match (collision, self.script.as_ref()) {
+                overlap = match (collision, self.script.as_ref()) {
                     (Some(w), Some(rt))
                         if sim.ps.rules == vcod_common::pmove::MoveRules::Uo
                             && spectating[slot].is_none() =>
@@ -8481,8 +8524,11 @@ impl Server {
                             let v = rt.host.vehicles.live.get(&id)?;
                             Some((v.pose.origin.into(), v.velocity.into()))
                         })
-                        .and_then(|e| w.unlink_model_instance(e))
                     }
+                    _ => None,
+                };
+                let unlinked = match (overlap, collision) {
+                    (Some(o), Some(w)) if o.unlink => w.unlink_model_instance(o.entity),
                     _ => None,
                 };
                 // A hitching client's gap is simulated, not discarded: see
@@ -8526,7 +8572,13 @@ impl Server {
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
             // falls, in the order it raised them, fired below before its
             // touch pass.
-            let mut attacks = Vec::new();
+            // The body inside a vehicle took its run-over and prone damage
+            // ahead of the pmove, before anything the cmd raised.
+            let mut attacks: Vec<Attack> = overlap
+                .filter(|o| o.struck.is_some() || o.prone)
+                .map(|o| Attack::Overlap { slot, overlap: o })
+                .into_iter()
+                .collect();
             for e in &raised {
                 let weapon = sim.ps.weapon;
                 let grenade = weapons
@@ -9101,6 +9153,80 @@ impl Server {
         relink(bodies, &self.clients, slot);
     }
 
+    /// The damage `ClientThink_real` deals a body inside a vehicle ahead of
+    /// its pmove (game.mp.uo 0x415e4..0x419c3, coduo-vehicles.md 11.6): a
+    /// moving vehicle's run-over ([`run_over`]), and to a prone body, every
+    /// cmd, `VEH_PlayerDamage(player, vehicle, 10)`, then `(player, player,
+    /// 10)` when the first left his health alone. Its clock,
+    /// `client+0x472c`, is written nowhere, so past the level's first
+    /// 500 ms nothing holds it back.
+    fn vehicle_overlap_hits(
+        &mut self,
+        slot: usize,
+        overlap: crate::spectate::VehicleOverlap,
+        rounds: &mut [Round],
+        bodies: &mut Vec<vcod_common::movetrace::Body>,
+        weapons: &crate::weapons::WeaponTable,
+    ) {
+        const PRONE_DAMAGE: i32 = 10;
+        let proto = self.proto;
+        let now_ms = self.sv_time_ms;
+        self.close_round(slot, &mut rounds[slot]);
+        let Some(rt) = self.script.as_mut() else {
+            return;
+        };
+        mirror_roster(&self.clients, rt);
+        let Some(c) = self.clients[slot].as_mut() else {
+            return;
+        };
+        let st = c.last_processed_st;
+        let bot = c.is_bot;
+        let Some(sim) = c.sim.as_mut() else { return };
+        let Some(veh) = rt.host.ents.handle(overlap.entity) else {
+            return;
+        };
+        // The cmd runs on the last frame's `level.time`.
+        let level_ms = now_ms.wrapping_sub(FRAME_MS);
+        mirror_for_callback(rt, sim, proto, slot, st);
+        if let Some(push) = overlap.struck {
+            run_over(rt, slot, veh, push, overlap.prone, overlap.at, level_ms);
+        }
+        if overlap.prone && 0 < level_ms - 500 {
+            let health = rt.client_vitals(slot).health;
+            vehicle_player_damage(rt, slot, veh, PRONE_DAMAGE, overlap.at);
+            if rt.client_vitals(slot).health == health {
+                // `VEH_PlayerDamage` of a non-vehicle: `G_Damage` with the
+                // player as inflictor and attacker, `MOD_SUICIDE`.
+                let weapon = crate::items::item_name(rt.host.defs, sim.ps.weapon as usize)
+                    .unwrap_or("none")
+                    .to_string();
+                rt.deliver_hits(vec![crate::game::combat::Hit {
+                    victim: slot,
+                    attacker: slot,
+                    inflictor: None,
+                    damage: PRONE_DAMAGE,
+                    dflags: 0,
+                    mod_: "MOD_SUICIDE",
+                    weapon,
+                    point: overlap.at.into(),
+                    dir: [0.0; 3],
+                    hitloc: "none",
+                }]);
+            }
+        }
+        apply_callback_ops(
+            rt,
+            sim,
+            slot,
+            bot,
+            self.anims.as_deref(),
+            weapons,
+            &mut self.rng,
+            now_ms,
+        );
+        relink(bodies, &self.clients, slot);
+    }
+
     /// `FireWeapon` inside the cmd that raised it: the trace against the
     /// world and every client as it stands now, and each impact and damage
     /// callback in the order the round met them, so a player one round kills
@@ -9140,6 +9266,10 @@ impl Server {
             }
             Attack::Rocket(shot) => {
                 self.launch(shot, weapons);
+                return;
+            }
+            Attack::Overlap { slot, overlap } => {
+                self.vehicle_overlap_hits(slot, overlap, rounds, bodies, weapons);
                 return;
             }
         };
@@ -9228,7 +9358,8 @@ impl Server {
                 | Attack::Fall { .. }
                 | Attack::Suicide { .. }
                 | Attack::Strike(_)
-                | Attack::Rocket(_) => {
+                | Attack::Rocket(_)
+                | Attack::Overlap { .. } => {
                     unreachable!()
                 }
             }
@@ -9421,7 +9552,7 @@ impl Server {
                 collision,
                 proto,
             );
-            entities.extend(rt.bodies().entities());
+            entities.extend(rt.body_entities(proto));
         }
 
         // Every live temp entity, at the number `G_TempEntity` took for it,

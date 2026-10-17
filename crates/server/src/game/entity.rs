@@ -352,6 +352,11 @@ impl ObjectTable {
                 self.num_entities - 1
             }
         };
+        Ok(self.place(cx, n))
+    }
+
+    /// A fresh entity at `n`, with `G_Spawn`'s zero `origin` and `angles`.
+    fn place(&mut self, cx: &mut Cx, n: u32) -> EntId {
         let id = EntId(n, self.ent_gens[n as usize]);
         let script = cx.new_struct();
         let mut engine = vec![Value::Undefined; engine_slot_count()];
@@ -387,7 +392,26 @@ impl ObjectTable {
             unlinked: false,
             ground: 0,
         });
-        Ok(id)
+        id
+    }
+
+    /// `G_SpawnPlayerClone` (0x67888): body-queue entity `n` (64..71), whose
+    /// previous occupant `G_FreeEntity` frees first, given `G_InitGentity`'s
+    /// classname `noclass` (`scr_const+0x56`, as 0x6783c). No free list is
+    /// touched: the queue picks the number (combat doc 5.2).
+    pub fn spawn_body(&mut self, cx: &mut Cx, n: u32) -> EntId {
+        let i = n as usize;
+        if self.ents[i].take().is_some() {
+            self.ent_gens[i] = self.ent_gens[i].wrapping_add(1);
+        }
+        let id = self.place(cx, n);
+        if let (Some(e), Route::Engine { slot, .. }) = (
+            self.ents[i].as_mut(),
+            crate::game::fields::route_entity("classname"),
+        ) {
+            e.engine[slot] = Value::String(cx.intern_exact("noclass"));
+        }
+        id
     }
 
     /// The world as a script value: what the `radiusDamage` builtin passes

@@ -976,7 +976,20 @@ on foot out of a vehicle before his `Pmove` (VERIFIED disassembly,
 - Prone, inside the vehicle (unlinked or not), and `client+0x472c` more
   than 500 ms old: `VEH_PlayerDamage(player, vehicle, 10)`, and a second
   `VEH_PlayerDamage(player, player, 10)` when the first left his health
-  alone.
+  alone (VERIFIED decompile). `client+0x472c` is read there alone
+  (0x41964) and written nowhere in the module (VERIFIED disassembly,
+  every reference to the displacement): unlike `VEH_PlayerCollision`'s
+  `+0x4728` it holds nothing back, so past the level's first 500 ms the
+  prone body takes the 10 on every cmd (VERIFIED, capture below).
+- `VEH_PlayerDamage` (0x81ffd) of a vehicle is `G_Damage` with the
+  vehicle as the inflictor and its `r.ownerNum` as the attacker (the
+  vehicle itself at 1023), no direction, the body's `r.currentOrigin` as
+  the point, dflags 0, `MOD_CRUSH_JEEP` (18) where the vehicle file's
+  type (`info+0x40`) is 1, `MOD_CRUSH_TANK` (17) else; `VEH_LinkPlayer`
+  (0x8998d) sets a vehicle's `r.ownerNum` to its driver and
+  `VEH_UnlinkPlayer` back to 1023. Of anything else (the player himself)
+  it is `G_Damage` with him as inflictor and attacker under
+  `MOD_SUICIDE` (21) (VERIFIED decompile).
 
 A rider put out where he sat (11.2) is that body: his box starts in the
 hull's collmap, so a cmd with velocity left meets the linked hull, is
@@ -990,13 +1003,53 @@ second on, the gunner's 20 units out (VERIFIED, capture,
 
 vcod runs it as `ClientSim::vehicle_overlap` before each UO cmd's pmove,
 the collmap instance taken out of the collision world for the cmd
-(`CollisionWorld::unlink_model_instance`). `vehicle_die_ab` sends the
+(`CollisionWorld::unlink_model_instance`), and deals the run-over and
+the prone damage in the cmd (`Server::vehicle_overlap_hits`), ahead of
+what its pmove raised. `vehicle_die_ab` sends the
 probe's 16, 16 and 18 ms cmds a frame and puts the driver's corpse
 within 1 unit of retail's at both lines, and the gunner's within 6.2
 from his mid-turn start (INFERRED, the residue is the probe client's cmd
-clock, which no capture logs). A body that a moving vehicle overlaps
-takes `player_push`'s velocity, but its run-over damage and sound are
-not dealt from this path, and the prone damage is not ported (open).
+clock, which no capture logs).
+
+Measured, retail UO 1.51b, 2026-10-17, `client-probes/probe_vehicle_ram`
+with `probe_victim` (fixtures
+`crates/server/tests/fixtures/vehicles/mp_kharkov-jeep-runover-*-uo.txt`,
+recipes in their headers): mp_kharkov's second Horch, driven straight
+ahead by `--probe-vehicle ram`, meets an allied victim standing or prone
+150 units ahead:
+
+- Standing, he is struck twice. 52 points 350 ms past the jeep's first
+  move, `MOD_CRUSH_JEEP`, the Horch the inflictor, its driver the
+  attacker, weapon `none`, the victim's origin as the point and no
+  direction; he is thrown 11 up and forward, and `vehicle_hit_person`
+  (alias 8) plays at his origin 972 up. The jeep catches him in the air
+  650 ms later for 138, which kills him, the sound 115 up (VERIFIED,
+  capture). Both are this path's, not the drive step's probes: the
+  amounts are `150 min(speed / 400, 1)` of the speed the hull had after
+  the frame before (140.5 gives 52, 369.2 gives 138, the heights `1500 (1
+  - f)`), and the callbacks read the last frame's time, as a cmd's do
+  (INFERRED, the amounts and times; vcod deals them on this path and
+  matches every one).
+- Prone, the hull runs over him without a push and without a sound: 10 on
+  every one of his cmds, three a frame (100 to 20), then a 72 at 192
+  units/s, which kills him (VERIFIED, capture). The 72 reads the frame's
+  own time: the drive step's strike (INFERRED, the time).
+- Prone under a teammate's jeep with `scr_friendlyfire 0`, every cmd's
+  crush is refused and the second call follows, `MOD_SUICIDE` with the
+  victim as inflictor and attacker and his own `mosin_nagant_mp`; past
+  his death the two keep coming until his end frame, the health reading
+  0, -10, -20 (VERIFIED, capture). That is `takedamage` staying set
+  until his end frame (INFERRED, combat doc 14.7's rule).
+
+`vehicle_runover_ab` replays the three on ours: every damage callback
+and every hit sound matches retail's in time, amount, means, attacker,
+inflictor, weapon and health; the victim's origin matches to the
+hundredth up to 150 ms past the first strike, and after it within a
+probe client cmd's travel (INFERRED, the gsc reads it after however many
+of the probe's cmds a frame ran: retail's flight steps 14, 3.8 and 17.6
+units over three frames where ours steps 10.6 each). Where a prone
+victim lies down is the probe client's timing too: retail's two prone
+runs lie 1.1 units apart.
 
 ## 12. The drive step
 
@@ -1638,8 +1691,8 @@ not dealt from this path, and the prone damage is not ported (open).
   `vehicle_hit_person` alias (`info+0x33b`) plays at the body's
   `r.currentOrigin`, `1500 (1 - min(speed / 400, 1))` up, broadcast
   (`svFlags |= 8`) (VERIFIED decompile, constants 0xa6b68 0.0, 0xa6b70
-  1500.0 and 0xa6b50 1.0). vcod reads bit 1 as the prone stance (INFERRED:
-  1.1's `PMF_PRONE`) and does the same (no retail capture of a run-over).
+  1500.0 and 0xa6b50 1.0). Bit 1 is the prone stance: a prone body's
+  strike plays no sound (VERIFIED, the run-over captures of 11.6).
 
 ## 14. What vcod-server does, and what it measured
 
@@ -1745,9 +1798,7 @@ not dealt from this path, and the prone damage is not ported (open).
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
 - **Not done.** The path methods; `closespeed` and
   `harc` read 0; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13); a body pushed out of a moving vehicle (11.6) takes
-  `VEH_PlayerCollision`'s push but not its run-over damage and sound,
-  and a prone one's 10-point `VEH_PlayerDamage` is not ported.
+  section 13).
 - **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
   clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
   and blend time 0, then sets each goal weight at the rate `1 / (10 |weight

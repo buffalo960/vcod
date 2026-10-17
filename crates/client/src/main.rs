@@ -400,6 +400,12 @@ struct Args {
         conflicts_with = "probe_fall_walk"
     )]
     probe_fall_prone: Option<f32>,
+    /// With `--net-probe`: hold this world yaw on every cmd no other mode
+    /// steers, where the plain probe holds 0 (`delta_angles` taken off), so a
+    /// script's turn holds. `client-probes/probe_dyingpose` stands its body
+    /// at 90 with it.
+    #[arg(long, value_name = "YAW")]
+    probe_yaw: Option<f32>,
     /// With `--net-probe` and `--probe-team`: stand at world yaw 0 and hold
     /// this view pitch in alternate 400 ms windows (0 between), printing a
     /// `PITCH` line per snapshot whose pitch moved. The target half of
@@ -1164,6 +1170,7 @@ fn main() -> Result<()> {
                 fall_walk: args.probe_fall_walk,
                 fall_prone: args.probe_fall_prone,
                 pitch_flip: args.probe_pitch_flip,
+                yaw: args.probe_yaw,
                 ride: args.probe_ride,
                 items: args.probe_items,
                 compass: args.probe_compass,

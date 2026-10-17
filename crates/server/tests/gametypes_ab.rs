@@ -393,7 +393,7 @@ fn retail_spawns(
     let mut playing = false;
     for line in &lines {
         if line.starts_with("!gamestate") {
-            points = spawn_points(fs, field(line, "mapname").expect("a mapname"));
+            points = common::spawn_points(fs, field(line, "mapname").expect("a mapname"));
         }
         if line.starts_with("!gamestate") || matches!(cmd_text(line), Some("n" | "B")) {
             playing = false;
@@ -430,28 +430,6 @@ fn retail_spawns(
         .into_iter()
         .filter(|(.., killcam)| !killcam)
         .map(|(pick, ..)| pick)
-        .collect()
-}
-
-/// A map's `mp_*spawn*` entities as `(origin, angles)`.
-fn spawn_points(fs: &vcod_common::pk3::Pk3Fs, map: &str) -> Vec<([f32; 3], [f32; 3])> {
-    let path = fs.resolve_map(map).expect("map in the mounted paks");
-    let bsp = vcod_common::bsp::parse(&fs.read(&path).unwrap()).unwrap();
-    vcod_common::bsp::entity_blocks(&bsp.entities)
-        .iter()
-        .filter(|e| {
-            e.get("classname")
-                .is_some_and(|c| c.starts_with("mp_") && c.contains("spawn"))
-        })
-        .filter_map(|e| {
-            let origin = vcod_common::bsp::parse_vec3(e.get("origin")?)?;
-            let angles = match (e.get("angles"), e.get("angle")) {
-                (Some(a), _) => vcod_common::bsp::parse_vec3(a)?,
-                (None, Some(y)) => [0.0, y.parse().ok()?, 0.0],
-                (None, None) => [0.0; 3],
-            };
-            Some((origin, angles))
-        })
         .collect()
 }
 

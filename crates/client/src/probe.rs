@@ -238,6 +238,8 @@ pub struct Save {
     pub fall_prone: Option<f32>,
     /// `--probe-pitch-flip`: the view pitch every other 400 ms window holds.
     pub pitch_flip: Option<f32>,
+    /// `--probe-yaw`: the world yaw a cmd no other mode steers holds.
+    pub yaw: Option<f32>,
     /// `--probe-ride`: print every snapshot's movement fields, no fixture.
     pub ride: bool,
     /// `--probe-items`: print every snapshot an item changed, no fixture.
@@ -393,6 +395,7 @@ pub fn probe(
         fall_walk,
         fall_prone,
         pitch_flip,
+        yaw: probe_yaw,
         ride: probe_ride,
         items: probe_items,
         compass: probe_compass,
@@ -1159,6 +1162,9 @@ pub fn probe(
                 cmd.buttons |= net::msg::BUTTON_ADS;
             }
             hold_view_yaw(&mut cmd, &client, &mut pvs_probe.spawn_yaw);
+        } else if let Some(yaw) = probe_yaw.filter(|_| client.state() == NetState::Active) {
+            // Absolute: `send_frame` takes `delta_angles` off.
+            cmd.angles[1] = deg_to_short(yaw);
         }
         // A retail client sends the weapon it is holding on every cmd. The
         // probe used to send 0, and retail's weapon-change check reads a

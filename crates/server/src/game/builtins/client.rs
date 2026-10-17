@@ -374,9 +374,9 @@ pub fn get_current_weapon(
 /// The body stands on the player's `origin` field, `r.currentOrigin`, which
 /// is snapped when the death runs inside the victim's own cmd (5.5).
 ///
-/// Returns `Value::Undefined` rather than the body entity: the body queue is
-/// not in the object table, so there is no `EntId` to hand out, and every
-/// stock gametype assigns the result without ever reading it back.
+/// Returns the body's entity (`GScr_AddEntity` at 0x446d1): a `playSound`
+/// on it rides the corpse's own ring, which the queue's state takes at the
+/// snapshot build, and a `delete` takes it off the wire.
 pub fn clone_player(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -401,14 +401,14 @@ pub fn clone_player(
     }
     let now = host.level_time_ms;
     let world = host.world.clone();
-    host.bodies.push(
+    let number = host.bodies.push(
         state,
         Some(slot),
         now,
         world.as_ref().map(|w| &w.collision),
         p,
     );
-    Ok(Value::Undefined)
+    Ok(Value::Entity(host.ents.spawn_body(cx, number)))
 }
 
 /// `self dropItem(name [, tag])` (`.so` 0x43684): a weapon name goes to
@@ -1797,13 +1797,20 @@ mod tests {
             set(&mut state, "clientNum", 2);
             set(&mut state, "legsAnim", 700);
             host.client_entity_states[2] = Some(state);
-            clone_player(&mut host, cx, recv, &[]).unwrap();
+            let Value::Entity(id) = clone_player(&mut host, cx, recv, &[]).unwrap() else {
+                panic!("the corpse comes back as an entity");
+            };
 
             let (number, body) = host.bodies.entities().next().unwrap();
             assert_eq!(number, crate::game::bodies::BODY_FIRST);
+            assert_eq!(id.0, number);
             assert_eq!(body.field_i32(p, "eType"), crate::game::bodies::ET_CORPSE);
             assert_eq!(body.field_i32(p, "clientNum"), 2);
             assert_eq!(body.field_i32(p, "legsAnim"), 700);
+
+            // `delete`'s free takes it off the wire.
+            host.free_entity(id);
+            assert_eq!(host.bodies.entities().count(), 0);
         });
     }
 

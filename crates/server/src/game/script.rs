@@ -2672,6 +2672,31 @@ impl ScriptRuntime {
 
     /// The corpse queue, whose entities every client's snapshot carries
     /// until their slots are reused (`crate::game::bodies`).
+    /// The queue's corpses as the snapshot sends them: each with the event
+    /// ring of the entity `cloneplayer` handed to script, which `playSound`
+    /// appends to (`G_PlaySoundAlias` 0x67b30 writes `s.events` on any
+    /// entity with no client).
+    pub fn body_entities<'a>(
+        &'a self,
+        p: &'a vcod_common::net::protocol::Protocol,
+    ) -> impl Iterator<Item = (u32, vcod_common::net::msg::EntityState)> + 'a {
+        self.host.bodies.entities().map(move |(n, mut e)| {
+            if let Some(g) = self
+                .host
+                .ents
+                .handle(n)
+                .and_then(|id| self.host.ents.get(id))
+            {
+                g.events.write(&mut |name: &str, v: i32| {
+                    if let Some(i) = vcod_common::net::msg::EntityState::field_index(p, name) {
+                        e.fields[i] = v;
+                    }
+                });
+            }
+            (n, e)
+        })
+    }
+
     pub fn bodies(&self) -> &crate::game::bodies::BodyQueue {
         &self.host.bodies
     }

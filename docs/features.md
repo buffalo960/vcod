@@ -301,7 +301,8 @@ something, the bullet links it.
   5-point probe hit through his damage callback, and one it leaves whole
   looks for a dismount spot; the others' corpses slide out of the hull.
   A body inside a vehicle is pushed out of it before its move, as
-  retail's `ClientThink_real` does. A seated driver's and gunner's body meets a level ray where retail's
+  retail's `ClientThink_real` does: a moving one runs him over (damage
+  and `vehicle_hit_person`), and a prone one under it takes 10 a cmd. A seated driver's and gunner's body meets a level ray where retail's
   does, to a quarter unit, with the jeep's steer blend on the driver.
   A Panzer IV's and a Willys's drives replay on ours as retail's to the
   field, and so do the seat changes; a vehicle and its sound blends leave
