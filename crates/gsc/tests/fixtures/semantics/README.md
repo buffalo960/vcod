@@ -30,24 +30,22 @@ way:
   and `level["k"] = "v"` both die with a `******* script compile error
   *******` block, not the runtime-error block above, because retail's
   compiler statically knows `level`/`game`'s access mode and rejects the
-  wrong one before `main()` starts. `run_probe.sh` only greps the console
-  for `script runtime error`, so a compile error shows up as an empty
-  capture section with no `PROBE_FATAL` line — indistinguishable, without
-  reading the raw console, from a probe that simply logged nothing. Keep a
-  construct that might be a *compile*-time rejection alone in its own file,
-  same as a fatal runtime one, or it costs every measurement in the file,
-  not just the ones after it (`probe_game_dotwrite.gsc`,
-  `probe_level_bracket.gsc`, both skipped in `semantics_ab.rs`'s
-  `KNOWN_GAPS_OUT_OF_SCOPE` since vcod's compiler has no equivalent
-  static check to reproduce the empty-capture result).
+  wrong one before `main()` starts. `run_probe.sh` prints the console's
+  `ERROR:` line as `PROBE_ERROR script compile error`, and that line alone is
+  the section; `semantics_ab.rs` then requires vcod's compiler to refuse the
+  file too. Keep a construct that might be a *compile*-time rejection alone
+  in its own file, same as a fatal runtime one, or it costs every
+  measurement in the file, not just the ones after it
+  (`probe_game_dotwrite.gsc`, `probe_level_bracket.gsc`,
+  `probe_self_bracket.gsc`).
 - **The engine caps loose gametype scripts at 31 and fails over to `dm`
   without a word.** Past that count the console prints `Too many game type
   scripts found! Only loading the first 31` once, and any gametype outside
   the kept set loads as `g_gametype is not a valid gametype, defaulting to
   dm` — no `PROBE_FATAL`, no probe output at all, since `dm`'s own
-  bootstrap never calls the missing script's `logPrint`s. That is the
-  *compile-error* signature above, produced for a reason that has nothing to
-  do with the script. The homepath is what accumulates them: `run_probe.sh`
+  bootstrap never calls the missing script's `logPrint`s. Before `run_probe.sh` printed
+  `PROBE_ERROR`, that was also what a compile error looked like, produced
+  here for a reason that has nothing to do with the script. The homepath is what accumulates them: `run_probe.sh`
   copies each probe into `main/maps/mp/gametypes/` and used to leave it
   there, so every probe ever captured piled up against a corpus that is
   itself at 31 files. This is what happened to `probe_truthy_num`,

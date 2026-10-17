@@ -73,7 +73,7 @@ fn first_round(frame: &[String]) -> Vec<String> {
         .map_or(2.min(frame.len()), |i| i + 1);
     let tail = &frame[end..];
     assert!(
-        tail.len() % 2 == 0 && tail.chunks(2).all(|c| c == ["f 101", "f 102"]),
+        tail.len().is_multiple_of(2) && tail.chunks(2).all(|c| c == ["f 101", "f 102"]),
         "a frame's later lines are not f pairs: {frame:?}"
     );
     frame[..end].to_vec()

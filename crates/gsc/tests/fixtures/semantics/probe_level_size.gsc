@@ -1,11 +1,7 @@
-//	Isolated: `level.size` after one and two dot-set fields. It turned out
-//	to read 1 on retail regardless of how many fields `level` carries (not
-//	the array-style key count `.size` gives an array or the character count
-//	it gives a string), a struct `.size` semantic this task's scope did not
-//	call for fixing -- see semantics_ab.rs's KNOWN_GAPS_OUT_OF_SCOPE
-//	sibling comment and docs/research/cod11-gsc-language.md section 9.
-//	Alone in its own file so this open question does not cost
-//	probe_level.gsc's dot write/read measurement, which already matches.
+//	Isolated: `level.size` after one and two dot-set fields. It reads 1 on
+//	retail regardless of how many fields `level` carries: the size opcode
+//	answers 1 for any object that is not an array
+//	(docs/research/cod11-gsc-language.md section 9).
 //	Run by tools/run_probe.sh; every logPrint line is one measurement.
 
 main()
