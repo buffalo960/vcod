@@ -1159,9 +1159,9 @@ file addresses.
   `label` (`localized string "PROBE_NEVER" not precached`), `statusicon`
   (`Status icon 'probe_never' was not precached`) and `shellshock`
   (`shellshock 'probe_never' was not precached`). The player-scoped probes
-  run on a test client from `addTestClient`, which retail refuses within
-  `sv_reconnectlimit` of the start (`reconnect rejected : too soon`), hence
-  their `wait 5`.
+  run on a test client from `addTestClient`, whose first bot retail refuses
+  within `sv_reconnectlimit` of the start (`reconnect rejected : too soon`;
+  `cod11-gsc-object-model.md` 25), hence their `wait 5`.
 
 - VERIFIED, `dump_builtins.py` and disassembly: `shellshock` and
   `stopShellShock` are generic entity methods 28 and 29 (0x5bb44,

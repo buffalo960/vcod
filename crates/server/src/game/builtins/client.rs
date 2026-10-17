@@ -59,7 +59,56 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("autodemostart", auto_demo_start),
     ("autodemostop", auto_demo_stop),
     ("autoscreenshot", auto_screenshot),
+    ("addtestclient", add_test_client),
 ];
+
+/// `addTestClient()` (game.mp 0x5f6e8 over cod_lnxded `SV_AddTestClient`
+/// 0x808753c): the first free slot connects as `bot<n>`, its connect callback
+/// runs inside the call and its `begin` notify lands once the calling
+/// thread's step returns (docs/research/cod11-gsc-object-model.md,
+/// "addTestClient"). `undefined` with no free slot, and for the counter's
+/// first bot inside `sv_reconnectlimit` of the start: its address, port 0,
+/// matches every never-used slot's in `SV_DirectConnect`'s reconnect check.
+/// The client sends no cmds, so nothing ever thinks for it.
+pub fn add_test_client(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    _recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let taken = |host: &GameHost, slot: usize| {
+        host.client_roster.get(slot).is_some_and(Option::is_some)
+            || host.test_clients.added.iter().any(|(s, _)| *s == slot)
+            || host
+                .ents
+                .handle(slot as u32)
+                .and_then(|id| host.ents.get(id))
+                .is_some_and(|e| e.client.is_some())
+    };
+    let Some(slot) = (0..host.client_roster.len()).find(|&s| !taken(host, s)) else {
+        return Ok(Value::Undefined);
+    };
+    let port = host.test_clients.counter;
+    host.test_clients.counter += 1;
+    // `sv_reconnectlimit`'s 3 s default, against `lastConnectTime` 0.
+    if port == 0 && host.test_clients.svs_time_ms < 3000 {
+        return Ok(Value::Undefined);
+    }
+    let name = format!("bot{port}");
+    let Some(id) = host.connect_client(cx, slot, &name) else {
+        return Ok(Value::Undefined);
+    };
+    host.test_clients.added.push((slot, name));
+    let me = Target::Entity(id);
+    let connect = cx.func_ref(
+        crate::game::script::CALLBACK_SETUP,
+        "CodeCallback_PlayerConnect",
+    );
+    cx.spawn(connect, Some(me), Vec::new());
+    let begin = cx.intern_folded(crate::game::script::BEGIN_NOTIFY);
+    cx.notify(me, begin, Vec::new());
+    Ok(Value::Entity(id))
+}
 
 /// 1.5's `self getGuid()` (game.mp 0x4110b): `trap_GetGuid`, the guid the
 /// engine took from the client's challenge (cod_lnxded 1.5b 0x808a1d0),

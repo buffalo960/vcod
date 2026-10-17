@@ -2613,6 +2613,38 @@ method (`0x45358`, entry 26 of `player_methods` at `0x733dc`, per
   whose `--probe-target` sends `kill` every 45 s, logged
   `K;0;;vcod;0;;vcod;none;100000;MOD_SUICIDE;none` at 0:22 and 1:07.
 
+**A suicide that stays playing.** `player_die` writes no `pm_type` (step
+list above) and `ClientEndFrame` writes 6 only off `sessionState == 1`
+(0x41057..0x41079), with the contents, `takedamage` and `SVF_NOCLIENT`
+beside it (5.4 below). INFERRED, off those stores: a killed callback that
+leaves `sessionstate` at `playing` leaves a body at health 0 that the end
+frame treats as alive. VERIFIED live, `client-probes/probe_suicide` on
+retail mp_harbor 2026-10-17 (recipe in that directory's README): after
+`suicide()` slot 1's own `pm_type` stayed 0 and its `viewHeightCurrent` 60,
+and slot 0's snapshot kept carrying slot 1, `eFlags` unchanged, for the
+3 s the session stayed `playing`; the frame the script wrote `dead`,
+slot 1 read `pm_type` 6, its eye started down (51.18, 42, 33, ... 8), and
+it left slot 0's snapshot. The 2026-10-07 `probe_compass` run saw the same
+`pm_type` 0 then 6 (`cod11-hud-protocol.md` 9). INFERRED, UO's
+`ClientEndFrame` (`game.mp.uo.i386.so`, Ghidra output): the same compares
+of `sessionState` against 3, 2 and 1 pick the arm, and only the 1 arm
+stores 6 (7 linked) with the same `svFlags` and `takedamage` writes, so UO
+keeps a playing suicide at `pm_type` 0 too; not run live there.
+
+vcod keyed the dead arm on the health instead and sent `pm_type` 6 and no
+entity at the suicide. VERIFIED, ours before the fix:
+`a_suicide_that_stays_playing_keeps_pm_type_0`
+(`crates/server/tests/suicide_playing.rs`) failed. Fixed: the end frame
+reads the session (`ClientSim::session`, set in the end-frame loop): only
+`playing` keeps the body on the wire with contents, `dead` alone writes
+`pm_type` 6, and a sim no script client backs keeps the health rule. The
+death's own relink as a corpse (step 13) clears `solid` until the body's
+next link, so the suicide's frame goes out with `solid` 0 (INFERRED, off
+step 13; the probe logged no `solid`). VERIFIED, ours after
+the fix, the same probe pair against `vcod-server --gametype-script`:
+`pm_type` 0 and slot 1 in slot 0's snapshot until the `dead` write, then
+6 and gone on the same frame.
+
 ### 5.2 `G_SpawnPlayerClone` and the body queue
 
 VERIFIED: `G_SpawnPlayerClone` is `0x67888`. VERIFIED: the offsets,

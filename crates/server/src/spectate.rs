@@ -260,6 +260,13 @@ pub struct ClientSim {
     /// read, so the cmds a death lands ahead of still run the live move
     /// (`docs/research/cod11-combat.md` 9.2).
     pm_dead: bool,
+    /// The script's `sessionstate` as the frame's end frame found it;
+    /// `None` with no script client behind the sim, where `dead` stands
+    /// in. `ClientEndFrame` keys its arms on the session, not the health,
+    /// so a `suicide()` that leaves `playing` keeps `pm_type` 0 and stays
+    /// on the wire (docs/research/cod11-combat.md 5.1, "A suicide that
+    /// stays playing").
+    pub session: Option<crate::follow::SessionState>,
     /// The last move ran the dead arm, whose `PM_CheckDuck` targets
     /// `deadViewHeight`.
     dead_eye: bool,
@@ -552,6 +559,7 @@ impl ClientSim {
             max_health: 0,
             dead: false,
             pm_dead: false,
+            session: None,
             dead_eye: false,
             damage: DamageAccum::default(),
             feedback: DamageFeedback::default(),
@@ -675,7 +683,27 @@ impl ClientSim {
     /// `SVF_NOCLIENT` on a dead one every frame (combat doc, 5.4;
     /// map-cycle doc, 6.2).
     pub fn linked(&self) -> bool {
-        self.pm_type == PmType::Normal && !self.dead
+        self.pm_type == PmType::Normal && !self.hidden()
+    }
+
+    /// Off the wire with no contents: every `ClientEndFrame` arm but the
+    /// playing one sets `SVF_NOCLIENT` (dead 0x41057, intermission 0x40ef0,
+    /// spectator `SpectatorClientEndFrame` 0x40760).
+    fn hidden(&self) -> bool {
+        use crate::follow::SessionState;
+        self.session
+            .map_or(self.dead, |s| s != SessionState::Playing)
+    }
+
+    /// `pm_type` 6: the dead arm (0x41079); a sim whose session is neither
+    /// playing nor dead keeps the health rule.
+    fn dead_arm(&self) -> bool {
+        use crate::follow::SessionState;
+        match self.session {
+            Some(SessionState::Playing) => false,
+            Some(SessionState::Dead) => true,
+            _ => self.dead,
+        }
     }
 
     /// `ps.groundEntityNum != ENTITYNUM_NONE`, which is what
@@ -874,7 +902,7 @@ impl ClientSim {
 
     /// `ClientEndFrame`'s contents write, once per frame before `end_frame`.
     pub fn update_contents(&mut self) {
-        self.contents = if self.pm_type == PmType::Normal && !self.dead {
+        self.contents = if self.pm_type == PmType::Normal && !self.hidden() {
             CONTENTS_BODY
         } else {
             0
@@ -888,6 +916,10 @@ impl ClientSim {
         if !self.dead {
             self.dead = true;
             self.contents = CONTENTS_CORPSE;
+            // `player_die`'s relink (combat doc 5.1 step 13): `solid` 0
+            // until the next link, even for a body whose session stays
+            // `playing`.
+            self.relink();
         }
     }
 
@@ -1714,8 +1746,8 @@ impl ClientSim {
     pub fn end_frame(&mut self, now_ms: i32) {
         // `ClientEndFrame` writes `pm_type` (0x41079) ahead of its
         // `P_DamageFeedback` call (0x41128).
-        self.pm_dead = self.dead;
-        if self.dead || self.damage.taken <= 0 || self.max_health <= 0 {
+        self.pm_dead = self.dead_arm();
+        if self.pm_dead || self.damage.taken <= 0 || self.max_health <= 0 {
             return;
         }
         let count = (self.damage.taken * 100 / self.max_health).min(127);

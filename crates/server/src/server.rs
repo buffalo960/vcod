@@ -1611,6 +1611,9 @@ pub struct Server {
     /// `--bots` spawns on the first tick with scripts up, once; a map change
     /// finds the bots already in their slots and rejoins them.
     bots_spawned: bool,
+    /// `SV_AddTestClient`'s process-wide `bot%d` counter (cod_lnxded
+    /// 0x80e2f9c), which `addTestClient` advances through the host's copy.
+    test_client_counter: u32,
     /// Per bot, `(sv_time of the last look, the enemy that look found)`.
     /// A fresh LOS trace per bot per tick was the other half of the 24-bot
     /// CPU load; a bot does not need a new verdict every 50 ms.
@@ -2022,6 +2025,7 @@ impl Server {
             fatal: None,
             bots: BTreeMap::new(),
             bots_spawned: false,
+            test_client_counter: 0,
             bot_enemies: BTreeMap::new(),
             bot_sidesteps: BTreeMap::new(),
             nav: None,
@@ -4597,6 +4601,37 @@ impl Server {
             }
             log::info!("client {slot} {name:?} connected (bot, team {asks})");
         }
+    }
+
+    /// The `Client` behind an `addTestClient` slot, whose `ClientConnect` and
+    /// `ClientBegin` the builtin already ran: `CS_ACTIVE` at once, a
+    /// spectator sim at the origin `ClientConnect`'s zeroing leaves, the
+    /// userinfo `SV_AddTestClient` connects with (0x808759b) and no
+    /// netchan. It sends no cmds and no brain drives it.
+    fn install_test_client(
+        clients: &mut [Option<Client>],
+        slot: usize,
+        name: String,
+        proto: &'static Protocol,
+        sv_time_ms: i32,
+    ) {
+        let Some(entry) = clients.get_mut(slot) else {
+            return;
+        };
+        let userinfo = format!(
+            "\\cg_predictItems\\1\\cl_anonymous\\0\\handicap\\100\\color\\4\\head\\default\\model\\multi\\snaps\\20\\rate\\5000\\name\\{name}\\protocol\\{}\\ip\\bot",
+            proto.version
+        );
+        let addr = SocketAddr::from(([127, 0, 0, 1], 65000 - slot as u16));
+        let mut client = Client::new(addr, 0, 0, userinfo, Instant::now());
+        client.is_bot = true;
+        client.state = ClientState::Active;
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(proto);
+        client.sim = Some(sim);
+        client.last_processed_st = sv_time_ms;
+        log::info!("client {slot} {name:?} connected (test client)");
+        *entry = Some(client);
     }
 
     /// One slot's `StuckInClient` view: `None` for a free slot, `own_view`
@@ -7308,6 +7343,7 @@ impl Server {
         let mut ranks_dirty = false;
         // A client that dropped between the packet and here has nothing left
         // to run its command against.
+        let svs_now = self.svs_time_ms();
         let queued: Vec<(usize, ScriptCommand)> = std::mem::take(&mut self.pending_script_commands)
             .into_iter()
             .filter(|(slot, _)| self.clients[*slot].is_some())
@@ -7332,8 +7368,32 @@ impl Server {
                     }
                 }
             }
+            // `addTestClient` can run on any script entry (a load's settle
+            // frames too), so the counter is read back before it goes in.
+            let counter = self.test_client_counter.max(rt.host.test_clients.counter);
+            rt.host.test_clients.counter = counter;
+            rt.set_network_time(svs_now);
+            for (slot, name) in std::mem::take(&mut rt.host.test_clients.added) {
+                Self::install_test_client(
+                    &mut self.clients,
+                    slot,
+                    name,
+                    self.proto,
+                    self.sv_time_ms,
+                );
+            }
             mirror_roster(&self.clients, rt);
             rt.run_threads(self.sv_time_ms);
+            self.test_client_counter = rt.host.test_clients.counter;
+            for (slot, name) in std::mem::take(&mut rt.host.test_clients.added) {
+                Self::install_test_client(
+                    &mut self.clients,
+                    slot,
+                    name,
+                    self.proto,
+                    self.sv_time_ms,
+                );
+            }
             // The vehicle guns the threads fired (`fireTurret` and kin run
             // their rounds inside the call).
             vehicle_fire(
@@ -7822,13 +7882,15 @@ impl Server {
                 );
                 // `takedamage` off the session state (0x40ed9, 0x40f93,
                 // 0x4107c, and `SpectatorClientEndFrame` 0x40788).
-                if let Some(session) = rt.client_session(slot) {
+                let session = rt.client_session(slot);
+                if let Some(session) = session {
                     let playing = session.state == follow::SessionState::Playing;
                     rt.set_client_takedamage(slot, playing);
                 }
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
                 };
+                sim.session = session.map(|s| s.state);
                 sim.update_contents();
                 let live = sim.pm_type == PmType::Normal && !sim.dead && sim.health > 0;
                 if live {
@@ -9252,12 +9314,17 @@ impl Server {
                 if hidden {
                     None
                 } else if sim.linked() {
-                    Some((
-                        i as u32,
-                        copied.unwrap_or_else(|| {
-                            sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
-                        }),
-                    ))
+                    let mut e = copied.unwrap_or_else(|| {
+                        sim.to_entity(self.proto, i, c.as_ref().unwrap().last_processed_st)
+                    });
+                    // Killed after its end frame copied it, its session
+                    // still `playing` there: the corpse relink still lands.
+                    if sim.dead
+                        && let Some(f) = msg::EntityState::field_index(self.proto, "solid")
+                    {
+                        e.fields[f] = sim.linked_solid;
+                    }
+                    Some((i as u32, e))
                 } else if sim.dead {
                     let mut e = copied?;
                     if let Some(f) = msg::EntityState::field_index(self.proto, "solid") {
@@ -14351,6 +14418,8 @@ mod tests {
         let mut rig = FollowRig::new();
         rig.press(msg::BUTTON_ATTACK);
         rig.script().host.client_vitals[1].dead = true;
+        // What a stock killed callback writes; the dead arm keys on it.
+        rig.script().set_client_state_for_test(1, "dead");
         let s = rig.step(0);
         assert_eq!(ps_i32(&s, "clientNum"), 1);
         assert_eq!(s.ps.health(), 0);

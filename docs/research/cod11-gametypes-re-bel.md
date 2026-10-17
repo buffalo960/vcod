@@ -195,8 +195,8 @@ Differences that remain, none specific to these gametypes:
   `t=11100`), so on ours the probes were already in when it ran.
 - The restart rebroadcasts configstrings 3, 12 and 13 on retail and only 3
   on ours, with `t\0` in 3: `docs/research/cod11-map-cycle.md` 4.5.
-- `addTestClient` is unimplemented; the stock scripts reach it only from
-  their `scr_numbots` debug thread.
+- The stock scripts reach `addTestClient` only from their commented-out
+  `scr_numbots` debug thread (`cod11-gsc-object-model.md` 25).
 
 Sections 7 and 8 cover what this run left out: an `re` pickup, carry,
 drop, return and capture, and a `bel` kill and the team swap it causes.

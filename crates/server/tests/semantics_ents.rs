@@ -44,6 +44,11 @@
 //! `probe_late_settext`, `probe_late_shellshock`, `probe_late_shockspan`,
 //! `probe_late_statusicon` and `probe_late_viewmodel`.
 //!
+//! The `probe_attach_*` probes and `probe_detach_missing` are claimed here
+//! for the object table's attachment slots, and `probe_testclient` for the
+//! client `addTestClient` connects, which `testclient.rs` runs on a whole
+//! server: its spawn reads the map's collision.
+//!
 //! `probe_ents`, `probe_delete`, `probe_bootstrap`, `probe_loadfx_wait`,
 //! the `probe_precache_*` and the `probe_late_*` probes need `COD_DIR`;
 //! without the paks they return early, like every other game-data test in
@@ -607,6 +612,27 @@ fn probe_late_index_matches_retail() {
         assert_eq!(ours, retail_probe_lines(name), "{name}");
         let fatal = !matches!(name, "probe_late_index" | "probe_late_player");
         assert_eq!(retail_probe_died(name), fatal, "{name}");
+    }
+}
+
+/// `attach`'s six slots, the error on a pair already attached, the
+/// compaction behind a `detach`, the lower-cased tag and the "bad index"
+/// readers (docs/research/cod11-gsc-object-model.md 24).
+#[test]
+fn probe_attach_matches_retail() {
+    for name in [
+        "probe_attach_badindex",
+        "probe_attach_badtag",
+        "probe_attach_slots",
+        "probe_attach_twice",
+        "probe_attach_twice_notag",
+        "probe_detach_missing",
+    ] {
+        let Some(ours) = run_initializing_probe(name) else {
+            return;
+        };
+        assert_eq!(ours, retail_probe_lines(name), "{name}");
+        assert!(retail_probe_died(name), "{name}");
     }
 }
 
