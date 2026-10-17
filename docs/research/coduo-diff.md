@@ -2496,6 +2496,50 @@ new level's `setTeamScore("allies", 0)` changes it), `d 3` (the ambient)
 restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
 `d 1` (cod11-map-cycle.md 4.5); it has no `d 14`, which it holds at `0`.
 
+Four more probes, 2026-10-17, ports 32531-32539, the same two clients and
+`gametypes_ab` tests (`uo_*_time*`, `uo_team_deathmatch_*`), cover the
+clock ends, the defender's return and a rotation to another map:
+- **ctf** (`probe_ctftime`, mp_cassino, `scr_ctf_roundlength 0.5`,
+  `scr_ctf_timelimit 0.5`, no score or round limit). The allied player
+  takes the axis flag, faces yaw 0 and `suicide()`s: `drop_flag`'s
+  `getPlant` puts it 11 units ahead, at (4974, -1987, -7.88). The axis
+  player `setOrigin`s onto it and `ctf_think`'s own-team branch returns
+  it one frame later: `A;...;axis;...;ctf_returned`,
+  `GMI_CTF_PLAYER_RETURNED_FLAG_AXIS` and the returned sound, no
+  `TIMEOUT_RETURNING` (VERIFIED, the log's 17400 and 17450, and the
+  captures). The round clock runs out 30 s into the level:
+  `GMI_CTF_TIMEEXPIRED`, `endRound("draw")`; after the 10 s end-round
+  delay `game["timepassed"]` reads 0.78 and `checkTimeLimit` ends the map
+  (`MPSCRIPT_TIME_LIMIT_REACHED`, `MPSCRIPT_THE_GAME_IS_A_TIE`,
+  intermission). The probe's own `setCvar("sv_mapRotation", "gametype
+  probe_ctftime map mp_foy")` is what `exitLevel(false)` rotates through:
+  a gamestate for mp_foy with serverId 33, and `g_gametype` still the
+  probe (VERIFIED, the log's `PROBE done mp_foy probe_ctftime` and the
+  `!gamestate` line; cod11-map-cycle.md 5.2).
+- **tdm** (`probe_tdmend`, mp_cassino, `scr_tdm_timelimit 0.5`,
+  `scr_tdm_scorelimit 2`). The allied player kills the axis player with
+  `finishPlayerDamage`: allies 1, under the limit. The victim's killcam
+  runs (2 s dying, `archivetime` 9), and he respawns only on a use press
+  after it (`waitRespawnButton`; the probe taps use 10 s after the kill).
+  `startGame`'s `checkTimeLimit` ends the map at 30100 ms of level time
+  (VERIFIED, the log and captures).
+- **hq** (`probe_hqtime`, mp_cassino, `scr_hq_timelimit 0.5`). Nobody
+  takes the radio; the time limit ends the map at 30100. The restarted
+  level shows a different radio, (1903, -1314, 168) where the first showed
+  (658, -1782, 0) (VERIFIED, the captures' objective slot 0). vcod shows
+  the first level's radio again (VERIFIED, the gate's ours side). INFERRED,
+  off `hq_randomize_radioarray`'s `randomInt` and vcod's per-level
+  `GameHost` seeding `RNG_SEED`: retail's draws carry across a restart and
+  vcod's start over. `gametypes_ab` drops every hq radio's origin, as for
+  the first level's random pick.
+- **bas** (`probe_bastime`, mp_foy, `scr_bas_roundlength 0.5`,
+  `scr_bas_roundlimit 1`, `scr_bas_startrounddelay 5`). Nobody breaches;
+  the round clock runs out with three bases a side: `GMI_DOM_TIMEEXPIRED`,
+  `endRound("draw")`, then `MPSCRIPT_ROUND_LIMIT_REACHED` and the map end
+  at 53650 (VERIFIED, the log and captures).
+All four match on vcod-server; `probe_ctftime` failed before
+`map_rotate` read the script's cvars (ours restarted mp_cassino).
+
 ### Engine facts the gametypes reach
 
 - **Model entities send `xmodel`.** UO's `G_DObjUpdate` (0x77df9) writes
@@ -2633,8 +2677,9 @@ restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
   (cod11-map-cycle.md 4.5). VERIFIED, retail's burst at mp_foy's first
   restart (`mp_foy-bas-attacker-uo.txt`, `ms=19467`): `d 14 23300`, `d 13`
   with the fog, `d 3 n\ambient_mp_foy\t\23300`, then `n`.
-- Not measured: `doDamage` on a client; a time limit; a map rotation that
-  names another map; `ctf`'s flag returned by a defender's touch.
+- Not measured: `doDamage` on a client; `dom`'s round clock and time
+  limit (the same `startRound` and `checkTimeLimit` shape as `ctf`'s,
+  which `probe_ctftime` measures).
 
 ## 23. HTTP downloads
 

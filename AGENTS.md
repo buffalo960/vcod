@@ -349,7 +349,8 @@ header of the fixture it produced.
   `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
-  `probe_bas` and their `*end` endings have run there. On UO's mp_carentan the
+  `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
+  `probe_hqtime` and `probe_bastime` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates

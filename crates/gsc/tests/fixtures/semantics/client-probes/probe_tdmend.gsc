@@ -3,10 +3,10 @@
 //	mp_cassino with two --save-scripted probes, allies then axis, under a
 //	half-minute time limit and a score limit of 2. The allied player kills
 //	the axis player through finishPlayerDamage (allies 1, below the limit),
-//	the axis player sits through the killcam and taps use to respawn, the time limit
-//	ends the map in intermission and exitLevel(false), and the empty
-//	rotation restarts it. Recipe and measurements: docs/research/coduo-diff.md
-//	22.
+//	the axis player sits through the killcam and taps use to respawn, the
+//	time limit ends the map in intermission and exitLevel(false), and the
+//	empty rotation restarts it. Recipe and measurements:
+//	docs/research/coduo-diff.md 22.
 
 main()
 {

@@ -6,7 +6,10 @@
 //! `probe_hq`; docs/research/coduo-diff.md 22), and each of the four UO
 //! modes played to its map end and the restart after it (`probe_ctfend`,
 //! `probe_domend`, `probe_hqend`, `probe_basend`; same section, "Round and
-//! map ends").
+//! map ends"), and the clock ends: `ctf`'s round clock and time limit with
+//! a defender's flag return and a rotation to mp_foy (`probe_ctftime`),
+//! `tdm`'s killcam and time limit (`probe_tdmend`), `hq`'s time limit
+//! (`probe_hqtime`) and `bas`'s round clock (`probe_bastime`).
 //!
 //! Each run is stock `re.gsc` or `bel.gsc` under a gsc probe
 //! (`client-probes/probe_re.gsc`, `probe_bel.gsc`) that places the players,
