@@ -2041,3 +2041,21 @@ The fixture is `crates/server/tests/fixtures/movers/mp_carentan-dm-anglesnap.txt
 (1.1d; 1.5b and UO 1.51b print the same lines), gated by `ride_ab.rs`'s
 `every_link_snaps_angles_like_retail` (cod11-movers.md 12, "The snap on
 every link").
+
+## probe_leanhit
+
+A leaning target's hit pose and a leaning shooter's rounds, for
+`docs/research/cod11-combat.md` 3.6. Two `--probe-uo-weapon direct`
+clients, an axis target and an allies `springfield_mp` shooter 256 units
+apart; the gsc sends each its buttons, lean and stance through
+`iPrintLn("PROBE_IN ...")` and runs 13 phases from level time 20000: the
+target standing, crouched and prone, each level and leaning both ways, then
+the shooter leaning both ways. Each phase logs a grid of `bulletTrace`
+cells across the target and the damage of one sighted round. The recipe is
+in the header of `crates/server/tests/fixtures/leanhit/mp_carentan-leanhit.txt`,
+gated by `crates/server/tests/leanhit_ab.rs`.
+
+Two things its first runs taught: the target's torso yaw stays where his
+spawn point left it until something swings it (16.4), so the probe lays him
+prone and stands him up before the phases; and a stance change needs the
+ground behind him clear, so the site asks for 80 level units past his spot.
