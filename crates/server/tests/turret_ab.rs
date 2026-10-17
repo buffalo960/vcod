@@ -227,6 +227,8 @@ fn build_on(
     sv.set_protocol(p);
     sv.overlay_script(PROBE_PATH, &read(PROBE_SRC));
     sv.set_cvar("probe_teleport", "1");
+    // Only logs: every hit's point and direction to the last bit.
+    sv.set_cvar("probe_hitlog", "1");
     for (name, value) in cvars {
         sv.set_cvar(name, value);
     }
@@ -1459,11 +1461,11 @@ const LATE_SPAWN_UO: &[i32] = &[36284];
 const GAPS_SPAWN_UO: &[(&str, &str)] = &[
     (
         "[target] impact t=31250: retail only 173@[1512.0, 1607.0",
-        UO_BONE_ARITH,
+        UO_BONE_POSE,
     ),
     (
         "[target] impact t=31250: ours only 173@[1513.0, 1607.0",
-        UO_BONE_ARITH,
+        UO_BONE_POSE,
     ),
 ];
 /// The sweep's cmd 19985 (sent at ms 1733), whose view snapshot 20000
@@ -1558,12 +1560,12 @@ const KILLING_ROUND: &str = "the killing round meets a target the round before k
     landing; this capture logs neither the target's cmd stamps nor its spawn time, and the \
     -spawn captures, which log both, match the killing round on 1.1d and 1.5b with no row \
     (cod11-turrets.md 13.4)";
-const UO_BONE_ARITH: &str = "ours enters the target at x 1513.0006, a thousandth of a unit \
+const UO_BONE_POSE: &str = "ours enters the target at x 1513.0006, a thousandth of a unit \
     past the whole unit retail's truncation stays under, with the target's entity matching \
-    retail's and its playerstate matching the target's own log (origin, velocity, pm_time) at \
-    the kill; UO's engine stores every float variable (bsp-ibsp59-format.md, Patch \
-    collision on 1.5 and UO) and the posed-bone trace (bonetrace.rs) has no stored-float \
-    arithmetic ported, which reads as that thousandth (cod11-turrets.md 13.4)";
+    retail's and its playerstate matching the target's own log at the kill; the hitfine \
+    capture's points put our bones 0.003 to 0.05 units off retail's along the round, and \
+    UO's stored floats in the bone trace move an entry by 3e-5 only, so the pose differs \
+    and UO has no getTagOrigin to log it (cod11-turrets.md 13.5)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
     ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
     print, which reads as a smaller air acceleration across the face on retail; no cmd \
@@ -2331,7 +2333,59 @@ fn spawn_gate(
     let ours = replay(&mut rig, &cap);
     let mut rows = diff(&cap, &ours, &fs().unwrap());
     rows.extend(target_rows(&cap, &read(&path("-target")), &ours));
+    rows.extend(hitfine_rows(
+        read(&path("-script")).lines(),
+        rig.sv.script_log().iter().map(String::as_str),
+    ));
     finish(rows, gaps);
+}
+
+/// A `probe_hitlog` line: time, victim, location and damage, then the point
+/// from its `int:thousandths:millionths of one` components.
+fn hitfine<'a>(log: impl Iterator<Item = &'a str>) -> Vec<(String, [f64; 3])> {
+    log.filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split_once("PROBE hitfine ").map(|(_, r)| r))
+        .map(|r| {
+            let f: Vec<&str> = r.split_whitespace().collect();
+            let comp = |c: &str| {
+                let (neg, c) = c.strip_prefix('-').map_or((false, c), |c| (true, c));
+                let p: Vec<f64> = c.split(':').map(|x| x.parse().expect("a number")).collect();
+                let v = p[0] + p[1] / 1e3 + p[2] / 1e9;
+                if neg { -v } else { v }
+            };
+            let point: Vec<f64> = f[4].split(',').map(comp).collect();
+            (f[..4].join(" "), [point[0], point[1], point[2]])
+        })
+        .collect()
+}
+
+/// The captures that log `probe_hitlog`: every hit at retail's time, on the
+/// same victim, location and damage. How far each point sits from retail's
+/// prints under `TURRET_REPORT=1` (turrets doc 13.5).
+fn hitfine_rows<'a>(
+    theirs: impl Iterator<Item = &'a str>,
+    mine: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    let (theirs, mine) = (hitfine(theirs), hitfine(mine));
+    if theirs.is_empty() {
+        return Vec::new();
+    }
+    let mut rows = Vec::new();
+    for (i, (key, at)) in theirs.iter().enumerate() {
+        match mine.get(i) {
+            Some((k, m)) if k == key => {
+                if report() {
+                    let d = [m[0] - at[0], m[1] - at[1], m[2] - at[2]];
+                    eprintln!("hitfine {key}: ours - retail = {d:?}");
+                }
+            }
+            other => rows.push(format!("[hit] {key}: ours {:?}", other.map(|o| &o.0))),
+        }
+    }
+    if mine.len() > theirs.len() {
+        rows.push(format!("[hit] ours only {:?}", &mine[theirs.len()..]));
+    }
+    rows
 }
 
 #[test]
@@ -2371,6 +2425,20 @@ fn the_spawn_capture_matches_uo_on_mp_carentan() {
         EARLY_SPAWN_UO,
         LATE_SPAWN_UO,
         GAPS_SPAWN_UO,
+    );
+}
+
+/// The `-spawn-uo` recipe rerun with `probe_hitlog`, whose hits the gate
+/// also pairs line by line (turrets doc 13.5).
+#[test]
+fn the_hitlog_capture_matches_uo_on_mp_carentan() {
+    spawn_gate(
+        "hitfine-uo",
+        vcod_common::testing::uo_fs,
+        &PROTOCOL_V22,
+        &[],
+        &[],
+        &[],
     );
 }
 

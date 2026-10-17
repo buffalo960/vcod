@@ -1,0 +1,56 @@
+# Retail United Offensive 1.51b dedicated server, mp_harbor tdm, client-probes/probe_skyshot spot part on the south sea wall looking 0 degrees down over the harbor, smokegrenade_mp, captured 2026-10-17:
+#   COD_VERSION=uo PORT=32692 PROBE_SECS=45 tools/run_probe.sh client-probes/probe_skyshot mp_harbor +set probe_part spot +set probe_weapon smokegrenade_mp +set probe_x -12640 +set probe_y -7036 +set probe_z 152 +set probe_yaw 90 +set probe_pitch 0
+#   vcod --game-dir <uo install> --mod-dir uo --net-probe 127.0.0.1:32692 --probe-team allies --probe-uo-weapon throw --probe-secs 30
+# UO frees a smoke grenade (projExplosionType smoke) on its splash: the temp entity goes out and the missile is gone the same frame (combat doc 12.1).
+# Retail server PROBE lines, then the shooter probe's VEH missile and temp lines (vehicle_probe.rs report).
+PROBE spot 1050 (-12640.00, -7036.00, 152.12) 90 0
+PROBE miss 20600 263 grenade (-12640.00, -7036.00, 212.12)
+PROBE miss 20650 263 grenade (-12640.00, -6988.00, 217.12)
+PROBE miss 20700 263 grenade (-12640.00, -6940.00, 220.12)
+PROBE miss 20750 263 grenade (-12640.00, -6892.00, 221.12)
+PROBE miss 20800 263 grenade (-12640.00, -6844.00, 220.12)
+PROBE miss 20850 263 grenade (-12640.00, -6796.00, 217.12)
+PROBE miss 20900 263 grenade (-12640.00, -6748.00, 212.12)
+PROBE miss 20950 263 grenade (-12640.00, -6700.00, 205.12)
+PROBE miss 21000 263 grenade (-12640.00, -6652.00, 196.12)
+PROBE miss 21050 263 grenade (-12640.00, -6604.00, 185.12)
+PROBE miss 21100 263 grenade (-12640.00, -6556.00, 172.12)
+PROBE miss 21150 263 grenade (-12640.00, -6508.00, 157.12)
+PROBE miss 21200 263 grenade (-12640.00, -6460.00, 140.12)
+PROBE miss 21250 263 grenade (-12640.00, -6412.00, 121.12)
+PROBE miss 21300 263 grenade (-12640.00, -6364.00, 100.12)
+PROBE miss 21350 263 grenade (-12640.00, -6316.00, 77.12)
+PROBE miss 21400 263 grenade (-12640.00, -6268.00, 52.12)
+PROBE miss 21450 263 grenade (-12640.00, -6220.00, 25.12)
+PROBE miss 21500 263 grenade (-12640.00, -6172.00, -3.88)
+PROBE miss 21550 263 grenade (-12640.00, -6124.00, -34.88)
+PROBE miss 21600 263 grenade (-12640.00, -6076.00, -67.88)
+PROBE miss 21650 263 grenade (-12640.00, -6028.00, -102.88)
+VEH 20600 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20650 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20700 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20750 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20800 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20850 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20900 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 20950 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21000 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21050 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21100 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21150 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21200 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21250 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21300 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21350 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21400 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21450 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21500 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21550 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21600 missile 263 type 5 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 52 etype 4 evseq 0 ev 0 parm 0
+VEH 21650 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52
+VEH 21700 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52
+VEH 21750 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52
+VEH 21800 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52
+VEH 21850 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52
+VEH 21900 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52
+VEH 21950 temp 74 ev 4274 parm 5 other 263 pos -12640.0 -6028.0 -102.0 surf 20 scale 32 weapon 52

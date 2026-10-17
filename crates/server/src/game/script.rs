@@ -90,6 +90,9 @@ pub struct Carry {
     /// every level, restarts included (map-cycle doc 4.8); `None` takes
     /// [`crate::game::host::RNG_SEED`].
     pub seed: Option<u64>,
+    /// A test's replay of another server's spawn picks
+    /// ([`crate::game::host::SpawnPins`]), handed to every level.
+    pub spawn_pins: Option<crate::game::host::SpawnPins>,
 }
 
 /// The two closures a level loaded, compiled, before any of it ran.
@@ -363,6 +366,7 @@ impl ScriptRuntime {
         if let Some(seed) = carry.seed {
             host.rng = seed | 1;
         }
+        host.spawn_pins = carry.spawn_pins;
         if let Some(items) = carry.items {
             host.items = items;
         }
@@ -2278,6 +2282,7 @@ impl ScriptRuntime {
             map: self.map.clone(),
             scripts: self.scripts.clone(),
             seed: None,
+            spawn_pins: None,
         }
     }
 
@@ -2971,10 +2976,14 @@ impl ScriptRuntime {
             }),
             _ => None,
         };
-        match host
+        let turn = host
             .missiles
-            .run_one(id, world, sims, &models, bones.as_mut(), now_ms)
-        {
+            .run_one(id, world, sims, &models, bones.as_mut(), now_ms);
+        // A water entry splash is `G_TempEntity`'d inside the move (12.1).
+        for te in host.missiles.take_splashes() {
+            self.vm.with_cx(|cx| host.add_temp_entity(cx, te));
+        }
+        match turn {
             Some(Turn::Flew) => {
                 host.missiles.sync_origin(&mut host.ents, id);
                 host.link_shootable(id);

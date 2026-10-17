@@ -349,6 +349,6 @@ Divergences:
   a `null.wav` row, so its replacement would not happen.
 - A `.shock` file that fails to load is a warning and no effect, not
   `CG_Error`.
-- `CL_MouseMove` clamps a frame's summed motion; vcod applies motion per
-  event, so the cap holds the frame's running sum, which lets through the
-  same total.
+- `CL_MouseMove` clamps a frame's summed motion; vcod spends the motion
+  once a frame too (`App::mouse_frame`), under the cap the frame before
+  set.

@@ -323,6 +323,9 @@ pub struct GameHost {
     /// Spawns the script performed this frame, drained by `Server` after
     /// `run_frame` the way `client_commands` is.
     pub client_spawns: Vec<SpawnRequest>,
+    /// Test-only: each slot's queue of `(origin, angles)` that its next
+    /// playing `spawn` takes in place of the script's pick.
+    pub spawn_pins: Option<SpawnPins>,
     /// `addTestClient`'s engine half, mirrored with `Server`.
     pub test_clients: TestClients,
     /// Each client's weapons, by slot. `giveWeapon` and `setSpawnWeapon`
@@ -654,6 +657,14 @@ pub type Bounds = ([f32; 3], [f32; 3]);
 
 /// Fixed non-zero xorshift64* seed. Any non-zero constant works; a zero
 /// state is the one xorshift degenerates on.
+/// Per client slot, the spawn points a gate replays from a retail capture,
+/// in spawn order (`None` keeps the script's own pick): the pick draws from
+/// a clock-seeded generator on retail (map-cycle doc 4.8), so no seed
+/// reproduces it.
+pub type SpawnPins = std::rc::Rc<std::cell::RefCell<Vec<std::collections::VecDeque<SpawnPin>>>>;
+/// One replayed spawn: `(origin, angles)`, or `None` for the script's own.
+pub type SpawnPin = Option<([f32; 3], [f32; 3])>;
+
 pub(crate) const RNG_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
 impl GameHost {
@@ -1302,6 +1313,7 @@ impl GameHost {
             world: None,
             area: crate::area::AreaTree::unbounded(),
             rng: RNG_SEED,
+            spawn_pins: None,
             script_log: Vec::new(),
             level_time_ms: 0,
             initializing: true,

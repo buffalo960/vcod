@@ -992,8 +992,9 @@ pub fn hint_material(hint: i32, weapons: &[Option<WeaponDef>]) -> Option<String>
     }
 }
 
-/// The hint icon, pulsing, and the hint string above it with its `[%s]`
-/// and `[{+activate}]` filled with the use key.
+/// The hint icon, pulsing, and the hint string above it, key-bound
+/// (0x300229b0) and with its `[%s]` filled with the use key
+/// ([`hint_use_key`]).
 fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Vec<HudQuad>) {
     let material = match p.uo {
         Some(_) => uo::hint_material(p.cursor_hint, cx.weapons),
@@ -1029,10 +1030,21 @@ fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Ve
     }
     // The configstring is a packed message (`RE_PRESS_TO_PICKUP\x14...`),
     // localized and key-bound the way a game message is (0x300229b0).
-    let s = super::bind_keys(&cx.loc.message(key)).replace("[%s]", "[F]");
+    let s = super::bind_keys(&cx.loc.message(key), cx.bound_key);
+    let s = hint_use_key(&s, cx.bound_key, cx.loc);
     let tw = text_width(cx.font, &s, 0.21);
     let baseline = y - text_height(cx.font, 0.21);
     menu_text(cx.font, &s, (x + (w - tw) / 2.0, baseline), 0.21, v, out);
+}
+
+/// The hint string's `[%s]` (0x300257cd), found case-folded: the key text
+/// of `+activate`, or `KEY_USE` ("use") while nothing is bound to it.
+fn hint_use_key(text: &str, bound: &dyn Fn(&str) -> Option<String>, loc: &Localized) -> String {
+    let Some(at) = text.to_ascii_lowercase().find("[%s]") else {
+        return text.to_string();
+    };
+    let key = bound("+activate").unwrap_or_else(|| loc.translate("@KEY_USE").into_owned());
+    format!("{}{key}{}", &text[..=at], &text[at + 3..])
 }
 
 /// What `CG_DamageFeedback` (`0x300287f0`) keeps: up to eight
@@ -2119,6 +2131,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The hint's `[%s]` takes the use key's text, or `KEY_USE` unbound.
+    #[test]
+    fn hint_fills_its_placeholder_with_the_use_key() {
+        let loc = Localized::default();
+        let bound = |c: &str| (c == "+activate").then(|| "F or G".to_string());
+        assert_eq!(
+            hint_use_key("Press [%S] to pick up", &bound, &loc),
+            "Press [F or G] to pick up"
+        );
+        assert_eq!(
+            hint_use_key("Press [%s] to use", &|_| None, &loc),
+            "Press [KEY_USE] to use"
+        );
+        assert_eq!(hint_use_key("no key", &bound, &loc), "no key");
     }
 
     #[test]

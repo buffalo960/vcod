@@ -628,13 +628,17 @@ impl VehicleProbe {
                 );
             } else if let Some(ev) = p.event_of(i("eType")) {
                 println!(
-                    "VEH {} temp {num} ev {ev} parm {} other {} pos {:.1} {:.1} {:.1}",
+                    "VEH {} temp {num} ev {ev} parm {} other {} pos {:.1} {:.1} {:.1} \
+                     surf {} scale {} weapon {}",
                     s.server_time,
                     i("eventParm"),
                     i("otherEntityNum"),
                     o[0],
                     o[1],
                     o[2],
+                    i("surfType"),
+                    i("_union.scale"),
+                    i("weapon"),
                 );
             } else if i("eType") == ET_MISSILE || self.missiles.contains(&(*num as i32)) {
                 self.missiles.insert(*num as i32);

@@ -1534,6 +1534,8 @@ pub struct Server {
     /// [`Server::new`], whose every level draws from `RNG_SEED`, so a test's
     /// spawn picks hold at each level; [`Server::with_seed`] steps it.
     level_seed: Option<u64>,
+    /// [`Server::pin_spawns`]'s queues, handed to every level's script.
+    spawn_pins: Option<crate::game::host::SpawnPins>,
     /// The map's collision and spawn, loaded by the binary; tests run
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
@@ -1993,6 +1995,20 @@ impl Server {
         sv
     }
 
+    /// Test-facing: each client slot's playing spawns, in order, go to these
+    /// `(origin, angles)` instead of the script's random pick (`None` keeps
+    /// the pick), across every later level. A gate replays a retail
+    /// capture's picks with it: retail seeds the script's draws from the
+    /// wall clock (map-cycle doc 4.8).
+    pub fn pin_spawns(&mut self, pins: Vec<Vec<crate::game::host::SpawnPin>>) {
+        let queues = pins.into_iter().map(Into::into).collect();
+        let pins = Rc::new(std::cell::RefCell::new(queues));
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.spawn_pins = Some(pins.clone());
+        }
+        self.spawn_pins = Some(pins);
+    }
+
     /// `new` with the generator seeded from `seed`; the binary passes the
     /// wall clock.
     pub fn with_seed(mut cfg: ServerConfig, now: Instant, seed: u64) -> Self {
@@ -2031,6 +2047,7 @@ impl Server {
             limiter: RateLimiter::new(now),
             rng: seed,
             level_seed: Some(seed),
+            spawn_pins: None,
             world: None,
             sv_time_ms: 0,
             paused_ms: 0,
@@ -4472,6 +4489,7 @@ impl Server {
                             at.into(),
                             crate::bots::BACK_DOWN_HEIGHT,
                         );
+                    view.crouch_jump = view.jump && follower.crouch_jumping(&g);
                     view.lip = view.jump
                         && matches!((self.world.as_ref(), ps, view.waypoint), (Some(w), Some(ps), Some(to))
                             if crate::nav::lip_ahead(&w.collision, &ps, glam::Vec2::new(to[0], to[1]), self.weapon_table.defs()));
@@ -5036,6 +5054,7 @@ impl Server {
             jump: false,
             leap: false,
             lip: false,
+            crouch_jump: false,
             stop: false,
             run_off: false,
             move_scale: def
@@ -5811,6 +5830,7 @@ impl Server {
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
             seed: self.level_seed,
+            spawn_pins: self.spawn_pins.clone(),
         };
         if let Some(seed) = self.level_seed.as_mut() {
             *seed = vcod_common::rng::xorshift(seed) | 1;

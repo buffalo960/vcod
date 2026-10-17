@@ -1493,8 +1493,14 @@ pointers. VERIFIED: the string `cg_drawCompass` is in none of
 the exe's decompilation names it only at the registration. VERIFIED: the
 cgame's row for `cg_drawTeamOverlay` (`0x30074ef0`, binding `0x301ad060`,
 default `"2"`, flags 1) is the only reference to that `vmCvar_t`; no
-instruction loads `0x301ad060`..`0x301ad06f`. INFERRED: both options are
-inert in 1.1 MP, so the compass always draws and there is no team overlay.
+instruction loads `0x301ad060`..`0x301ad06f`. VERIFIED: 1.5's CoDMP.exe
+and UO's CoDUOMP.exe register both the same way and discard the pointers
+(their decompilations), neither string is in 1.5's or UO's `ui_mp_x86.dll`
+or in UO's cgame but for `cg_drawTeamOverlay`'s row, and that row's
+`vmCvar_t` (1.5 cgame `0x301b0c00`, row `0x30076eb0`; UO cgame
+`0x304218a0`, row `0x30085750`) is referenced nowhere else in the file (a
+byte search for each of its four words). INFERRED: both options are inert
+in all three, so the compass always draws and there is no team overlay.
 vcod registers both at retail's defaults so the menu's choice is kept, and
 reads neither.
 
@@ -2279,7 +2285,13 @@ twice as wide, shifted left by half the rect. A hint string (configstring
 `1212 + serverCursorHintString`, `cod11-gsc-object-model.md`) is localized,
 its `[%s]` filled with the use key's binding, and printed at textscale .21
 centred on the rect with its baseline one text height above it. VERIFIED:
-`0x300696d4` reads 0.0066667 and `0x30063188` is `"[%s]"`. The weapon hints'
+`0x300696d4` reads 0.0066667 and `0x30063188` is `"[%s]"`. VERIFIED, the
+fill (`0x30025792`..`0x30025899`): the string goes through the
+`[{command}]` pass with `"Hint String"`, a copy is case-folded
+(`0x3003e9b0`) and searched for `[%s]`, and the original up to the `[`,
+`+activate`'s key text (`0x3006186c`, through `0x30046940`) or, when that
+reads unbound, `KEY_USE` localized (`0x30063160`, key.str `"use"`), and the
+original from the `]` on are joined. The weapon hints'
 own composed sentence is not modelled.
 
 ### Damage direction

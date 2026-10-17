@@ -192,6 +192,7 @@ pub fn build(
     configstrings: &[String],
     layout: &CsLayout,
     loc: &Localized,
+    bound: &dyn Fn(&str) -> Option<String>,
     fonts: &UiFonts,
     server_time: i32,
     screen: (f32, f32),
@@ -205,7 +206,17 @@ pub fn build(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     for e in order {
-        draw(e, configstrings, layout, loc, fonts, server_time, &v, out);
+        draw(
+            e,
+            configstrings,
+            layout,
+            loc,
+            bound,
+            fonts,
+            server_time,
+            &v,
+            out,
+        );
     }
 }
 
@@ -215,6 +226,7 @@ fn draw(
     cs: &[String],
     layout: &CsLayout,
     loc: &Localized,
+    bound: &dyn Fn(&str) -> Option<String>,
     fonts: &UiFonts,
     now: i32,
     v: &Virtual,
@@ -230,7 +242,7 @@ fn draw(
     let body = match ty {
         1 => Some(match e.get(f::TEXT) {
             0 => String::new(),
-            i => localized(loc, cs, layout.localized() + i as usize),
+            i => localized(loc, bound, cs, layout.localized() + i as usize),
         }),
         2 => Some(format_g(e.get_f32(f::VALUE))),
         4..=7 => Some(timer_text(ty, e.get(f::TIME), now)),
@@ -239,7 +251,7 @@ fn draw(
 
     let label = match e.get(f::LABEL) {
         0 => String::new(),
-        i => localized(loc, cs, layout.localized() + i as usize),
+        i => localized(loc, bound, cs, layout.localized() + i as usize),
     };
     if let Some(body) = body {
         let s = merge_label(&label, &body);
@@ -340,14 +352,21 @@ fn fade_color(e: &HudElem, now: i32) -> [f32; 4] {
 }
 
 /// A localized-string configstring as text: its table entry, or the bare
-/// key when the table lacks it; an empty configstring reads empty.
-fn localized(loc: &Localized, cs: &[String], index: usize) -> String {
+/// key when the table lacks it, through the `[{command}]` pass
+/// (`hud::bind_keys`, the cgame's "hudelem string"); an empty configstring
+/// reads empty.
+fn localized(
+    loc: &Localized,
+    bound: &dyn Fn(&str) -> Option<String>,
+    cs: &[String],
+    index: usize,
+) -> String {
     let key = cs.get(index).map(String::as_str).unwrap_or("");
     if key.is_empty() {
         return String::new();
     }
     let bare = key.strip_prefix('@').unwrap_or(key);
-    loc.get(bare).unwrap_or(bare).to_string()
+    super::bind_keys(loc.get(bare).unwrap_or(bare), bound)
 }
 
 /// `shaderIndex`'s material, or `None` (warned once per index) when its
@@ -517,6 +536,7 @@ pub(crate) mod tests {
             cs,
             &vcod_common::net::protocol::CS_LAYOUT_V1,
             &Localized::default(),
+            &|_| None,
             &fonts,
             now,
             screen,

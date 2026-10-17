@@ -18,12 +18,17 @@ pub use vcod_common::net::flags::{EF_CROUCH, EF_PRONE};
 const SHORT_PER_DEG: f32 = 65536.0 / 360.0;
 
 /// Degrees of view per mouse count, `CL_MouseMove` (CoDMP.exe 0x40b240;
-/// docs/research/cod11-console.md, section 5).
+/// docs/research/cod11-console.md, section 5), and where the motion goes:
+/// `cl_freelook` 0 turns the vertical motion into `forwardmove` unless
+/// `+mlook` is held, `+strafe` the horizontal one into `rightmove`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MouseLook {
     pub sensitivity: f32,
     pub m_yaw: f32,
     pub m_pitch: f32,
+    pub m_forward: f32,
+    pub m_side: f32,
+    pub freelook: bool,
 }
 
 impl Default for MouseLook {
@@ -33,25 +38,112 @@ impl Default for MouseLook {
             sensitivity: 5.0,
             m_yaw: 0.022,
             m_pitch: 0.022,
+            m_forward: 0.25,
+            m_side: 0.25,
+            freelook: true,
         }
     }
 }
 
+/// One frame's mouse motion as `CL_MouseMove` spends it: the turn in
+/// degrees `[pitch, yaw]` and the counts added to the cmd's `forwardmove`
+/// and `rightmove`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MouseMove {
+    pub turn: [f32; 2],
+    pub forward: i32,
+    pub side: i32,
+}
+
 impl MouseLook {
-    /// `[pitch, yaw]` degrees for a motion of `(dx, dy)` counts: pitch
-    /// down-positive, yaw left-positive, as the view angles run. `zoom` is
-    /// cgame's sensitivity scale, the view's fov over `cg_fov`. On a mounted
-    /// gun retail drops the sensitivity for 2.5 on yaw and 2 on pitch.
-    pub fn degrees(&self, dx: f32, dy: f32, zoom: f32, mounted: bool) -> [f32; 2] {
-        let (sx, sy) = if mounted {
-            (2.5, 2.0)
+    /// The motion scaled by the rate: `sensitivity * zoom` on both axes, or
+    /// on a mounted gun 2.5 on yaw and 2 on pitch with no sensitivity.
+    fn scaled(&self, dx: f32, dy: f32, zoom: f32, mounted: bool) -> (f32, f32) {
+        if mounted {
+            (dx * 2.5, dy * 2.0)
         } else {
             let s = self.sensitivity * zoom;
-            (s, s)
-        };
-        [dy * sy * self.m_pitch, -dx * sx * self.m_yaw]
+            (dx * s, dy * s)
+        }
+    }
+
+    /// `[pitch, yaw]` degrees for a motion of `(dx, dy)` counts: pitch
+    /// down-positive, yaw left-positive, as the view angles run. `zoom` is
+    /// cgame's sensitivity scale, the view's fov over `cg_fov`.
+    pub fn degrees(&self, dx: f32, dy: f32, zoom: f32, mounted: bool) -> [f32; 2] {
+        let (mx, my) = self.scaled(dx, dy, zoom, mounted);
+        [my * self.m_pitch, -mx * self.m_yaw]
+    }
+
+    /// The whole of `CL_MouseMove`: `+strafe` (`strafe`) sends the
+    /// horizontal motion to `rightmove` through `m_side`, and without
+    /// `cl_freelook` or `+mlook` (`mlook`), or under `+strafe`, the
+    /// vertical motion goes off `forwardmove` through `m_forward`, each
+    /// truncated (`_ftol`, 0x538be0).
+    pub fn moves(
+        &self,
+        dx: f32,
+        dy: f32,
+        zoom: f32,
+        mounted: bool,
+        mlook: bool,
+        strafe: bool,
+    ) -> MouseMove {
+        let (mx, my) = self.scaled(dx, dy, zoom, mounted);
+        let mut out = MouseMove::default();
+        if strafe {
+            out.side = (mx * self.m_side) as i32;
+        } else {
+            out.turn[1] = -mx * self.m_yaw;
+        }
+        if (mlook || self.freelook) && !strafe {
+            out.turn[0] = my * self.m_pitch;
+        } else {
+            out.forward = -((my * self.m_forward) as i32);
+        }
+        out
     }
 }
+
+/// `CL_MouseEvent`'s two motion slots and `CL_MouseMove`'s read of them
+/// (CoDMP.exe 0x40b240): a frame takes its own slot, or with `m_filter`
+/// the mean of its slot and the last frame's, then flips to the other slot
+/// and clears it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MouseAccum {
+    dx: [f32; 2],
+    dy: [f32; 2],
+    index: usize,
+}
+
+impl MouseAccum {
+    pub fn add(&mut self, dx: f32, dy: f32) {
+        self.dx[self.index] += dx;
+        self.dy[self.index] += dy;
+    }
+
+    /// Once a frame, whether or not the mouse moved.
+    pub fn take(&mut self, filter: bool) -> (f32, f32) {
+        let i = self.index;
+        let out = if filter {
+            (
+                (self.dx[0] + self.dx[1]) * 0.5,
+                (self.dy[0] + self.dy[1]) * 0.5,
+            )
+        } else {
+            (self.dx[i], self.dy[i])
+        };
+        self.index ^= 1;
+        self.dx[self.index] = 0.0;
+        self.dy[self.index] = 0.0;
+        out
+    }
+
+    pub fn clear(&mut self) {
+        *self = MouseAccum::default();
+    }
+}
+
 /// A retail default bind. `Slot(n)` is a number key, `n` the weapon slot it
 /// requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -79,6 +171,11 @@ pub enum Action {
     /// United Offensive's `+sprint` (`CL_CmdButtons`, CoDUOMP.exe
     /// 0x40c700), sent only to a UO server.
     Sprint,
+    /// `+mlook` (CoDMP.exe 0x40a450): the mouse pitches the view whatever
+    /// `cl_freelook` says.
+    MLook,
+    /// `+strafe` (0x40a8c0): the mouse's horizontal motion strafes.
+    Strafe,
 }
 
 /// The client's own stance, held level on the wire
@@ -379,6 +476,9 @@ pub struct PlayInput {
     mouse_caps: [Option<f32>; 2],
     mouse_sum: [f32; 2],
     mouse_let: [f32; 2],
+    /// The mouse's `forwardmove` and `rightmove` counts ([`MouseMove`])
+    /// not yet in a cmd.
+    mouse_axes: [i32; 2],
 }
 
 impl PlayInput {
@@ -452,6 +552,29 @@ impl PlayInput {
             self.raw_angles[axis] += whole as i32;
             self.mouse_rest[axis] = total - whole;
         }
+    }
+
+    /// Spends a frame's [`MouseMove`]: the turn now, the move counts in
+    /// the next cmd built.
+    pub fn mouse_move(&mut self, m: MouseMove) {
+        self.mouse(m.turn);
+        self.mouse_axes[0] += m.forward;
+        self.mouse_axes[1] += m.side;
+    }
+
+    /// Whether `+mlook` and `+strafe` are held, which `CL_MouseMove` reads.
+    pub fn mlook_strafe(&self) -> (bool, bool) {
+        (
+            self.down.contains(&Action::MLook),
+            self.down.contains(&Action::Strafe),
+        )
+    }
+
+    /// `-mlook` under `cl_freelook` 0 (CoDMP.exe 0x40a460): the view's
+    /// pitch levelled, `cl.viewangles[PITCH] = -SHORT2ANGLE(delta_angles)`.
+    pub fn center_view(&mut self, delta_pitch: i32) {
+        self.raw_angles[0] = delta_pitch.wrapping_neg();
+        self.mouse_rest[0] = 0.0;
     }
 
     /// The selection, `cg_weaponSelect`: the weapon every cmd asks for, and
@@ -711,20 +834,27 @@ impl PlayInput {
             buttons |= msg::BUTTON_SPRINT_V22;
         }
 
+        // `CL_MouseMove` adds its counts after the keys, each clamped to a
+        // signed byte (0x40b412, 0x40b5d9).
+        let [mouse_fwd, mouse_side] = std::mem::take(&mut self.mouse_axes);
+        let byte = |v: i32| v.clamp(-128, 127) as i8;
+        let forward = axis(
+            self.down.contains(&Action::Forward),
+            self.down.contains(&Action::Back),
+        );
+        let right = axis(
+            self.down.contains(&Action::Right),
+            self.down.contains(&Action::Left),
+        );
+
         UserCmd {
             server_time,
             buttons,
             wbuttons,
             weapon,
             angles: self.cmd_angles(),
-            forward: axis(
-                self.down.contains(&Action::Forward),
-                self.down.contains(&Action::Back),
-            ),
-            right: axis(
-                self.down.contains(&Action::Right),
-                self.down.contains(&Action::Left),
-            ),
+            forward: byte(i32::from(forward) + mouse_fwd),
+            right: byte(i32::from(right) + mouse_side),
             up,
             ..Default::default()
         }
@@ -1480,6 +1610,54 @@ mod tests {
             (pitch - 0.44).abs() < 1e-4,
             "mounted pitch is 2 x m_pitch, {pitch}"
         );
+    }
+
+    /// `m_filter` 1 spends the mean of this frame's motion and the last
+    /// frame's; 0 only this frame's.
+    #[test]
+    fn m_filter_averages_two_frames() {
+        let mut m = MouseAccum::default();
+        m.add(10.0, -4.0);
+        assert_eq!(m.take(true), (5.0, -2.0));
+        m.add(2.0, 0.0);
+        assert_eq!(m.take(true), (6.0, -2.0));
+        assert_eq!(m.take(true), (1.0, 0.0));
+        m.add(3.0, 1.0);
+        assert_eq!(m.take(false), (3.0, 1.0));
+    }
+
+    /// `cl_freelook` 0 drives `forwardmove` off the vertical motion until
+    /// `+mlook`; `+strafe` sends the horizontal one to `rightmove`; both
+    /// truncate and clamp to a byte over the keys' 127.
+    #[test]
+    fn freelook_off_moves_and_strafe_slides() {
+        let look = MouseLook {
+            freelook: false,
+            ..MouseLook::default()
+        };
+        // 30 counts down at 5 x 0.25: 37.5, truncated, off forwardmove.
+        let m = look.moves(0.0, 30.0, 1.0, false, false, false);
+        assert_eq!((m.turn[0], m.forward), (0.0, -37));
+        let m = look.moves(0.0, 30.0, 1.0, false, true, false);
+        assert!((m.turn[0] - 3.3).abs() < 1e-4 && m.forward == 0);
+        let m = MouseLook::default().moves(-7.0, 0.0, 1.0, false, false, true);
+        assert_eq!((m.turn, m.side), ([0.0, 0.0], -8));
+
+        let mut i = synced(10);
+        i.key(Action::Back, true);
+        i.mouse_move(look.moves(0.0, 30.0, 1.0, false, false, false));
+        let c = i.build(100, &held(10));
+        assert_eq!(c.forward, -128, "-127 - 37 clamps to the byte");
+        assert_eq!(i.build(150, &held(10)).forward, -127, "spent once");
+    }
+
+    /// `-mlook` under `cl_freelook` 0 levels the view over `delta_angles`.
+    #[test]
+    fn center_view_levels_the_pitch() {
+        let mut i = synced(10);
+        i.mouse([20.0, 0.0]);
+        i.center_view(-300);
+        assert_eq!(i.build(100, &held(10)).angles[0], 300);
     }
 
     #[test]

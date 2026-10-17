@@ -136,6 +136,14 @@ The penalty never reaches the accel, the wish speed or the cmd scale (no
 read in 0x1ed62, 0x1f08b, 0x1eec9; VERIFIED by absence). Because it runs on
 `pm_time`, `PM_SlideMove`'s tail (a running timer hands the primal velocity
 back) now applies for 1.2-1.8 s after every jump's landing (INFERRED).
+The airborne clear above takes 0x2000 off and leaves `pm_time` running,
+so a body that walks off a ledge inside the penalty falls with the timer
+on and no flag, and its velocity into a wall survives the slide. VERIFIED
+(retail UO 1.51b, `mp_streets-dm-slope-8ms-crouchjump-streets.txt`: off
+the sill at ct 21548 `pm_flags` lose 0x2000, `pm_time` 792 counts on, and
+the body falls down the wall at x 233.13 keeping `velocity[0]` -146).
+The predictor's `from_wire` keeps a 1.5 or UO `pm_time` with no flag for
+that reason; 1.1's still means nothing without 0x100 or 0x200.
 
 ## 3. Stance and the eye
 
@@ -561,6 +569,12 @@ the client's live world, `play::replay` and `play::loopback` set off the
 connection's protocol (`Arith::for_protocol`). The client's
 predictor no longer follows them: it runs the Windows client's build
 (section 8).
+
+- The locational bone trace (1.5b `cod_lnxded` 0x80d2000, UO
+  `coduo_lnxded` 0x80c7394) stores every transformed point, slab distance
+  and entry fraction, where 1.1d's 0x80c4564 keeps them. VERIFIED. The
+  stores move a round's entry by about 3e-5 units. vcod ports none of
+  them (`cod11-turrets.md` 13.5).
 
 ## 8. The Windows clients
 

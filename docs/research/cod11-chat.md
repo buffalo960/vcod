@@ -182,10 +182,29 @@ escaped. A part fills the first open slot in what came before it, or is
 appended when there is none. A `\x16` after a separator (or standing as
 one) makes the next part's `%s` literal. vcod: `Localized::message`.
 
-INFERRED, 0x300229b0: after localizing, the cgame replaces the first
-`[{command}]` with the key bound to the command, keeping the brackets, and
-leaves the text alone when the command is unbound. vcod fills
-`[{+activate}]` with its use key F.
+VERIFIED, 0x300229b0 (its body): after localizing (trap `0x39`), the
+cgame finds the first `[{` with at least five bytes from it, then the
+first `}]` after it, and replaces the command between them with its key
+text, keeping the brackets. Only that first one is tried: no `}]`, a
+command with no key, or a result past 1023 bytes (`String too long to add
+key binding: %s`) returns the text as it was. Callers: the centre print,
+the game and bold game messages, hudelem text and labels (`"hudelem
+string"`), the cursor hint string and the scoreboard's objective.
+
+VERIFIED, the key text: `0x30046590` rescans a fixed table of 24-byte rows
+(1.1 `0x3006f150`..`0x3006f5ff`, 50 rows; 1.5 `0x30071150`, 50 rows,
+`messagesquad` where 1.1 has `messagemode4`; UO `0x3008adb8`, 55 rows,
+adding `mp_quickmap`, `mp_purchase`, `weaponslot satchel`, `weaponslot
+binocular` and `+sprint`), filling each row's first two keys from key 0
+up whose binding equals the row's command case-blind (`0x300464e0`, trap
+`0xb0`). `0x30046860` finds the command's row case-blind; a command in no
+row, or a row with no key, reads unbound (`0x30046940` returns 0). The
+text is the key name (trap `0xac`) localized when the table has it
+(`KEY_SPACE` "Space"), two keys joined by `" %s "` (`0x30060710`) of
+`KEY_OR`. 1.5's cgame (`0x30023c90`) and UO's (`0x3002d850`) keep the
+same pass (their decompilations, the same string). vcod: `hud::bind_keys` and `hud::bind_commands`, the key text
+`Shell::key_text` (the stance hints, the vote line and the weapon strip
+use the same lookup).
 
 ### 3.2 The chat (0x3002c920, drawn by 0x300150b0)
 

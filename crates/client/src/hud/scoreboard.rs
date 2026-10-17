@@ -143,6 +143,8 @@ pub struct BoardView<'a> {
     /// `g_ScoresBanner_*`, `cg_objectiveText`).
     pub cvar: &'a dyn Fn(&str) -> Option<String>,
     pub loc: &'a Localized,
+    /// A command's key text, for the objective's `[{command}]` pass.
+    pub bound_key: &'a dyn Fn(&str) -> Option<String>,
     /// The title row: the game type's name and the map.
     pub gametype: &'a str,
     pub map: &'a str,
@@ -725,7 +727,8 @@ fn frame(d: &Draw, b: &BoardView, out: &mut Vec<HudQuad>) {
     d.text(address, x, y, s, WHITE, out);
 }
 
-/// `0x3002a1e0`: `cg_objectiveText`, wrapped at 375 units, then a rule.
+/// `0x3002a1e0`: `cg_objectiveText` through the `[{command}]` pass
+/// ("scoreboard objective info"), wrapped at 375 units, then a rule.
 /// Returns the y under it; `top` when there is no objective.
 fn objective(d: &Draw, b: &BoardView, top: f32, out: &mut Vec<HudQuad>) -> f32 {
     let raw = (b.cvar)("cg_objectiveText").unwrap_or_default();
@@ -733,7 +736,9 @@ fn objective(d: &Draw, b: &BoardView, top: f32, out: &mut Vec<HudQuad>) -> f32 {
         return top;
     }
     const SCALE: f32 = 0.24;
-    let text: Vec<char> = b.loc.message(&raw).chars().collect();
+    let text: Vec<char> = super::bind_keys(&b.loc.message(&raw), b.bound_key)
+        .chars()
+        .collect();
     let mut y = top + 4.0;
     let line = |a: usize, z: usize, y: f32, out: &mut Vec<HudQuad>| {
         let s: String = text[a..z].iter().collect();
@@ -1018,6 +1023,7 @@ mod tests {
             own_client: own,
             client: &client,
             cvar: &cvars,
+            bound_key: &|_| None,
             loc: &fx.loc,
             gametype: "TDM_TEAM_DEATHMATCH",
             map: "mp_carentan",
