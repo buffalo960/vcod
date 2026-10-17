@@ -1939,6 +1939,22 @@ fn restart_live_cgame(
     };
     let weapons = live_weapons(fs, configstrings.get(7).map_or("", String::as_str));
     *phase = Phase::Live(Box::new(live.restart_cgame(weapons)));
+    fresh_cgame(view, input, predictor, hud, fx);
+    true
+}
+
+/// What a freshly loaded cgame starts without, past the live phase: the
+/// view, the HUD with its chat ring, the effects and the prediction.
+/// `CL_InitCGame` (CoDMP.exe 0x4049c0) runs on a `vid_restart` and on every
+/// gamestate's `CL_DownloadsComplete` (0x40ffb0), which frees the old
+/// cgame first (docs/research/cod11-front-end.md section 17).
+fn fresh_cgame(
+    view: &mut play::view::OnlineView,
+    input: &mut play::input::PlayInput,
+    predictor: &mut play::predict::Predictor,
+    hud: Option<&mut hud::Hud>,
+    fx: &mut fx::sim::FxSystem,
+) {
     view.restart_cgame();
     // The fresh cgame's first snapshot runs a load's resets.
     input.new_gamestate();
@@ -1947,7 +1963,6 @@ fn restart_live_cgame(
         hud.restart_cgame();
     }
     fx.clear();
-    true
 }
 
 /// Parse the map, upload it to the GPU and hand back the live phase.
@@ -2912,12 +2927,16 @@ impl App {
         }
     }
 
-    /// `vid_restart` (`CL_Vid_Restart_f`, CoDMP.exe 0x40fbe0): the latched
-    /// video cvars, the UI, the window and, in a live game, the cgame
-    /// ([`Self::restart_cgame`], `stop_sounds` passed on).
+    /// `vid_restart` (`CL_Vid_Restart_f`, CoDMP.exe 0x40fbe0): the sounds,
+    /// the latched video cvars, the UI, the window and, in a live game, the
+    /// cgame ([`Self::restart_cgame`]). `stop_sounds` is false under
+    /// `snd_restart`, whose restored streams stand for the stop.
     fn vid_restart(&mut self, event_loop: &ActiveEventLoop, stop_sounds: bool) {
         if self.refuse_vid_restart() {
             return;
+        }
+        if stop_sounds {
+            self.vid_restart_stop_sounds();
         }
         self.shell.apply_latched_video();
         // A Mods pick the listen server refused takes effect now
@@ -2944,7 +2963,17 @@ impl App {
                 let _ = w.request_inner_size(size);
             }
         }
-        self.restart_cgame(stop_sounds);
+        self.restart_cgame();
+    }
+
+    /// `CL_Vid_Restart_f`'s `S_StopAllSounds(1)` (CoDMP.exe 0x44fa40), with
+    /// a game or without one: the main menu's music and its click go too
+    /// (docs/research/cod11-front-end.md section 17, "The cgame restart").
+    /// The offline viewer has no retail counterpart and keeps its ambient.
+    fn vid_restart_stop_sounds(&mut self) {
+        if !matches!(self.mode, Mode::Fly(_) | Mode::Walk { .. }) {
+            self.audio.stop_all();
+        }
     }
 
     /// A renderer for `window` with the current world, submodels and
@@ -3293,6 +3322,7 @@ impl App {
         if self.refuse_vid_restart() {
             return;
         }
+        self.vid_restart_stop_sounds();
         if !matches!(self.mode, Mode::Online { .. }) {
             self.switch_fs_game(game);
             self.enter_menu(None);
@@ -3331,7 +3361,7 @@ impl App {
         if let Mode::Online { view, .. } = &mut self.mode {
             view.reopen();
         }
-        self.restart_cgame(true);
+        self.restart_cgame();
     }
 
     /// A live game's map read again off the reopened search path, as
@@ -3363,11 +3393,9 @@ impl App {
     /// 0x401a20) frees the cgame module and `CL_InitCGame` (0x4049c0)
     /// loads a fresh one, so the HUD, the kick, the effects, the event
     /// rings and the prediction start over; then `CL_SendPureChecksums`
-    /// (0x40fac0) sends `cp`. `stop_sounds` is the restart's own
-    /// `S_StopAllSounds` (0x44fa40), which `snd_restart`'s stream restore
-    /// already stands for. Only past `CA_LOADING`, as retail
+    /// (0x40fac0) sends `cp`. Only past `CA_LOADING`, as retail
     /// (docs/research/cod11-front-end.md section 17, "The cgame restart").
-    fn restart_cgame(&mut self, stop_sounds: bool) {
+    fn restart_cgame(&mut self) {
         let Mode::Online {
             net,
             view,
@@ -3390,9 +3418,6 @@ impl App {
             net.configstrings(),
         ) {
             return;
-        }
-        if stop_sounds {
-            self.audio.stop_all();
         }
         // `CG_Init` replays configstring 3 (sound doc section 9).
         self.audio
@@ -4575,8 +4600,15 @@ impl ApplicationHandler for App {
                                                     &self.fs,
                                                     net.configstrings(),
                                                 );
-                                                view.new_gamestate();
-                                                input.new_gamestate();
+                                                // `CL_DownloadsComplete` frees the
+                                                // old cgame and loads a fresh one.
+                                                fresh_cgame(
+                                                    view,
+                                                    input,
+                                                    predictor,
+                                                    self.hud.as_mut(),
+                                                    &mut self.fx,
+                                                );
                                                 if let Err(e) = load_script_menus(
                                                     &mut self.ui,
                                                     &self.fs,
@@ -6932,6 +6964,28 @@ mod tests {
         assert!(live.drawn_pos.is_empty());
         assert_eq!(live.seat_frac, 0.0);
         assert_eq!(live.weapons.iter().flatten().count(), 2);
+        assert!(hud.chat.is_empty());
+    }
+
+    /// A map change loads a fresh cgame as `vid_restart` does: the chat
+    /// ring the gamestate's resets keep goes once the new map is up.
+    #[test]
+    fn a_map_load_starts_a_fresh_cgame() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = hud::Hud::new(&fs).unwrap();
+        hud.chat.push("before the map change", 0);
+        hud.on_gamestate();
+        assert!(!hud.chat.is_empty(), "the gamestate parse keeps the ring");
+        hud.chat.push("during the load", 1000);
+        fresh_cgame(
+            &mut play::view::OnlineView::default(),
+            &mut play::input::PlayInput::default(),
+            &mut play::predict::Predictor::default(),
+            Some(&mut hud),
+            &mut fx::sim::FxSystem::new(),
+        );
         assert!(hud.chat.is_empty());
     }
 
