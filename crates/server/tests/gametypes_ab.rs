@@ -888,3 +888,8 @@ fn uo_base_assault_plant_defuse_and_map_end_match_retail() {
 fn uo_capture_the_flag_touch_return_time_limit_and_rotation_match_retail() {
     uo_gametype(&UO, "ctftime", 90, 80_000);
 }
+
+#[test]
+fn uo_team_deathmatch_killcam_and_time_limit_match_retail() {
+    uo_gametype(&UO, "tdmend", 50, 45_000);
+}
