@@ -260,6 +260,13 @@ pub struct ClientSim {
     /// read, so the cmds a death lands ahead of still run the live move
     /// (`docs/research/cod11-combat.md` 9.2).
     pm_dead: bool,
+    /// Whether the script's `sessionstate` reads `dead`, as the frame's end
+    /// frame found it; `None` with no script client behind the sim, where
+    /// `dead` stands in. `ClientEndFrame` keys its dead arm on the session,
+    /// not the health, so a `suicide()` that leaves `playing` keeps
+    /// `pm_type` 0 (docs/research/cod11-combat.md 5.1, "A suicide that
+    /// stays playing").
+    pub session_dead: Option<bool>,
     /// The last move ran the dead arm, whose `PM_CheckDuck` targets
     /// `deadViewHeight`.
     dead_eye: bool,
@@ -552,6 +559,7 @@ impl ClientSim {
             max_health: 0,
             dead: false,
             pm_dead: false,
+            session_dead: None,
             dead_eye: false,
             damage: DamageAccum::default(),
             feedback: DamageFeedback::default(),
@@ -675,7 +683,12 @@ impl ClientSim {
     /// `SVF_NOCLIENT` on a dead one every frame (combat doc, 5.4;
     /// map-cycle doc, 6.2).
     pub fn linked(&self) -> bool {
-        self.pm_type == PmType::Normal && !self.dead
+        self.pm_type == PmType::Normal && !self.dead_arm()
+    }
+
+    /// `ClientEndFrame`'s `sessionState == STATE_DEAD` arm (0x41057).
+    fn dead_arm(&self) -> bool {
+        self.session_dead.unwrap_or(self.dead)
     }
 
     /// `ps.groundEntityNum != ENTITYNUM_NONE`, which is what
@@ -873,7 +886,7 @@ impl ClientSim {
 
     /// `ClientEndFrame`'s contents write, once per frame before `end_frame`.
     pub fn update_contents(&mut self) {
-        self.contents = if self.pm_type == PmType::Normal && !self.dead {
+        self.contents = if self.pm_type == PmType::Normal && !self.dead_arm() {
             CONTENTS_BODY
         } else {
             0
@@ -1713,8 +1726,8 @@ impl ClientSim {
     pub fn end_frame(&mut self, now_ms: i32) {
         // `ClientEndFrame` writes `pm_type` (0x41079) ahead of its
         // `P_DamageFeedback` call (0x41128).
-        self.pm_dead = self.dead;
-        if self.dead || self.damage.taken <= 0 || self.max_health <= 0 {
+        self.pm_dead = self.dead_arm();
+        if self.pm_dead || self.damage.taken <= 0 || self.max_health <= 0 {
             return;
         }
         let count = (self.damage.taken * 100 / self.max_health).min(127);

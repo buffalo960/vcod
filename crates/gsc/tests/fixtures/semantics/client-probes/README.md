@@ -1312,6 +1312,26 @@ The `PROBE step` lines carry slot 1's origin; slot 0's `COMPASS` lines carry
 what it was sent. Against ours: `vcod-server mp_harbor --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_compass.gsc`.
 
+## probe_suicide
+
+What `ClientEndFrame` does with a `suicide()` whose killed callback leaves
+`sessionstate` at `playing`, for `docs/research/cod11-combat.md` 5.1, "A
+suicide that stays playing". Both clients join allies at mp_harbor's first
+two tdm spawns; slot 1 suicides, stays `playing` 3 s, takes the dead session,
+then spawns again. Two probes with `--probe-compass`: slot 1's `COMPASS`
+lines carry its own `pm_type` and eye, slot 0's the players its snapshot
+holds:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=40 tools/run_probe.sh client-probes/probe_suicide mp_harbor
+# second and third shells, once the map is up, two seconds apart:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-compass --probe-secs 30
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-compass --probe-secs 28
+```
+
+Against ours: `vcod-server mp_harbor --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_suicide.gsc`.
+
 ## probe_tankcompass
 
 What United Offensive's `G_GetNonPVSTankInfo` packs into
