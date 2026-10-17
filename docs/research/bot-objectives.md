@@ -760,7 +760,13 @@ model and took it nothing.
 
 VERIFIED (measured, ours, 2026-10-17, same setup, the rules above):
 gate `four_shooting_uo_bots_end_a_bas_round`, four bots shooting, over
-`BOTS_SEED` 1 to 15 odd: RESULTS_4. The two-bot gate: RESULTS_2.
+`BOTS_SEED` 1 to 23 odd (the seed is made odd, so 1 to 8 is four
+runs), the round over by its bases on every seed, at ticks 11059 to
+29459 (9 to 25 min; seed 7 at 21539), four to five bases gone off and
+none to four defuses a round; seed 17 also had a bot killed by its own
+breach rocket, which the sighted spread (4 degrees) still carries into cover
+by the stand now and then. The two-bot gate, shoot off: over at tick
+12099, five gone off, none defused.
 With the planter's guard alone (8 s, outside-the-blast before), one
 seed in eight ended; the rest stalled on defuses, a bot standing at a
 launcher it could not take, a dry defender, or a bot killing itself
