@@ -1017,6 +1017,22 @@ INFERRED too). INFERRED: a kill from the gun is credited to
 `mg42_bipod_stand_mp`, not the gunner's carried weapon, which is what puts the
 MG42 kill icon on the obituary.
 
+United Offensive credits the wound to the gun as well. VERIFIED,
+disassembly: 1.1d's `Bullet_Fire_Extended` hands `G_Damage` its attacker
+argument as both inflictor and attacker (0x68be5..0x68bea push
+`[ebp+0xc]` twice), and so does 1.5b's (0x6e50c..0x6e516); UO's hands it
+the inflictor argument when there is one (0x7b1e9, `[ebp-0xa0]`, the
+vehicle swap of `coduo-vehicles.md` 13 aside), and `turret_fire`
+(0x5aaa9) passes the gun there through `Bullet_Fire` (0x7a90f).
+`G_DamageClient` (UO 0x4fd4b, 1.1d 0x4aa38) gives
+the callback `inflictor->s.weapon` on all three. VERIFIED,
+`mp_carentan-dm-turret-spawn-uo-script.txt` and
+`-hitfine-uo-script.txt`: the `D;` line names `mg42_bipod_stand_mp`,
+where 1.1d's and 1.5b's name `m1carbine_mp`. vcod: on UO the turret
+round's hits carry the gun as inflictor and its weapon (`server.rs`, the
+end-frame turret pass); `turret_ab`'s spawn gates compare the `D;` and
+`K;` records on all three servers.
+
 Not determined from the bytes: the means of death and the hit location a
 turret bullet carries through `Bullet_Fire_Extended`. VERIFIED, 12.6: the
 capture's `D;` and `K;` lines read `MOD_RIFLE_BULLET` and `torso_upper`, and
@@ -1567,7 +1583,8 @@ phases now match.
 The kill credit matches as well: after the replay, ours logs the same `D;`
 and `K;` records as script lines 33-34 once the client numbers and names are
 dropped, `m1carbine_mp` on the wound and `mg42_bipod_stand_mp` on the kill,
-53 and `torso_upper` on both.
+53 and `torso_upper` on both. Since 2026-10-18 the gate on this capture is
+gone (13.4) and the `-spawn` gates compare the credit instead.
 
 ### 13.2 The live run against ours
 
@@ -1810,9 +1827,14 @@ phase and the target's playerstate against its `FALL` lines on the
 snapshots that carry its entity.
 
 - vcod measurement: on 1.1d and 1.5b every row matches, the wounding and
-  the killing rounds' impacts included, which the earlier captures keep as
+  the killing rounds' impacts included, which the earlier captures kept as
   `ENTRY_POINT` and `KILLING_ROUND` rows for want of the spawn time and
-  the stamps. Before the target's stamps were replayed the 1.1d kill was
+  the stamps. A retake of an earlier capture with both logged is a
+  `-spawn` capture, so since 2026-10-18 `turret_ab` no longer replays
+  `-turret.txt`, `-turret-15.txt`, `-turret-uo.txt`, `-victim-15.txt` or
+  `-victim-uo.txt`; they stay committed as the evidence 12, 13.1 and 13.3
+  cite. `-victim.txt` keeps its gate for the 1.1d fall of 13.3, the one
+  row on it. Before the target's stamps were replayed the 1.1d kill was
   (1516, 1612) against retail's (1516, 1611); our entry point was 1612.054
   in y.
 - vcod measurement: on UO the wound matches and the kill enters at x
