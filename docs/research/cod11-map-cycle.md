@@ -313,6 +313,10 @@ and the gamestate arrives only once that client's next message reaches the new
 server carrying the old serverId and `SV_ExecuteClientMessage` resends it
 (4.4), which makes the map change pull-shaped.
 
+On the client that gamestate frees the cgame and loads a fresh one once the
+downloads are done (`CL_DownloadsComplete`, CoDMP.exe `0x40ffb0`), chat ring
+and all: cod11-front-end.md section 17, "A map change reloads the cgame".
+
 ### 3.2 The `0x800` cvar range is configstrings 140..203 and 204..267
 
 VERIFIED: `0x806fbec`, the call of step 24, holds a walk of the cvar list

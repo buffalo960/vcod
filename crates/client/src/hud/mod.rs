@@ -316,7 +316,9 @@ impl Hud {
         }
     }
 
-    /// A new gamestate: CS 7 indices and the scoreboard change, chat does not.
+    /// A new gamestate, or leaving a server: CS 7 indices and the
+    /// scoreboard change. The chat ring goes once the cgame loads
+    /// ([`Self::restart_cgame`]).
     pub fn on_gamestate(&mut self) {
         self.kill_icons.clear();
         // CL_InitCGame empties the message windows (cod11-hud-protocol.md 1.1).
@@ -330,9 +332,10 @@ impl Hud {
         self.spawn = None;
     }
 
-    /// An in-game `vid_restart`: a gamestate's resets, and the chat ring,
-    /// which lives in the cgame (cod11-chat.md 3.2) and goes with it
-    /// (cod11-front-end.md section 17, "The cgame restart").
+    /// A fresh cgame, on a map load or an in-game `vid_restart`: a
+    /// gamestate's resets, and the chat ring, which lives in the cgame
+    /// (cod11-chat.md 3.2) and goes with it (cod11-front-end.md section
+    /// 17, "The cgame restart").
     pub fn restart_cgame(&mut self) {
         self.on_gamestate();
         self.chat = Chat::new();
