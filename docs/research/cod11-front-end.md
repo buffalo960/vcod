@@ -1505,13 +1505,15 @@ vertex lighting.
 - `r_lodscale` / `r_lodbias` (Model Detail) feed the xmodel LOD pick
   every frame, as `RE_RenderScene` reads them (`xmodel-v14-format.md`,
   "LOD selection").
-- Stored but inert (archived, so a choice survives): `cl_freelook`,
-  `m_filter`, `r_nv_fog_dist`, `mss_3d_provider`, and the
-  Multiplayer Options' Show Compass
-  (`cg_drawCompass`) and Team Overlay (`cg_drawTeamOverlay`), which retail
-  does not read either (`cod11-hud-protocol.md`, "Which views draw it").
+- `cl_freelook` and `m_filter` drive the mouse as `CL_MouseMove` reads
+  them, with `+mlook` and `+strafe` (`cod11-console.md` section 5).
+- Stored but inert (archived, so a choice survives): `r_nv_fog_dist`,
+  `mss_3d_provider`, and the Multiplayer Options' Show Compass
+  (`cg_drawCompass`) and Team Overlay (`cg_drawTeamOverlay`), which no
+  retail binary reads either (`cod11-hud-protocol.md`, "Which views draw
+  it").
   `setRecommended` is an unknown command. Binds to commands vcod lacks
-  (`+lookup`, `+strafe`, `screenshotJPEG`, the stance toggles) are stored
+  (`+lookup`, `screenshotJPEG`, the stance toggles) are stored
   and print `Unknown command` when pressed.
 - Not shown: the language picker (`cl_languagesavailable` reads 1, so its
   `hideCvar` hides it), NVIDIA fog (no `r_nv_fog_available`), Driver Info
@@ -1682,10 +1684,13 @@ them as a spectator for 10-25 s each.
   `cl_allowDownload 0` therefore lands in the client's archived cvar and
   stays after it leaves, as on retail; vcod's own default is 1. With
   downloads off it logs the missing paks and loads the map if it resolves.
-- `fs_game` from the systeminfo layers `<game_dir>/<fs_game>` over the base
-  directory (`Pk3Fs::open_layered`) at the gamestate, before the download
-  check; downloads land in either directory and never overwrite a file.
-  Leaving the server drops the layer, which retail does not.
+- The search path follows the `fs_game` cvar, registered `""` and
+  write-protected (`CVAR_INIT`) as retail's: at the gamestate the value
+  the systeminfo forced layers `<game_dir>/<fs_game>` over the base
+  directory (`Pk3Fs::open_layered`), before the download check; downloads
+  land in either directory and never overwrite a file. A disconnect
+  leaves the cvar, so the server's mod stays after it, as on retail; only
+  the pure list is dropped.
 - Paks are matched by checksum since 2026-10-09, with retail's
   `<name>.%08x.pk3` file name when a same-named pak is in the way, and a
   pure server's `sv_paks` limits the search path
@@ -1795,9 +1800,10 @@ carries its label.
   A `vid_restart` with the mod unchanged keeps the loaded map, which
   reads the same files. The next gamestate puts a server's own `fs_game`
   back.
-- A server that names no `fs_game` keeps the player's mod; one that names
-  another replaces it for the connection, and leaving goes back to the
-  player's.
+- The pick forces the `fs_game` cvar, as `RunMod`'s `trap_Cvar_Set`
+  does. A server that names no `fs_game` keeps whatever the cvar holds;
+  one that names another replaces it, and leaving keeps the server's
+  until the Mods menu or another server names one.
 - While the server Dedicated No started runs, a pick prints `Listen
   server cannot video restart.` and only records the mod, as `RunMod`'s
   `fs_game` set before the refused `vid_restart`; leaving the game, or the

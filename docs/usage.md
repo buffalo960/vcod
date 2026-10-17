@@ -172,7 +172,9 @@ without a leading `/` or `\` is chat, as in retail. `;` separates commands.
 Anything else goes to the server while connected (`callvote`, `kill`,
 `follownext`). Bindable commands and key names are retail's (`+attack`,
 `+speed`, `weaponslot pistol`, `MOUSE1`, `MWHEELUP`). The client cvars are
-`name`, `cl_run`, `sensitivity`, `m_yaw`, `m_pitch`, `cg_fov`
+`name`, `cl_run`, `sensitivity`, `m_yaw`, `m_pitch`, `m_filter`,
+`cl_freelook` (0 moves with the mouse's vertical motion unless `+mlook` is
+held; `m_forward`, and `m_side` under `+strafe`), `cg_fov`
 (cheat-protected, so 80 unless the server runs `sv_cheats 1`), `rate`
 (25000; retail's first-run 5000 starves snapshots), `snaps`,
 `scr_conspeed`, `mss_volume`, `r_mode` / `r_fullscreen` (applied at start
