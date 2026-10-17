@@ -2070,10 +2070,17 @@ captures and the gates.
 - `configstrings_uo_ab`: the whole table against `gamestate-uo.bin`, the
   start time included: UO's level clock starts at the server's uptime, 3's
   `t` and 14 read 1810050 there, and the gate loads ours on that clock
-  (`Server::start_clock_at`). Only `sv_serverid` is left out, which
-  retail's first level reads as 17 and vcod as 16 (VERIFIED, live; the
-  extra low-nibble bump is the restart path's, coduo_lnxded 0x8088325,
-  which vcod does not take at startup, INFERRED).
+  (`Server::start_clock_at`), `sv_serverid` included. A fresh retail UO
+  server's first level reads 16, in `rcon sv_serverid` and in a probe's
+  gamestate, with no client and with one joined (VERIFIED, live,
+  2026-10-17, mp_cassino dm), as `SV_SpawnServer`'s `+0x10` gives
+  (coduo_lnxded, the add after `Cvar_Set("mapname")`; VERIFIED,
+  decompile). The capture's 17 is that server's history: one spawn and
+  one `map_restart` (`0x8088325`, low nibble up one; VERIFIED, decompile)
+  before the probe joined. INFERRED, off the nibbles. The gate restarts
+  ours once on a clock 300 ms earlier, the three 100 ms settle frames
+  the spawn runs before the restart can start its level, and the table
+  then matches whole. VERIFIED (gate).
 - `playerstate_uo_ab`: above.
 - `combat_uo_ab`: retail's `--save-combat` capture (kar98k: single shot,
   sustained fire, reload, crouched and prone shots) replayed on a protocol
@@ -2705,8 +2712,9 @@ The client's `cp` and the server's check take the module names from
   section 1's ten stock paks and `main/nsf_mp_j5outpost` (live, VERIFIED).
 - vcod-server builds the same lists and bound; `configstrings_uo_ab`
   compares the referenced pair on every UO table and both pure captures'
-  serverinfo and systeminfo byte for byte, bar `sv_serverid` (the captures
-  were a second map load). Its pure gate needs `nsf_mp_j5outpost.pk3` in
+  serverinfo and systeminfo byte for byte, `sv_serverid` 32 included: the
+  captures were each recipe's second map load, and the gate loads the
+  recipe's first map before it. Its pure gate needs `nsf_mp_j5outpost.pk3` in
   the install's `main/`.
 
 ## Tools

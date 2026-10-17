@@ -93,6 +93,16 @@ pub struct CompiledScripts {
     gametype_entry: String,
     entry: String,
     program: vcod_gsc::Program,
+    /// The `#using_animtree` names the closure declares.
+    animtrees: Vec<String>,
+}
+
+impl CompiledScripts {
+    /// The animtrees the level's scripts name, whose `.atr` the engine
+    /// reads at the load (cod11-server-handshake.md, "The four cvars").
+    pub fn animtrees(&self) -> &[String] {
+        &self.animtrees
+    }
 }
 
 /// The BSP's share of a level load: the entity string the spawn pass
@@ -305,6 +315,7 @@ impl ScriptRuntime {
                     gametype_entry: gametype_entry.clone(),
                     entry: entry.clone(),
                     program: vm.program(),
+                    animtrees: loader.animtrees().map(str::to_string).collect(),
                 });
                 (vm, scripts)
             }
@@ -2129,6 +2140,11 @@ impl ScriptRuntime {
     /// settle frames of step 20.
     pub fn reconnect_client(&mut self, slot: usize, name: String) {
         self.dispatch_client_event(ClientEvent::Connect { slot, name });
+    }
+
+    /// The animtrees the level's scripts name in `#using_animtree`.
+    pub fn animtrees(&self) -> &[String] {
+        self.scripts.as_ref().map_or(&[], |c| c.animtrees())
     }
 
     #[cfg(test)]
