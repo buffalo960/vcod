@@ -33,6 +33,20 @@
 //	and takes no health:
 //
 //	PROBE hit <time> <phase> <team> dmg <amount> loc <location> point <point>
+//
+//	Before the phases the target's attachments, the head and the gear
+//	random draws whose boxes differ (cod11-turrets.md 13.6):
+//
+//	PROBE models <entity number> <model>...
+//
+//	`probe_bones 1` also links a script_origin to each of eleven of the
+//	target's bones 0.35 s before each grid and logs his origin and them on
+//	three frames, each as its offset from the target's spot (a link reads the pose a
+//	frame late, so the body has settled by then); the marks go before the
+//	grid's frame:
+//
+//	PROBE body <time> <phase> <dx> <dy> <dz>
+//	PROBE bone <time> <phase> <tag> <dx> <dy> <dz>
 
 main()
 {
@@ -163,6 +177,52 @@ lean_off(wb, yaw)
 	return (r[0] * 19.225 * s, r[1] * 19.225 * s, -5.513);
 }
 
+bones(name, site, target, delay)
+{
+	wait delay;
+	tags = [];
+	tags[0] = "bip01 pelvis";
+	tags[1] = "bip01 spine2";
+	tags[2] = "bip01 neck";
+	tags[3] = "bip01 head";
+	tags[4] = "bip01 l upperarm";
+	tags[5] = "bip01 r upperarm";
+	tags[6] = "bip01 l forearm";
+	tags[7] = "bip01 r forearm";
+	tags[8] = "bip01 l hand";
+	tags[9] = "bip01 r hand";
+	tags[10] = "tag_weapon_right";
+	marks = [];
+	for (j = 0; j < tags.size; j++)
+	{
+		marks[j] = spawn("script_origin", target.origin);
+		marks[j] linkto(target, tags[j], (0, 0, 0), (0, 0, 0));
+	}
+	wait 0.1;
+	for (k = 0; k < 3; k++)
+	{
+		d = target.origin - site.b;
+		logPrint("PROBE body " + gettime() + " " + name + " " + d[0] + " " + d[1] + " " + d[2] + "\n");
+		for (j = 0; j < tags.size; j++)
+		{
+			d = marks[j].origin - site.b;
+			logPrint("PROBE bone " + gettime() + " " + name + " " + tags[j] + " " + d[0] + " " + d[1] + " " + d[2] + "\n");
+		}
+		wait 0.05;
+	}
+	for (j = 0; j < marks.size; j++)
+		marks[j] delete();
+}
+
+log_models()
+{
+	line = "PROBE models " + self getEntityNumber();
+	n = self getattachsize();
+	for (i = 0; i < n; i++)
+		line = line + " " + self getattachmodelname(i);
+	logPrint(line + "\n");
+}
+
 cell(start, end, target)
 {
 	tr = bullettrace(start, end, true, undefined);
@@ -268,6 +328,7 @@ run()
 	//	clients joined.
 	while (gettime() < 20000)
 		wait 0.05;
+	team_player("axis") log_models();
 	ps = phases();
 	for (i = 0; i < ps.size; i++)
 	{
@@ -282,6 +343,8 @@ run()
 		logPrint("PROBE phase " + gettime() + " " + p.name + "\n");
 		send_in(target, 0, p.twb);
 		send_in(shooter, 16, p.swb);
+		if (getcvarint("probe_bones"))
+			thread bones(p.name, site, target, p.settle - 0.35);
 		wait p.settle;
 		grid(p.name, site, target);
 		send_in(shooter, 17, p.swb);

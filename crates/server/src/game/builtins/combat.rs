@@ -574,7 +574,7 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
                 fs,
                 anims,
                 rigs: &mut host.hit_rigs,
-                now_ms: host.level_time_ms,
+                now_ms: host.dobj_time_ms,
             }),
             _ => None,
         };
@@ -673,7 +673,7 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
             fs,
             anims,
             rigs: &mut host.hit_rigs,
-            now_ms: host.level_time_ms,
+            now_ms: host.dobj_time_ms,
         }),
         _ => None,
     };
@@ -853,7 +853,9 @@ fn body_hit(
             fs,
             anims,
             rigs: &mut host.hit_rigs,
-            now_ms: host.level_time_ms,
+            // A thread due on the last frame's clock traces the pose the
+            // DObj update has not advanced yet (combat doc 3.6).
+            now_ms: host.dobj_time_ms,
         }),
         _ => None,
     };
