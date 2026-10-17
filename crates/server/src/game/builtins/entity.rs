@@ -224,7 +224,7 @@ fn client_spawn(
     let [Value::Vector(origin), Value::Vector(angles)] = args else {
         return Err(ErrorKind::BadType("spawn takes an origin and angles"));
     };
-    let (origin, angles) = (*origin, *angles);
+    let (mut origin, mut angles) = (*origin, *angles);
 
     let state = cx.intern_folded("sessionstate");
     let mode = match host.get_field(cx, id, state) {
@@ -237,6 +237,14 @@ fn client_spawn(
         },
         _ => SpawnMode::Spectator,
     };
+    if mode == SpawnMode::Player
+        && let Some(pin) = host
+            .spawn_pins
+            .as_ref()
+            .and_then(|p| p.borrow_mut().get_mut(slot)?.pop_front().flatten())
+    {
+        (origin, angles) = pin;
+    }
 
     // `ClientSpawn`'s `Scr_SetString(ent->classname, "player")` (0x4271d).
     let classname = cx.intern_folded("classname");
