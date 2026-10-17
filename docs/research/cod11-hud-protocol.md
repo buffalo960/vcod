@@ -363,7 +363,8 @@ decompilations of 1.5 `CoDMP.exe` and UO `CoDUOMP.exe`.
 - VERIFIED: `CL_GetServerCommand`'s `n` case (1.1 `CoDMP.exe` 0x4017c3,
   index 10 of the byte table at 0x401824 off `'d'`, jump table 0x401808)
   calls 0x4087b0, which zeroes the rings of the game window (0x142efcc)
-  and window 2 (0x142f050), then zeroes window 3 (0x142f0d4) itself
+  and window 2 (0x142f050, the bold window: trap 3, 0x401fc2, writes
+  window 2), then zeroes window 3 (0x142f0d4) itself
   before the cgame sees the command. The switch at 0x408c90 maps window
   0 to 0x142f5a8, 1 to 0x142efcc, 2 to 0x142f050 and 3 to 0x142f0d4.
   VERIFIED: 1.5's (`CoDMP.exe` 0x401620, calling 0x408ce0) and UO's
