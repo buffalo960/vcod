@@ -6,6 +6,9 @@
 //! `1.5` or `uo` picks the movement on its own. `NEAR=x,y,r` lists the
 //! nodes within `r` across of `(x, y)`, with their edge counts, and
 //! `ROUTE=x,y,z,x,y,z` the route between the nodes nearest two points.
+//! `GAMETYPE=tdm` unlinks the other gametypes' script brushes as the
+//! census does, in place of the `bas` rubble. `LOST=1` lists the spawns
+//! that do not reach the census's main component, with their nodes.
 //! `UNLINK=n,...` builds with those submodels out, as a script's
 //! `delete` leaves them. The `digest` is an FNV-1a hash over the nodes,
 //! the edges and the jump, leap, risky and perch sets: two builds that
@@ -50,9 +53,13 @@ fn main() {
         let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
         let seeds = spawn_points(&bsp.entities);
         let t = Instant::now();
-        // As a server's build: without the brushes `bas.gsc` lifts away.
-        for &m in &world.rubble {
-            world.collision.set_model_linked(m, false);
+        if let Ok(gt) = std::env::var("GAMETYPE") {
+            world.collision.unlink_script_brushes(&bsp.entities, &gt);
+        } else {
+            // As a server's build: without the brushes `bas.gsc` lifts away.
+            for &m in &world.rubble {
+                world.collision.set_model_linked(m, false);
+            }
         }
         for m in std::env::var("UNLINK")
             .unwrap_or_default()
@@ -75,6 +82,19 @@ fn main() {
             g.leaps.len(),
             digest(&g),
         );
+        if std::env::var("LOST").is_ok_and(|v| v == "1") {
+            for (i, n) in g.census_lost(&world.collision, &seeds).1 {
+                let s = seeds[i].map(f32::round);
+                match n {
+                    Some(n) => println!(
+                        "  lost spawn {i} {s:?} node {n} {:?} edges {}",
+                        g.nodes[n as usize].round(),
+                        g.edges[n as usize].len()
+                    ),
+                    None => println!("  lost spawn {i} {s:?} no node"),
+                }
+            }
+        }
         if let Ok(route) = std::env::var("ROUTE") {
             let v: Vec<f32> = route
                 .split(',')

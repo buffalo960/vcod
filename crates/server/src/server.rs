@@ -8317,6 +8317,9 @@ impl Server {
     /// what each slot replayed, for the trace line `send_snapshots` writes.
     fn replay_moves(&mut self) -> Vec<MoveSummary> {
         use vcod_common::movetrace::{Body, MoveWorld};
+        use vcod_common::net::event_ids::{
+            EV_FIRE_WEAPON_MG42, EV_FIRE_WEAPONB, EV_UO_FIRE_WEAPONC,
+        };
         use vcod_common::pmove::weapon::{
             EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_WEAPON_ALT,
         };
@@ -8464,6 +8467,22 @@ impl Server {
                 // The aim block runs once per cmd, on the whole cmd, before
                 // the chop (`ClientThink_real` 0x40169-0x40456).
                 sim.update_aim(dt_ms, now_ms, weapons.defs());
+                // A UO body inside a vehicle's collmap: the vehicle may sit
+                // out this cmd's pmove (coduo-vehicles.md 11.6).
+                let unlinked = match (collision, self.script.as_ref()) {
+                    (Some(w), Some(rt))
+                        if sim.ps.rules == vcod_common::pmove::MoveRules::Uo
+                            && spectating[slot].is_none() =>
+                    {
+                        sim.vehicle_overlap(MoveWorld::new(w, &bodies, slot as u32), |e| {
+                            let id = rt.host.ents.handle(e)?;
+                            let v = rt.host.vehicles.live.get(&id)?;
+                            Some((v.pose.origin.into(), v.velocity.into()))
+                        })
+                        .and_then(|e| w.unlink_model_instance(e))
+                    }
+                    _ => None,
+                };
                 // A hitching client's gap is simulated, not discarded: see
                 // `cmd::chop`.
                 vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd, |step, dt| {
@@ -8482,6 +8501,25 @@ impl Server {
                     bodies.extend(sim.body(slot as u32));
                     sim.ps.jump_latched
                 });
+                if let (Some(u), Some(w)) = (unlinked, collision) {
+                    w.relink_model_instance(u);
+                }
+            }
+            // `BG_PlayerStateToEntityState` hands each new event to
+            // `G_PlayerEvent` after `Pmove`, ahead of `ClientEvents`: on 1.5
+            // and UO a fire event kicks the gun spring the next cmd's aim
+            // reads (cod15-movement.md 6).
+            for e in &raised {
+                if matches!(
+                    e.event,
+                    EV_FIRE_WEAPON
+                        | EV_FIRE_WEAPONB
+                        | EV_FIRE_WEAPON_LASTSHOT
+                        | EV_FIRE_WEAPON_MG42
+                        | EV_UO_FIRE_WEAPONC
+                ) {
+                    sim.fire_recoil(weapons.defs(), || rand_from(&mut self.rng));
+                }
             }
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
             // falls, in the order it raised them, fired below before its

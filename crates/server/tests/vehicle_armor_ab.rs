@@ -189,6 +189,7 @@ fn ours_after(
     let mut last_a = 0;
     let mut hold = common::ProbeHold {
         aim,
+        sixty: true,
         ..Default::default()
     };
     // In the sweep runs the target is `--probe-vehicle sit` too: the
