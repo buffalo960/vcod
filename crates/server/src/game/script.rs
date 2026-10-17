@@ -873,9 +873,13 @@ impl ScriptRuntime {
                     host.turret_ops.push(TurretOp::Mount { slot, turret });
                 }
                 // `Cmd_Activate_f` notifies `trigger` on the entity the hint
-                // pass chose, with no `wait` gate
+                // pass chose on the spot (0x48547), not through the trigger
+                // queue, and with no `wait` gate
                 // (docs/research/cod11-gametypes-re-bel.md 4).
-                Some(Activate::Trigger(id)) => host.trigger_fires.push((id, client)),
+                Some(Activate::Trigger(id)) => {
+                    host.engine_notifies
+                        .push((id, "trigger", vec![Value::Entity(client)]))
+                }
                 Some(Activate::Vehicle(veh)) => {
                     let on_ground = host.client_on_ground.get(slot).copied().unwrap_or(false);
                     crate::game::vehicle::seat::board(host, cx, veh, slot, on_ground, 0.0);
@@ -2809,44 +2813,61 @@ impl ScriptRuntime {
         self.host.dobj_time_ms = self.host.level_time_ms;
         self.host.dobj_posed.iter_mut().for_each(Vec::clear);
         self.host.level_time_ms = now_ms;
-        // The last entity pass's mover notifies and the touch pass's, on this
-        // frame's clock, and their waiters run here, ahead of every `wait`
-        // this frame brings due (docs/research/cod11-items.md, 13.1; combat
-        // doc 14.7, "Entity numbers"). Any other thread already `Runnable`
-        // runs here with them; a frame with no such notify skips the pass.
-        let engine_notifies = std::mem::take(&mut self.host.engine_notifies);
-        if !engine_notifies.is_empty() {
-            for (id, event, args) in engine_notifies {
-                if self.host.ents.get(id).is_some() {
-                    let event = self.vm.with_cx(|cx| cx.intern_folded(event));
-                    self.vm.notify(Target::Entity(id), event, &args);
-                }
-            }
-            for e in self.vm.run_runnable(&mut self.host) {
-                log::warn!("script error: {e:?}");
+        // The notifies retail raises where they happen: the last entity
+        // pass's movers and the cmds' touches, use key and item takes. They
+        // only wake their waiters, which run in the first round below with
+        // the trigger queue's (docs/research/cod11-gsc-language.md, "Engine
+        // notifies and the trigger queue").
+        for (id, event, args) in std::mem::take(&mut self.host.engine_notifies) {
+            if self.host.ents.get(id).is_some() {
+                let event = self.vm.with_cx(|cx| cx.intern_folded(event));
+                self.vm.notify(Target::Entity(id), event, &args);
             }
         }
-        // A trigger's thread runs on the clock of the frame after the touch:
-        // retail's plant bar carries the `scaleStartTime` of the first
-        // snapshot it is on, and `G_RunFrame` drains the lookat queue after
-        // writing `level.time` (docs/research/cod11-gsc-object-model.md 23.1).
-        let event = self.vm.with_cx(|cx| cx.intern_folded("trigger"));
-        for (id, other) in std::mem::take(&mut self.host.trigger_fires) {
-            if self.host.ents.get(id).is_some() && self.host.ents.get(other).is_some() {
-                self.vm
-                    .notify(Target::Entity(id), event, &[Value::Entity(other)]);
-            }
-        }
-        // `Scr_RunCurrentThreads` (0x50653): what is due on the clock the
-        // last frame left runs before the DObjs advance (0x506ed), then
-        // `Scr_SetTime` walks the rest.
-        for e in self.vm.run_current(&mut self.host) {
-            log::warn!("script error: {e:?}");
-        }
+        self.trigger_rounds();
         self.host.dobj_time_ms = now_ms;
         for e in self.vm.run_frame(&mut self.host, now_ms) {
             log::warn!("script error: {e:?}");
         }
+    }
+
+    /// `G_RunFrame`'s trigger queue (0x50540..0x50665), on the clock of the
+    /// frame after the touch: retail's plant bar carries the
+    /// `scaleStartTime` of the first snapshot it is on
+    /// (docs/research/cod11-gsc-object-model.md 23.1). Each round notifies
+    /// `"trigger"` once per entity, in queue order with a sent entry
+    /// swapped for the last, keeps a repeat for the next round, and runs
+    /// `Scr_RunCurrentThreads` (0x50653); the rounds go on while an entry
+    /// was kept. An entry whose entity or activator is gone is dropped.
+    /// What a round's threads queue joins the queue, and is dropped with it
+    /// once a round keeps nothing (0x50665).
+    fn trigger_rounds(&mut self) {
+        let event = self.vm.with_cx(|cx| cx.intern_folded("trigger"));
+        loop {
+            let mut sent = HashSet::new();
+            let mut kept = false;
+            let mut i = 0;
+            while i < self.host.trigger_fires.len() {
+                let (id, other) = self.host.trigger_fires[i];
+                if self.host.ents.get(id).is_some() && self.host.ents.get(other).is_some() {
+                    if !sent.insert(id) {
+                        kept = true;
+                        i += 1;
+                        continue;
+                    }
+                    self.vm
+                        .notify(Target::Entity(id), event, &[Value::Entity(other)]);
+                }
+                self.host.trigger_fires.swap_remove(i);
+            }
+            for e in self.vm.run_current(&mut self.host) {
+                log::warn!("script error: {e:?}");
+            }
+            if !kept {
+                break;
+            }
+        }
+        self.host.trigger_fires.clear();
     }
 
     /// The start of `G_RunFrame`'s entity loop (0x50912), after the threads

@@ -722,7 +722,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A `trigger_lookat` is never touched; it fires off `ClientEndFrame`'s aim
   trace. A `trigger_use` is never touched either (contents 0x200000); it
   fires off the use key's aim pick. A trigger-woken thread runs on the next
-  frame's clock.
+  frame's clock. A trigger's own `"trigger"` (touch, hurt, lookat) goes
+  through `G_RunFrame`'s queue, one per entity a round
+  (`host.trigger_fires`); what retail notifies on the spot (a touch, the
+  use key, an item take, a mover's end) goes in `host.engine_notifies`
+  (`cod11-gsc-language.md`, "Engine notifies and the trigger queue").
 
 ### Script
 

@@ -377,8 +377,8 @@ pub struct GameHost {
     /// (`docs/research/cod11-gsc-object-model.md`, 23.1).
     pub client_lookat: Vec<Option<EntId>>,
     /// `(trigger, toucher)` for every trigger that fired since the last
-    /// script frame, notified once that frame's clock is set
-    /// (`ScriptRuntime::run_frame`).
+    /// script frame: `G_RunFrame`'s trigger queue, handed out in rounds
+    /// once that frame's clock is set (`ScriptRuntime::trigger_rounds`).
     pub trigger_fires: Vec<(EntId, EntId)>,
     /// Each client's previous cmd buttons, for the use key's rising edge
     /// (`ClientThink_real` 0x40106..0x4011d).
@@ -386,10 +386,11 @@ pub struct GameHost {
     /// `setarchive`'s flag: whether the engine keeps a frame archive for
     /// the killcam (`crate::archive`).
     pub archive_on: bool,
-    /// `(entity, event, args)` for every `"touch"` and `"trigger"` the touch
-    /// pass raised and every `movedone`/`rotatedone` the entity pass raised
-    /// since the last script frame, notified at its start the way
-    /// `trigger_fires` are.
+    /// `(entity, event, args)` for every notify retail raises on the spot
+    /// outside a script step (the touch pass's `"touch"`, an item's or the
+    /// use key's `"trigger"`, the entity pass's `movedone`/`rotatedone`)
+    /// since the last script frame. Nothing runs between them on retail,
+    /// so delivering them at the frame's start wakes the same waiters.
     pub engine_notifies: Vec<(EntId, &'static str, Vec<Value>)>,
     /// Each client's `ps.grenadeTimeLeft`, mirrored in by
     /// `Server::replay_moves` with the entity states, which is the last read

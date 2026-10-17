@@ -1046,15 +1046,15 @@ started before the watchers, follows the 34750 `trigger` and `touch` lines.
 INFERRED: the same order.
 
 vcod delivers the item pass's notifies at the top of the script frame, on
-the frame's clock, and on a frame that has any runs their waiters there,
-before the entity thinks, the movers and the frame's `wait` pass
-(`ScriptRuntime::run_frame`); any other thread already runnable at that
-point runs there with them. The thread pass had run them in thread age, and
-the gate read the teleport at 31350 and the ammo pickup at 31400. Where
-retail's drain sits relative to the entity thinks is not measured. INFERRED,
-unmeasured: where retail drains a trigger's notifies relative to the `wait`
-pass; vcod keeps them where they were so the trigger and S&D gates keep
-their baselines.
+the frame's clock, and runs their waiters in the first round of the trigger
+queue, before the entity thinks, the movers and the frame's `wait` pass
+(`ScriptRuntime::run_threads`); any other thread due on the script clock
+runs there with them. The thread pass had run them in thread age, and the
+gate read the teleport at 31350 and the ammo pickup at 31400. VERIFIED
+since, `G_RunFrame` 0x50540..0x50653: retail's queue drain and its
+`Scr_RunCurrentThreads` come before the entity loop and before
+`Scr_SetTime` walks the clock (`cod11-gsc-language.md`, "Engine notifies
+and the trigger queue").
 
 ### 13.2 A pickup reaches the playerstate inside its cmd
 
