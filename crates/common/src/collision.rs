@@ -985,6 +985,9 @@ struct Volume {
     planes: Vec<(Vec3, f32)>,
     lo: Vec3,
     hi: Vec3,
+    /// Per side, its material's surface flags: kept for water, which a
+    /// missile's splash reads (`water_hit`), empty otherwise.
+    side_flags: Vec<u32>,
 }
 
 const AXES: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
@@ -1156,13 +1159,23 @@ impl CollisionWorld {
                         planes: planes.clone(),
                         lo,
                         hi,
+                        side_flags: Vec::new(),
                     });
                 }
                 if mat.content_flags & CONTENTS_WATER != 0 {
+                    let sides = &bsp.brush_sides[b.first_side as usize..][..b.num_sides as usize];
                     water.push(Volume {
                         planes: planes.clone(),
                         lo,
                         hi,
+                        side_flags: sides
+                            .iter()
+                            .map(|s| {
+                                bsp.materials
+                                    .get(s.material as usize)
+                                    .map_or(mat.surface_flags, |m| m.surface_flags)
+                            })
+                            .collect(),
                     });
                 }
                 if mat.content_flags & CLIP_BRUSH != 0 {
@@ -1991,17 +2004,15 @@ impl CollisionWorld {
     /// UO's `G_ExplodeMissile` finds the surface with: the nearest water
     /// side the segment enters, as a fraction of it, or `None`.
     pub fn water_trace(&self, start: Vec3, end: Vec3) -> Option<f32> {
-        let mut trace = Trace {
-            fraction: 1.0,
-            endpos: end,
-            normal: Vec3::ZERO,
-            surface_flags: 0,
-            startsolid: false,
-            allsolid: false,
-            hit: None,
-            enter: -1.0,
-            copy: None,
-        };
+        self.water_hit(start, end).map(|t| t.fraction)
+    }
+
+    /// [`Self::water_trace`] with the side it entered: its normal and its
+    /// material's surface flags, what `G_RunMissile`'s splash reads
+    /// (docs/research/cod11-combat.md 12.1). A start inside water reads
+    /// fraction 0.
+    pub fn water_hit(&self, start: Vec3, end: Vec3) -> Option<Trace> {
+        let mut trace = Trace::clear(end);
         for v in &self.water {
             if !(start.min(end).cmple(v.hi).all() && start.max(end).cmpge(v.lo).all()) {
                 continue;
@@ -2011,15 +2022,17 @@ impl CollisionWorld {
                 start,
                 end,
                 &v.planes,
-                &[],
+                &v.side_flags,
                 Vec3::ZERO,
                 Prim::Brush(0),
             );
             if trace.allsolid {
-                return Some(0.0);
+                trace.endpos = start;
+                return Some(trace);
             }
         }
-        (trace.fraction < 1.0).then_some(trace.fraction)
+        trace.endpos = start + (end - start) * trace.fraction;
+        (trace.fraction < 1.0).then_some(trace)
     }
 
     /// Contents at a point: `CONTENTS_WATER` inside any water brush,
