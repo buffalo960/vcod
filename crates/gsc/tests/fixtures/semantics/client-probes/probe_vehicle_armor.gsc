@@ -16,10 +16,21 @@
 //	seat logs seat 0. The vehicle's `damage` notify is
 //	logged as `PROBE vdamage`. Run the target first, the shooter once the
 //	target's `PROBE place` is logged. UO only.
+//
+//	With `probe_bones` set, every frame from client 0's first seat on his
+//	bones (a `script_origin` linked to each once he sits; UO has no
+//	`getTagOrigin`):
+//
+//	PROBE bone <time> <phase> <seat> <tag> <origin>
+//	PROBE body <time> <phase> <seat> <origin> <angles> <untagged link's origin>
+//
+//	the untagged link carrying the entity's `r.currentOrigin` (plus the
+//	offset it had at the link).
 
 main()
 {
 	thread watch_places();
+	thread log_bones();
 	maps\mp\gametypes\tdm::main();
 	level.callbackPlayerDamage = ::probe_damage;
 }
@@ -249,5 +260,55 @@ log_profile()
 					logPrint("PROBE vprof " + t + " " + seat + " " + z + " " + f + " " + trace["position"] + "\n");
 			}
 		}
+	}
+}
+
+log_bones()
+{
+	//	Read after the load: `run_probe.sh`'s `+set`s land after `+map`.
+	wait 1;
+	if (!getcvarint("probe_bones"))
+		return;
+	tags = [];
+	tags[0] = "bip01 pelvis";
+	tags[1] = "bip01 spine";
+	tags[2] = "bip01 spine2";
+	tags[3] = "bip01 neck";
+	tags[4] = "bip01 head";
+	tags[5] = "bip01 l hand";
+	tags[6] = "bip01 r hand";
+	tags[7] = "bip01 l foot";
+	tags[8] = "bip01 r foot";
+	tags[9] = "tag_origin";
+	for (;;)
+	{
+		wait 0.05;
+		players = getentarray("player", "classname");
+		p = undefined;
+		for (i = 0; i < players.size; i++)
+			if (players[i] getEntityNumber() == 0 && isdefined(players[i].probe_placed))
+				p = players[i];
+		if (!isdefined(p) || (!isdefined(p.probe_marks) && !(p isInVehicle())))
+			continue;
+		if (!isdefined(p.probe_marks))
+		{
+			p.probe_marks = [];
+			for (j = 0; j < tags.size; j++)
+			{
+				p.probe_marks[j] = spawn("script_origin", p.origin);
+				p.probe_marks[j] linkto(p, tags[j], (0, 0, 0), (0, 0, 0));
+			}
+			p.probe_root = spawn("script_origin", p.origin);
+			p.probe_root linkto(p);
+		}
+		seat = 0;
+		if (p isInVehicle() && isdefined(p.probe_seat))
+			seat = p.probe_seat;
+		phase = 0;
+		if (isdefined(p.probe_phase))
+			phase = p.probe_phase;
+		for (j = 0; j < tags.size; j++)
+			logPrint("PROBE bone " + gettime() + " " + phase + " " + seat + " " + tags[j] + " " + p.probe_marks[j].origin + "\n");
+		logPrint("PROBE body " + gettime() + " " + phase + " " + seat + " " + p.origin + " " + p.angles + " " + p.probe_root.origin + "\n");
 	}
 }
