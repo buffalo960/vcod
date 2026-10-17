@@ -6161,12 +6161,13 @@ impl ApplicationHandler for App {
                     return;
                 }
                 // Over the game, under the menus (CoDMP.exe 0x416b10, drawn
-                // in `CA_ACTIVE` only).
+                // in `CA_ACTIVE` with no fullscreen menu up, cod11-demos.md 8).
                 if let Mode::Online {
                     net,
                     phase: Phase::Live(_),
                     ..
                 } = &self.mode
+                    && !self.ui.fullscreen()
                     && let Some((name, bytes)) = net.recording_status()
                 {
                     let v1 = net.protocol().version == net::protocol::PROTOCOL_V1.version;
