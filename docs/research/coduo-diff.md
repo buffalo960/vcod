@@ -1106,10 +1106,10 @@ Stage 1 of section 17, the client side: vcod watches a UO server.
 - **Events, effects, HUD.** Section 19.
 - **Wheel dust** is `coduo-vehicles.md` 15.
 - **Not done.** The wheel suspension (under 0.03 units) of section 9,
-  the local gunner's view-driven gun, the
-  driver's steering blend and the head icon over a driver, a shell's
-  sound blend, `lofx/`, soundloadspecs, the rest of section 19's "Not done"
-  and stage 3.
+  the head icon over a driver, `lofx/`, soundloadspecs and the rest of
+  section 19's "Not done". The own gunner's gun and the drawn steer are
+  `coduo-vehicles.md` 9, a shell's sound blend section 19, stage 3
+  sections 20 to 22.
 - **Playing (stage 2, on foot).** The client predicts under
   `MoveRules::Uo` and sends `+sprint` as `buttons` 0x8; what that covers
   and leaves out is `coduo-movement.md` 10.
@@ -1906,9 +1906,7 @@ snapshots' server times; ids and `eFlags` are the wire's, as
   reference, UO's view jitter in the shake, `sprint_breath_last` (no
   alias), a captured explode on a
   vehicle (the `vehicle` column; the dispatch and the server's
-  0x100000 are read off the decompiles, coduo-vehicles.md 14), the
-  flame chunks' own bounce off the
-  local player (0x30025cd0's second trace against `cg.snap`'s box).
+  0x100000 are read off the decompiles, coduo-vehicles.md 14).
 
 ### Capture recipe
 
@@ -2543,8 +2541,10 @@ restart sends every changed slot in slot order, then `d 3`, `B`/`n` and
   (VERIFIED decompile). `G_RadiusDamage` (0x5098b) passes the direction
   from the blast to `r.currentOrigin` lifted 24 and the blast's origin as
   the point (VERIFIED decompile). vcod reproduces all of this
-  (`GameHost::damage_nonclient`); the client arm of `doDamage`
-  (`G_DamageClient`, which the vehicle scripts reach) is not done. A
+  (`GameHost::damage_nonclient`). `doDamage` on a player or a vehicle
+  goes through `vehicle::g_damage`: a vehicle's own branch, a player's
+  damage callback behind `G_DamageClient`'s rider branch
+  (`coduo-vehicles.md` 14, "Riders"). A
   `radiusDamage((100,200,10), 200, 100, 50)` on a script model at
   (100,200,0) with `setTakeDamage(true)` notifies `9 MOD_EXPLOSIVE (0, 0,
   1) (100, 200, 10)` on retail and on vcod (VERIFIED,

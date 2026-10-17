@@ -1867,9 +1867,22 @@ ground entity, and the result is capped at what the wish still lacks, both
 before and after the division. Q3's `PM_Accelerate` has no floor: a wish
 under 100, the 89.7 of a sighted walk or the 28.5 of a crawl, gains at 100's
 rate and stops at its own speed. 0x70908 has no other reference in the pmove
-range 0x2e400-0x35e00 (`objdump` byte scan), so the air and water
-accelerations do not take it. The ladder's inline accelerate has the same
-floor through its own 100.0 at 0x70ccc ("Ladders").
+range 0x2e400-0x35e00 (`objdump` byte scan). The ladder's inline accelerate
+has the same floor through its own 100.0 at 0x70ccc ("Ladders"), and so
+does `PM_AirMove`'s through 100.0 at 0x708ec. VERIFIED, `objdump` of
+0x2f119-0x2f1cd: the wish speed is `VectorNormalize`'s length times the
+stored scale, left on the stack; nothing is added when it less the
+velocity along the wish is not above 0 (0x2f14b); 0x2f159-0x2f16e take
+the larger of 100.0 and the wish speed, 0x2f16e-0x2f174 multiply it by
+the frame time (`pm_airaccelerate`'s 1.0 folded away), and it is capped
+at the lack, divided by `ps.friction` with a ground entity (0x2f18e) and
+capped again; each component is rounded once (0x2f1b0-0x2f1c5). An earlier
+read of this paragraph had the air accelerate without the floor, off the
+missing 0x70908 reference. In the air a wish under 100 comes only off the
+walk scale: the sight drops off the ground (`PM_UpdateAimDownSightFlag`),
+so it is the walk key, or 1.5's lean (`cod15-movement.md` 7). vcod:
+`pmove::air_accelerate`
+(`pmove::tests::a_wish_under_100_in_the_air_accelerates_at_100s_rate`).
 
 VERIFIED, off `mp_carentan-dm-slope-8ms.txt`: a sighted diagonal walk from
 rest reads `vel` -8, -18, -32, -42, -56 and -63 per axis on consecutive

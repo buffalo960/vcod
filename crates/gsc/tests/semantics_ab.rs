@@ -73,13 +73,15 @@ impl Host for ProbeHost {
 struct Run {
     lines: Vec<String>,
     error: Option<String>,
-    /// `"call_now"` or `"start_thread"`; carried into failure messages so a
-    /// reader is not puzzled by which path an error could or couldn't have
-    /// come from -- see the two paths' doc comments below.
-    path: &'static str,
+    /// `"call_now"`, `"start_thread"` or, for a script that did not compile,
+    /// `"compile error: <msg>"`; carried into failure messages so a reader
+    /// is not puzzled by which path an error could or couldn't have come
+    /// from -- see the two paths' doc comments below.
+    path: String,
 }
 
-/// Loads `name`'s probe fresh and returns its `main`, ready to run.
+/// Loads `name`'s probe fresh and returns its `main`, ready to run, or the
+/// compile error that rejected it.
 fn install(name: &str) -> Result<(Vm, FuncRef), String> {
     let path = format!("maps/mp/gametypes/{name}");
     let text = std::fs::read_to_string(format!("tests/fixtures/semantics/{name}.gsc"))
@@ -91,7 +93,7 @@ fn install(name: &str) -> Result<(Vm, FuncRef), String> {
     }));
     loader
         .load(&mut vm, &path)
-        .map_err(|e| format!("{name} does not load: {e:?}"))?;
+        .map_err(|e| format!("compile error: {} (line {})", e.msg, e.line))?;
     let main = vm.func_ref(&path, "main");
     Ok((vm, main))
 }
@@ -107,14 +109,27 @@ fn install(name: &str) -> Result<(Vm, FuncRef), String> {
 /// path inherits `start_thread`'s own blind spot -- an error in its
 /// immediate run has nowhere to go either -- but nothing in the corpus
 /// needs both a `wait` and a synchronous-death measurement in one file.
+///
+/// A compile error voids the whole script on retail before `main()` runs:
+/// its section holds only [`COMPILE_ERROR`], and a run here that does not
+/// compile has no lines and that error.
 fn run_probe(name: &str) -> Result<Run, String> {
-    let (mut vm, main) = install(name)?;
+    let (mut vm, main) = match install(name) {
+        Ok(loaded) => loaded,
+        Err(path) => {
+            return Ok(Run {
+                lines: Vec::new(),
+                error: Some(COMPILE_ERROR.to_string()),
+                path,
+            });
+        }
+    };
     let mut host = ProbeHost::default();
     match vm.call_now(&mut host, main, None, Vec::new()) {
         Ok(_) => Ok(Run {
             lines: host.lines,
             error: None,
-            path: "call_now",
+            path: "call_now".into(),
         }),
         Err(e) if e.kind == ErrorKind::SuspendedInImmediateCall => {
             let (mut vm, main) = install(name)?;
@@ -131,18 +146,23 @@ fn run_probe(name: &str) -> Result<Run, String> {
             Ok(Run {
                 lines: host.lines,
                 error,
-                path: "start_thread",
+                path: "start_thread".into(),
             })
         }
         Err(e) => Ok(Run {
             lines: host.lines,
             error: Some(format!("{:?}", e.kind)),
-            path: "call_now",
+            path: "call_now".into(),
         }),
     }
 }
 
-/// `retail-captures.txt` parsed into `probe name -> (PROBE lines, fatal)`.
+/// What `run_probe.sh` prints, as `PROBE_ERROR`, for a script retail would
+/// not compile.
+const COMPILE_ERROR: &str = "script compile error";
+
+/// `retail-captures.txt` parsed into `probe name -> (PROBE lines, fatal)`;
+/// a compile error is a fatal of [`COMPILE_ERROR`].
 fn captures() -> BTreeMap<String, (Vec<String>, Option<String>)> {
     let text = include_str!("fixtures/semantics/retail-captures.txt");
     let mut out = BTreeMap::new();
@@ -153,6 +173,8 @@ fn captures() -> BTreeMap<String, (Vec<String>, Option<String>)> {
             out.insert(name.clone(), (Vec::new(), None));
         } else if let Some(msg) = line.strip_prefix("PROBE_FATAL ") {
             out.get_mut(&name).expect("a section header first").1 = Some(msg.to_string());
+        } else if line == format!("PROBE_ERROR {COMPILE_ERROR}") {
+            out.get_mut(&name).expect("a section header first").1 = Some(COMPILE_ERROR.into());
         } else if line.starts_with("PROBE ") {
             out.get_mut(&name)
                 .expect("a section header first")
@@ -236,40 +258,11 @@ const RUN_IN_SERVER_CRATE: &[&str] = &[
     "probe_stale_hud_write",
 ];
 
-/// `game.foo = 1` and `level["k"] = "v"` are, on retail, *compile*-time
-/// rejections ("not an object" / "not an array, string, or vector") that
-/// void the whole script before `main()` ever runs -- so retail's capture
-/// for each is an empty section, no lines at all. vcod's compiler has no
-/// static type check tied to the bare `level`/`game` identifiers; both
-/// constructs compile and only fail when the instruction loop actually
-/// reaches them, by which point the `PROBE at ...` line immediately before
-/// each has already printed. That is a real, understood divergence in
-/// reach, not a message-text nitpick the harness already looks past, so
-/// these two are skipped rather than made to look like a false pass;
-/// adding retail's global-identifier static typing to the compiler is its
-/// own task.
-///
-/// `level.size` is a third skip for an unrelated reason: on retail it
-/// reads 1 regardless of how many fields `level` carries, not the
-/// array-style key count `game.size`/an array's `.size` gives (verified by
-/// `probe_game`, which does match). vcod's `LoadField` only special-cases
-/// `.size` for `Value::Array`/`Value::String`, so `level.size` reads
-/// `Undefined` there and a struct's `.size` semantic on retail is an open
-/// question this task did not scope in ("Only game changes" -- the task
-/// brief this harness came from).
-const KNOWN_GAPS_OUT_OF_SCOPE: &[&str] = &[
-    "probe_game_dotwrite",
-    "probe_level_bracket",
-    "probe_level_size",
-];
-
 #[test]
 fn vcod_matches_retail_on_every_probe() {
     let mut failures = Vec::new();
     for (name, (retail_lines, retail_fatal)) in captures() {
-        if RUN_IN_SERVER_CRATE.contains(&name.as_str())
-            || KNOWN_GAPS_OUT_OF_SCOPE.contains(&name.as_str())
-        {
+        if RUN_IN_SERVER_CRATE.contains(&name.as_str()) {
             continue;
         }
         let ours = match run_probe(&name) {
@@ -283,6 +276,13 @@ fn vcod_matches_retail_on_every_probe() {
             failures.push(format!(
                 "{name} ({}): output differs\n  retail: {retail_lines:#?}\n  vcod:   {:#?}",
                 ours.path, ours.lines
+            ));
+        }
+        let retail_compile = retail_fatal.as_deref() == Some(COMPILE_ERROR);
+        if retail_compile != (ours.error.as_deref() == Some(COMPILE_ERROR)) {
+            failures.push(format!(
+                "{name} ({}): one side failed to compile, the other did not",
+                ours.path
             ));
         }
         // Where retail dies, vcod raises an error and aborts the thread
@@ -312,7 +312,7 @@ fn vcod_matches_retail_on_every_probe() {
 #[test]
 fn every_skipped_probe_names_a_real_capture_section() {
     let names: Vec<String> = captures().keys().cloned().collect();
-    for n in RUN_IN_SERVER_CRATE.iter().chain(KNOWN_GAPS_OUT_OF_SCOPE) {
+    for n in RUN_IN_SERVER_CRATE {
         assert!(
             names.iter().any(|c| c == n),
             "{n} is skipped but is not a capture section"

@@ -246,12 +246,14 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::StoreLocal(slot));
             }
             Expr::Field(obj, name) => {
+                self.check_object(obj)?;
                 self.compile_expr(obj)?;
                 self.compile_expr(value)?;
                 let a = self.interner.intern_folded(name);
                 self.emit(Op::StoreField(a));
             }
             Expr::Index(obj, idx) => {
+                self.check_array(obj)?;
                 self.compile_ensure_array(obj)?;
                 self.compile_expr(idx)?;
                 self.compile_expr(value)?;
@@ -278,11 +280,13 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::EnsureArrayLocal(slot));
             }
             Expr::Field(inner, name) => {
+                self.check_object(inner)?;
                 self.compile_expr(inner)?;
                 let a = self.interner.intern_folded(name);
                 self.emit(Op::EnsureArrayField(a));
             }
             Expr::Index(inner, idx) => {
+                self.check_array(inner)?;
                 self.compile_ensure_array(inner)?;
                 self.compile_expr(idx)?;
                 self.emit(Op::EnsureArrayIndex);
@@ -290,6 +294,25 @@ impl<'a> Compiler<'a> {
             _ => self.compile_expr(obj)?,
         }
         Ok(())
+    }
+
+    /// Retail's compiler types the bare globals: `game` is an array and
+    /// `self`, `level`, `anim` are objects, so the wrong access on one voids
+    /// the whole script before it runs (cod11-gsc-language.md §9).
+    fn check_object(&self, obj: &Expr) -> Result<(), CompileError> {
+        match obj {
+            Expr::GameRef => Err(self.err("not an object")),
+            _ => Ok(()),
+        }
+    }
+
+    fn check_array(&self, obj: &Expr) -> Result<(), CompileError> {
+        match obj {
+            Expr::SelfRef | Expr::LevelRef | Expr::AnimRef => {
+                Err(self.err("not an array, string, or vector"))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn compile_if(
@@ -550,11 +573,16 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::LoadAnim);
             }
             Expr::Field(obj, name) => {
+                // `.size` is its own opcode on retail and takes any operand.
+                if !name.eq_ignore_ascii_case("size") {
+                    self.check_object(obj)?;
+                }
                 self.compile_expr(obj)?;
                 let a = self.interner.intern_folded(name);
                 self.emit(Op::LoadField(a));
             }
             Expr::Index(obj, idx) => {
+                self.check_array(obj)?;
                 self.compile_expr(obj)?;
                 self.compile_expr(idx)?;
                 self.emit(Op::LoadIndex);
