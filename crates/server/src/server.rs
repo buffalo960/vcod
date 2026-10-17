@@ -6287,10 +6287,22 @@ impl Server {
                 return self.absorb_load("map_restart", r);
             }
             console::Command::MapRotate => {
-                let full = self.sv_map_rotation.clone();
+                // Both rotation cvars are the one table a script's
+                // `setCvar` and `getCvar` reach on retail (doc section 5.2).
+                let mut full = self.sv_map_rotation.clone();
+                if let Some(rt) = self.script.as_ref() {
+                    let script = rt.host.cvars.get("sv_mapRotation");
+                    if !script.is_empty() {
+                        full = script.to_string();
+                    }
+                    self.rotation.current = rt.host.cvars.get("sv_mapRotationCurrent").to_string();
+                }
                 let before = self.cfg.gametype.clone();
                 let mut gametype = before.clone();
                 let next = self.rotation.rotate(&full, &mut gametype);
+                if let Some(rt) = self.script.as_mut() {
+                    rt.host.cvars.set("sv_mapRotationCurrent", &self.rotation.current);
+                }
                 for w in self.rotation.warnings.drain(..) {
                     log::warn!("{w}");
                 }

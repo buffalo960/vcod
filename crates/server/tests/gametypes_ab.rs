@@ -883,3 +883,8 @@ fn uo_headquarters_waves_and_map_end_match_retail() {
 fn uo_base_assault_plant_defuse_and_map_end_match_retail() {
     uo_gametype(&UO_FOY, "basend", 160, 155_000);
 }
+
+#[test]
+fn uo_capture_the_flag_touch_return_time_limit_and_rotation_match_retail() {
+    uo_gametype(&UO, "ctftime", 90, 80_000);
+}
