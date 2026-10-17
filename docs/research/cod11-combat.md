@@ -398,10 +398,21 @@ shot. vcod before this kept state 3 at `weaponTime` 1 there and never
 rechambered under the held trigger (`moves_ab`, which now compares
 `weapAnim` too).
 
-Not modelled: an unlatched expiry of states 4 and 11 (no `semiAuto`, or an
-empty clip) under a held trigger. vcod's timer ends both itself; retail
-leaves them to the release check, which a held trigger skips for the fire
-path (INFERRED). No stock capture holds one.
+VERIFIED, `.so` 0x388d0: the unlatched arm stores 0 into `weaponTime` and
+writes neither `weaponstate` nor `weapAnim`. VERIFIED: the melee finish
+(`0x38eb4`) tests `weaponstate` 11 at 0x38f15, writes the index-preserving
+idle (0x38f33-0x38f3b), stores 0 into `weaponstate` (0x38f48) and returns
+1, which ends `PM_Weapon` (0x39294); it runs only past the gate at
+0x3925a (an expired delay, or `weaponTime` and `weaponDelay` both 0). The
+trigger-release check stores 0 into `weaponstate` whatever state reached
+it (0x3932d); its idle write is gated on state 3 (0x392fa). INFERRED: an
+unlatched relax (no `semiAuto`, or an empty clip) ends on the frame both
+timers are out, and that frame neither fires, reloads nor swings; an
+unlatched rechamber (4) stands until the release check or the next shot
+ends it in that same frame. vcod: `pmove::weapon::advance_timers` leaves
+both, `pm_weapon` ends 11 behind the gate and the release check ends any
+state; `a_held_trigger_fires_the_frame_after_the_relax_ends`. No stock
+capture holds one.
 
 ### 1.5 Firing
 
@@ -438,6 +449,25 @@ branch conditions.
 9. When `weaponDef->clipOnly` (`0x2D4`) is set and both the clip and the
    reserve are now 0, `BG_TakePlayerWeapon` runs and event `0x95`
    (`EV_NOAMMO`) is raised.
+
+VERIFIED, `.so` 0x38af0-0x38b51: step 1's `adsFire` store replaces the
+`fireDelay` one with `(1 - fWeaponPosFrac) * (1 / weapDef[0x414])`
+truncated, before the ammo check; 0x38d53 is step 3's test of
+`weaponDelay`, after step 2. VERIFIED: `PM_Weapon` calls the fire path
+(0x39344) with the expired-delay flag the timers returned (0x391ff),
+skipping the `weaponTime`/`weaponDelay` gate on it (0x3925a), and the ADS
+lerp (0x372fc) runs at 0x39143, ahead of the timers (0x391fa). 1.5b's
+`PM_Weapon` (0x303ad) and UO's call the same pieces in the same order (the
+lerp first, the fire path `0x2ff54` / `0x36c0e` arming, then testing
+`weaponDelay`). INFERRED: an `adsFire` pull from short of the sight fires
+nothing, forces the sight up (section 1.13) and shoots on the frame the
+delay runs out, whatever the trigger does by then; the re-arm then
+computes 0 off the raised sight. A gun with a non-zero `fireDelay` re-arms
+it on every pass and never fires; no stock gun has one (the four 1.1
+grenades, which skip the arm, and UO's binoculars do). vcod before
+2026-10-17 fired at the pull and armed the delay after, and ran the lerp
+after the timers. `an_ads_fire_shot_waits_for_the_sight`,
+`a_fire_delay_rearms_on_every_pull_and_never_fires`.
 
 VERIFIED, `.so` `0x38d28`: the fire path calls step 1 (`0x38a44`) before
 step 2 (`0x38bbc`), so a dry trigger has already stored `fireTime` into
@@ -906,7 +936,9 @@ modelled, since it is unnamed (section 10). The dead clear lives in
 `pmove::dead_move` rather than in the flag update, because no pmove step runs
 for a dead player at all, which leaves the fraction frozen where the death
 found it rather than ramping it down. And `pml.groundPlane` is read as
-`ps.on_ground`, the nearest thing vcod's mover carries.
+`ps.on_ground`, the nearest thing vcod's mover carries. `advance_ads` runs first in `pm_weapon`, ahead of
+the grenade and the timers, as 0x39143 does, so the reload window and the
+`adsFire` force read the timers the frame starts with.
 
 ---
 
