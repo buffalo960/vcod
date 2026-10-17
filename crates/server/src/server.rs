@@ -4857,9 +4857,9 @@ impl Server {
         (!crate::bots::friend_in_line(muzzle, spot.into(), &bodies)).then_some(spot)
     }
 
-    /// The script models within [`BREACH_MODEL_NEAR`] of a `bas` base, on
-    /// such a level only: what a rocket fired at one meets besides the
-    /// world, the base's own model among them.
+    /// The script models and vehicles within [`BREACH_MODEL_NEAR`] of a
+    /// `bas` base, on such a level only: what a rocket fired at one meets
+    /// besides the world, the base's own model among them.
     fn bot_breach_models(
         &mut self,
         uo: Option<&script::UoObjectives>,
@@ -4870,7 +4870,7 @@ impl Server {
         let Some(rt) = self.script.as_mut() else {
             return Vec::new();
         };
-        rt.placed_script_models()
+        rt.shot_models()
             .into_iter()
             .filter(|m| {
                 bases
@@ -9963,8 +9963,11 @@ const BREACH_SECTORS: usize = 16;
 /// nearest to.
 const BREACH_STAND_FAR: f32 = 1000.0;
 const BREACH_STAND_IDEAL: f32 = 600.0;
-/// Script models this near a base are in its breach traces.
-const BREACH_MODEL_NEAR: f32 = 1200.0;
+/// Script models and vehicles this near a base are in its breach traces:
+/// anywhere between it and a stand. A rocket from mp_italy's stand by the
+/// allied spawn struck the Sherman parked 190 units on, 1290 from the
+/// base, and killed its shooter.
+const BREACH_MODEL_NEAR: f32 = crate::bots::BREACH_RANGE + 64.0;
 
 /// Where a rocket from `muzzle` is aimed at a base whose script model
 /// stands at `base`, from [`crate::bots::BREACH_MIN`] to

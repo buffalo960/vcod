@@ -137,6 +137,11 @@ objective, since its rising edge also picks up weapons and mounts turrets.
   on it.
 - Defender before the plant: goes to its site's standing point and holds
   within 250 units of it, looking about.
+- An enemy in sight that no round has gone at for 10 s is left out of
+  the bot's view for 30 s (`Bot::count_futile`, `Bot::ignores`): two UO
+  bots, one holding only an LMG it could not deploy on a stair, the other
+  a dry pistol and rockets (which go at no player), stood facing each
+  other for twenty minutes of a `bas` round.
 - Defender after the plant: only the lead, its team's playing bot nearest
   the bomb (lower slot on a tie, `SdView::lead`), goes for the defuse. The
   rest stand 96 to 250 units off the bomb like the attackers: defenders
@@ -616,6 +621,15 @@ first everywhere.
   `BaseAssault_bomb_countdown` (3586-3664) blows after `scr_bas_bombtime`
   with a 1000-damage `radiusDamage` on every player within 500 units,
   and kills the base.
+- VERIFIED (`bas.gsc` 3137-3157, 3852): `BaseAssault_bomb_think`
+  decrements `count` when its trigger fires with the match or round not
+  started or the round ended, and nothing in the function sets it;
+  `BaseAssault_base_think`'s twin sets `count = 1` first. INFERRED (the
+  script alone): a player looking at a live charge in the end-of-round
+  delay (`endRound`'s `wait` of `scr_bas_endrounddelay`, 2260-2264, 10 s
+  by default, 186, between `level.roundended` and the `W;` line) stops
+  that thread with a script error on any engine. The bas gates in `tests/bots.rs` pass over that
+  one abort.
 - VERIFIED (`bas.gsc` 330-345): `scr_bas_planttime` 15,
   `scr_bas_defusetime` 10 and `scr_bas_bombtime` 60 by default.
   INFERRED (`BaseAssault_bomb_countdown`, 3591-3598, loop body): the
@@ -666,11 +680,17 @@ first everywhere.
   before anything else but a live frag, fight or no fight. A defender
   keeps the charge room of a breached base of its side's, the only way
   a plant comes; with none breached it attacks with the rest, since a
-  standing base needs no guard. Each side defuses a charge on one of its
-  bases (10.5 s): a defender, and an attacker within 2000 units of it.
-  An attacker goes for the next of the other side's bases after each of
-  its deaths, off the defender that killed it. A standing base is breached with rockets (below); bots ride no
-  tank.
+  standing base needs no guard. With a charge of its side's ticking on
+  the other side's base it holds that charge's room beside the planter
+  instead: one on one, the defender in its own room won most fights and
+  defused. A defender that does not shoot (`--bots-shoot` off) stops no
+  plant from the room, and with a defender a side every plant was
+  defused the moment it was down, for good: it attacks with the rest
+  and comes back only to defuse. Each side defuses a charge on one of
+  its bases (10.5 s): a defender, and an attacker within 2000 units of
+  it. An attacker goes for the next of the other side's bases after
+  each of its deaths, off the defender that killed it. A standing base
+  is breached with rockets (below); bots ride no tank.
 - **The breach.** An attacker with no loaded rocket launcher in hand
   (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve) walks
   to the nearest launcher lying about (`BasView::launchers`, off
@@ -683,8 +703,8 @@ first everywhere.
   graph node in each of 16 sectors round the base, 400 to 1000 units off
   (nearest 600), from whose standing eye a rocket strikes the base's
   model or bursts within 64 units of its origin (`breach_aim`, the
-  world's missile trace and the script models' meshes under the
-  missile's clipmask). The bot takes the stand nearest its own side's
+  world's missile trace and the meshes of the script models and
+  vehicles within 1564 units of a base, under the missile's clipmask). The bot takes the stand nearest its own side's
   nearest base, and the next one after 2 s there with no shot. Wherever
   the live check (`Server::breach_shot`, from its own muzzle, 400 to 1500
   off) finds a shot, it stops, draws the launcher, rests the view on the
@@ -695,7 +715,16 @@ first everywhere.
   the range still left a bot killed by its own splash in most four-bot
   rounds. Nor does a breach rocket go while another player's box
   crosses its line, or where it would burst within 320 units of the
-  muzzle (`BREACH_CLEAR`; the base's mesh reaches toward the shooter).
+  muzzle (`BREACH_CLEAR`; the base's mesh reaches toward the shooter),
+  nor where a rocket along the edge of the sighted spread cone (4
+  degrees, `adsSpread` of the bazooka and panzerschreck; the
+  panzerfaust's is 3.5) meets anything within those 320 units
+  (`spread_clear`, eight rays). With the line's middle alone, a bot on
+  mp_foy was killed now and then by a rocket the spread carried into
+  the cover by its stand; on mp_italy one fired twice from the stand by
+  the allied spawn into the Sherman (`script_vehicle` at (-3043, -2347,
+  -40), 190 units on and 1290 from the base, outside the 1200 the
+  models were taken within then) and died of the second.
   A bot with both its weapons spent draws the gun it still has; one
   with no round anywhere uses `kill` after 10 s, and a launcher the body
   has come no 32 units nearer in 20 s (a node over it, or a tap that
@@ -771,3 +800,22 @@ With the planter's guard alone (8 s, outside-the-blast before), one
 seed in eight ended; the rest stalled on defuses, a bot standing at a
 launcher it could not take, a dry defender, or a bot killing itself
 with its own rocket.
+
+VERIFIED (measured, ours, 2026-10-17, release, UO install,
+`scr_bas_basehealth 3000`, the rules above): before this round's
+changes, four bots with shoot off on mp_foy, seeds 3 and 7, planted 97
+and 113 times and defused all but one or two, for 29 minutes. Two bots
+with shoot off, seed 7, ended the round on mp_italy (tick 21579),
+mp_kursk (10579), mp_ponyri (13679) and mp_rhinevalley (10539); nothing
+stalled there. After them, gate
+`four_uo_bots_end_a_bas_round_without_shooting` (seeds 1, 3, 5, 7):
+over at ticks 9139, 10359, 9919 and 11199, four or five bases gone
+off, up to six defuses. `four_shooting_uo_bots_end_a_bas_round` on
+mp_foy, seeds 1, 3, 5, 7: 17959, 32759, 12939 and 18839 (seed 3 within
+two minutes of the gate's 29), no own-rocket kill; seeds 9 and 11 at
+14019 and 14259. Shooting, seed 7, on the other maps (`BAS_MAP`):
+mp_italy 26179 (seed 3, 24439), mp_kursk 19999, mp_ponyri 12799,
+mp_rhinevalley 12419. The two-bot gate, seed 7: 11199. Before the
+futile-enemy rule the shooting seed 7 stood twenty minutes with both
+sides' last bases breached, an LMG bot facing a dry-pistol one; before
+the backing rule seed 5 ran out its 29 minutes on six defuses.
