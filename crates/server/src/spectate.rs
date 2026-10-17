@@ -415,6 +415,10 @@ pub struct ClientSim {
     pub hud_cleared: bool,
     /// `pm_flags` 0x800 ([`PMF_RESPAWNED`]).
     respawned: bool,
+    /// UO's spawn built the DObj inside the frame's script threads, so the
+    /// clips the spawn set advance in that frame's anim update, a frame ahead
+    /// of 1.1's and 1.5's (cod11-turrets.md 13.7). The next end frame takes it.
+    pub dobj_ahead: bool,
     /// The last frame a follow sent this spectator, the copy with its flags
     /// patched: the playerstate `StopFollowing` writes over.
     pub follow_wire: Option<msg::PlayerState>,
@@ -620,6 +624,7 @@ impl ClientSim {
             last_buttons: 0,
             hud_cleared: false,
             respawned: false,
+            dobj_ahead: false,
             follow_wire: None,
             residue: None,
             end_frame_wire: None,
@@ -2035,6 +2040,11 @@ impl ClientSim {
         // doc 14.3); without the anim records every clip plays at rate 1
         // from where the channel took it.
         let (mut legs_clock, mut torso_clock) = (self.pose.legs_clock, self.pose.torso_clock);
+        let ahead = if std::mem::take(&mut self.dobj_ahead) {
+            frametime_ms
+        } else {
+            0
+        };
         match anims {
             Some(a) => {
                 let seen = Seen {
@@ -2042,8 +2052,12 @@ impl ClientSim {
                     tr_base: self.ps.origin.trunc(),
                     eflags: self.entity_eflags(),
                 };
-                legs_clock.update(a, true, legs, &seen, Times::end_frame(now_ms));
-                torso_clock.update(a, false, torso, &seen, Times::end_frame(now_ms));
+                let at = Times {
+                    clock_ms: now_ms.wrapping_sub(ahead),
+                    snapshot_ms: now_ms,
+                };
+                legs_clock.update(a, true, legs, &seen, at);
+                torso_clock.update(a, false, torso, &seen, at);
             }
             None => {
                 legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());

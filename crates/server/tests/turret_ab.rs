@@ -198,6 +198,7 @@ fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Ri
         None,
         0,
         &[],
+        None,
     )
 }
 
@@ -215,6 +216,7 @@ fn build_on(
     gun_info: Option<&str>,
     alone_ms: i64,
     target_cmds: &[i32],
+    target_spawn: Option<([f32; 3], [f32; 3])>,
 ) -> Option<Rig> {
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let mut bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -234,6 +236,9 @@ fn build_on(
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
+    if let Some(pin) = target_spawn {
+        sv.pin_spawns(vec![vec![Some(pin)]]);
+    }
     common::run_alone(&mut sv, &mut now, alone_ms);
     let qg = Rc::new(RefCell::new(Queues::default()));
     let qt = Rc::new(RefCell::new(Queues::default()));
@@ -1457,17 +1462,6 @@ const EARLY_SPAWN_UO: &[i32] = &[1536, 1987, 15238];
 /// The strafe's 36284, which the landing at 36300 does not show: retail's
 /// body moved one cmd's way that frame and two the next.
 const LATE_SPAWN_UO: &[i32] = &[36284];
-/// [`GAPS`] for the `-spawn-uo` capture: the killing round.
-const GAPS_SPAWN_UO: &[(&str, &str)] = &[
-    (
-        "[target] impact t=31250: retail only 173@[1512.0, 1607.0",
-        UO_BONE_POSE,
-    ),
-    (
-        "[target] impact t=31250: ours only 173@[1513.0, 1607.0",
-        UO_BONE_POSE,
-    ),
-];
 /// The sweep's cmd 19985 (sent at ms 1733), whose view snapshot 20000
 /// does not show yet (it reads cmd 19969's -141), and two strafe cmds
 /// that reached the server behind the cmd after them and so never ran:
@@ -1560,11 +1554,6 @@ const KILLING_ROUND: &str = "the killing round meets a target the round before k
     landing; this capture logs neither the target's cmd stamps nor its spawn time, and the \
     -spawn captures, which log both, match the killing round on 1.1d and 1.5b with no row \
     (cod11-turrets.md 13.4)";
-const UO_BONE_POSE: &str = "UO's target idles a frame ahead of ours: the hit grids put \
-    every UO wound cell on retail's to 0.004 once his first legs clip starts a frame before \
-    his spawn's end frame, and the kill on retail's 1512, but the same shift moves \
-    vehicle_armor_ab's UO bodies, spawned the same way, off retail's, so the rule is not \
-    known and not ported (cod11-turrets.md 13.6)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
     ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
     print, which reads as a smaller air acceleration across the face on retail; no cmd \
@@ -1662,6 +1651,9 @@ struct Capture {
     traces: Vec<(String, Sample)>,
     /// Cvars the replay sets on ours beyond the recipe's.
     cvars: &'static [(&'static str, &'static str)],
+    /// Where retail's spawn put the target (`PROBE spawnat`), which ours
+    /// pins: a spawn's think on a sloped point leaves him a drift.
+    target_spawn: Option<([f32; 3], [f32; 3])>,
 }
 
 fn parse(text: &str) -> Capture {
@@ -1783,6 +1775,7 @@ fn parse(text: &str) -> Capture {
         early: &[],
         target_cmds: Vec::new(),
         cvars: &[],
+        target_spawn: None,
         weapon,
         gun,
         cmds,
@@ -1828,6 +1821,7 @@ fn rig_after(
         None,
         alone_ms,
         &cap.target_cmds,
+        cap.target_spawn,
     )?;
     let at = cap.traces.first().expect("a snapshot").1.origin;
     let mut ours = rig.sample().origin;
@@ -2363,12 +2357,13 @@ fn hit_gate(
             env!("CARGO_MANIFEST_DIR")
         )
     };
+    let script = read(&path("-script"));
     let cap = Capture {
         target_cmds: target_cmds(&read(&path("-target"))),
         cvars,
+        target_spawn: spawn_at(&script),
         ..parse(&read(&path("")))
     };
-    let script = read(&path("-script"));
     let place = place_ms(script.lines(), 0).expect("retail's PROBE place");
     let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
         return;
@@ -2379,6 +2374,19 @@ fn hit_gate(
     rows.extend(hitfine_rows(script.lines(), log.iter().map(String::as_str)));
     rows.extend(hitgrid_rows(script.lines(), log.iter().map(String::as_str)));
     finish(rows, gaps);
+}
+
+/// Client 0's first `PROBE spawnat <num> <origin> <angles>` line.
+fn spawn_at(script: &str) -> Option<([f32; 3], [f32; 3])> {
+    let rest = script
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .find_map(|l| l.split_once("PROBE spawnat 0 ").map(|(_, r)| r))?;
+    let v: Vec<f32> = rest
+        .split(['(', ')', ','])
+        .filter_map(|x| x.trim().parse().ok())
+        .collect();
+    Some(([v[0], v[1], v[2]], [v[3], v[4], v[5]]))
 }
 
 /// A `fine1` number: `<int>:<thousandths>:<millionths of one>`.
@@ -2540,7 +2548,7 @@ fn the_spawn_capture_matches_uo_on_mp_carentan() {
         &PROTOCOL_V22,
         EARLY_SPAWN_UO,
         LATE_SPAWN_UO,
-        GAPS_SPAWN_UO,
+        &[],
     );
 }
 
@@ -2554,7 +2562,7 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
         &PROTOCOL_V22,
         &[],
         &[],
-        GAPS_HITFINE_UO,
+        &[],
     );
 }
 
@@ -2564,16 +2572,6 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
 /// `b` head, reads them 0.12 off (cod11-turrets.md 13.6).
 const HEAD_HITGRID: &[(&str, &str)] =
     &[("probe_hitgrid", "1"), ("probe_head", "basehead_axis_a_01")];
-/// The UO hit-grid capture: both rounds' grids and the kill's point, every
-/// cell of the frame-ahead idle ([`UO_BONE_POSE`]).
-const GAPS_HITGRID_UO: &[(&str, &str)] = &[
-    ("[grid] t=30400 ", UO_BONE_POSE),
-    ("[grid] t=30450 ", UO_BONE_POSE),
-    ("[hit] 30450 0 torso_upper 53: ours - retail", UO_BONE_POSE),
-];
-/// The `-hitfine-uo` capture's kill point, 0.055 off ([`UO_BONE_POSE`]).
-const GAPS_HITFINE_UO: &[(&str, &str)] =
-    &[("[hit] 30200 0 torso_upper 53: ours - retail", UO_BONE_POSE)];
 /// The other hit-grid captures' cvars.
 const HITGRID: &[(&str, &str)] = &[("probe_hitgrid", "1")];
 
@@ -2610,7 +2608,39 @@ fn the_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID,
-        GAPS_HITGRID_UO,
+        &[],
+    );
+}
+
+/// The UO hit-grid recipe rerun with the target's spawn point logged and
+/// pinned, and once more with the target placed on the ground instead of
+/// falling onto it: every cell matches either way (turrets doc 13.7).
+const HITGRID_SPAWNLOG: &[(&str, &str)] = &[("probe_hitgrid", "1"), ("probe_spawnlog", "1")];
+const HITGRID_GROUND: &[(&str, &str)] = &[
+    ("probe_hitgrid", "1"),
+    ("probe_spawnlog", "1"),
+    ("probe_ground", "1"),
+];
+
+#[test]
+fn the_spawnlog_hitgrid_capture_matches_uo_on_mp_carentan() {
+    hit_gate(
+        "hitgrid-uo-spawn2",
+        vcod_common::testing::uo_fs,
+        &PROTOCOL_V22,
+        HITGRID_SPAWNLOG,
+        &[],
+    );
+}
+
+#[test]
+fn the_grounded_hitgrid_capture_matches_uo_on_mp_carentan() {
+    hit_gate(
+        "hitgrid-uo-ground",
+        vcod_common::testing::uo_fs,
+        &PROTOCOL_V22,
+        HITGRID_GROUND,
+        &[],
     );
 }
 
@@ -2725,6 +2755,7 @@ fn a_15_match_timeout_holds_the_gunner_where_he_stands() {
         None,
         0,
         &[],
+        None,
     )
     .unwrap();
     rig.tap(BUTTON_USE);
@@ -2864,6 +2895,7 @@ fn a_gunner_never_meets_his_own_round() {
             Some(info),
             0,
             &[],
+            None,
         )
         .unwrap();
         rig.tap(BUTTON_USE);
@@ -2919,6 +2951,7 @@ fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) 
         None,
         0,
         &[],
+        None,
     )
     .unwrap();
     rig.tap(BUTTON_USE);

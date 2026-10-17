@@ -853,7 +853,14 @@ fn body_hit(
             fs,
             anims,
             rigs: &mut host.hit_rigs,
-            now_ms: host.level_time_ms,
+            // 1.5's and UO's threads run ahead of the frame's anim update and
+            // pose where the DObjs were last advanced to; 1.1d's at the
+            // frame's own time (cod11-turrets.md 13.7, leanhit_ab).
+            now_ms: if host.patch_1_5 {
+                host.dobj_time_ms
+            } else {
+                host.level_time_ms
+            },
         }),
         _ => None,
     };

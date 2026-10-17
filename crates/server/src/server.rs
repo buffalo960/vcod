@@ -7545,6 +7545,9 @@ impl Server {
                 match s.mode {
                     SpawnMode::Player => {
                         sim.become_player(s.origin, s.yaw_deg, cmd_angles);
+                        // UO's `G_DObjUpdate` (0x87df9) rebuilds a client's
+                        // DObj when the spawning thread sets his model.
+                        sim.dobj_ahead = sim.ps.rules == vcod_common::pmove::MoveRules::Uo;
                         let think = sim.spawn_think_on(
                             &last_cmd,
                             self.sv_time_ms,

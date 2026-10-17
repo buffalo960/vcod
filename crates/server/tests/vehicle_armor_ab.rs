@@ -536,38 +536,6 @@ fn profiles(log: &[String]) -> Vec<Profile> {
     out
 }
 
-/// A gap's ray tolerance and how many cells may disagree outright.
-type Allowance = (f32, usize);
-
-/// Stints whose silhouette may differ from retail's, by map and phase (the
-/// fixture's `seat` line count): how far a ray may stop off retail's and
-/// how many cells may disagree outright, with the reason. Both are the
-/// stint after the gunner's seat. There retail's script `bulletTrace`
-/// poses the rider at the last frame's anim time: posed 50 ms earlier,
-/// ours matches every cell of both to 0.01 (tank) and 0.12 (jeep, as in
-/// its first stint), while the target's link pass, before boarding, the
-/// tank's first stint and 90 s on foot with no vehicle pose at the
-/// frame's own (coduo-vehicles.md 13, "Back from the gunner's seat"). What
-/// switches it is not traced, so nothing is ported.
-const SILHOUETTE_GAPS: &[(&str, usize, Allowance, &str)] = &[
-    (
-        "mp_peaks",
-        3,
-        (0.6, 0),
-        "the jeep passenger after the gunner's seat: four of 30 cells stop up to 0.57 off \
-         retail's, which poses him a frame earlier there (coduo-vehicles.md 13, \
-         \"Back from the gunner's seat\")",
-    ),
-    (
-        "mp_cassino",
-        3,
-        (0.7, 1),
-        "the tank driver back from the gunner's seat: 11 of 84 cells stop up to 0.65 off \
-         retail's and one meets one side only, all within 0.01 posed a frame earlier \
-         (coduo-vehicles.md 13, \"Back from the gunner's seat\")",
-    ),
-];
-
 /// Every seated profile's rays: the same cells meet the rider and the hull
 /// as on retail, each within a quarter unit of retail's.
 fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
@@ -585,21 +553,13 @@ fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
         if *seat == 0 {
             continue;
         }
-        let (tolerance, mut odd) = SILHOUETTE_GAPS
-            .iter()
-            .find(|(m, p, ..)| *m == map && *p == phase)
-            .map_or((0.25, 0), |g| g.2);
         let cells: std::collections::BTreeSet<_> = r.keys().chain(o.keys()).collect();
         for cell in cells {
             let (a, b) = (r.get(cell), o.get(cell));
             let close = match (a, b) {
-                (Some(a), Some(b)) => (0..3).all(|i| (a[i] - b[i]).abs() <= tolerance),
+                (Some(a), Some(b)) => (0..3).all(|i| (a[i] - b[i]).abs() <= 0.25),
                 _ => false,
             };
-            if !close && odd > 0 {
-                odd -= 1;
-                continue;
-            }
             assert!(
                 close,
                 "{map} phase {phase} seat {seat} cell {cell:?}: retail {a:?}, ours {b:?}"
@@ -712,9 +672,8 @@ fn compare_on_foot(fixture: &str, ours: &[String]) {
 }
 
 /// The jeep's flank with the target on foot for 90 s: his silhouette
-/// matches retail's frame for frame, the bulletTrace posing him at the
-/// frame's own time, where after a seat cycle retail's poses him a frame
-/// earlier (docs/research/coduo-vehicles.md 13, "The silhouette").
+/// matches retail's frame for frame (docs/research/coduo-vehicles.md 13,
+/// "The silhouette").
 #[test]
 fn a_target_on_foot_meets_the_rays_where_retails_does() {
     let fixture = include_str!("fixtures/vehicles/mp_peaks-jeep-silhouette-foot-uo.txt");
