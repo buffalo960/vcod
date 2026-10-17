@@ -5075,6 +5075,20 @@ mod tests {
         assert_eq!(check_leaf_fixture(&fs, "terrainleaf-uo.txt"), 12);
     }
 
+    /// 1.5's mp_neuville: its patches 68 and 69, which no leaf lists, stand
+    /// in open air, and retail 1.5b's bulletTrace passes them
+    /// (`tests/fixtures/patch/neuvilleleaf-15.txt`).
+    #[test]
+    fn neuvilles_unlisted_patches_never_clip() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        if fs.read("maps/mp/mp_neuville.bsp").is_none() {
+            return;
+        }
+        assert_eq!(check_leaf_fixture(&fs, "neuvilleleaf-15.txt"), 6);
+    }
+
     /// Every model-0 lump-24 partition no leaf lists on the stock 1.1
     /// maps: mp_brecourt's terrain record 385 (five points, no triangle)
     /// and mp_carentan's four patches.
@@ -5158,7 +5172,15 @@ mod tests {
             let v = |i: usize| w[i].parse::<f32>().unwrap();
             let start = Vec3::new(v(1), v(2), v(3));
             let end = start - Vec3::Z * 400.0;
-            if w[4] == "point" {
+            if w[4] == "west" {
+                let t = world.shot_trace(start, start - Vec3::X * 80.0);
+                assert!(
+                    (t.fraction - v(5)).abs() <= 1e-6 && (t.endpos.x - v(6)).abs() <= 0.01,
+                    "{line}: ours {} at {}",
+                    t.fraction,
+                    t.endpos.x
+                );
+            } else if w[4] == "point" {
                 let t = world.shot_trace(start, end);
                 assert!(
                     (t.fraction - v(5)).abs() <= 1e-6 && (t.endpos.z - v(6)).abs() <= 0.01,
