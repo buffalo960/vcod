@@ -37,6 +37,9 @@ const BONE_NEAR: f32 = 0.005;
 /// moves 0.45 degrees a second at most, and retail logs the point to the
 /// hundredth.
 const POINT_NEAR: f32 = 0.5;
+/// How far a round's direction may sit from retail's, on each axis:
+/// retail logs six figures.
+const DIR_NEAR: f32 = 0.00002;
 
 /// Cells `(view, height, column)` per phase where ours may sit more than
 /// [`CELL_NEAR`] off retail's, or hit where retail misses or the other way.
@@ -55,8 +58,8 @@ struct Case {
     /// offset, carried by every bone of a standing or crouched body and by
     /// none of a prone one, which rests on its own ground trace.
     stand_dz: f32,
-    /// Phases whose round may strike another part than retail's.
-    round_gaps: &'static [&'static str],
+    /// Phases whose round's `PROBE dir` may sit past [`DIR_NEAR`].
+    dir_gaps: &'static [&'static str],
     gaps: Gaps,
 }
 
@@ -71,14 +74,22 @@ const JOIN_11: i64 = 8550;
 const LATE_11: i64 = 2950;
 const JOIN_UO: i64 = 8600;
 const LATE_UO: i64 = 3000;
+/// The `-cmds` captures' join times.
+const CMDS_JOIN_11: i64 = 8900;
+const CMDS_LATE_11: i64 = 3600;
+const CMDS_JOIN_15: i64 = 8750;
+const CMDS_LATE_15: i64 = 3850;
+const CMDS_JOIN_UO: i64 = 9250;
+const CMDS_LATE_UO: i64 = 4250;
 
-/// 1.5b's target stands 0.0402 under ours after the hold's `setOrigin`
-/// drop. Where that drop of a unit and a bit stops rides the cmd times:
-/// ours lands anywhere from 0.013 over the spot to 0.125 under it as the
-/// split moves a millisecond, and the 16, 16 and 18 ms split puts the
-/// 1.1d and UO captures' target on retail's height to the bit. The net
-/// probe logs no cmd times, so 1.5b's split is unknown
-/// (docs/research/cod11-combat.md 3.6).
+/// The first 1.5b capture's target stands 0.0402 under ours after the
+/// hold's `setOrigin` drop. Where that drop of a unit and a bit stops rides
+/// the cmd times: retail's target lands anywhere from 0.125 under the spot
+/// to 0.024 over it from one run to the next on every server, and ours,
+/// replaying a `-cmds` capture's own cmds, lands on retail's height to the
+/// bit (fall rows and bones of [`cmds_case`]). This capture logged no
+/// cmd times, so its split cannot be replayed (docs/research/cod11-combat.md
+/// 3.6).
 const STAND_DZ_15: f32 = -0.0402;
 /// The cells 1.5b's standing height moves past [`CELL_NEAR`]: rays grazing
 /// a box edge 0.04 units lower (with [`STAND_DZ_15`] every bone matches).
@@ -90,12 +101,36 @@ const CELL_GAPS_15: Gaps = &[
     ("t_crouch_right", &[('f', 22, 1)]),
 ];
 
-/// 1.5b's and UO's crouched round under the target's left lean strikes
-/// `torso_lower` 0.06 higher than ours, which takes `torso_upper` a unit
-/// nearer: the ray grazes the two boxes' seam. The target's bones and
-/// every grid cell of the phase match, so it is the shooter's ray, which
-/// 1.1d's capture places right (combat doc 3.6).
-const ROUND_GAPS_15_UO: &[&str] = &["t_crouch_left"];
+/// Phases whose round leaves the muzzle up to 7e-5 off retail's direction
+/// on each axis (0.02 units at the target; points and parts match):
+/// on 1.5b and UO every phase in which the target leans or lies, on UO two
+/// more, and on all three servers the shooter's left lean against the
+/// target's right. The
+/// idle sway, now on the last frame's clock, closed the 3e-4 the rest read;
+/// what still moves these is open (cod11-combat.md 3.6).
+const DIR_GAPS_11: &[&str] = &["s_left_t_right"];
+const DIR_GAPS_15: &[&str] = &[
+    "t_left",
+    "t_right",
+    "t_crouch_left",
+    "t_crouch_right",
+    "t_prone",
+    "t_prone_left",
+    "t_prone_right",
+    "s_left_t_right",
+];
+const DIR_GAPS_UO: &[&str] = &[
+    "t_left",
+    "t_right",
+    "t_crouch",
+    "t_crouch_left",
+    "t_crouch_right",
+    "t_prone",
+    "t_prone_left",
+    "t_prone_right",
+    "s_right",
+    "s_left_t_right",
+];
 
 /// The buttons, `wbuttons` and `up` of a `f "PROBE_IN ..."` command
 /// (`vehicle_probe::direct_input`).
@@ -111,7 +146,7 @@ fn direct_input(tokens: &[String]) -> Option<(u8, u8, i8)> {
     ))
 }
 
-fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case, bones: bool) -> Vec<String> {
+fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
     let proto = vcod_server::server::install_protocol(&fs);
     let map = "mp_carentan";
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
@@ -120,11 +155,22 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case, bones: bool) -> Vec<String> {
     let mut sv = vcod_server::Server::new(common::cfg(map, "probe_leanhit"), now);
     sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_leanhit", SCRIPT);
-    if bones {
-        sv.set_cvar("probe_bones", "1");
+    // The recipe's `+set`s.
+    for l in c.fixture.lines().filter(|l| l.starts_with('#')) {
+        let mut t = l.split_whitespace();
+        while let Some(w) = t.next() {
+            if w == "+set"
+                && let (Some(name), Some(value)) = (t.next(), t.next())
+            {
+                sv.set_cvar(name, value);
+            }
+        }
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    // The target connects first, into slot 0.
+    let pin = |who: &str| spawn_at(c.fixture, who).map(Some).into_iter().collect();
+    sv.pin_spawns(vec![pin("target"), pin("shooter")]);
     common::run_alone(&mut sv, &mut now, c.join_ms);
     let (qa, qb) = (
         Rc::new(RefCell::new(Queues::default())),
@@ -142,6 +188,8 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case, bones: bool) -> Vec<String> {
         ..Default::default()
     };
     let (mut ha, mut hb) = (aim(), aim());
+    ha.times = common::cmds_times(c.fixture, "shooter");
+    hb.times = common::cmds_times(c.fixture, "target");
     // Each client's last `PROBE_IN`, and the shooter's `a` select.
     let (mut ia, mut ib) = ((0u8, 0u8, 0i8), (0u8, 0u8, 0i8));
     let mut selected: Option<u8> = None;
@@ -240,6 +288,21 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case, bones: bool) -> Vec<String> {
     sv.script_log().to_vec()
 }
 
+/// A `PROBE spawnat` row's spawn point and angles for `who`.
+fn spawn_at(fixture: &str, who: &str) -> Option<([f32; 3], [f32; 3])> {
+    let l = fixture
+        .lines()
+        .filter_map(|l| l.strip_prefix("PROBE spawnat "))
+        .find(|l| l.split(' ').nth(1) == Some(who))?;
+    let v: Vec<f32> = l
+        .split(' ')
+        .skip(2)
+        .map(|t| t.trim_matches(|c| c == '(' || c == ')' || c == ','))
+        .map(|t| t.parse().unwrap())
+        .collect();
+    Some(([v[0], v[1], v[2]], [v[3], v[4], v[5]]))
+}
+
 fn probe_lines<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     lines
         .into_iter()
@@ -250,20 +313,26 @@ fn probe_lines<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
 }
 
 /// Each `PROBE bone` and `PROBE body` row's offset off the target's spot,
-/// keyed `(phase, tag, frame)`, the body's under the tag `origin`, the frame
+/// keyed `(phase, tag, frame)`, the body's under the tag `origin` and the
+/// shooter's `PROBE eye` off his under `eye`, the frame
 /// counted from the phase's first row of that tag.
 fn bone_rows(lines: &[String]) -> BTreeMap<(String, String, usize), [f32; 3]> {
     let mut out = BTreeMap::new();
     let mut seen: BTreeMap<(String, String), usize> = BTreeMap::new();
     for l in lines {
-        let rest = match (l.strip_prefix("PROBE bone "), l.strip_prefix("PROBE body ")) {
-            (Some(r), _) => r.to_string(),
-            (_, Some(r)) => {
-                let (t, rest) = r.split_once(' ').unwrap();
-                let (phase, d) = rest.split_once(' ').unwrap();
-                format!("{t} {phase} origin {d}")
-            }
-            _ => continue,
+        let body = |r: &str, tag: &str| {
+            let (t, rest) = r.split_once(' ').unwrap();
+            let (phase, d) = rest.split_once(' ').unwrap();
+            format!("{t} {phase} {tag} {d}")
+        };
+        let rest = if let Some(r) = l.strip_prefix("PROBE bone ") {
+            r.to_string()
+        } else if let Some(r) = l.strip_prefix("PROBE body ") {
+            body(r, "origin")
+        } else if let Some(r) = l.strip_prefix("PROBE eye ") {
+            body(r, "eye")
+        } else {
+            continue;
         };
         let t: Vec<&str> = rest.split(' ').collect();
         let n = t.len();
@@ -272,6 +341,22 @@ fn bone_rows(lines: &[String]) -> BTreeMap<(String, String, usize), [f32; 3]> {
         let frame = seen.entry((t[1].into(), tag.clone())).or_default();
         out.insert((t[1].into(), tag, *frame), [d[0], d[1], d[2]]);
         *frame += 1;
+    }
+    out
+}
+
+/// Each `PROBE fall` row's height, keyed `(who, row)`.
+fn fall_rows(lines: &[String]) -> BTreeMap<(String, usize), f32> {
+    let mut out = BTreeMap::new();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for l in lines {
+        let Some(r) = l.strip_prefix("PROBE fall ") else {
+            continue;
+        };
+        let t: Vec<&str> = r.split(' ').collect();
+        let n = seen.entry(t[1].into()).or_default();
+        out.insert((t[1].to_string(), *n), t[2].parse().unwrap());
+        *n += 1;
     }
     out
 }
@@ -316,6 +401,20 @@ fn hits(lines: &[String]) -> BTreeMap<String, (String, String, [f32; 3])> {
     out
 }
 
+/// Each round's `PROBE dir` direction, by phase.
+fn dirs(lines: &[String]) -> BTreeMap<String, [f32; 3]> {
+    let mut out = BTreeMap::new();
+    for l in lines {
+        let Some(r) = l.strip_prefix("PROBE dir ") else {
+            continue;
+        };
+        let t: Vec<&str> = r.split(' ').collect();
+        let d: Vec<f32> = t[2..5].iter().map(|v| v.parse().unwrap()).collect();
+        out.insert(t[1].to_string(), [d[0], d[1], d[2]]);
+    }
+    out
+}
+
 fn report(retail: &[String], ours: &[String]) {
     if std::env::var_os("LH_REPORT").is_some() {
         eprintln!("retail:\n{}\nours:\n{}", retail.join("\n"), ours.join("\n"));
@@ -347,8 +446,7 @@ fn report_cells(
 
 fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
     let retail = probe_lines(c.fixture.lines());
-    let bones = retail.iter().any(|l| l.starts_with("PROBE bone "));
-    let ours = ours(fs, c, bones);
+    let ours = ours(fs, c);
     let ours = probe_lines(ours.iter().map(String::as_str));
     report(&retail, &ours);
     let site = |l: &[String]| l.iter().find(|l| l.starts_with("PROBE site")).cloned();
@@ -356,7 +454,10 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
     assert_eq!(strip(site(&retail)), strip(site(&ours)), "the pair site");
     let mut bad = Vec::new();
 
-    let (rb, ob) = (bone_rows(&retail), bone_rows(&ours));
+    let (rb, mut ob) = (bone_rows(&retail), bone_rows(&ours));
+    if !rb.keys().any(|k| k.1 == "eye") {
+        ob.retain(|k, _| k.1 != "eye");
+    }
     assert_eq!(
         rb.keys().collect::<Vec<_>>(),
         ob.keys().collect::<Vec<_>>(),
@@ -364,11 +465,18 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
     );
     for (k, r) in &rb {
         let mut o = ob[k];
-        if k.1 == "origin" || !k.0.contains("prone") {
+        if k.1 != "eye" && (k.1 == "origin" || !k.0.contains("prone")) {
             o[2] += c.stand_dz;
         }
         if (0..3).any(|i| (r[i] - o[i]).abs() > BONE_NEAR) {
             bad.push(format!("bone {k:?}: retail {r:?} ours {o:?}"));
+        }
+    }
+
+    let (rf, of) = (fall_rows(&retail), fall_rows(&ours));
+    for (k, r) in &rf {
+        if of.get(k).is_none_or(|o| (r - o).abs() > BONE_NEAR) {
+            bad.push(format!("fall {k:?}: retail {r} ours {:?}", of.get(k)));
         }
     }
 
@@ -396,15 +504,19 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
 
     let (rh, oh) = (hits(&retail), hits(&ours));
     for (phase, r) in &rh {
-        if c.round_gaps.contains(&phase.as_str()) {
-            continue;
-        }
         let o = oh.get(phase);
         let near = o.is_some_and(|o| {
             o.0 == r.0 && o.1 == r.1 && (0..3).all(|i| (o.2[i] - r.2[i]).abs() <= POINT_NEAR)
         });
         if !near {
             bad.push(format!("round {phase}: retail {r:?} ours {o:?}"));
+        }
+    }
+    let (rd, od) = (dirs(&retail), dirs(&ours));
+    for (phase, r) in rd.iter().filter(|(p, _)| !c.dir_gaps.contains(&p.as_str())) {
+        let o = od.get(phase);
+        if o.is_none_or(|o| (0..3).any(|i| (o[i] - r[i]).abs() > DIR_NEAR)) {
+            bad.push(format!("round {phase} direction: retail {r:?} ours {o:?}"));
         }
     }
     for phase in oh.keys().filter(|p| !rh.contains_key(*p)) {
@@ -428,7 +540,7 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             join_ms: 8550,
             late_ms: 3450,
             stand_dz: 0.0,
-            round_gaps: &[],
+            dir_gaps: &[],
             gaps: &[],
         },
     );
@@ -446,7 +558,7 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             join_ms: JOIN_11,
             late_ms: LATE_11,
             stand_dz: 0.0,
-            round_gaps: &[],
+            dir_gaps: &[],
             gaps: &[],
         },
     );
@@ -472,7 +584,7 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             join_ms: 8200,
             late_ms: 2800,
             stand_dz: STAND_DZ_15,
-            round_gaps: ROUND_GAPS_15_UO,
+            dir_gaps: &[],
             gaps: CELL_GAPS_15,
         },
     );
@@ -490,8 +602,62 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             join_ms: JOIN_UO,
             late_ms: LATE_UO,
             stand_dz: 0.0,
-            round_gaps: ROUND_GAPS_15_UO,
+            dir_gaps: &[],
             gaps: &[],
         },
+    );
+}
+
+/// The `-cmds` captures: `probe_fall 1`, the shooter's origin and both
+/// clients' cmd times, which the gate replays (`ProbeHold::times`).
+fn cmds_case(
+    fixture: &'static str,
+    join_ms: i64,
+    late_ms: i64,
+    dir_gaps: &'static [&'static str],
+) -> Case {
+    Case {
+        fixture,
+        join_ms,
+        late_ms,
+        stand_dz: 0.0,
+        dir_gaps,
+        gaps: &[],
+    }
+}
+
+#[test]
+fn a_dropped_body_lands_and_poses_as_on_retail_on_its_cmds() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-cmds.txt");
+    check(
+        fs,
+        &cmds_case(fixture, CMDS_JOIN_11, CMDS_LATE_11, DIR_GAPS_11),
+    );
+}
+
+#[test]
+fn a_dropped_body_on_15_lands_and_poses_as_on_retail_on_its_cmds() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-cmds-1.5.txt");
+    check(
+        fs,
+        &cmds_case(fixture, CMDS_JOIN_15, CMDS_LATE_15, DIR_GAPS_15),
+    );
+}
+
+#[test]
+fn a_dropped_body_on_uo_lands_and_poses_as_on_retail_on_its_cmds() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-cmds-uo.txt");
+    check(
+        fs,
+        &cmds_case(fixture, CMDS_JOIN_UO, CMDS_LATE_UO, DIR_GAPS_UO),
     );
 }
