@@ -2053,7 +2053,8 @@ only, and takes the first candidate whose bones the segment actually scores.
 The height-fraction partition that used to stand here is gone.
 
 The victim is posed per shot, not per frame, out of the same grafted
-body-plus-head-plus-helmet skeleton the client draws
+body-plus-head-plus-helmet skeleton the client draws (an attachment's box
+on a bone that already has one rides on as a second box, 3.6)
 (`crates/server/src/game/hitrig.rs`): the legs and torso clips the animscript
 picked, each at the phase its channel started at, then the spine aim layer.
 The models, the clips, their start times, the pitch and the lean are the ones
@@ -2224,6 +2225,55 @@ where retail stops.
 VERIFIED: the parse spec it builds is 19 records of
 `{ name, offset = i*4, type = 6 }` against `g_fHitLocDamageMult`, and type 6
 is `float` in the same type vocabulary the weapon-def table uses.
+
+### 3.6 Measured: a leaning body, and the helmet's own box
+
+VERIFIED, live (retail 1.1d, mp_carentan tdm, 2026-10-17,
+`client-probes/probe_leanhit`, fixture
+`crates/server/tests/fixtures/leanhit/mp_carentan-leanhit.txt`): an axis
+target held 256 units from an allies shooter, 13 phases from level time
+20000 (standing, crouched and prone, each level and full lean either way,
+then the shooter leaning either way). Each phase a grid of level
+`bulletTrace`s with `hitCharacters` (2.7) crosses the target: 13 heights by
+11 columns along the shooter's facing and 13 by 15 across it, each cell
+the distance to where the ray stopped on him. Then the sighted
+`springfield_mp` fires once, aimed by the gsc from the shooter's eye
+moved by a full lean (19.2 across, 5.5 down, `pmove::aim::lean_offset`).
+All 13 rounds struck; the damage callback's location, damage and point are
+the fixture's `PROBE hit` lines.
+
+What the run showed, VERIFIED against ours by `crates/server/tests/leanhit_ab.rs`:
+
+- The helmet's box is traced as well as the head model's. VERIFIED, off
+  the paks: the head model (`xmodel/basehead_axis_a_01`) gives `bip01
+  head` a box spanning -0.43..9.04 along the bone, and
+  `xmodel/gear_german_helmet_falshrm_camo`'s root, also `bip01 head`,
+  carries its own, 0..10.35 along and a unit wider on one side. VERIFIED, the
+  fixture: a standing target's head stops a level ray 70 units up (and
+  ours, keeping only the first box, let it by), and with both boxes ours
+  matches the head cells in every phase. This is 3.1's per-part bone loop
+  with two parts' bones on one matrix; vcod's grafted skeleton now keeps
+  the second box as a box-only child of the merged bone
+  (`skeleton::adopt_hit_box`).
+- The lean pose of 16.4 holds as ported: with the helmet box in, every
+  prone phase and the standing lean right match to 0.03 units, the
+  crouched leans to 0.5 bar three cells, and every round's point lands
+  within 0.3 units of retail's with the same location and damage, a
+  leaning shooter's (2.1) included. Scaling any of 16.4's lean terms
+  (`tag_origin`'s roll and shift, the three back rolls) by 0.7 to 2 on ours
+  only moved the standing lean cells further off.
+- A body's torso yaw keeps whatever its spawn left it until something
+  swings it (16.4): the first capture, whose target never moved after his
+  placement, read a different torso on retail than on ours, which had
+  given him a different spawn point. The probe lays him prone and stands
+  him up first.
+
+Left open: 52 of about 1000 cells, all on standing or crouched bodies,
+sit 0.5 to 3 units off (one 8.6) or hit where the other misses, at the
+edges of arm, hand and head boxes (`leanhit_ab::CELL_GAPS`). INFERRED: a
+small pose difference in the arms and head the grid's edge cells magnify;
+the idle clip's phase is not it (ours with the target joined 50 ms later
+reads 7 cells apart from itself).
 
 ---
 
