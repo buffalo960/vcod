@@ -603,3 +603,18 @@ loss each way the jittery run played one fire more than the server fired:
 a round the prediction played from cmds the server never got (INFERRED,
 it stays exact with the loss off; retail's client predicts the same lost
 cmds).
+
+`predict_ab`'s `predictor_matches_the_uo_server_step` checks the round
+trip field by field: each UO on-foot slope capture's cmds (sprint and
+bipod, automatic fire, the three mp_foy mount and cook runs) go to a
+protocol 22 `ClientSim` and to a predictor rebuilt from that sim's
+playerstate after `ps_to_protocol` and the wire codec, at every captured
+snapshot and every fifth cmd. Every field a rebuild restores agrees on
+every cmd, the event ring read back through the wire's 8 bits included
+(VERIFIED, 22 392 cmds, 0 mismatches). Dropping `iFatigueSoundTime` from
+`to_wire` puts 3098 fatigue clock misreads and 2632 `eventSequence`
+misses on the sprint run (VERIFIED, the gate on that revert).
+`predictor_matches_the_1_5_server_step` runs the 1.5 moves and turns
+captures the same way on protocol 6 (VERIFIED, 12 821 cmds, 0
+mismatches). The seats are not covered: a seated sim needs the server's
+vehicle.

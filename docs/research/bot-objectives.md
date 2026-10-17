@@ -637,10 +637,27 @@ first everywhere.
   parameters). A charged one is guarded from outside the blast, 520 to
   670 units off. A defender guards its own bases by rank and defuses a
   charge on one (10.5 s), and so does an attacker within 2000 units of
-  it. Bots ride no tank and carry no rocket in hand, so they breach
-  nothing: a plant waits on a human's breach, or on
-  `scr_bas_basehealth 0`, which breaches every base at the round's start
-  (no damage to take).
+  it. A standing base is breached with rockets (below); bots ride no
+  tank.
+- **The breach.** An attacker with no loaded rocket launcher in hand
+  (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve) walks
+  to the nearest launcher lying about (`BasView::launchers`, off
+  `ScriptRuntime::weapon_items`) and taps use on it, the retrieval
+  pickup's tap (section 4.2): walking over a weapon it does not carry
+  takes nothing (`cod11-items.md` 1). It passes over a launcher within
+  300 units of a standing base of the other side's, which lies in that
+  bunker behind its walls. With one in hand it walks to a breach stand:
+  the server picks, once per base and graph (`Server::breach_stands`), a
+  graph node in each of 16 sectors round the base, 400 to 1000 units off
+  (nearest 600), from whose standing eye a rocket strikes the base's
+  model or bursts within 64 units of its origin (`breach_aim`, the
+  world's missile trace and the script models' meshes under the
+  missile's clipmask). The bot takes the stand nearest its own side's
+  nearest base, and the next one after 2 s there with no shot. Wherever
+  the live check (`Server::breach_shot`, from its own muzzle, 400 to 1500
+  off) finds a shot, it stops, draws the launcher, rests the view on the
+  aim, fires and reloads, until the launcher is dry; then it fetches
+  another. A visible enemy comes first with shoot on.
 - The way into a breached base opens only when its walls go, after the
   graph was built. The server builds the graph without the `rubble`
   brushes (`World::rubble`; out of the way except over a dead base) and
@@ -654,6 +671,24 @@ first everywhere.
   posed it before), and a respawned brush entity links its model again
   (a restart's walls).
 
+- VERIFIED (`pakuo00.pk3` `weapons/mp/bazooka_mp`, `panzerschreck_mp`,
+  `panzerfaust_mp`): `weaponType projectile`, `weaponClass
+  rocketlauncher`, `damage 1000`, `explosionRadius 256` with 100 inner
+  and 10 outer, `clipSize 1`; the bazooka and the panzerschreck
+  `maxAmmo 3` and `reloadTime 6` with no `reloadEmptyTime` (their dry
+  reload takes `reloadTime`, `cod11-combat.md` 1.7), the panzerfaust one
+  round. `scr_bas_basehealth` defaults to 24500, "700 tank shell * 35"
+  (`bas.gsc` 351): 25 direct rockets a base. VERIFIED (mp_foy's entity
+  lump): 32 `mpweapon_bazooka`, `_panzerschreck` and `_panzerfaust`
+  lie about, most with `wait 15` (a few 25, some none); six are
+  `script_gameobjectname bas` with `count 3`, one per base about 145
+  units from its origin beside its rocket crate, inside its bunker.
+- INFERRED (ours, `GameHost::shot_models`): a rocket strikes a base's
+  script model mesh before it reaches the origin, so the breach rides the
+  direct `G_Damage` on a `takedamage` model (`cod11-combat.md`, the shell
+  direct hits); before that fix the struck base was also the splash's
+  ignore and took nothing.
+
 VERIFIED (measured, ours, 2026-10-15, release, UO rules, 2 bots, seed 7,
 `tests/bot_objectives.rs`, after gtend's gametype endings merged): `ctf`
 on mp_cassino with shoot on, a flag taken at tick 1351 and captured 1342
@@ -666,3 +701,17 @@ mp_foy with shoot off and `scr_bas_basehealth 0`, a charge planted at
 tick 2020 on the axis hq, down the stair once the graph had the walls
 out, and gone off 1199 ticks later with the lone defender at the other
 side's bases. No script abort in any.
+
+VERIFIED (measured, ours, 2026-10-17, release, UO rules, seed 7,
+`scr_bas_basehealth 3000`, three direct rockets a base, gate
+`uo_bots_breach_bases_until_a_bas_round_ends` in `tests/bots.rs`): two
+bots, shoot off, on mp_foy: the first base breached at tick 2329, five
+breached and four charges gone off, and the round over by its bases at
+tick 13539 (11.3 min). With four bots (a defender a side) and shoot off
+the first breach came at 2329 too, but every plant after the first was
+defused by the other side's defender for the rest of a 33-minute run;
+with shoot on, two breaches and one charge in 29 minutes, the attackers
+dying on the way. Before the reload fix (`cod11-combat.md`, the reload begin in section 1) a bot
+fired one rocket and stood for good on a launcher that never reloaded;
+before the shell direct hit (missiles2) a rocket struck the base's
+model and took it nothing.

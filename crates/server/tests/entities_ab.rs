@@ -237,6 +237,10 @@ fn ours(
     sv.load_scripts(fs).expect("load the scripts");
 
     let q = Rc::new(RefCell::new(Queues::default()));
+    // The capture's server had seen a client leave before the walk (the
+    // fixture header says so), which is what its script models and turrets
+    // read 1023 off.
+    common::connect_and_leave(&mut sv, &q, &mut now);
     let (cl, _join) = common::join(&mut sv, &q, &mut now, &trace.team, &trace.weapon);
     assert!(
         cl.snapshots().newest().is_some(),
@@ -375,7 +379,7 @@ fn compare(map: &str, retail: &BTreeMap<u32, EntityState>, ours: &BTreeMap<u32, 
 }
 
 fn check(map: &str) {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping {map}");
         return;
     };

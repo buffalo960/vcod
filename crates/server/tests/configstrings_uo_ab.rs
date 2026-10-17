@@ -15,11 +15,6 @@
 use std::collections::BTreeMap;
 use vcod_common::net::protocol::PROTOCOL_V22;
 
-/// Slot 1's `sv_serverid`: retail UO's first level reads 17, 16 plus one
-/// restart bump vcod does not reproduce (coduo-diff.md 20), and a
-/// second map load moves it again.
-const SKIPPED_KEYS: &[&str] = &["sv_serverid"];
-
 fn retail() -> BTreeMap<usize, String> {
     use vcod_common::net::{gamestate, huffman::Huffman, msg::MsgReader};
     let data = vcod_common::testing::fixture("net/gamestate-uo.bin");
@@ -68,6 +63,11 @@ fn ours(
             .collect();
         std::fs::write(format!("{p}-{map}-{gametype}.txt"), t).unwrap();
     }
+    table_of(&sv)
+}
+
+/// Every non-empty slot of `sv`'s table.
+fn table_of(sv: &vcod_server::server::Server) -> BTreeMap<usize, String> {
     (0..2048)
         .filter(|i| !sv.configstring(*i).is_empty())
         .map(|i| (i, sv.configstring(i).to_string()))
@@ -140,16 +140,6 @@ fn server_at(
     sv
 }
 
-/// An info string without the keys `skip` names.
-fn without(info: &str, skip: &[&str]) -> String {
-    let parts: Vec<&str> = info.split('\\').skip(1).collect();
-    parts
-        .chunks(2)
-        .filter(|kv| !skip.contains(&kv[0]))
-        .map(|kv| format!("\\{}\\{}", kv[0], kv.get(1).unwrap_or(&"")))
-        .collect()
-}
-
 /// The keys two info strings disagree on.
 fn info_diff(a: &str, b: &str) -> String {
     let pairs = |s: &str| -> BTreeMap<String, String> {
@@ -177,12 +167,14 @@ fn the_configstring_table_matches_uo_on_mp_cassino() {
     };
     // That server had been up half an hour: UO's level clock starts at the
     // uptime, and its start time (14, and 3's `t`) reads 1810050
-    // (coduo-diff.md 20). Ours loads on the same clock.
-    check(
-        retail(),
-        ours(fs, "mp_cassino", "dm", 0, 1_810_050),
-        "mp_cassino dm",
-    );
+    // (coduo-diff.md 20). Its `sv_serverid` 17 is one spawn and one
+    // `map_restart` (a fresh server reads 16, cod11-map-cycle.md 3 step 16
+    // and 4 step 5), so ours restarts once too; the restart starts its
+    // level after the spawn's three 100 ms settle frames.
+    let mut sv = server_with(fs, "mp_cassino", "dm", 0, &[], 1_810_050 - 300);
+    sv.push_console("map_restart");
+    sv.drain_console(std::time::Instant::now());
+    check(retail(), table_of(&sv), "mp_cassino dm");
 }
 
 /// UO's own gametypes, each on the first stock map whose arena lists it.
@@ -257,10 +249,12 @@ fn the_configstring_table_matches_uo_with_a_motd_and_a_message() {
 /// A pure server's systeminfo, all four pak lists in it and 1318 and 1351
 /// bytes long: UO keeps `BIG_INFO_STRING` where 1.1 cuts at 1023, and
 /// references only the paks the level read a file from, plus any outside
-/// `main` and `uo` (cod11-server-handshake.md, "The four cvars").
+/// `main` and `uo` (cod11-server-handshake.md, "The four cvars"). Each was
+/// the recipe's second map load, so its `sv_serverid` reads 32 and ours
+/// loads the recipe's first map before it.
 #[test]
 fn a_pure_server_s_systeminfo_matches_uo() {
-    for map in ["mp_cassino", "mp_j5outpost"] {
+    for (first, map) in [("mp_foy", "mp_cassino"), ("mp_cassino", "mp_j5outpost")] {
         let Some(fs) = vcod_common::testing::uo_fs() else {
             return;
         };
@@ -268,24 +262,64 @@ fn a_pure_server_s_systeminfo_matches_uo() {
             eprintln!("no nsf_mp_j5outpost.pk3 in this install: skipped");
             return;
         }
-        let sv = server_with(fs, map, "dm", 0, &[("sv_pure", "1")], 0);
+        let mut sv = server_with(fs, first, "dm", 0, &[("sv_pure", "1")], 0);
+        sv.push_console(&format!("map {map}"));
+        // The load runs in the tick, the cvar refresh with it.
+        let t = std::time::Instant::now();
+        for i in 0..3 {
+            sv.tick(t + std::time::Duration::from_millis(50 * i));
+        }
+        assert_eq!(sv.script_aborts(), Vec::<String>::new(), "{map}");
         let retail = table(&format!("{map}-dm-uo-pure"));
         for i in [0, 1] {
-            let (a, b) = (
-                without(&retail[&i], SKIPPED_KEYS),
-                without(sv.configstring(i), SKIPPED_KEYS),
-            );
-            assert_eq!(a, b, "{map} cs[{i}]: {}", info_diff(&a, &b));
+            let (a, b) = (&retail[&i], sv.configstring(i));
+            assert_eq!(a, b, "{map} cs[{i}]: {}", info_diff(a, b));
         }
     }
 }
 
-fn check(mut retail: BTreeMap<usize, String>, mut ours: BTreeMap<usize, String>, what: &str) {
-    for t in [&mut retail, &mut ours] {
-        if let Some(s) = t.get_mut(&1) {
-            *s = without(s, SKIPPED_KEYS);
-        }
+/// A pak in `uo/` is listed once the level reads a file from it, and two
+/// reads only the load makes: the map's sound load spec and each
+/// `#using_animtree`'s tree (bas's `_flak_gmi.gsc` names `flak88`).
+/// Retail UO with `fs_debug 1` reads both on mp_foy bas
+/// (cod11-server-handshake.md, "The four cvars").
+#[test]
+fn a_pak_holding_the_load_spec_or_an_animtree_is_referenced() {
+    let Some(stock) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let dir = vcod_common::testing::game_dir();
+    let scratch = std::env::temp_dir()
+        .join(format!("vcod-loadreads-{}", std::process::id()))
+        .join("uo");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let files = [
+        ("zzz_spec", "soundloadspecs/mp/mp_foy.csv"),
+        ("zzz_tree", "animtrees/flak88.atr"),
+    ];
+    for (pak, file) in files {
+        let bytes = stock.read(file).expect(file);
+        let pk3 = vcod_common::testing::pk3_with(&[(file, &bytes)]);
+        std::fs::write(scratch.join(format!("{pak}.pk3")), pk3).unwrap();
     }
+    let dirs = vec![dir.join("main"), dir.join("uo"), scratch.clone()];
+    let fs = vcod_common::pk3::Pk3Fs::open_dirs(dirs, None, false).unwrap();
+    let sv = server_with(fs, "mp_foy", "bas", 0, &[], 0);
+    let _ = std::fs::remove_dir_all(scratch.parent().unwrap());
+    let names = vcod_common::net::connectionless::info_value_for_key(
+        sv.configstring(1),
+        "sv_referencedPakNames",
+    )
+    .unwrap_or_default();
+    for (pak, _) in files {
+        assert!(
+            names.split(' ').any(|n| n == format!("uo/{pak}")),
+            "uo/{pak} not in sv_referencedPakNames: {names}"
+        );
+    }
+}
+
+fn check(retail: BTreeMap<usize, String>, ours: BTreeMap<usize, String>, what: &str) {
     let mut slots: Vec<usize> = retail.keys().chain(ours.keys()).copied().collect();
     slots.sort_unstable();
     slots.dedup();

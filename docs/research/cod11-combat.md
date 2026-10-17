@@ -369,11 +369,13 @@ its time does. VERIFIED, capture: `mp_carentan-dm-slope-8ms-springfield-1.1.txt`
 `weaponTime` 0 on the snapshot whose `commandTime` is the cmd each of its
 four shots' time ran out on, and the rechamber's 162 on a later one; vcod
 before this read `weaponstate` 4 there (`moves_ab`). VERIFIED, capture: the
-older per-snapshot combat captures caught that one-cmd idle on three of their
+older per-snapshot combat captures caught that one-cmd idle on four of their
 fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
 between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
-`prone_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`, `mp_cassino-dm-combat-uo.txt`
-`crouch_fire`); whether a snapshot lands on it is the cmd grid's business, so
+`prone_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
+`mp_carentan-tdm-ads-sniper.txt` `ads_shot`, `mp_cassino-dm-combat-uo.txt`
+`crouch_fire`; re-counted on the 2026-10-17 recapture of the 1.1 files,
+where the sniper's is new); whether a snapshot lands on it is the cmd grid's business, so
 `playerstate_combat_ab` and `combat_uo_ab` leave that lone sample out of the
 `weapAnim` sets they compare. UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
@@ -398,10 +400,21 @@ shot. vcod before this kept state 3 at `weaponTime` 1 there and never
 rechambered under the held trigger (`moves_ab`, which now compares
 `weapAnim` too).
 
-Not modelled: an unlatched expiry of states 4 and 11 (no `semiAuto`, or an
-empty clip) under a held trigger. vcod's timer ends both itself; retail
-leaves them to the release check, which a held trigger skips for the fire
-path (INFERRED). No stock capture holds one.
+VERIFIED, `.so` 0x388d0: the unlatched arm stores 0 into `weaponTime` and
+writes neither `weaponstate` nor `weapAnim`. VERIFIED: the melee finish
+(`0x38eb4`) tests `weaponstate` 11 at 0x38f15, writes the index-preserving
+idle (0x38f33-0x38f3b), stores 0 into `weaponstate` (0x38f48) and returns
+1, which ends `PM_Weapon` (0x39294); it runs only past the gate at
+0x3925a (an expired delay, or `weaponTime` and `weaponDelay` both 0). The
+trigger-release check stores 0 into `weaponstate` whatever state reached
+it (0x3932d); its idle write is gated on state 3 (0x392fa). INFERRED: an
+unlatched relax (no `semiAuto`, or an empty clip) ends on the frame both
+timers are out, and that frame neither fires, reloads nor swings; an
+unlatched rechamber (4) stands until the release check or the next shot
+ends it in that same frame. vcod: `pmove::weapon::advance_timers` leaves
+both, `pm_weapon` ends 11 behind the gate and the release check ends any
+state; `a_held_trigger_fires_the_frame_after_the_relax_ends`. No stock
+capture holds one.
 
 ### 1.5 Firing
 
@@ -438,6 +451,25 @@ branch conditions.
 9. When `weaponDef->clipOnly` (`0x2D4`) is set and both the clip and the
    reserve are now 0, `BG_TakePlayerWeapon` runs and event `0x95`
    (`EV_NOAMMO`) is raised.
+
+VERIFIED, `.so` 0x38af0-0x38b51: step 1's `adsFire` store replaces the
+`fireDelay` one with `(1 - fWeaponPosFrac) * (1 / weapDef[0x414])`
+truncated, before the ammo check; 0x38d53 is step 3's test of
+`weaponDelay`, after step 2. VERIFIED: `PM_Weapon` calls the fire path
+(0x39344) with the expired-delay flag the timers returned (0x391ff),
+skipping the `weaponTime`/`weaponDelay` gate on it (0x3925a), and the ADS
+lerp (0x372fc) runs at 0x39143, ahead of the timers (0x391fa). 1.5b's
+`PM_Weapon` (0x303ad) and UO's call the same pieces in the same order (the
+lerp first, the fire path `0x2ff54` / `0x36c0e` arming, then testing
+`weaponDelay`). INFERRED: an `adsFire` pull from short of the sight fires
+nothing, forces the sight up (section 1.13) and shoots on the frame the
+delay runs out, whatever the trigger does by then; the re-arm then
+computes 0 off the raised sight. A gun with a non-zero `fireDelay` re-arms
+it on every pass and never fires; no stock gun has one (the four 1.1
+grenades, which skip the arm, and UO's binoculars do). vcod before
+2026-10-17 fired at the pull and armed the delay after, and ran the lerp
+after the timers. `an_ads_fire_shot_waits_for_the_sight`,
+`a_fire_delay_rearms_on_every_pull_and_never_fires`.
 
 VERIFIED, `.so` `0x38d28`: the fire path calls step 1 (`0x38a44`) before
 step 2 (`0x38bbc`), so a dry trigger has already stored `fireTime` into
@@ -509,6 +541,16 @@ conditions.
   (`EV_RELOAD_FROM_EMPTY`, 152); otherwise `WEAP_RELOAD`, `weaponTime` from
   `reloadTime` and event `0x97` (`EV_RELOAD`, 151). `weaponstate` becomes 6
   when it was 8 and 5 otherwise.
+- VERIFIED, the same two tests in 1.5b's `game.mp.i386.so` (the
+  begin-reload at 0x3df40, `ammoclip` against 0 and `weaponDef+0x70`
+  against 0) and UO's `game.mp.uo.i386.so` (0x34585 and 0x3459b, UO's
+  `weaponType` at `+0x7c` and `reloadEmptyTime` at `+0x244`, its event
+  0x9a). VERIFIED, `pakuo00.pk3`: `bazooka_mp` and `panzerschreck_mp` are
+  `weaponType projectile` with `reloadTime 6` and no `reloadEmptyTime`.
+  INFERRED: a dry rocket launcher reloads over `reloadTime` with
+  `EV_RELOAD`. vcod took the empty branch on any weapon until 2026-10-17
+  (`WeaponDef::is_bullet`, `a_dry_rocket_launcher_reloads_over_reload_time`),
+  so a UO launcher ran a 0 ms reload that never loaded its clip.
 - dll `0x30010b00`, on the frame the reload's `weaponDelay` expires: with
   `weaponDef->boltAction` set and the weapon's `ps->weaponrechamber` bit set
   it clears that bit and raises event `0xA3` (`EV_EJECT_BRASS`, 163), then
@@ -547,7 +589,8 @@ stock segmented files ship `reloadStartAdd` equal to `reloadAmmoAdd`
 the two fields apart. VERIFIED, `mp_carentan-tdm-ads-sniper` `ads_reload`
 and `ads_release`: after one shot from a full five, the reload reads
 `weaponstate` 7 with `weapAnim` 13 and event 153 for `reloadStartTime`,
-its `weaponDelay` counting 1366 to 0 from `reloadStartAddTime`, then 9 with
+its `weaponDelay` counting 1367 to 0 from `reloadStartAddTime` (1366 before
+the 2026-10-17 recapture; the first sample's phase), then 9 with
 `weapAnim` 526 and event 154 for `reloadEndTime`, then 0; state 5 never
 appears. INFERRED: the start's one-round add filled the clip, the reload
 test refused a loop segment, and the reload went straight to its end.
@@ -874,24 +917,26 @@ reload and not at the key.
 **What the `--save-ads` captures measured**, 2026-09-05, one per gate map
 (`crates/server/tests/fixtures/playerstate/<map>-dm-ads.txt`, `!trace` per
 snapshot with `fWeaponPosFrac` and `aimSpreadScale` as decimals), the probe
-standing still and holding each input in turn. VERIFIED, every number;
+standing still and holding each input in turn; the numbers below are
+re-measured on the 2026-10-17 recapture. VERIFIED, every number;
 INFERRED, that they are the file's fields, which is arithmetic.
 
-- The ramp is linear and the rates are the reciprocal times: up, the
-  carbine and the mosin both cross 0.0533 at 16 ms and 0.8867 at 258 ms and
-  read 1.0 at 323, which is `adsTransInTime` 0.3 s; down, the carbine steps
-  0.125 per 48 ms and reaches 0 at 403 ms (`adsTransOutTime` 0.4) and the
-  mosin 0.0833 per 48 ms, 0 at 612 (0.6).
+- The ramp is linear and the rates are the reciprocal times: up, both
+  weapons step about 0.1667 a snapshot, the carbine reading 0.1067 at 32 ms and
+  1.0 at 328, the mosin 0.1567 at 48 and 1.0 at 346, which is
+  `adsTransInTime` 0.3 s; down, the carbine steps about 0.125 a snapshot and
+  reaches 0 at 408 ms (`adsTransOutTime` 0.4) and the mosin about 0.0833
+  a snapshot, 0 at 630 (0.6).
 - Through a reload with the sight held: the fraction ramps *down* from the
-  reload's first frame at the out rate (carbine 1.0 to 0 over 467 ms, mosin
-  over 661), sits at 0, and ramps back up at the in rate from about 2080 ms
+  reload's first frame at the out rate (carbine 1.0 to 0 over 445 ms, mosin
+  over 673), sits at 0, and ramps back up at the in rate from about 2080 ms
   on the carbine (`reloadTime` 2650 less 600) and 1840 on the mosin (2400
   less 600), reaching 1.0 some 300 ms before `weaponstate` leaves 5. A
   reload asked for on a full clip does nothing at all, which the first
   capture found by having nothing to show for its reload step.
 - The sight released mid-ramp turns straight round: carentan's
-  `ads_release_2` reads 0.92 at 32 ms off a fraction that had just reached
-  1.0, and `idle_after` the same.
+  `ads_release_2` reads 0.8775 at 48 ms off a fraction that read 1.0 on the
+  step's first sample, and `idle_after` 0.96 at 16 ms the same way.
 
 The trace fields in a snapshot are the state after the last of that
 frame's pmove steps, and the probe sends a cmd every 16 ms, so a 48 ms gap
@@ -906,7 +951,9 @@ modelled, since it is unnamed (section 10). The dead clear lives in
 `pmove::dead_move` rather than in the flag update, because no pmove step runs
 for a dead player at all, which leaves the fraction frozen where the death
 found it rather than ramping it down. And `pml.groundPlane` is read as
-`ps.on_ground`, the nearest thing vcod's mover carries.
+`ps.on_ground`, the nearest thing vcod's mover carries. `advance_ads` runs first in `pm_weapon`, ahead of
+the grenade and the timers, as 0x39143 does, so the reload window and the
+`adsFire` force read the timers the frame starts with.
 
 ---
 
@@ -916,13 +963,17 @@ found it rather than ramping it down. And `pml.groundPlane` is read as
 `--save-grenade` run against the retail 1.1d server: one melee swing, a switch
 to the frag, a cooked throw, a cook held past the fuse, a cook cancelled by
 switching back, and a throw at the ground. The step names below are the
-fixture's own.
+fixture's own. VERIFIED: the fixture was recaptured on 2026-10-17 with the
+probe holding the spawn point's yaw (-180 at (976, -792, -4.5)); the first
+capture (in git at `c52e9606`) held yaw 90 at (1200, 1760, 144), and the
+first `!missile` line of each of its throws already carries a bounce (177).
 
 **The fuse does not run down.** VERIFIED: `grenadeTimeLeft` reads a flat 4000
 (`fuseTime` 4) from the pullback frame to the throw frame and 0 on every other
 sample, under a 200 ms, a 1000 ms and a 5000 ms hold alike. VERIFIED:
 `pin_out` holds the trigger 5000 ms and the throw's event 159 lands on the
-release, at +5032 ms, with the explode 3954 ms after that. INFERRED: 1.11's
+release, at +5038 ms (+5032 on the first capture), with the explode 3950 ms
+of server time after the release snapshot. INFERRED: 1.11's
 decrement is unreachable on this build, so there is no pin at 50, no
 auto-throw and no shortening of the fuse by cooking.
 
@@ -957,16 +1008,18 @@ combat captures read no write at all because they sent `cmd.weapon` 0 every
 frame, which is the one input 1.2's setter refuses to write on.
 
 **The raise ends when `raiseTime` does.** VERIFIED: `weaponstate` 1 lasts
-295 ms on `to_frag` and 263 ms on `to_frag_2`, against the frag's `raiseTime`
-of 250, and 2.7 s on `cancel`, whose trigger is held through the raise.
+258 ms on `to_frag` and 245 ms on `to_frag_2` (295 and 263 on the first
+capture), against the frag's `raiseTime` of 250 and inside a sample's 50 ms, and 2.7 s on `cancel`, whose trigger is held through the raise.
 INFERRED: the state ends on `weaponTime` reaching 0 and the semi-automatic
 latch of 1.4 pins it at 1 for as long as the bit is down, so a held trigger
 keeps a weapon coming up.
 
 **The swing.** VERIFIED: `melee_tap` reads `weaponstate` 10 with event 164 and
 `weapAnim` 520, then 11 with event 165 once `meleeDelay` (0.15 on the carbine)
-runs out, then 0 with `weapAnim` 0 at `meleeTime` (0.65), and `torsoAnim` 732
-across both states. VERIFIED: `aimSpreadScale` reads 255.00 at every sample of
+runs out, then 0 with `weapAnim` 0 at `meleeTime` (0.65), and `torsoAnim` 729
+across both states (732 on the first capture). VERIFIED: the standing
+`meleeattack` clause of `mp/playeranim.script` lists five torso swings.
+INFERRED: 729 and 732 (indices 217 and 220) are two picks from that list. VERIFIED: `aimSpreadScale` reads 255.00 at every sample of
 states 10 and 11 and starts decaying on the first sample of state 0.
 UNVERIFIED: which store holds the counter there; 1.8's raise is the only 255.0
 store this document has located.
@@ -980,15 +1033,17 @@ that differs from the sample before it by the toggle alone -- 512 on
 legs and restarts the torso on no anim at all, which is the same index 0 every
 settled retail pose reads (player-model-anim-system.md, "The weapon channel").
 
-**A `both` land clause is not.** VERIFIED: the sample after the one where
-`throw_down`'s frag knocks the thrower off his feet reads `legsAnim` 100,
+**A `both` land clause is not.** VERIFIED, first capture (`c52e9606`): the
+sample after the one where `throw_down`'s frag knocks the thrower off his
+feet reads `legsAnim` 100,
 index 100 with the toggle clear, between two samples of 634, and `torsoAnim`
 512 across all three. VERIFIED: the landing clause the stance and class
 select is `weaponclass pistol AND grenade`, whose body is
 `both pb_standjump_land_pistol duration 5`. INFERRED: the land
 event puts its anim on the legs and leaves the torso alone, so the rule above
 is the throw's and not every `both` clause's; the single sample is the
-`duration 5`.
+`duration 5`. VERIFIED: the 2026-10-17 recapture's thrower takes no damage (no 187
+`EV_PAIN`, `damageEvent` 0 to the end) and the step holds no land sample.
 
 INFERRED, and unmeasured: vcod applies the throw's rule to the rest of the
 event clauses, so it also reaches `fireweapon`'s pistol-ADS clause and
@@ -1240,17 +1295,19 @@ both fixture weapons spell `hipSpreadTurnAdd 0`. Both retail motion captures
 agree -- 255.0 at every pose with a movement axis, standing, crouched or
 prone, and 0.0 at every pose without one.
 
-The `--save-ads` captures (1.13) put numbers on the rest. VERIFIED: a hip
-shot from the carbine reads 162.18 on the first snapshot after it, 16 ms
-into a decay from `hipSpreadFireAdd` 0.7 times 255, and then 111.18, 43.86,
-9.18, 0 at roughly 50 ms steps, which is the decay of 4 times 255 a second;
-the mosin's reads 255 and comes down 41.4 a step. A walk climbs 51 a step
-on the carbine (the add of 8 less the decay of 4, times 255, times the
-frame) to 255 in 274 ms, and stopping brings it down 51 a step to 0 in 258.
-A shot down the settled sight adds nothing, and a walk begun with the sight
-coming up adds until the snapshot the fraction reads 1.0 and decays from the
-next step on: `ads_walk` on carentan climbs to 255 at 276 ms with the
-fraction at 0.94 and reads 222.36 at 324 with it at 1.0. INFERRED, that the
+The `--save-ads` captures (1.13) put numbers on the rest, re-measured on
+the 2026-10-17 recapture. VERIFIED: a hip shot from the carbine reads 128.52
+on the first snapshot after it, 49 ms into a decay from `hipSpreadFireAdd`
+0.7 times 255, and then 94.86, 40.80, 5.10, 0, two or three 16 ms cmds a
+snapshot at the decay of 4 times 255 a second; the mosin's reads 255 and
+comes down 41.44 a full step. A walk climbs 51 a full step on the carbine
+(the add of 8 less the decay of 4, times 255, times the frame) to 255 in
+276 ms, and stopping brings it down 51 a step to 0 in 247. A shot down the
+settled sight adds nothing, and a walk begun with the sight coming up adds
+until the snapshot the fraction reads 1.0 and decays from the next step on:
+`ads_walk` on carentan reaches 255 at 237 ms with the fraction at 0.83,
+still reads 255 at 272 with it at 0.89, and reads 206.04 at 336 with it at
+1.0, 48 ms of decay. INFERRED, that the
 skip keys on the previous step's fraction, as 2.1's call order says: the
 step that reaches 1.0 still adds, and the one after it does not. The BAR
 is the one stock weapon with a turn term (`hipSpreadTurnAdd` 0.8) and it
@@ -1540,6 +1597,30 @@ number against 1022 and the entity's `takedamage`, and calls `G_Damage` with
 `dflags` 0, `mod` 7 (`MOD_MELEE`) and a damage of `weaponDef->meleeDamage`
 plus `rand() % 5`. INFERRED: the call is on the arm where the number differs
 from 1022 and `takedamage` is set.
+
+VERIFIED, `game.mp.i386.so`: after `G_CheckHitTriggerDamage` the function
+tests `trace.surfaceFlags & 0x10` (0x687a9) and the fraction against 1.0
+(0x687b3..0x687c2), both jumping to the return at 0x68886 past the temp
+entity and the damage; UO's `Weapon_Melee` (0x7a524) takes the same two
+tests (0x7a609, 0x7a620) and the `takedamage` (+0x17d) test at 0x7a6c7.
+INFERRED: a swing at nothing or at the sky spawns no event. VERIFIED, live
+(2026-10-17, `client-probes/probe_skyshot` air part,
+`fixtures/missiles/mp_carentan-skyshot-air.txt` on 1.1d and `-air-uo.txt`
+on UO 1.51b): three swings into open air (`weaponstate` 10 then 11) put no
+temp entity on the wire; the same swings 80 degrees down at the floor
+(`-floor.txt`, 1.1d) each raise 167 with parm 5 naming the world. VERIFIED,
+live (UO 1.51b, `client-probes/probe_takedamage`,
+`mp_carentan-takedamage-melee-uo.txt`): a swing at a `setTakeDamage(1)`
+script model raises 167 naming the model and takes it 71, 73 and 73 as
+`MOD_MELEE` with the M1 carbine. INFERRED, off the mask (0x2802031, the
+bullet's): a swing strikes a shootable grenade's box as a round does. vcod
+ports all four (`a_swing_damages_what_takes_damage`,
+`crates/server/tests/missile_edge_ab.rs`); before 2026-10-17 its swing at
+nothing raised a 167 at the reach's end, a model took no damage and a
+satchel was swung through. One gap stands: the floor swing's truncated
+event origin reads x 1375 on ours and 1374 on retail, y 2615 on both, from
+(1368, 2608.1) facing yaw 45; the start or the aim is a fraction of a unit
+off ours in a way that capture cannot pin (`FLOOR_POS_GAP`).
 
 **As implemented.** `melee_fire` (`crates/server/src/game/combat.rs`) shares
 `trace_attack` with `bullet_fire`, so the two cannot disagree about a
@@ -3498,6 +3579,26 @@ Closed on 2026-09-27, the `kill` death frame and the respawn frame:
   wire's `viewHeightTarget` off the last move's arm. Pinned by
   `the_kill_commands_death_frame_is_retails` (`tests/combat.rs`), with 1.8's
   pickup rule from the same day.
+- **The death frame's `weaponstate`.** Measured on 2026-10-17; ours already
+  matched. VERIFIED, run: the target probe's `--probe-kill-cmds 1,3` sends
+  each `kill` with exactly one or three cmds behind it, one message each,
+  back to back, then no cmd for 150 ms. On 1.1d, 1.5b and UO 1.51b alike
+  (`mp_carentan-dm-hit-target-killcmds{,-1.5,-uo}.txt`, 7, 10 and 10
+  kills) a kill with one cmd reads `weaponstate` 1 and one with three reads
+  0, and the dead player keeps it until the respawn; the events are
+  `EV_DEATH`, `EV_RAISE_WEAPON` (UO's `EV_REMOVE_WEAPON_ATTACHMENTS`
+  between them) either way. VERIFIED: `PM_Weapon`'s dead arm stores only
+  `ps->weapon` 0: 1.1d `.so` 0x390fe, 1.5b `game.mp.i386.so` 0x303fc
+  (behind `cmpl $0x5,0x4(%eax)` at 0x303ec), UO `game.mp.uo.i386.so`
+  0x372bb (`ps+0xd8`, behind 0x372ab); `player_die` stores no
+  `weaponstate` on any of them. INFERRED: the first cmd's putaway to empty
+  hands raises weapon 0 (state 1); a second live cmd before `ClientEndFrame`
+  ends that raise, weapon 0's `raiseTime` being 0, and reads 0. The
+  unscripted captures' mix (the `tdm` hit target: one death in five reads
+  1) is where the kill fell in the frame: one cmd reaches the server inside
+  it about a third of the time at 16 ms a cmd. The 1.5 "0 on 1.5b, 1 on
+  ours" note of 2026-10-14 (`cod15-protocol-diff.md`, "Spawn events") was
+  one sample of that. Pinned by `tests/kill_cmds_ab.rs` at each install.
 - **The respawn frame carried `legsAnim` 0 where retail carries 634.**
   VERIFIED, run: one frame, the next reading 634 and every frame after it.
   VERIFIED, `game.mp.i386.so`: `ClientSpawn` ends in `ClientThink_real`
@@ -3548,7 +3649,8 @@ Closed on 2026-09-07, off the same capture:
 - **A scoped shot left a reload segment retail does not run** (was
   `RECHAMBER_GAP`, and was never a rechamber). VERIFIED: the `ads_release`
   step that follows the sight-held reload reads `weaponstate` 7, then 9 with
-  `weaponDelay` 0 throughout on retail, and on vcod held `weaponstate` 5 for
+  `weaponDelay` 0 throughout on retail (the 2026-10-17 recapture opens it on
+  9, its last 7 falling in `ads_reload`), and on vcod held `weaponstate` 5 for
   12 of the step's samples with a 175 ms `weaponDelay`, writing `weapAnim`
   11 with it. VERIFIED: 5 is `WEAPON_RELOADING`, the segmented reload's loop
   segment, 11 is its `WEAP_RELOAD`, and 175 is `reloadAddTime` 0.2 less one
@@ -3684,16 +3786,19 @@ the same `fuseTime` 4.
 
 VERIFIED: the weapon switch to the frag, frame for frame against the lone
 capture's `to_frag` step: putaway 14 frames against retail's 13, raise 5
-against 6, then ready. The cook holds `weaponstate` 3 for 41 frames against
+against 6, then ready (the 2026-10-17 recapture reads 14 and 5). The cook holds `weaponstate` 3 for 41 frames against
 retail's 40.
 
 **What differs.**
 
 VERIFIED: **every vcod grenade launches with the same tumble.** Retail's
 `apos` `trDelta` is drawn per throw. Across the committed throws the roll rate
-holds one value for a throw's whole life and takes 316.3, 318.0, 344.8, 354.4,
-367.4 and 387.1 deg/s, all inside `360 +/- 45`; the launch pitch rate reads
-692.7, 704.1 and 726.9, all inside `720 +/- 45`, and is redrawn at each bounce
+holds one value for a throw's whole life and takes 323.0, 335.9, 354.4,
+367.4, 368.4 and 387.1 deg/s, all inside `360 +/- 45`; the launch pitch rate
+reads 684.9, 692.7, 703.5, 704.1, 726.9 and 729.5, all inside `720 +/- 45`
+(the lone capture's three re-measured on its 2026-10-17 recapture; the first
+one's rolls were 316.3, 318.0 and 344.8, and its throws had bounced before
+their first sample), and is redrawn at each bounce
 (11.2's `G_MissileLandAngles`, unmodelled). Every vcod throw in the four runs
 reads exactly `675.0, 0.0, 315.0`, the low end of both bands.
 `Missiles` carries its own `flrand` state and `#[derive(Default)]` left it
@@ -3770,7 +3875,8 @@ VERIFIED: **the lone `--save-grenade` script cannot finish against vcod.** Its
 `throw_down` and `pin_out` steps blew up their own thrower on both attempts, at
 57 s and at 23 s, and the lone capture mode has no respawn, so the run stalls
 on the step it died in. Retail's thrower survived the same script from a spawn
-144 units up. INFERRED: the spawn geometry, not the damage, since the falloff
+144 units up (the first capture; the 2026-10-17 recapture's, at z -4.5,
+takes no damage at all). INFERRED: the spawn geometry, not the damage, since the falloff
 at the ranges involved is 14.1's on both sides. The step-by-step comparison
 above is off the traces the log carries up to the death.
 
@@ -3837,7 +3943,7 @@ VERIFIED, the collision world of `mp_carentan` walked from (412, -1704):
 one crest, against 0 of 80 with the snap in. VERIFIED, the same fix closed
 the one open gap the ADS capture had left: `mp_carentan` `ads-sniper`
 `ads_walk` read `groundEntityNum` 1023 for one sample where retail read 1022
-for all 31, which reversed the sight ramp for that cmd, and both the sight
+for all 30 (both captures), which reversed the sight ramp for that cmd, and both the sight
 and the spread now match retail sample for sample. vcod was wrong; retail is
 right. Fixed in `step_slide_move`, pinned by
 `walking_a_slope_never_leaves_the_ground` and
@@ -4453,8 +4559,40 @@ the ordering and the conditions in it.
   frame.
 - Otherwise, when `tr.surfaceFlags & 0x10` is set, `G_FreeEntity(ent)` runs
   and the frame ends with no event, no explosion and no think.
-  UNVERIFIED: what that surface bit is called. INFERRED: it is the sky, since
-  freeing the missile silently is what a sky brush is for.
+  VERIFIED, `game.mp.i386.so` read with `tools/re/annotate_func.py`: the
+  test is `test [ebp-0x2c], 0x10` at 0x5432f ahead of the `G_FreeEntity`
+  call at 0x54339; 1.5b's is `and eax, 0x10` at 0x550e4 before its free at
+  0x550f1. VERIFIED, the material lumps of every stock 1.1 and UO map
+  (`crates/common/examples/flag_census.rs`): the only clip-brush materials
+  carrying 0x10 or 0x4 are the `textures/sky/*` ones, every one surface
+  0x434 and contents 0x801 (0x8000801 for `sky/sewer`). VERIFIED, live
+  (retail 1.1d, 2026-10-17, `fixtures/missiles/mp_carentan-skyshot-rocket.txt`,
+  `client-probes/probe_skyshot`): a panzerfaust round fired 80 degrees up
+  climbs 137 a frame to z 2225.8 and is gone from the script's entity list
+  and the wire on the frame its move meets the sky at 2304, with no explode.
+- **United Offensive.** VERIFIED, `game.mp.uo.i386.so`: right after the
+  move trace `G_RunMissile` tests `surfaceFlags & 0x4` (0x5f247) and on it
+  adds -2.0 (`.rodata 0xa180c`) times the plane's normal to the end point,
+  before the trigger re-trace and the store into `r.currentOrigin`; at the
+  end of the move the same 0x4 test (0x5f533) jumps past both the 0x10 free
+  (0x5f541) and `G_MissileImpact` to `G_RunThink`. VERIFIED: its
+  `G_MissileTrace` (0x5edae) clears a start-solid (`tr+0x2f`) and sets the
+  fraction to 1.0 when the trace's contents carry 0x800 (0x5edf4..0x5ee13),
+  and otherwise zeroes the fraction of a start-solid trace. INFERRED, off
+  the stores: a UO missile that meets the sky is put 2 units inside the sky
+  brush, and the next frame's trace, starting inside it, reads clear, so the
+  missile flies on above the map. VERIFIED, live (retail UO 1.51b,
+  2026-10-17, `mp_carentan-skyshot-rocket-uo.txt`): the bazooka round's
+  origin reads z 2305.88 on the contact frame, 2 past the face at 2303.88,
+  climbs on at 137 a frame on its line, and goes off on its 15 s think (13.6)
+  with 185 and parm 0 at z 41318, out past the map. vcod: `Missile::step`
+  (`SURF_SKY`, `SURF_NOIMPACT`, `UO_SKY_PUSH`, `CONTENTS_SKY`), pinned by
+  `a_missile_at_the_sky_is_freed_silently`,
+  `a_uo_missile_flies_through_the_sky` and
+  `crates/server/tests/missile_edge_ab.rs`. Before 2026-10-17 every
+  protocol's missile struck the sky: a rocket exploded on it, a grenade
+  bounced off. vcod applies only the sky-start arm of UO's `G_MissileTrace`;
+  the zeroed fraction on any other start-solid is not ported.
 - Otherwise `G_MissileImpact(ent, &tr, dir)` runs, and `G_RunThink(ent)`
   follows only when `s.eType` is still 4. VERIFIED: `G_MissileImpact`'s
   explode path sets `s.eType` to 0 (13.1), so the test is what stops a
@@ -4779,6 +4917,16 @@ The explode block, reached from all three arms:
   ent->+0x24C)`. VERIFIED: the ignored entity is `other`, the entity the
   missile hit. INFERRED: the direct-hit victim is deliberately kept out of the
   splash, having already been charged the direct damage.
+- VERIFIED, live (retail UO 1.51b, 2026-10-17,
+  `fixtures/missiles/mp_carentan-takedamage-rocket-uo.txt`,
+  `client-probes/probe_takedamage`): three bazooka rounds at a
+  `setTakeDamage(1)` barrel each give it one `damage` notify, 1000
+  `MOD_PROJECTILE` at the contact, and no splash, while the shooter 200
+  back takes 35 `MOD_PROJECTILE_SPLASH`. vcod hands the direct `G_Damage`
+  to any struck entity with `takedamage` (`GameHost::entity_takes_damage`:
+  turrets, UO vehicles, `setTakeDamage` entities, linked damageable
+  `func_static`s); before 2026-10-17 only a client or a UO vehicle took
+  it, and a struck script model took nothing, the splash skipping it.
 - `trap_LinkEntity(ent)` closes it.
 
 ### 13.2 `G_ExplodeMissile`, the fuse
@@ -4848,7 +4996,10 @@ it come off the captures rather than off the binary, and each is worth naming
 because a reader of 11 to 13 alone would guess otherwise.
 
 VERIFIED, off `mp_carentan-tdm-grenade.txt`: a throw's `trTime` is the
-*previous* frame's `level.time`, not the frame the release lands on. The
+*previous* frame's `level.time`, not the frame the release lands on. Its
+2026-10-17 recapture reads it on all three throws' first `!missile` line:
+484950, 494950 and 503650 against release snapshots at 485000, 495000 and
+503700 (the first capture's throws had already bounced there). The
 death-drop capture pins it twice over, `trTime` 1405500 against a death frame
 at `serverTime` 1405550. vcod stamps both the thrown and the dropped grenade
 that way.
@@ -4859,11 +5010,12 @@ missile is 1000 ms on `cook_release`, 5000 on `pin_out` and 600 on
 `throw_down`. VERIFIED, `missile_ab.rs`: the replay reads the same three.
 Measured from each step's first snapshot instead, `pin_out` reads 50 ms
 longer on ours, which is the capture's step clock and not the throw.
-VERIFIED: `pin_out`'s first trace (`serverTime` 226200) already reads
+VERIFIED: `pin_out`'s first trace (`serverTime` 490000 on the 2026-10-17
+recapture, 226200 before) already reads
 `grenadeTimeLeft` 4000 and `weaponDelay` 600, where `cook_release` and
 `throw_down` open on a `weaponstate` 0 sample from before their first pressed
 cmd; the replay opens every step on such a sample. VERIFIED:
-`cook_release`'s last trace is `serverTime` 226150 at `weaponstate` 0, so no
+`cook_release`'s last trace is `serverTime` 489950 (226150) at `weaponstate` 0, so no
 snapshot is missing between the two steps. INFERRED, off `CombatProbe::step`
 in `crates/client/src/probe.rs`: a step's clock starts on the probe's first
 iteration after the step before it ended, and a snapshot already traced is
@@ -5014,11 +5166,15 @@ rocket, explode or splash. Pinned by
 `a_rocket_that_strikes_a_player_hits_him_directly`
 (`crates/server/tests/combat.rs`), and on the client by
 `the_panzer_capture_s_explode_draws_the_rocket_row`
-(`crates/client/src/fx/registry.rs`). INFERRED, not ported: 12.3's sky free
-(vcod's collision world holds no sky faces, so a rocket fired at the sky
-flies its 30 s and goes off with 178 out of the world), 12.1's water
-splash, and a direct hit on a script entity that takes damage (only a
-client and a UO vehicle take it).
+(`crates/client/src/fx/registry.rs`). Not ported: 12.1's water splash.
+
+VERIFIED, `game.mp.uo.i386.so`: UO's `fire_rocket` (0x5fc74) stores
+`trType` 2 (0x5fde6) and a 15000 ms think, `Weapon_RocketLauncher_Fire`
+(0x7b3da) leaves it, and `Weapon_Artillery_Fire` (0x7b594), a vehicle main
+gun's fire, rewrites it to 5 (0x7b6c8). VERIFIED, live (retail UO 1.51b,
+2026-10-17, `mp_carentan-skyshot-rocket-uo.txt`): a player's bazooka round
+reads `trType` 2 and climbs an even 137 a frame. Before 2026-10-17 vcod
+flew every UO rocket on `trType` 5.
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 
@@ -5235,11 +5391,13 @@ script picks -- `50 + (1 - 100/300) * 1950` truncates to 1349 in f32 and 1350
 in f64 -- and retail's own x87 arithmetic is not reproducible in either
 width.
 `crates/server/tests/combat.rs`'s two blast tests are the end-to-end gate, and
-the grenade capture's own `throw_down` pins the number a third time.
-VERIFIED: its pain frame reads `aimSpreadScale` 94.00 off a counter that was
-0. INFERRED: section 6's step 5 adds `damage * 100 / maxHealth` there, so
-retail charged 94, which is what the falloff gives at the 78 units the replay
-measures between the blast and the thrower.
+the grenade capture's first version (in git at `c52e9606`) pinned the
+number a third time. VERIFIED: its `throw_down` pain frame reads
+`aimSpreadScale` 94.00 off a counter that was 0. INFERRED: section 6's step
+5 adds `damage * 100 / maxHealth` there, so retail charged 94, which is what
+the falloff gives at the 78 units the replay measured between the blast and
+the thrower. VERIFIED: the 2026-10-17 recapture's thrower takes no damage,
+so it no longer carries that frame.
 
 ### 14.4 What stops a blast, measured
 
@@ -5921,7 +6079,14 @@ seen are 0, 2 and 7.
 INFERRED, from the above: items lying in the world, triggers but a
 `spawnflags & 8` one with no 1, 2 or 4, `script_brushmodel`s and `script_model`s are in the
 tree from their spawn; missiles, temp entities, corpses, `script_origin`s
-and taken items never are. A `trigger_hurt` stays where its contents -1
+and taken items never are. VERIFIED, `tools/re/annotate_func.py`: 1.1's
+`fire_grenade` and `fire_rocket` store to `+0xf4` (0x88, at 0x54415 and
+0x54687) and `+0x198`, never to `r.contents` (+0x118); UO's `fire_grenade`
+writes `r.contents` 0x2000 (+0x120, 0x5fbc3) on the arm that makes a
+`takeDamage` grenade shootable, and its `fire_rocket` and `fire_artillery`
+write none. INFERRED: `G_RunMissile`'s `trap_LinkEntity` every frame is
+`SV_LinkEntity`'s unlink for every missile but UO's shootable grenades,
+which is why vcod links those alone (`GameHost::link_shootable`). A `trigger_hurt` stays where its contents -1
 link filed it and the walk tests its 0x405c0008; a `trigger_use` the same
 with 0x200000. A `notSolid` brush model stays linked with contents 0.
 
@@ -5968,9 +6133,15 @@ and lists e first in the ammo run. INFERRED: those lists are retail's too:
 running each phase's woken threads in the reverse of the order they were
 woken, the first notify of a frame waking each waiter, gives every `t`,
 `mt` and `pt` line in the table from them, and the `f` pair in the same
-reverse. The rule for when woken threads run, and why the `"touch"`
-waiters wake once a frame where the `"trigger"` ones wake once a cmd, is
-not settled here.
+reverse. VERIFIED since, `G_RunFrame` 0x50540..0x50665: the `"trigger"`
+of a `trigger_multiple` is not notified in the cmd but queued, and the
+frame hands the queue out one trigger per entity a round with
+`Scr_RunCurrentThreads` after each round, which is why the `f` pair comes
+once a cmd while a `"touch"`, notified in the cmd to a waiter that has not
+run again by the next one, comes once a frame (`cod11-gsc-language.md`,
+"Engine notifies and the trigger queue"). VERIFIED, a 2026-10-17 rerun
+(`crates/server/tests/fixtures/touchorder/mp_pavlov.txt`): every frame of a
+phase repeats the first's `t`, `mt` and `pt` lines after its first `f` pair.
 
 **As implemented.** `crate::area::AreaTree` is the tree above, port for
 port: the lazy split on the region handed in, the one-level push-down, the
@@ -6019,10 +6190,11 @@ Not routed through the tree: a linked client's per-frame relink in
 touches no BSP leaf, which `SV_LinkEntity` unlinks
 (the leaf count at 0x8090c68, the unlink at 0x8090c84). Not walking it yet: `G_GetActivateEnt` (the use key; sorted
 by score, so the order reaches it only through ties), `G_KillBox`, `positionWouldTelefrag` and
-the two trigger-damage walks. vcod delivers the `"touch"` and `"trigger"`
-notifies at the top of the next script frame in the order they were
-raised, and runs their waiters in thread age, so the log lines above come
-out in a different order on ours.
+the two trigger-damage walks. vcod raises the `"touch"` notifies at the
+top of the next script frame in the order the walk made them and hands the
+`"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);
+`crates/server/tests/touchorder_ab.rs` replays the probe and reads every
+frame's lines in retail's order.
 
 ---
 

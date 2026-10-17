@@ -127,9 +127,10 @@ fn run_cmd(
         return;
     }
     cmd::apply_view(ps, cmd.angles, da);
-    for (step, dt) in cmd::chop(*last_st, cmd) {
-        pmove(ps, &cmd::pm_input(&step), world, dt, weapons);
-    }
+    cmd::chop(*last_st, cmd, |step, dt| {
+        pmove(ps, &cmd::pm_input(step), world, dt, weapons);
+        ps.jump_latched
+    });
     *last_st = cmd.server_time;
 }
 
@@ -332,7 +333,13 @@ fn the_ladder_mover_climbs_where_retail_does() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
+    // A 1.1 capture replays on 1.1's paks only (a UO install's `main/` is
+    // 1.5's).
+    let install_11 = vcod_common::testing::game_fs_11().is_some();
     for (name, yaw, rules) in FIXTURES {
+        if *rules == MoveRules::V1_1 && !install_11 {
+            continue;
+        }
         println!("{name}");
         check(&replay(
             &fixture(name),

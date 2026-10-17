@@ -1,0 +1,520 @@
+//! Missiles and swings at the edges, ours against retail's
+//! (`fixtures/missiles/`). `client-probes/probe_skyshot` holds a shooter
+//! under the sky and fires a rocket 60 degrees up: 1.1d frees it where its
+//! move meets the sky, UO pushes it through and it goes off 15 s on, out
+//! past the map (combat doc 12.3). Its air part swings at nothing, which
+//! raises no event on either, and at the floor, which raises the miss
+//! (2.5). `client-probes/probe_takedamage` stands a `setTakeDamage` barrel
+//! in front of a UO shooter: a rocket's direct hit and a swing both run
+//! `G_Damage` on it (13.1, 2.5).
+//!
+//! `ME_REPORT=1` prints both logs. The 1.1d tests need `COD_DIR` at a 1.1
+//! install, the UO ones at a UO one; each returns early without.
+
+mod common;
+
+use common::{Join, Queues, step};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+use vcod_common::net::msg::{BUTTON_ADS, BUTTON_ATTACK, BUTTON_MELEE, UserCmd};
+use vcod_common::net::{NetClient, NetEvent};
+
+const SKYSHOT: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_skyshot.gsc");
+const TAKEDAMAGE: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_takedamage.gsc");
+
+/// What the shooter does from its first live snapshot, as
+/// `vehicle_probe.rs`'s on-foot scripts: `Aim` settles 1 s and holds the
+/// sight and the trigger, `Melee` settles 3 s and taps melee for 100 ms
+/// three times 1.5 s apart.
+#[derive(Clone, Copy, PartialEq)]
+enum Script {
+    Aim,
+    Melee,
+}
+
+impl Script {
+    fn buttons(self, ms: i64) -> u8 {
+        match self {
+            Script::Aim if ms >= 1000 => BUTTON_ADS | BUTTON_ATTACK,
+            Script::Melee if (0..3).any(|k| (3000 + 1500 * k..3100 + 1500 * k).contains(&ms)) => {
+                BUTTON_MELEE
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// Our run of `name` (`script`) on mp_carentan with `cvars` set and one
+/// allies shooter running `run` for `ms` from its spawn. Returns the
+/// script's log, then a line per snapshot per missile and temp entity in
+/// the shooter's snapshots, in the fixtures' `VEH` shape.
+fn ours(
+    fs: vcod_common::pk3::Pk3Fs,
+    name: &str,
+    script: &str,
+    cvars: &[(&str, &str)],
+    run: Script,
+    ms: i64,
+) -> Vec<String> {
+    let bsp_path = fs.resolve_map("mp_carentan").expect("map in the paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", name), now);
+    sv.set_protocol(vcod_server::server::install_protocol(&fs));
+    sv.overlay_script(&format!("maps/mp/gametypes/{name}"), script);
+    for (k, v) in cvars {
+        sv.set_cvar(k, v);
+    }
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
+    let q = Rc::new(RefCell::new(Queues::default()));
+    let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
+    // The net probe's allies pick (`--probe-team allies`).
+    let mut join = Join::new("allies", "m1carbine_mp");
+    let mut hold = common::ProbeHold {
+        aim: true,
+        ..Default::default()
+    };
+    let frame = Duration::from_millis(common::FRAME_MS as u64);
+    let mut selected: Option<u8> = None;
+    let mut spawned: Option<i64> = None;
+    let mut last_snap = None;
+    let mut missiles = std::collections::BTreeSet::new();
+    let mut lines = Vec::new();
+    for i in 0..4000i64 {
+        if spawned.is_some_and(|at| (i - at) * common::FRAME_MS > ms) {
+            break;
+        }
+        now += frame;
+        let live = cl.state() == vcod_common::net::NetState::Active
+            && cl
+                .snapshots()
+                .newest()
+                .is_some_and(|s| s.ps.field_i32(cl.protocol(), "pm_type") == 0);
+        if live {
+            let at = *spawned.get_or_insert(i);
+            let mut cmds = hold.cmds(&cl, run.buttons((i - at) * common::FRAME_MS));
+            if let Some(w) = selected {
+                cmds.iter_mut().for_each(|c| c.weapon = w);
+            }
+            cl.send_cmds(&cmds);
+        } else if let Some(c) = cl.send_frame(&UserCmd::default()) {
+            hold.last = c.server_time;
+        }
+        for e in step(&mut sv, &q, &mut cl, now) {
+            if let NetEvent::ServerCommand(tokens) = e {
+                if tokens.first().map(String::as_str) == Some("a") {
+                    selected = tokens.get(1).and_then(|w| w.parse().ok());
+                }
+                join.on_server_command(&tokens, &mut cl, now);
+            }
+        }
+        let p = cl.protocol();
+        let Some(snap) = cl.snapshots().newest() else {
+            continue;
+        };
+        if last_snap == Some(snap.message_num) {
+            continue;
+        }
+        last_snap = Some(snap.message_num);
+        let v = snap.ps.viewangles(p);
+        lines.push(format!(
+            "VEH {} ps view {:.2} {:.2} frac {:.3} wstate {} weapon {}",
+            snap.server_time,
+            v[0],
+            v[1],
+            snap.ps.field_f32(p, "fWeaponPosFrac"),
+            snap.ps.field_i32(p, "weaponstate"),
+            snap.ps.field_i32(p, "weapon"),
+        ));
+        missiles.retain(|n| snap.entities.contains_key(n));
+        for (num, e) in &snap.entities {
+            let i = |n: &str| e.field_i32(p, n);
+            let f = |n: &str| e.field_f32(p, n);
+            if let Some(ev) = p.event_of(i("eType")) {
+                let o = e.origin(p);
+                lines.push(format!(
+                    "VEH {} temp {num} ev {ev} parm {} other {} pos {:.1} {:.1} {:.1}",
+                    snap.server_time,
+                    i("eventParm"),
+                    i("otherEntityNum"),
+                    o[0],
+                    o[1],
+                    o[2],
+                ));
+            } else if i("eType") == 4 || missiles.contains(num) {
+                missiles.insert(*num);
+                let slot = (i("eventSequence") - 1) & 3;
+                lines.push(format!(
+                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} etype {} ev {} parm {}",
+                    snap.server_time,
+                    i("pos.trType"),
+                    f("pos.trBase[0]"),
+                    f("pos.trBase[1]"),
+                    f("pos.trBase[2]"),
+                    i("eType"),
+                    i(&format!("events[{slot}]")),
+                    i(&format!("eventParms[{slot}]")),
+                ));
+            }
+        }
+    }
+    let mut out: Vec<String> = sv
+        .script_log()
+        .iter()
+        .map(|l| l.trim().to_string())
+        .filter(|l| l.starts_with("PROBE"))
+        .collect();
+    out.extend(lines);
+    out
+}
+
+fn retail(fixture: &str) -> Vec<String> {
+    fixture
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
+fn report(retail: &[String], ours: &[String]) {
+    if std::env::var_os("ME_REPORT").is_some() {
+        for l in ours {
+            eprintln!("ours   {l}");
+        }
+        for l in retail {
+            eprintln!("retail {l}");
+        }
+    }
+}
+
+/// The trailing `(x, y, z)` of a PROBE line.
+fn vec_at(l: &str, from: usize) -> [f32; 3] {
+    let s = &l[l[from..].find('(').unwrap() + from + 1..];
+    let s = &s[..s.find(')').unwrap()];
+    let v: Vec<f32> = s.split(", ").map(|c| c.parse().unwrap()).collect();
+    [v[0], v[1], v[2]]
+}
+
+/// The first rocket's `PROBE miss` lines: (time, origin).
+fn first_rocket(lines: &[String]) -> Vec<(i32, [f32; 3])> {
+    let miss: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("PROBE miss "))
+        .collect();
+    let Some(first) = miss.first() else {
+        return Vec::new();
+    };
+    let num = first.split(' ').nth(3).unwrap().to_string();
+    miss.iter()
+        .filter(|l| l.split(' ').nth(3) == Some(num.as_str()))
+        .map(|l| (l.split(' ').nth(2).unwrap().parse().unwrap(), vec_at(l, 0)))
+        .collect()
+}
+
+fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
+    (0..3).map(|k| (a[k] - b[k]).powi(2)).sum::<f32>().sqrt()
+}
+
+/// Two runs of one rocket over their first `frames` frames: each frame's
+/// step and height. The launch takes the weapon's spread off each server's
+/// own RNG (sighted, a fraction of a degree on both), so the rounds part
+/// ways sideways; the climb does not.
+fn same_climb(r: &[(i32, [f32; 3])], o: &[(i32, [f32; 3])], frames: usize, skip: &[usize]) {
+    assert!(
+        r.len() >= frames && o.len() >= frames,
+        "retail {r:?}\nours {o:?}"
+    );
+    let (r, o) = (&r[..frames], &o[..frames]);
+    for k in (1..frames).filter(|k| !skip.contains(k)) {
+        let step = |v: &[(i32, [f32; 3])]| dist(v[k].1, v[k - 1].1);
+        assert!(
+            (step(r) - step(o)).abs() < 0.5,
+            "frame {k}: retail {r:?}\nours {o:?}"
+        );
+        assert!(
+            (r[k].1[2] - o[k].1[2]).abs() < 5.0,
+            "frame {k}: retail {r:?}\nours {o:?}"
+        );
+    }
+}
+
+/// 1.1d: the rocket flies its six frames and is gone the frame its move
+/// meets the sky, with no explode on the wire.
+#[test]
+fn a_rocket_at_the_sky_is_freed_silently() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = retail(include_str!(
+        "fixtures/missiles/mp_carentan-skyshot-rocket.txt"
+    ));
+    let log = ours(
+        fs,
+        "probe_skyshot",
+        SKYSHOT,
+        &[("probe_part", "sky"), ("probe_weapon", "panzerfaust_mp")],
+        Script::Aim,
+        15_000,
+    );
+    report(&fixture, &log);
+    let (r, o) = (first_rocket(&fixture), first_rocket(&log));
+    assert_eq!(o.len(), r.len(), "retail {r:?}\nours {o:?}");
+    same_climb(&r, &o, r.len(), &[]);
+    assert!(
+        !log.iter()
+            .any(|l| l.contains(" missile ") && l.contains("etype 0")),
+        "ours exploded: {log:?}"
+    );
+}
+
+/// UO: the rocket is pushed 2 into the sky, flies on above it on its line,
+/// and goes off on its 15 s think out past the map with 185 and parm 0.
+#[test]
+fn a_uo_rocket_flies_on_through_the_sky() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = retail(include_str!(
+        "fixtures/missiles/mp_carentan-skyshot-rocket-uo.txt"
+    ));
+    let log = ours(
+        fs,
+        "probe_skyshot",
+        SKYSHOT,
+        &[("probe_part", "sky"), ("probe_weapon", "bazooka_mp")],
+        Script::Aim,
+        25_000,
+    );
+    report(&fixture, &log);
+    let (r, o) = (first_rocket(&fixture), first_rocket(&log));
+    let through = |v: &[(i32, [f32; 3])]| v.iter().position(|p| p.1[2] > 2304.0);
+    assert_eq!(
+        through(&o),
+        through(&r),
+        "retail {:?}\nours {:?}",
+        &r[..24],
+        &o[..24]
+    );
+    let at = through(&r).expect("retail's rocket went through");
+    assert!(
+        (o[at].1[2] - r[at].1[2]).abs() < 0.01,
+        "pushed 2 in: retail {:?}, ours {:?}",
+        r[at],
+        o[at]
+    );
+    // The contact frame's step is cut where the spread met the sky.
+    same_climb(&r, &o, 24, &[at, at + 1]);
+    let explode = |lines: &[String], launched: i32| {
+        lines
+            .iter()
+            .find(|l| l.contains(" missile ") && l.contains("etype 0"))
+            .map(|l| {
+                let t: Vec<&str> = l.split(' ').collect();
+                let v = |k: usize| t[k].parse::<f32>().unwrap();
+                (
+                    t[1].parse::<i32>().unwrap() - launched,
+                    [v(7), v(8), v(9)],
+                    t[t.len() - 3].to_string(),
+                    t[t.len() - 1].to_string(),
+                )
+            })
+            .unwrap_or_else(|| panic!("no explode in {lines:?}"))
+    };
+    let (rx, ox) = (explode(&fixture, r[0].0), explode(&log, o[0].0));
+    assert_eq!((&ox.2, &ox.3), (&rx.2, &rx.3), "retail {rx:?}, ours {ox:?}");
+    assert!((ox.0 - rx.0).abs() <= 50, "retail {rx:?}, ours {ox:?}");
+    // Out past the map on the line: the spread swings where, not how far.
+    let (rd, od) = (dist(rx.1, r[0].1), dist(ox.1, o[0].1));
+    assert!(
+        (rd - od).abs() < rd * 0.005,
+        "retail {rx:?} {rd}, ours {ox:?} {od}"
+    );
+}
+
+/// `PROBE mdamage` lines: (amount, mod, point).
+fn mdamage(lines: &[String]) -> Vec<(i32, String, [f32; 3])> {
+    lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("PROBE mdamage "))
+        .map(|l| {
+            let t: Vec<&str> = l.split(' ').collect();
+            (t[1].parse().unwrap(), t[2].to_string(), vec_at(l, 0))
+        })
+        .collect()
+}
+
+/// UO: each rocket at the `setTakeDamage` barrel takes it 1000 as
+/// `MOD_PROJECTILE` at the contact, and the splash skips it.
+#[test]
+fn a_rocket_hits_a_takedamage_model_directly_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = retail(include_str!(
+        "fixtures/missiles/mp_carentan-takedamage-rocket-uo.txt"
+    ));
+    let log = ours(
+        fs,
+        "probe_takedamage",
+        TAKEDAMAGE,
+        &[("probe_weapon", "bazooka_mp")],
+        Script::Aim,
+        20_000,
+    );
+    report(&fixture, &log);
+    let (r, o) = (mdamage(&fixture), mdamage(&log));
+    assert_eq!(o.len(), r.len(), "retail {r:?}\nours {o:?}");
+    // The contact is on the barrel's side wherever the spread put it: its
+    // distance off the barrel's axis is the collision's radius.
+    let axis = |lines: &[String]| {
+        let l = lines.iter().find(|l| l.starts_with("PROBE site ")).unwrap();
+        vec_at(l, l.rfind('(').unwrap())
+    };
+    let off = |p: [f32; 3], a: [f32; 3]| ((p[0] - a[0]).powi(2) + (p[1] - a[1]).powi(2)).sqrt();
+    let (ra, oa) = (axis(&fixture), axis(&log));
+    for (rd, od) in r.iter().zip(&o) {
+        assert_eq!(
+            (od.0, od.1.as_str()),
+            (rd.0, rd.1.as_str()),
+            "retail {r:?}\nours {o:?}"
+        );
+        assert!(
+            (off(od.2, oa) - off(rd.2, ra)).abs() < 1.0,
+            "retail {r:?}\nours {o:?}"
+        );
+    }
+}
+
+/// UO: a swing at the `setTakeDamage` barrel raises the miss naming it and
+/// takes it `meleeDamage + rand()%5` as `MOD_MELEE` at the trace's end.
+#[test]
+fn a_swing_damages_a_takedamage_model_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = retail(include_str!(
+        "fixtures/missiles/mp_carentan-takedamage-melee-uo.txt"
+    ));
+    let log = ours(
+        fs,
+        "probe_takedamage",
+        TAKEDAMAGE,
+        &[("probe_dist", "40")],
+        Script::Melee,
+        8000,
+    );
+    report(&fixture, &log);
+    let (r, o) = (mdamage(&fixture), mdamage(&log));
+    assert_eq!(o.len(), r.len(), "retail {r:?}\nours {o:?}");
+    let low = r.iter().map(|d| d.0).min().unwrap();
+    for d in &o {
+        assert_eq!(d.1, "MOD_MELEE");
+        assert!(
+            (low - 4..low + 5).contains(&d.0),
+            "retail {r:?}\nours {o:?}"
+        );
+        assert!(dist(d.2, r[0].2) < 0.5, "retail {r:?}\nours {o:?}");
+    }
+    let barrel = |lines: &[String]| {
+        lines
+            .iter()
+            .find_map(|l| l.strip_prefix("PROBE site "))
+            .and_then(|l| l.split(' ').nth(5).map(str::to_string))
+            .expect("the barrel was spawned")
+    };
+    let misses = |lines: &[String], b: &str| {
+        lines
+            .iter()
+            .filter(|l| l.contains(" temp ") && l.contains(" ev 167 "))
+            .all(|l| l.contains(&format!(" other {b} ")))
+            && lines.iter().any(|l| l.contains(" ev 167 "))
+    };
+    assert!(misses(&fixture, &barrel(&fixture)));
+    assert!(misses(&log, &barrel(&log)), "{log:?}");
+}
+
+/// A swing at nothing raises no temp entity; at the floor it raises 167 on
+/// the world with parm 5.
+#[test]
+fn a_swing_at_nothing_raises_no_event() {
+    for (fs, fixture) in [
+        (
+            vcod_common::testing::game_fs_11(),
+            include_str!("fixtures/missiles/mp_carentan-skyshot-air.txt"),
+        ),
+        (
+            vcod_common::testing::uo_fs(),
+            include_str!("fixtures/missiles/mp_carentan-skyshot-air-uo.txt"),
+        ),
+    ] {
+        let Some(fs) = fs else {
+            continue;
+        };
+        let fixture = retail(fixture);
+        let log = ours(
+            fs,
+            "probe_skyshot",
+            SKYSHOT,
+            &[("probe_part", "air")],
+            Script::Melee,
+            8000,
+        );
+        report(&fixture, &log);
+        assert!(!fixture.iter().any(|l| l.contains(" temp ")));
+        assert!(!log.iter().any(|l| l.contains(" temp ")), "{log:?}");
+    }
+}
+
+/// The floor swing's truncated event origin: ours reads x 1375 where
+/// retail reads 1374 with y 2615 on both, though the shooter faces yaw 45
+/// from (1368, 2608.1). At pitch 80 a 64-unit swing from the eye 60 up meets
+/// the floor 7.5 out along each axis; retail's x lands under 7, a start or
+/// aim a fraction of a unit off ours that this capture cannot pin (combat
+/// doc 2.5).
+const FLOOR_POS_GAP: f32 = 1.0;
+
+#[test]
+fn a_swing_at_the_floor_raises_the_miss() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = retail(include_str!(
+        "fixtures/missiles/mp_carentan-skyshot-floor.txt"
+    ));
+    let log = ours(
+        fs,
+        "probe_skyshot",
+        SKYSHOT,
+        &[("probe_part", "air"), ("probe_pitch", "80")],
+        Script::Melee,
+        8000,
+    );
+    report(&fixture, &log);
+    // One line per temp entity: its first snapshot.
+    let firsts = |lines: &[String]| -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        lines
+            .iter()
+            .filter(|l| l.contains(" temp "))
+            .filter(|l| seen.insert(l.split(' ').nth(3).unwrap().to_string()))
+            .map(|l| l.splitn(5, ' ').nth(4).unwrap().to_string())
+            .collect()
+    };
+    let (r, o) = (firsts(&fixture), firsts(&log));
+    assert_eq!(r.len(), 3, "{fixture:?}");
+    assert_eq!(o.len(), r.len(), "retail {r:?}\nours {o:?}");
+    for (a, b) in r.iter().zip(&o) {
+        let (ta, tb): (Vec<&str>, Vec<&str>) = (a.split(' ').collect(), b.split(' ').collect());
+        assert_eq!(ta[..6], tb[..6], "retail {r:?}\nours {o:?}");
+        let pos = |t: &[&str]| -> [f32; 3] { std::array::from_fn(|k| t[7 + k].parse().unwrap()) };
+        assert!(
+            dist(pos(&ta), pos(&tb)) <= FLOOR_POS_GAP,
+            "retail {r:?}\nours {o:?}"
+        );
+    }
+}

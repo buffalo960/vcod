@@ -1138,22 +1138,13 @@ mod tests {
         assert_eq!(seen, vec![Value::Int(1), Value::Int(2)]);
     }
 
-    // --- Divergences kept as documentation
-    // (docs/research/cod11-gsc-language.md §10), pinned so a later change to
-    // notify/kill ordering is deliberate rather than accidental. ---
-
-    /// Two `notify`s of the same event on the same target queued within one
-    /// step coalesce: `notify` only flips a waiter's state (`Vm::notify`),
-    /// it never re-checks whether a later notify in the same flush still has
-    /// a waiter, so the first wakes it and the second, finding it no longer
-    /// `WaitingNotify`, is dropped. `pump`'s two `notify`s both queue during
-    /// its own single step and flush together after it (`step_thread`); by
-    /// the time the second flushes, `waiter` has already been marked
-    /// `Runnable` by the first, so it never sees `2` -- and never runs
-    /// again to look, since its second `waittill` is now waiting on a tick
-    /// that already happened.
+    /// Two `notify`s of the same event in one step: the first wakes the
+    /// waiter, which does not run before the notifier's step ends, so the
+    /// second finds nobody and is lost, and the waiter reads the first's
+    /// value. Retail does the same (`probe_notify_twice`,
+    /// docs/research/cod11-gsc-language.md section 9).
     #[test]
-    fn two_notifies_of_the_same_event_in_one_step_coalesce_and_the_second_is_lost() {
+    fn two_notifies_of_the_same_event_in_one_step_lose_the_second() {
         let mut vm = vm_with(
             r#"waiter() { self waittill("tick", v); got(v); self waittill("tick", v); got(v); }
             pump() { self notify("tick", 1); self notify("tick", 2); }"#,
@@ -1181,6 +1172,10 @@ mod tests {
             "waiting forever on a second tick that already happened"
         );
     }
+
+    // --- Divergences kept as documentation
+    // (docs/research/cod11-gsc-language.md §10), pinned so a later change to
+    // notify/kill ordering is deliberate rather than accidental. ---
 
     /// A thread that notifies an event it has itself registered an `endon`
     /// for is not killed by it: it runs on and resumes past its next

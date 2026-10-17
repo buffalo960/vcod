@@ -471,7 +471,8 @@ both captures moves exactly that slot. VERIFIED: `weapAnim` carries the same
 and 516, the same index with and without the bit.
 
 VERIFIED: `weaponstate` 3 runs 3 samples on carentan, 100-200 ms, and 7 on
-pavlov, 300-400 ms. INFERRED: that is the weapon's `fireTime`, the only
+pavlov, 300-400 ms (6, 250-350 ms, on the crouched and prone shots of the
+2026-10-17 recapture). INFERRED: that is the weapon's `fireTime`, the only
 weapon-file time inside both windows at 0.135 s and 0.33 s.
 
 VERIFIED: the torso index a shot writes is stance-specific. Every standing fire
@@ -488,9 +489,9 @@ VERIFIED, resolved out of the animtree (`crates/common/src/animtree.rs`,
 `pt_crouch_shoot_auto`, 249 `pt_crouch_shoot`, 250 `pt_stand_shoot_auto_ads`,
 251 `pt_stand_shoot_ads`, 252 `pt_stand_shoot_auto`, 253 `pt_stand_shoot`, and
 prone adds 222 `pt_prone_shoot_auto`, 223 `pt_prone_shoot_pistol` and 224
-`pt_prone_shoot`. UNVERIFIED: every member of it but 249 and 253. The probe
-never held the ads bit through a shot, neither rifle is automatic, and the
-prone never happened (below).
+`pt_prone_shoot`. UNVERIFIED: every member of it but 224, 249 and 253. The
+probe never held the ads bit through a shot, and neither rifle is
+automatic.
 
 ### The restart toggle, doing its job
 
@@ -525,7 +526,7 @@ column, because a duration falling inside a bound is a match and not a proof,
 and INFERRED: the state numbers themselves, which are read off behaviour rather
 than out of an enum.
 
-VERIFIED: 4 and 5 appear on pavlov only. INFERRED: that is the bolt action --
+VERIFIED: 4 appears on pavlov only. INFERRED: that is the bolt action --
 the carbine's `rechamberTime` is 0.1 s, under two snapshot intervals, and its
 15-round clip never emptied.
 
@@ -580,8 +581,10 @@ VERIFIED: a rechamber ending writes no `weapAnim` either. Pavlov's
 `single_shot` reads 516 across the sample where `weaponstate` goes 4 to 0, and
 its `sustained_fire` never shows index 0 at all between two shots.
 
-VERIFIED: pavlov's `weaponstate` goes 3 to 4 with one snapshot between the
-samples, 328 ms to 378 ms, and its `weapAnim` 2 to 4 across the same pair.
+VERIFIED: pavlov's `weaponstate` goes 3 to 4 on consecutive samples, 50 ms
+of server time apart, and its `weapAnim` 2 to 4 across the same pair: 344 to
+408 ms on `sustained_fire` and 310 to 374 on `crouch_fire` (re-measured on
+the 2026-10-17 recapture; an earlier capture read 328 to 378).
 INFERRED: the shot's state ends and the rechamber opens within one server
 frame. That frame holds several cmds, so it does not show whether the
 rechamber waits a cmd for the state 3 exit; it does (`cod11-combat.md` 1.4).
@@ -598,45 +601,51 @@ weapon-change check when `upmove`, `wbuttons` or the byte itself moves;
 weapon and not an animscript clause, and there is nothing left here to
 explain.
 
-### Prone fire, taken on one map and refused on the other
+### Prone fire, taken on both maps
 
 VERIFIED: carentan's `prone_fire` step reads `legsAnim` 557 (index 45,
 `pb_prone_aim`) and `torsoAnim` 224 `pt_prone_shoot` across its three shots.
 That is the prone shoot pose this document previously carried as unreachable.
+VERIFIED: on the 2026-10-17 recapture pavlov's reads the same, `legsAnim` 557
+and `torsoAnim` 736 (224 with the toggle). VERIFIED: 230
+`pt_reload_prone_rifle` appears in neither capture, since neither reload ran
+prone.
 
-VERIFIED: pavlov's same step reads `legsAnim` 634 (index 122, the standing
-idle) and the standing shoot pose 253 throughout. INFERRED: the prone was
-refused there and the step recorded a standing shot under a prone label, so its
-253 is not prone evidence. VERIFIED: the crouch was taken at that same spot one
-step earlier (`legsAnim` 111). VERIFIED: 230 `pt_reload_prone_rifle` appears
-in neither capture, since neither reload ran prone.
+VERIFIED: the recapture holds the spawn point's yaw. The walk of `advance`
+ends turned (carentan 135, pavlov 45), and `idle` brings the view back to the
+spawn's facing (45, 0), where every later step holds it, at (-522.6, 1997.2,
+144.1) and (-8829.7, 10319.9, -23.6).
 
-VERIFIED: both captures' settled field lines turn the view during the still
-`idle` step after the walk while every `!input` line records yaw 0: pavlov's
-`viewangles[1]` reads -135 after `advance` and 90 from `idle` on at
-(-7440.875, 10399.125, 309.23), carentan's 0 and then -90 at (-233.41,
-1684.30, -7.87), 40 units from where its walk ended. INFERRED: that is the
-probe's stall turn, which rode past the walk until 5233cc3, a week after both
-captures. INFERRED: facing 90 on pavlov the body has a wall 15 units behind
-it. vcod's `BG_CheckProneValid` port (`pmove::check_prone`, 0x2d428) meets it
-at fraction 1/6 of the sweep 24 up behind the facing, a reach of 15 against
-the 17 (`HALF_WIDTH + 2`) it needs, and refuses at every yaw from 80 to 100;
-facing -135 it takes the prone. So the refusal is the spot and the facing,
-not the map.
+VERIFIED, first capture (in git at `c52e9606`): pavlov's `prone_fire` read
+`legsAnim` 634 (index 122, the standing idle) and the standing shoot pose 253
+throughout, with the crouch taken at the same spot one step earlier
+(`legsAnim` 111). INFERRED: the prone was refused there and the step recorded
+a standing shot under a prone label. VERIFIED: both of that capture's settled
+field lines turn the view during the still `idle` step after the walk while
+every `!input` line records yaw 0: pavlov's `viewangles[1]` reads -135 after
+`advance` and 90 from `idle` on at (-7440.875, 10399.125, 309.23), carentan's
+0 and then -90 at (-233.41, 1684.30, -7.87), 40 units from where its walk
+ended. INFERRED: that is the probe's stall turn, which rode past the walk
+until 5233cc3, a week after both captures. INFERRED: facing 90 on pavlov the
+body has a wall 15 units behind it. vcod's `BG_CheckProneValid` port
+(`pmove::check_prone`, 0x2d428) meets it at fraction 1/6 of the sweep 24 up
+behind the facing, a reach of 15 against the 17 (`HALF_WIDTH + 2`) it needs,
+and refuses at every yaw from 80 to 100; facing -135 it takes the prone. So
+the refusal was the spot and the facing, not the map.
 
 As implemented: `playerstate_combat_ab` starts the step after such a turn at
 retail's settled origin and yaw (`Step::place`), and compares `prone_fire` on
-both maps like every other step: ours lies down on carentan and stays
-standing on pavlov, as retail did.
+both maps like every other step. Against the first capture ours lay down on
+carentan and stayed standing on pavlov, as retail did.
 
 ### Neither counter in `!observed` counts shots
 
-VERIFIED: carentan's `sustained_fire` reads `shots_seen` 4 against six taps and
-six 159 events, and pavlov's `single_shot` reads `seq_delta` 3 against one tap.
+VERIFIED: carentan's `sustained_fire` reads `shots_seen` 3 against six taps and
+six 159 events (4 before the 2026-10-17 recapture), and pavlov's `single_shot` reads `seq_delta` 3 against one tap.
 INFERRED for the first: `shots_seen` counts `weaponstate` 0 -> 3 edges, and at
 carentan's 183 ms tap period against a 135 ms `fireTime` the weapon is ready
-for under one snapshot interval between shots, so two of the six edges fall
-between samples. VERIFIED for the second: one mosin shot raises three events,
+for under one snapshot interval between shots, so two or three of the six edges
+fall between samples. VERIFIED for the second: one mosin shot raises three events,
 159, then 162 `EV_RECHAMBER_WEAPON`, then 163 `EV_EJECT_BRASS`, so `seq_delta`
 is three per shot on pavlov and one per shot on carentan, whose carbine raises
 only 159.

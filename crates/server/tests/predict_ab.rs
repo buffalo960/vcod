@@ -11,6 +11,13 @@
 //! `predictor_ring_matches_the_server_step`, needed `bobCycle` on the wire
 //! before it could pass; it does now.
 //!
+//! `predictor_matches_the_uo_server_step` and
+//! `predictor_matches_the_1_5_server_step` run the same comparison on a
+//! protocol 22 and a protocol 6 sim, fed retail's own cmd streams (the
+//! `moves_ab.rs` slope captures: UO's sprint, bipod, automatic fire, mounts
+//! and cook, 1.5's moves and turns). The UO one runs at a UO install, the
+//! 1.5 one at a 1.5 or UO install.
+//!
 //! `predictor_replays_retail_slope_runs` is `playerstate_slope_ab.rs`'s
 //! rebased replay with the predictor in place of the bare mover: retail's
 //! snapshot rebuilt through `from_wire`, retail's cmds run through `run_cmd`.
@@ -30,7 +37,9 @@ use vcod_common::net::msg::{
     self, BUTTON_ADS, BUTTON_ATTACK, NULL_USERCMD, UserCmd, WBUTTON_CROUCH, WBUTTON_PRONE,
     WBUTTON_RELOAD,
 };
-use vcod_common::net::protocol::{ENTITYNUM_WORLD, PROTOCOL_V1, Protocol};
+use vcod_common::net::protocol::{
+    ENTITYNUM_WORLD, PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol,
+};
 use vcod_common::net::trajectory::Trajectory;
 use vcod_common::pmove::movers::SnapshotMovers;
 use vcod_common::pmove::predict::{self, Predicted};
@@ -66,16 +75,16 @@ fn load_world(fs: &vcod_common::pk3::Pk3Fs, map: &str) -> (CollisionWorld, Strin
 
 /// What a client decodes: the playerstate written as a delta from the null
 /// state and read back, so every field arrives at its netfield width.
-fn over_the_wire(w: &msg::PlayerState) -> msg::PlayerState {
+fn over_the_wire(p: &Protocol, w: &msg::PlayerState) -> msg::PlayerState {
     // Built once: the tree costs a debug build over 200 ms.
     static HUFF: std::sync::OnceLock<Huffman> = std::sync::OnceLock::new();
     let huff = HUFF.get_or_init(Huffman::new);
-    let null = msg::PlayerState::null(P);
+    let null = msg::PlayerState::null(p);
     let mut writer = msg::MsgWriter::new(huff);
-    msg::write_delta_playerstate(&mut writer, P, &null, w);
+    msg::write_delta_playerstate(&mut writer, p, &null, w);
     let data = writer.finish();
     let mut reader = msg::MsgReader::new(&data, huff);
-    let out = msg::read_delta_playerstate(&mut reader, P, &null);
+    let out = msg::read_delta_playerstate(&mut reader, p, &null);
     assert!(
         !reader.is_overflowed(),
         "the playerstate did not round-trip"
@@ -88,6 +97,8 @@ fn over_the_wire(w: &msg::PlayerState) -> msg::PlayerState {
 
 /// The server sim and the predictor, fed the same cmds.
 struct Run<'a> {
+    /// The wire both sides speak.
+    p: &'static Protocol,
     sim: ClientSim,
     pred: Predicted,
     world: &'a CollisionWorld,
@@ -119,12 +130,7 @@ impl Run<'_> {
     /// does.
     fn send(&mut self, template: UserCmd, dt_ms: i32) {
         if self.cmds.is_multiple_of(5) {
-            let w = over_the_wire(&self.sim.to_wire(P, 0, self.st));
-            self.pred = predict::from_wire(P, &w, Some(&self.last_cmd));
-            self.rebuilds += 1;
-            self.rebuilds_dropping +=
-                usize::from(self.pred.ps.weaponstate == pm::weapon::WEAPON_DROPPING);
-            self.rebuilds_mid_lerp += usize::from(self.pred.view_lerp_start != 0);
+            self.rebuild();
         }
         let da = self.sim.delta_angles();
         let cmd = UserCmd {
@@ -150,6 +156,20 @@ impl Run<'_> {
         self.cmds += 1;
     }
 
+    /// The predictor rebuilt from the snapshot the server would send now.
+    fn rebuild(&mut self) {
+        // The snapshot's own map into the protocol's numbering (events,
+        // `eFlags`), as `Server`'s snapshot pass runs it.
+        let mut w = self.sim.to_wire(self.p, 0, self.st);
+        vcod_server::game::wire::ps_to_protocol(self.p, &mut w);
+        let w = over_the_wire(self.p, &w);
+        self.pred = predict::from_wire(self.p, &w, Some(&self.last_cmd));
+        self.rebuilds += 1;
+        self.rebuilds_dropping +=
+            usize::from(self.pred.ps.weaponstate == pm::weapon::WEAPON_DROPPING);
+        self.rebuilds_mid_lerp += usize::from(self.pred.view_lerp_start != 0);
+    }
+
     /// `replay_moves`' per-cmd body for one client, minus what reaches past
     /// the sim (attacks, touches, anims).
     fn server_step(&mut self, cmd: &UserCmd) {
@@ -158,14 +178,15 @@ impl Run<'_> {
             return;
         }
         self.sim.update_aim(dt_ms, cmd.server_time, self.weapons);
-        for (step, dt) in pm::cmd::chop(self.st, cmd) {
+        pm::cmd::chop(self.st, cmd, |step, dt| {
             self.sim.step(
-                &step,
+                step,
                 dt,
                 Some(MoveWorld::new(self.world, &self.bodies, 0)),
                 self.weapons,
             );
-        }
+            self.sim.ps.jump_latched
+        });
         self.st = cmd.server_time;
     }
 
@@ -248,6 +269,101 @@ impl Run<'_> {
             format!("{:?}", s.view_height()),
             format!("{:?}", p.view_height()),
         );
+        // The rest of what a rebuild restores, bit for bit: a field the wire
+        // drops reads its spawn value here on the cmd after a rebuild.
+        let fbits = |v: f32| v.to_bits().to_string();
+        check(
+            "aim_spread_scale",
+            fbits(s.aim_spread_scale),
+            fbits(p.aim_spread_scale),
+        );
+        check("lean", fbits(s.lean), fbits(p.lean));
+        check(
+            "prone_direction",
+            fbits(s.prone_direction),
+            fbits(p.prone_direction),
+        );
+        check(
+            "prone_direction_pitch",
+            fbits(s.prone_direction_pitch),
+            fbits(p.prone_direction_pitch),
+        );
+        check(
+            "prone_torso_pitch",
+            fbits(s.prone_torso_pitch),
+            fbits(p.prone_torso_pitch),
+        );
+        check(
+            "movement_dir",
+            s.movement_dir.to_string(),
+            p.movement_dir.to_string(),
+        );
+        check(
+            "bob_cycle",
+            s.bob_cycle.to_string(),
+            p.bob_cycle.to_string(),
+        );
+        check(
+            "jump_origin_z",
+            fbits(s.jump_origin_z),
+            fbits(p.jump_origin_z),
+        );
+        check(
+            "ads_active",
+            s.ads_active.to_string(),
+            p.ads_active.to_string(),
+        );
+        check(
+            "grenade_time_left_ms",
+            s.grenade_time_left_ms.to_string(),
+            p.grenade_time_left_ms.to_string(),
+        );
+        check(
+            "weapon_rechamber",
+            s.weapon_rechamber.to_string(),
+            p.weapon_rechamber.to_string(),
+        );
+        check("ammo", format!("{:?}", s.ammo), format!("{:?}", p.ammo));
+        check(
+            "knockback",
+            format!("{} {}", s.knockback_ms, s.knockback_flags),
+            format!("{} {}", p.knockback_ms, p.knockback_flags),
+        );
+        check(
+            "mounted",
+            format!("{:?}", s.mounted),
+            format!("{:?}", p.mounted),
+        );
+        check(
+            "jump_penalty",
+            s.jump_penalty.to_string(),
+            p.jump_penalty.to_string(),
+        );
+        // Unread under 1.1's rules.
+        if s.rules.v15() {
+            check("view_target", fbits(s.view_target), fbits(p.view_target));
+        }
+        check(
+            "sprint",
+            format!("{} {}", s.sprinting, s.winded),
+            format!("{} {}", p.sprinting, p.winded),
+        );
+        check("fatigue", fbits(s.fatigue), fbits(p.fatigue));
+        check(
+            "last_sprint_time",
+            s.last_sprint_time.to_string(),
+            p.last_sprint_time.to_string(),
+        );
+        check(
+            "fatigue_sound_time",
+            s.fatigue_sound_time.to_string(),
+            p.fatigue_sound_time.to_string(),
+        );
+        check(
+            "mount_hint",
+            format!("{:?}", s.mount_hint),
+            format!("{:?}", p.mount_hint),
+        );
         if !self.ring {
             return self.record(bad);
         }
@@ -257,9 +373,16 @@ impl Run<'_> {
             ring.seq.to_string(),
             self.pred.ring.seq.to_string(),
         );
+        // The server's slot as the client reads it back: the protocol's id,
+        // 8 bits of it, in 1.1's numbering again.
+        let p = self.p;
         check(
             "events",
-            format!("{:?}", ring.events.map(|e| e & 0xff)),
+            format!(
+                "{:?}",
+                ring.events
+                    .map(|e| (p.event_to_v1)((p.event_from_v1)(e) & 0xff))
+            ),
             format!("{:?}", self.pred.ring.events),
         );
         check(
@@ -360,6 +483,7 @@ fn start<'a>(
         ..NULL_USERCMD
     };
     Run {
+        p: P,
         pred: predict::from_wire(P, &sim.to_wire(P, 0, t0), Some(&first)),
         sim,
         world,
@@ -558,7 +682,7 @@ fn step_side_by_side(ring: bool) {
         view,
     );
     // The client learns of the mount from the next snapshot, not from a cmd.
-    let w = over_the_wire(&run.sim.to_wire(P, 0, run.st));
+    let w = over_the_wire(P, &run.sim.to_wire(P, 0, run.st));
     run.pred = predict::from_wire(P, &w, Some(&run.last_cmd));
     run.hold(
         input(|c| {
@@ -596,6 +720,235 @@ fn step_side_by_side(ring: bool) {
         "the predictor diverged from the server's step: {:?}",
         run.counts
     );
+}
+
+// ---------------------------------------------------------------------------
+// The same side-by-side step under 1.5's and United Offensive's wires and
+// rules, driven by retail's own cmd streams.
+
+/// UO's on-foot slope captures and their maps (`moves_ab.rs`): the sprint to
+/// exhaustion and the bipod, automatic fire, and the mounts and the cook.
+const UO_RUNS: &[(&str, &str)] = &[
+    ("mp_carentan-dm-slope-8ms-sprint-uo.txt", "mp_carentan"),
+    ("mp_carentan-dm-slope-8ms-autofire-uo.txt", "mp_carentan"),
+    ("mp_foy-dm-slope-8ms-uofoot-stand.txt", "mp_foy"),
+    ("mp_foy-dm-slope-8ms-uofoot-crouch.txt", "mp_foy"),
+    ("mp_foy-dm-slope-8ms-uofoot-mount.txt", "mp_foy"),
+];
+
+enum CaptureLine {
+    Cmd(UserCmd),
+    Snap(Box<msg::PlayerState>),
+}
+
+/// A slope capture's cmds and decoded playerstates (`moves_ab.rs`' parser,
+/// less what this gate does not read).
+fn parse_capture(p: &Protocol, text: &str) -> Vec<CaptureLine> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some((kind, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let kv: BTreeMap<&str, &str> = rest
+            .split_whitespace()
+            .filter_map(|kv| kv.split_once('='))
+            .collect();
+        let int = |k: &str| -> i32 { kv[k].parse().unwrap_or_else(|_| panic!("{k} in {line}")) };
+        let pairs = |k: &str| -> Vec<(&str, i32)> {
+            kv.get(k)
+                .into_iter()
+                .flat_map(|v| v.split(','))
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    let (a, b) = s.rsplit_once(':').expect("name:value");
+                    (a, b.parse().expect("an int"))
+                })
+                .collect()
+        };
+        match kind {
+            "!cmd" => {
+                let a: Vec<i32> = kv["angles"]
+                    .split(',')
+                    .map(|x| x.parse().unwrap())
+                    .collect();
+                out.push(CaptureLine::Cmd(UserCmd {
+                    server_time: int("st"),
+                    buttons: int("buttons") as u8,
+                    wbuttons: int("wbuttons") as u8,
+                    weapon: int("weapon") as u8,
+                    angles: [a[0], a[1], a[2]],
+                    forward: int("forward") as i8,
+                    right: int("right") as i8,
+                    up: int("up") as i8,
+                    ..NULL_USERCMD
+                }));
+            }
+            "!snap" => {
+                let mut w = msg::PlayerState::null(p);
+                for (name, v) in pairs("wire") {
+                    let i = msg::PlayerState::field_index(p, name).expect(name);
+                    w.fields[i] = v;
+                }
+                for (k, v) in pairs("ammo") {
+                    w.arrays.ammo[k.parse::<usize>().unwrap()] = v as i16;
+                }
+                for (k, v) in pairs("clip") {
+                    w.arrays.ammoclip[k.parse::<usize>().unwrap()] = v as i16;
+                }
+                out.push(CaptureLine::Snap(Box::new(w)));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// One capture's cmds run on a server sim speaking `p` and on a predictor
+/// rebuilt from that sim's playerstate, mapped and round-tripped through the
+/// wire codec as a snapshot is, at every snapshot the capture holds and every
+/// fifth cmd between. The sim starts from retail's first snapshot and takes
+/// retail's `serverCursorHint` at each one, so a bipod deploys where retail's
+/// did. A field `to_wire` leaves out, or `from_wire` misreads, shows on the
+/// cmds after a rebuild (`iFatigueSoundTime` was one, coduo-movement.md 15).
+/// `Err` names the fields that differed.
+fn capture_side_by_side(
+    p: &'static Protocol,
+    fs: &vcod_common::pk3::Pk3Fs,
+    file: &str,
+    map: &str,
+) -> Result<(), String> {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/playerstate/{file}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    // The 1.5 captures predate the header; 1.5b sends 1.1's list.
+    let cs7 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("# cs7 "))
+        .unwrap_or(retail_cs7());
+    let weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
+    let (world, entities) = load_world(fs, map);
+    world.unlink_script_brushes(&entities, "dm");
+    world.set_arith(vcod_common::patch::Arith::for_protocol(p));
+    let lines = parse_capture(p, &text);
+    let first = lines
+        .iter()
+        .find_map(|l| match l {
+            CaptureLine::Snap(w) => Some(&**w),
+            CaptureLine::Cmd(_) => None,
+        })
+        .expect("a snapshot");
+    // The cmd that ran to it, as `moves_ab.rs`' `base_cmd` builds it.
+    let view = first.viewangles(p);
+    let cmd_angles = [0, 1, 2].map(|i| {
+        let da = first.field_i32(p, &format!("delta_angles[{i}]"));
+        ((view[i] * ANGLE2SHORT).round() as i32 - da) & 0xffff
+    });
+    let last_cmd = UserCmd {
+        server_time: first.field_i32(p, "commandTime"),
+        angles: cmd_angles,
+        weapon: first.field_i32(p, "weapon") as u8,
+        ..NULL_USERCMD
+    };
+    let seed = predict::from_wire(p, first, Some(&last_cmd));
+    let mut sim = ClientSim::spectator(first.origin(p), view[1], cmd_angles);
+    sim.ps.rules = pm::MoveRules::for_protocol(p);
+    sim.become_player(first.origin(p), view[1], cmd_angles);
+    sim.ps = seed.ps;
+    let t0 = seed.command_time;
+    let mut run = Run {
+        p,
+        pred: seed,
+        sim,
+        world: &world,
+        bodies: Vec::new(),
+        weapons: &weapons,
+        st: t0,
+        last_cmd,
+        view: [0; 2],
+        cmds: 0,
+        ring: true,
+        rebuilds: 0,
+        rebuilds_dropping: 0,
+        rebuilds_mid_lerp: 0,
+        prone_corrections: 0,
+        mismatches: Vec::new(),
+        counts: BTreeMap::new(),
+    };
+    run.rebuild();
+    let (mut sprinted, mut deployed, mut cooked) = (0, 0, 0);
+    for line in &lines {
+        match line {
+            CaptureLine::Snap(w) => {
+                run.sim.set_cursor_hint(
+                    w.field_i32(p, "serverCursorHint"),
+                    w.field_i32(p, "serverCursorHintVal"),
+                );
+                run.rebuild();
+            }
+            CaptureLine::Cmd(c) if c.server_time > run.st => {
+                // The capture's angles are absolute; `send` takes the view.
+                run.view = [c.angles[0], c.angles[1]];
+                run.send(*c, c.server_time - run.st);
+                sprinted += usize::from(run.sim.ps.sprinting);
+                deployed += usize::from(run.sim.ps.deployed());
+                cooked += usize::from(run.sim.ps.grenade_time_left_ms != 0);
+            }
+            CaptureLine::Cmd(_) => {}
+        }
+    }
+    println!(
+        "{file}: {} cmds, {} rebuilds, sprinting {sprinted}, deployed {deployed}, \
+         fuse armed {cooked}, {} mismatching reads {:?}",
+        run.cmds,
+        run.rebuilds,
+        run.mismatches.len(),
+        run.counts
+    );
+    for m in run.mismatches.iter().take(20) {
+        println!("  {m}");
+    }
+    assert!(run.cmds > 1000, "{file}: only {} cmds", run.cmds);
+    if run.mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{file}: {:?}", run.counts))
+    }
+}
+
+/// United Offensive's sprint, bipod, automatic fire, mounts and cook through
+/// the protocol 22 round trip. Needs `COD_DIR` at a United Offensive install.
+#[test]
+fn predictor_matches_the_uo_server_step() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let failures: Vec<String> = UO_RUNS
+        .iter()
+        .filter_map(|&(file, map)| capture_side_by_side(&PROTOCOL_V22, &fs, file, map).err())
+        .collect();
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// 1.5's jump penalty, stepped eye and prone turns through the protocol 6
+/// round trip. Needs `COD_DIR` at a 1.5 install, or a UO one (its `main/` is
+/// 1.5's).
+#[test]
+fn predictor_matches_the_1_5_server_step() {
+    let Some(fs) = vcod_common::testing::game_fs()
+        .filter(|fs| vcod_common::net::protocol::install_protocol(fs).version == 6)
+    else {
+        return;
+    };
+    let failures: Vec<String> = [
+        "mp_carentan-dm-slope-8ms-moves-1.5.txt",
+        "mp_carentan-dm-slope-8ms-turns-1.5.txt",
+    ]
+    .iter()
+    .filter_map(|file| capture_side_by_side(&PROTOCOL_V6, &fs, file, "mp_carentan").err())
+    .collect();
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +1147,7 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
 
 #[test]
 fn predictor_replays_retail_slope_runs() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let weapons = vcod_common::weapon_table::from_configstring(&fs, retail_cs7());
@@ -974,7 +1327,7 @@ fn brush_entity(
 
 #[test]
 fn predictor_rides_retail_movers() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let cs7 = retail_cs7();
@@ -1063,7 +1416,7 @@ const COPY: u32 = 171;
 /// (docs/research/cod11-movers.md 20).
 #[test]
 fn predictor_rides_a_retail_world_copy() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let cs7 = retail_cs7();

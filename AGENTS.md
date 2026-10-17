@@ -353,7 +353,8 @@ header of the fixture it produced.
   `--probe-flame` beside
   `probe_flame` (`coduo-diff.md` 19, "The flame report") and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
-  `probe_bas` and their `*end` endings have run there. On UO's mp_carentan the
+  `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
+  `probe_hqtime` and `probe_bastime` have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -462,7 +463,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   has to write: the predictor rebuilds from the snapshot each time, and a
   field left 0 replays differently from the server. A missing
   `iFatigueSoundTime` breathed on every snapshot and played rounds twice
-  (coduo-movement.md 15).
+  (coduo-movement.md 15); `predict_ab`'s 1.5 and UO side-by-side gates
+  catch the next one.
 - The stock pak set is the protocol's (`Protocol::id_pak_numbers`: 1.1
   `pak0`..`pak8`, 1.5 `pak0`..`pakf`, UO's `pakuo` ones in `uo/` too), not the install's, and a retail
   server streams a stock pak anyone asks for. A 1.5 match timeout freezes
@@ -728,7 +730,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A `trigger_lookat` is never touched; it fires off `ClientEndFrame`'s aim
   trace. A `trigger_use` is never touched either (contents 0x200000); it
   fires off the use key's aim pick. A trigger-woken thread runs on the next
-  frame's clock.
+  frame's clock. A trigger's own `"trigger"` (touch, hurt, lookat) goes
+  through `G_RunFrame`'s queue, one per entity a round
+  (`host.trigger_fires`); what retail notifies on the spot (a touch, the
+  use key, an item take, a mover's end) goes in `host.engine_notifies`
+  (`cod11-gsc-language.md`, "Engine notifies and the trigger queue").
 
 ### Script
 
