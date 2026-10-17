@@ -1,4 +1,6 @@
 # Retail CoD 1.1d dedicated server: a mount, sweep, fire and dismount of a misc_mg42.
+# Recipe, server log and the target's own cmds: mp_carentan-dm-turret-spawn-script.txt and
+# mp_carentan-dm-turret-spawn-target.txt beside this file (the recipe below is the generic one).
 # map mp_carentan, gametype probe_turret
 # turret 298 origin=1712.0,1830.0,8.0 angles=0.0,229.0,0.0
 # gunner team=allies weapon=m1carbine_mp

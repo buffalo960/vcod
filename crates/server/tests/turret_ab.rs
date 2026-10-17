@@ -151,6 +151,20 @@ struct Sample {
     /// The target's entity in the gunner's snapshot, where the capture logs
     /// it (`!victim`).
     victim: Option<Victim>,
+    /// Ours only: the target's own playerstate, as a `--probe-fall`
+    /// client's `FALL` line reads it ([`target_rows`]).
+    target_ps: Option<TargetPs>,
+}
+
+/// The fields of a `FALL` line [`target_rows`] compares.
+#[derive(Clone, Debug, Default)]
+struct TargetPs {
+    command_time: i32,
+    origin: [f32; 3],
+    velocity: [f32; 3],
+    pm_flags: i32,
+    pm_time: i32,
+    health: i32,
 }
 
 /// The target's entity as a `!victim` line prints it: `pos.trTime` less
@@ -313,7 +327,15 @@ impl Rig {
         for &(ms, cmd) in cmds {
             self.now = start + Duration::from_millis(ms as u64);
             self.gunner.pump_at(self.now);
-            self.gunner.send_frame(&cmd);
+            if self.target_cmds.is_empty() {
+                self.gunner.send_frame(&cmd);
+            } else {
+                // On retail's clock (`rig_aligned`) a cmd keeps its own
+                // stamp, so one that arrived late still runs its own ms.
+                let st = cmd.server_time;
+                let sent = common::stamped(&self.gunner, &cmd, &[st], i32::MIN, i32::MAX);
+                self.gunner.send_cmds(&sent);
+            }
         }
         let mut held = UserCmd {
             wbuttons: self.target_wbuttons,
@@ -383,6 +405,19 @@ impl Rig {
             );
         }
         let mut s = self.sample();
+        if let Some(snap) = self.target.snapshots().newest() {
+            let p = self.p;
+            let i = |n: &str| snap.ps.field_i32(p, n);
+            let f = |n: &str| f32::from_bits(i(n) as u32);
+            s.target_ps = Some(TargetPs {
+                command_time: i("commandTime"),
+                origin: [f("origin[0]"), f("origin[1]"), f("origin[2]")],
+                velocity: [f("velocity[0]"), f("velocity[1]"), f("velocity[2]")],
+                pm_flags: i("pm_flags"),
+                pm_time: i("pm_time"),
+                health: snap.ps.health(),
+            });
+        }
         if let Some(snap) = self.gunner.snapshots().newest() {
             for e in self.events.drain(snap, self.p) {
                 let event = nearest_v1(e.event);
@@ -525,6 +560,7 @@ impl Rig {
                     solid: i("solid"),
                 }
             }),
+            target_ps: None,
         }
     }
 
@@ -1401,23 +1437,35 @@ const FIXTURE_VICTIM_UO: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim-uo.txt"
 );
-const FIXTURE_SPAWN: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-spawn.txt"
-);
-const SCRIPT_FIXTURE_SPAWN: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-spawn-script.txt"
-);
-const TARGET_FIXTURE_SPAWN: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-spawn-target.txt"
-);
 const LATE_VICTIM: &[i32] = &[];
 /// [`EARLY_VICTIM_15`] for the `-spawn` capture: cmd 21551 (sent at probe
 /// ms 2089), whose yaw -101 the snapshot at 21550 reads; the 21550 sent
 /// after it is stamped below it and never runs.
 const EARLY_SPAWN: &[i32] = &[2089];
+/// The same on 1.5b: the first 35900 (16036), whose step the refused
+/// phase's 35900 already shows.
+const EARLY_SPAWN_15: &[i32] = &[16036];
+/// Cmds 21184 and 21234, whose yaws 173 and 179 the snapshots at 21200 and
+/// 21250 do not show yet (171 and 177, the cmds before them).
+const LATE_SPAWN_15: &[i32] = &[21184, 21234];
+/// The same on UO: 22101 (1536) and 22551 (1987), each followed by a cmd
+/// stamped a ms below it, whose yaws -163 and -111 the snapshots at 22100
+/// and 22550 read, and the strafe's first 35800 (15238).
+const EARLY_SPAWN_UO: &[i32] = &[1536, 1987, 15238];
+/// The strafe's 36284, which the landing at 36300 does not show: retail's
+/// body moved one cmd's way that frame and two the next.
+const LATE_SPAWN_UO: &[i32] = &[36284];
+/// [`GAPS`] for the `-spawn-uo` capture: the killing round.
+const GAPS_SPAWN_UO: &[(&str, &str)] = &[
+    (
+        "[target] impact t=31250: retail only 173@[1512.0, 1607.0",
+        UO_BONE_ARITH,
+    ),
+    (
+        "[target] impact t=31250: ours only 173@[1513.0, 1607.0",
+        UO_BONE_ARITH,
+    ),
+];
 /// The sweep's cmd 19985 (sent at ms 1733), whose view snapshot 20000
 /// does not show yet (it reads cmd 19969's -141), and two strafe cmds
 /// that reached the server behind the cmd after them and so never ran:
@@ -1509,6 +1557,12 @@ const KILLING_ROUND: &str = "the killing round meets a target the round before k
     moved by however many ms of its own cmds retail's frame ran, and the target is another \
     client whose cmd clock this capture does not carry; the -victim captures log it (the \
     target's pos.trTime) and their gates match the killing round (cod11-turrets.md 13.1)";
+const UO_BONE_ARITH: &str = "ours enters the target at x 1513.0006, a thousandth of a unit \
+    past the whole unit retail's truncation stays under, with the target's entity matching \
+    retail's and its playerstate matching the target's own log (origin, velocity, pm_time) at \
+    the kill; UO's engine stores every float variable (bsp-ibsp59-format.md, \"Patch \
+    collision on 1.5 and UO\") and the posed-bone trace (bonetrace.rs) has no stored-float \
+    arithmetic ported, which reads as that thousandth (cod11-turrets.md 13.3)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
     ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
     print, which reads as a smaller air acceleration across the face on retail; no cmd \
@@ -1810,7 +1864,7 @@ fn place_ms<'a>(mut log: impl Iterator<Item = &'a str>, num: u32) -> Option<i32>
 /// the pose a round meets is retail's (`cod11-turrets.md` 13.3).
 fn rig_aligned(
     cap: &Capture,
-    fs: impl Fn() -> Option<Pk3Fs>,
+    fs: &impl Fn() -> Option<Pk3Fs>,
     p: &'static Protocol,
     rebase_max: f32,
     place: i32,
@@ -1894,7 +1948,11 @@ fn replay(rig: &mut Rig, cap: &Capture) -> Vec<Sample> {
             .iter()
             .filter(|c| frame_of(cap, c) == Some(t))
             .map(|c| {
-                let mut cmd = UserCmd { weapon, ..c.cmd };
+                let mut cmd = UserCmd {
+                    weapon,
+                    server_time: c.st,
+                    ..c.cmd
+                };
                 for i in 0..3 {
                     cmd.angles[i] = (cmd.angles[i] + prev.delta_angles[i]) & 0xffff;
                 }
@@ -2081,6 +2139,56 @@ fn diff(cap: &Capture, ours: &[Sample], fs: &Pk3Fs) -> Vec<String> {
     rows
 }
 
+/// The target's own playerstate against its `FALL` lines on the snapshots
+/// the capture logs its entity on (`!victim`, the fire and target phases,
+/// the kill included): command time, `pm_flags`, `pm_time` and health
+/// exactly, origin and velocity to the line's print. The legs are left
+/// out: a death anim is a random draw.
+fn target_rows(cap: &Capture, log: &str, ours: &[Sample]) -> Vec<String> {
+    let ours: BTreeMap<i32, &TargetPs> = ours
+        .iter()
+        .filter(|s| {
+            cap.traces
+                .iter()
+                .any(|(_, r)| r.t == s.t && r.victim.is_some())
+        })
+        .filter_map(|s| Some((s.t, s.target_ps.as_ref()?)))
+        .collect();
+    let mut rows = Vec::new();
+    let mut compared = 0;
+    for rest in log.lines().filter_map(|l| l.strip_prefix("FALL ")) {
+        let k = kv(rest);
+        let t: i32 = k["t"].parse().expect("t=");
+        let Some(o) = ours.get(&t) else { continue };
+        compared += 1;
+        let r = TargetPs {
+            command_time: k["ct"].parse().expect("ct="),
+            origin: floats(k["origin"]),
+            velocity: floats(k["vel"]),
+            pm_flags: i32::from_str_radix(k["pm_flags"].trim_start_matches("0x"), 16)
+                .expect("pm_flags="),
+            pm_time: k["pm_time"].parse().expect("pm_time="),
+            health: k["health"].parse().expect("health="),
+        };
+        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() <= 0.001);
+        if r.command_time != o.command_time
+            || r.pm_flags != o.pm_flags
+            || r.pm_time != o.pm_time
+            || r.health != o.health
+            || !near(r.origin, o.origin)
+            || !near(r.velocity, o.velocity)
+        {
+            rows.push(format!("[target ps] t={t}: retail {r:?} ours {o:?}"));
+        }
+    }
+    // The wound and the kill each move health and pm_time.
+    assert!(
+        compared >= 2,
+        "{compared} FALL lines on the target's phases"
+    );
+    rows
+}
+
 /// Fails on any row no [`GAPS`] entry names, and on any entry that named no
 /// row, so the list cannot outlive what it excuses.
 fn finish(rows: Vec<String>, gaps: &[(&str, &str)]) {
@@ -2184,29 +2292,83 @@ fn the_victim_capture_matches_retail_on_mp_carentan() {
     finish(diff(&cap, &ours, &fs), GAPS_VICTIM);
 }
 
-#[test]
-fn the_spawn_capture_matches_retail_on_mp_carentan() {
-    if vcod_common::testing::game_fs_11().is_none() {
+/// The recipe rerun once more with the gsc logging each placement's level
+/// time and the target logging its own cmds (`--probe-fall`), as
+/// `mp_carentan-dm-turret-<tag>.txt` and its `-script` and `-target`
+/// halves: ours replays it on retail's level clock (`rig_aligned`), the
+/// target's cmds at their own stamps, and diffs every phase. `fs` is the
+/// install's paks, `None` where the capture's server is not the install's.
+fn spawn_gate(
+    tag: &str,
+    fs: impl Fn() -> Option<Pk3Fs>,
+    p: &'static Protocol,
+    early: &'static [i32],
+    late: &'static [i32],
+    gaps: &[(&str, &str)],
+) {
+    if fs().is_none() {
         return;
     }
-    let cap = Capture {
-        early: EARLY_SPAWN,
-        target_cmds: target_cmds(&read(TARGET_FIXTURE_SPAWN)),
-        ..parse(&read(FIXTURE_SPAWN))
+    let path = |half: &str| {
+        format!(
+            "{}/tests/fixtures/turret/mp_carentan-dm-turret-{tag}{half}.txt",
+            env!("CARGO_MANIFEST_DIR")
+        )
     };
-    let place = place_ms(read(SCRIPT_FIXTURE_SPAWN).lines(), 0).expect("retail's PROBE place");
-    let Some(mut rig) = rig_aligned(
-        &cap,
-        vcod_common::testing::game_fs_11,
-        &PROTOCOL_V1,
-        REBASE_MAX_VICTIM,
-        place,
-    ) else {
+    let cap = Capture {
+        early,
+        late,
+        target_cmds: target_cmds(&read(&path("-target"))),
+        ..parse(&read(&path("")))
+    };
+    let place = place_ms(read(&path("-script")).lines(), 0).expect("retail's PROBE place");
+    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
         return;
     };
     let ours = replay(&mut rig, &cap);
-    let fs = vcod_common::testing::game_fs_11().unwrap();
-    finish(diff(&cap, &ours, &fs), &[]);
+    let mut rows = diff(&cap, &ours, &fs().unwrap());
+    rows.extend(target_rows(&cap, &read(&path("-target")), &ours));
+    finish(rows, gaps);
+}
+
+#[test]
+fn the_spawn_capture_matches_retail_on_mp_carentan() {
+    spawn_gate(
+        "spawn",
+        vcod_common::testing::game_fs_11,
+        &PROTOCOL_V1,
+        EARLY_SPAWN,
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn the_spawn_capture_matches_15b_on_mp_carentan() {
+    spawn_gate(
+        "spawn-15",
+        || {
+            vcod_common::testing::game_fs().filter(|fs| {
+                vcod_server::server::install_protocol(fs).version == PROTOCOL_V6.version
+            })
+        },
+        &PROTOCOL_V6,
+        EARLY_SPAWN_15,
+        LATE_SPAWN_15,
+        &[],
+    );
+}
+
+#[test]
+fn the_spawn_capture_matches_uo_on_mp_carentan() {
+    spawn_gate(
+        "spawn-uo",
+        vcod_common::testing::uo_fs,
+        &PROTOCOL_V22,
+        EARLY_SPAWN_UO,
+        LATE_SPAWN_UO,
+        GAPS_SPAWN_UO,
+    );
 }
 
 /// [`the_victim_capture_matches_retail_on_mp_carentan`] on 1.5b.
