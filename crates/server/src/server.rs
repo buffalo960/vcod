@@ -6301,7 +6301,9 @@ impl Server {
                 let mut gametype = before.clone();
                 let next = self.rotation.rotate(&full, &mut gametype);
                 if let Some(rt) = self.script.as_mut() {
-                    rt.host.cvars.set("sv_mapRotationCurrent", &self.rotation.current);
+                    rt.host
+                        .cvars
+                        .set("sv_mapRotationCurrent", &self.rotation.current);
                 }
                 for w in self.rotation.warnings.drain(..) {
                     log::warn!("{w}");
@@ -10399,6 +10401,42 @@ mod tests {
             sv.script_cvar("g_gametype").as_deref(),
             Some("tdm"),
             "the rotated level's script still reads the value `--set` left"
+        );
+    }
+
+    /// Doc section 5.2: a script's `setCvar("sv_mapRotation", ...)` is the
+    /// rotation the next `map_rotate` runs, and the queue it leaves is
+    /// `sv_mapRotationCurrent` in the same table.
+    #[test]
+    fn a_rotation_a_script_set_drives_map_rotate() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR not at a 1.1 install: skipping");
+            return;
+        };
+        let fs = Rc::new(fs);
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_cvar("g_gametype", "dm");
+        let path = fs.resolve_map("mp_carentan").expect("map in the paks");
+        let bsp =
+            vcod_common::bsp::parse(&fs.read(&path).expect("read the bsp")).expect("parse the bsp");
+        sv.load_world(World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs).expect("load the scripts");
+        sv.script.as_mut().unwrap().host.cvars.set(
+            "sv_mapRotation",
+            "gametype tdm map mp_brecourt map mp_carentan",
+        );
+
+        sv.push_console("map_rotate");
+        sv.tick(now);
+        assert_eq!(
+            sv.cfg.map, "mp_brecourt",
+            "the script's rotation did not load"
+        );
+        assert_eq!(sv.cfg.gametype, "tdm");
+        assert_eq!(
+            sv.script_cvar("sv_mapRotationCurrent").as_deref(),
+            Some("map mp_carentan"),
         );
     }
 
