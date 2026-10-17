@@ -405,7 +405,8 @@ VERIFIED, off the capture:
   while the stalled descent was still running replaced it: the wire's new
   `trBase` z 30 is the old trajectory at the call's level time, and its
   `trDelta` z -32 is the 32 that `getorigin()` read a frame earlier. Section
-  14 has the second run that tells the two apart.
+  14 has the second run that tells the two apart, and "A blocked mover"
+  below the setup that does it.
 - **The residual yaw.** After `rotateyaw(2, 1)` and `rotateyaw(-2, 1)` the
   slab's `apos.trBase` reads `-0.0` and the pushed player drifts +x by 0.021
   a frame while it is pushed, the slab's whole push turning about the world
@@ -516,12 +517,50 @@ moves 2 units more on retail than on ours once. In the `-ents` run its
 trajectory, stalled from 36700, logs no change at 36950 and shifts again
 from 37000: it moved 72 to 70 on that pass and stalled at 70. In the first
 run every `crush` sample reads 72, and the `moveto` that resets it starts
-from 30 where ours starts from 32: the move falls between the last sample
-and the teleport. VERIFIED, the first run's wire: the player's ground reads
-1022 on every snapshot of the crush and its `commandTime` trails the
-snapshot by at most 34 ms, so a cmd relinked him on every frame. What lets
-the one frame through is not on either capture; `ride_ab.rs` holds it as
-its `reset` and `crush` gaps.
+from 30 where ours started from 32. The two have different causes.
+
+VERIFIED, game.mp `ScriptEnt_MoveAxis` (`0x606c0`) and `ScriptEntCmd_MoveTo`
+(`0x603a0`) hand `r.currentOrigin` (`ent+0x134`; `0x608a1`, `0x60554`) to
+the move setup (`0x5fb38`, called at `0x608bf` and `0x60575`) and end in
+`trap_LinkEntity` (`0x608cb`, `0x60581`). INFERRED, off the setup's
+control flow: it takes the delta to the target off `r.currentOrigin` first; then,
+when `pos.trType` is not 0, `BG_EvaluateTrajectory` writes the running
+trajectory at `level.time` into `r.currentOrigin`; `trBase` is copied from
+it, and a last evaluation of the new trajectory at `level.time` writes it
+back. VERIFIED: `ScriptEnt_RotateAxis` calls the same setup on `r.currentAngles`
+(`0x60d52`), `ScriptEntCmd_RotateVelocity` its velocity twin `0x5feb0`
+on `ent+0x140` (`0x60f24`, `0x60f45`), and `ScriptEntCmd_RotateTo` the setup at
+`0x60b3c`; each links after (`0x60d5e`, `0x60f51`, `0x60b4b`).
+`ScriptEntCmd_GravityMove` (`0x60590`) copies
+`r.currentOrigin` into `trBase` (`0x60667`) and calls no evaluation before
+it. INFERRED: `0x5feb0` evaluates a running trajectory as `0x5fb38` does;
+after a move verb on a moving entity `getorigin()`
+reads the new `trBase`, one frame further on than it read before the call
+(a stalled trajectory runs a frame ahead of where the mover holds), and the
+verb's link puts the clip there. That is the first run's 2 units: its reset
+is called a second after the teleport, while the slab, freed, still
+descends.
+
+VERIFIED, `client-probes/probe_crush.gsc` against the retail 1.1d Linux
+server, mp_carentan, 2026-10-17, the client on a jittered link
+(`VCOD_NETSIM="ping=40,jitter=70"`):
+`crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`, the slab
+held on the player for 8 s. It slips 2 units five times (72 to 62), each on
+the frame after a snapshot whose `commandTime` repeats the one before it,
+and on no other frame: those five frames ran with no cmd from the player.
+The `moveto` called in the frame of the teleport, the slab still stalled at
+62, reads `getorigin()` 60 straight after the call. INFERRED, off the push
+listing above: the blocked push leaves the player unlinked; only his next
+`ClientThink` links him, so a frame that runs before one reaches the server
+finds nobody under the slab. The `-ents` run's client logged no
+`commandTime`, so its 36950 pass is read as one such frame, not measured.
+
+vcod: the move verbs write the start into `origin` and link
+(`builtins::mover::linked`, `mover::verb_linked`), and a blocked push
+leaves the blocker unlinked as retail does. `ride_ab.rs`'s
+`a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail` replays the
+crush capture, holding the cmd back from each frame that ran without one,
+and matches every slab sample; the `-ents` run keeps its `crush` gap.
 
 ### The box test
 

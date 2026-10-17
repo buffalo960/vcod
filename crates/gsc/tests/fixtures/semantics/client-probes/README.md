@@ -2006,3 +2006,22 @@ PORT=<p> COD_DIR=<install> SECS=22 tools/run_probe.sh client-probes/probe_yawres
 The fixture is `crates/server/tests/fixtures/movers/mp_carentan-dm-yawres.txt`,
 gated by `ride_ab.rs`'s `a_rotated_brush_model_keeps_retails_quantized_angles`
 (cod11-movers.md 12, "The residual yaw").
+
+## probe_crush
+
+probe_ride's crush alone, held for 8 s: mp_carentan's bombzone_A slab `*5`
+lowered onto the first allied player, then a teleport and a `moveto` in the
+same frame. Every frame logs `PROBE f <phase> <time> <player origin> <mover
+origin>`. Run the client on a jittered link so some frames go without a cmd:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=45 \
+    tools/run_probe.sh client-probes/probe_crush mp_carentan
+# second shell, about 6 s later:
+VCOD_NETSIM="ping=40,jitter=70" cargo run -p vcod -- --net-probe 127.0.0.1:<p> \
+    --probe-ride --probe-team allies --probe-secs 34
+```
+
+The fixture is `crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`,
+gated by `ride_ab.rs`'s `a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail`
+(cod11-movers.md 12, "A blocked mover").
