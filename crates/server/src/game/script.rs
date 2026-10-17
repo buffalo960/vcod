@@ -86,6 +86,10 @@ pub struct Carry {
     /// files, so it reuses them instead of compiling again (map-cycle doc,
     /// 4.7).
     pub scripts: Option<Rc<CompiledScripts>>,
+    /// `G_InitGame`'s `Rand_Init` seed for the script's draws, a new one
+    /// every level, restarts included (map-cycle doc 4.8); `None` takes
+    /// [`crate::game::host::RNG_SEED`].
+    pub seed: Option<u64>,
 }
 
 /// The two closures a level loaded, compiled, before any of it ran.
@@ -356,6 +360,9 @@ impl ScriptRuntime {
         host.level_time_ms = now_ms;
         host.dobj_time_ms = now_ms;
         host.pers_carry = carry.pers;
+        if let Some(seed) = carry.seed {
+            host.rng = seed | 1;
+        }
         if let Some(items) = carry.items {
             host.items = items;
         }
@@ -2237,6 +2244,7 @@ impl ScriptRuntime {
             area: Some(self.host.area.clone()),
             map: self.map.clone(),
             scripts: self.scripts.clone(),
+            seed: None,
         }
     }
 

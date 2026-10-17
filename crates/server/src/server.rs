@@ -1486,6 +1486,12 @@ pub struct Server {
     outbox: Vec<(SocketAddr, Vec<u8>)>,
     limiter: RateLimiter,
     rng: u64,
+    /// The next level's script seed, `G_InitGame`'s `Rand_Init` argument:
+    /// retail passes the wall clock at every load and restart, so no level
+    /// repeats the last one's draws (map-cycle doc 4.8). `None` under
+    /// [`Server::new`], whose every level draws from `RNG_SEED`, so a test's
+    /// spawn picks hold at each level; [`Server::with_seed`] steps it.
+    level_seed: Option<u64>,
     /// The map's collision and spawn, loaded by the binary; tests run
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
@@ -1936,7 +1942,9 @@ impl Server {
     /// A server whose generator starts from a fixed seed, so a test run
     /// replays the same bot picks, script `randomInt`s and spawn choices.
     pub fn new(cfg: ServerConfig, now: Instant) -> Self {
-        Self::with_seed(cfg, now, 0x9e37_79b9_7f4a_7c15)
+        let mut sv = Self::with_seed(cfg, now, 0x9e37_79b9_7f4a_7c15);
+        sv.level_seed = None;
+        sv
     }
 
     /// `new` with the generator seeded from `seed`; the binary passes the
@@ -1976,6 +1984,7 @@ impl Server {
             outbox: Vec::new(),
             limiter: RateLimiter::new(now),
             rng: seed,
+            level_seed: Some(seed),
             world: None,
             sv_time_ms: 0,
             paused_ms: 0,
@@ -5712,7 +5721,11 @@ impl Server {
             area: carry.area.filter(|_| restart),
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
+            seed: self.level_seed,
         };
+        if let Some(seed) = self.level_seed.as_mut() {
+            *seed = vcod_common::rng::xorshift(seed) | 1;
+        }
         let fs_paks = fs.clone();
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
@@ -10710,6 +10723,35 @@ mod tests {
             sv.script_cvar("sv_mapRotationCurrent").as_deref(),
             Some("map mp_carentan"),
         );
+    }
+
+    /// Map-cycle doc 4.8: `G_InitGame` reseeds the script's generator at
+    /// every load, a restart too, so a restarted level does not replay the
+    /// last one's draws (UO hq's radio pick, coduo-diff.md 22).
+    #[test]
+    fn a_restart_reseeds_the_script_draws() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR not at 1.1 install: skipping");
+            return;
+        };
+        let fs = Rc::new(fs);
+        let now = Instant::now();
+        let mut sv = Server::with_seed(cfg(), now, 7);
+        sv.set_cvar("g_gametype", "dm");
+        let path = fs.resolve_map("mp_carentan").expect("map in paks");
+        let bsp = vcod_common::bsp::parse(&fs.read(&path).expect("read bsp")).expect("parse bsp");
+        sv.load_world(World::from_bsp(&bsp, Some(&fs)));
+        sv.load_scripts(fs).expect("load scripts");
+        let draws = |sv: &mut Server| -> Vec<i32> {
+            let host = &mut sv.script.as_mut().unwrap().host;
+            (0..4).map(|_| host.rand_int()).collect()
+        };
+        let first = draws(&mut sv);
+        let id = sv.server_id;
+        sv.push_console("map_restart");
+        sv.tick(now);
+        assert_ne!(sv.server_id, id, "the restart did not run");
+        assert_ne!(draws(&mut sv), first, "the restart replayed the draws");
     }
 
     /// Doc section 4 step 3: a `g_gametype` that moved since the level

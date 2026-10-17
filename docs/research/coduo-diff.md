@@ -2540,12 +2540,14 @@ clock ends, the defender's return and a rotation to another map:
 - **hq** (`probe_hqtime`, mp_cassino, `scr_hq_timelimit 0.5`). Nobody
   takes the radio; the time limit ends the map at 30100. The restarted
   level shows a different radio, (1903, -1314, 168) where the first showed
-  (658, -1782, 0) (VERIFIED, the captures' objective slot 0). vcod shows
-  the first level's radio again (VERIFIED, the gate's ours side). INFERRED,
-  off `hq_randomize_radioarray`'s `randomInt` and vcod's per-level
-  `GameHost` seeding `RNG_SEED`: retail's draws carry across a restart and
-  vcod's start over. `gametypes_ab` drops every hq radio's origin, as for
-  the first level's random pick.
+  (658, -1782, 0) (VERIFIED, the captures' objective slot 0). The draws
+  do not carry: `G_InitGame` reseeds `hq_randomize_radioarray`'s
+  `randomInt` from the wall clock at every load, a restart included
+  (VERIFIED, cod11-map-cycle.md 4.8). vcod used to seed every level with
+  `RNG_SEED` and showed the first radio again; the binary now steps a
+  level seed per load (`Server::with_seed`), while `Server::new`, which
+  the gates run, keeps `RNG_SEED` at every level. `gametypes_ab` drops every hq radio's origin, as for the first
+  level's random pick.
 - **bas** (`probe_bastime`, mp_foy, `scr_bas_roundlength 0.5`,
   `scr_bas_roundlimit 1`, `scr_bas_startrounddelay 5`). Nobody breaches;
   the round clock runs out with three bases a side: `GMI_DOM_TIMEEXPIRED`,

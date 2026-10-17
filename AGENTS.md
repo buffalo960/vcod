@@ -131,6 +131,9 @@ check.
   is not a regression.
 - `Server::new` seeds its RNG with a constant; only `main.rs` passes the clock
   through `Server::with_seed`. Tests that depend on spawn picks rely on that.
+  Under `new` every level's script draws start from `RNG_SEED` again; under
+  `with_seed` each load steps a fresh seed, as retail's `G_InitGame` does
+  (`cod11-map-cycle.md` 4.8).
 - Comments: one line where the code doesn't explain itself (an invariant, a
   unit or sign convention, a workaround and what it works around). Facts that
   live in a doc stay there; the comment is the pointer.

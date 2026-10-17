@@ -464,9 +464,9 @@ pub struct GameHost {
     /// (`crate::area`, combat doc 14.7).
     pub area: crate::area::AreaTree,
     /// `randomFloat`'s generator state: xorshift64*, so a draw is a real
-    /// uniform value and reproducible from a seed. Retail seeds from the
-    /// level clock; nothing here needs to match its sequence, only to be a
-    /// real draw.
+    /// uniform value and reproducible from a seed. Each level's load seeds
+    /// it anew (`Carry::seed`), as retail's `G_InitGame` seeds its LCG from
+    /// the wall clock (map-cycle doc 4.8).
     pub rng: u64,
     /// Every `logPrint` line, in order. Retail's `logPrint` writes to the
     /// server's `games_mp.log`; this is where that will come from, and it is
