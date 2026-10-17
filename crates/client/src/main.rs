@@ -342,7 +342,9 @@ struct Args {
     /// every usercmd and snapshot to
     /// `crates/server/tests/fixtures/movers/<map>-dm-legs-client.txt`, which
     /// `legs_ab.rs` replays beside the gsc's bone log. Refuses to replace the
-    /// fixture without --overwrite-fixture.
+    /// fixture without --overwrite-fixture. A `--capture-tag` starting
+    /// `torso` fires, reloads and aims on the move instead, beside
+    /// `client-probes/probe_torso`, for `torso_ab.rs`.
     #[arg(long)]
     save_legs: bool,
     /// With `--net-probe` and `--probe-team`: the shellshock capture's

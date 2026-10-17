@@ -586,7 +586,9 @@ pub fn probe(
     // with the gsc's `probe_overlap 1`.
     let mut bump = BumpProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("overlap")));
     let mut wrote_bump = false;
-    let mut legs = crate::legs_probe::LegsProbe::default();
+    // A tag starting `torso` fires and reloads on the move (probe_torso).
+    let mut legs =
+        crate::legs_probe::LegsProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("torso")));
     let mut wrote_legs = false;
     let mut shock = crate::shock_probe::ShockProbe::default();
     let mut wrote_shock = false;

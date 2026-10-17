@@ -229,9 +229,9 @@ neither axis leaves the bit as it was. VERIFIED: RTCW carries the same three
 arms in `PmoveSingle`
 (`private/reference/RTCW-MP/src/game/bg_pmove.c:3915`), which is the lineage
 `crates/common/src/pmove.rs` ports. VERIFIED: both captures carry 0x40 at
-`run_back` and at none of the other 42 poses. INFERRED: 0x80 is the walk bit and
-nothing in a CoD 1.1 usercmd can set it (see "Walk against run"), so the `walk*`
-blocks are unreachable.
+`run_back` and at none of the other 42 poses. VERIFIED: 0x80 is the ADS
+walk, which the sight sets, and the `walk*` blocks are reached through it
+(see "Walk against run").
 
 **The stop.** VERIFIED: past the movetype's selection call (0x327d8, its
 result kept in `esi`) and the bob update, 0x3282a tests the cmd's
@@ -341,22 +341,61 @@ rather than a standing back-run. Neither reading is in the code.
 ### Walk against run
 
 VERIFIED: CoD 1.1 MP has one move speed and no walk bit in the usercmd
-(`docs/protocol-1.1.md`, "Usercmd input bits"), so nothing in the input picks
-between the `walk*` and `run*` blocks. VERIFIED: retail chose the `run` family
-in every moving standing or crouched pose of both captures (94, 93, 92, 91, 84),
-and the only walk-family block it ever selected was `walkprone` (50), which
-prone reaches because there is no `runprone`. VERIFIED: holding the ads bit for
-two seconds selected the standing ads clause on both maps, `ads_stand` reading
-121 `pb_stand_ads`. The captures taken before 2026-09-02 read the plain
-standing idle 122 there, and the only difference is the usercmd's `weapon`
-byte: a probe sending 0 was holstered, so its ads bit reached no weapon.
-VERIFIED: the file's own NOTES at line 94 read "The player
-walks when they are ADS, so they can not ADS while running", and the `walkbk`
-block carries the comment "Always ADS when walking". INFERRED: `walk`, `walkbk`,
-`walkcr` and `walkcrbk` are the ADS locomotion set and are unreachable from a
-usercmd alone, so vcod parses them and never enters them: `ads` is the cmd's
-own bit since the weapon channel landed, and no clause outside the `idle`
-blocks and `EVENTS` tests it.
+(`docs/protocol-1.1.md`, "Usercmd input bits"). VERIFIED: retail chose the
+`run` family in every moving standing or crouched pose of both movement
+captures (94, 93, 92, 91, 84), and in those the only walk-family block it
+selected was `walkprone` (50), which prone reaches because there is no
+`runprone`. VERIFIED: holding the ads bit for two seconds selected the
+standing ads clause on both maps, `ads_stand` reading 121 `pb_stand_ads`.
+The captures taken before 2026-09-02 read the plain standing idle 122 there,
+and the only difference is the usercmd's `weapon` byte: a probe sending 0 was
+holstered, so its ads bit reached no weapon.
+
+VERIFIED, `game.mp.i386.so` 1.1d: `PM_Footsteps` keeps `pm_flags & 0x80` in
+`edi` (0x32490, 0x32499), and each standing and crouched arm passes the walk
+index for it: standing 5 (`walkbk`, 0x32783) or 4 (`walk`, 0x327b5) with it,
+11 or 10 without; crouched 7 (0x32745) or 6 (0x3275c) with it, 13 or 12
+without. `pm_flags` 0x80 is `PM_UpdatePlayerWalkingFlag`'s (0x33694): the
+sight held, not prone and not reloading (vcod
+`pmove::weapon::ads_pm_flags`). VERIFIED, live (retail 1.1d, 2026-10-17,
+`movers/mp_carentan-dm-legs-client-torso.txt`, step `ads_walk_fire`): walking
+forward with the sight up reads `pm_flags` 0x400a0 and `legsAnim` 573, index
+61 `pb_stand_shoot_walk_forward`, the `walk` block's default clause, at 90
+u/s. So the `walk*` blocks are the ADS locomotion the file's NOTES at line 94
+describe ("The player walks when they are ADS, so they can not ADS while
+running"), reached through the walk bit, not the usercmd. Before 2026-10-17
+vcod never entered them and ran the ADS walk on 94, the run.
+
+VERIFIED, `game.mp.i386.so` 1.5b: `PM_Footsteps` (0x24ae8) sets its walk
+local (`ebp-0x28`) when `pm_flags & 0x80` (0x24e6f) or the float at
+`ps+0x40`, `leanf`, is non-zero (0x24e82); the movetype dispatch tests that
+local (0x25307, 0x253c9). VERIFIED, `game.mp.uo.i386.so`: UO's (0x297e4)
+takes `pm_flags & 0x80` alone (0x29ba4, `ebp-0x28`, tested at 0x29eae and
+on); its lean test (0x29a2a, `ps+0x44`) sits in the bob block above.
+INFERRED: a 1.5 runner that leans plays the walk clips; no capture shows it.
+vcod: `ClientSim::footsteps_movetype_of` (`crates/server/src/spectate.rs`).
+
+### The weapon event's movetype
+
+VERIFIED, `game.mp.i386.so` 1.1d, `PmoveSingle` (0x33dfc, relocations
+resolved with `tools/re/annotate_func.py`): the main arm calls `PM_Weapon`
+(0x34331) and then `PM_Footsteps` (0x34336). The `fireweapon` and `reload`
+events `PM_Weapon` raises select their clause by the `movetype` condition,
+which only `PM_Footsteps`' selection writes, so they read the movetype the
+previous pmove left. VERIFIED, 1.5b: the main arm calls `PM_Footsteps`
+(0x28889) and then `PM_Weapon` (0x2888e); UO likewise (0x2e04e, 0x2e053).
+INFERRED: there the event reads the movetype its own pmove just wrote.
+
+VERIFIED, live (retail 1.1d, 2026-10-17, the torso capture above): the first
+shot of each moving step, sent in the first cmd that moves, writes the idle's
+fire anim: `run_fire` 253 `pt_stand_shoot`, `strafe_fire` 253,
+`crouch_run_fire` 249 `pt_crouch_shoot` and `ads_walk_fire` 251
+`pt_stand_shoot_ads`, each held for ten snapshots; the shots after it,
+while moving, write nothing (the `movetype moving` clauses are empty).
+Before 2026-10-17 vcod picked every event's clause by the movetype at the end
+of the frame, and none of those four anims played. vcod:
+`ClientSim::note_footsteps`, called after each pmove of a cmd's chop; the
+events carry the movetype it returns (`spectate::AnimEvent`).
 
 ### The turn movetypes, and what selects them
 

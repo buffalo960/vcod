@@ -1282,7 +1282,7 @@ struct Round {
     held: Option<u8>,
     switched: bool,
     /// Each event the round raised, with its cmd's `serverTime`.
-    events: Vec<(vcod_common::pmove::PmEvent, i32)>,
+    events: Vec<crate::spectate::AnimEvent>,
     last_cmd: Option<UserCmd>,
 }
 
@@ -8440,6 +8440,8 @@ impl Server {
                 frozen = sim.follow.on;
             }
             let mut raised = Vec::new();
+            // The movetype each of `raised` selects its anim by.
+            let mut raised_movetype = Vec::new();
             let mut take = None;
             if !frozen {
                 // The aim block runs once per cmd, on the whole cmd, before
@@ -8448,14 +8450,17 @@ impl Server {
                 // A hitching client's gap is simulated, not discarded: see
                 // `cmd::chop`.
                 vcod_common::pmove::cmd::chop(c.last_processed_st, &cmd, |step, dt| {
-                    raised.extend(sim.step(
+                    let events = sim.step(
                         step,
                         dt,
                         collision.map(|w| {
                             MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
                         }),
                         weapons.defs(),
-                    ));
+                    );
+                    let movetype = sim.note_footsteps(step);
+                    raised_movetype.extend(events.iter().map(|_| movetype));
+                    raised.extend(events);
                     bodies.retain(|b| b.entity != slot as u32);
                     bodies.extend(sim.body(slot as u32));
                     sim.ps.jump_latched
@@ -8573,9 +8578,12 @@ impl Server {
                 }
             }
             let alt_switch = raised.iter().any(|e| e.event == EV_WEAPON_ALT);
-            round
-                .events
-                .extend(raised.iter().map(|&e| (e, cmd.server_time)));
+            round.events.extend(
+                raised
+                    .iter()
+                    .zip(raised_movetype)
+                    .map(|(&e, m)| (e, cmd.server_time, m)),
+            );
             round.switched |= sim.ps.weapon != held;
             let t = Touched {
                 slot,

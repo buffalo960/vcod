@@ -240,8 +240,9 @@ fn clip_sums(n: usize, layers: &[ClipAt]) -> (Vec<glam::Vec4>, Vec<Vec3>, Vec<f3
         for (track, slot) in anim.tracks.iter().zip(&binding.0) {
             let Some(bi) = *slot else { continue };
             let (p, q) = track.sample(frame_pos);
+            // Signed as the loader left the track (`xanim::parse`): the
+            // sampler adds the raw keys.
             let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
-            let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
             rot[bi] += q * w;
             pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
             weight[bi] += w;
@@ -335,11 +336,11 @@ impl PoseBuffer {
                 if w[bi] <= 0.0 || r[bi] == glam::Vec4::ZERO {
                     continue;
                 }
-                // The loader keeps a track's keys on one hemisphere; across
-                // clips and nodes the sum is kept on the first one's.
-                let q = r[bi].normalize();
-                let q = if rot[bi].dot(q) < 0.0 { -q } else { q };
-                rot[bi] += q * node_weight;
+                // Raw signed sums, no hemisphere alignment: two nodes on
+                // opposite hemispheres swing the long way round, as retail's
+                // reload blend-out does (cod11-movers.md 15, "Torso over
+                // legs").
+                rot[bi] += r[bi].normalize() * node_weight;
                 pos[bi] += p[bi] / w[bi] * node_weight;
                 weight[bi] += node_weight;
             }

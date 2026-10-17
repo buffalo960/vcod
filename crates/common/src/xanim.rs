@@ -190,8 +190,12 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
         None
     };
     let nb = bone_count.div_ceil(8);
-    r.skip(nb)?; // bitset A, role unknown
-    let simple = r.take(nb)?.to_vec(); // bitset B: z-only rotation keys
+    // Bitset A: negate the track's first rotation key; bitset B: z-only keys
+    // (cod_lnxded 0x080b7160, xanim-v14-format.md, "Rotation keys as the
+    // engine rebuilds them").
+    let flip = r.take(nb)?.to_vec();
+    let simple = r.take(nb)?.to_vec();
+    let is_flipped = |i: usize| flip[i / 8] >> (i % 8) & 1 == 1;
     let is_simple = |i: usize| simple[i / 8] >> (i % 8) & 1 == 1;
     let mut names = Vec::with_capacity(bone_count);
     for _ in 0..bone_count {
@@ -214,6 +218,20 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
                 dequant(x, y, z)
             };
             rot_keys.push((f, q));
+        }
+        // The loader's sign: the flagged first key negated, then each key
+        // put on its predecessor's hemisphere, so the track's keys run
+        // continuously from a sign the file chose. The sampler sums them
+        // raw, so the sign shows wherever two tracks blend.
+        if is_flipped(i)
+            && let Some((_, q)) = rot_keys.first_mut()
+        {
+            *q = -*q;
+        }
+        for k in 1..rot_keys.len() {
+            if rot_keys[k].1.dot(rot_keys[k - 1].1) < 0.0 {
+                rot_keys[k].1 = -rot_keys[k].1;
+            }
         }
         let tc = r.u16()? as u32;
         ensure!(
@@ -317,7 +335,7 @@ mod tests {
         d.extend(2u16.to_le_bytes()); // bone_count
         d.push(0); // flags
         d.extend(30u16.to_le_bytes()); // framerate
-        d.push(0b00); // bitset A (ignored)
+        d.push(0b00); // bitset A: no first key negated
         d.push(0b10); // bitset B: bone 1 simple
         d.extend(b"full\0simp\0");
         // bone 0: rot_count 2 with index list [0, 2]
@@ -362,6 +380,21 @@ mod tests {
         assert_eq!(a.tracks[1].rot_keys[2].0, 2);
         assert!(a.tracks[1].trans_keys.is_empty());
         assert_eq!(a.notes, vec![("fire".to_string(), 2)]);
+    }
+
+    /// Bitset A negates a track's first key, and the keys after it follow
+    /// it onto that hemisphere: the sampler sums them signed.
+    #[test]
+    fn bitset_a_negates_the_first_key_and_the_track_follows() {
+        let mut d = fixture();
+        assert_eq!(d[9], 0b00);
+        d[9] = 0b01;
+        let a = parse("flip", &d).unwrap();
+        let k = &a.tracks[0].rot_keys;
+        assert_eq!(k[0].1, -Quat::IDENTITY);
+        let q = -Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        assert!(k[1].1.abs_diff_eq(q, 1e-3), "{:?}", k[1].1);
+        assert!(a.tracks[1].rot_keys[0].1.w > 0.0);
     }
 
     #[test]
