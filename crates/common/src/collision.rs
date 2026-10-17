@@ -13,7 +13,7 @@ use crate::patch::{Arith, PatchCollide, Sweep};
 use crate::terrain::{CapsuleSweep, Terrain};
 use glam::Vec3;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 /// Shared with the xmodel collision surfaces, which use the same bits.
 pub const CONTENTS_SOLID: u32 = 0x1;
@@ -175,7 +175,8 @@ pub enum Pusher {
 /// `start + fraction * delta` off the unshifted start, rounded once
 /// (0x8056887-0x80568c4). On a clear trace that is not `end` in the last
 /// bit (docs/research/cod11-player-clip.md 8.9). 1.5b's (0x805aba1) also
-/// stores the shifted end (0x805acdd), under [`Arith::Stored`].
+/// stores the shifted end (0x805acdd), under [`Arith::Stored`]; the Windows
+/// clients keep it (CoDMP15.exe 0x4264d6, cod15-movement.md 8).
 pub fn cm_endpos(
     start: Vec3,
     end: Vec3,
@@ -188,7 +189,7 @@ pub fn cm_endpos(
     let f = f64::from(fraction);
     let axis = |s: f32, e: f32, o: f32| {
         let shifted = s + o;
-        let delta = (arith.var(f64::from(e) + f64::from(o)) - f64::from(shifted)) as f32;
+        let delta = (arith.gcc_var(f64::from(e) + f64::from(o)) - f64::from(shifted)) as f32;
         (f64::from(s) + f * f64::from(delta)) as f32
     };
     Vec3::new(
@@ -390,10 +391,13 @@ fn clip_brush_capsule(
     let mut allsolid = true;
     let mut lead: Option<(Vec3, usize)> = None;
     // One side's distances; `false` when the side rules the brush out.
+    // The Windows clients store `d1`, the enter path's gap and both
+    // fractions only (CoDMP15.exe 0x424fc0, cod15-movement.md 8).
+    let gcc = |x: f64| arith.gcc_var(x);
     let mut side = |d1: f64, d2: f64, normal: Vec3, k: usize| -> bool {
-        let (d1, d2) = (var(d1), var(d2));
-        let gap = var(d1 - d2);
+        let (d1, d2) = (var(d1), gcc(d2));
         if d1 <= 0.0 {
+            let gap = gcc(d1 - d2);
             if d2 > 0.0 {
                 allsolid = false;
                 if leave * gap < d1 {
@@ -405,17 +409,18 @@ fn clip_brush_capsule(
             }
             return true;
         }
+        let gap = var(d1 - d2);
         if d2 > 0.0 {
             if gap <= 0.0 || d(SURFACE_CLIP_EPSILON) <= d2 {
                 return false;
             }
             allsolid = false;
         }
-        let back = var(d1 - d(SURFACE_CLIP_EPSILON));
+        let back = gcc(d1 - d(SURFACE_CLIP_EPSILON));
         if d(enter) * gap < back {
             let e = back / gap;
             enter = e as f32;
-            if leave <= var(e) {
+            if leave <= gcc(e) {
                 return false;
             }
             lead = Some((normal, k));
@@ -436,14 +441,27 @@ fn clip_brush_capsule(
         }
     }
     for (k, &(n, dist)) in planes.iter().enumerate().skip(6) {
-        let pushed = d(dist + r);
         let toward = if crate::x87::dot(n, sphere) > 0.0 {
             -sphere
         } else {
             sphere
         };
-        let at = |p: [f32; 3]| crate::x87::dot(n, Vec3::from(p) + toward) - pushed;
-        if !side(at(sw.start), at(sw.end), n, k) {
+        // Windows keeps the pushed distance and the shifted start on the
+        // stack and stores only the shifted end (CoDMP15.exe 0x4251c7,
+        // 0x4251fb, 0x42521e).
+        let msvc = arith == Arith::Msvc;
+        let pushed = if msvc { d(dist) + d(r) } else { d(dist + r) };
+        let d1 = if msvc {
+            let (p, n) = (
+                Vec3::from(sw.start).as_dvec3() + toward.as_dvec3(),
+                n.as_dvec3(),
+            );
+            (n.x * p.x + n.y * p.y) + n.z * p.z - pushed
+        } else {
+            crate::x87::dot(n, Vec3::from(sw.start) + toward) - pushed
+        };
+        let d2 = crate::x87::dot(n, Vec3::from(sw.end) + toward) - pushed;
+        if !side(d1, d2, n, k) {
             return;
         }
     }
@@ -577,11 +595,11 @@ fn expand_brush(planes: &[(Vec3, f32)], radius: f32, out: &mut Vec<(Vec3, f32)>)
 
 /// Whether a sweep reaches `patch`'s clip at all: a position test always
 /// does, a moving sweep when its bounds meet the patch's box.
-fn patch_meets(start: Vec3, end: Vec3, capsule: Capsule, patch: &WorldPatch, stored: bool) -> bool {
+fn patch_meets(start: Vec3, end: Vec3, capsule: Capsule, patch: &WorldPatch, arith: Arith) -> bool {
     if start == end {
         return true;
     }
-    let collide = patch.clip(stored);
+    let collide = patch.clip(arith);
     let (lo, hi) = (collide.mins, collide.maxs);
     let (s, e) = (
         (start + capsule.center).to_array(),
@@ -601,18 +619,18 @@ fn patch_meets(start: Vec3, end: Vec3, capsule: Capsule, patch: &WorldPatch, sto
 /// reads `startsolid`. A moving trace reaches the clip only when its bounds
 /// meet the patch's box, the grid's grown by a unit (0x8054c48 at
 /// 0x80556e9). A hit replaces the trace's only when it is strictly closer,
-/// retail's `enterFrac < tw->trace.fraction`. `stored` picks 1.5b's
-/// build of the patch.
+/// retail's `enterFrac < tw->trace.fraction`. `arith` picks the build of
+/// the patch and of its trace.
 fn clip_patch(
     trace: &mut Trace,
     start: Vec3,
     end: Vec3,
     capsule: Capsule,
     patch: &WorldPatch,
-    stored: bool,
+    arith: Arith,
     prim: Prim,
 ) {
-    let collide = patch.clip(stored);
+    let collide = patch.clip(arith);
     let sweep = if capsule.radius == 0.0 {
         Sweep::Point
     } else {
@@ -631,11 +649,10 @@ fn clip_patch(
         }
         return;
     }
-    if !patch_meets(start, end, capsule, patch, stored) {
+    if !patch_meets(start, end, capsule, patch, arith) {
         return;
     }
     let (s, e) = (s.to_array(), e.to_array());
-    let arith = if stored { Arith::Stored } else { Arith::Kept };
     let Some(hit) = collide.trace(s, e, sweep, trace.fraction, arith) else {
         return;
     };
@@ -773,7 +790,7 @@ pub struct CollisionWorld {
     any_instance: AtomicBool,
     /// Terrain point traces and patches take 1.5b's and United
     /// Offensive's arithmetic ([`Self::set_arith`]).
-    stored_arith: AtomicBool,
+    arith: AtomicU8,
 }
 
 /// One entity's copy of a submodel: its pose and `r.contents`, which a
@@ -873,7 +890,7 @@ impl Clone for CollisionWorld {
                     .clone(),
             ),
             any_instance: AtomicBool::new(self.any_instance.load(Ordering::Acquire)),
-            stored_arith: AtomicBool::new(self.stored_arith.load(Ordering::Acquire)),
+            arith: AtomicU8::new(self.arith.load(Ordering::Acquire)),
         }
     }
 }
@@ -886,6 +903,9 @@ pub struct WorldPatch {
     /// The same patch in 1.5b's and United Offensive's arithmetic
     /// ([`Arith::Stored`]), where that builds it differently.
     pub stored: Option<PatchCollide>,
+    /// The same patch as the Windows clients build it ([`Arith::Msvc`]),
+    /// where that differs from `collide`.
+    pub msvc: Option<PatchCollide>,
     pub content_flags: u32,
     pub surface_flags: u32,
     /// Its record's index among lump 24's patches, for `describe`.
@@ -895,12 +915,14 @@ pub struct WorldPatch {
 }
 
 impl WorldPatch {
-    /// The build a trace clips: 1.5b's when `stored` and it differs.
-    pub fn clip(&self, stored: bool) -> &PatchCollide {
-        match &self.stored {
-            Some(s) if stored => s,
-            _ => &self.collide,
-        }
+    /// The build a trace under `arith` clips.
+    pub fn clip(&self, arith: Arith) -> &PatchCollide {
+        let other = match arith {
+            Arith::Kept => None,
+            Arith::Stored => self.stored.as_ref(),
+            Arith::Msvc => self.msvc.as_ref(),
+        };
+        other.unwrap_or(&self.collide)
     }
 }
 
@@ -1234,8 +1256,10 @@ impl CollisionWorld {
             };
             let stored = PatchCollide::generate_as(w, h, part.tolerance, &points, Arith::Stored)
                 .filter(|s| !s.same_clip(&collide));
+            let msvc = PatchCollide::generate_as(w, h, part.tolerance, &points, Arith::Msvc)
+                .filter(|s| !s.same_clip(&collide));
             let (mut lo, mut hi) = (collide.mins, collide.maxs);
-            if let Some(s) = &stored {
+            for s in stored.iter().chain(&msvc) {
                 for k in 0..3 {
                     lo[k] = lo[k].min(s.mins[k]);
                     hi[k] = hi[k].max(s.maxs[k]);
@@ -1252,6 +1276,7 @@ impl CollisionWorld {
             patches.push(WorldPatch {
                 collide,
                 stored,
+                msvc,
                 content_flags: mat.content_flags,
                 surface_flags: mat.surface_flags,
                 index: index as u32,
@@ -1385,28 +1410,28 @@ impl CollisionWorld {
             any_copy: AtomicBool::new(false),
             instances: RwLock::new(Vec::new()),
             any_instance: AtomicBool::new(false),
-            stored_arith: AtomicBool::new(false),
+            arith: AtomicU8::new(Arith::Kept as u8),
         }
     }
 
-    /// Which engine build's arithmetic terrain point traces and patches
-    /// follow: 1.1d's, or 1.5b's and United Offensive's
-    /// ([`Arith::Stored`]), whose unoptimized code stores every float
-    /// variable. A terrain point trace then takes
+    /// Which engine build's arithmetic every trace follows: 1.1d's, 1.5b's
+    /// and United Offensive's ([`Arith::Stored`]), whose unoptimized code
+    /// stores every float variable, or the Windows clients'
+    /// ([`Arith::Msvc`]). Under `Stored` a terrain point trace takes
     /// `Terrain::point_clip_stored`, and every trace clips each patch as
-    /// that build makes it, which leaves cracks along other facet seams
+    /// its build makes it, which leaves cracks along other facet seams
     /// (docs/research/bsp-ibsp59-format.md, "Patch collision on 1.5 and
     /// UO").
     pub fn set_arith(&self, arith: Arith) {
-        self.stored_arith
-            .store(arith == Arith::Stored, Ordering::Release);
+        self.arith.store(arith as u8, Ordering::Release);
     }
 
-    fn arith(&self) -> Arith {
-        if self.stored_arith.load(Ordering::Acquire) {
-            Arith::Stored
-        } else {
-            Arith::Kept
+    /// The build every trace runs as ([`Self::set_arith`]).
+    pub fn arith(&self) -> Arith {
+        match self.arith.load(Ordering::Acquire) {
+            x if x == Arith::Stored as u8 => Arith::Stored,
+            x if x == Arith::Msvc as u8 => Arith::Msvc,
+            _ => Arith::Kept,
         }
     }
 
@@ -2596,9 +2621,8 @@ impl CollisionWorld {
                         && self.patches[p as usize].model == 0 =>
                 {
                     let patch = &self.patches[p as usize];
-                    let stored = self.stored_arith.load(Ordering::Acquire);
                     if patch.content_flags & sw.mask != 0
-                        && patch_meets(sw.start, sw.end, sw.capsule, patch, stored)
+                        && patch_meets(sw.start, sw.end, sw.capsule, patch, self.arith())
                     {
                         walk.patch_met.set(true);
                         return;
@@ -2673,8 +2697,7 @@ impl CollisionWorld {
                 if patch.content_flags & mask == 0 || !self.model_clips(patch.model, sw) {
                     return;
                 }
-                let stored = self.stored_arith.load(Ordering::Acquire);
-                clip_patch(trace, start, end, capsule, patch, stored, prim);
+                clip_patch(trace, start, end, capsule, patch, self.arith(), prim);
             }
             Prim::Model(t) => {
                 let mt = &self.model_tris[t as usize];
@@ -2782,7 +2805,7 @@ impl CollisionWorld {
                 return;
             }
             let (s, e) = (s.to_array(), e.to_array());
-            let hit = if self.stored_arith.load(Ordering::Acquire) {
+            let hit = if self.arith() == Arith::Stored {
                 self.terrain.point_clip_stored(&tp, s, e, trace.fraction)
             } else {
                 self.terrain.point_clip(&tp, s, e, trace.fraction)
@@ -4002,7 +4025,7 @@ mod tests {
                             end,
                             capsule,
                             &world.patches[i as usize],
-                            false,
+                            Arith::Kept,
                             *prim,
                         );
                     }

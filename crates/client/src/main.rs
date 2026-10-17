@@ -754,15 +754,10 @@ struct LivePhase {
 
 /// The live phase off `bsp`, with the weapons configstring 7 (`weapons_cs`)
 /// names read off `fs`.
-fn live_phase(
-    fs: &Pk3Fs,
-    bsp: &bsp::Bsp,
-    protocol: &'static net::protocol::Protocol,
-    weapons_cs: &str,
-) -> Phase {
+fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, weapons_cs: &str) -> Phase {
     let world = collision::CollisionWorld::build(bsp, &props::collision_tris(fs, &bsp.entities));
-    // Predict what the protocol's Linux server computes.
-    world.set_arith(vcod_common::patch::Arith::for_protocol(protocol));
+    // Predict as the retail Windows client does, not as the server.
+    world.set_arith(vcod_common::patch::Arith::for_client());
     // A brush model clips only through its snapshot entity
     // (`pmove::movers::SnapshotMovers::place`), as retail's cgame meets it.
     for model in 1..world.model_count() {
@@ -1833,16 +1828,12 @@ fn read_map(fs: &Pk3Fs, map: &str) -> Result<bsp::Bsp> {
 
 /// The serverinfo's map and a fresh live phase off `fs`: the CPU half of
 /// [`App::reload_live_map`].
-fn reread_live_map(
-    fs: &Pk3Fs,
-    configstrings: &[String],
-    protocol: &'static net::protocol::Protocol,
-) -> Result<(bsp::Bsp, Phase)> {
+fn reread_live_map(fs: &Pk3Fs, configstrings: &[String]) -> Result<(bsp::Bsp, Phase)> {
     let cs = |i: usize| configstrings.get(i).map_or("", String::as_str);
     let map = net::info_value_for_key(cs(0), "mapname")
         .context("the server sent no mapname in its serverinfo")?;
     let bsp = read_map(fs, map)?;
-    let phase = live_phase(fs, &bsp, protocol, cs(7));
+    let phase = live_phase(fs, &bsp, cs(7));
     Ok((bsp, phase))
 }
 
@@ -1866,7 +1857,7 @@ fn load_map(
     if let Some(window) = window {
         window.set_title(title);
     }
-    let phase = live_phase(fs, &bsp, net.protocol(), net.configstring(7));
+    let phase = live_phase(fs, &bsp, net.configstring(7));
     r.load_world(&bsp, fs)?;
     if let Phase::Live(live) = &phase {
         r.set_hud_weapons(Some(&live.weapons));
@@ -3201,7 +3192,7 @@ impl App {
         else {
             return Ok(());
         };
-        let (bsp, live) = reread_live_map(&self.fs, net.configstrings(), net.protocol())?;
+        let (bsp, live) = reread_live_map(&self.fs, net.configstrings())?;
         *phase = live;
         self.audio
             .set_ambient(&self.fs, net::info_value_for_key(net.configstring(3), "n"));
@@ -6704,9 +6695,8 @@ mod tests {
 
         let mut cs = vec![String::new(); 8];
         cs[0] = "\\mapname\\mp_carentan".into();
-        let proto = &net::protocol::PROTOCOL_V1;
         let models = |fs: &Pk3Fs| {
-            let (bsp, phase) = reread_live_map(fs, &cs, proto).unwrap();
+            let (bsp, phase) = reread_live_map(fs, &cs).unwrap();
             let Phase::Live(live) = phase else {
                 panic!("not live")
             };
