@@ -958,6 +958,7 @@ fn player_view<'a>(
         max_health: ps.max_health(),
         eflags,
         weapon: f.weapons.get(weapon).and_then(Option::as_ref),
+        weapon_index: weapon,
         name_weapon: f.weapons.get(name_weapon).and_then(Option::as_ref),
         ammo_weapon: f.weapons.get(ammo_weapon).and_then(Option::as_ref),
         turret: f.turret_weapon.and_then(|w| f.weapons.get(w)?.as_ref()),

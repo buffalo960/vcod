@@ -150,7 +150,7 @@ something, the bullet links it.
   with the game type, map, host name and address, the objective, the
   team banners leading team first with their totals and average ping,
   rows in the server's order with status icons and your own row lit,
-  and the scroll bar with page keys and wheel once it overflows
+  and the scroll bar with page keys, wheel and `weapnext`/`weapprev` once it overflows
   ([cod11-hud-protocol.md](research/cod11-hud-protocol.md) 3.1).
 - The stock quick message menu (`V`): commands, statements and responses
   go to the gametype script, which plays the voice line and sends the team
@@ -196,7 +196,7 @@ something, the bullet links it.
   the gun turns with it; on 1.5 the view jitters as the gun fires, on UO
   the eye sways and shakes and a hit does not kick it.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
-  health, ammo, stance, compass with objectives and teammates, use hints, hit
+  health, ammo, stance, compass with objectives and teammates, use hints with retail's pick-up and swap lines, hit
   direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
   elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
   icons over players. A spectator following someone sees their HUD, weapon

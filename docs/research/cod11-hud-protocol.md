@@ -2291,8 +2291,40 @@ fill (`0x30025792`..`0x30025899`): the string goes through the
 (`0x3003e9b0`) and searched for `[%s]`, and the original up to the `[`,
 `+activate`'s key text (`0x3006186c`, through `0x30046940`) or, when that
 reads unbound, `KEY_USE` localized (`0x30063160`, key.str `"use"`), and the
-original from the `]` on are joined. The weapon hints'
-own composed sentence is not modelled.
+original from the `]` on are joined.
+
+The cgame's own sentences. VERIFIED, `0x300251f0` and `cgame.str`: the
+weapon branch loads `CGAME_PICKUPNEWWEAPON` ("Hold USE [%s] to pick up
+the %s", `0x3002548c`) and `CGAME_SWAPWEAPONS` ("Hold USE [%s] to swap")
+with `CGAME_FOR` and `"%s %s %s %s"` (`0x300253c1`..`0x30025410`), the
+ammo branch `CGAME_PICKUPAMMO` ("Press USE [%s] to pickup the %s ammo",
+`0x3002560d`) and the hint 7 branch `CGAME_PICKUPHEALTH` ("Press USE [%s]
+to pickup health", `0x30025942`); each takes `+activate`'s key text from
+`0x30046940`, which writes the localized `KEY_UNBOUND` for an unbound
+command (no `KEY_USE` fallback on these paths). VERIFIED: the names come
+from `0x301a69e4 + 0x198 * w`, the field the weapon name draws
+(`0x30023c30`).
+
+INFERRED, off the branches: a weapon hint (10..73, weapon `hint - 9`) and
+an ammo hint (74..137, weapon `hint - 73`) never read the server's
+string; hint 7 reads it first and prints its own sentence only when none
+is sent. For a weapon, `0x3000f680` (weapon, predicted ps) returns a free
+slot: for slot type 1 or 2 (def `+0x78`) `weaponslots[1]` or `[2]` when
+empty, for 3..5 the type's own slot, else 0. With one, the pick-up string
+has the key text spliced between its brackets (an unfolded `strstr` of
+`"[%s]"`, `0x3002549d`) and then formats the name. Without one the old
+weapon is the predicted `ps.weapon` (`0x3020720c`) when its slot type is
+the new weapon's, else `weaponslots[type]` (`0x30207470`); when that is
+the hinted weapon the function leaves (`0x300253bb`, `0x30025426`) ahead
+of the icon draw at `0x300259d7`, so nothing is drawn. Otherwise the line
+is the swap string formatted with the key text, the old name, `for` and
+the new name. Ammo splices and formats as the pick-up does; health formats
+the key text in. Each line is placed as the server's string is. VERIFIED:
+1.5's `0x30026560` holds the same compares (`0x3002669b`, `0x30026c96`)
+and string loads; UO's `0x300303a0` the same with its numbering (weapons
+11..138 at `0x300304eb`, ammo 139..266 at `0x3003078d`, health 8 at
+`0x30030ae9`; slot types 1..7 in `0x30011520`). vcod:
+`hud::player::hint_text`.
 
 ### Damage direction
 
