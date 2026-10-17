@@ -1,0 +1,1201 @@
+# Retail CoD 1.1d dedicated server: a blocked brush model mover and a client whose cmds miss frames.
+# map mp_carentan, gametype dm (served as probe_crush), one client joined allies, 2026-10-17.
+# Two shells, the gsc probe first, then the client about 6 s later:
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=32321 SECS=45 \
+#       tools/run_probe.sh client-probes/probe_crush mp_carentan
+#   VCOD_NETSIM="ping=40,jitter=70" cargo run -p vcod -- --net-probe 127.0.0.1:32321 \
+#       --probe-ride --probe-team allies --probe-secs 34
+# probe_crush.gsc lowers model *5's slab (entity 177) onto the standing player and holds
+# it there 8 s, then teleports him away and sends the slab home with a moveto in the same
+# frame. The PROBE lines are the server half, one per frame of a phase. The rest is the
+# client half from --probe-ride, from lift to done: a RIDE line per snapshot received (the
+# jittered link drops some) and a line per trajectory change of entity 177. A snapshot
+# whose ct equals the one before it ran a frame with no cmd from the player.
+# docs/research/cod11-movers.md 12, "A blocked mover", is what it measured.
+PROBE player 0
+PROBE at lift 11600
+PROBE f lift 11600 (-215.00, 2430.00, -31.88) (0.00, 0.00, 0.00)
+PROBE f lift 11650 (-215.00, 2430.00, -31.88) (0.00, 0.00, 0.00)
+PROBE f lift 11700 (-215.00, 2430.00, -31.88) (0.00, 0.00, 8.00)
+PROBE f lift 11750 (-215.00, 2430.00, -31.88) (0.00, 0.00, 16.00)
+PROBE f lift 11800 (-215.00, 2430.00, -31.88) (0.00, 0.00, 24.00)
+PROBE f lift 11850 (-215.00, 2430.00, -31.88) (0.00, 0.00, 32.00)
+PROBE f lift 11900 (-215.00, 2430.00, -31.88) (0.00, 0.00, 40.00)
+PROBE f lift 11950 (-215.00, 2430.00, -31.88) (0.00, 0.00, 48.00)
+PROBE f lift 12000 (-215.00, 2430.00, -31.88) (0.00, 0.00, 56.00)
+PROBE f lift 12050 (-215.00, 2430.00, -31.88) (0.00, 0.00, 64.00)
+PROBE f lift 12100 (-215.00, 2430.00, -31.88) (0.00, 0.00, 72.00)
+PROBE f lift 12150 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12200 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12250 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12300 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12350 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12400 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12450 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12500 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f lift 12550 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f over 12600 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f over 12650 (-215.00, 2430.00, -31.88) (0.00, 0.00, 80.00)
+PROBE f over 12700 (-215.00, 2430.00, -31.88) (0.00, -4.80, 80.00)
+PROBE f over 12750 (-215.00, 2430.00, -31.88) (0.00, -9.60, 80.00)
+PROBE f over 12800 (-215.00, 2430.00, -31.88) (0.00, -14.40, 80.00)
+PROBE f over 12850 (-215.00, 2430.00, -31.88) (0.00, -19.20, 80.00)
+PROBE f over 12900 (-215.00, 2430.00, -31.88) (0.00, -24.00, 80.00)
+PROBE f over 12950 (-215.00, 2430.00, -31.88) (0.00, -28.80, 80.00)
+PROBE f over 13000 (-215.00, 2430.00, -31.88) (0.00, -33.60, 80.00)
+PROBE f over 13050 (-215.00, 2430.00, -31.88) (0.00, -38.40, 80.00)
+PROBE f over 13100 (-215.00, 2430.00, -31.88) (0.00, -43.20, 80.00)
+PROBE f over 13150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f over 13550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE at crush 13600
+PROBE f crush 13600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f crush 13650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 80.00)
+PROBE f crush 13700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 78.00)
+PROBE f crush 13750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 76.00)
+PROBE f crush 13800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 74.00)
+PROBE f crush 13850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 13900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 13950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 72.00)
+PROBE f crush 14350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 14950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 15000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 15050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 15100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 15150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 70.00)
+PROBE f crush 15200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 15950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 16950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 17000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 17050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 68.00)
+PROBE f crush 17100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 17950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 66.00)
+PROBE f crush 18350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 64.00)
+PROBE f crush 18900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 18950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 19950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20600 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20650 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20700 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20750 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20800 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20850 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20900 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 20950 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21000 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21050 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21100 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21150 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21200 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21250 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21300 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21350 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21400 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21450 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21500 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE f crush 21550 (-215.00, 2430.00, -31.88) (0.00, -48.00, 62.00)
+PROBE at reset 21600
+PROBE f reset 21600 (-512.00, 2688.00, -15.00) (0.00, -48.00, 60.00)
+PROBE f reset 21650 (-512.00, 2688.00, -15.71) (0.00, -48.00, 60.00)
+PROBE f reset 21700 (-512.00, 2688.00, -23.18) (0.00, -45.60, 56.90)
+PROBE f reset 21750 (-512.00, 2688.00, -23.87) (0.00, -43.20, 53.80)
+PROBE f reset 21800 (-512.00, 2688.00, -23.87) (0.00, -40.80, 50.70)
+PROBE f reset 21850 (-512.00, 2688.00, -23.87) (0.00, -38.40, 47.60)
+PROBE f reset 21900 (-512.00, 2688.00, -23.87) (0.00, -36.00, 44.50)
+PROBE f reset 21950 (-512.00, 2688.00, -23.87) (0.00, -33.60, 41.40)
+PROBE f reset 22000 (-512.00, 2688.00, -23.87) (0.00, -31.20, 38.30)
+PROBE f reset 22050 (-512.00, 2688.00, -23.87) (0.00, -28.80, 35.20)
+PROBE f reset 22100 (-512.00, 2688.00, -23.87) (0.00, -26.40, 32.10)
+PROBE f reset 22150 (-512.00, 2688.00, -23.87) (0.00, -24.00, 29.00)
+PROBE f reset 22200 (-512.00, 2688.00, -23.87) (0.00, -21.60, 25.90)
+PROBE f reset 22250 (-512.00, 2688.00, -23.87) (0.00, -19.20, 22.80)
+PROBE f reset 22300 (-512.00, 2688.00, -23.87) (0.00, -16.80, 19.70)
+PROBE f reset 22350 (-512.00, 2688.00, -23.87) (0.00, -14.40, 16.60)
+PROBE f reset 22400 (-512.00, 2688.00, -23.87) (0.00, -12.00, 13.50)
+PROBE f reset 22450 (-512.00, 2688.00, -23.87) (0.00, -9.60, 10.40)
+PROBE f reset 22500 (-512.00, 2688.00, -23.87) (0.00, -7.20, 7.30)
+PROBE f reset 22550 (-512.00, 2688.00, -23.87) (0.00, -4.80, 4.20)
+PROBE f reset 22600 (-512.00, 2688.00, -23.87) (0.00, -2.40, 1.10)
+PROBE f reset 22650 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 22700 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 22750 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 22800 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 22850 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 22900 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 22950 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23000 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23050 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23100 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23150 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23200 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23250 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23300 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23350 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23400 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23450 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23500 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE f reset 23550 (-512.00, 2688.00, -23.87) (0.00, 0.00, 0.00)
+PROBE done 23600
+RIDE t=11100 ct=11050 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11100 ct=11050 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11100 ct=11050 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11100 ct=11050 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11100 ct=11050 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11150 ct=11100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11150 ct=11100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11150 ct=11100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11200 ct=11149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11200 ct=11149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11200 ct=11149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11200 ct=11149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11250 ct=11166 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11300 ct=11200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11300 ct=11200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11300 ct=11200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11300 ct=11200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11300 ct=11200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11350 ct=11250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11350 ct=11250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11400 ct=11316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11400 ct=11316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11450 ct=11365 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11450 ct=11365 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11450 ct=11365 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11450 ct=11365 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11500 ct=11400 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11500 ct=11400 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11500 ct=11400 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11500 ct=11400 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11550 ct=11466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11550 ct=11466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11550 ct=11466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11650 ct=11566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11700 ct=11582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11700 ct=11582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11700 ct=11582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11800 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11800 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11850 ct=11747 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11950 ct=11915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11950 ct=11915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=11950 ct=11915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12000 ct=11947 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12000 ct=11947 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12000 ct=11947 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12000 ct=11947 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12050 ct=11982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12050 ct=11982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12050 ct=11982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12050 ct=11982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12050 ct=11982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12150 ct=12066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12150 ct=12066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12150 ct=12066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12150 ct=12066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12150 ct=12066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12150 ct=12066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12200 ct=12150 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12200 ct=12150 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12250 ct=12215 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12250 ct=12215 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12250 ct=12215 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12300 ct=12231 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12300 ct=12231 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12300 ct=12231 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12350 ct=12250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12350 ct=12250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12400 ct=12316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12400 ct=12316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12400 ct=12316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12400 ct=12316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12400 ct=12316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12450 ct=12350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12500 ct=12416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12500 ct=12416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12500 ct=12416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12550 ct=12465 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12550 ct=12465 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12550 ct=12465 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12550 ct=12465 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12550 ct=12465 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12600 ct=12516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12600 ct=12516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12600 ct=12516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12600 ct=12516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12600 ct=12516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12650 ct=12615 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12700 ct=12616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12750 ct=12665 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12750 ct=12665 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12750 ct=12665 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12800 ct=12782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12800 ct=12782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12800 ct=12782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12800 ct=12782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12850 ct=12800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12850 ct=12800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12850 ct=12800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12900 ct=12832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12900 ct=12832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12950 ct=12900 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12950 ct=12900 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12950 ct=12900 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=12950 ct=12900 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13000 ct=12916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13000 ct=12916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13000 ct=12916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13050 ct=13000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13050 ct=13000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13100 ct=13032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13100 ct=13032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13100 ct=13032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13100 ct=13032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13100 ct=13032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13100 ct=13032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13150 ct=13132 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13150 ct=13132 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13200 ct=13148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13200 ct=13148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13200 ct=13148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13250 ct=13181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13250 ct=13181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13250 ct=13181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13250 ct=13181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13250 ct=13181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13250 ct=13181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13350 ct=13266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13350 ct=13266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13350 ct=13266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13350 ct=13266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13350 ct=13266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13400 ct=13331 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13400 ct=13331 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13400 ct=13331 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13450 ct=13366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13450 ct=13366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13450 ct=13366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13500 ct=13415 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13500 ct=13415 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13550 ct=13450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13550 ct=13450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13550 ct=13450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13550 ct=13450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13600 ct=13550 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13600 ct=13550 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13650 ct=13582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13700 ct=13616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13700 ct=13616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13700 ct=13616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13700 ct=13616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13700 ct=13616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13700 ct=13616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13800 ct=13764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13800 ct=13764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13800 ct=13764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13800 ct=13764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13850 ct=13800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13850 ct=13800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13850 ct=13800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13850 ct=13800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13900 ct=13848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13900 ct=13848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13900 ct=13848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13900 ct=13848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=13900 ct=13848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14000 ct=13898 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14000 ct=13898 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14000 ct=13898 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14000 ct=13898 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14050 ct=13965 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14050 ct=13965 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14100 ct=14016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14100 ct=14016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14100 ct=14016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14100 ct=14016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14150 ct=14066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14150 ct=14066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14150 ct=14066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14200 ct=14148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14200 ct=14148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14200 ct=14148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14250 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14250 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14300 ct=14216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14400 ct=14348 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14400 ct=14348 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14400 ct=14348 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14400 ct=14348 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14450 ct=14397 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14450 ct=14397 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14450 ct=14397 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14450 ct=14397 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14500 ct=14432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14500 ct=14432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14500 ct=14432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14550 ct=14450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14550 ct=14450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14550 ct=14450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14650 ct=14566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14650 ct=14566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14650 ct=14566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14650 ct=14566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14650 ct=14566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14650 ct=14566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14700 ct=14682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14700 ct=14682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14700 ct=14682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14750 ct=14715 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14750 ct=14715 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14750 ct=14715 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14800 ct=14733 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14800 ct=14733 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14800 ct=14733 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14800 ct=14733 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14900 ct=14800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14900 ct=14800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14900 ct=14800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14900 ct=14800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14900 ct=14800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14900 ct=14800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14950 ct=14900 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=14950 ct=14900 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15000 ct=14948 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15000 ct=14948 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15000 ct=14948 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15050 ct=14981 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15100 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15100 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15100 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15100 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15100 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15100 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15150 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15150 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15150 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15150 ct=15032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15250 ct=15181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15250 ct=15181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15250 ct=15181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15250 ct=15181 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15300 ct=15198 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15300 ct=15198 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15300 ct=15198 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15350 ct=15266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15350 ct=15266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15400 ct=15332 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15400 ct=15332 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15400 ct=15332 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15450 ct=15366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15450 ct=15366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15450 ct=15366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15450 ct=15366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15500 ct=15450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15500 ct=15450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15500 ct=15450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15500 ct=15450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15550 ct=15498 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15550 ct=15498 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15600 ct=15516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15600 ct=15516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15600 ct=15516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15650 ct=15566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15650 ct=15566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15650 ct=15566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15700 ct=15632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15700 ct=15632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15700 ct=15632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15700 ct=15632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15750 ct=15650 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15750 ct=15650 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15750 ct=15650 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15750 ct=15650 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15800 ct=15716 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15850 ct=15782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15850 ct=15782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15850 ct=15782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15850 ct=15782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15900 ct=15800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15900 ct=15800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15900 ct=15800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15900 ct=15800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15950 ct=15866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15950 ct=15866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15950 ct=15866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=15950 ct=15866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16050 ct=15950 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16050 ct=15950 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16100 ct=15998 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16100 ct=15998 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16100 ct=15998 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16100 ct=15998 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16100 ct=15998 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16100 ct=15998 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16150 ct=16116 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16200 ct=16149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16200 ct=16149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16200 ct=16149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16200 ct=16149 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16250 ct=16182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16250 ct=16182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16250 ct=16182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16300 ct=16250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16300 ct=16250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16300 ct=16250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16350 ct=16282 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16350 ct=16282 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16350 ct=16282 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16350 ct=16282 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16350 ct=16282 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16400 ct=16350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16400 ct=16350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16450 ct=16382 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16450 ct=16382 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16450 ct=16382 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16450 ct=16382 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16550 ct=16450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16650 ct=16582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16650 ct=16582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16650 ct=16582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16650 ct=16582 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16700 ct=16631 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16700 ct=16631 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16750 ct=16698 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16750 ct=16698 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16750 ct=16698 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16750 ct=16698 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16750 ct=16698 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16850 ct=16766 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16850 ct=16766 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16850 ct=16766 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16850 ct=16766 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16850 ct=16766 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16850 ct=16766 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16900 ct=16798 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16950 ct=16915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16950 ct=16915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16950 ct=16915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=16950 ct=16915 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17000 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17000 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17000 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17050 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17050 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17050 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17050 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17050 ct=16966 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17100 ct=17032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17100 ct=17032 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17150 ct=17066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17150 ct=17066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17150 ct=17066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17150 ct=17066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17200 ct=17098 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17250 ct=17182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17250 ct=17182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17250 ct=17182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17250 ct=17182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17300 ct=17200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17300 ct=17200 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17350 ct=17266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17350 ct=17266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17350 ct=17266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17400 ct=17298 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17400 ct=17298 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17400 ct=17298 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17400 ct=17298 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17450 ct=17350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17450 ct=17350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17500 ct=17432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17500 ct=17432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17500 ct=17432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17500 ct=17432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17550 ct=17450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17550 ct=17450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17550 ct=17450 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17600 ct=17516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17600 ct=17516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17600 ct=17516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17600 ct=17516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17600 ct=17516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17600 ct=17516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17700 ct=17632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17700 ct=17632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17700 ct=17632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17700 ct=17632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17700 ct=17632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17750 ct=17700 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17750 ct=17700 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17800 ct=17748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17800 ct=17748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17800 ct=17748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17800 ct=17748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17850 ct=17764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17850 ct=17764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17850 ct=17764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17850 ct=17764 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17950 ct=17866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17950 ct=17866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17950 ct=17866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=17950 ct=17866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18000 ct=17950 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18000 ct=17950 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18050 ct=17982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18050 ct=17982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18050 ct=17982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18050 ct=17982 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18100 ct=18016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18100 ct=18016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18100 ct=18016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18100 ct=18016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18150 ct=18066 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18200 ct=18100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18200 ct=18100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18200 ct=18100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18200 ct=18100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18200 ct=18100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18250 ct=18216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18250 ct=18216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18300 ct=18216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18300 ct=18216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18300 ct=18216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18350 ct=18266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18350 ct=18266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18350 ct=18266 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18400 ct=18316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18400 ct=18316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18400 ct=18316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18400 ct=18316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18400 ct=18316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18400 ct=18316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18450 ct=18416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18500 ct=18432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18500 ct=18432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18500 ct=18432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18500 ct=18432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18500 ct=18432 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18600 ct=18516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18600 ct=18516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18600 ct=18516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18600 ct=18516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18600 ct=18516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18650 ct=18564 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18650 ct=18564 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18650 ct=18564 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18750 ct=18682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18750 ct=18682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18750 ct=18682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18750 ct=18682 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18800 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18800 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18800 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18800 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18800 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18850 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18850 ct=18782 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18900 ct=18832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18900 ct=18832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18900 ct=18832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18900 ct=18832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18900 ct=18832 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18950 ct=18866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=18950 ct=18866 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19000 ct=18916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19000 ct=18916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19000 ct=18916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19000 ct=18916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19100 ct=19000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19100 ct=19000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19100 ct=19000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19100 ct=19000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19150 ct=19116 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19150 ct=19116 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19150 ct=19116 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19150 ct=19116 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19200 ct=19148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19200 ct=19148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19200 ct=19148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19200 ct=19148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19250 ct=19182 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19300 ct=19216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19300 ct=19216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19300 ct=19216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19300 ct=19216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19300 ct=19216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19300 ct=19216 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19350 ct=19316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19400 ct=19332 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19400 ct=19332 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19450 ct=19381 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19450 ct=19381 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19450 ct=19381 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19500 ct=19416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19500 ct=19416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19500 ct=19416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19500 ct=19416 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19550 ct=19516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19550 ct=19516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19550 ct=19516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19600 ct=19566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19600 ct=19566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19600 ct=19566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19600 ct=19566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19600 ct=19566 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19700 ct=19616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19700 ct=19616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19700 ct=19616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19700 ct=19616 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19750 ct=19648 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19750 ct=19648 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19750 ct=19648 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19750 ct=19648 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19800 ct=19748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19800 ct=19748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19800 ct=19748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19800 ct=19748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19800 ct=19748 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19900 ct=19800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19900 ct=19800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19900 ct=19800 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19950 ct=19848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19950 ct=19848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=19950 ct=19848 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20000 ct=19950 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20000 ct=19950 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20050 ct=20000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20050 ct=20000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20050 ct=20000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20050 ct=20000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20050 ct=20000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20050 ct=20000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20100 ct=20016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20100 ct=20016 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20150 ct=20098 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20150 ct=20098 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20150 ct=20098 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20150 ct=20098 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20200 ct=20131 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20200 ct=20131 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20200 ct=20131 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20200 ct=20131 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20250 ct=20166 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20300 ct=20232 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20300 ct=20232 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20350 ct=20250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20350 ct=20250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20350 ct=20250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20350 ct=20250 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20400 ct=20350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20400 ct=20350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20400 ct=20350 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20450 ct=20398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20450 ct=20398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20450 ct=20398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20500 ct=20466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20500 ct=20466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20500 ct=20466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20500 ct=20466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20550 ct=20482 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20550 ct=20482 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20600 ct=20516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20600 ct=20516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20600 ct=20516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20600 ct=20516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20600 ct=20516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20600 ct=20516 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20700 ct=20632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20700 ct=20632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20700 ct=20632 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20750 ct=20664 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20800 ct=20732 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20800 ct=20732 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20900 ct=20847 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20950 ct=20916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=20950 ct=20916 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21000 ct=20948 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21050 ct=20997 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21050 ct=20997 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21050 ct=20997 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21050 ct=20997 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21100 ct=21000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21100 ct=21000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21100 ct=21000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21100 ct=21000 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21200 ct=21100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21200 ct=21100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21200 ct=21100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21200 ct=21100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21200 ct=21100 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21250 ct=21148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21250 ct=21148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21250 ct=21148 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21300 ct=21232 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21300 ct=21232 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21300 ct=21232 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21350 ct=21300 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21350 ct=21300 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21350 ct=21300 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21350 ct=21300 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21350 ct=21300 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21400 ct=21316 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21450 ct=21366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21450 ct=21366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21450 ct=21366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21450 ct=21366 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21500 ct=21398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21500 ct=21398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21500 ct=21398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21500 ct=21398 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21550 ct=21466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21550 ct=21466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21550 ct=21466 origin=-215.000,2430.000,-31.877 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21600 ct=21500 origin=-512.000,2688.000,-15.000 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21650 ct=21548 origin=-512.000,2688.000,-15.707 vel=0,0,-32 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21650 ct=21548 origin=-512.000,2688.000,-15.707 vel=0,0,-32 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21650 ct=21548 origin=-512.000,2688.000,-15.707 vel=0,0,-32 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21650 ct=21548 origin=-512.000,2688.000,-15.707 vel=0,0,-32 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21650 ct=21548 origin=-512.000,2688.000,-15.707 vel=0,0,-32 ground=1023 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21750 ct=21682 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21750 ct=21682 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21750 ct=21682 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21750 ct=21682 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21800 ct=21750 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21800 ct=21750 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21850 ct=21800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21850 ct=21800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21850 ct=21800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21900 ct=21866 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21900 ct=21866 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21900 ct=21866 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21900 ct=21866 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21900 ct=21866 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21950 ct=21916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21950 ct=21916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21950 ct=21916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=21950 ct=21916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22000 ct=21916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22050 ct=21982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22050 ct=21982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22050 ct=21982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22050 ct=21982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22050 ct=21982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22100 ct=22050 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22100 ct=22050 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22100 ct=22050 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22100 ct=22050 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22150 ct=22098 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22150 ct=22098 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22150 ct=22098 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22200 ct=22115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22200 ct=22115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22200 ct=22115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22250 ct=22150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22250 ct=22150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22300 ct=22200 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22350 ct=22216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22350 ct=22216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22350 ct=22216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22350 ct=22216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22350 ct=22216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22400 ct=22366 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22450 ct=22399 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22450 ct=22399 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22450 ct=22399 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22500 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22500 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22500 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22550 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22550 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22550 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22550 ct=22482 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22600 ct=22566 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22600 ct=22566 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22600 ct=22566 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22650 ct=22582 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22650 ct=22582 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22650 ct=22582 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22650 ct=22582 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22650 ct=22582 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22700 ct=22650 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22700 ct=22650 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22750 ct=22666 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22750 ct=22666 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22750 ct=22666 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22750 ct=22666 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22800 ct=22715 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22800 ct=22715 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22850 ct=22766 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=22900 ct=22800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23000 ct=22948 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23000 ct=22948 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23050 ct=22997 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23050 ct=22997 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23050 ct=22997 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23050 ct=22997 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23050 ct=22997 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23100 ct=23066 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23100 ct=23066 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23100 ct=23066 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23100 ct=23066 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23150 ct=23115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23150 ct=23115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23200 ct=23115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23200 ct=23115 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23250 ct=23150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23250 ct=23150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23250 ct=23150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23250 ct=23150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23250 ct=23150 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23300 ct=23216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23300 ct=23216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23300 ct=23216 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23350 ct=23315 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23350 ct=23315 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23350 ct=23315 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23350 ct=23315 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23400 ct=23315 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23450 ct=23332 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23450 ct=23332 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23500 ct=23382 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23500 ct=23382 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23500 ct=23382 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23500 ct=23382 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23500 ct=23382 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23500 ct=23382 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23550 ct=23500 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23600 ct=23565 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23600 ct=23565 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23600 ct=23565 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23650 ct=23581 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23650 ct=23581 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23650 ct=23581 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23650 ct=23581 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23650 ct=23581 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23700 ct=23632 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23700 ct=23632 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23750 ct=23666 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23800 ct=23715 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23800 ct=23715 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23800 ct=23715 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23850 ct=23800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23850 ct=23800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23850 ct=23800 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23900 ct=23850 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23900 ct=23850 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23900 ct=23850 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23900 ct=23850 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23950 ct=23916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23950 ct=23916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23950 ct=23916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23950 ct=23916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=23950 ct=23916 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24000 ct=23932 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24000 ct=23932 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24000 ct=23932 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24000 ct=23932 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24050 ct=23982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24050 ct=23982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24050 ct=23982 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24100 ct=24032 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24100 ct=24032 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+RIDE t=24100 ct=24032 origin=-512.000,2688.000,-23.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 viewyaw=0.000 delta_yaw=0
+entity 177 serverTime 11650 eType 8 pos trType 3 trTime 11600 trDuration 500 base [0.0,0.0,0.0] delta [0.0,0.0,160.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 12150 eType 8 pos trType 0 trTime 12100 trDuration 500 base [0.0,0.0,80.0] delta [0.0,0.0,160.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 12600 eType 8 pos trType 3 trTime 12600 trDuration 500 base [0.0,0.0,80.0] delta [0.0,-96.0,0.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 13100 eType 8 pos trType 0 trTime 13100 trDuration 500 base [0.0,-48.0,80.0] delta [0.0,-96.0,0.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 13600 eType 8 pos trType 3 trTime 13600 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 0 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 13850 eType 8 pos trType 3 trTime 13650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 50 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 13900 eType 8 pos trType 3 trTime 13700 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 100 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14000 eType 8 pos trType 3 trTime 13800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14050 eType 8 pos trType 3 trTime 13850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14100 eType 8 pos trType 3 trTime 13900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14150 eType 8 pos trType 3 trTime 13950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14200 eType 8 pos trType 3 trTime 14000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14250 eType 8 pos trType 3 trTime 14050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14400 eType 8 pos trType 3 trTime 14150 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 550 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14450 eType 8 pos trType 3 trTime 14200 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 600 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14500 eType 8 pos trType 3 trTime 14250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14550 eType 8 pos trType 3 trTime 14300 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 700 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14650 eType 8 pos trType 3 trTime 14400 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 800 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14700 eType 8 pos trType 3 trTime 14450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14750 eType 8 pos trType 3 trTime 14500 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 900 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14800 eType 8 pos trType 3 trTime 14550 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 950 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14900 eType 8 pos trType 3 trTime 14650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 14950 eType 8 pos trType 3 trTime 14700 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1100 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15000 eType 8 pos trType 3 trTime 14750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15050 eType 8 pos trType 3 trTime 14800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15100 eType 8 pos trType 3 trTime 14850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15250 eType 8 pos trType 3 trTime 14950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15300 eType 8 pos trType 3 trTime 15000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15350 eType 8 pos trType 3 trTime 15050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15400 eType 8 pos trType 3 trTime 15100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15450 eType 8 pos trType 3 trTime 15150 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1550 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15500 eType 8 pos trType 3 trTime 15200 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1600 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15550 eType 8 pos trType 3 trTime 15250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15600 eType 8 pos trType 3 trTime 15300 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1700 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15650 eType 8 pos trType 3 trTime 15350 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1750 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15700 eType 8 pos trType 3 trTime 15400 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1800 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15750 eType 8 pos trType 3 trTime 15450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15800 eType 8 pos trType 3 trTime 15500 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1900 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15850 eType 8 pos trType 3 trTime 15550 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 1950 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15900 eType 8 pos trType 3 trTime 15600 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2000 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 15950 eType 8 pos trType 3 trTime 15650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16050 eType 8 pos trType 3 trTime 15750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16100 eType 8 pos trType 3 trTime 15800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16150 eType 8 pos trType 3 trTime 15850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16200 eType 8 pos trType 3 trTime 15900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16250 eType 8 pos trType 3 trTime 15950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16300 eType 8 pos trType 3 trTime 16000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16350 eType 8 pos trType 3 trTime 16050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16400 eType 8 pos trType 3 trTime 16100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16450 eType 8 pos trType 3 trTime 16150 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2550 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16550 eType 8 pos trType 3 trTime 16250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16650 eType 8 pos trType 3 trTime 16350 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2750 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16700 eType 8 pos trType 3 trTime 16400 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2800 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16750 eType 8 pos trType 3 trTime 16450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16850 eType 8 pos trType 3 trTime 16550 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 2950 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16900 eType 8 pos trType 3 trTime 16600 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3000 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 16950 eType 8 pos trType 3 trTime 16650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17000 eType 8 pos trType 3 trTime 16700 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3100 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17100 eType 8 pos trType 3 trTime 16750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17150 eType 8 pos trType 3 trTime 16800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17200 eType 8 pos trType 3 trTime 16850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17250 eType 8 pos trType 3 trTime 16900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17300 eType 8 pos trType 3 trTime 16950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17350 eType 8 pos trType 3 trTime 17000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17400 eType 8 pos trType 3 trTime 17050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17450 eType 8 pos trType 3 trTime 17100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17500 eType 8 pos trType 3 trTime 17150 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3550 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17550 eType 8 pos trType 3 trTime 17200 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3600 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17600 eType 8 pos trType 3 trTime 17250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17700 eType 8 pos trType 3 trTime 17350 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3750 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17750 eType 8 pos trType 3 trTime 17400 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3800 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17800 eType 8 pos trType 3 trTime 17450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17850 eType 8 pos trType 3 trTime 17500 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 3900 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 17950 eType 8 pos trType 3 trTime 17600 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4000 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18000 eType 8 pos trType 3 trTime 17650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18050 eType 8 pos trType 3 trTime 17700 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4100 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18100 eType 8 pos trType 3 trTime 17750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18150 eType 8 pos trType 3 trTime 17800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18200 eType 8 pos trType 3 trTime 17850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18250 eType 8 pos trType 3 trTime 17900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18350 eType 8 pos trType 3 trTime 17950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18400 eType 8 pos trType 3 trTime 18000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18450 eType 8 pos trType 3 trTime 18050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18500 eType 8 pos trType 3 trTime 18100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18600 eType 8 pos trType 3 trTime 18200 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4600 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18650 eType 8 pos trType 3 trTime 18250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18750 eType 8 pos trType 3 trTime 18350 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4750 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18800 eType 8 pos trType 3 trTime 18400 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4800 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18900 eType 8 pos trType 3 trTime 18450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 18950 eType 8 pos trType 3 trTime 18500 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4900 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19000 eType 8 pos trType 3 trTime 18550 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 4950 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19100 eType 8 pos trType 3 trTime 18650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19150 eType 8 pos trType 3 trTime 18700 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5100 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19200 eType 8 pos trType 3 trTime 18750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19250 eType 8 pos trType 3 trTime 18800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19300 eType 8 pos trType 3 trTime 18850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19350 eType 8 pos trType 3 trTime 18900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19400 eType 8 pos trType 3 trTime 18950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19450 eType 8 pos trType 3 trTime 19000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19500 eType 8 pos trType 3 trTime 19050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19550 eType 8 pos trType 3 trTime 19100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19600 eType 8 pos trType 3 trTime 19150 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5550 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19700 eType 8 pos trType 3 trTime 19250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19750 eType 8 pos trType 3 trTime 19300 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5700 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19800 eType 8 pos trType 3 trTime 19350 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5750 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19900 eType 8 pos trType 3 trTime 19450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 19950 eType 8 pos trType 3 trTime 19500 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5900 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20000 eType 8 pos trType 3 trTime 19550 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 5950 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20050 eType 8 pos trType 3 trTime 19600 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6000 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20100 eType 8 pos trType 3 trTime 19650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20150 eType 8 pos trType 3 trTime 19700 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6100 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20200 eType 8 pos trType 3 trTime 19750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20250 eType 8 pos trType 3 trTime 19800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20300 eType 8 pos trType 3 trTime 19850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20350 eType 8 pos trType 3 trTime 19900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20400 eType 8 pos trType 3 trTime 19950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20450 eType 8 pos trType 3 trTime 20000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20500 eType 8 pos trType 3 trTime 20050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20550 eType 8 pos trType 3 trTime 20100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20600 eType 8 pos trType 3 trTime 20150 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6550 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20700 eType 8 pos trType 3 trTime 20250 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6650 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20750 eType 8 pos trType 3 trTime 20300 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6700 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20800 eType 8 pos trType 3 trTime 20350 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6750 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20900 eType 8 pos trType 3 trTime 20450 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6850 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 20950 eType 8 pos trType 3 trTime 20500 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6900 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21000 eType 8 pos trType 3 trTime 20550 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 6950 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21050 eType 8 pos trType 3 trTime 20600 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7000 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21100 eType 8 pos trType 3 trTime 20650 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7050 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21200 eType 8 pos trType 3 trTime 20750 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7150 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21250 eType 8 pos trType 3 trTime 20800 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7200 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21300 eType 8 pos trType 3 trTime 20850 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7250 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21350 eType 8 pos trType 3 trTime 20900 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7300 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21400 eType 8 pos trType 3 trTime 20950 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7350 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21450 eType 8 pos trType 3 trTime 21000 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7400 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21500 eType 8 pos trType 3 trTime 21050 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7450 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21550 eType 8 pos trType 3 trTime 21100 trDuration 2000 base [0.0,-48.0,80.0] delta [0.0,0.0,-40.0] apos trType 0 trTime 7500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 21600 eType 8 pos trType 3 trTime 21600 trDuration 1000 base [0.0,-48.0,60.0] delta [0.0,48.0,-62.0] apos trType 0 trTime 7500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
+entity 177 serverTime 22600 eType 8 pos trType 0 trTime 22600 trDuration 1000 base [0.0,0.0,0.0] delta [0.0,48.0,-62.0] apos trType 0 trTime 7500 trDuration 0 base [0.0,0.0,0.0] delta [0.0,0.0,0.0]
