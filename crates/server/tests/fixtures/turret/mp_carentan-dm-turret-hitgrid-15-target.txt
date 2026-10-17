@@ -1,0 +1,439 @@
+# Retail CoD 1.5b: the target's half of mp_carentan-dm-turret-hitgrid-15.txt, the
+# --probe-team axis --probe-fall net-probe's stdout (client 0), its CMDS and FALL lines only.
+# Captured 2026-10-17; recipe and server log in mp_carentan-dm-turret-hitgrid-15-script.txt.
+# CMDS st=<first> d=<steps>: the serverTime of every cmd the client sent, 60 a
+# line, the first stamp and the steps after it (a partial last batch is not
+# printed).
+# FALL t= ct=: the client's own playerstate on every snapshot whose ground
+# entity, pm_flags, pm_time, events or health moved.
+FALL t=11900 ct=11900 origin=384.000,-624.000,184.000 vel=0,0,0 ground=0 pm_type=4 pm_flags=0x0 pm_time=0 health=0 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=0 torso=0
+FALL t=12050 ct=12050 origin=1515.182,1603.587,9.000 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12100 ct=12083 origin=1515.182,1603.587,8.558 vel=0,0,-27 ground=1023 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12150 ct=12132 origin=1515.182,1603.587,6.259 vel=0,0,-67 ground=1023 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12200 ct=12182 origin=1515.182,1603.587,1.918 vel=0,0,-107 ground=1023 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12250 ct=12234 origin=1515.182,1603.587,-4.717 vel=0,0,-148 ground=1023 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12300 ct=12282 origin=1515.182,1603.587,-12.753 vel=0,0,-187 ground=1023 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12350 ct=12332 origin=1515.182,1603.587,-23.093 vel=0,0,-227 ground=1023 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=0 events=[0,0,0,0] parms=[0,0,0,0] legs=634 torso=0
+FALL t=12400 ct=12382 origin=1515.182,1603.587,-31.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=1 events=[110,0,0,0] parms=[8,0,0,0] legs=634 torso=0
+CMDS st=783 d=29,11088,16,16,18,17,17,16,0,16,16,18,17,16,17,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16
+CMDS st=12850 d=16,16,18,16,17,17,16,16,18,16,16,17,1,16,18,16,16,34,16,16,16,2,16,16,18,17,16,17,19,16,15,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,19,15,16,16,18,16
+CMDS st=13832 d=18,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,18,17,15,16,16,18,16,16,18,17,16,17,16,16,18,17,18,15,16,16,16,2,18,32,16,16,18,17,17,16,16,16,18,16,16,18,16,16,17,1
+CMDS st=14816 d=34,16,16,18,16,17,17,16,16,17,1,18,16,16,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,18,16,16,16,18,16,16,16,18,16,16,18,16,16,18,16,19,15,16,16,18,18,16,16
+CMDS st=15817 d=17,16,16,16,18,16,17,17,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,16,16,17,1,16,34,16,18,16,0,16,34,16,16,18,16,17,16,1,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16
+CMDS st=16800 d=17,18,15,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,18,16,16,16,17,17,16,17,17,16,16,18,16,18,16,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,18,16,16,16
+CMDS st=17798 d=2,16,34,16,16,17,1,16,16,18,16,17,17,17,33,16,16,16,2,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16
+CMDS st=18783 d=17,16,16,16,2,16,34,16,16,16,2,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,16,1,16,34
+CMDS st=19766 d=16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16
+CMDS st=20732 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,16,2,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16
+CMDS st=21700 d=16,34,17,16,17,0,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,17,16,17,17,18,15,16,16,18,16,16
+CMDS st=22700 d=16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16
+CMDS st=23683 d=17,16,16,18,16,16,18,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,0,16,34,16,16,16
+CMDS st=24650 d=16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,19,16,15,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16
+CMDS st=25650 d=16,17,17,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,18,16,16,17,18,15,18,16,16,16,16,18,16,16,18,16,18,16,17,16,17,31,19,16,17,17,16,16,18,16,17,17,16,17,17
+CMDS st=26666 d=16,18,16,16,18,18,16,16,16,16,18,16,18,16,16,16,16,2,17,33,16,16,18,16,16,16,2,17,16,17,16,17,17,16,16,18,17,17,16,16,16,18,16,34,16,16,17,1,16,16,18,16,18,16,16,16,18,16,16
+CMDS st=27650 d=16,16,18,16,16,18,16,17,17,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,18,16,16,16,16,16,2,16,16,18,16,16,18,16,16,18,16
+CMDS st=28633 d=17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,18,16,16,17,17,16,16
+FALL t=30450 ct=30432 origin=1515.182,1603.587,-31.875 vel=-39.719345,-44.95396,-1.2309332 ground=1022 pm_type=0 pm_flags=0x40200 pm_time=50 health=47 seq=1 events=[110,0,0,0] parms=[8,0,0,0] legs=634 torso=0
+FALL t=30500 ct=30482 origin=1513.195,1601.352,-31.875 vel=-76.015854,-84.69023,-1.2309332 ground=1022 pm_type=0 pm_flags=0x40200 pm_time=50 health=0 seq=3 events=[110,187,189,0] parms=[8,47,0,0] legs=525 torso=512
+FALL t=30550 ct=30532 origin=1509.451,1597.190,-31.875 vel=-70,-78,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+FALL t=30600 ct=30583 origin=1507.212,1594.713,-31.977 vel=-31,-34,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+CMDS st=29634 d=16,16,16,18,16,16,18,16,16,18,18,17,15,16,16,18,16,18,16,16,16,18,16,18,16,17,17,16,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16
+FALL t=30650 ct=30633 origin=1506.846,1594.315,-31.977 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+FALL t=31150 ct=31116 origin=1506.846,1594.315,-31.977 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+FALL t=31400 ct=31382 origin=1506.846,1594.315,-31.979 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+CMDS st=30633 d=17,16,16,18,16,16,18,17,16,17,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,17,16,1,16,34,16,18,16,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17
+FALL t=32150 ct=32116 origin=1506.846,1594.315,-31.979 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+FALL t=32250 ct=32232 origin=1506.846,1594.315,-31.981 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+FALL t=32400 ct=32382 origin=1506.846,1594.315,-31.982 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=4 events=[110,187,189,155] parms=[8,47,0,0] legs=525 torso=512
+FALL t=32550 ct=32532 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=31616 d=16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,16,1,16,34,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,16
+FALL t=32600 ct=32583 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32650 ct=32633 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32700 ct=32682 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32750 ct=32732 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32800 ct=32783 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32850 ct=32832 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32900 ct=32898 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=32950 ct=32916 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33000 ct=32999 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33050 ct=33032 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33100 ct=33082 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33150 ct=33132 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33200 ct=33182 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33250 ct=33232 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33300 ct=33283 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33350 ct=33333 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33400 ct=33382 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33450 ct=33433 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33500 ct=33483 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33550 ct=33533 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=32600 d=16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,18,16,16,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16
+FALL t=33600 ct=33584 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33650 ct=33632 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33700 ct=33683 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33750 ct=33732 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33800 ct=33782 origin=1715.422,1877.253,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33850 ct=33833 origin=1741.811,1856.615,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33900 ct=33882 origin=1741.811,1856.615,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=33950 ct=33933 origin=1741.811,1856.615,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34000 ct=33983 origin=1741.811,1856.615,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34050 ct=34032 origin=1742.701,1857.638,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34100 ct=34082 origin=1743.890,1859.006,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34150 ct=34132 origin=1744.891,1860.157,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34200 ct=34182 origin=1745.692,1861.079,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34250 ct=34233 origin=1746.286,1861.762,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34300 ct=34282 origin=1746.541,1862.055,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34350 ct=34332 origin=1746.374,1861.863,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34400 ct=34386 origin=1745.986,1861.417,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34450 ct=34432 origin=1745.883,1861.298,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34500 ct=34482 origin=1745.607,1860.981,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=33583 d=17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,17,1,16,17,17,16,16,18,16,19,15,19,31,16,16,18,0,16,34,16,17,17,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18
+FALL t=34550 ct=34533 origin=1745.037,1860.326,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34600 ct=34582 origin=1744.130,1859.282,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34650 ct=34638 origin=1743.028,1858.014,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34700 ct=34682 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34750 ct=34716 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34800 ct=34798 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34850 ct=34832 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34900 ct=34884 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=34950 ct=34935 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35000 ct=34983 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35050 ct=35033 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35100 ct=35083 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35150 ct=35133 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35200 ct=35167 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35250 ct=35234 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35300 ct=35282 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35350 ct=35334 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35400 ct=35382 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35450 ct=35439 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35500 ct=35482 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35550 ct=35534 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=34566 d=16,18,20,30,16,16,16,2,16,17,17,16,34,16,18,16,16,16,18,16,16,18,16,17,16,1,16,16,18,16,16,18,16,17,17,20,16,14,16,16,18,16,19,15,16,34,16,16,18,16,16,17,1,16,34,16,16,18,16
+FALL t=35600 ct=35584 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35650 ct=35632 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35700 ct=35682 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35750 ct=35733 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35800 ct=35785 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35850 ct=35832 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35900 ct=35884 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=35950 ct=35934 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36000 ct=35982 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36050 ct=36034 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36100 ct=36082 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36150 ct=36134 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36200 ct=36183 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36250 ct=36232 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36300 ct=36284 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36350 ct=36332 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36400 ct=36382 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36450 ct=36432 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36500 ct=36485 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=35583 d=16,1,16,16,18,18,32,17,17,16,16,17,17,16,16,18,17,16,17,16,16,17,1,17,33,16,17,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+FALL t=36550 ct=36532 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36600 ct=36584 origin=1742.193,1857.053,-23.871 vel=0,0,0 ground=1023 pm_type=0 pm_flags=0x30000 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36650 ct=36632 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36700 ct=36683 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36750 ct=36732 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36800 ct=36782 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36850 ct=36832 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36900 ct=36882 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=36950 ct=36933 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37000 ct=36982 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37050 ct=37033 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37100 ct=37082 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37150 ct=37132 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37200 ct=37182 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37250 ct=37249 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37300 ct=37283 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37350 ct=37332 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37400 ct=37382 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37450 ct=37432 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37500 ct=37483 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=36566 d=16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,17,1,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16
+FALL t=37550 ct=37532 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37600 ct=37582 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37650 ct=37632 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37700 ct=37682 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37750 ct=37732 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37800 ct=37783 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37850 ct=37832 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37900 ct=37883 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=37950 ct=37932 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38000 ct=37983 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38050 ct=38032 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38100 ct=38082 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38150 ct=38134 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38200 ct=38182 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38250 ct=38232 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38300 ct=38283 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38350 ct=38332 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38400 ct=38382 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38450 ct=38432 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38500 ct=38482 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=37550 d=16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16
+FALL t=38550 ct=38532 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38600 ct=38582 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38650 ct=38649 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38700 ct=38684 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38750 ct=38716 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38800 ct=38782 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38850 ct=38834 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38900 ct=38883 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=38950 ct=38933 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39000 ct=38982 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39050 ct=39032 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39100 ct=39082 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39150 ct=39132 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39200 ct=39182 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39250 ct=39249 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39300 ct=39267 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39350 ct=39333 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39400 ct=39384 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39450 ct=39435 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39500 ct=39482 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=38550 d=16,16,18,16,16,17,1,16,18,16,16,34,16,16,18,17,17,16,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,16,1,17,33,17,16,17,17,17,16,16,19,15,16,16,18,16,17
+FALL t=39550 ct=39533 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39600 ct=39584 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39650 ct=39636 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39700 ct=39682 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39750 ct=39733 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39800 ct=39783 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39850 ct=39832 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39900 ct=39883 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=39950 ct=39932 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40000 ct=39982 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40050 ct=40048 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40100 ct=40068 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40150 ct=40133 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40200 ct=40198 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40250 ct=40233 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40300 ct=40268 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40350 ct=40348 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40400 ct=40367 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40450 ct=40432 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40500 ct=40498 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=39550 d=16,18,16,18,18,14,16,16,18,16,17,17,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,16,2,18,32,16,17,17,16,16,16,2,16,17,17,18,32,16,16,16,2,17,33,16,16,18,16,16,16,2,16
+FALL t=40550 ct=40533 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40600 ct=40582 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40650 ct=40616 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40700 ct=40683 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40750 ct=40732 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40800 ct=40799 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40850 ct=40832 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40900 ct=40882 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=40950 ct=40932 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41000 ct=40984 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41050 ct=41032 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41100 ct=41084 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41150 ct=41132 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41200 ct=41182 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41250 ct=41234 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41300 ct=41283 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41350 ct=41332 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41400 ct=41384 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41450 ct=41432 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41500 ct=41482 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=4 pm_flags=0x0 pm_time=0 health=100 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+CMDS st=40533 d=17,16,16,18,16,34,17,16,17,16,16,18,16,17,16,1,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,18,16,16,16,16,18,16,16,18,17,17,16,16,17,17,16,16,18,16,18,16,16,16,18,16,16,18,16
+FALL t=41550 ct=41532 origin=1749.632,1865.611,75.770 vel=0,0,0 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41600 ct=41582 origin=1749.632,1865.611,74.780 vel=0,0,-40 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41650 ct=41632 origin=1749.632,1865.611,71.790 vel=0,0,-80 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41700 ct=41683 origin=1749.632,1865.611,66.676 vel=0,0,-121 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41750 ct=41734 origin=1749.632,1865.611,59.457 vel=0,0,-162 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41800 ct=41782 origin=1749.632,1865.611,50.750 vel=0,0,-201 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41850 ct=41832 origin=1749.632,1865.611,39.710 vel=0,0,-241 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41900 ct=41884 origin=1749.632,1865.611,26.103 vel=0,0,-283 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=41950 ct=41932 origin=1749.632,1865.611,11.588 vel=0,0,-322 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=42000 ct=41982 origin=1749.632,1865.611,-5.503 vel=0,0,-362 ground=1023 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=1 events=[99,0,0,0] parms=[7,0,0,0] legs=544 torso=0
+FALL t=42050 ct=42032 origin=1749.632,1865.611,-23.875 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=42100 ct=42082 origin=1749.632,1865.611,-23.977 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=42300 ct=42266 origin=1749.632,1865.611,-23.979 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=42450 ct=42418 origin=1749.632,1865.611,-23.981 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=41532 d=18,16,16,18,16,16,18,17,16,17,18,16,16,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16,16,2,16,34,16,16,18,16,16,16,2,18,32,16,17,17,16
+FALL t=42850 ct=42832 origin=1749.632,1865.611,-23.982 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=42532 d=18,0,16,16,18,16,17,17,18,16,16,16,34,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,17,17
+FALL t=44000 ct=43966 origin=1749.632,1865.611,-23.984 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=44100 ct=44082 origin=1749.632,1865.611,-23.985 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=43516 d=16,18,16,18,16,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,17,17,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,18,17,15,16,16
+CMDS st=44500 d=17,16,17,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16
+CMDS st=45500 d=16,16,18,16,16,18,19,16,15,16,19,15,16,16,18,16,18,16,17,17,16,18,16,16,16,16,18,16,17,17,17,17,16,17,17,16,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,18,16,16,16,16
+CMDS st=46500 d=18,16,16,16,18,16,16,16,18,16,16,18,16,16,18,17,16,17,16,18,16,18,16,16,16,16,18,16,16,18,16,16,18,19,16,15,16,18,16,16,16,18,16,34,16,16,18,16,16,18,0,18,16,16,16,34,17,16,16
+FALL t=47550 ct=47534 origin=1749.632,1865.611,-23.986 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=47700 ct=47682 origin=1749.632,1865.611,-23.987 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=48400 ct=48366 origin=1749.632,1865.611,-23.989 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=47500 d=16,18,16,16,34,16,16,16,2,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,16,2,16,34,16,17,16,1,16
+FALL t=48500 ct=48483 origin=1749.632,1865.611,-23.989 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=48483 d=17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,19,17,14,16,16,18,16,16,18,18,17,15,17,17,16,16,16,18,16
+FALL t=49650 ct=49634 origin=1749.632,1865.611,-23.991 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=49900 ct=49867 origin=1749.632,1865.611,-23.993 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=49484 d=16,18,32,16,16,16,2,18,16,16,16,16,18,19,18,13,16,34,16,16,16,2,17,33,17,17,16,16,18,16,16,16,18,18,16,16,17,19,14,16,16,18,16,16,18,16,17,17,17,17,16,16,18,16,16,17,17,18,16
+FALL t=51450 ct=51416 origin=1749.632,1865.611,-23.994 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=50500 d=18,16,16,16,16,18,16,18,16,16,16,18,16,19,15,16,16,18,17,18,15,16,18,16,17,17,16,16,17,17,16,16,18,16,18,16,17,17,16,16,17,17,17,16,17,19,31,16,16,18,16,16,16,2,16,34,16,16,18
+FALL t=51600 ct=51570 origin=1749.632,1865.611,-23.996 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=51516 d=16,16,2,20,30,16,16,18,16,16,18,17,18,16,-1,19,31,16,17,17,16,18,16,17,17,16,16,18,16,16,16,18,16,16,18,16,16,18,19,16,15,16,16,18,18,17,15,16,17,17,16,18,16,16,16,18,16,16,18
+CMDS st=52517 d=16,17,16,16,18,16,16,18,16,17,17,17,18,15,16,18,16,16,16,18,17,18,15,18,16,16,16,18,16,18,18,14,16,16,18,16,18,16,16,16,18,18,16,16,19,16,15,16,16,18,17,16,17,16,17,17,18,32,17
+FALL t=54100 ct=54068 origin=1749.632,1865.611,-23.997 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=54200 ct=54184 origin=1749.632,1865.611,-23.998 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=53534 d=16,0,18,32,16,16,18,16,18,16,16,17,17,16,16,18,16,17,17,16,18,16,16,16,18,17,16,17,16,16,16,2,18,32,16,16,17,1,18,16,16,16,34,16,16,18,16,16,18,0,16,34,17,17,16,16,18,16,0
+FALL t=54900 ct=54882 origin=1749.632,1865.611,-23.998 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=54516 d=34,17,17,16,0,16,16,18,16,16,18,16,17,17,16,34,16,17,16,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=55516 d=18,16,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,18,16,16,18,16,16,16,16,18,16,16,18,16,16,18,16,19,15,17,16,17,16,17,17,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18
+CMDS st=56516 d=17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,18,16,16,18,16,16,16,16,18,16,19,15,16,16,18,17,18,15,16,16,18,18,16,16,16,16,18,18,16,16,16,17,17,16,18,16,16,16,18,16,18,16
+FALL t=58050 ct=58032 origin=1749.632,1865.611,-23.999 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=57516 d=16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,19,15,16,16,18,17,18,15,16,34,16,16,17,1,16,16,18,16,16,18,16,17,17,18,17,15,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17
+CMDS st=58516 d=16,18,16,16,18,16,16,18,16,16,18,16,18,16,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,17,16,17,18,16,16,16,16,18,16,16,18,16,18,16,18,17,15,16,16,18,16,16,18
+FALL t=60100 ct=60082 origin=1749.632,1865.611,-23.999 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+FALL t=60250 ct=60232 origin=1749.632,1865.611,-23.999 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=59516 d=17,17,18,16,16,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,17,1,16,16,18,17,33,16,16,17,1,16,16,18,16,16,18,16,19,15,16,16,18,16,16,18,16,16
+CMDS st=60500 d=16,17,17,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,18,16,16,16,18,17,16,17,16,17,17,16,16,18,16,17,17,16,16,16,2,16,16,18,17
+FALL t=61700 ct=61683 origin=1749.632,1865.611,-24.000 vel=0,0,0 ground=1022 pm_type=6 pm_flags=0x40000 pm_time=0 health=0 seq=2 events=[99,99,0,0] parms=[7,17,0,0] legs=544 torso=0
+CMDS st=61483 d=17,16,17,17,16,34,17,16,16,1,17,16,17,16,16,18,16,34,16,20,14,16,17,17,16,16,18,16,16,18,16,16,16,2,17,33,16,16,18,16,17,16,1,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16
+CMDS st=62482 d=18,17,16,17,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,16,2,16,34,16,16,18,16,17,17,16
+CMDS st=63484 d=16,16,16,16,2,16,16,18,16,34,16,17,16,1,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,17,16,17,16,16,18,16,17,17,16,17,17,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=64466 d=16,18,16,16,18,19,16,15,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,18,16,17,17,16,16,18,16,16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,18,17,15,16,18,16,16,19,15
+CMDS st=65466 d=16,18,18,16,16,16,17,17,16,16,18,18,16,16,16,16,18,16,18,16,16,16,18,16,16,18,16,17,17,16,18,16,16,16,18,16,16,18,16,18,16,17,17,16,16,16,18,16,16,18,18,16,16,17,17,16,18,16,16
+CMDS st=66466 d=16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,20,14,18,16,16,16,16,18,16,18,16,16,17,17,16,16,18,18,16,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=67466 d=16,18,16,16,18,16,16,18,16,16,17,1,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,17,17,16,16,16,18,16,16,18,17,16
+CMDS st=68450 d=16,16,18,16,17,17,16,16,18,16,16,16,2,16,17,17,16,16,18,17,16,17,18,16,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,17,17,16,16,18,16,16,18,16
+CMDS st=69433 d=17,16,16,18,16,17,17,16,17,17,16,17,16,1,16,34,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,16,17,17,16,17,17
+CMDS st=70416 d=16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,18,16,17,16,17,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,16,16
+CMDS st=71400 d=16,16,18,16,34,16,16,18,16,16,17,1,17,33,16,16,16,2,17,16,17,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,16,2,16
+CMDS st=72400 d=16,16,16,2,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,17,17,16,16,16,18,18,16,16,17,17,16,16,16,18,16,16,18,17,16,17,16
+CMDS st=73383 d=17,16,16,18,16,16,16,2,16,34,16,17,16,1,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,16,2,16,34
+CMDS st=74366 d=17,16,1,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,17,17,16,16,18,16,16,17,1,16,34,16,16
+CMDS st=75350 d=16,16,16,2,16,16,18,18,32,16,16,16,2,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16
+CMDS st=76333 d=16,1,16,34,16,16,16,2,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,19,14,16,16,18,16,16,18,17,16,17,16,16,18,16,34,16,16,18,16
+CMDS st=77333 d=16,1,16,34,17,16,17,16,16,17,1,16,34,18,18,14,18,16,16,17,16,17,16,17,17,17,16,17,17,17,16,16,16,18,19,16,15,16,18,16,16,19,15,17,16,17,16,19,15,16,18,16,16,18,16,16,34,16,16
+CMDS st=78348 d=2,19,31,18,16,16,17,17,16,19,17,14,16,19,15,16,18,16,16,16,18,16,17,17,16,16,18,16,16,18,17,17,16,18,17,15,16,18,16,16,16,18,16,16,18,16,16,18,17,16,17,16,18,16,16,16,18,18,16
+CMDS st=79350 d=16,16,18,16,16,18,16,34,18,16,16,19,16,15,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,18,16,16,17,17,16,16,17,17,16,18,16,18,16,16,16,16,18,17,16,17,17,16,17,16,16,18,16,18,16
+CMDS st=80366 d=16,18,16,18,16,16,16,18,16,18,16,17,16,17,17,16,17,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,19,16,15,16,16,18,16,17,17,17,16,17,18,16,16
+CMDS st=81366 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,18,16,16,18,16,16,16,18,16,16,18,19,16,15,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=82366 d=17,17,16,16,18,16,16,17,1,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,17,16
+CMDS st=83350 d=16,16,18,17,16,17,16,16,18,16,17,17,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,17,17,18,16,16,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16
+CMDS st=84332 d=18,17,17,16,16,17,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,17,1,16,17,17,16,16,18,16,16,18,16,17,17,17,33,17,16,16,1,16,17,17,16,16,18,17,16,17,16,16,18
+CMDS st=85316 d=16,18,16,16,18,16,16,18,16,18,16,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,18,16,16,16,18
+CMDS st=86316 d=17,17,16,16,18,16,16,18,16,23,11,16,18,16,17,17,16,16,16,18,16,16,18,17,17,16,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,18,16,16,16,18,16,16,16,18,16,19,15,16,16,18,16,16,18
+CMDS st=87317 d=16,17,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,16,16,2,19,31,18,16,16,16,16,18,16,16,16,2,16,16,18,16,34,16,17,16,1,16,16,18,16,16,18,16,34,16,16,16,2,18,16,16,16,16
+CMDS st=88300 d=16,17,17,16,16,18,16,16,18,19,16,15,16,16,18,16,18,16,16,16,18,16,16,18,17,16,17,17,17,16,16,18,16,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,17,16
+CMDS st=89299 d=1,16,34,16,16,16,2,16,16,18,16,16,18,16,17,17,16,17,17,20,30,16,16,18,16,19,15,16,22,12,17,17,16,16,16,18,17,18,15,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16
+CMDS st=90300 d=16,16,18,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,17,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,17,17,16,17,16,17,16,16,18,16,16,18,16,18,16,16,16,18,16
+CMDS st=91282 d=18,16,16,18,16,16,18,16,18,16,16,17,17,17,16,17,17,18,15,16,17,17,17,17,16,16,16,18,17,16,17,17,16,17,17,17,16,16,17,17,17,16,17,16,18,16,16,17,17,16,16,18,16,17,17,16,18,16,16
+CMDS st=92283 d=17,17,16,17,16,16,18,16,34,16,16,16,2,17,17,16,16,16,18,19,31,16,17,17,17,16,17,16,18,16,17,21,12,17,17,16,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,17,16
+CMDS st=93300 d=16,17,17,17,16,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,17,16,16,1,16
+CMDS st=94282 d=18,18,32,16,16,16,2,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16
+CMDS st=95282 d=18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,18,16,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17
+CMDS st=96267 d=16,17,16,16,18,17,16,17,16,16,18,17,16,17,17,17,16,16,18,16,16,18,16,16,16,18,16,16,18,17,16,17,16,16,17,1,16,16,18,16,34,16,16,17,1,16,16,18,17,16,17,16,16,18,16,16,18,16,17
+CMDS st=97250 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,16,2,16,34,16,17,17,0,16,34,16,16,16,2,17,16,17,16,16,18,16
+CMDS st=98232 d=18,16,34,16,17,17,0,16,34,17,17,16,16,16,17,1,19,31,16,16,18,16,18,16,16,17,17,17,16,17,0,16,34,17,17,17,-1,17,33,16,16,18,16,17,17,16,16,18,16,18,16,17,17,16,16,18,16,17,17
+CMDS st=99250 d=16,16,18,16,16,18,17,18,15,18,16,16,18,16,16,16,16,18,17,17,16,17,17,16,17,16,17,16,34,16,16,16,2,17,16,17,16,16,18,16,16,18,18,32,16,16,18,18,16,17,-1,16,34,17,17,16,0,16,34
+CMDS st=100266 d=17,17,16,19,15,16,19,15,18,16,16,16,16,18,16,16,18,16,19,15,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,17,16,16,16,18,16,18,16,18,16,16,16,16,18,19,16,15
+CMDS st=101266 d=16,18,16,16,18,18,16,16,16,17,17,22,28,17,16,17,16,17,17,16,16,18,16,16,18,16,18,16,18,16,16,16,16,18,16,18,16,16,16,18,18,16,16,17,16,17,16,16,18,16,17,17,16,16,18,18,16,16,16
+CMDS st=102282 d=18,16,16,18,17,17,16,17,16,17,16,16,18,16,16,18,16,18,16,16,16,18,17,17,16,16,16,18,16,16,18,17,17,16,16,16,18,17,17,16,16,16,18,18,16,16,17,17,16,16,16,18,16,16,18,16,16,18,17
+CMDS st=103283 d=17,16,16,18,16,17,17,17,17,16,16,18,16,16,16,18,17,16,17,0,16,34,17,17,16,0,16,34,16,16,18,16,17,17,0,16,34,16,16,16,2,16,18,16,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17
+CMDS st=104266 d=16,18,17,16,17,16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,17,17,16,0,16,34,16,16,18,16,16,17,1,16,16
+CMDS st=105250 d=16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16
+CMDS st=106232 d=18,16,18,16,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=107216 d=16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16
+CMDS st=108183 d=17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18
+CMDS st=109167 d=16,17,16,16,18,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,18,16,17,18,15,16,16,18,18,16,16,16,16,18,19,17,14,16,16,18,18,16,16,16,16,18,16,18,16,17,17,16,17,33,16,18,16,16
+CMDS st=110186 d=14,16,17,17,17,17,16,16,20,14,17,16,17,16,17,17,16,19,15,16,17,17,16,17,17,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,17,17,17,17,16,17,17,16,16,34,16,16,18,17,17,16,0,16
+CMDS st=111200 d=16,16,17,1,16,34,18,16,16,17,16,17,16,16,18,18,16,16,18,16,16,16,16,18,16,17,17,17,16,17,16,18,16,16,16,18,17,17,16,16,16,18,16,16,18,16,18,16,16,18,16,16,18,16,18,17,15,16,17
+CMDS st=112200 d=18,16,16,16,34,16,16,16,2,17,16,17,17,33,16,16,18,16,18,16,16,16,18,18,17,15,16,18,16,16,17,17,18,16,16,16,19,15,16,17,17,16,16,18,17,20,13,16,16,18,18,16,16,16,16,18,18,16,16
+CMDS st=113216 d=34,16,16,18,0,16,34,16,19,16,-1,16,34,18,16,16,16,16,18,18,16,16,16,17,17,16,16,18,18,17,15,16,17,17,16,17,17,17,16,17,16,17,17,16,16,18,18,16,16,16,16,18,16,18,16,16,16,18,18
+CMDS st=114234 d=16,16,16,18,18,16,16,17,16,17,17,33,17,16,16,1,16,34,17,17,16,0,16,34,18,16,16,16,16,16,2,16,34,18,16,16,16,16,18,16,16,18,17,16,17,17,16,16,1,17,33,16,18,16,16,16,18,16,16
+CMDS st=115248 d=2,17,33,16,16,17,1,16,34,16,19,15,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,19,16,15,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16,17,17,16,16
+CMDS st=116250 d=17,16,17,16,16,16,2,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,18,16,16,18,16,16,16,16,18,16,16,18,16,16,18,16
+CMDS st=117233 d=17,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,18,16,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,17,17,16,16,18,16,34,16,16,17,1,18,16,16,17,33,16,16,16,2
+CMDS st=118216 d=16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=119216 d=16,16,2,17,16,17,16,34,16,16,17,1,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,17,17,16,18,16,16,16
+CMDS st=120200 d=16,19,15,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,16,18,16,16,17,17,16,16,18,17,17,16,16,17,17,16,16,18,16,16,18,16,19,15,16,16,18,16,17,17,16,16,18,16,17,17,16,18
+CMDS st=121200 d=16,16,18,16,16,18,16,16,18,18,16,16,17,16,17,17,17,16,17,16,17,16,17,17,17,17,16,18,18,14,16,16,18,17,17,16,16,16,18,16,18,16,16,17,17,16,18,16,16,16,18,16,16,18,17,17,16,16,16
+CMDS st=122200 d=17,20,13,16,18,16,16,16,18,16,17,17,20,18,12,17,33,16,18,16,17,19,14,16,16,18,16,18,16,16,18,16,18,16,16,18,17,15,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16
+CMDS st=123216 d=17,17,18,16,16,16,16,18,16,16,18,16,16,18,18,32,16,16,18,17,18,15,16,16,16,2,17,33,16,18,17,-1,19,31,16,16,18,16,18,16,16,16,18,16,16,18,18,17,15,16,17,17,18,17,15,17,17,16,16
+CMDS st=124232 d=18,16,16,18,16,21,13,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,19,15,16,34,16,16,18,18,16,16,16,18,16,16,16,18,17,16,17,16,18,16,16,16,18,16,16,18,16,17,16,1,18,32,16,16
+CMDS st=125250 d=17,17,16,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,21,16,13,16,19,15,16,16,18,16,16,18,16,17,17,17,18,15,17,17
+CMDS st=126250 d=18,16,16,16,16,18,16,16,18,16,16,18,16,34,16,16,17,1,17,33,16,16,18,0,16,34,16,16,18,16,17,17,16,17,17,16,18,16,16,18,16,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=127266 d=16,18,16,16,18,18,17,15,16,17,17,16,16,18,17,17,16,16,18,16,16,18,16,16,17,17,16,16,18,18,16,16,16,16,18,16,16,18,16,17,17,17,16,17,16,17,17,16,17,17,16,16,18,16,16,18,16,19,15
+CMDS st=128266 d=16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,18,16,16,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,18,15,17,17,16,16,17,17,18,16,16,17,16,17,17,16,17
+CMDS st=129268 d=18,14,16,16,18,16,19,15,19,31,16,18,16,16,17,17,16,16,16,2,16,34,16,16,18,18,16,16,16,19,15,16,16,18,16,16,18,17,16,17,18,16,16,16,18,16,16,16,18,17,17,16,18,16,16,17,16,17,16
+CMDS st=130282 d=18,16,17,17,18,16,16,16,16,18,16,16,18,18,17,15,16,16,18,17,17,16,18,16,16,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,34,16,16
+CMDS st=131299 d=1,18,32,16,18,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,18,32,16,16,17,1,17,16,17,16,34,17,16,17,17,16,17,17,17,16,16,16,18,17,16,17,16,16,18,18,17
+CMDS st=132300 d=16,16,18,16,16,18,16,18,16,17,17,16,16,17,17,16,17,17,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,17,16,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,17
+CMDS st=133300 d=18,17,15,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,19,15,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,17,16,17,16,17
+CMDS st=134300 d=16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,16,17,17,16,17,17,17,16,17,17,16,17,17,16,17,17,17,16,16,18,16,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,17,1,16
+CMDS st=135300 d=16,18,16,17,16,16,1,16,34,16,19,15,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,17,16,16,1,16,16,18,16,16,18,16,18,16,16,18,16,16,34,16,20,14,16,17,17,16,17,17,16,16,18,19,16
+CMDS st=136300 d=16,16,18,16,16,18,19,16,15,16,17,17,18,16,16,16,16,18,18,17,15,16,16,18,19,31,16,17,18,-1,16,16,18,17,16,17,16,18,16,17,33,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,17
+CMDS st=137300 d=17,17,16,16,16,18,16,16,18,16,34,16,17,17,17,17,16,0,16,34,16,18,16,16,18,16,16,16,16,2,16,34,19,17,14,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,17,16,17
+CMDS st=138316 d=16,18,16,16,18,17,17,16,17,16,17,16,17,17,16,16,18,16,16,16,2,16,34,16,17,17,16,16,16,2,17,17,16,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,19,16,15,17,17,16,16,16
+CMDS st=139300 d=16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,18,16,16,17,17,16,18,16,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,19,16,15,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,17,17
+CMDS st=140300 d=16,18,16,17,16,17,16,18,16,18,16,16,17,16,17,16,16,18,17,16,17,16,17,17,18,17,15,16,16,18,16,16,18,17,16,17,17,16,17,16,17,17,16,18,16,16,16,18,16,16,18,17,17,16,18,16,16,16,17
+CMDS st=141300 d=16,16,18,16,16,18,16,16,18,16,17,17,16,19,15,20,16,14,16,19,15,16,19,15,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,18,16,16,17,17,16,18,16,16,16
+CMDS st=142300 d=18,18,14,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,19,15,17,16,17,16,16,18,18,16,16,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16
+CMDS st=143300 d=16,16,18,17,17,16,16,16,18,16,17,17,16,16,18,16,16,18,17,33,16,16,18,16,16,16,2,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,34,24,26,22,16,12,16,16,18,16,16,18,16
+CMDS st=144333 d=17,17,17,16,16,16,18,17,17,16,17,17,16,17,18,15,17,33,16,16,17,1,18,32,16,17,17,16,17,17,16,16,18,18,16,16,16,17,17,18,19,13,16,17,17,17,17,16,17,33,16,18,16,16,19,15,17,17,16
+CMDS st=145366 d=17,17,16,21,13,16,16,18,16,19,15,17,17,16,16,16,18,18,17,15,16,19,15,16,34,16,16,17,1,17,16,17,17,33,16,17,16,1,17,33,16,16,18,18,16,16,16,16,18,16,18,16,17,17,16,16,17,17,16
+CMDS st=146382 d=18,16,16,18,17,16,17,16,16,18,18,16,16,16,16,16,2,16,34,17,17,16,0,18,32,16,16,16,2,18,16,16,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,17,16,17,16,17,17,17,16,17,16,16,18
+CMDS st=147366 d=16,18,17,16,17,16,16,18,16,16,18,16,19,15,17,16,17,16,17,17,17,16,17,16,16,18,16,18,16,16,16,18,16,17,17,16,17,17,17,17,16,16,16,18,16,16,18,19,16,15,17,17,16,16,18,16,16,17,17
+CMDS st=148366 d=16,18,16,17,17,16,16,18,16,17,17,17,18,15,16,17,17,16,16,18,16,16,18,17,16,17,19,17,14,17,33,16,17,17,0,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,17,17,16,16,18,16,16,18
+CMDS st=149366 d=16,18,17,16,17,16,16,18,17,16,17,16,18,16,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,16,2,19,31,16,16,18,16,16,16
+CMDS st=150350 d=16,34,16,17,16,1,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,20,16,14,18,16,16,16,16,18,16,16
+CMDS st=151350 d=16,18,16,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,19,16,15,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,17,17,18,18,14,16,16,18,16,17
+CMDS st=152350 d=16,16,18,16,16,18,16,18,16,17,16,17,16,18,16,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,18,16,16,16,18,17,16,17,18,17,15,16,16,18,16,16,18,17,18,15,16,18,16,16,16,18,16,17
+CMDS st=153350 d=17,16,17,16,16,18,16,16,18,19,17,14,16,16,18,18,17,15,16,16,18,17,18,15,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,17,17,16,18,16,16,16,16,18,17,16,17,16,19
+CMDS st=154350 d=16,17,17,17,17,16,17,16,17,17,16,17,18,32,16,16,16,2,16,16,18,17,17,16,16,16,18,16,17,17,17,33,16,16,18,16,16,17,1,16,19,15,16,34,16,16,17,1,16,16,18,16,16,18,16,34,17,17,16
+CMDS st=155366 d=16,16,2,16,34,17,17,16,0,17,33,18,16,16,16,19,15,16,18,16,16,18,16,16,16,18,16,17,17,18,17,15,17,16,17,18,16,16,16,16,18,16,17,17,17,17,16,17,17,16,16,16,18,16,18,16,16,16,18
+CMDS st=156366 d=16,18,16,16,16,2,16,34,16,18,16,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,17,16,17,16,16,18,16,16,16,2,17,16,17,16,34,16,16,16,2,16,34,16,18,16,16,16,16,2,16,34,16,18,16
+CMDS st=157350 d=16,34,16,16,17,1,16,17,17,16,16,18,16,16,18,18,17,15,16,34,16,16,16,2,16,34,16,17,17,16,16,18,16,16,18,16,16,16,2,17,33,16,16,18,16,16,18,16,17,17,18,16,16,16,16,18,16,16,18
+CMDS st=158366 d=17,17,17,18,15,16,16,18,16,18,16,16,16,18,19,16,15,16,17,17,16,17,17,18,16,16,16,17,17,16,16,18,17,16,17,20,16,14,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17
+CMDS st=159366 d=16,18,18,16,16,16,16,18,16,16,18,16,18,16,16,16,18,16,18,16,16,16,18,18,16,16,16,16,18,18,16,16,16,18,16,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,17,17
+CMDS st=160366 d=16,18,16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,17,16,17,18,17,15,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,17,17,16,18,16
+CMDS st=161366 d=16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,17,16,0,16,34,16,16,18,17,16,17,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,17
+CMDS st=162350 d=16,16,18,16,16,18,16,16,18,17,18,15,16,17,17,16,16,18,16,17,17,16,16,18,19,18,13,17,16,17,18,17,15,16,17,17,20,30,18,18,14,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,17,18,15
+CMDS st=163366 d=16,18,18,16,16,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,16,2,16,34,18,16,16,16,16,16,2,16,16,18,17,16,17,16,16,18,16,18,16,16,16
+CMDS st=164350 d=16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,18,16,19,16,15,17,16,17,16,19,15,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,18,16,16,16
+CMDS st=165350 d=16,16,18,17,17,16,16,19,15,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,17,18,15,16,17,17,16,16,18,16,16,18,16,17
+CMDS st=166349 d=1,16,16,18,17,33,16,16,18,16,18,16,0,16,16,18,16,16,18,17,33,16,16,16,2,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16
+CMDS st=167332 d=18,16,16,18,17,16,17,17,16,17,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,19,15,16,17,17,16,17,17,16,16,18,18,16,16,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16
+CMDS st=168332 d=18,17,17,16,16,18,16,18,16,16,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,17,17,0,18,32,16,16,18,16,16,16,2
+CMDS st=169316 d=16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,18,16,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,16,17,17
+CMDS st=170317 d=17,16,16,16,18,16,16,18,18,17,15,16,16,18,20,16,14,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,18,16,16,16,17,17,16,16,18,16,18,16
+CMDS st=171317 d=16,17,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,18,16,16,17,16,17,16,16,16,2,16,16,18,16,34,16,16,18,0,16,18,16,16,16,18,19,31,16,16,16,2,16,16,18,16,16,18,16,17
+CMDS st=172300 d=16,16,18,16,16,18,16,16,18,17,18,15,16,34,16,16,17,1,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,17
+CMDS st=173300 d=16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,17,18,15,17,16,17,16,19,15,16,18,16,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,16,1,18
+CMDS st=174284 d=16,16,17,17,16,16,18,16,16,18,16,18,16,16,34,16,16,16,2,16,16,18,18,16,16,16,16,18,17,17,16,17,17,16,17,16,17,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16
+CMDS st=175282 d=18,16,16,18,16,17,17,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,18,17,15,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,17,17,16,17,16,17,16
+CMDS st=176283 d=17,17,17,16,16,18,16,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,16,2,16,34,16,17,16,1,16,34,18,16,17,-1,16,34,16,16,16,2,16,34,16,16,16,2,16,16,18,16,17,17,16,17,17
+CMDS st=177267 d=16,17,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,17,17,17,16,17,17,16,17,16,16,18,16,17,17,16,18,16,17,16,17,16,16,18,18,16,16,16,17,17,16,16,18,16,16,18,16,16,18
+CMDS st=178266 d=16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,16,2,16,18
+CMDS st=179250 d=16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,20,18,12,16,34,16,17,16,1,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,34,16,17,16,1,17,16,17,16,16,18,16,16,18,16,20,14,16,16
+CMDS st=180250 d=16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16
+CMDS st=181250 d=16,16,18,16,16,18,17,16,17,16,19,15,16,16,18,16,16,18,16,17,17,0,16,34,16,17,17,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,16
+CMDS st=182235 d=15,16,16,18,16,16,18,18,16,16,16,16,18,18,16,16,18,16,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,17,16,17,16,17,17,16,16,16,2,16,34,16,16,18,16,16,18,16
+CMDS st=183232 d=18,16,16,18,16,16,17,1,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,17,17,16,18,16,16,16,18,16,16,18,16,19,15,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18
+CMDS st=184216 d=16,18,16,18,16,16,16,18,16,16,18,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16
+CMDS st=185200 d=16,18,16,16,16,18,17,16,17,16,16,18,16,16,18,16,16,17,1,16,34,16,17,16,1,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16
+CMDS st=186182 d=18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,17,1,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=187166 d=16,18,16,17,17,17,16,17,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16
+CMDS st=188150 d=16,16,16,2,18,32,16,16,16,2,16,16,18,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,17,16,1,16,34,16
+CMDS st=189134 d=16,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,17,1,16,34,16,16,17,1,16,16
+CMDS st=190100 d=16,16,18,16,16,18,17,16,17,17,16,17,16,17,17,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,17,18,15,16,16,18,16,16
+CMDS st=191100 d=16,16,18,17,16,17,16,16,17,1,16,16,18,16,19,15,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,19,15,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,18,16,16,16,16,18,17
+CMDS st=192083 d=17,16,16,18,18,17,15,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,17,17,17,-1,16,16,18,17,33,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18
+CMDS st=193066 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,17,17,16,16,16,2,16,34,16,16,18,0,17,33,16,18,16
+CMDS st=194066 d=16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,18,16,16,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,19,16,15,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18
+CMDS st=195066 d=17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18
+CMDS st=196067 d=16,17,16,16,18,16,18,16,16,16,18,16,19,15,16,16,18,16,16,16,2,16,34,16,16,16,2,16,34,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,17,16,17,16,19,15,16,16,18,17,16,17,17,16
+CMDS st=197050 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,17,16,17,16,16,18,17,16,17,16
+CMDS st=198032 d=18,17,16,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18
+CMDS st=199016 d=17,17,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16
+CMDS st=199982 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,19,15,16,17,17,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18
+CMDS st=200966 d=17,17,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,17,1,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16
+CMDS st=201950 d=16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,16,2,16,16,18,16,34,16,16,17,1,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16
+CMDS st=202932 d=18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,17,17,16,16,16,2,16,34,17,17,17,-1,16,16,18,16,34,16,17,16,1,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+CMDS st=203916 d=16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,17,16,1,16,34,16,17,16,1,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16
+CMDS st=204900 d=16,16,18,16,16,18,17,16,17,16,16,18,16,16,17,1,16,34,16,16,18,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,18,16,16,16,34,16,16,16,2,16,18,16,16,17,17,18,17,15,16
+CMDS st=205882 d=18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16
+CMDS st=206882 d=18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,18,16,16,16,16,2,16,34,16,18,16,0,16,16,18,17,16,17,16,16,18,17,17,16,16,16,18,16,16,18
+CMDS st=207866 d=17,17,18,16,16,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,19,15,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,17,16,17,16,16,18,16,16,18,16,16,17
+CMDS st=208850 d=16,34,16,17,17,16,16,17,1,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16
+CMDS st=209832 d=18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,16,2,16,34,16,16,17,1,17,33,17,16,17,0,16,34,18

@@ -1560,12 +1560,11 @@ const KILLING_ROUND: &str = "the killing round meets a target the round before k
     landing; this capture logs neither the target's cmd stamps nor its spawn time, and the \
     -spawn captures, which log both, match the killing round on 1.1d and 1.5b with no row \
     (cod11-turrets.md 13.4)";
-const UO_BONE_POSE: &str = "ours enters the target at x 1513.0006, a thousandth of a unit \
-    past the whole unit retail's truncation stays under, with the target's entity matching \
-    retail's and its playerstate matching the target's own log at the kill; the hitfine \
-    capture's points put our bones 0.003 to 0.05 units off retail's along the round, and \
-    UO's stored floats in the bone trace move an entry by 3e-5 only, so the pose differs \
-    and UO has no getTagOrigin to log it (cod11-turrets.md 13.5)";
+const UO_BONE_POSE: &str = "UO's target idles a frame ahead of ours: the hit grids put \
+    every UO wound cell on retail's to 0.004 once his first legs clip starts a frame before \
+    his spawn's end frame, and the kill on retail's 1512, but the same shift moves \
+    vehicle_armor_ab's UO bodies, spawned the same way, off retail's, so the rule is not \
+    known and not ported (cod11-turrets.md 13.6)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
     ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
     print, which reads as a smaller air acceleration across the face on retail; no cmd \
@@ -1661,6 +1660,8 @@ struct Capture {
     target_cmds: Vec<i32>,
     /// Every snapshot with its phase, `wait` included.
     traces: Vec<(String, Sample)>,
+    /// Cvars the replay sets on ours beyond the recipe's.
+    cvars: &'static [(&'static str, &'static str)],
 }
 
 fn parse(text: &str) -> Capture {
@@ -1781,6 +1782,7 @@ fn parse(text: &str) -> Capture {
         late: &[],
         early: &[],
         target_cmds: Vec::new(),
+        cvars: &[],
         weapon,
         gun,
         cmds,
@@ -1820,7 +1822,7 @@ fn rig_after(
     let mut rig = build_on(
         fs,
         p,
-        &[],
+        cap.cvars,
         &cap.weapon,
         true,
         None,
@@ -2340,28 +2342,79 @@ fn spawn_gate(
     finish(rows, gaps);
 }
 
+/// The hit-grid captures: the `-spawn` recipe with `probe_hitlog` and
+/// `probe_hitgrid`, whose grids read the pose each round met
+/// (`cod11-turrets.md` 13.6). Ours replays it as [`spawn_gate`] does, with
+/// `cvars` set, and is held to the target's playerstate, every hit's point
+/// and every grid cell; the gunner's own rows are the `-spawn` gates'.
+fn hit_gate(
+    tag: &str,
+    fs: impl Fn() -> Option<Pk3Fs>,
+    p: &'static Protocol,
+    cvars: &'static [(&'static str, &'static str)],
+    gaps: &[(&str, &str)],
+) {
+    if fs().is_none() {
+        return;
+    }
+    let path = |half: &str| {
+        format!(
+            "{}/tests/fixtures/turret/mp_carentan-dm-turret-{tag}{half}.txt",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    };
+    let cap = Capture {
+        target_cmds: target_cmds(&read(&path("-target"))),
+        cvars,
+        ..parse(&read(&path("")))
+    };
+    let script = read(&path("-script"));
+    let place = place_ms(script.lines(), 0).expect("retail's PROBE place");
+    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let mut rows = target_rows(&cap, &read(&path("-target")), &ours);
+    let log = rig.sv.script_log();
+    rows.extend(hitfine_rows(script.lines(), log.iter().map(String::as_str)));
+    rows.extend(hitgrid_rows(script.lines(), log.iter().map(String::as_str)));
+    finish(rows, gaps);
+}
+
+/// A `fine1` number: `<int>:<thousandths>:<millionths of one>`.
+fn fine(c: &str) -> f64 {
+    let (neg, c) = c.strip_prefix('-').map_or((false, c), |c| (true, c));
+    let p: Vec<f64> = c.split(':').map(|x| x.parse().expect("a number")).collect();
+    let v = p[0] + p[1] / 1e3 + p[2] / 1e9;
+    if neg { -v } else { v }
+}
+
 /// A `probe_hitlog` line: time, victim, location and damage, then the point
-/// from its `int:thousandths:millionths of one` components.
-fn hitfine<'a>(log: impl Iterator<Item = &'a str>) -> Vec<(String, [f64; 3])> {
+/// and the direction.
+fn hitfine<'a>(log: impl Iterator<Item = &'a str>) -> Vec<(String, [f64; 3], [f64; 3])> {
     log.filter(|l| !l.starts_with('#'))
         .filter_map(|l| l.split_once("PROBE hitfine ").map(|(_, r)| r))
         .map(|r| {
             let f: Vec<&str> = r.split_whitespace().collect();
-            let comp = |c: &str| {
-                let (neg, c) = c.strip_prefix('-').map_or((false, c), |c| (true, c));
-                let p: Vec<f64> = c.split(':').map(|x| x.parse().expect("a number")).collect();
-                let v = p[0] + p[1] / 1e3 + p[2] / 1e9;
-                if neg { -v } else { v }
+            let v = |s: &str| {
+                let c: Vec<f64> = s.split(',').map(fine).collect();
+                [c[0], c[1], c[2]]
             };
-            let point: Vec<f64> = f[4].split(',').map(comp).collect();
-            (f[..4].join(" "), [point[0], point[1], point[2]])
+            (f[..4].join(" "), v(f[4]), v(f[5]))
         })
         .collect()
 }
 
+/// How far a hit's point may sit from retail's, units: what is left on a
+/// knockback's first frame (`cod11-turrets.md` 13.6).
+const HIT_NEAR: f64 = 0.02;
+/// How far a hit-grid cell may sit from retail's along its ray, units.
+const GRID_NEAR: f64 = 0.1;
+
 /// The captures that log `probe_hitlog`: every hit at retail's time, on the
-/// same victim, location and damage. How far each point sits from retail's
-/// prints under `TURRET_REPORT=1` (turrets doc 13.5).
+/// same victim, location and damage, its point within [`HIT_NEAR`]. How far
+/// each point sits from retail's prints under `TURRET_REPORT=1` (turrets
+/// doc 13.5).
 fn hitfine_rows<'a>(
     theirs: impl Iterator<Item = &'a str>,
     mine: impl Iterator<Item = &'a str>,
@@ -2371,12 +2424,15 @@ fn hitfine_rows<'a>(
         return Vec::new();
     }
     let mut rows = Vec::new();
-    for (i, (key, at)) in theirs.iter().enumerate() {
+    for (i, (key, at, _)) in theirs.iter().enumerate() {
         match mine.get(i) {
-            Some((k, m)) if k == key => {
+            Some((k, m, _)) if k == key => {
+                let d = [m[0] - at[0], m[1] - at[1], m[2] - at[2]];
                 if report() {
-                    let d = [m[0] - at[0], m[1] - at[1], m[2] - at[2]];
                     eprintln!("hitfine {key}: ours - retail = {d:?}");
+                }
+                if d.iter().map(|x| x * x).sum::<f64>().sqrt() > HIT_NEAR {
+                    rows.push(format!("[hit] {key}: ours - retail = {d:?}"));
                 }
             }
             other => rows.push(format!("[hit] {key}: ours {:?}", other.map(|o| &o.0))),
@@ -2384,6 +2440,66 @@ fn hitfine_rows<'a>(
     }
     if mine.len() > theirs.len() {
         rows.push(format!("[hit] ours only {:?}", &mine[theirs.len()..]));
+    }
+    rows
+}
+
+/// Every `probe_hitgrid` row against retail's, cell by cell, each a
+/// distance along the round from the server's own hit point moved back 48:
+/// both turn into a distance from a common origin through that point's
+/// projection on the round, so a cell compares where its ray met the body.
+fn hitgrid_rows<'a>(
+    theirs: impl Iterator<Item = &'a str> + Clone,
+    mine: impl Iterator<Item = &'a str> + Clone,
+) -> Vec<String> {
+    type Rows = BTreeMap<(i32, i32), Vec<Option<f64>>>;
+    let rows_of = |log: &mut dyn Iterator<Item = &'a str>| -> Rows {
+        let mut out = Rows::new();
+        for r in log
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.split_once("PROBE hitgrid ").map(|(_, r)| r))
+        {
+            let f: Vec<&str> = r.split_whitespace().collect();
+            let cells = f[3..]
+                .iter()
+                .map(|c| (*c != "-").then(|| fine(c)))
+                .collect();
+            out.insert((f[0].parse().unwrap(), f[2].parse().unwrap()), cells);
+        }
+        out
+    };
+    let along = |log: &mut dyn Iterator<Item = &'a str>| -> BTreeMap<i32, f64> {
+        hitfine(log)
+            .into_iter()
+            .map(|(key, p, d)| {
+                let t = key.split(' ').next().unwrap().parse().unwrap();
+                (t, p[0] * d[0] + p[1] * d[1] + p[2] * d[2])
+            })
+            .collect()
+    };
+    let (rt, ot) = (rows_of(&mut theirs.clone()), rows_of(&mut mine.clone()));
+    let (ra, oa) = (along(&mut theirs.clone()), along(&mut mine.clone()));
+    let mut rows = Vec::new();
+    for ((t, row), cells) in &rt {
+        let Some(mine) = ot.get(&(*t, *row)) else {
+            rows.push(format!("[grid] t={t} row {row}: retail only"));
+            continue;
+        };
+        for (j, (r, o)) in cells.iter().zip(mine).enumerate() {
+            let off = match (r, o) {
+                (Some(r), Some(o)) => Some((o + oa[t]) - (r + ra[t])),
+                (None, None) => continue,
+                _ => None,
+            };
+            if report() {
+                eprintln!("grid t={t} row {row} col {j}: {off:?}");
+            }
+            if off.is_none_or(|d| d.abs() > GRID_NEAR) {
+                rows.push(format!(
+                    "[grid] t={t} row {row} col {j}: retail {r:?} ours {o:?}"
+                ));
+            }
+        }
     }
     rows
 }
@@ -2438,7 +2554,63 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
         &PROTOCOL_V22,
         &[],
         &[],
+        GAPS_HITFINE_UO,
+    );
+}
+
+/// The 1.1d hit-grid capture's head: the capture predates the gsc's
+/// `PROBE models` line, and its head cells read the boxes of the `a` axis
+/// heads (`xmodelparts/basehead_axis11`) to 0.002 where ours' own draw, a
+/// `b` head, reads them 0.12 off (cod11-turrets.md 13.6).
+const HEAD_HITGRID: &[(&str, &str)] =
+    &[("probe_hitgrid", "1"), ("probe_head", "basehead_axis_a_01")];
+/// The UO hit-grid capture: both rounds' grids and the kill's point, every
+/// cell of the frame-ahead idle ([`UO_BONE_POSE`]).
+const GAPS_HITGRID_UO: &[(&str, &str)] = &[
+    ("[grid] t=30400 ", UO_BONE_POSE),
+    ("[grid] t=30450 ", UO_BONE_POSE),
+    ("[hit] 30450 0 torso_upper 53: ours - retail", UO_BONE_POSE),
+];
+/// The `-hitfine-uo` capture's kill point, 0.055 off ([`UO_BONE_POSE`]).
+const GAPS_HITFINE_UO: &[(&str, &str)] =
+    &[("[hit] 30200 0 torso_upper 53: ours - retail", UO_BONE_POSE)];
+/// The other hit-grid captures' cvars.
+const HITGRID: &[(&str, &str)] = &[("probe_hitgrid", "1")];
+
+#[test]
+fn the_hitgrid_capture_matches_retail_on_mp_carentan() {
+    hit_gate(
+        "hitgrid",
+        vcod_common::testing::game_fs_11,
+        &PROTOCOL_V1,
+        HEAD_HITGRID,
         &[],
+    );
+}
+
+#[test]
+fn the_hitgrid_capture_matches_15b_on_mp_carentan() {
+    hit_gate(
+        "hitgrid-15",
+        || {
+            vcod_common::testing::game_fs().filter(|fs| {
+                vcod_server::server::install_protocol(fs).version == PROTOCOL_V6.version
+            })
+        },
+        &PROTOCOL_V6,
+        HITGRID,
+        &[],
+    );
+}
+
+#[test]
+fn the_hitgrid_capture_matches_uo_on_mp_carentan() {
+    hit_gate(
+        "hitgrid-uo",
+        vcod_common::testing::uo_fs,
+        &PROTOCOL_V22,
+        HITGRID,
+        GAPS_HITGRID_UO,
     );
 }
 
