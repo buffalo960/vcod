@@ -897,6 +897,23 @@ free; a tank's first change after a use entry is never refused; inside
 6 to 1), stamped 1500 ms ahead, so changes are 1750 ms apart and the
 script sees `deactivated` then `activated` (VERIFIED decompile).
 
+The cycle is a client command, so it runs where `SV_ExecuteClientMessage`
+runs its packet's commands: after every earlier packet's usercmds and
+before its own packet's. `SetClientViewAngle` (0x54301) writes
+`delta_angles` as `ANGLE2SHORT(view) - client+0x452c`, the angles of the
+last cmd run (VERIFIED decompile), so where in the frame's cmds the
+command lands moves the seat's `delta_angles` and every view after it.
+Both seats captures fit a change after the last cmd that still turns and
+before the held run the probe's `say` step starts: the tank's
+`delta_angles` (23003, 63172) at the driver's seat are `tag_player`'s
+view (8.88, -27.60) less cmd 41000's (44149, 62875), the jeep's (13195,
+41447) at the passenger's `tag_body` (-11.21, 76.53) less cmd 39700's,
+to a short (VERIFIED, capture). vcod-server queues the cycle with its
+packet and runs it in the move pass ahead of that packet's cmds, as it
+runs `kill` (`client::PacketCommand`); it used to run it on arrival,
+ahead of the cmds of packets queued before it, and the seat's view
+stood off retail's by up to 0.84 degrees on the change's snapshot.
+
 ### 11.4 Every frame
 
 - `G_RunClient` (0x41dfc) puts a linked player in `pm_type` 1, 7 dead
@@ -1724,11 +1741,11 @@ runs lie 1.1 units apart.
   per-cmd `delta_angles` pushes included: they move ours cmd for cmd as
   they moved retail's (VERIFIED, replay; until 2026-10-17 the replay
   rebased every cmd on our newest `delta_angles`, which put each push a
-  snapshot apart and opened the cone on the jump, 9 tolerated rows). Gap:
-  each seat change's snapshot, and on the tank the next one's cone. The
-  probe's `nextvehslot` rides no cmd, so ours changes seat in another
-  frame than retail's and its `SetClientViewAngle` reads the view tag as
-  that frame poses the turret (INFERRED, the replay's timing).
+  snapshot apart and opened the cone on the jump, 9 tolerated rows).
+  The replay sends `nextvehslot` in its own packet ahead of the held run
+  of cmds that ends the change's frame (11.3), and every seat change's
+  view and cone match (VERIFIED, replay; the three rows it tolerated
+  until 2026-10-17 were the server running the cycle on arrival).
   The driver's feedback from the tank's own shell matches (13, "A blast
   on a hull"). `delta_angles` is not compared: its absolute value
   rides the replaying client's own cmd angles. The jeep driver's legs
