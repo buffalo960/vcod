@@ -163,6 +163,39 @@ INFERRED: the 0.5 at 0x80cd42c is the dispatcher's half height. The
 dispatcher picks which of the two spheres and the cylinder to trace from the
 z relation of the two capsules; its branch conditions were not read in full.
 
+### 2.4 The capsule sweep's rounding on 1.1d
+
+VERIFIED, `cod_lnxded` 1.1d `CM_TransformedBoxTrace` (0x80568d8): the
+mover's box is made symmetric, its offset `(mins + maxs) * 0.5` stored, and
+the start and end shifted by it and then by the body's origin, each sum
+stored as a float, so the sweep runs in the body's frame. VERIFIED, the
+same function: the mover's capsule radius is `min(maxs.x, maxs.z)` of the
+symmetric box, its half height `maxs.z`, its sphere offset the difference,
+stored. VERIFIED, `CM_Trace` (0x8056310): the delta is the end less the
+start, stored, and its squared length stored at `tw+0x24`. VERIFIED, the
+dispatcher (0x8055c04): the body's capsule comes off the temp model's
+bounds the same way, its spheres at its centre plus and less the offset,
+stored.
+
+INFERRED, from the instruction sequence of the sphere (0x8055794): `rel`,
+its squared length, the dot with the delta and the discriminant stay on the
+x87 stack; the summed radius squared is stored (0x80557d2), and so is the
+raw root `(-b - sqrt(disc)) / a` (0x8055903) before the 0.125 backoff,
+`0.125 |rel| / b` with `|rel|` the stored length `VectorNormalize2`
+(0x8065bc8) returns, is added on the stack. The sum is compared with the
+fraction and stored. INFERRED, the cylinder (0x8055980) the same, except
+that the summed radius squared and `a` (the squared xy delta) stay on the
+stack, and its z test reads `start.z + (f - backoff) * delta.z`, the root
+recovered from the sum.
+
+VERIFIED, `bump_ab` on `mp_carentan-dm-bump-walker.txt`: in f32 world coordinates vcod's sweep landed one
+to four ulps off retail on six of the bump capture's rows (the stand jump's
+fall onto the target, a crouched head-on stop, a prone glance); in the
+body's frame with these roundings every row reads retail's bits.
+`movetrace::kept` is the port, run under `Arith::Kept` only: 1.5b's and
+UO's stored builds and the Windows cgames keep the f32 world-frame sweep,
+not read.
+
 ### 2.3 A step does not climb a player
 
 VERIFIED: `PM_StepSlideMove` (0x34fbc) compares the down trace's
