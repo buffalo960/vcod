@@ -243,8 +243,9 @@ vcod's server bounds the systeminfo at 1023 on protocol 1 (trimming paks,
 not `sv_serverid`) and at 8191 on 6 and 22, and sends every configstring of
 1000 bytes or more as `x`/`y`/`z` (`net::configstring_commands`); the client
 puts them back together. The UO gate `a_pure_server_s_systeminfo_matches_uo`
-matches both pure captures byte for byte bar `sv_serverid`, which the
-captures read after a second map load.
+matches both pure captures byte for byte, `sv_serverid` included: it
+loads the recipe's first map, then the captured one, as the captures were
+a second map load (32).
 
 ### Identical on both maps, index < 140
 
