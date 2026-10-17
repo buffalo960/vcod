@@ -3,7 +3,7 @@
 //! delta-compressed snapshots.
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 use vcod_common::net::protocol::Protocol;
@@ -47,8 +47,10 @@ struct Args {
     /// Whether the bots fight. Without it they only roam.
     #[arg(long)]
     bots_shoot: bool,
-    /// A cvar to set before the scripts load, retail's `+set name value`;
-    /// repeatable, e.g. `--set scr_friendlyfire=1`.
+    /// A cvar to set, retail's `+set name value`; repeatable, e.g.
+    /// `--set scr_friendlyfire=1`. Every one is set before the scripts load;
+    /// one placed after the map is set again once the level has loaded, over
+    /// what the scripts wrote, as retail runs `+map x +set ...`.
     #[arg(long = "set", value_name = "NAME=VALUE")]
     set: Vec<String>,
     /// File that keeps `banUser`/`banClient` bans across runs, an IPv4
@@ -88,7 +90,15 @@ const PACKET_QUEUE: usize = 4 * MAX_PACKETS_PER_FRAME;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let args = Args::parse();
+    let matches = Args::command().get_matches();
+    let args = Args::from_arg_matches(&matches)?;
+    // `Com_AddStartupCommands` queues the command line in order, so a set
+    // after `+map` runs again once the level is up (map-cycle doc 4.5).
+    let map_index = matches.index_of("map").unwrap_or(0);
+    let sets_after_map: Vec<bool> = matches
+        .indices_of("set")
+        .map(|i| i.map(|i| i > map_index).collect())
+        .unwrap_or_default();
     log::info!(
         "vcod-server {}{}",
         vcod_server::VERSION,
@@ -260,6 +270,11 @@ fn main() -> Result<()> {
     if let Err(e) = server.load_scripts(fs.clone()) {
         log::error!("loading the map and gametype scripts: {e:#}");
         std::process::exit(1);
+    }
+    for (pair, _) in args.set.iter().zip(&sets_after_map).filter(|(_, a)| **a) {
+        if let Some((name, value)) = pair.split_once('=') {
+            server.push_set(name, value);
+        }
     }
     // Ctrl-C runs `quit`, so the masters get their flatline; a second one
     // exits at once.

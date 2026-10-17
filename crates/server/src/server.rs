@@ -1536,9 +1536,10 @@ pub struct Server {
     /// The blasts this frame's missile pass set off, for the radius damage
     /// pass to charge (`crate::game::missile::Explosion`).
     pending_explosions: Vec<crate::game::missile::Explosion>,
-    /// Retail's `+set name value`: applied last in `cvars`, over
-    /// `default_mp.cfg` and the config's own, so a run can turn a script
-    /// cvar such as `scr_friendlyfire` on without a code change.
+    /// Retail's `+set name value` as `Com_StartupVariable` applies it: last
+    /// in the first level's `cvars`, over `default_mp.cfg` and the config's
+    /// own, so a run can turn a script cvar such as `scr_friendlyfire` on
+    /// without a code change. Also where a latched `sv_maxclients` waits.
     cvar_overrides: Vec<(String, String)>,
     /// `bg_fallDamageMinHeight` and `bg_fallDamageMaxHeight` as the script's
     /// cvar table last read, what every move lands with and systeminfo
@@ -5492,8 +5493,9 @@ impl Server {
     /// Past the first level the table comes from the one the outgoing level
     /// left ([`Self::carried_cvars`]) rather than from `default_mp.cfg`
     /// again: retail's is process-global and a script's `setCvar` survives
-    /// both boundaries. The config mirrors and the `+set` overrides are
-    /// replayed on top either way, so a `--set` still outranks a script.
+    /// both boundaries. The `--set`s go in at the first load only, as
+    /// `Com_StartupVariable` runs once; [`Self::set_cvar`] writes the
+    /// running table after that.
     fn cvars(&self, fs: &vcod_common::pk3::Pk3Fs) -> crate::cvars::Cvars {
         let mut cvars = match self.carried_cvars.clone() {
             Some(c) => c,
@@ -5520,14 +5522,24 @@ impl Server {
         // section 3 step 15), which a script's `getCvar("mapname")` reads.
         cvars.set("mapname", &self.cfg.map);
         cvars.set("sv_hostname", &self.cfg.hostname);
-        cvars.set("sv_maxclients", &self.cfg.max_clients.to_string());
+        // Latched: a `set` while a level ran waits in the overrides.
+        cvars.set(
+            "sv_maxclients",
+            &self.pending_cvar("sv_maxclients", &self.cfg.max_clients.to_string()),
+        );
         cvars.set("dedicated", &self.dedicated.to_string());
         cvars.set("sv_pure", "0");
         cvars.set("sv_running", "1");
         cvars.set("sv_serverid", &self.server_id.to_string());
         cvars.set("sv_cheats", if self.cheats { "1" } else { "0" });
-        for (name, value) in &self.cvar_overrides {
-            cvars.set(name, value);
+        // `Com_StartupVariable` runs from `Com_Init` only, never from
+        // `SV_SpawnServer`, so the command line's sets go in once, over
+        // `default_mp.cfg`; past that a script's `setCvar` stands
+        // (map-cycle doc 4.5).
+        if self.carried_cvars.is_none() {
+            for (name, value) in &self.cvar_overrides {
+                cvars.set(name, value);
+            }
         }
         if self.v15() {
             cvars.set_ui_cvars();
@@ -5846,9 +5858,12 @@ impl Server {
         Some(self.script.as_ref()?.cvars().get(name).to_string())
     }
 
-    /// A `+set` for the next `load_scripts`. `sv_mapRotation` and
-    /// `g_gametype` also mirror into their own fields, so `--set` and
-    /// `map_rotate`'s `gametype` token both work through one value
+    /// `Cvar_Set`: before the first load a `+set` for it to stamp
+    /// (`Com_StartupVariable`), after it a write to the running table, or to
+    /// the carried one between levels. `g_gametype` and `sv_maxclients` are
+    /// latched and wait for the next load. `sv_mapRotation` and `g_gametype`
+    /// also mirror into their own fields, so `--set` and `map_rotate`'s
+    /// `gametype` token both work through one value
     /// (docs/research/cod11-map-cycle.md section 5).
     pub fn set_cvar(&mut self, name: &str, value: &str) {
         // 1.5b registers `sv_punkbuster` read-only ahead of the command
@@ -5866,6 +5881,15 @@ impl Server {
             None => self
                 .cvar_overrides
                 .push((name.to_string(), value.to_string())),
+        }
+        let latched =
+            name.eq_ignore_ascii_case("g_gametype") || name.eq_ignore_ascii_case("sv_maxclients");
+        if !latched {
+            if let Some(rt) = self.script.as_mut() {
+                rt.host.cvars.set(name, value);
+            } else if let Some(c) = self.carried_cvars.as_mut() {
+                c.set(name, value);
+            }
         }
         self.apply_engine_cvar(name, value);
         // Latched: serverinfo keeps the running level's value until a load,
@@ -6449,6 +6473,14 @@ impl Server {
         self.console.push_back(line.to_string());
     }
 
+    /// A command-line `+set` placed after `+map`: `Com_AddStartupCommands`
+    /// queues it behind the map, so it runs as a console `set` once the
+    /// level has loaded, over the script's load-time writes (map-cycle doc
+    /// 4.5).
+    pub fn push_set(&mut self, name: &str, value: &str) {
+        self.push_console(&format!("set {name} \"{value}\""));
+    }
+
     /// `Cbuf_Execute`: every queued line through [`Self::exec_console_line`].
     /// A command pushed by a builtin during the script pass runs here, at the
     /// top of the next tick, which is `EXEC_APPEND`. The frame loop runs it
@@ -6998,8 +7030,6 @@ impl Server {
     /// `Cvar_Set_f`: a read-only, init or (without `sv_cheats`) cheat cvar
     /// refuses, a latched one keeps its value until the next load and says
     /// so, anything else is written to the running level's table at once.
-    /// A `--set` override of the same name follows, so the next load does
-    /// not put the old value back.
     fn console_set(&mut self, name: &str, value: &str) {
         if let Some((canon, live, pending)) = self.latched_cvar(name) {
             let mut waiting = (pending != live).then_some(pending);
@@ -7018,23 +7048,13 @@ impl Server {
             }
         };
         match outcome {
-            crate::cvars::ConsoleSet::Refused(msg) => {
-                self.print(&msg);
-                return;
-            }
+            crate::cvars::ConsoleSet::Refused(msg) => self.print(&msg),
             crate::cvars::ConsoleSet::Latched(msg) => {
                 if let Some(msg) = msg {
                     self.print(&msg);
                 }
             }
             crate::cvars::ConsoleSet::Applied => self.apply_engine_cvar(name, value),
-        }
-        if let Some((_, v)) = self
-            .cvar_overrides
-            .iter_mut()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        {
-            *v = value.to_string();
         }
     }
 
@@ -10650,6 +10670,72 @@ mod tests {
         let sv = Server::new(cfg(), Instant::now());
         let cvars = sv.cvars(&vcod_common::pk3::Pk3Fs::empty());
         assert_eq!(cvars.get("mapname"), "mp_carentan");
+    }
+
+    /// Doc 4.5: `Com_StartupVariable` runs from `Com_Init` only, so a
+    /// `--set` goes into the first level's table and a script's later
+    /// `setCvar` of it survives a restart and a map change. Each load of
+    /// this gametype appends to the cvar; a replay of the `--set` at each
+    /// load would keep resetting it to one `x`.
+    #[test]
+    fn a_set_applies_once_and_a_scripts_write_outlives_later_loads() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let mut now = Instant::now();
+        let mut sv = Server::new(
+            ServerConfig {
+                gametype: "trail".into(),
+                ..cfg()
+            },
+            now,
+        );
+        sv.overlay_script(
+            "maps/mp/gametypes/trail",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
+             setCvar(\"vc_trail\", getCvar(\"vc_trail\") + \"x\"); }",
+        );
+        sv.set_cvar("vc_trail", "a");
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("ax"));
+        now += Duration::from_millis(50);
+        sv.push_console("map_restart");
+        sv.tick(now);
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("axx"));
+        sv.spawn_server("mp_brecourt").expect("the map load failed");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("axxx"));
+
+        // A set while the level runs is `Cvar_Set` on the live table, and
+        // the next load builds on it.
+        sv.set_cvar("vc_trail", "b");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("b"));
+        sv.spawn_server("mp_carentan").expect("the map load failed");
+        assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("bx"));
+    }
+
+    /// Doc 4.5: a `+set` after `+map` runs again once the level is up
+    /// (`Com_AddStartupCommands`), so it outranks the script's load-time
+    /// write, as `scr_allow_vote 0` read back on 1.1d over `dm.gsc`'s
+    /// `setCvar("scr_allow_vote", level.allowvote)`.
+    #[test]
+    fn a_set_after_the_map_outranks_the_scripts_load_time_write() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.set_cvar("scr_allow_vote", "0");
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        assert_eq!(
+            sv.script_cvar("scr_allow_vote").as_deref(),
+            Some("1"),
+            "dm.gsc no longer writes scr_allow_vote at load"
+        );
+        sv.push_set("scr_allow_vote", "0");
+        sv.drain_console(now);
+        assert_eq!(sv.script_cvar("scr_allow_vote").as_deref(), Some("0"));
     }
 
     /// `map_rotate`'s `gametype` token is a `Cvar_Set` (doc section 5.2), so
