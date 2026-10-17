@@ -43,13 +43,14 @@ impl Kind {
         }
     }
 
-    /// `cg_gameMessageWidth` 70 and `cg_gameBoldMessageWidth` 60, the
-    /// characters a line holds before it wraps (cgame cvar table, 1.1
-    /// 0x300750c0, the same defaults on 1.5 and UO).
-    fn width(self) -> usize {
+    /// The cvar that sets the characters a line holds before it wraps,
+    /// and its default: `cg_gameMessageWidth` 70 and
+    /// `cg_gameBoldMessageWidth` 60, archived (cgame cvar table, 1.1
+    /// 0x300750c0, 1.5 0x300770b0, UO 0x30085950; cod11-chat.md 3.3).
+    pub fn width_cvar(self) -> (&'static str, usize) {
         match self {
-            Kind::Game => 70,
-            Kind::Bold => 60,
+            Kind::Game => ("cg_gameMessageWidth", 70),
+            Kind::Bold => ("cg_gameBoldMessageWidth", 60),
         }
     }
 
@@ -96,6 +97,8 @@ struct Line {
 /// One window's ring. A slot with `start` 0 is empty.
 pub struct Window {
     kind: Kind,
+    /// Characters a line holds, [`line_width`] of the kind's cvar.
+    pub width: usize,
     slots: [Option<Line>; SLOTS],
     current: usize,
 }
@@ -104,6 +107,7 @@ impl Window {
     pub fn new(kind: Kind) -> Window {
         Window {
             kind,
+            width: kind.width_cvar().1,
             slots: Default::default(),
             current: 0,
         }
@@ -122,7 +126,7 @@ impl Window {
                 }
                 continue;
             }
-            for line in wrap(part, self.kind.width(), &mut colour) {
+            for line in wrap(part, self.width, &mut colour) {
                 self.add_line(Body::Text(line), now_ms);
             }
         }
@@ -228,9 +232,22 @@ impl Window {
     }
 }
 
+/// The width 0x408f80 wraps at: the cvar's integer, or the console's
+/// line width (0x4088f0: `max(vidWidth, 640) / 8 - 2`) when it is under 1
+/// or over that.
+pub fn line_width(cvar: i32, vid_width: u32) -> usize {
+    let console = vid_width.max(640) as i32 / 8 - 2;
+    (if cvar < 1 || cvar > console {
+        console
+    } else {
+        cvar
+    }) as usize
+}
+
 /// CoDMP.exe 0x408f80 for the game and bold windows: one part of a message
 /// cut into console lines of at most `limit` characters. A part longer than
-/// `limit` (colour codes not counted, 0x4aa6c0) is balanced over
+/// `limit` (colour codes not counted, 0x4aa6c0; `^8`/`^9` on 1.5 and UO,
+/// 0x409760 and 0x409dc0) is balanced over
 /// `ceil(len / limit)` lines: a line also ends after a space once it holds
 /// `len / lines`. Before each character the rest of its word (bytes above a
 /// space, at most `limit`) moves to a new line when it would overrun, unless
@@ -244,7 +261,7 @@ fn wrap(text: &str, limit: usize, colour: &mut char) -> Vec<String> {
         (s[i] == '^')
             .then(|| s.get(i + 1).copied())
             .flatten()
-            .filter(|c| ('0'..='7').contains(c))
+            .filter(|&c| super::font::is_colour_code(c))
     };
     let mut len = 0;
     let mut i = 0;
@@ -430,6 +447,39 @@ mod tests {
         let mut w = Window::new(Kind::Bold);
         w.push(&format!("{} {}", "a".repeat(40), "b".repeat(25)), 0);
         assert_eq!(live(&w).len(), 2);
+    }
+
+    /// The width cvar holds between 1 and the console's line width; 0 or
+    /// past it takes the console's (78 at 640 wide, 238 at 1920).
+    #[test]
+    fn the_width_cvar_is_clamped_to_the_console() {
+        assert_eq!(line_width(70, 1920), 70);
+        assert_eq!(line_width(0, 1920), 238);
+        assert_eq!(line_width(200, 1024), 126);
+        assert_eq!(line_width(70, 320), 70);
+        assert_eq!(line_width(-5, 320), 78);
+        let mut w = Window::new(Kind::Game);
+        w.width = 20;
+        w.push(&format!("{} {}", "a".repeat(15), "b".repeat(15)), 0);
+        assert_eq!(live(&w).len(), 2);
+    }
+
+    /// On 1.5 and UO `^8`/`^9` are codes: they count for no width and reopen
+    /// the next line.
+    #[test]
+    fn team_codes_wrap_as_codes_on_15() {
+        let text = format!("^9{} {}", "a".repeat(40), "b".repeat(35));
+        crate::hud::font::set_team_colours(true, &|_| None);
+        let lines = wrapped(&text, 70);
+        crate::hud::font::set_team_colours(false, &|_| None);
+        assert_eq!(
+            lines,
+            [
+                format!("^9{}", "a".repeat(40)),
+                format!("^9{}", "b".repeat(35))
+            ]
+        );
+        assert_eq!(wrapped(&format!("^9{}", "c".repeat(69)), 70).len(), 2);
     }
 
     #[test]

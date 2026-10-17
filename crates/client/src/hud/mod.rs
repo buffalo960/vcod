@@ -256,6 +256,14 @@ impl Hud {
         self.game_messages.push(text, now_ms);
     }
 
+    /// `cg_gameMessageWidth` and `cg_gameBoldMessageWidth`, read as the
+    /// cgame's vmCvar integers each frame, for a window `vid_width` px wide
+    /// ([`messages::line_width`]).
+    pub fn set_message_widths(&mut self, game: i32, bold: i32, vid_width: u32) {
+        self.game_messages.width = messages::line_width(game, vid_width);
+        self.bold_messages.width = messages::line_width(bold, vid_width);
+    }
+
     /// A weapon-select bind ran: the weapon name shows again.
     pub fn weapon_selected(&mut self) {
         self.player.weapon_name.select();
@@ -416,6 +424,7 @@ impl Hud {
 
     /// This frame's quads from every element, at [`HUD_SCALE`].
     pub fn build(&mut self, f: &HudFrame) -> Vec<HudQuad> {
+        font::set_team_colours(f.protocol.team_colour_codes, f.cvar);
         let mut out = Vec::new();
         let screen = (f.screen_w, f.screen_h);
         let pm_type = |ps: &PlayerState| ps.field_i32(f.protocol, "pm_type");

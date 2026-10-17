@@ -195,8 +195,9 @@ impl UiFonts {
 }
 
 /// The engine's `colorTable` for `^0`..`^7` (doc section 7, CoDMP.exe
-/// `0x004d7f13`). Only these eight codes exist. `^7` restores the caller's
-/// colour rather than reading entry 7; [`split_color_codes`] does the same.
+/// `0x004d7f13`). `^7` restores the caller's colour rather than reading
+/// entry 7; [`split_color_codes`] does the same. 1.5 and UO add `^8` and
+/// `^9` ([`set_team_colours`]).
 pub const COLORS: [[f32; 4]; 8] = [
     [0.0, 0.0, 0.0, 1.0], // ^0 black
     [1.0, 0.0, 0.0, 1.0], // ^1 red
@@ -208,10 +209,60 @@ pub const COLORS: [[f32; 4]; 8] = [
     [1.0, 1.0, 1.0, 1.0], // ^7 white; the renderer restores the caller's colour instead
 ];
 
+thread_local! {
+    /// `^8` and `^9`'s colours, `None` while the codes are literal (1.1).
+    /// Retail keeps them in two globals the client frame refreshes; vcod's
+    /// HUD build does ([`set_team_colours`]).
+    static TEAM_COLOURS: std::cell::Cell<Option<[[f32; 3]; 2]>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The client frame's team colour refresh (CoDMP.exe 1.5 0x405440, UO
+/// 0x405cb0, from 0x412762 and 0x4138bf): on a protocol whose renderer
+/// takes `^8`/`^9`, each reads `g_TeamColor_Allies` / `g_TeamColor_Axis`
+/// as `"%f %f %f"` (a component the scan stops before keeps its last
+/// value), white when the cvar is unset or empty, each clamped to 0..1
+/// (cod11-hud-protocol.md 7).
+pub fn set_team_colours(team_codes: bool, cvar: &dyn Fn(&str) -> Option<String>) {
+    let next = team_codes.then(|| {
+        let last = TEAM_COLOURS.get().unwrap_or([[1.0; 3]; 2]);
+        let read = |name: &str, mut c: [f32; 3]| {
+            match cvar(name).filter(|s| !s.is_empty()) {
+                Some(s) => {
+                    let floats = s.split_whitespace().map_while(|f| f.parse::<f32>().ok());
+                    for (slot, f) in c.iter_mut().zip(floats) {
+                        *slot = f;
+                    }
+                }
+                None => c = [1.0; 3],
+            }
+            c.map(|v| v.clamp(0.0, 1.0))
+        };
+        [
+            read("g_TeamColor_Allies", last[0]),
+            read("g_TeamColor_Axis", last[1]),
+        ]
+    });
+    TEAM_COLOURS.set(next);
+}
+
+/// Whether `^d` is a colour code: `0`..`7`, and on 1.5 and UO `8` and `9`
+/// too, for the renderer, the console and message writers and the chat
+/// wrap alike (cod11-chat.md 3.3).
+pub fn is_colour_code(d: char) -> bool {
+    match d {
+        '0'..='7' => true,
+        '8' | '9' => TEAM_COLOURS.get().is_some(),
+        _ => false,
+    }
+}
+
 /// Splits `"^1Bob^7: hi"` into `[("Bob", red), (": hi", default)]`. `^7`
-/// restores `default`, not `COLORS[7]`. `^8`, `^9`, `^^` and a lone `^` are
-/// literal (doc section 7).
+/// restores `default`, not `COLORS[7]`; any other code replaces the RGB
+/// and keeps `default`'s alpha. `^^`, a lone `^` and a code
+/// [`is_colour_code`] refuses are literal (doc section 7).
 pub fn split_color_codes(text: &str, default: [f32; 4]) -> Vec<(String, [f32; 4])> {
+    let team = TEAM_COLOURS.get();
     let mut out = Vec::new();
     let mut buf = String::new();
     let mut color = default;
@@ -219,13 +270,21 @@ pub fn split_color_codes(text: &str, default: [f32; 4]) -> Vec<(String, [f32; 4]
     while let Some(c) = chars.next() {
         if c == '^' {
             match chars.peek() {
-                Some(d) if ('0'..='7').contains(d) => {
-                    let idx = d.to_digit(10).unwrap() as usize;
+                Some(&d) if is_colour_code(d) => {
                     chars.next();
                     if !buf.is_empty() {
                         out.push((std::mem::take(&mut buf), color));
                     }
-                    color = if idx == 7 { default } else { COLORS[idx] };
+                    let rgb = match (d, team) {
+                        ('7', _) => None,
+                        ('8', Some(t)) => Some(t[0]),
+                        ('9', Some(t)) => Some(t[1]),
+                        _ => {
+                            let [r, g, b, _] = COLORS[d as usize - '0' as usize];
+                            Some([r, g, b])
+                        }
+                    };
+                    color = rgb.map_or(default, |[r, g, b]| [r, g, b, default[3]]);
                     continue;
                 }
                 Some('^') => {
@@ -419,6 +478,43 @@ mod tests {
         assert_eq!(out[1], (": hi".to_string(), default));
         assert_eq!(split_color_codes("a^", default)[0].0, "a^");
         assert_eq!(split_color_codes("^8x", default)[0].0, "^8x");
+    }
+
+    #[test]
+    fn a_code_keeps_the_callers_alpha() {
+        let out = split_color_codes("^1a", [1.0, 1.0, 1.0, 0.25]);
+        assert_eq!(out[0].1, [1.0, 0.0, 0.0, 0.25]);
+    }
+
+    #[test]
+    fn team_codes_follow_the_protocol_and_the_team_cvars() {
+        let default = [0.0, 1.0, 0.0, 0.5];
+        let cvars = |name: &str| match name {
+            "g_TeamColor_Allies" => Some("0.25 0.5 2".to_string()),
+            _ => None,
+        };
+        set_team_colours(false, &cvars);
+        assert_eq!(split_color_codes("^8x", default)[0].0, "^8x");
+        assert!(!is_colour_code('8'));
+
+        set_team_colours(true, &cvars);
+        let out = split_color_codes("^8a^9b^7c", default);
+        assert_eq!(
+            out,
+            vec![
+                ("a".to_string(), [0.25, 0.5, 1.0, 0.5]),
+                ("b".to_string(), [1.0, 1.0, 1.0, 0.5]),
+                ("c".to_string(), default),
+            ]
+        );
+        assert_eq!(char_count("^9ab^8"), 2);
+
+        // A short value keeps the components the scan stopped before.
+        set_team_colours(true, &|name: &str| {
+            (name == "g_TeamColor_Allies").then(|| "0 x".to_string())
+        });
+        assert_eq!(split_color_codes("^8a", default)[0].1, [0.0, 0.5, 1.0, 0.5]);
+        set_team_colours(false, &cvars);
     }
 
     #[test]

@@ -1131,7 +1131,7 @@ in `'0'..'7'` (`0x30..0x37`), the byte is consumed and the colour changes:
 (`callerAlpha << 24`).
 
 Three things follow: only `^0`..`^7` are recognised (`^8`, `^9`, `^a` are printed
-literally), `^^` escapes a caret, and alpha always comes from the caller;
+literally; 1.5 and UO add `^8` and `^9`, below), `^^` escapes a caret, and alpha always comes from the caller;
 `^N` only ever replaces RGB. `^7` is special-cased to restore all four
 components of the caller's colour rather than reading `colorTable[7]`.
 
@@ -1157,6 +1157,52 @@ One CoD-specific wrinkle: the chat handlers (`h`/`i`) run every incoming string
 through `0x3002df00`, which strips every byte `0x19` before display. Any
 renderer vcod writes should do the same, and should strip `^N` pairs from a
 string before measuring its width.
+
+### `^8` and `^9` on 1.5 and UO
+
+VERIFIED, the renderer: CoDMP.exe 1.5's text draw (0x4bab80..0x4babdf)
+and CoDUOMP.exe's (0x4c0581) take a `^` followed by `'0'..'9'`
+(`0x30..0x39`), not `^`, as a code. `^7` restores the caller's colour in
+full, as on 1.1; any other code goes through 0x4ba8e0 (UO 0x4c02f0), and
+the caller's alpha byte is written over its result (0x4babd3, UO
+0x4c05d4).
+
+VERIFIED, 0x4ba8e0 / 0x4c02f0: digits 0..7 read `colorTable` (1.5
+0x57ed54, UO 0x590e9c, the same eight dwords as 1.1's), `8` reads the
+dword at 0x199a2f8 (UO 0x489a5b8) and `9` the one at 0x199a2fc (UO
+0x489a5bc).
+
+VERIFIED, those two dwords: 0x405440 (UO 0x405cb0) reads
+`g_TeamColor_Allies` (string 0x5a7fe0, UO 0x58e694) into the floats at
+0x1493bf0 (UO 0x49637ac) and `g_TeamColor_Axis` (0x5a7fcc, UO 0x58e680)
+into 0x1493c00 (UO 0x49637bc) through 0x4052f0 (UO 0x405b50), then packs
+each into bytes, Allies into the `^8` dword and Axis into the `^9` one.
+0x405b50 looks the cvar up (0x43d8f0); a cvar that is missing or empty
+gives 1, 1, 1, otherwise `sscanf("%f %f %f")` (0x58e6a8) writes over the
+floats it scans and leaves the rest at their last value. Each component
+is clamped to 0..1 (constants 0x5b9b3c 0.0, 0x5b9b38 1.0) and alpha is 1.
+VERIFIED, the caller: the client frame calls 0x405440 at 0x412762 (UO
+0x405cb0 at 0x4138bf, in 0x413870), so the colours follow the cvars
+every frame.
+
+VERIFIED, where the cvars come from: no cgame registers them (1.1, 1.5
+and UO only read them, `trap_Cvar_VariableStringBuffer` at cgame
+0x3002a85d, 1.5 0x3002bced, UO 0x30036f66). The game module registers
+both, `0.5 0.5 1` and `1 0.5 0.5`, with flag 0x800 (1.5b's table row 70
+and 71, UO's 84 and 85, `tools/re/dump_cvars.py`), which puts them in
+the 140/204 mirror, so a client in a game holds the server's. VERIFIED,
+CoDMP.exe 1.1 has neither name; its renderer prints `^8`/`^9`.
+
+VERIFIED, the writers agree: 1.5's console and message writer (0x409760,
+UO 0x409dc0), its length count (UO 0x470ee0) and its obituary line writer
+(0x409e60, UO 0x40a4a0) take `^0`..`^9`, as do 1.5's and UO's
+`CG_AddToTeamChat` (cgame 0x3002de50, UO 0x30039390; cod11-chat.md
+3.2).
+
+vcod: `hud::font::set_team_colours`, called with
+`Protocol::team_colour_codes` and the client cvars at each HUD build and
+with no cvars at a gamestate, and `hud::font::is_colour_code`, which
+every text path asks.
 
 ---
 

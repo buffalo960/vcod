@@ -96,14 +96,18 @@ pub fn team_color(team: i32) -> [f32; 4] {
 }
 
 /// A name as the kill line draws it: `CG_Obituary` cuts it to 31 bytes, and
-/// the engine's line writer (CoDMP.exe 0x409590) drops every `^0`..`^7`, so
-/// the whole name takes its team colour.
+/// the engine's line writer (CoDMP.exe 0x409590; 1.5 0x409e60 and UO
+/// 0x40a4a0 also `^8`, `^9`) drops every colour code, so the whole name
+/// takes its team colour.
 pub fn line_name(name: &str) -> String {
     let b = &name.as_bytes()[..name.len().min(31)];
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'^' && b.get(i + 1).is_some_and(|c| (b'0'..=b'7').contains(c)) {
+        if b[i] == b'^'
+            && b.get(i + 1)
+                .is_some_and(|&c| super::font::is_colour_code(c as char))
+        {
             i += 2;
             continue;
         }

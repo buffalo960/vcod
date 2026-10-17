@@ -144,7 +144,9 @@ pub fn field(
     menu_text_rgba(font, &typed, (x, baseline), FIELD_SCALE, white, v, out);
 }
 
-/// `CG_AddToTeamChat`'s line breaking.
+/// `CG_AddToTeamChat`'s line breaking. 1.5's (cgame 0x3002de50) and UO's
+/// (0x30039390) take `^8`/`^9` as codes too
+/// ([`super::font::is_colour_code`]).
 fn wrap(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut lines = Vec::new();
@@ -171,7 +173,7 @@ fn wrap(text: &str) -> Vec<String> {
         }
         let c = chars[i];
         match chars.get(i + 1) {
-            Some(&d) if c == '^' && ('0'..='7').contains(&d) => {
+            Some(&d) if c == '^' && super::font::is_colour_code(d) => {
                 line.push(c);
                 line.push(d);
                 colour = d;
