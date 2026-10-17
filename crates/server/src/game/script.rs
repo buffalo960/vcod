@@ -1245,6 +1245,27 @@ impl ScriptRuntime {
         })
     }
 
+    /// Every weapon item lying in the world to be picked up, as `(weapon
+    /// index, origin)`: placed `mpweapon_*` entities while shown and drops.
+    /// A taken one waits on its respawn off every snapshot and is left out.
+    pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3])> {
+        let defs = self.host.defs;
+        let items: Vec<(EntId, u8)> = self
+            .host
+            .ents
+            .iter_inuse()
+            .filter_map(|(id, e)| {
+                let item = e.item?;
+                let weapon = !item.taken && defs.weapon_name(item.index as usize).is_some();
+                weapon.then_some((id, item.index))
+            })
+            .collect();
+        items
+            .into_iter()
+            .filter_map(|(id, w)| Some((w, self.entity_origin_of(id)?)))
+            .collect()
+    }
+
     /// One client's health as the script left it, read every frame the way
     /// `client_weapons` is.
     /// `ClientEndFrame`'s `takedamage` write.

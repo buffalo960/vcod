@@ -76,7 +76,7 @@ const EXPLODE_TRACE_DOWN: f32 = 16.0;
 /// The clipmask `fire_grenade` gives a missile (combat doc 11.1), as UO's
 /// `fire_grenade` and `fire_rocket` do (game.mp.uo 0x5fc74): what a script
 /// model's 0x2080 and a vehicle's collision surfaces meet.
-const MISSILE_MODEL_MASK: u32 = 0x0280_2091;
+pub(crate) const MISSILE_MODEL_MASK: u32 = 0x0280_2091;
 /// `0x14`, the surface type the water branches of 12.1 and 13.2 both use.
 const WATER_SURF_TYPE: i32 = 0x14;
 // How long an exploded missile stays on the wire before it is freed: the
