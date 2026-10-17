@@ -2353,12 +2353,12 @@ carriers against the section 19 captures.
 
 ### Not done
 
-A live capture of a satchel shot off (the decompile and unit tests only);
+A swing now strikes a satchel's box as a round does, and the other
+missiles' every-frame links are unlinks, their `r.contents` being 0
+(cod11-combat.md 2.5, 14.7). A live capture of a satchel shot off (the decompile and unit tests only);
 a satchel shot in the 300 ms its explode rides the wire (retail's
 `takedamage` survives the explode, so a second `G_GrenadeDie` there would
-explode it again; INFERRED, not ported); melee against a satchel; the
-other missiles' links in the area tree, which retail makes every frame;
-a live run of a retail UO client burning on vcod-server; the
+explode it again; INFERRED, not ported); a live run of a retail UO client burning on vcod-server; the
 flamethrower's stray bullets on vcod-server. The bipod deploy's entity
 bit is not a gap: `BG_PlayerStateToEntityState` (game.mp.uo 0x2cd8b) ORs
 0x100 (1.1's 0x200) into the entity's `eFlags` whenever `pm_flags` 0x20,
