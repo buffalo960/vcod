@@ -495,6 +495,12 @@ connection's protocol (`Arith::for_protocol`). The client's
 predictor no longer follows them: it runs the Windows client's build
 (section 8).
 
+- The locational bone trace (1.5b `cod_lnxded` 0x80d2000, UO
+  `coduo_lnxded` 0x80c7394) stores every transformed point, slab distance
+  and entry fraction, where 1.1d's 0x80c4564 keeps them. VERIFIED. The
+  stores move a round's entry by about 3e-5 units. vcod ports none of
+  them (`cod11-turrets.md` 13.5).
+
 ## 8. The Windows clients
 
 The retail clients are one MSVC build of the collision and pmove code on

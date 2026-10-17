@@ -1,0 +1,30 @@
+# Retail CoD United Offensive 1.51b dedicated server log lines under the --save-turret client of
+# mp_carentan-dm-turret-hitfine-uo.txt beside this file. Captured 2026-10-17.
+# The -spawn-uo recipe with probe_hitlog 1: every hit's point and direction
+# to the float's last bit. map mp_carentan, g_gametype probe_turret,
+# probe_teleport 1, probe_hitlog 1, dedicated 1, sv_maxclients 8, sv_pure 0,
+# a homepath holding no pak. Client 0 is a --probe-team axis --probe-fall
+# net-probe standing as the target, client 1 the --save-turret gunner.
+#
+#   COD_VERSION=uo COD_LNXDED_HOME=<absolute, no '+'> PORT=32681 PROBE_SECS=230 \
+#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 +set probe_hitlog 1
+#   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32681 --probe-team axis --probe-fall --probe-secs 200
+#   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32681 --save-turret --capture-tag hitfine-uo --probe-secs 190
+# The axis client started 10 s after the server and the gunner 5 s after it.
+# (The run wrote its capture as -spawn-uo2; renamed by hand.)
+#
+# PROBE hitfine <time> <num> <hitloc> <damage> <point> <dir>, each component
+# <int>:<thousandths>:<millionths of a thousandth> (probe_turret.gsc fine1).
+# Lines are copied from games_mp.log, the m:ss stamp kept; every line past InitGame.
+0:01 PROBE turret 297 (-500.00, 1896.00, 175.00) (0.00, 295.00, 0.00)
+0:01 PROBE turret 298 (1712.00, 1830.00, 8.00) (0.00, 229.00, 0.00)
+0:11 J;0;0;vcod
+0:11 PROBE place 0 axis (1515.18, 1603.59, 8.00) 409 11450
+0:16 J;0;1;vcod
+0:16 PROBE place 1 allies (1738.24, 1860.19, 8.00) 229 16550
+0:30 PROBE hitfine 30150 0 torso_upper 53 1519:957:763672,1612:592:651367,22:911:319702 -0:661:989075,-0:749:232666,-0:20:515554
+0:30 D;0;0;axis;vcod;0;1;allies;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
+0:30 PROBE hitfine 30200 0 torso_upper 53 1513:656:5859.38,1608:460:937500,22:762:27710 -0:666:930908,-0:744:837097,-0:20:515554
+0:30 K;0;0;;vcod;0;1;;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
+0:36 Q;0;1;vcod
+3:30 Q;0;0;vcod
