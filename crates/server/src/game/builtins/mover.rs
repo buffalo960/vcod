@@ -101,11 +101,17 @@ fn field_vec(host: &mut GameHost, cx: &mut Cx, id: EntId, name: &str) -> Vec3 {
 
 /// Every verb ends in `trap_LinkEntity`, whose snap rounds a component of
 /// `r.currentAngles` (`.angles`) within a thousandth of an integer
-/// (`mover::snap_angles`); a rotate first sets them to its start.
-fn linked(host: &mut GameHost, cx: &mut Cx, id: EntId, angles: Vec3) {
+/// (`mover::snap_angles`); a rotate first sets them to its start, a move
+/// `r.currentOrigin` to its (`origin`, `Some` for a move verb).
+fn linked(host: &mut GameHost, cx: &mut Cx, id: EntId, origin: Option<Vec3>, angles: Vec3) {
+    if let Some(o) = origin {
+        let atom = cx.intern_folded("origin");
+        let _ = host.write_field(cx, id, atom, Value::Vector(o.into()));
+    }
     let atom = cx.intern_folded("angles");
     let v = Value::Vector(crate::game::mover::snap_angles(angles).into());
     let _ = host.write_field(cx, id, atom, v);
+    crate::game::mover::verb_linked(host, cx, id);
 }
 
 /// `self moveTo(destination, time [, accel, decel])`: an absolute point.
@@ -121,9 +127,9 @@ pub fn move_to(
     };
     let from = field_vec(host, cx, id, "origin");
     let now = host.level_time_ms;
-    host.movers.move_to(id, now, from, dest, m);
+    let start = host.movers.move_to(id, now, from, dest, m);
     let angles = field_vec(host, cx, id, "angles");
-    linked(host, cx, id, angles);
+    linked(host, cx, id, Some(start), angles);
     Ok(Value::Undefined)
 }
 
@@ -145,9 +151,9 @@ fn move_axis(
     let mut dest = from;
     dest[axis] += d;
     let now = host.level_time_ms;
-    host.movers.move_to(id, now, from, dest, m);
+    let start = host.movers.move_to(id, now, from, dest, m);
     let angles = field_vec(host, cx, id, "angles");
-    linked(host, cx, id, angles);
+    linked(host, cx, id, Some(start), angles);
     Ok(Value::Undefined)
 }
 
@@ -196,7 +202,7 @@ pub fn move_gravity(
     let now = host.level_time_ms;
     host.movers.move_gravity(id, now, from, v, m.secs);
     let angles = field_vec(host, cx, id, "angles");
-    linked(host, cx, id, angles);
+    linked(host, cx, id, None, angles);
     Ok(Value::Undefined)
 }
 
@@ -215,7 +221,7 @@ pub fn rotate_to(
     let from = field_vec(host, cx, id, "angles");
     let now = host.level_time_ms;
     let start = host.movers.rotate_to(id, now, from, dest, m);
-    linked(host, cx, id, start);
+    linked(host, cx, id, None, start);
     Ok(Value::Undefined)
 }
 
@@ -239,7 +245,7 @@ fn rotate_axis(
     dest[axis] += d;
     let now = host.level_time_ms;
     let start = host.movers.rotate_to(id, now, from, dest, m);
-    linked(host, cx, id, start);
+    linked(host, cx, id, None, start);
     Ok(Value::Undefined)
 }
 
@@ -293,7 +299,7 @@ pub fn rotate_velocity(
     let from = field_vec(host, cx, id, "angles");
     let now = host.level_time_ms;
     let start = host.movers.rotate_velocity(id, now, from, v, m);
-    linked(host, cx, id, start);
+    linked(host, cx, id, None, start);
     Ok(Value::Undefined)
 }
 

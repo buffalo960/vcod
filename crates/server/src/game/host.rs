@@ -725,7 +725,9 @@ impl GameHost {
 
     /// [`Self::link_entity`] at `pose` (origin, angles) rather than the
     /// fields: a mover's `r.currentOrigin`, which runs a frame ahead of what
-    /// script reads (movers doc, section 8).
+    /// script reads (movers doc, section 8). Every link first snaps
+    /// `.angles` (`r.currentAngles`) as `SV_LinkEntity` does, linked or not
+    /// (`mover::snap_angles`, movers doc 12, "The snap on every link").
     pub fn link_entity_at(&mut self, cx: &mut Cx, id: EntId, pose: Option<([f32; 3], [f32; 3])>) {
         use crate::game::entity::LinkKind;
         let Some(e) = self.ents.get(id) else {
@@ -734,10 +736,7 @@ impl GameHost {
         if e.client.is_some() {
             return;
         }
-        let Some(shape) = e.link else {
-            self.area.unlink(id.0);
-            return;
-        };
+        let shape = e.link;
         let vector = |host: &mut Self, cx: &mut Cx, name: &str| {
             let atom = cx.intern_folded(name);
             match host.get_field(cx, id, atom) {
@@ -745,9 +744,18 @@ impl GameHost {
                 _ => [0.0; 3],
             }
         };
-        let (origin, angles) = match pose {
+        let (origin, raw) = match pose {
             Some(p) => p,
             None => (vector(self, cx, "origin"), vector(self, cx, "angles")),
+        };
+        let angles = crate::game::mover::snap_angles(raw.into()).to_array();
+        if angles != raw {
+            let atom = cx.intern_folded("angles");
+            let _ = self.write_field(cx, id, atom, Value::Vector(angles));
+        }
+        let Some(shape) = shape else {
+            self.area.unlink(id.0);
+            return;
         };
         let link = match shape.kind {
             LinkKind::Brush | LinkKind::ScriptBrush | LinkKind::Vehicle => {
