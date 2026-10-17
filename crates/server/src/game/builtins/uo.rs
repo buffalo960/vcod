@@ -227,7 +227,9 @@ pub fn attack_button_pressed(
 
 /// `self isInVehicle()` (`PlayerCmd_isInVehicle` 0x46ca0): 1 in a seat.
 /// Retail reads the entity's copy of `eFlags`, which an entry sets only at
-/// the frame's end; the stock scripts wait 0.1 s before asking.
+/// the frame's end; the stock scripts wait 0.1 s before asking. A rider
+/// put out where he sat reads 1 until his end frame, one a dismount moved
+/// 0 at once (coduo-vehicles.md 11.2).
 pub fn is_in_vehicle(
     host: &mut GameHost,
     _cx: &mut Cx,
@@ -235,7 +237,9 @@ pub fn is_in_vehicle(
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    Ok(Value::Int(i32::from(host.vehicles.seat_of(slot).is_some())))
+    let seated =
+        host.vehicles.seat_of(slot).is_some() || host.vehicles.stale_seated.contains(&slot);
+    Ok(Value::Int(i32::from(seated)))
 }
 
 /// `self viewKick(force, origin)` (0x6db55): what a hit leaves for

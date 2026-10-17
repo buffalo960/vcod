@@ -432,6 +432,7 @@ pub fn link_player(
         .as_ref()
         .and_then(|p| p.tag(view_tag))
         .map_or([0.0, pose.angles[1], 0.0], |(_, r)| view_of(r));
+    host.vehicles.stale_seated.remove(&slot);
     let v = host.vehicles.live.get_mut(&id).unwrap();
     v.seats[seat] = Some(slot);
     v.wire.anim_movetype |= 1 << seat;
@@ -524,6 +525,12 @@ pub fn unlink_player(
         v.wire.other = NONE;
     }
     let pop = voluntary && now < v.coast_until;
+    // `isInVehicle` reads the entity state's bit, which only a dismount's
+    // `SetClientOrigin` updates before the end frame
+    // (`PlayerCmd_isInVehicle` 0x46ca0).
+    if spot.is_none() {
+        host.vehicles.stale_seated.insert(slot);
+    }
     host.vehicles.seat_ops.push(SeatOp::Exit {
         slot,
         origin: spot,

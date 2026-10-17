@@ -275,7 +275,7 @@ fn elimination_wait(who: &str, events: &[NetchanEvent]) -> i64 {
 
 #[test]
 fn an_sd_round_restart_matches_retail() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };

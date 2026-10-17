@@ -497,11 +497,12 @@ fn the_predictor_replays_each_patch_under_its_own_rules() {
         return;
     };
     let mut failures = Vec::new();
-    // The springfield's file differs on 1.5's paks (its sight's lerp), and a
-    // UO install's `main/` is 1.5's.
-    let springfield = vcod_common::testing::game_fs_11().is_some();
+    // A 1.1 capture replays on 1.1's paks only: the springfield's file
+    // differs on 1.5's (its sight's lerp), and a UO install's `main/` is
+    // 1.5's.
+    let install_11 = vcod_common::testing::game_fs_11().is_some();
     for c in CAPTURES {
-        if (c.file == SPRINGFIELD_1_1 || c.file == SPRINGFIELD_HELD_1_1) && !springfield {
+        if c.rules == MoveRules::V1_1 && !install_11 {
             continue;
         }
         let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{}", c.file)).unwrap();

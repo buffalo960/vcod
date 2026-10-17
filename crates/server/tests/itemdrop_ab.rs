@@ -229,7 +229,7 @@ fn angles_off(a: Vec3, b: Vec3) -> f32 {
 
 #[test]
 fn the_flights_land_where_retail_lands() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let retail = retail();
@@ -495,7 +495,7 @@ fn shape(line: &str, start: i32) -> (String, Vec<Vec3>) {
 
 #[test]
 fn the_probe_runs_as_retail_ran() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let retail = retail();

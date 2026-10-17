@@ -217,6 +217,8 @@ pub struct Save {
     pub killcam: bool,
     /// `--probe-killcam-skip-ms`: press use this long into the killcam.
     pub killcam_skip_ms: Option<u64>,
+    /// `--probe-kill-cmds`: the target's cmds behind each `kill`, cycled.
+    pub kill_cmds: Vec<usize>,
     /// `--probe-fall`: print every snapshot a landing moved, no fixture.
     pub fall: bool,
     /// `--probe-fall-walk`: the world yaw `--probe-fall` walks at.
@@ -372,6 +374,7 @@ pub fn probe(
         follow: probe_follow,
         killcam: probe_killcam,
         killcam_skip_ms,
+        kill_cmds,
         fall: probe_fall,
         fall_walk,
         fall_prone,
@@ -545,6 +548,15 @@ pub fn probe(
     } else {
         TARGET_KILL_AT
     });
+    target_probe.bursts = kill_cmds;
+    anyhow::ensure!(
+        !target_probe.bursts.contains(&0),
+        "--probe-kill-cmds counts start at 1"
+    );
+    // `--probe-kill-cmds`: the last cmd sent, which a burst stamps on from,
+    // and the end of the quiet after one.
+    let mut last_sent: Option<net::msg::UserCmd> = None;
+    let mut quiet_until: Option<Instant> = None;
     let mut wrote_hit = false;
     // The hit capture waits for the first spawn before its script starts.
     let mut spawned = false;
@@ -1136,11 +1148,14 @@ pub fn probe(
         // A retail client stays `CA_CONNECTED` until its downloads end and
         // creates no usercmds before `CA_PRIMED`, so nothing enters the
         // world mid-download.
-        let sent = if download.as_ref().is_some_and(DownloadProbe::holds_cmds) {
+        let sent = if download.as_ref().is_some_and(DownloadProbe::holds_cmds)
+            || quiet_until.is_some_and(|t| now < t)
+        {
             None
         } else {
             client.send_frame(&cmd)
         };
+        last_sent = sent.or(last_sent);
         if let Some(c) = sent {
             if probe_fall {
                 fall.record_cmd(c.server_time, fall_walk.map(|_| c.angles[1]));
@@ -1321,6 +1336,19 @@ pub fn probe(
                 .collect();
             for c in pending {
                 client.send_reliable(&c);
+            }
+            // Each message carries the queued `kill`; the server runs it
+            // once, ahead of the first message's cmd.
+            if let Some(n) = target_probe.burst.take()
+                && let Some(last) = last_sent
+            {
+                for k in 1..=n as i32 {
+                    client.send_cmds(&[net::msg::UserCmd {
+                        server_time: last.server_time + k,
+                        ..last
+                    }]);
+                }
+                quiet_until = Some(now + KILL_CMDS_QUIET);
             }
             // A map-cycle capture runs on the probe's own clock and writes
             // its own fixture below; the script here only supplies its motion.
@@ -1552,7 +1580,11 @@ pub fn probe(
                         longest_sightline(w, eye)
                     });
                 }
-                if combat.step(now, s) {
+                // The clock after the reads above: the weapon file and the
+                // sight line take 100-200 ms on the first settled snapshot,
+                // and a first step timed from before them opened with a
+                // snapshot gap and that much of its hold already spent.
+                if combat.step(Instant::now(), s) {
                     // The sway run is a measurement: its impact lines
                     // went to stdout and there is no fixture for it.
                     if !probe_sway {
@@ -2847,7 +2879,7 @@ struct MotionProbe {
     traced: Option<u32>,
     /// The view yaw at the spawn, which every pose's own yaw is an offset
     /// from ([`hold_view_yaw`]).
-    spawn_yaw: Option<i32>,
+    spawn_yaw: ViewHold,
 }
 
 impl Default for MotionProbe {
@@ -2859,7 +2891,7 @@ impl Default for MotionProbe {
             captured: Vec::new(),
             done: false,
             traced: None,
-            spawn_yaw: None,
+            spawn_yaw: ViewHold::default(),
         }
     }
 }
@@ -3771,7 +3803,7 @@ struct CombatProbe {
     /// The weapon file has been read once; a second look would reread it every
     /// frame.
     weapon_read: bool,
-    spawn_yaw: Option<i32>,
+    spawn_yaw: ViewHold,
     stall: StallTurn,
     /// Configstring 7 indexes, 1-based, of the frag and of the weapon the join
     /// chose; 0 until the list is read.
@@ -3805,7 +3837,7 @@ impl Default for CombatProbe {
             done: false,
             traced: None,
             weapon_read: false,
-            spawn_yaw: None,
+            spawn_yaw: ViewHold::default(),
             stall: StallTurn::default(),
             frag_index: 0,
             joined_index: 0,
@@ -3947,9 +3979,13 @@ impl CombatProbe {
 
     /// Holds the step's base input, and taps only once its clock runs: a step
     /// waiting for the weapon to read ready must not be tapping while it waits.
+    /// A walk stands still until its clock runs too: `advance` used to walk
+    /// through the join's settle, so the `# spawn` pose (and the yaw a gate
+    /// rebases `!input` on) was taken after a stall turn the input never had.
     fn cmd(&self) -> net::msg::UserCmd {
         match (self.steps.get(self.idx), self.started) {
             (Some(step), Some(t)) => step.cmd_at(t.elapsed()),
+            (Some(step), None) if step.walks => net::msg::NULL_USERCMD,
             (Some(step), None) => step.base,
             (None, _) => net::msg::NULL_USERCMD,
         }
@@ -4379,8 +4415,8 @@ fn write_combat_fixture(
     let (spawn_origin, spawn_view) = combat.spawn_pose.unwrap_or_default();
     out.push_str(&format!(
         "# spawn origin={} viewangles={}\n",
-        vec_str(spawn_origin),
-        vec_str(spawn_view),
+        vec_exact(spawn_origin),
+        vec_exact(spawn_view),
     ));
     if combat.kind == "lean" {
         out.push_str("# Every step is scoped and holds still. The probe aims every cmd at the\n");
@@ -4424,8 +4460,8 @@ frag={} frag_index={} origin={} viewangles={}\n",
             combat.joined_index,
             combat.frag_name,
             combat.frag_index,
-            vec_str(origin),
-            vec_str(view),
+            vec_exact(origin),
+            vec_exact(view),
         ));
     }
     let broken: Vec<&str> = combat
@@ -4614,6 +4650,11 @@ const TARGET_SCORE_PERIOD: Duration = Duration::from_secs(2);
 /// The cap on the whole run: past the shooter's approach limit and its firing
 /// phases, so the target is still tracing when the shots land.
 const TARGET_RUN_LIMIT: Duration = Duration::from_secs(200);
+/// `--probe-kill-cmds`: a kill this long after the last, once alive again.
+const KILL_CMDS_PERIOD: Duration = Duration::from_secs(8);
+/// `--probe-kill-cmds`: no cmd this long after a kill's burst, so the next
+/// one reaches the server past the death frame's `ClientEndFrame`.
+const KILL_CMDS_QUIET: Duration = Duration::from_millis(150);
 
 /// Retail's body queue: the corpse clone lands in one of the eight entities
 /// straight past the 64 client slots (docs/research/cod11-combat.md, 5.2).
@@ -4674,6 +4715,13 @@ fn pairs_str(pairs: &[(usize, i16)]) -> String {
 
 fn vec_str(v: [f32; 3]) -> String {
     format!("{:.1},{:.1},{:.1}", v[0], v[1], v[2])
+}
+
+/// A vector as the shortest decimals that read back as the same f32: a pose
+/// a gate places its client at. One decimal put a spawn's -138.0048 view (short
+/// 40413) a short off when read back.
+fn vec_exact(v: [f32; 3]) -> String {
+    format!("{},{},{}", v[0], v[1], v[2])
 }
 
 impl HitSample {
@@ -4882,6 +4930,12 @@ struct TargetProbe {
     done: bool,
     /// How long after the spawn the first `kill` goes out.
     kill_at: Duration,
+    /// `--probe-kill-cmds`: the cmd counts each kill takes in turn.
+    bursts: Vec<usize>,
+    /// The count the loop sends behind the `kill` it is about to send.
+    burst: Option<usize>,
+    /// `(ms, cmds)` per kill in burst mode.
+    kills: Vec<(u128, usize)>,
 }
 
 impl TargetProbe {
@@ -4958,12 +5012,23 @@ impl TargetProbe {
         // independent of whether the shooter ever finds a line of sight.
         let kill_due = match self.killed_at {
             None => elapsed >= self.kill_at,
+            Some(t) if !self.bursts.is_empty() => {
+                self.died_at.is_none()
+                    && pm_type == PM_NORMAL
+                    && now.duration_since(t) >= KILL_CMDS_PERIOD
+            }
             Some(t) => self.died_at.is_none() && now.duration_since(t) >= TARGET_KILL_PERIOD,
         };
         if kill_due {
             println!("TARGET: sending kill at +{ms}ms");
             self.pending.push("kill".to_string());
             self.killed_at = Some(now);
+            if !self.bursts.is_empty() {
+                let n = self.bursts[self.kills.len() % self.bursts.len()];
+                println!("TARGET: {n} cmds behind the kill");
+                self.burst = Some(n);
+                self.kills.push((ms, n));
+            }
         }
         if pm_type != PM_NORMAL {
             if self.died_at.is_none() {
@@ -4999,9 +5064,12 @@ impl TargetProbe {
             }
         }
 
-        if self
-            .last_score_at
-            .is_none_or(|t| now.duration_since(t) >= TARGET_SCORE_PERIOD)
+        // A burst run sends no `score`: a bare one opens retail's 800 ms
+        // flood window, which drops a `kill` that falls inside it.
+        if self.bursts.is_empty()
+            && self
+                .last_score_at
+                .is_none_or(|t| now.duration_since(t) >= TARGET_SCORE_PERIOD)
         {
             self.last_score_at = Some(now);
             self.pending.push("score".to_string());
@@ -6131,6 +6199,15 @@ and carries nothing about what a shot does to a player."
     if target.corpses.is_empty() {
         notes.push("# BROKEN no corpse ever appeared in the body queue.".to_string());
     }
+    if !target.kills.is_empty() {
+        notes.push(format!(
+            "# --probe-kill-cmds: each `kill` (a !kill line) went out with exactly `cmds`\n\
+# usercmds behind it, one message each, back to back, then no cmd for {} ms;\n\
+# a kill every {} s once alive again, and no `score` (its flood window drops a kill).",
+            KILL_CMDS_QUIET.as_millis(),
+            KILL_CMDS_PERIOD.as_secs()
+        ));
+    }
     let mut body = String::from("[section target]\n");
     body.push_str(&format!(
         "!observed deaths={} traced={} obituaries={} corpse_edges={} scoreboards={}\n",
@@ -6140,6 +6217,9 @@ and carries nothing about what a shot does to a player."
         target.corpses.len(),
         target.scoreboards.len(),
     ));
+    for (ms, cmds) in &target.kills {
+        body.push_str(&format!("!kill ms={ms} cmds={cmds}\n"));
+    }
     for s in &target.trace {
         body.push_str(&s.line());
     }
@@ -6744,28 +6824,49 @@ fn write_playerstate_fixture(
     Ok(())
 }
 
+/// What [`hold_view_yaw`] keeps: the facing the spawn gave, once known, and
+/// until then the last spectating snapshot's `delta_angles[1]` and the yaw
+/// the probe asked for under it.
+#[derive(Default)]
+struct ViewHold {
+    spawn: Option<i32>,
+    before: Option<(i32, i32)>,
+}
+
 /// A scripted yaw is a view direction, an offset from where the spawn faced:
-/// `spawn` latches the view yaw of the first snapshot that shows the player
-/// spawned, and every later cmd asks for that plus the script's yaw.
+/// every cmd after the spawn asks for that facing plus the script's yaw.
 /// `send_frame` takes `delta_angles` off, so a push of `delta_angles` (the
-/// prone cone's hold) never turns the heading the script asked for. Before
-/// 2026-10-17 this took `delta_angles` off too, latched before the spawn:
-/// the view then followed every push the other way, and a prone swing past
-/// the cap oscillated (playerstate_motion_ab.rs).
+/// prone cone's hold) never turns the heading the script asked for.
+///
+/// The facing is not read off the first spawned snapshot's view: by then
+/// the probe's own cmds have turned it (on 1.1 the spawn's think runs a cmd
+/// whose angles are the negated `delta_angles`, so that view reads 0). It is
+/// read off `delta_angles`: `SetClientViewAngle` sets them to the spawn's
+/// yaw less the last cmd's angle, and that cmd was the asked-for yaw less the
+/// spectating `delta_angles` (cod15-movement.md, "The spawn's lie-down";
+/// cod11-combat.md 9.2). Before 2026-10-17 this took `delta_angles` off too,
+/// so the view followed every push the other way, and a prone swing past the
+/// cap oscillated (playerstate_motion_ab.rs); until the second fix that day
+/// it latched the first spawned view, so every capture faced world yaw 0.
 fn hold_view_yaw(
     cmd: &mut net::msg::UserCmd,
     client: &NetClient<UdpTransport>,
-    spawn: &mut Option<i32>,
+    hold: &mut ViewHold,
 ) {
     let Some(s) = client.snapshots().newest() else {
         return;
     };
     let p = wire();
-    if spawn.is_none() && s.ps.field_i32(p, "pm_type") == PM_NORMAL {
-        let view = f32::from_bits(s.ps.field_i32(p, "viewangles[1]") as u32);
-        *spawn = Some((view * 65536.0 / 360.0).round() as i32);
+    let delta = s.ps.field_i32(p, "delta_angles[1]");
+    if hold.spawn.is_none() {
+        if s.ps.field_i32(p, "pm_type") == PM_NORMAL {
+            let (before, asked) = hold.before.unwrap_or((0, 0));
+            hold.spawn = Some((delta - before + asked) & 0xffff);
+        } else {
+            hold.before = Some((delta, cmd.angles[1]));
+        }
     }
-    if let Some(spawn) = *spawn {
+    if let Some(spawn) = hold.spawn {
         cmd.angles[1] = (spawn + cmd.angles[1]) & 0xffff;
     }
 }
@@ -12619,11 +12720,10 @@ fn write_entities_fixture(
 sample of a set\n"
     ));
     head.push_str("# already seen adds a position and no new visibility case.\n");
-    head.push_str(
-        "# Every run is taken from a settled server: an item's groundEntityNum reads 0\n",
-    );
-    head.push_str("# for the first minute after a map load and ENTITYNUM_NONE afterwards, so a\n");
-    head.push_str("# capture taken straight after +map disagrees with every later one.\n");
+    head.push_str("# Every run is taken from a server one client has already joined and left:\n");
+    head.push_str("# its ClientDisconnect frees entity 0, and G_FreeEntity's sweep turns every\n");
+    head.push_str("# groundEntityNum still at G_Spawn's 0 (the script models, the turrets) to\n");
+    head.push_str("# 1023, so a first run on a fresh server disagrees with every later one.\n");
     head.push_str(
         "# One [sample] per station, carrying the probe's origin there and every entity\n",
     );
@@ -12754,7 +12854,7 @@ struct PvsProbe {
     detour_deg: i32,
     /// Time and position the current stuck window opened at.
     last_progress: Option<(Instant, [f32; 3])>,
-    spawn_yaw: Option<i32>,
+    spawn_yaw: ViewHold,
     /// The previous snapshot's entities, which the next one is diffed against.
     live: BTreeMap<u32, EntInfo>,
     /// Newest snapshot already diffed, so the diff runs per snapshot rather
@@ -12772,7 +12872,7 @@ impl Default for PvsProbe {
             started: None,
             detour_deg: 0,
             last_progress: None,
-            spawn_yaw: None,
+            spawn_yaw: ViewHold::default(),
             live: BTreeMap::new(),
             traced: None,
             stations: Vec::new(),
