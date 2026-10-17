@@ -622,6 +622,17 @@ struct Args {
     /// control (tag `crouchjump-<spot>-stand`).
     #[arg(long, requires = "probe_crouchjump")]
     probe_crouchjump_stand: bool,
+    /// With --save-slope: runs into a patch, slides along it both ways,
+    /// runs at it turned, jumps at it, crouch walks and crawls along it and
+    /// stands up beside it, from a placement of
+    /// `client-probes/probe_patchwalk` on mp_carentan (`+set
+    /// probe_teleport 1 +set probe_spot pole|pillar|kerb`). The value is
+    /// the world yaw to face, which the gsc logs with the placement. Tag
+    /// the fixture `patchwalk-<spot>-<1.1|1.5|uo>`; moves_ab.rs replays it
+    /// under that version's rules (bsp-ibsp59-format.md, "Patch collision
+    /// on 1.5 and UO").
+    #[arg(long, allow_negative_numbers = true)]
+    probe_patchwalk: Option<f32>,
     /// Milliseconds between usercmds the probe sends. A retail client at 125
     /// fps sends one every 8 ms; the default is what every capture so far
     /// was taken with.
@@ -1125,6 +1136,7 @@ fn main() -> Result<()> {
                 uofoot: args.probe_uofoot,
                 crouchjump: args.probe_crouchjump,
                 crouchjump_stand: args.probe_crouchjump_stand,
+                patchwalk: args.probe_patchwalk,
                 combat: args.save_combat,
                 ads: args.save_ads,
                 grenade: args.save_grenade,
