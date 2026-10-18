@@ -1732,6 +1732,52 @@ pub struct ProbeHold {
     /// the 50 ms from its time, where there are any. A `setOrigin` drop
     /// lands where its cmds' split stops it (cod11-combat.md 3.6).
     pub times: Vec<i32>,
+    /// Under [`ProbeHold::framed`], how many ms before a frame's time a
+    /// captured cmd may be stamped and still run after that frame: the net
+    /// probe stamps a cmd with the snapshot's time on its arrival, so one
+    /// stamped `lead` before it went out while the server was still
+    /// running that frame (cod11-combat.md 15.1, "The cmd that fires").
+    pub lead_ms: i32,
+    /// The newest snapshot's time, view and `delta_angles` at the last
+    /// [`ProbeHold::cmds`], and the snapshot's before it: a cmd stamped
+    /// inside [`ProbeHold::lead_ms`] before the newest went out on the
+    /// older one.
+    pub seen: [Option<(i32, [f32; 3], [i32; 3])>; 2],
+}
+
+/// The input changes of a client's `CMDS` lines: each `in=<k>:<buttons>:
+/// <wbuttons>:<up>` as the `serverTime` of the line's `k`-th cmd and the
+/// buttons, `wbuttons` and `up` it and the cmds after it went out with.
+pub fn cmds_inputs(text: &str, who: &str) -> Vec<(i32, (u8, u8, i8))> {
+    let mut out = Vec::new();
+    for l in text.lines() {
+        let Some(rest) = l
+            .strip_prefix(who)
+            .and_then(|r| r.trim_start().strip_prefix("CMDS st="))
+        else {
+            continue;
+        };
+        let mut f = rest.split_whitespace();
+        let mut times = vec![
+            f.next()
+                .and_then(|t| t.parse::<i32>().ok())
+                .expect("a CMDS start"),
+        ];
+        for tok in f {
+            if let Some(d) = tok.strip_prefix("d=") {
+                for d in d.split(',').filter(|d| !d.is_empty()) {
+                    times.push(times.last().unwrap() + d.parse::<i32>().expect("a CMDS step"));
+                }
+            } else if let Some(ins) = tok.strip_prefix("in=") {
+                for e in ins.split(',') {
+                    let v: Vec<i32> = e.split(':').map(|x| x.parse().expect("an input")).collect();
+                    out.push((times[v[0] as usize], (v[1] as u8, v[2] as u8, v[3] as i8)));
+                }
+            }
+        }
+    }
+    out.sort_by_key(|e| e.0);
+    out
 }
 
 /// The cmd times of a client's `CMDS` lines (the net probe's
@@ -1787,8 +1833,9 @@ impl ProbeHold {
         let mut times = Vec::new();
         if self.framed {
             let f = s.server_time;
-            let lo = self.times.partition_point(|&c| c < f);
-            let hi = self.times.partition_point(|&c| c < f + FRAME_MS as i32);
+            let (lo, hi) = (f - self.lead_ms, f + FRAME_MS as i32 - self.lead_ms);
+            let lo = self.times.partition_point(|&c| c < lo);
+            let hi = self.times.partition_point(|&c| c < hi);
             let captured = &self.times[lo..hi];
             if captured.is_empty() {
                 times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
@@ -1812,8 +1859,17 @@ impl ProbeHold {
                 times.push(t);
             }
         }
+        // A cmd stamped before the newest snapshot's time went out on the
+        // snapshot before it, its view and `delta_angles`.
+        if self.seen[0].is_none_or(|(st, _, _)| st != s.server_time) {
+            self.seen = [Some((s.server_time, v, da)), self.seen[0]];
+        }
         let mut out = Vec::new();
         for &t in &times {
+            let (v, da) = match self.seen[1] {
+                Some((_, ov, oda)) if self.lead_ms > 0 && t < s.server_time => (ov, oda),
+                _ => (v, da),
+            };
             out.push(UserCmd {
                 server_time: t,
                 angles: std::array::from_fn(|i| {
