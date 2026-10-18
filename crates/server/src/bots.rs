@@ -932,6 +932,9 @@ const BAS_BLAST: f32 = 520.0;
 const BAS_CLEAR_S: f32 = 20.0;
 /// An attacker this near a charge on its own base turns back to defuse it.
 const BAS_DEFUSE_NEAR: f32 = 2000.0;
+/// The graph's run, units a second: a bot this far from a charge in
+/// straight line needs at least that long to reach it.
+const BAS_RUN_SPEED: f32 = 190.0;
 /// A rocket's burst counts at a base this near its origin: the base links
 /// as a point with the turret's box round it (`GameHost::blast_entities`),
 /// and the rocket's 256-unit splash falls off from 100 to 10.
@@ -1399,10 +1402,24 @@ impl Bot {
                 };
                 let (mine, theirs) = (side(true), side(false));
                 // A charge on one of ours: every defender goes for it, and
-                // an attacker near it.
-                let ticking = mine.iter().filter(|x| x.planted).find_map(|x| x.charge);
+                // an attacker near it. One that does not shoot only from
+                // near: the planter cannot stop it, and a side's defuser
+                // back from across the map in time for every plant left
+                // two lone bases standing for good (seeds 17 and 19).
+                // Not one that goes off before a defuse could finish: the
+                // defuser held use inside the blast to the end (seed 5).
+                let fits = |x: &BasBaseView, c: BombView| {
+                    let trip = dist_sq(view.origin, c.origin).sqrt() / BAS_RUN_SPEED;
+                    self.obj.held > 0
+                        || x.blows_in
+                            .is_none_or(|s| s > BAS_DEFUSE_TICKS as f32 / 20.0 + trip)
+                };
+                let ticking = mine
+                    .iter()
+                    .filter(|x| x.planted)
+                    .find_map(|x| x.charge.filter(|c| fits(x, *c)));
                 if let Some(c) = ticking
-                    && (defends
+                    && ((defends && self.shoot)
                         || theirs.is_empty()
                         || dist_sq(view.origin, c.origin) < BAS_DEFUSE_NEAR * BAS_DEFUSE_NEAR)
                 {
@@ -1417,7 +1434,7 @@ impl Bot {
                 // is nothing to defend and it attacks with the rest. One
                 // that does not shoot stops no plant there, and defused
                 // each charge the moment it was down for good: it attacks
-                // too, and comes back to defuse.
+                // too, and defuses what it passes near.
                 let open: Vec<&&BasBaseView> = mine.iter().filter(|x| x.breached).collect();
                 // A charge of ours ticking: a defender that shoots joins
                 // its planter in holding its room. One on one, the
@@ -2413,13 +2430,25 @@ impl Bot {
         cmd.forward = forward;
         self.jump_held = cmd.up > 0;
         self.pressed = view.waypoint.filter(|_| forward != 0);
+        // A `bas` charge about to go: the keys keep running the graph's way
+        // out whatever the fight wants, and no bipod goes down. A planter
+        // and a defender fighting in the charge room both stood in the
+        // blast to the end (seed 5).
+        let clearing = Self::blast_near(view).is_some();
         if self.shoot {
             self.track(view.enemy);
+            let keys = (cmd.forward, cmd.right, cmd.up, cmd.wbuttons);
             if let Some(e) = view.enemy
+                && !(clearing && view.lmg)
                 && let Some(aim) = self.engage(view, e, &mut cmd)
             {
+                if clearing {
+                    (cmd.forward, cmd.right) = rekey(keys.0, keys.1, yaw, aim[1]);
+                    (cmd.up, cmd.wbuttons) = (keys.2, keys.3);
+                    cmd.buttons &= !msg::BUTTON_ADS;
+                }
                 [pitch, yaw] = aim;
-            } else if view.lmg && view.deployed && self.lmg_linger > 0 {
+            } else if view.lmg && view.deployed && self.lmg_linger > 0 && !clearing {
                 // The bipod stays down a while for the target to show again.
                 cmd.buttons |= msg::BUTTON_ADS;
                 cmd.forward = 0;
@@ -3277,6 +3306,18 @@ pub(crate) fn along_face(yaw: f32, from: [f32; 3], m: [f32; 2]) -> i8 {
 
 fn yaw_diff(to: f32, from: f32) -> f32 {
     (to - from + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// The forward and right keys that move the body the way `forward` and
+/// `right` did under a view at `from` (degrees), with the view at `to`.
+fn rekey(forward: i8, right: i8, from: f32, to: f32) -> (i8, i8) {
+    let d = yaw_diff(from, to).to_radians();
+    let (f, r) = (forward as f32, right as f32);
+    let key = |k: f32| k.round().clamp(-127.0, 127.0) as i8;
+    (
+        key(f * d.cos() + r * d.sin()),
+        key(r * d.cos() - f * d.sin()),
+    )
 }
 
 fn deg_short(deg: f32) -> i32 {
@@ -5917,6 +5958,32 @@ mod tests {
         assert_eq!(bot.goal(&v), Goal::To(theirs), "the charge's room");
     }
 
+    /// A charge on a base of its side's: a shooting defender comes back from
+    /// anywhere to defuse it, one that does not shoot only from near.
+    #[test]
+    fn a_bas_defender_that_does_not_shoot_defuses_only_from_near() {
+        let mut v = bas_view();
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.rank = 1;
+        let ours = [-2000.0, 0.0, -176.0];
+        let mine = &mut b.bases[0];
+        mine.breached = true;
+        mine.planted = true;
+        mine.blows_in = Some(50.0);
+        mine.charge = Some(BombView {
+            origin: ours,
+            aim: [-2000.0, 0.0, -160.0],
+        });
+        v.origin = [2500.0, 0.0, 0.0];
+        assert_eq!(Bot::new("allies", true, 1).goal(&v), Goal::To(ours));
+        let calm = Bot::new("allies", false, 1);
+        assert_eq!(calm.goal(&v), Goal::To([300.0, 200.0, 8.0]), "attacks on");
+        v.origin = [-1000.0, 0.0, 0.0];
+        assert_eq!(calm.goal(&v), Goal::To(ours), "near");
+    }
+
     /// A launcher the body comes no nearer to is passed over.
     #[test]
     fn a_launcher_out_of_reach_is_passed_over() {
@@ -5983,6 +6050,33 @@ mod tests {
         v.enemy = None;
         v.origin = [1400.0, 0.0, 0.0];
         assert_eq!(bot.goal(&v), Goal::Hold, "clear of it");
+    }
+
+    /// A fight inside the blast of a charge about to go: the gun stays on
+    /// the enemy, the keys run the graph's way out.
+    #[test]
+    fn a_fight_in_a_charges_blast_keeps_running_out() {
+        let (mut bot, mut v) = engaged(21);
+        v.uo = bas_view().uo;
+        let b = their_base(&mut v);
+        b.breached = true;
+        b.planted = true;
+        b.blows_in = Some(8.0);
+        b.charge = Some(BombView {
+            origin: [50.0, 0.0, 0.0],
+            aim: [50.0, 0.0, 16.0],
+        });
+        v.waypoint = Some([-300.0, 0.0, 64.0]);
+        for _ in 0..20 {
+            let cmd = bot.think(&v);
+            let yaw = (cmd.angles[1] + v.delta_angles[1]) as f32 / ANGLE2SHORT;
+            let way = yaw + (-(cmd.right as f32)).atan2(cmd.forward as f32).to_degrees();
+            assert!(cmd.forward != 0 || cmd.right != 0, "keys down");
+            assert!(yaw_diff(way, 180.0).abs() < 45.0, "runs west, not {way}");
+            assert_eq!(cmd.buttons & msg::BUTTON_ADS, 0);
+            // On the move, or the stall check sends it a random way.
+            v.origin[0] -= 10.0;
+        }
     }
 
     /// An enemy no round goes at (an LMG that will not deploy, here) is

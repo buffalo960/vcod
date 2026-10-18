@@ -686,11 +686,15 @@ first everywhere.
   defused. A defender that does not shoot (`--bots-shoot` off) stops no
   plant from the room, and with a defender a side every plant was
   defused the moment it was down, for good: it attacks with the rest
-  and comes back only to defuse, and a side's two such bots split over
+  and defuses only a charge it is within 2000 units of, and a side's two such bots split over
   the other side's bases by rank (shooting, both take the same one), so
-  two charges can tick at once on a side with one bot left to defuse. Each side defuses a charge on one of
-  its bases (10.5 s): a defender, and an attacker within 2000 units of
-  it. An attacker goes for the next of the other side's bases after
+  two charges can tick at once on a side with one bot left to defuse. When
+  it still ran home to defuse from anywhere, it was back in time for every
+  plant (about 38 s of a 60 s fuse on mp_foy), and with a base left a
+  side the round looped on defuses for good (seeds 17 and 19, 64 to 68
+  defuses in 29 min). Each side defuses a charge on one of
+  its bases (10.5 s): a defender that shoots, and any other bot within
+  2000 units of it. An attacker goes for the next of the other side's bases after
   each of its deaths, off the defender that killed it. A standing base
   is breached with rockets (below); bots ride no tank.
 - **The breach.** An attacker with no loaded rocket launcher in hand
