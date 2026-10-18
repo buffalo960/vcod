@@ -164,18 +164,34 @@ fn direct_buttons(tokens: &[String]) -> Option<u8> {
 /// logs `PROBE done`, and returns its `PROBE` lines. `None` without a UO
 /// install.
 fn direct_run(map: &str, probe: &str) -> Option<Vec<String>> {
+    let fs = vcod_common::testing::uo_fs()?;
+    Some(direct_run_on(
+        fs,
+        &vcod_common::net::protocol::PROTOCOL_V22,
+        map,
+        probe,
+    ))
+}
+
+/// [`direct_run`] on `fs` under `proto`.
+fn direct_run_on(
+    fs: vcod_common::pk3::Pk3Fs,
+    proto: &'static vcod_common::net::protocol::Protocol,
+    map: &str,
+    probe: &str,
+) -> Vec<String> {
     use common::{Join, Queues};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::time::Duration;
     use vcod_common::net::msg::UserCmd;
     use vcod_common::net::{NetClient, NetEvent};
-    let fs = Rc::new(vcod_common::testing::uo_fs()?);
+    let fs = Rc::new(fs);
     let bsp_path = fs.resolve_map(map).unwrap();
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = std::time::Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(map, probe), now);
-    sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+    sv.set_protocol(proto);
     let src = std::fs::read_to_string(format!(
         "../gsc/tests/fixtures/semantics/client-probes/{probe}.gsc"
     ))
@@ -244,7 +260,7 @@ fn direct_run(map: &str, probe: &str) -> Option<Vec<String>> {
             eprintln!("{l}");
         }
     }
-    Some(ours)
+    ours
 }
 
 #[test]
@@ -394,4 +410,113 @@ fn mp_foys_belltower_matches_retail_uo() {
     };
     let ours: Vec<&str> = ours.iter().map(String::as_str).collect();
     assert_eq!(spread_free(&ours), spread_free(RETAIL_BELLTOWER));
+}
+
+/// `client-probes/probe_dmgspawn.gsc` on retail 1.1d and 1.5b, mp_carentan,
+/// 2026-10-18, no client: both servers logged these lines alike. A
+/// `spawn("trigger_damage", origin)` takes inline model 0, the world's box
+/// moved to its origin, and `CanDamage` probes from that box's centre: a
+/// blast at the origin is cut off from it and raises nothing, one in the sky
+/// or at the centre takes the whole charge, and one past the box's top is
+/// out of range. Moved 1500 down, the centre goes under the ground; deleted,
+/// nothing reaches it (docs/research/cod11-combat.md 14.8).
+const RETAIL_SPAWNED: &[&str] = &[
+    "PROBE spawned trigger_damage 32000 (844.00, 3480.00, -21.25)",
+    "PROBE phase 1550 origin",
+    "PROBE health 1550 32000",
+    "PROBE phase 2550 above",
+    "PROBE health 2550 32000",
+    "PROBE damage 100 - 2550",
+    "PROBE phase 3550 centre",
+    "PROBE health 3550 32000",
+    "PROBE damage 100 - 3550",
+    "PROBE phase 4550 under_centre",
+    "PROBE health 4550 32000",
+    "PROBE damage 100 - 4550",
+    "PROBE phase 5550 past_top",
+    "PROBE health 5550 32000",
+    "PROBE phase 6550 moved_old_centre",
+    "PROBE health 6550 32000",
+    "PROBE phase 7550 moved_new_centre",
+    "PROBE health 7550 32000",
+    "PROBE damage 100 - 7550",
+    "PROBE phase 8550 back",
+    "PROBE health 8550 32000",
+    "PROBE damage 100 - 8550",
+    "PROBE phase 9550 deleted",
+    "PROBE done",
+];
+
+/// Needs `COD_DIR` at a 1.1 or 1.5 install; a UO one returns early.
+#[test]
+fn a_script_spawned_trigger_damage_matches_retail() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    let proto = vcod_server::server::install_protocol(&fs);
+    if proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+        return;
+    }
+    let fs = std::rc::Rc::new(fs);
+    let bsp_path = fs.resolve_map("mp_carentan").expect("mp_carentan");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = std::time::Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", "probe_dmgspawn"), now);
+    sv.set_protocol(proto);
+    let src =
+        std::fs::read_to_string("../gsc/tests/fixtures/semantics/client-probes/probe_dmgspawn.gsc")
+            .expect("the probe");
+    sv.overlay_script("maps/mp/gametypes/probe_dmgspawn", &src);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, 11000);
+    let ours: Vec<&str> = sv
+        .script_log()
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| l.starts_with("PROBE"))
+        .collect();
+    if std::env::var_os("DMGTRIG_REPORT").is_some() {
+        for l in &ours {
+            eprintln!("{l}");
+        }
+    }
+    assert_eq!(ours, RETAIL_SPAWNED);
+}
+
+/// `client-probes/probe_dmgspawnshot.gsc` on retail 1.1d, mp_carentan,
+/// 2026-10-18 (two runs), one axis `--probe-uo-weapon direct` client with
+/// `--probe-weapon kar98k_mp` firing into the ground 160 units ahead. A
+/// round's walk sight-traces its segment against the spawned trigger's
+/// world copy: with the copy's ground 20 or 1 unit over the world's the
+/// round ends inside it and fires the trigger, 20 or 1 under or level it
+/// ends in the air or on the face and fires nothing (cod11-combat.md 14.8).
+const RETAIL_SPAWNED_SHOT: &[&str] = &[
+    "PROBE site (844.00, 3480.00, -23.88) (1004.00, 3480.00, -23.88)",
+    "PROBE phase up (0.00, 0.00, 20.00)",
+    "PROBE trigger player",
+    "PROBE damage 120 player -",
+    "PROBE phase down (0.00, 0.00, -20.00)",
+    "PROBE phase level (0.00, 0.00, 0.00)",
+    "PROBE phase up1 (0.00, 0.00, 1.00)",
+    "PROBE trigger player",
+    "PROBE damage 120 player -",
+    "PROBE phase down1 (0.00, 0.00, -1.00)",
+    "PROBE done",
+];
+
+/// 1.5b logged the same lines. Needs `COD_DIR` at a 1.1 or 1.5 install; a
+/// UO one returns early.
+#[test]
+fn a_round_on_a_script_spawned_trigger_damage_matches_retail() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    let proto = vcod_server::server::install_protocol(&fs);
+    if proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+        return;
+    }
+    let ours = direct_run_on(fs, proto, "mp_carentan", "probe_dmgspawnshot");
+    let ours: Vec<&str> = ours.iter().map(String::as_str).collect();
+    assert_eq!(ours, RETAIL_SPAWNED_SHOT);
 }
