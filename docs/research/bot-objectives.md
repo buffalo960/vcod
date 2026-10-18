@@ -152,6 +152,20 @@ objective, since its rising edge also picks up weapons and mounts turrets.
   within 1 degree for two ticks (the aim trace is read a frame late,
   `cod11-gsc-object-model.md` 23.1). It holds 10.5 s, or lets go after 20
   ticks with no link and tries again.
+- The defuse press's rising edge is `Cmd_Activate_f`'s too, and a weapon
+  lying by the bomb (a planter's, dropped where he died) can outscore the
+  trigger and swap the held weapon away. INFERRED (from `activate_score`:
+  an entity dead on the view scores its distance from the eye): with the
+  eye over the bomb, the trigger's middle is nearer than anything lying on
+  the floor. So while the end frame's cursor hint names a weapon
+  (`BotView::use_takes_weapon`, the hint at or past the protocol's weapon
+  base) the lead does not press: it closes in to 16 units of the bomb and
+  settles again, and after 5 s of that presses whatever it takes
+  (`bots::tests::a_defuser_closes_in_rather_than_take_a_weapon_by_the_bomb`,
+  2026-10-18). Not seen in a run yet: in 8 six-bot shoot-on `mp_carentan`
+  S&D runs (`ship_stalls`, seeds 1-15 odd, 6000 ticks) no bot killed
+  another, so no weapon lay by a bomb.
+  The bas defuse is unchanged.
 - A death sits out the round. VERIFIED (`maps/MP/gametypes/sd.gsc`
   `Callback_PlayerKilled` 756, `spawnSpectator` at 856; `re.gsc` 838, 973,
   `pak5.pk3`): after the 2 s `wait`, the dead player gets the killcam or a

@@ -239,7 +239,13 @@ patch grid moved `mp_brecourt` back to 159.
   hatch, the yards at 1136 to 1166, the mast top at 1030, platform edges
   at 648 and 701), `mp_depot` 9, `mp_pavlov` 7, none on `mp_hurtgen`,
   `mp_carentan`, `mp_harbor`, `mp_brecourt`, `mp_chateau`, `mp_dawnville`,
-  `mp_powcamp`, `mp_railyard` or `mp_rocket`.
+  `mp_powcamp`, `mp_railyard` or `mp_rocket`. A point goal (an enemy, an
+  item, a remembered spot, an objective point) on a perch is walked to the
+  nearest node off the perches within 128 of it instead, and the walked-out
+  path heads at that node, not the point (`NavGraph::goal_node`,
+  2026-10-18; `nav::tests::a_point_goal_on_a_perch_ends_beside_it`).
+  VERIFIED (the graph): both crow's nest rail nodes the test names have such
+  a node within 128.
 - New nodes stay within 512 units of the spawns' bounding box. Past it lies
   scenery: `mp_hurtgen`'s forest added 10 000 nodes.
 - Walks run on every core, a layer at a time, handed out one node at a time;
