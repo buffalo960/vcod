@@ -821,9 +821,9 @@ the last base) the four-bot shoot-off gate looped on defuses on seeds
 17 and 19 (64 to 68 defuses, never over) and ended the rest at ticks
 6979 to 12959; shoot on ended at 8739 to 21759. After: shoot off ends
 every seed at 6459 to 7559 with no defuse, shoot on at 8559 to 20059
-(mean 13700 against 13000 before; the slowest seed now 14700 ticks
-inside the 34800-tick gate where 13000 was), no bot killed by a
-charge's blast. Intermediate, with the near-only defuse alone, shoot on
+(mean 13700 against 13000 before; the slowest seed 14700 ticks short
+of the 34800-tick gate where it was 13000 short). Seed 5 traced before
+the blast rule lost a bot to a charge four times a round; intermediate, with the near-only defuse alone, shoot on
 seed 23 took 31999 ticks: its allied defender came across the map to
 the last axis base only once the charge was down and the planter dead,
 twice. The two-bot gate: over at tick 11079, five gone off.
