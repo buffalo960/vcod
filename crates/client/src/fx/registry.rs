@@ -2686,6 +2686,39 @@ mod uo_capture_gates {
         }
     }
 
+    /// `uo-shellveh`'s three shells strike the Elefant: each explode is 186
+    /// with the vehicle bit on metal, and draws the `tank_explode` row's
+    /// vehicle column, not the metal one (coduo-vehicles.md 13, "A shell
+    /// on a hull").
+    #[test]
+    fn the_uo_shellveh_capture_explodes_on_the_vehicle_column() {
+        let weapons = weapons("uo-shellveh");
+        let ctx = ctx(&weapons);
+        let table = rows(&["tank_explode"]);
+        let shells: Vec<_> = events("uo-shellveh")
+            .into_iter()
+            .filter(|e| {
+                e.event == EV_UO_PROJECTILE_EXPLODE || e.event == EV_UO_PROJECTILE_EXPLODE_NOMARKS
+            })
+            .collect();
+        assert_eq!(shells.len(), 3);
+        for ev in shells {
+            assert_eq!(
+                (
+                    ev.event,
+                    ev.scale,
+                    ev.surf_type,
+                    ev.eflags & EF_IN_VEHICLE_V22
+                ),
+                (EV_UO_PROJECTILE_EXPLODE_NOMARKS, 6, 13, EF_IN_VEHICLE_V22)
+            );
+            assert_eq!(
+                paths(resolve_with(&ev, &table, &ctx)),
+                ["fx/tank_explode/vehicle.efx"]
+            );
+        }
+    }
+
     /// `uo-tank`'s shells drawn off a pak whose impact table spells its
     /// rows as UO's `fx/gmi_impacts.csv` does, with backslashes: each
     /// explode's row reads its effect and the effect spawns particles.
