@@ -1990,8 +1990,9 @@ above).
   the head counts whichever way it moves (the bob under the plate), and
   the spot stands a body's width (30) clear of every neighbour of the
   head, three steps off where two are not. Since 2026-10-18 a bot already
-  past the end toward the rungs (flat, by more than a unit: backing down
-  over the lip) walks back onto the end before it heads for the spot
+  past the end toward the rungs (flat, by more than a half-width, 15:
+  backing down over the lip) walks back onto the end before it heads for
+  the spot
   (`nav::tests::a_yield_from_over_the_lip_steps_back_onto_the_head_first`).
   Below.
 

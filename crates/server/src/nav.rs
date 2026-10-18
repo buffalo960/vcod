@@ -2551,12 +2551,15 @@ impl Follower {
             return None;
         }
         let moving = coming.chain(on_head).any(|m| m);
-        // A body already past the head toward the rungs (backing down over
+        // A body well past the head toward the rungs (backing down over
         // the lip) steps back onto the head first: headed straight for the
         // spot, a bot on mp_ship's hatch at (3806, 60, 623) slid along the
         // hatch's side and fell through it to the deck at 304
         // (bot-navigation.md section 3).
-        let p = if box_flat(&rungs, at) + 1.0 < box_flat(&rungs, end) {
+        // Not from beside the head: a bot that came to rest 5 units past
+        // mp_ship's (3337, -440, 56) toward its rungs went on asking for
+        // the head and stood in the climber's way off it (seed 3769).
+        let p = if box_flat(&rungs, at) + HALF_WIDTH < box_flat(&rungs, end) {
             end
         } else {
             spot
@@ -7664,8 +7667,8 @@ mod tests {
     /// mp_ship's ladder at x 3793: a bot backing down over its hatch's
     /// lip at (3806, 60, 623) met a climber, headed straight for the spot
     /// aside, slid along the hatch's side and fell through to the deck at
-    /// 304 (seed 1795, the bot hurt). Past the head toward the rungs it steps back onto
-    /// the head first; from the head it goes on to the spot.
+    /// 304 (seed 1795, the bot hurt). Well past the head toward the rungs it
+    /// steps back onto the head first; from the head it goes on to the spot.
     #[test]
     fn a_yield_from_over_the_lip_steps_back_onto_the_head_first() {
         let Some(world) = map_world("mp_ship") else {
@@ -7697,6 +7700,11 @@ mod tests {
             .ladder_yield(&g, g.nodes[head as usize], body, &up, &[])
             .expect("a spot");
         assert_ne!(spot, g.nodes[head as usize]);
+        // Come to rest just past the head, it goes on to the spot: asking
+        // for the head from there, a bot on mp_ship's (3337, -440, 56)
+        // stood in its climber's way off the rungs (seed 3769).
+        let beside = g.nodes[head as usize] + Vec3::X * 5.0;
+        assert_eq!(f.ladder_yield(&g, beside, body, &up, &[]), Some(spot));
     }
 
     #[test]
