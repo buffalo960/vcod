@@ -716,9 +716,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   stance, never `pm_flags` alone (player-model-anim-system.md, "How
   retail picks the movetype"): a test that sets `ps.stance` by hand idles
   standing; `PlayerState::settle_stance` sets the whole stance.
-- A blast and the touch pass walk `crate::area::AreaTree`, retail's entity
-  area tree, so victim and touch order is link history, not entity order. A
-  client links through `GameHost::link_client`, everything else through
+- A blast, the touch pass, the use key and `positionWouldTelefrag` walk
+  `crate::area::AreaTree`, retail's entity area tree, so victim and touch
+  order is link history, not entity order, and an entity no link put in
+  the tree is invisible to all four. A client links through
+  `GameHost::link_client`, everything else through
   `GameHost::link_entity`; an `origin` write on a non-client relinks it, a
   player `setOrigin`, spawn or death is an unlink then a link (combat doc
   14.7).
