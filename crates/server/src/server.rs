@@ -4572,6 +4572,7 @@ impl Server {
                     if let Some(p) = follower.climb_line(&g) {
                         view.ladder_middle = Some(p.into());
                     }
+                    view.back_face = follower.back_face(&g).map(|(y, m)| (y, m.into()));
                     if view.fatigue.is_some() {
                         view.sprint_room = follower.straight_run(&g, at.into());
                     }
@@ -5151,6 +5152,7 @@ impl Server {
                 .filter(|_| sim.ps.on_ladder)
                 .and_then(|g| g.ladder_middle(sim.ps.origin))
                 .map(Into::into),
+            back_face: None,
             on_ground: sim.ps.on_ground,
             jump: false,
             leap: false,
