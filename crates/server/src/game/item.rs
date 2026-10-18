@@ -791,7 +791,7 @@ pub fn activate_ent(
     // A vehicle is scored on its hit along the view, the dot there 1
     // (`G_GetActivateEnt` 0x56e85), and needs no further trace.
     let vehicle = crate::game::vehicle::seat::aimed_vehicle(host, cx, slot, eye, view);
-    scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+    msort(&mut scored, |a, b| (a.1 - b.1) as i32 <= 0);
     let world = host.world.clone();
     let picked = scored.into_iter().find_map(|(hit, score, c)| {
         let blocked = world.as_ref().is_some_and(|w| {
@@ -810,6 +810,33 @@ pub fn activate_ent(
         (Some((hit, _)), None) => Some(hit),
         (None, Some((v, _))) => Some(Activate::Vehicle(v)),
         (None, None) => None,
+    }
+}
+
+/// The C library's `qsort` as glibc runs it on a short list: a top-down
+/// merge sort that takes from the left run while `le(left, right)`.
+/// `G_GetActivateEnt`'s comparator (0x50f88) truncates the score difference
+/// to an int, so two scores under 1.0 apart compare equal and keep their
+/// walk order, though such a comparator is not a total order (items doc
+/// 2.1).
+fn msort<T: Clone>(v: &mut [T], le: impl Fn(&T, &T) -> bool + Copy) {
+    if v.len() <= 1 {
+        return;
+    }
+    let mid = v.len() / 2;
+    msort(&mut v[..mid], le);
+    msort(&mut v[mid..], le);
+    let (left, right) = (v[..mid].to_vec(), v[mid..].to_vec());
+    let (mut i, mut j) = (0, 0);
+    for slot in v.iter_mut() {
+        let take_left = j == right.len() || (i < left.len() && le(&left[i], &right[j]));
+        *slot = if take_left {
+            i += 1;
+            left[i - 1].clone()
+        } else {
+            j += 1;
+            right[j - 1].clone()
+        };
     }
 }
 
@@ -967,6 +994,15 @@ fn respawn_secs(host: &mut GameHost, cx: &mut Cx, id: EntId, index: usize) -> Op
 mod tests {
     use super::*;
     use crate::game::testing::fixture;
+
+    /// The use key's sort: scores under 1.0 apart compare equal and the
+    /// merge keeps the left run's first, so 5.0 still goes ahead of 4.5.
+    #[test]
+    fn the_activate_sort_ties_scores_under_a_unit_apart() {
+        let mut v = vec![('a', 5.0_f32), ('b', 4.5), ('c', 3.0)];
+        msort(&mut v, |x, y| (x.1 - y.1) as i32 <= 0);
+        assert_eq!(v.iter().map(|x| x.0).collect::<String>(), "cab");
+    }
 
     /// `GetFreeCueSpot` with every slot held evicts slot 0, and a slot whose
     /// item is gone is reused before anything is evicted.

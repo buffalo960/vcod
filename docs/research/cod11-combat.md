@@ -6458,14 +6458,57 @@ as retail does, where the entity-number order took d.
 `radiusdamage_walks_its_victims_in_the_area_trees_order`
 (`crates/server/src/game/builtins/combat.rs`) replay the blast table.
 
-Not routed through the tree: a linked client's per-frame relink in
-`G_RunClient`, a gunner's relink in the turret think, `func_*` entities
-(vcod spawns none of them), the link `ScriptEntCmd_MoveTo` and
-`Reached_ScriptMover` make at a move's ends, and an entity whose box
-touches no BSP leaf, which `SV_LinkEntity` unlinks
-(the leaf count at 0x8090c68, the unlink at 0x8090c84). Not walking it yet: `G_GetActivateEnt` (the use key; sorted
-by score, so the order reaches it only through ties), `G_KillBox`, `positionWouldTelefrag` and
-the two trigger-damage walks. vcod raises the `"touch"` notifies at the
+The other walks and links (2026-10-18):
+
+- `positionWouldTelefrag` walks the tree under 0x2000000 over
+  `playerMins`/`playerMaxs` at the point and answers 1 off the first
+  client whose `pm_type` is below 6 (`builtins::client::position_would_telefrag`,
+  cod11-gsc-object-model.md 20).
+- `G_GetActivateEnt` takes its candidates off the walk over the muzzle
+  ±(192, 192, 96) under 0x200000, in its order, and scores each at its
+  link's `(absmin + absmax) * 0.5` (`item::activate_ent`, cod11-items.md
+  2.1). VERIFIED, the relocation at 0x4f421: the sort is the C library's
+  `qsort`. INFERRED: glibc's `qsort` merges when it can allocate, which
+  keeps ties in walk order, so vcod sorts stably.
+- `G_KillBox` (1.1d 0x66bf8, 1.5b 0x6d57d, UO 0x79dd9) has no caller:
+  VERIFIED, no relocation in 1.1d's `.rel.text` names it and no `call`
+  reaches it in the 1.5b or UO disassembly. Nothing to port.
+- The trigger-damage walks: VERIFIED, 14.6: no 1.1 MP map places a
+  `trigger_damage`; UO's `mp_uo_stanjel` places 17 and `mp_foy` one
+  (`coduo-diff.md`, "Map entities"). vcod links them (0x405c0008) but runs
+  no `Activate_trigger_damage`, so neither walk has anything to do yet.
+- VERIFIED, `game.mp.i386.so` and `game.mp.uo.i386.so`: `setModel` links
+  after `G_SetModel` and `G_DObjUpdate` (1.1d 0x5db16, UO 0x68ce4),
+  `setContents` links after its store (1.1d 0x5dd4a, UO 0x6970b), and UO's
+  `setBounds` writes `r.mins` (+0x108) and `r.maxs` (+0x114) and links
+  (0x6976c). vcod links in all three (`builtins::entity::set_model`,
+  `builtins::uo::set_contents`, `set_bounds`): a `script_model` spawned
+  with no model is filed under its world box until its `setModel` files it
+  under the model's bounds.
+- VERIFIED, `Reached_ScriptMover` (0x5f98c): each group whose segment has
+  ended is evaluated and linked (0x5fa17, 0x5faba), behind
+  `G_MoverPush`'s link of the same frame. vcod relinks in place once per
+  such group (`mover::reached`). INFERRED: the entity keeps its place, but
+  each link runs its node's push-down, one level further.
+  `ScriptEntCmd_MoveTo` and the other verbs link at their start
+  (`mover::verb_linked`).
+- `G_RunClient` (UO 0x41dfc) on a seated rider: `G_SetFixedLink` mode 2
+  writes `r.currentOrigin` from the seat link, the tag of the vehicle as it
+  stands shifted by the link's offset, then links him (coduo-vehicles.md
+  13). vcod runs it on the rider's turn of the pass, his vehicle first
+  (`run_rider_link` in `server.rs`), with the offset `VEH_LinkPlayer`
+  asked for (`Seat::link_offset`).
+- VERIFIED, `cod_lnxded` `SV_LinkEntity`: the unlink at 0x8090c84 runs
+  when `CM_BoxLeafnums` (0x8053d94) returns 0. INFERRED: that walk ends in
+  a leaf on every path down the BSP and appends each leaf it reaches
+  (0x8054054), so it never returns 0 and the unlink never runs.
+
+Not routed through the tree: a linked turret's `G_GeneralLink` from its
+think (`turret_think` 0x5328c), which vcod makes on the turret's turn of
+the pass (`link::run_linked`), not from the gunner's end frame; the
+relink `G_RunFrame` makes of every client when `g_bounds_width` or
+`g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
+`func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the
 top of the next script frame in the order the walk made them and hands the
 `"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);
 `crates/server/tests/touchorder_ab.rs` replays the probe and reads every
