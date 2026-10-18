@@ -3473,8 +3473,24 @@ also stores 1 and 0 into alongside `client+0x2218`. INFERRED: the 1 goes with
 the victim's own origin and the 0 with a real direction, so the 255/255 pair is
 the sentinel for "the damage carried no direction".
 
+**The angles are `vectoangles`'.** VERIFIED, `P_DamageFeedback`
+(0x3f500): step 8's angles come from the module's `vectoangles` (0x3de94),
+whose pitch is `-atan2(z, |xy|)` and whose two angles are both wrapped
+into [0, 360) (14.8, "`vectorToAngles`"), so a direction a little up reads a
+pitch just under 360. VERIFIED, `mp_carentan-tdm-grenade-target.txt`
+(ms 9557): a frag going off under the standing target knocked him
+(-86.9, -0.6, 14.0) and wrote `damageYaw` 128 and `damagePitch` 249, 350.9
+degrees, about 9 up; Q3's `vectoangles` (pitch `+atan2`) would have written
+6. VERIFIED, `mp_carentan-tdm-hit-target.txt`: a level carbine hit with
+knockback z 0.1 wrote `damagePitch` 255. Until 2026-10-18 vcod used Q3's
+sign here and the unit test that pinned 255 fed it a direction a hair
+down; `a_blast_from_below_writes_the_capture_s_pitch_byte` now pins the
+grenade line.
+
 **As implemented** (`ClientSim::take_damage` and `end_frame`,
-`crates/server/src/spectate.rs`): steps 2 to 5 and 7 to 13 as listed, with
+`crates/server/src/spectate.rs`): steps 2 to 5 and 7 to 13 as listed,
+the angles through the same `vectoangles` port as the `vectorToAngles`
+builtin (`game::builtins::math::vectoangles`), scaled in double, with
 step 1 read as the sim's `dead` flag, which the killing hit sets before the
 end-frame runs. Step 6's view kick is not carried; nothing on the wire reads
 it. `EV_PAIN` is raised whatever the stance: nothing above names
@@ -4667,6 +4683,23 @@ INFERRED: the ordering in it.
 - `r.currentOrigin` (`+0x134`) takes the `origin` argument and
   `r.currentAngles` (`+0x140`) the finished `apos.trBase`.
 
+VERIFIED, `fire_grenade` 0x544cd-0x54589: `vectoangles` reads the
+`velocity` argument (`edi`), not the truncated `trDelta`, and
+`AngleNormalize360` (0x3eb30) scales by 182.04445 (.rodata 0x72ba4),
+truncates under a `| 0xc00` control word, masks to 16 bits and scales back
+by 0.005493164 (0x72ba8), so the launch pitch is a whole number of
+65536ths. VERIFIED, `net/snapshots-skyfrag.bin` (2026-10-18,
+`client-probes/probe_skyshot` sky part with `fraggrenade_mp`, the recipe in
+the probe's header with `--probe-uo-weapon throw --save-snapshots
+--capture-tag skyfrag`): a frag thrown 80 degrees up left with `trDelta`
+(117, 117, 1065) and `apos.trBase` (158.88977, 45, 0), the pitch exactly
+28925 65536ths. INFERRED: 158.88977 is 278.88977 less 120, a pitch of
+81.11 degrees up, which is the unrounded throw (117.8, 117.8, 1065.x); the
+truncated delta reads 81.17. vcod took the angles off the truncated
+velocity and wrapped without the 65536ths until 2026-10-18 (158.82935);
+`missile_edge_ab::launch_angles_match_retail_on_1_1` now matches the
+capture bit for bit.
+
 ### 11.3 Where the throw's origin and velocity come from
 
 VERIFIED, `FireWeapon` `0x68D68`: it takes the client's view angles from
@@ -4689,7 +4722,14 @@ the velocity in place and adds `n * dot(client->ps.velocity, n)` to the
 returned missile's `s.pos.trDelta`, where `n` is the normalized velocity.
 INFERRED: the thrower's own motion along the throw direction is therefore
 added to the grenade after `fire_grenade` has truncated the delta, so the
-final `trDelta` is not whole-numbered.
+final `trDelta` is not whole-numbered. VERIFIED, 0x6900c-0x6909c: z is
+`projectileSpeed * forward.z` plus `projectileSpeedUp` on the stack, stored
+once; `VectorNormalize` runs on the unrounded velocity, and the dot and
+each `n * dot` stay on the stack until each `trDelta` component is stored.
+VERIFIED, UO's `weapon_grenadelauncher_fire` (0x7b2c4) has the same shape
+with the dot stored as a float. vcod: `missile::throw_velocity` returns
+the unrounded velocity and `Missiles::carry` does the truncation and the
+add, so `fire_grenade` gets what retail's does.
 
 VERIFIED: `weapon_grenadelauncher_fire` (`0x69348`) is the same arithmetic
 against the `params` frame of 2.3, taking the forward axis from `params+0`,
@@ -5534,7 +5574,20 @@ and `splashMethodOfDeath` 6 (`MOD_PROJECTILE_SPLASH`), `clipmask`
 0x2802091, `s.pos.trType` 2 (`TR_LINEAR`), `trTime` `level.time - 50`
 (0x54708), `trBase` the muzzle, `trDelta` `dir * projectileSpeed` truncated
 toward zero per axis, `r.currentOrigin` the muzzle, and `G_SetAngle` of
-`vectoangles(trDelta)`. INFERRED: no bounce bit (0x03000000) is set, so
+`vectoangles(trDelta)` (0x547e3; `G_SetAngle` 0x67d9c copies the three
+floats into `apos.trBase` and `r.currentAngles` with no wrap). VERIFIED,
+`net/snapshots-skyrocket.bin` (2026-10-18, `probe_skyshot`'s sky part with
+`panzerfaust_mp`, `--probe-uo-weapon aim --save-snapshots --capture-tag
+skyrocket`): a rocket fired 80 degrees up with `trDelta` (344, 350, 2756)
+went out with `apos.trBase` (280.09662, 45.49534, 0): `vectoangles`' pitch,
+down positive and wrapped into [0, 360). vcod sent Q3's -79.9 until
+2026-10-18; `missile_edge_ab::launch_angles_match_retail_on_1_1` holds
+ours within the panzerfaust's 3.5 degree `adsSpread` of it (each server
+draws the spread off its own RNG). INFERRED, `net/snapshots-uo-bazooka.bin`:
+UO's 16-bit angle field cannot tell the two signs apart (the round off
+-0.88 and 359.12 is the same short). VERIFIED, `game.mp.uo.i386.so`:
+UO's `vectoangles` (0x3aded) wraps both angles into [0, 360) the same way,
+beside a separate `vectosignedangles` (0x3af4c). INFERRED: no bounce bit (0x03000000) is set, so
 13.1 explodes it on whatever it strikes: a body or anything else that takes
 damage gets `damage` (1000 for `panzerfaust_mp`) as `MOD_PROJECTILE` with
 the flight as the direction and the splash skips it; the blast is
