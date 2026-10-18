@@ -219,6 +219,21 @@ pub enum Effect {
     Hit(Hit),
     /// An entity with no client struck (a UO vehicle), for its `G_Damage`.
     EntityHit(EntityHit),
+    /// A leg's `G_CheckHitTriggerDamage`, run before anything the leg
+    /// struck takes its damage (combat doc 14.8).
+    TriggerSweep(TriggerSweep),
+}
+
+/// One segment `G_CheckHitTriggerDamage` walks: the leg's start to where
+/// its trace stopped, the leg's damage before any falloff, its means of
+/// death.
+#[derive(Clone, Copy, Debug)]
+pub struct TriggerSweep {
+    pub attacker: usize,
+    pub start: Vec3,
+    pub end: Vec3,
+    pub damage: i32,
+    pub mod_: &'static str,
 }
 
 /// A round's `G_Damage` on an entity with no client: the falloff's damage,
@@ -263,14 +278,14 @@ impl ShotResult {
     pub fn impacts(&self) -> impl Iterator<Item = &TempEntity> {
         self.effects.iter().filter_map(|e| match e {
             Effect::Impact(te) => Some(te),
-            Effect::Hit(_) | Effect::EntityHit(_) => None,
+            Effect::Hit(_) | Effect::EntityHit(_) | Effect::TriggerSweep(_) => None,
         })
     }
 
     pub fn hits(&self) -> impl Iterator<Item = &Hit> {
         self.effects.iter().filter_map(|e| match e {
             Effect::Hit(h) => Some(h),
-            Effect::Impact(_) | Effect::EntityHit(_) => None,
+            Effect::Impact(_) | Effect::EntityHit(_) | Effect::TriggerSweep(_) => None,
         })
     }
 }
@@ -730,7 +745,7 @@ fn fire_round(
             .then_some(round.uo)
             .flatten()
             .filter(|u| u.tracer);
-        match trace_attack(
+        let traced = trace_attack(
             start,
             end,
             pass,
@@ -740,7 +755,15 @@ fn fire_round(
             models,
             priority,
             bones.as_deref_mut(),
-        ) {
+        );
+        out.effects.push(Effect::TriggerSweep(TriggerSweep {
+            attacker: shooter,
+            start,
+            end: traced.endpos(start, end),
+            damage,
+            mod_,
+        }));
+        match traced {
             Traced::Player {
                 slot,
                 fraction,
@@ -942,6 +965,19 @@ enum Traced {
         normal: Vec3,
     },
     Nothing,
+}
+
+impl Traced {
+    /// Where the trace from `start` to `end` stopped.
+    fn endpos(&self, start: Vec3, end: Vec3) -> Vec3 {
+        match self {
+            Traced::Player { fraction, .. }
+            | Traced::Model { fraction, .. }
+            | Traced::Entity { fraction, .. } => start + (end - start) * *fraction,
+            Traced::World(t) => t.endpos,
+            Traced::Nothing => end,
+        }
+    }
 }
 
 /// A live player's body as a locational trace meets it (combat doc, section
@@ -1395,118 +1431,132 @@ pub fn melee_fire(
         &BULLET_PRIORITY,
         bones,
     );
-    let weapon = weapon_index as i32;
-    if let Traced::Player {
-        slot,
-        fraction,
-        hitloc,
-    } = traced
-    {
-        let point = muzzle + (end - muzzle) * fraction;
-        let damage = def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32;
-        let damage = located_damage(damage, hitlocs.multiplier(hitloc));
-        return ShotResult {
-            effects: vec![
-                Effect::Impact(TempEntity {
-                    event: EV_MELEE_HIT,
-                    // The bone trace answers no normal. Retail's is the
-                    // bone's own, which the melee capture reads as the swing
-                    // reversed and tilted: parm 115 against a forward of +y.
-                    parm: dir_to_byte((-forward).into()),
-                    surf_type: SURF_FLESH,
-                    other: slot as u32,
-                    attacker: 0,
-                    weapon,
-                    origin: point.into(),
-                    client_num: 0,
-                    scale: 0,
-                    scope: Scope::Broadcast,
-                    quake: None,
-                    origin2: None,
-                }),
-                Effect::Hit(Hit {
-                    victim: slot,
-                    attacker,
-                    inflictor: None,
-                    damage,
-                    dflags: 0,
-                    mod_: "MOD_MELEE",
-                    weapon: weapon_name.to_string(),
-                    point: point.into(),
-                    dir: forward.into(),
-                    hitloc,
-                }),
-            ],
-            struck: Vec::new(),
+    // `G_CheckHitTriggerDamage` with `meleeDamage` ahead of the swing's
+    // own damage roll (1.1d 0x687a0, combat doc 14.8).
+    let sweep = Effect::TriggerSweep(TriggerSweep {
+        attacker,
+        start: muzzle,
+        end: traced.endpos(muzzle, end),
+        damage: def.melee_damage,
+        mod_: "MOD_MELEE",
+    });
+    let mut swing = || -> ShotResult {
+        let weapon = weapon_index as i32;
+        if let Traced::Player {
+            slot,
+            fraction,
+            hitloc,
+        } = traced
+        {
+            let point = muzzle + (end - muzzle) * fraction;
+            let damage = def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32;
+            let damage = located_damage(damage, hitlocs.multiplier(hitloc));
+            return ShotResult {
+                effects: vec![
+                    Effect::Impact(TempEntity {
+                        event: EV_MELEE_HIT,
+                        // The bone trace answers no normal. Retail's is the
+                        // bone's own, which the melee capture reads as the swing
+                        // reversed and tilted: parm 115 against a forward of +y.
+                        parm: dir_to_byte((-forward).into()),
+                        surf_type: SURF_FLESH,
+                        other: slot as u32,
+                        attacker: 0,
+                        weapon,
+                        origin: point.into(),
+                        client_num: 0,
+                        scale: 0,
+                        scope: Scope::Broadcast,
+                        quake: None,
+                        origin2: None,
+                    }),
+                    Effect::Hit(Hit {
+                        victim: slot,
+                        attacker,
+                        inflictor: None,
+                        damage,
+                        dflags: 0,
+                        mod_: "MOD_MELEE",
+                        weapon: weapon_name.to_string(),
+                        point: point.into(),
+                        dir: forward.into(),
+                        hitloc,
+                    }),
+                ],
+                struck: Vec::new(),
+            };
+        }
+        // A miss names what the trace met; a sky face or nothing at all
+        // spawns no event (0x687a9, 0x687c2; UO 0x8a6ff).
+        let miss = |normal: Vec3, surface_flags: u32, other: u32, at: Vec3| {
+            Effect::Impact(TempEntity {
+                event: EV_MELEE_MISS,
+                parm: dir_to_byte(normal.into()),
+                surf_type: sound_material(surface_flags),
+                other,
+                attacker: 0,
+                weapon,
+                origin: at.into(),
+                client_num: 0,
+                scale: 0,
+                scope: Scope::Broadcast,
+                quake: None,
+                origin2: None,
+            })
         };
-    }
-    // A miss names what the trace met; a sky face or nothing at all
-    // spawns no event (0x687a9, 0x687c2; UO 0x8a6ff).
-    let miss = |normal: Vec3, surface_flags: u32, other: u32, at: Vec3| {
-        Effect::Impact(TempEntity {
-            event: EV_MELEE_MISS,
-            parm: dir_to_byte(normal.into()),
-            surf_type: sound_material(surface_flags),
-            other,
-            attacker: 0,
-            weapon,
-            origin: at.into(),
-            client_num: 0,
-            scale: 0,
-            scope: Scope::Broadcast,
-            quake: None,
-            origin2: None,
-        })
+        match traced {
+            Traced::Player { .. } => unreachable!("returned above"),
+            // `G_Damage` on anything with `takedamage`: a UO script model
+            // `setTakeDamage` opened (a vehicle's hull takes it too, and
+            // `MOD_MELEE` is one no vehicle is hurt by). A 1.1 script model
+            // has no `takedamage`.
+            Traced::Model {
+                id,
+                fraction,
+                normal,
+                surface_flags,
+                takes_damage,
+            } => {
+                let at = muzzle + (end - muzzle) * fraction;
+                let mut effects = vec![miss(normal, surface_flags, id.0, at)];
+                if takes_damage {
+                    effects.push(Effect::EntityHit(EntityHit {
+                        target: id,
+                        attacker,
+                        inflictor: None,
+                        damage: def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32,
+                        dflags: 0,
+                        mod_: "MOD_MELEE",
+                        point: at.into(),
+                        dir: forward.into(),
+                    }));
+                }
+                ShotResult {
+                    effects,
+                    struck: Vec::new(),
+                }
+            }
+            // A shootable grenade's box: its 1 health goes as a round's does.
+            Traced::Entity {
+                id,
+                fraction,
+                normal,
+            } => ShotResult {
+                effects: vec![miss(normal, 0, id.0, muzzle + (end - muzzle) * fraction)],
+                struck: vec![id],
+            },
+            Traced::World(t) if t.surface_flags & crate::game::missile::SURF_NOIMPACT == 0 => {
+                ShotResult {
+                    effects: vec![miss(t.normal, t.surface_flags, ENTITYNUM_WORLD, t.endpos)],
+                    struck: Vec::new(),
+                }
+            }
+            Traced::World(_) | Traced::Nothing => ShotResult::default(),
+        }
     };
-    match traced {
-        Traced::Player { .. } => unreachable!("returned above"),
-        // `G_Damage` on anything with `takedamage`: a UO script model
-        // `setTakeDamage` opened (a vehicle's hull takes it too, and
-        // `MOD_MELEE` is one no vehicle is hurt by). A 1.1 script model
-        // has no `takedamage`.
-        Traced::Model {
-            id,
-            fraction,
-            normal,
-            surface_flags,
-            takes_damage,
-        } => {
-            let at = muzzle + (end - muzzle) * fraction;
-            let mut effects = vec![miss(normal, surface_flags, id.0, at)];
-            if takes_damage {
-                effects.push(Effect::EntityHit(EntityHit {
-                    target: id,
-                    attacker,
-                    inflictor: None,
-                    damage: def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32,
-                    dflags: 0,
-                    mod_: "MOD_MELEE",
-                    point: at.into(),
-                    dir: forward.into(),
-                }));
-            }
-            ShotResult {
-                effects,
-                struck: Vec::new(),
-            }
-        }
-        // A shootable grenade's box: its 1 health goes as a round's does.
-        Traced::Entity {
-            id,
-            fraction,
-            normal,
-        } => ShotResult {
-            effects: vec![miss(normal, 0, id.0, muzzle + (end - muzzle) * fraction)],
-            struck: vec![id],
-        },
-        Traced::World(t) if t.surface_flags & crate::game::missile::SURF_NOIMPACT == 0 => {
-            ShotResult {
-                effects: vec![miss(t.normal, t.surface_flags, ENTITYNUM_WORLD, t.endpos)],
-                struck: Vec::new(),
-            }
-        }
-        Traced::World(_) | Traced::Nothing => ShotResult::default(),
-    }
+    let mut out = swing();
+    out.effects.insert(0, sweep);
+    out
 }
 
 /// The rise `G_RadiusDamage` adds to the direction it hands the callback
@@ -1621,10 +1671,10 @@ pub fn can_damage(
     }
 }
 
-/// A blast candidate with no client: a turret, or a `func_static` spawned
-/// with spawnflags 2 or 4 (combat doc 14.6, movers doc 21). Retail's door
-/// and `trigger_damage` spawns store `takedamage` too, but vcod runs
-/// neither spawn.
+/// A blast candidate with no client: a turret, a `func_static` spawned
+/// with spawnflags 2 or 4 (combat doc 14.6, movers doc 21) or a
+/// `trigger_damage` (14.8). Retail's door spawn stores `takedamage` too,
+/// but vcod runs none.
 #[derive(Clone)]
 pub struct EntityVictim {
     pub id: EntId,
@@ -1982,6 +2032,7 @@ mod tests {
             Effect::Impact(_) => "impact",
             Effect::Hit(_) => "hit",
             Effect::EntityHit(_) => "entity",
+            Effect::TriggerSweep(_) => "sweep",
         }
     }
 
@@ -2740,7 +2791,11 @@ mod tests {
         );
         assert_eq!(hits[1].dir, hits[0].dir, "both carry the shot's forward");
         let order: Vec<&str> = r.effects.iter().map(effect_kind).collect();
-        assert_eq!(order, ["hit", "hit", "impact"], "each leg in turn");
+        assert_eq!(
+            order,
+            ["sweep", "hit", "sweep", "hit", "sweep", "impact"],
+            "each leg in turn, its trigger walk first"
+        );
         let te = only(r.impacts(), "the wall behind C");
         assert_eq!(te.event, 174);
         assert!((te.origin[0] - 300.0).abs() < 0.2, "{:?}", te.origin);
@@ -2788,7 +2843,11 @@ mod tests {
         let got: Vec<(usize, i32)> = r.hits().map(|h| (h.victim, h.damage)).collect();
         assert_eq!(got, [(1, 45)], "B behind the pane at full damage");
         let order: Vec<&str> = r.effects.iter().map(effect_kind).collect();
-        assert_eq!(order, ["impact", "hit", "impact"], "pane, B, wall");
+        assert_eq!(
+            order,
+            ["sweep", "impact", "sweep", "hit", "sweep", "impact"],
+            "pane, B, wall"
+        );
         let at: Vec<(f32, i32)> = r.impacts().map(|t| (t.origin[0], t.surf_type)).collect();
         assert_eq!(r.impacts().count(), 2, "{at:?}");
         assert!((at[0].0 - 40.0).abs() < 0.2 && at[0].1 == 9, "{at:?}");

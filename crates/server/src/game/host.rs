@@ -1024,6 +1024,33 @@ impl GameHost {
                 })
             })
             .collect();
+        // A `trigger_damage`, measured off its brush model's box
+        // (combat doc 14.8).
+        let damage_triggers: Vec<(EntId, crate::game::trigger::Trigger)> = self
+            .triggers
+            .iter()
+            .filter(|(_, t)| t.kind == crate::game::trigger::TriggerKind::Damage)
+            .map(|(id, t)| (id, *t))
+            .collect();
+        for (id, t) in damage_triggers {
+            if self.ents.get(id).is_none_or(|e| e.unlinked) {
+                continue;
+            }
+            let Value::Vector(at) = self.get_field(cx, id, origin) else {
+                continue;
+            };
+            victims.push(crate::game::combat::EntityVictim {
+                id,
+                origin: glam::Vec3::from(at),
+                mins: glam::Vec3::from(t.shape.mins),
+                maxs: glam::Vec3::from(t.shape.maxs),
+                brush: t
+                    .shape
+                    .model
+                    .map(|m| vcod_common::collision::Pusher::Model(m as usize)),
+                vehicle_link: None,
+            });
+        }
         // A UO vehicle takes blasts on its collmap's box.
         for (&id, v) in &self.vehicles.live {
             if self.ents.get(id).is_none_or(|e| e.unlinked) {
@@ -1092,6 +1119,8 @@ impl GameHost {
         if self.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
             out[0].1 = hit.uo_args(cx, damage.max(1), attacker);
         }
+        // A `trigger_damage`'s `pain` or `die` (combat doc 14.8).
+        crate::game::damage_trigger::damaged(self, cx, id, attacker, damage.max(1), &hit.mod_);
         out
     }
 
@@ -1103,6 +1132,14 @@ impl GameHost {
             || self.vehicles.live.contains_key(&id)
             || self.script_takedamage.contains(&id)
             || crate::game::mover::damageable_statics(self).contains(&id)
+            || self.is_damage_trigger(id)
+    }
+
+    /// A `trigger_damage`, `takedamage` from its spawn on.
+    pub fn is_damage_trigger(&self, id: EntId) -> bool {
+        self.triggers
+            .get(id)
+            .is_some_and(|t| t.kind == crate::game::trigger::TriggerKind::Damage)
     }
 
     /// A `script_model` or `script_brushmodel`, `eType` 8 on the wire.
@@ -1645,7 +1682,10 @@ impl GameHost {
     fn finish_think(&mut self, id: EntId, think: ThinkFn) {
         match think {
             ThinkFn::Free => self.free_entity(id),
-            ThinkFn::ClearOwner | ThinkFn::RespawnItem | ThinkFn::Concussive(_) => {}
+            ThinkFn::ClearOwner
+            | ThinkFn::RespawnItem
+            | ThinkFn::Concussive(_)
+            | ThinkFn::MultiWait => {}
         }
     }
 

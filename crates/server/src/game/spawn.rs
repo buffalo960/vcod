@@ -119,6 +119,16 @@ pub fn spawn_entities_from_string(
         );
         if let Some(kind) = crate::game::trigger::kind_of(&classname).or(mount) {
             register_trigger(host, &block, id, kind);
+            if kind == crate::game::trigger::TriggerKind::Damage {
+                // `SP_trigger_damage`'s `health` 32000 (1.1d 0x65337).
+                let health = cx.intern_folded("health");
+                host.set_field(
+                    cx,
+                    id,
+                    health,
+                    Value::Int(crate::game::damage_trigger::FULL_HEALTH),
+                )?;
+            }
             crate::game::trigger::link(host, cx, id, spawnflags);
         }
         link_script_entity(host, cx, &block, id, &classname);
@@ -378,6 +388,11 @@ fn register_trigger(
             int_key("dmg", crate::game::trigger::HURT_DEFAULT_DAMAGE),
             int_key("spawnflags", 0),
         );
+        return;
+    }
+    if kind == crate::game::trigger::TriggerKind::Damage {
+        let spec = crate::game::damage_trigger::spec_of(block, host.is_uo());
+        host.triggers.register_damage(id, shape, spec);
         return;
     }
     // Only `Touch_Multi` reads `wait` (movers doc 17); `random` is read by

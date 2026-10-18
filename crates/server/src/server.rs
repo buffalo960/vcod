@@ -472,6 +472,7 @@ fn apply_effects(rt: &mut script::ScriptRuntime, effects: Vec<Effect>) {
             Effect::Impact(te) => rt.push_temp_entity(te),
             Effect::Hit(h) => rt.deliver_hits(vec![h]),
             Effect::EntityHit(h) => rt.deliver_entity_hit(&h),
+            Effect::TriggerSweep(t) => rt.trigger_sweep(&t),
         }
     }
 }
@@ -747,6 +748,7 @@ fn vehicle_fire(
                     h.inflictor = Some(id);
                     Some(Effect::EntityHit(h))
                 }
+                Effect::TriggerSweep(t) => Some(Effect::TriggerSweep(t)),
                 Effect::Impact(_) => None,
             })
             .collect();
@@ -7925,6 +7927,21 @@ impl Server {
                         dir: x.flight.normalize_or_zero().into(),
                     });
                 }
+                // UO's `G_MissileImpact` walks the trigger_damages from the
+                // contact to the struck face's normal read as a point
+                // (game.mp.uo 0x5df1a, combat doc 14.8).
+                if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version
+                    && x.struck.is_some()
+                    && x.shell_damage != 0
+                {
+                    rt.trigger_sweep(&crate::game::combat::TriggerSweep {
+                        attacker: x.owner,
+                        start: x.contact,
+                        end: x.normal,
+                        damage: x.shell_damage,
+                        mod_: x.direct_mod,
+                    });
+                }
                 let blast = crate::game::combat::Blast::new(
                     x.at,
                     def.explosion_radius,
@@ -8386,6 +8403,7 @@ impl Server {
                         Effect::Impact(t) => t.other = shot.gun,
                         Effect::Hit(h) => h.inflictor = gun_id,
                         Effect::EntityHit(h) => h.inflictor = gun_id,
+                        Effect::TriggerSweep(_) => {}
                     }
                 }
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
@@ -9555,6 +9573,12 @@ impl Server {
                 Effect::EntityHit(h) => {
                     if let Some(rt) = self.script.as_mut() {
                         rt.deliver_entity_hit(&h);
+                    }
+                    continue;
+                }
+                Effect::TriggerSweep(t) => {
+                    if let Some(rt) = self.script.as_mut() {
+                        rt.trigger_sweep(&t);
                     }
                     continue;
                 }

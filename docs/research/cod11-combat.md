@@ -6107,8 +6107,9 @@ gives a turret 100 `health` when its key left 0. The same probe against
 (`crates/server/src/game/builtins/combat.rs`) replays it. A `func_static`
 with `takedamage` is listed too, measured by brush-model distance
 (`r.bmodel`), and takes `G_Damage`'s `eType` 5 arm, a `"trigger"` notify and
-`Use_Static`, never `health` (`cod11-movers.md` 21). Not modelled: doors and
-`trigger_damage`, whose spawns vcod does not run.
+`Use_Static`, never `health` (`cod11-movers.md` 21). A `trigger_damage` is
+listed too, measured off its brush model's box (14.8). Not modelled:
+doors, whose spawn vcod does not run.
 
 A bullet never reaches a turret. VERIFIED: `G_SpawnTurret` writes
 `r.contents` `0x200004` and is the only writer of that value in the module;
@@ -6604,10 +6605,9 @@ The other walks and links (2026-10-18):
 - `G_KillBox` (1.1d 0x66bf8, 1.5b 0x6d57d, UO 0x79dd9) has no caller:
   VERIFIED, no relocation in 1.1d's `.rel.text` names it and no `call`
   reaches it in the 1.5b or UO disassembly. Nothing to port.
-- The trigger-damage walks: VERIFIED, 14.6: no 1.1 MP map places a
-  `trigger_damage`; UO's `mp_uo_stanjel` places 17 and `mp_foy` one
-  (`coduo-diff.md`, "Map entities"). vcod links them (0x405c0008) but runs
-  no `Activate_trigger_damage`, so neither walk has anything to do yet.
+- The trigger-damage walks: `G_CheckHitTriggerDamage` and
+  `G_GrenadeTouchTriggerDamage` walk the tree under 0x400000 over the
+  segment's box (14.8).
 - VERIFIED, `game.mp.i386.so` and `game.mp.uo.i386.so`: `setModel` links
   after `G_SetModel` and `G_DObjUpdate` (1.1d 0x5db16, UO 0x68ce4),
   `setContents` links after its store (1.1d 0x5dd4a, UO 0x6970b), and UO's
@@ -6644,6 +6644,116 @@ top of the next script frame in the order the walk made them and hands the
 `"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);
 `crates/server/tests/touchorder_ab.rs` replays the probe and reads every
 frame's lines in retail's order.
+
+### 14.8 `trigger_damage`
+
+Where it is placed. VERIFIED, the entity lumps of every BSP in the stock
+paks: no 1.1 or 1.5 MP map places one; UO's `mp_uo_stanjel` places 17
+(`targetname` `birdbush`, no spawnflags, no keys past `model`, read by
+`maps/mp/_birdbush.gsc`'s `waittill("trigger")`) and `mp_foy` one
+(`belltower_damage`, spawnflags 115, `script_exploder` 2, read by
+`mp_foy.gsc`'s `belltower_damage()` and `_load.gsc`'s exploder thread).
+`_treefall_gmi.gsc` waits on `script_model`s, not on a `trigger_damage`.
+
+**The spawn.** VERIFIED, `SP_trigger_damage` (1.1d 0x65278, 1.5b 0x6ac1e,
+UO 0x76f59), with the `.rodata` strings at 1.1d 0x79940..0x79aae:
+`G_SpawnFloat("wait", "0.5")` to +0x268 (UO +0x278), `G_SpawnFloat("random",
+"0")` to +0x26c; when `wait <= random` and `wait >= 0`, `random = wait - 100`
+(`.rodata` 0x79ab8, 100.0) and `G_Printf("trigger_damage has random >=
+wait")`; `G_SpawnInt("accumulate", "0")` to +0x250 (UO +0x260) and
+`G_SpawnInt("threshold", "0")` to +0x2a8 (UO +0x2b8). Then `health` 32000,
+`takedamage` 1, `use`/`pain`/`die` = `Use_`/`Pain_`/`Die_trigger_damage`,
+the brush model, contents 0x405c0008, `svFlags |= 2`, and a link. UO alone
+reads `teamname` (+0x1e8): `axis` stores 1 at +0x2dc, `allies` 2, else 0.
+
+**`Respond_trigger_damage(self, mod)`** (1.1d 0x65024, 1.5b 0x6a7f5, UO
+0x76aca). VERIFIED, the jump tables at 1.1d 0x799a8 and 0x79a00 read
+through their relocations: a spawnflag refuses these means of death (1.1
+and 1.5 share the table; UO's means of death are its own, `defs.rs`):
+
+| flag | 1.1 / 1.5 refuses | UO refuses |
+|---|---|---|
+| 0x1 | 1 | 1 |
+| 0x2 | 2 | 2 |
+| 0x4 | 3..6 | 3..6, 13, 14 |
+| 0x8 | 3..6, 9, 10, 13, 14, 15, 24 | 3..6, 9..14, 23 |
+| 0x10 | 4, 6, 10, 14 | 4, 6, 10, 12, 14 |
+| 0x20 | 7 | 7 |
+| 0x40 | 18 | (no arm) |
+| 0x100 | 0, 11, 12, 16, 17, 19..23 | 0, 15, 16, 19..22 |
+
+**`Activate_trigger_damage(self, attacker, damage, mod)`** (1.1d 0x650c0,
+1.5b 0x6a973, UO 0x76c2f). VERIFIED, the offsets and compares; INFERRED,
+the order of the gates:
+
+1. UO only: each side's team is its client's `+0x45bc`, or the trigger's
+   own +0x2dc for one with no client; refused when both are non-zero and
+   differ.
+2. Refused while `nextthink` is non-zero unless the think is
+   `Think_GeneralLink` (an `enableLinkTo`).
+3. Refused when `threshold > 0` and `damage < threshold`.
+4. Refused when `Respond_trigger_damage` refuses `mod`.
+5. Refused when `accumulate != 0` and `32000 - health < accumulate`.
+6. `activator = attacker`; unless `mod` is -1 (the `use` arm),
+   `G_Trigger(self, attacker)` queues the `"trigger"` (UO 0x76218;
+   1.1d inlines it: the queue at `level+0x1dec`, `cod11-gsc-language.md`).
+7. Unless the think is `Think_GeneralLink`: `wait > 0` arms `multi_wait`
+   (1.1d 0x65870, which only clears `nextthink`) at
+   `level.time + (int)((crandom * random + wait) * 1000)`, the `fistp`
+   under `| 0xc00` (0x6521f) truncating, `crandom` being
+   `2 * rand() * 4.656613e-10 - 1` (`.rodata` 0x79a60); otherwise the touch
+   function is cleared and `G_FreeEntity` thinks 100 ms on.
+8. `health = 32000`.
+
+`Use_trigger_damage` calls it with `accumulate + 1` and mod -1;
+`Pain_trigger_damage` and `Die_trigger_damage` pass `G_Damage`'s damage and
+mod, then set `health` back to 32000 when `accumulate` is 0. They run off
+4.2's entity arm, after its `"damage"` (and `"death"`) notify and the
+`health` decrement.
+
+**The walks with no `G_Damage`.** VERIFIED, `G_CheckHitTriggerDamage`
+(1.1d 0x653f8, 1.5b 0x6ad7f, UO 0x77130) and `G_GrenadeTouchTriggerDamage`
+(1.1d 0x655a0): `trap_EntitiesInBox` over the two points' box under
+0x400000, kept to `classname == "trigger_damage"` (and for the grenade
+walk `flags & 0x8000`, which `enableGrenadeTouchDamage` sets,
+12.2), `trap_SightTraceToEntity(start, 0, 0, end, ent, -1)`, then
+`Scr_Notify(ent, "damage", 2)` with the attacker and the damage (no mod,
+no point), `Activate_trigger_damage`, and `health` back to 32000 when
+`accumulate` is 0. Nothing comes off `health`. Callers, VERIFIED:
+`Weapon_Melee` (1.1d 0x78720 in the Ghidra numbering) with the trace's
+start and end and `meleeDamage`, mod 7, ahead of the swing's damage;
+`Bullet_Fire_Extended` on every leg with the leg's start and the trace's
+end and the leg's damage, mod 1 or 2, ahead of the leg's `G_Damage`;
+`G_RunMissile` for a `MOD_GRENADE` missile after its link (12.2); UO's
+`G_MissileImpact` (0x5df57) for a shell with damage, from the contact to
+`&trace.normal` (the struck face's normal passed as the end point).
+
+**Measured.** VERIFIED, `client-probes/probe_dmgtrig.gsc` on retail UO
+1.51b, mp_uo_stanjel, 2026-10-18 (`crates/server/tests/dmgtrig_ab.rs`):
+every bush reads `health` 32000; a `radiusDamage` notifies `"damage"` with
+the full charge, `MOD_EXPLOSIVE` and the world, and `health` reads 32000
+on the builtin's next line; a charge over the health adds `"death"` ahead
+of `"damage"`; a blast's direct and indirect falloff matches 14.1 against
+the brush box. No `"trigger"` reached a script waiter in any phase.
+VERIFIED, a gdb breakpoint on retail's `Activate_trigger_damage` and
+`G_Trigger` in the same run: the first blast activated (mod 23,
+`MOD_EXPLOSIVE`, `health` 31900 on entry) and called `G_Trigger`; blasts
+inside the 500 ms wait reached `Activate_trigger_damage` with `nextthink`
+2050 and were refused; each later phase activated once. INFERRED: the
+queue entry is dropped because it is raised from a script thread
+(`radiusDamage`) inside `G_RunFrame`'s trigger rounds, whose queue is
+cleared once a round keeps nothing; vcod's `trigger_rounds` clears it the
+same way. A player's rounds, swing and grenade are not captured yet.
+
+**As implemented.** `crate::game::damage_trigger`: `spec_of` (the spawn's
+keys), `responds`, `activate`, `damaged` (`pain`/`die`, from
+`GameHost::damage_nonclient`) and `sweep` (both walks; the sight trace is
+the segment against the trigger's brushes, or its box without them).
+`GameHost::blast_entities` lists every linked `trigger_damage` with its
+brush model's box. A round's legs and a swing raise
+`Effect::TriggerSweep` ahead of their hits; the missile pass sweeps a
+grenade's move; UO's shell impact sweeps to the normal.
+`enableGrenadeTouchDamage` / `disableGrenadeTouchDamage` set the bit.
 
 ---
 
