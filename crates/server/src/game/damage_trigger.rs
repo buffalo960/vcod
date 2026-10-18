@@ -57,6 +57,25 @@ pub fn spec_of(block: &HashMap<String, String>, uo: bool) -> DamageSpec {
     }
 }
 
+/// `SP_trigger_damage` for a script's `spawn("trigger_damage", origin
+/// [, spawnflags])`: no spawn keys, so every default, and no `model` key,
+/// so `trap_SetBrushModel` takes inline model 0 and the trigger links as a
+/// copy of the whole world where it stands, its box the world's moved to
+/// its origin (docs/research/cod11-combat.md 14.8, movers doc 19).
+pub fn spawn_scripted(host: &mut GameHost, cx: &mut Cx, id: EntId, spawnflags: i32) {
+    let block = HashMap::from([("spawnflags".to_string(), spawnflags.to_string())]);
+    let spec = spec_of(&block, host.is_uo());
+    let (mins, maxs) = host.model_bounds.first().copied().unwrap_or_default();
+    let shape = crate::game::trigger::TriggerShape {
+        mins,
+        maxs,
+        model: Some(0),
+    };
+    host.triggers.register_damage(id, shape, spec);
+    restore(host, cx, id);
+    crate::game::trigger::link(host, cx, id, spawnflags);
+}
+
 /// `Respond_trigger_damage` (1.1d 0x65024, 1.5b 0x6a7f5, UO 0x76aca):
 /// whether a trigger with these spawnflags takes this means of death.
 /// 1.1 and 1.5 share a body; UO's means of death are renumbered and it has
@@ -252,12 +271,26 @@ pub fn sweep(
             Value::Vector(v) => Vec3::from(v),
             _ => Vec3::ZERO,
         };
-        let crossed = match t
+        let hulls = t
             .shape
             .model
-            .and_then(|m| host.model_brushes.get(m as usize))
-        {
-            Some(hulls) if !hulls.is_empty() => {
+            .filter(|m| *m != 0)
+            .and_then(|m| host.model_brushes.get(m as usize));
+        let crossed = match (t.shape.model, hulls) {
+            // A world copy: the segment against the whole world's clip
+            // moved to the trigger, under `trap_SightTraceToEntity`'s -1.
+            (Some(0), _) => host.world.as_ref().is_some_and(|w| {
+                let tr = w.collision.pusher_box_trace(
+                    vcod_common::collision::Pusher::Copy(id.0),
+                    start,
+                    end,
+                    Vec3::ZERO,
+                    Vec3::ZERO,
+                    u32::MAX,
+                );
+                tr.fraction < 1.0 || tr.startsolid
+            }),
+            (_, Some(hulls)) if !hulls.is_empty() => {
                 crate::game::trigger::segment_enters_hulls(start, end, at, hulls).is_some()
             }
             _ => {

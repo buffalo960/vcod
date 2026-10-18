@@ -6635,9 +6635,35 @@ The other walks and links (2026-10-18):
   a leaf on every path down the BSP and appends each leaf it reaches
   (0x8054054), so it never returns 0 and the unlink never runs.
 
-Not routed through the tree: a linked turret's `G_GeneralLink` from its
-think (`turret_think` 0x5328c), which vcod makes on the turret's turn of
-the pass (`link::run_linked`), not from the gunner's end frame; the
+- VERIFIED, `TeleportPlayer` (1.1d 0x51380, 1.5b and UO alike): it reads
+  `ent+0xf0` (0x513dc; 1.5b 0x50dc8, UO `ent+0xf4` 0x5a3f8), unlinks
+  (0x513e6), writes the lifted `ps.origin` into `r.currentOrigin`
+  (0x51457..0x51469) and links again when the read was non-zero (0x5146f,
+  0x51477). INFERRED, off the 0xf0 and 0xf4 offsets
+  (`sizeof(entityState_t)`, `r` first): the read is `r.linked`. INFERRED,
+  off those branches: a turret's release, from `turret_think_client` in the gunner's end frame
+  or from `G_FreeTurret`, files him at the mount spot, at the head of his
+  node's list, ahead of his next cmd's link. vcod links there
+  (`ScriptRuntime::teleport_link`); a `G_FreeTurret` release links in
+  the gunner's end frame, where vcod applies it, not in the deleting
+  thread. `ClientSpawn`'s release (0x426e1) is followed by its own unlink
+  (0x42708) and the spawn's link, so vcod skips it there. 1.5b's and UO's
+  extra block after the lift tests `eFlags | 0xc000` (1.5b 0x50e44),
+  never zero, so it never runs. `turret_ab`'s
+  `the_release_links_the_gunner_where_it_put_him` and
+  `deleting_a_manned_turret_releases_its_gunner` read the link.
+- VERIFIED, UO `VEH_UnlinkPlayer` (0x89fb2): `G_EntUnlink` (0x8a1ac) and
+  `SetClientOrigin` (0x8a463), and neither `SetClientOrigin` (0x44210)
+  nor anything else there calls `trap_LinkEntity`. INFERRED: a dismount
+  leaves the rider filed where his seat link put him until his next cmd,
+  as vcod does.
+
+- A linked turret's `G_GeneralLink` comes from its own think
+  (`turret_think` 0x5328c, `nextthink` +50 so every frame), on its turn of
+  the entity pass, not from the gunner's end frame; vcod links it on the
+  same turn (`link::run_linked`, then the think).
+
+Not routed through the tree: the
 relink `G_RunFrame` makes of every client when `g_bounds_width` or
 `g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
 `func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the
@@ -6806,23 +6832,70 @@ thread has deleted the trigger by then; `maps/mp/_utility.gsc`'s
 top) and keeps the `xmodel/fx` model, which plays `bell_tower_exp` after
 its `script_delay` .04.
 
-VERIFIED, `client-probes/probe_dmgspawn.gsc` on retail 1.1d, mp_carentan,
-2026-10-18 (no client): `spawn("trigger_damage", origin)` runs
-`SP_trigger_damage` with no `model` key, and the entity reads classname
-`trigger_damage` and `health` 32000. A `radiusDamage(origin + (0, 0, 32),
-64, 100, 50)` half a second later raised nothing; one 2000 units above
-the origin a second later notified `"damage"` 100 with no mod. INFERRED,
-by analogy with a spawned `script_brushmodel` (movers doc 19): with no
-`*N` it links inline model 0 and is a copy of the whole world where it
-stands; why the first blast missed it is not measured. vcod spawns no
-`trigger_damage` from script.
+**A script-spawned one.** VERIFIED, `client-probes/probe_dmgspawn.gsc` on
+retail 1.1d and 1.5b, mp_carentan, 2026-10-18, no client, both servers
+logging the same lines (`dmgtrig_ab.rs`'s fifth test):
+`spawn("trigger_damage", origin)` runs `SP_trigger_damage` with no `model`
+key and no spawn keys, and the entity reads classname `trigger_damage` and
+`health` 32000. INFERRED, by the movers doc 19 reading of the brush-model
+setter (`cod_lnxded` 0x8089544, `CM_InlineModel(s.index)` with `s.index`
+0): it links inline model 0, so its box is mp_carentan's world box,
+(-8513, -6721, -637.12) to (10817, 11649, 2369) grown a unit (the BSP's
+model 0, `bsp::Model::clip_bounds`), moved to the trigger's origin, and its
+clip is a copy of the whole world standing there. The blasts, all
+`radiusDamage(at, 64, 100, 50)` with the trigger at the first tdm spawn
+point's origin `o` (844, 3480, -21.25), and `c` the box's centre less `o`,
+(1152, 2464, 865.94):
+
+| blast at | `"damage"` |
+|---|---|
+| `o + (0, 0, 32)` | none |
+| `o + (0, 0, 2000)` | 100, no mod |
+| `o + c` | 100 |
+| `o + c - (0, 0, 40)` | 100 |
+| 70 over the box's top, over the centre | none |
+| `o + c`, the trigger moved to `o - (0, 0, 1500)` | none |
+| the moved trigger's centre | 100 |
+| `o + c`, the trigger back at `o` | 100 |
+| `o + c` after `delete` | none |
+
+INFERRED, 14.1 and 14.3 applied to that box: every blast but the one over
+the top is inside the box, distance 0 and the full 100; `CanDamage`'s
+no-client arm probes from the box's centre, (1996, 5944, 844.7) with the
+trigger at `o`, and a blast at the centre has a probe of no length. The
+blasts that miss inside the box have every probe to the centre blocked by
+the world (vcod's clip blocks the same five). Moved 1500 down, the centre
+sits under the world's bottom and the old centre is cut off from it.
+INFERRED: so the first blast's miss is `CanDamage` reading the
+world-sized box's centre, not anything about the spawn, and an `origin`
+write relinks the trigger and moves its centre with it. VERIFIED, the same
+logs: the `"damage"` notify carries two arguments on 1.1d and 1.5b (4.2),
+hence no mod.
+
+VERIFIED, `client-probes/probe_dmgspawnshot.gsc` on retail 1.1d (two runs)
+and 1.5b, mp_carentan, 2026-10-18, one axis `--probe-uo-weapon direct`
+client with a kar98k standing on the first tdm spawn point's ground and
+firing at the ground 160 units east (`dmgtrig_ab.rs`'s sixth test). The
+trigger's origin shifts the copy's ground against the world's, and so
+whether the round's segment meets it: with the trigger at (0, 0, 20) or
+(0, 0, 1) the round ends inside the copy's ground and logs `"trigger"`
+(the player) then `"damage"` 120 with the player and no mod, as 14.8's
+UO round did; at (0, 0, -20), (0, 0, -1) and (0, 0, 0) it logs nothing.
+INFERRED: `G_CheckHitTriggerDamage`'s `trap_SightTraceToEntity(start, 0,
+0, end, ent, -1)` clips the segment against the copy alone, and a round's
+end, backed off the world's face, does not reach the same face in a copy
+at the same place.
 
 **As implemented.** `crate::game::damage_trigger`: `spec_of` (the spawn's
 keys), `responds`, `activate`, `damaged` (`pain`/`die`, from
 `GameHost::damage_nonclient`) and `sweep` (both walks; the sight trace is
 the segment against the trigger's brushes, or its box without them).
 `GameHost::blast_entities` lists every linked `trigger_damage` with its
-brush model's box. A round's legs and a swing raise
+brush model's box. `spawn_scripted` is a script `spawn`'s: model 0's box,
+linked as a world copy (`CollisionWorld::set_world_copy`, contents
+0x405c0008, which no trace mask but the walks' -1 meets), measured from
+that box's centre with its own copy passed, and walked by tracing the
+segment against the copy (`pusher_box_trace` with `Pusher::Copy`). A round's legs and a swing raise
 `Effect::TriggerSweep` ahead of their hits; the missile pass sweeps a
 grenade's move with its `explosionInnerDamage`; UO's shell impact
 tests its contact point. A blast's notifies on an entity raised in the entity pass go through
