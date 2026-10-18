@@ -375,11 +375,15 @@ pub fn throw_velocity(ps: &PlayerState, aim: [f32; 2], def: &WeaponDef) -> (Vec3
         pitch.cos() * yaw.sin(),
         pitch.sin(),
     );
-    let velocity = (forward * def.projectile_speed + Vec3::Z * def.projectile_speed_up).trunc();
-    // The thrower's own motion along the throw, added after the truncation,
-    // which is why a retail `trDelta` is not whole-numbered.
-    let n = velocity.normalize_or_zero();
-    (origin, velocity + n * ps.velocity.dot(n))
+    // `projectileSpeed` times each axis stored, `projectileSpeedUp` added
+    // to z on the stack (`FireWeapon` 0x6900c). `fire_grenade` truncates;
+    // the launch angles read it unrounded.
+    let speed = def.projectile_speed;
+    let z = f64::from(speed) * f64::from(forward.z) + f64::from(def.projectile_speed_up);
+    (
+        origin,
+        Vec3::new(speed * forward.x, speed * forward.y, z as f32),
+    )
 }
 
 /// `BG_EvaluateTrajectoryDelta` for the two types a missile ever carries.
@@ -405,15 +409,10 @@ fn normalize_360(deg: f32) -> f32 {
     deg.rem_euclid(360.0)
 }
 
-/// `vectoangles`, Q3's, in degrees: pitch, yaw, roll with pitch negated.
+/// `vectoangles` (1.1d 0x3de94, UO's alike): pitch down positive, both
+/// angles in [0, 360) (combat doc 11.2, 13.6).
 fn vectoangles(v: Vec3) -> Vec3 {
-    if v.x == 0.0 && v.y == 0.0 {
-        return Vec3::new(if v.z > 0.0 { -90.0 } else { 90.0 }, 0.0, 0.0);
-    }
-    let yaw = normalize_360(v.y.atan2(v.x).to_degrees());
-    let forward = (v.x * v.x + v.y * v.y).sqrt();
-    let pitch = v.z.atan2(forward).to_degrees();
-    Vec3::new(-pitch, yaw, 0.0)
+    Vec3::from(crate::game::builtins::math::vectoangles(v.into()))
 }
 
 /// 1.1d's `G_BounceMissile` damping (0x53828-0x53942) for a grenade, both
@@ -1167,7 +1166,32 @@ impl Missiles {
         }
     }
 
+    /// A throw's `trDelta`: `velocity` truncated per axis, plus the
+    /// thrower's `carried` velocity along it. 1.1d's `FireWeapon`
+    /// (0x6900c-0x6909c) normalizes `velocity` in place and keeps the dot
+    /// and each product on the x87 stack; 1.5b's and UO's
+    /// `weapon_grenadelauncher_fire` (UO 0x7b2c4) store the dot.
+    fn carry(&self, velocity: Vec3, carried: Vec3) -> Vec3 {
+        let delta = velocity.trunc();
+        if carried == Vec3::ZERO {
+            return delta;
+        }
+        let stored = self.falls;
+        let n = if stored {
+            x87::normalize_stored(velocity)
+        } else {
+            x87::normalize_in_place(velocity)
+        };
+        let dot = x87::dot(n, carried);
+        let dot = if stored { f64::from(dot as f32) } else { dot };
+        (delta.as_dvec3() + n.as_dvec3() * dot).as_vec3()
+    }
+
     /// `fire_grenade` (11): the entity, the two trajectories and the fuse.
+    /// `velocity` is the caller's, unrounded: `trDelta` takes it truncated
+    /// and the launch angles take it as it is (11.2). `carried` is the
+    /// thrower's own velocity, whose part along the throw `FireWeapon`
+    /// adds to `trDelta` once the spawn returns (11.3); zero for a drop.
     /// `now_ms` is the `level.time` the throw ran at, which is the frame
     /// *before* the one the missile first moves on: retail executes a
     /// usercmd in `SV_ClientThink`, between frames, so the first
@@ -1183,6 +1207,7 @@ impl Missiles {
         weapon: u8,
         origin: Vec3,
         velocity: Vec3,
+        carried: Vec3,
         fuse_left_ms: i32,
         now_ms: i32,
     ) -> Result<EntId, ErrorKind> {
@@ -1198,7 +1223,8 @@ impl Missiles {
         }
         set_script_origin(ents, id, origin);
         let mut angles = vectoangles(velocity);
-        angles.x = normalize_360(angles.x - LAUNCH_PITCH_LEAD);
+        angles.x = vcod_common::pmove::aim::angle_normalize_360(angles.x - LAUNCH_PITCH_LEAD);
+        let delta = self.carry(velocity, carried);
         let tumble = Vec3::new(
             self.flrand(-TUMBLE_SPREAD, TUMBLE_SPREAD) + TUMBLE_PITCH,
             0.0,
@@ -1219,7 +1245,7 @@ impl Missiles {
                 tr_time: now_ms,
                 tr_duration: 0,
                 base: origin,
-                delta: velocity,
+                delta,
             },
             apos: Trajectory {
                 tr_type: TR_LINEAR,
@@ -1688,7 +1714,7 @@ mod tests {
         now: i32,
     ) -> EntId {
         let ents = &mut host.ents;
-        vm.with_cx(|cx| ms.fire_grenade(ents, cx, 0, 0, 8, origin, velocity, 4000, now))
+        vm.with_cx(|cx| ms.fire_grenade(ents, cx, 0, 0, 8, origin, velocity, Vec3::ZERO, 4000, now))
             .unwrap()
     }
 
@@ -1957,15 +1983,20 @@ mod tests {
     }
 
     /// The thrower's own motion along the throw is added after the truncation
-    /// (11.3), so a runner's grenade goes further than a stander's.
+    /// (11.3), so a runner's grenade goes further than a stander's; the
+    /// direction it is measured along is the unrounded throw's.
     #[test]
     fn the_throwers_speed_along_the_throw_is_added() {
-        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
-        ps.velocity = Vec3::new(190.0, 0.0, 0.0);
-        let (_, velocity) = throw_velocity(&ps, [0.0, 0.0], &frag());
-        let n = Vec3::new(960.0, 0.0, 120.0).normalize();
-        let want = Vec3::new(960.0, 0.0, 120.0) + n * 190.0 * n.x;
-        assert!((velocity - want).length() < 0.01, "{velocity} want {want}");
+        let velocity = Vec3::new(117.8, 117.8, 1065.4);
+        let carried = Vec3::new(190.0, 0.0, 0.0);
+        let delta = Missiles::default().carry(velocity, carried);
+        let n = velocity.normalize();
+        let want = Vec3::new(117.0, 117.0, 1065.0) + n * 190.0 * n.x;
+        assert!((delta - want).length() < 0.001, "{delta} want {want}");
+        assert_eq!(
+            Missiles::default().carry(velocity, Vec3::ZERO),
+            Vec3::new(117.0, 117.0, 1065.0)
+        );
     }
 
     /// 1.5's and UO's fall test: a frag resting on a player who has left

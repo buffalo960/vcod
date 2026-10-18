@@ -1970,9 +1970,11 @@ impl ClientSim {
                 self.kick.pitch = -kick;
             }
             Some(d) => {
-                let (pitch, yaw) = vec_to_angles(d);
-                self.feedback.pitch = (pitch / 360.0 * 256.0) as i32;
-                self.feedback.yaw = (yaw / 360.0 * 256.0) as i32;
+                // Both angles in [0, 360), the pitch down positive; the
+                // scale runs on the x87 stack and truncates (combat doc 6).
+                let [pitch, yaw, _] = crate::game::builtins::math::vectoangles(d.into());
+                self.feedback.pitch = (f64::from(pitch) / 360.0 * 256.0) as i32;
+                self.feedback.yaw = (f64::from(yaw) / 360.0 * 256.0) as i32;
                 let axis = pmove::aim::angles_to_axis(self.view_angles);
                 self.kick.side = -kick * d.dot(Vec3::from(axis[1]));
                 self.kick.pitch = kick * d.dot(Vec3::from(axis[0]));
@@ -2758,23 +2760,6 @@ fn vec_to_yaw(v: Vec3) -> f32 {
     }
     let yaw = v.y.atan2(v.x).to_degrees();
     if yaw < 0.0 { yaw + 360.0 } else { yaw }
-}
-
-/// The damage direction as `(pitch, yaw)`, both 0..360, the pitch not
-/// negated: a slightly downward direction is a pitch just under 360.
-/// Retail's `vectoangles` negates it (`crate::game::builtins::math`); this
-/// one has not been checked against the feedback byte.
-fn vec_to_angles(v: Vec3) -> (f32, f32) {
-    let yaw = vec_to_yaw(v);
-    let mut pitch = if v.x == 0.0 && v.y == 0.0 {
-        if v.z > 0.0 { 90.0 } else { 270.0 }
-    } else {
-        v.z.atan2(v.truncate().length()).to_degrees()
-    };
-    if pitch < 0.0 {
-        pitch += 360.0;
-    }
-    (pitch, yaw)
 }
 
 /// `PmoveSingle`'s `eFlags` 0x400 (game.mp.i386.so 0x33fa0..0x33fdf): the
@@ -3739,9 +3724,10 @@ mod tests {
     /// The retail hit (combat doc, 8.4): the shooter at (1810, 2109.5), the
     /// target at (1800, 2696), a level carbine round to the head.
     fn hit_op(damage: i32, fatal: bool) -> SimOp {
-        // A hair downward: the capture's `damagePitch` 255 is a pitch just
-        // short of 360, which a perfectly level shot would read as 0.
-        let dir = Vec3::new(-10.0, 586.5, -0.5).normalize();
+        // A hair upward, as the capture's knockback (velocity z 0.1): its
+        // `damagePitch` 255 is `vectoangles`' pitch just short of 360, which
+        // a perfectly level shot would read as 0.
+        let dir = Vec3::new(-10.0, 586.5, 0.5).normalize();
         SimOp::Damaged {
             damage,
             point: [1800.0, 2681.0, 36.1],
@@ -3860,6 +3846,32 @@ mod tests {
         sim.health = 100;
         sim.max_health = 100;
         sim
+    }
+
+    /// The feedback's pitch byte is `vectoangles`', down positive and
+    /// wrapped: a frag going off under the target (`mp_carentan-tdm-
+    /// grenade-target.txt`, ms 9557: knockback -86.9, -0.6, 14.0) reads
+    /// `damageYaw` 128 and `damagePitch` 249, about 9 degrees up. Q3's
+    /// sign read 6.
+    #[test]
+    fn a_blast_from_below_writes_the_capture_s_pitch_byte() {
+        let p = &PROTOCOL_V1;
+        let mut sim = target();
+        let op = SimOp::Damaged {
+            damage: 74,
+            point: [1192.0, 3296.0, -23.9],
+            dir: Vec3::new(-86.9, -0.6, 14.0).normalize().into(),
+            knockback: true,
+            attacker: Some(1),
+            attacker_origin: None,
+            fatal: false,
+        };
+        sim.take_damage(&op, None, &mut 1, 1000);
+        sim.health = 26;
+        sim.end_frame(1000);
+        let w = sim.to_wire(p, 0, 0);
+        assert_eq!(w.field_i32(p, "damageYaw"), 128);
+        assert_eq!(w.field_i32(p, "damagePitch"), 249);
     }
 
     /// One surviving hit writes the four feedback fields, the pain event
