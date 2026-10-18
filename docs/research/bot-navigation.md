@@ -1173,7 +1173,13 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   than a jump is walked on too when the graph's forward walk ran off it
   (`Follower::runs_off`; a drop that walk misses was backed down, and is
   taken as proved), and the bot then runs off it rather than backing onto
-  it (`BotView::run_off`, 2026-10-12, below).
+  it (`BotView::run_off`, 2026-10-12, below). Where a miss of such a drop
+  can hurt (`nav::a_miss_hurts`: a point 32 to 96 units out from 48 over
+  the landing, in the open, with no floor within 256 under the landing)
+  the run has to land from 2 units either side of the body across its
+  pace too, unless the body stands within 12 of the node and, turned
+  round with no key held, would coast off a lip anyway
+  (`nav::coasts_off`, 16 ticks) (2026-10-18, below).
   Where that walk fails the bot heads on at the waypoint, and within 12
   units of it flat takes the edge out of its plans as a stuck one, unless
   the plan took the edge while it was out of its plans (no way round it):
@@ -1983,7 +1989,11 @@ above).
   within a step of the head's height), a climber within a jump (39) under
   the head counts whichever way it moves (the bob under the plate), and
   the spot stands a body's width (30) clear of every neighbour of the
-  head, three steps off where two are not. Below.
+  head, three steps off where two are not. Since 2026-10-18 a bot already
+  past the end toward the rungs (flat, by more than a unit: backing down
+  over the lip) walks back onto the end before it heads for the spot
+  (`nav::tests::a_yield_from_over_the_lip_steps_back_onto_the_head_first`).
+  Below.
 
 VERIFIED (measured 2026-10-12d, same detector, `mp_ship` dm, 6 bots, 4000
 ticks, release; master 7de7be23; `stalled` and `spells` over seeds 1-767
