@@ -131,6 +131,25 @@ impl Trajectory {
         }
     }
 
+    /// 1.1d's server `BG_EvaluateTrajectory` (`.so` 0x2c600) for a gravity
+    /// arc: `dt` (the ms times the float 0.001), each product and sum on
+    /// the x87 stack, every component rounded once into its store, `z`
+    /// being `base + delta * dt - 400 * dt * dt` (0x2c6c0). Other types are
+    /// [`Trajectory::evaluate`]'s.
+    pub fn evaluate_kept(&self, at_ms: i32) -> Vec3 {
+        if self.tr_type != TR_GRAVITY {
+            return self.evaluate(at_ms);
+        }
+        let dt = f64::from(at_ms - self.tr_time) * f64::from(0.001f32);
+        let (b, d) = (self.base.as_dvec3(), self.delta.as_dvec3());
+        let half_g = f64::from(0.5 * DEFAULT_GRAVITY);
+        Vec3::new(
+            (b.x + d.x * dt) as f32,
+            (b.y + d.y * dt) as f32,
+            ((b.z + d.z * dt) - half_g * dt * dt) as f32,
+        )
+    }
+
     /// The inverse of [`Trajectory::read`]: every word of the `prefix` trajectory.
     pub fn write(&self, ent: &mut EntityState, p: &Protocol, prefix: &str) {
         let mut seti = |name: &str, v: i32| {

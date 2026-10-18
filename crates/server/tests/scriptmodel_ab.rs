@@ -739,8 +739,9 @@ fn a_frag_rests_on_a_prone_players_back_on_a_grade() {
 
 /// mp_brecourt on 1.1d: the prone part's second frag bounces down the
 /// field's terrain and rolls to rest on it, each contact on retail's
-/// snapshot with the world as its ground, every base within
-/// [`TERRAIN_NEAR`] of retail's. The first rests on the target's back, his
+/// snapshot with the world as its ground, every base retail's to the bit:
+/// the point clip (0x8052894), `G_BounceMissile` and the gravity arc keep
+/// 1.1d's x87 arithmetic (12.4, 12.5). The first rests on the target's back, his
 /// number its ground; the fixture was taken while the part dropped him onto
 /// the grade every frame, which put that frag where the cmd timing gave, so
 /// only its ground is compared (docs/research/cod11-combat.md 12.4, 12.5).
@@ -772,19 +773,13 @@ fn a_frag_rolls_down_terrain_like_retail() {
     };
     let (rc, oc) = (changes(&r[1]), changes(&o[1]));
     assert_eq!(oc.len(), rc.len(), "retail {rc:?}\nours   {oc:?}");
-    for (a, b) in rc.iter().zip(&oc) {
-        let near = (0..3).all(|i| (a.1[i] - b.1[i]).abs() <= TERRAIN_NEAR);
-        assert!(
-            a.0 == b.0 && a.2 == b.2 && near,
-            "retail {rc:?}\nours   {oc:?}"
-        );
-    }
+    let bits = |v: &[MissileRow]| -> Vec<_> {
+        v.iter()
+            .map(|g| (g.0, g.1.map(f32::to_bits), g.2))
+            .collect()
+    };
+    assert_eq!(bits(&oc), bits(&rc), "retail {rc:?}\nours   {oc:?}");
 }
-
-/// The terrain roll's bases sit 2 or 3 float steps off retail's from the
-/// second contact: the point clip is retail's (0x8052894), the bounce and
-/// the arc are not ported to the x87's precision.
-const TERRAIN_NEAR: f32 = 0.001;
 
 /// Each `PROBE shooter` line's thrower origin, in order.
 fn shooter_origins(lines: &[String]) -> Vec<[f32; 3]> {
