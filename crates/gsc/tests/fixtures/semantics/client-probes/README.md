@@ -342,6 +342,28 @@ The mound run is the same with `probe_spot mound`, `--probe-prone 270` and
 `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-prone-<spot>.txt`,
 named `dm` because retail runs the probe as gametype `probe_prone`.
 
+## probe_speedgrav
+
+probe_prone's street placement (always on, no `probe_teleport`) with the
+speed and gravity changed: `probe_gravity N` is `setCvar("g_gravity", N)`
+a frame after the load (`SP_worldspawn` writes 800 over any `+set`),
+`probe_maxspeed N` sets each placed allied player's `maxspeed` (1.5 and UO;
+1.1 reads `g_speed`, set with `+set`). It logs `PROBE gravity <g_gravity>
+speed <g_speed>` and probe_prone's `PROBE place` line.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=110 \
+    tools/run_probe.sh client-probes/probe_speedgrav mp_carentan +set g_speed 250 +set probe_gravity 400
+# second shell, about 10 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --save-slope --probe-moves \
+    --probe-cmd-ms 8 --capture-tag speedgrav-1.1 --probe-secs 95
+```
+
+On 1.5b and UO it is `COD_VERSION=1.5` / `COD_VERSION=uo` with `+set
+probe_maxspeed 250 +set probe_gravity 400` and the tag `speedgrav-1.5` /
+`speedgrav-uo` (UO's probe also `--mod-dir uo`). It writes
+`crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-speedgrav-<v>.txt`.
+
 ## probe_pronebones
 
 A still prone body's bones. Each live player is put once per spawn on the

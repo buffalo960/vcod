@@ -758,6 +758,7 @@ const UO_RUNS: &[(&str, &str)] = &[
     ("mp_foy-dm-slope-8ms-uofoot-crouch.txt", "mp_foy"),
     ("mp_foy-dm-slope-8ms-uofoot-mount.txt", "mp_foy"),
     ("mp_carentan-dm-slope-8ms-uostates-uo.txt", "mp_carentan"),
+    ("mp_carentan-dm-slope-8ms-speedgrav-uo.txt", "mp_carentan"),
 ];
 
 enum CaptureLine {
@@ -980,6 +981,12 @@ fn capture_side_by_side(
     sim.ps.rules = pm::MoveRules::for_protocol(p);
     sim.become_player(first.origin(p), view[1], cmd_angles);
     sim.ps = seed.ps;
+    // What the capture's server stored at each end frame: its `g_speed` or
+    // `maxspeed`, and its `g_gravity`, off a playing first snapshot.
+    if first.field_i32(p, "pm_type") == vcod_common::net::flags::PM_NORMAL {
+        sim.max_speed = seed.ps.speed as i32;
+        sim.gravity = seed.ps.gravity as i32;
+    }
     let t0 = seed.command_time;
     let mut run = Run {
         p,
@@ -1073,6 +1080,7 @@ fn predictor_matches_the_1_5_server_step() {
     let failures: Vec<String> = [
         "mp_carentan-dm-slope-8ms-moves-1.5.txt",
         "mp_carentan-dm-slope-8ms-turns-1.5.txt",
+        "mp_carentan-dm-slope-8ms-speedgrav-1.5.txt",
     ]
     .iter()
     .filter_map(|file| capture_side_by_side(&PROTOCOL_V6, &fs, file, "mp_carentan").err())
@@ -1097,6 +1105,8 @@ struct Snap {
     pm_flags: i32,
     /// The wire's `ps.speed`, `g_speed` on these captures.
     speed: i32,
+    /// The wire's `ps.gravity`, `g_gravity`.
+    gravity: i32,
 }
 
 enum Line {
@@ -1152,6 +1162,10 @@ fn parse_fixture(text: &str) -> Vec<Line> {
                         .split(',')
                         .find_map(|f| f.strip_prefix("speed:"))
                         .map_or(0, |v| v.parse().unwrap()),
+                    gravity: kv["wire"]
+                        .split(',')
+                        .find_map(|f| f.strip_prefix("gravity:"))
+                        .map_or(0, |v| v.parse().unwrap()),
                 }));
             }
             _ => {}
@@ -1177,6 +1191,7 @@ fn wire_from(snap: &Snap, weapon: u8) -> msg::PlayerState {
     set("groundEntityNum", snap.ground);
     set("pm_flags", snap.pm_flags);
     set("speed", snap.speed);
+    set("gravity", snap.gravity);
     set("fWeaponPosFrac", snap.frac.to_bits() as i32);
     set("viewHeightCurrent", pm::VIEW_STAND.to_bits() as i32);
     set("weapon", i32::from(weapon));
@@ -1404,9 +1419,10 @@ fn parse_ride(text: &str, num: u32) -> (Vec<Ride>, Vec<(i32, Trajectory, Traject
                     delta_angles: [0, int("delta_yaw"), 0],
                     frac: 0.0,
                     pm_flags: int("pm_flags"),
-                    // The probe logs no speed; the capture's server ran the
-                    // stock `g_speed`.
+                    // The probe logs no speed or gravity; the capture's
+                    // server ran the stock `g_speed` and `g_gravity`.
                     speed: 190,
+                    gravity: 800,
                 },
             });
         } else if let Some(rest) = line.strip_prefix(&format!("entity {num} serverTime ")) {
