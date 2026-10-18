@@ -68,6 +68,10 @@
 //	back, then runs the grid again in that frame as phase `level_re`.
 //	`probe_stamp 1` crosses the target with one `bulletTrace` right after
 //	the second `bones` row, in that thread (movers doc 15).
+//	`probe_tapwait 1` sends the tap a frame after the grid rather than in
+//	its frame: a grid frame runs long on retail, and a cmd the shooter sent
+//	while it ran lands after it, which moves the view the round reads
+//	(cod11-combat.md 15.1, "The cmd that fires").
 
 main()
 {
@@ -465,6 +469,8 @@ run()
 			target reattach(undefined);
 			grid("level_re", site, target);
 		}
+		if (getcvarint("probe_tapwait"))
+			wait 0.05;
 		send_in(shooter, 17, p.swb);
 		wait 0.05;
 		send_in(shooter, 16, p.swb);

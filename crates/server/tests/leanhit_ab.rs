@@ -61,7 +61,18 @@ struct Case {
     /// Phases whose round's `PROBE dir` may sit past [`DIR_NEAR`].
     dir_gaps: &'static [&'static str],
     gaps: Gaps,
+    /// The capture logs each client's input changes by cmd (`CMDS ...
+    /// in=`): the replay presses on those cmds, not on the `PROBE_IN`
+    /// lines, and runs a cmd stamped up to [`PRESS_LEAD_MS`] before a frame
+    /// after it.
+    press: bool,
 }
+
+/// How far before a frame's time the `-press` captures' late cmds are
+/// stamped: those within 3 ms of the frame went out while it ran, the
+/// shooter's next earlier ones 11 ms or more before it
+/// (docs/research/cod11-combat.md 15.1, "The cmd that fires").
+const PRESS_LEAD_MS: i32 = 6;
 
 fn gap(gaps: Gaps, phase: &str, view: &str, height: &str, column: usize) -> bool {
     let (v, h) = (view.chars().next().unwrap(), height.parse::<u32>().unwrap());
@@ -101,13 +112,14 @@ const CELL_GAPS_15: Gaps = &[
     ("t_crouch_right", &[('f', 22, 1)]),
 ];
 
-/// Phases whose round leaves the muzzle up to 7e-5 off retail's direction
-/// on each axis (0.02 units at the target; points and parts match):
-/// on 1.5b and UO every phase in which the target leans or lies, on UO two
-/// more, and on all three servers the shooter's left lean against the
-/// target's right. The
-/// idle sway, now on the last frame's clock, closed the 3e-4 the rest read;
-/// what still moves these is open (cod11-combat.md 3.6).
+/// Phases whose round leaves the muzzle up to 8e-5 off retail's direction
+/// (0.02 units at the target; points and parts match). The round goes
+/// along the view the cmd before the trigger left: the exact angles of the
+/// hold's `setPlayerAngles` when no cmd ran since, else that view
+/// quantized by a cmd, a short lower when the cmd was built on the
+/// snapshot before. These captures tap in the grid's long frame and log no
+/// input by cmd, so which cmds ran after the frame cannot be replayed; the
+/// `-press` captures can (cod11-combat.md 15.1, "The cmd that fires").
 const DIR_GAPS_11: &[&str] = &["s_left_t_right"];
 const DIR_GAPS_15: &[&str] = &[
     "t_left",
@@ -190,6 +202,15 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
     let (mut ha, mut hb) = (aim(), aim());
     ha.times = common::cmds_times(c.fixture, "shooter");
     hb.times = common::cmds_times(c.fixture, "target");
+    let (mut pa, mut pb) = (Vec::new(), Vec::new());
+    if c.press {
+        // The target's `setOrigin` drop lands on retail's height on the
+        // plain frame windows, and off it under the lead (open,
+        // cod11-combat.md 15.1, "The cmd that fires").
+        ha.lead_ms = PRESS_LEAD_MS;
+        pa = common::cmds_inputs(c.fixture, "shooter");
+        pb = common::cmds_inputs(c.fixture, "target");
+    }
     // Each client's last `PROBE_IN`, and the shooter's `a` select.
     let (mut ia, mut ib) = ((0u8, 0u8, 0i8), (0u8, 0u8, 0i8));
     let mut selected: Option<u8> = None;
@@ -203,10 +224,18 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
     let send = |cl: &mut NetClient<common::ClientEnd>,
                 hold: &mut common::ProbeHold,
                 input: (u8, u8, i8),
+                pressed: &[(i32, (u8, u8, i8))],
                 weapon: Option<u8>| {
         if live(cl) {
             let mut cmds = hold.cmds(cl, input.0);
             for c in &mut cmds {
+                // The captured input of the cmd, where the capture logs it.
+                let input = match pressed.partition_point(|e| e.0 <= c.server_time) {
+                    0 if pressed.is_empty() => input,
+                    0 => (0, 0, 0),
+                    i => pressed[i - 1].1,
+                };
+                c.buttons = input.0;
                 c.wbuttons = input.1;
                 c.up = input.2;
                 if let Some(w) = weapon {
@@ -249,9 +278,9 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
             }
         }
         if let Some(ca) = ca.as_mut() {
-            send(ca, &mut ha, ia, selected);
+            send(ca, &mut ha, ia, &pa, selected);
         }
-        send(&mut cb, &mut hb, ib, None);
+        send(&mut cb, &mut hb, ib, &pb, None);
         for (addr, q) in [(common::ADDR, &qa), (common::ADDR_B, &qb)] {
             let pending: Vec<Vec<u8>> = q.borrow_mut().to_server.drain(..).collect();
             for p in pending {
@@ -542,6 +571,7 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             stand_dz: 0.0,
             dir_gaps: &[],
             gaps: &[],
+            press: false,
         },
     );
 }
@@ -560,6 +590,7 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             stand_dz: 0.0,
             dir_gaps: &[],
             gaps: &[],
+            press: false,
         },
     );
 }
@@ -586,6 +617,7 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             stand_dz: STAND_DZ_15,
             dir_gaps: &[],
             gaps: CELL_GAPS_15,
+            press: false,
         },
     );
 }
@@ -604,6 +636,7 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             stand_dz: 0.0,
             dir_gaps: &[],
             gaps: &[],
+            press: false,
         },
     );
 }
@@ -623,6 +656,7 @@ fn cmds_case(
         stand_dz: 0.0,
         dir_gaps,
         gaps: &[],
+        press: false,
     }
 }
 
@@ -660,4 +694,66 @@ fn a_dropped_body_on_uo_lands_and_poses_as_on_retail_on_its_cmds() {
         fs,
         &cmds_case(fixture, CMDS_JOIN_UO, CMDS_LATE_UO, DIR_GAPS_UO),
     );
+}
+
+/// The `-press` captures' join times (their headers' first playing
+/// snapshots, joined as [`cmds_case`]'s are).
+const PRESS_JOIN_11: i64 = 8850;
+const PRESS_LATE_11: i64 = 3250;
+const PRESS_JOIN_15: i64 = 8900;
+const PRESS_LATE_15: i64 = 2550;
+const PRESS_JOIN_UO: i64 = 8600;
+const PRESS_LATE_UO: i64 = 3350;
+
+/// The `-press` captures: the `-cmds` recipe rerun with each client's input
+/// changes logged by cmd, which the replay presses on. Every round leaves
+/// within [`DIR_NEAR`] of retail's direction: whether the cmd that fires
+/// aims along the view the hold's `setPlayerAngles` left or along the one
+/// a cmd after it quantized rides which cmd carries the press and which
+/// side of the frame it ran on (docs/research/cod11-combat.md 15.1).
+fn press_case(
+    fixture: &'static str,
+    join_ms: i64,
+    late_ms: i64,
+    dir_gaps: &'static [&'static str],
+) -> Case {
+    Case {
+        press: true,
+        ..cmds_case(fixture, join_ms, late_ms, dir_gaps)
+    }
+}
+
+/// The 1.5b capture's first round: retail's scope froze the turn sway's
+/// pitch lag 4 65536ths short of zero, ours 3 (cod11-combat.md 15.3,
+/// 15.1 "The cmd that fires"); every later round reads no lag on both.
+const PRESS_DIR_GAPS_15: &[&str] = &["level"];
+
+#[test]
+fn a_round_leaves_along_retails_aim_on_its_press() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press.txt");
+    check(fs, &press_case(fixture, PRESS_JOIN_11, PRESS_LATE_11, &[]));
+}
+
+#[test]
+fn a_round_on_15_leaves_along_retails_aim_on_its_press() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press-1.5.txt");
+    check(
+        fs,
+        &press_case(fixture, PRESS_JOIN_15, PRESS_LATE_15, PRESS_DIR_GAPS_15),
+    );
+}
+
+#[test]
+fn a_round_on_uo_leaves_along_retails_aim_on_its_press() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press-uo.txt");
+    check(fs, &press_case(fixture, PRESS_JOIN_UO, PRESS_LATE_UO, &[]));
 }

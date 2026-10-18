@@ -2488,8 +2488,9 @@ fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
   for up to 8e-5 (0.02 units at the target) on the shooter's left lean
   against the target's right on all three, every phase in which the target
   leans or lies on 1.5b and UO, and two more on UO
-  (`leanhit_ab::DIR_GAPS_*`). Open: the aim point is the same script
-  vector on every server, so what moves those is not found.
+  (`leanhit_ab::DIR_GAPS_*`). Each is which view the round read, the
+  hold's exact angles or a cmd's quantized ones (15.1, "The cmd that
+  fires").
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
@@ -6723,6 +6724,45 @@ and no gun angles. INFERRED, from the position of the block ahead of
 `Pmove`: the aim is built from the playerstate the previous cmd left,
 `viewangles` included, so a shot goes along the view of the cmd before the
 one that pulled the trigger.
+
+**The cmd that fires.** `client-probes/probe_leanhit`'s hold calls
+`setPlayerAngles` every frame, so the view a round reads is one of two:
+
+- VERIFIED, vcod measurement (the six `leanhit` captures with `probe_fall`,
+  1.1d, 1.5b and UO, 2026-10-18; each `PROBE dir` against 15.2's idle sway
+  on the last frame's `level.time` composed with the hold's script angle):
+  every round fits to 5e-7 either the exact script angle or that angle cut
+  to 65536ths, and none fits anything between. A 1.1d run also carried a
+  constant 3 65536ths of pitch on every round, the turn sway's lag the
+  scope froze (15.3); a 1.5b run carried 4 on its first round only.
+- INFERRED, from those fits and `SetClientViewAngle` (0x41e30): the hold
+  writes the exact angles into `viewangles` and `delta_angles =
+  ANGLE2SHORT(angle) - lastcmd`, truncated. A round reads the exact angles
+  when its cmd is the first to run after the frame's threads, and the
+  quantized `SHORT2ANGLE(cmd + delta)` of a cmd that ran in between when
+  not. A cmd built on the snapshot before the frame (its `delta_angles`
+  a frame stale) lands a short low when the angle's fraction is past a
+  half: retail's quantized rounds read the angle floored, never rounded.
+- VERIFIED, the `-press` captures (2026-10-18, same recipe, the net
+  probe's `CMDS` lines now naming each input change, `in=`, and the
+  snapshot each cmd went out on, `snap=`): the probe stamps a cmd with a
+  snapshot's time the moment it arrives, so the trigger cmd's stamp is
+  the frame's time; cmds stamped 2 ms before the frame to 3 after it went
+  out on the snapshot before. In the first run, where the probe tapped in
+  the frame that ran its 81-ray grid, a round read the quantized view
+  even where the shooter's cmd before the trigger was stamped 18 ms
+  ahead of the frame: a long frame takes in the cmds sent while it runs.
+  `probe_tapwait 1` taps a frame later; in that run every round on all
+  three servers reads the exact angles.
+- vcod: `leanhit_ab`'s `-press` gates replay each cmd's logged input and
+  run a shooter's cmd stamped up to 6 ms before a frame after it, built
+  on the snapshot before (`ProbeHold::lead_ms`). Every round of the 1.1d
+  and UO runs leaves within 2e-5 of retail's direction; 1.5b's first
+  round reads one 65536th of the frozen lag short (ours 3, retail 4,
+  `PRESS_DIR_GAPS_15`). The target's `setOrigin` drop under the same lead
+  lands 0.21 off retail's first fall row, so its cmds keep the plain
+  windows (open). The `-cmds` captures' `DIR_GAPS_*` stay: they tap in
+  the grid's frame and log no input by cmd.
 
 ### 15.2 `BG_CalculateWeaponAngles` (`0x3a1e4`)
 
