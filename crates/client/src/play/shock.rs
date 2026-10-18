@@ -466,13 +466,8 @@ pub struct ShellShock {
 }
 
 impl ShellShock {
-    /// A map load drops the configstring records.
-    pub fn new_gamestate(&mut self) {
-        self.loaded.clear();
-    }
-
-    /// A fresh cgame's state for an in-game `vid_restart`: only the last
-    /// file parsed, which the cvars hold, survives.
+    /// A fresh cgame's state for a map load or an in-game `vid_restart`:
+    /// only the last file parsed, which the cvars hold, survives.
     pub fn restart_cgame(&mut self) -> ShellShock {
         ShellShock {
             last: self.last.take(),

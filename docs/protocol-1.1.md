@@ -1259,6 +1259,18 @@ registration. Until 2026-10-09 it drew 100 ms behind the newest snapshot,
 re-anchoring on every arrival (an early one stepped the view forward, a late
 one froze it), and stamped cmds off the newest snapshot plus elapsed time.
 
+`CL_CreateNewCommands` (CoDMP.exe `0x40b8d0`) builds one cmd a frame once
+`cls.state` is past 4: it takes `frame_msec` as the frame's `com_frameTime`
+step clamped to 200 (used only to scale the frame's input), bumps
+`cl.cmdNumber` and stores `CL_CreateCmd`'s (`0x40b720`) cmd at `cmdNumber &
+63`, stamped by `CL_FinishMove` as above. VERIFIED (decompile). So a hitch or a
+forward RESET reaches the server as one cmd whose time steps forward by the
+whole gap. vcod ticks cmds every 8 ms (`play::cmds::CmdClock`) and, until
+2026-10-18, built every tick a frame owed up to a packet's 32, a burst after a
+RESET or the first snapshot; a frame owing more than 200 ms now builds one
+cmd at its newest tick. The 200 ms bound is vcod's own, borrowed
+from `frame_msec`'s clamp; retail has no tick to collapse.
+
 Measured 2026-10-09 with `vcod --net-probe ADDR --probe-clock --probe-cmd-ms
 8` (frame time 8 ms), which runs both clocks on the same arrivals. "Behind"
 is newest snapshot time minus the drawn time, min/mean/max ms; "past" the

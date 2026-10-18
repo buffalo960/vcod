@@ -1534,10 +1534,9 @@ pub struct Server {
     rng: u64,
     /// The next level's script seed, `G_InitGame`'s `Rand_Init` argument:
     /// retail passes the wall clock at every load and restart, so no level
-    /// repeats the last one's draws (map-cycle doc 4.8). `None` under
-    /// [`Server::new`], whose every level draws from `RNG_SEED`, so a test's
-    /// spawn picks hold at each level; [`Server::with_seed`] steps it.
-    level_seed: Option<u64>,
+    /// repeats the last one's draws (map-cycle doc 4.8). Stepped at every
+    /// load, from `RNG_SEED` under [`Server::new`].
+    level_seed: u64,
     /// [`Server::pin_spawns`]'s queues, handed to every level's script.
     spawn_pins: Option<crate::game::host::SpawnPins>,
     /// The map's collision and spawn, loaded by the binary; tests run
@@ -1994,9 +1993,7 @@ impl Server {
     /// A server whose generator starts from a fixed seed, so a test run
     /// replays the same bot picks, script `randomInt`s and spawn choices.
     pub fn new(cfg: ServerConfig, now: Instant) -> Self {
-        let mut sv = Self::with_seed(cfg, now, 0x9e37_79b9_7f4a_7c15);
-        sv.level_seed = None;
-        sv
+        Self::with_seed(cfg, now, crate::game::host::RNG_SEED)
     }
 
     /// Test-facing: each client slot's playing spawns, in order, go to these
@@ -2050,7 +2047,7 @@ impl Server {
             outbox: Vec::new(),
             limiter: RateLimiter::new(now),
             rng: seed,
-            level_seed: Some(seed),
+            level_seed: seed,
             spawn_pins: None,
             world: None,
             sv_time_ms: 0,
@@ -5927,12 +5924,10 @@ impl Server {
             area: carry.area.filter(|_| restart),
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
-            seed: self.level_seed,
+            seed: Some(self.level_seed),
             spawn_pins: self.spawn_pins.clone(),
         };
-        if let Some(seed) = self.level_seed.as_mut() {
-            *seed = vcod_common::rng::xorshift(seed) | 1;
-        }
+        self.level_seed = vcod_common::rng::xorshift(&mut self.level_seed) | 1;
         let fs_paks = fs.clone();
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
@@ -11241,7 +11236,7 @@ mod tests {
         };
         let fs = Rc::new(fs);
         let now = Instant::now();
-        let mut sv = Server::with_seed(cfg(), now, 7);
+        let mut sv = Server::new(cfg(), now);
         sv.set_cvar("g_gametype", "dm");
         let path = fs.resolve_map("mp_carentan").expect("map in paks");
         let bsp = vcod_common::bsp::parse(&fs.read(&path).expect("read bsp")).expect("parse bsp");

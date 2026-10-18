@@ -490,6 +490,17 @@ impl Shell {
         // CoDMP.exe 0x4b3965: default "1", CVAR_ARCHIVE; the sky stage
         // (0x4e84d0) draws the disc and adds the flare only while it is set.
         s.register("r_drawSun", "1", ARCHIVE);
+        // vcod-only: 1 widens the view on a window wider than 4:3 (Hor+,
+        // every fov a 4:3 view's width) and keeps the HUD's side pieces at
+        // the window's edges; 0 is retail's fixed horizontal fov with the
+        // whole HUD in the 4:3 box (camera::view_fov_x, hudelem::Virtual).
+        s.register("vc_widescreen", "1", ARCHIVE);
+        // R_Register (CoDMP.exe 0x4b374b, 0x4b3760): the size `r_mode -1`
+        // asks for, and its pixel aspect, which vcod ignores. Retail's are
+        // 1600 and 1024; vcod's 0 keeps its own window size (crate::video).
+        s.register("r_customwidth", "0", ARCHIVE);
+        s.register("r_customheight", "0", ARCHIVE);
+        s.register("r_customaspect", "1", ARCHIVE);
         // vcod-only: 1 under `--vanilla`, the stock paks alone on the
         // search path (Pk3Fs::vanilla).
         s.register("vc_vanilla", "0", ROM);

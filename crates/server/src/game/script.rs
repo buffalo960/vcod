@@ -87,8 +87,8 @@ pub struct Carry {
     /// 4.7).
     pub scripts: Option<Rc<CompiledScripts>>,
     /// `G_InitGame`'s `Rand_Init` seed for the script's draws, a new one
-    /// every level, restarts included (map-cycle doc 4.8); `None` takes
-    /// [`crate::game::host::RNG_SEED`].
+    /// every level, restarts included (map-cycle doc 4.8); `None` (a test
+    /// building a runtime by hand) takes [`crate::game::host::RNG_SEED`].
     pub seed: Option<u64>,
     /// A test's replay of another server's spawn picks
     /// ([`crate::game::host::SpawnPins`]), handed to every level.
