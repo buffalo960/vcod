@@ -1061,10 +1061,10 @@ impl GameHost {
                 origin: glam::Vec3::from(at),
                 mins: glam::Vec3::from(t.shape.mins),
                 maxs: glam::Vec3::from(t.shape.maxs),
-                brush: t
-                    .shape
-                    .model
-                    .map(|m| vcod_common::collision::Pusher::Model(m as usize)),
+                brush: t.shape.model.map(|m| match m {
+                    0 => vcod_common::collision::Pusher::Copy(id.0),
+                    m => vcod_common::collision::Pusher::Model(m as usize),
+                }),
                 vehicle_link: None,
             });
         }
