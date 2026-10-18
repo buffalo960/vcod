@@ -766,7 +766,15 @@ first everywhere.
   and unlinked since, once that count (`GameHost::brush_links`, bumped
   by `delete`, `notSolid` and `solid` on a brush model) has held still
   2 s (`Server::relink_nav`); the cache keys on which submodels clip, so
-  a restart that puts the same walls back finds the old graph. Two
+  a restart that puts the same walls back finds the old graph. The flood
+  reaches 512 units past every bas entity as well as past the spawns
+  (`World::nav_cover`): mp_italy's western axis bunker (-4556 3760) lay
+  outside the spawns' margin, the graph stopped at x -4603 in its
+  bunker, and its charge room had no node. An allied attacker stood over
+  the breached base for good, and with the four-bot shoot-off seed 11
+  the round looped on 47 defuses at the other side's last base. The
+  ignored census `every_bas_charge_room_is_on_the_graph` in
+  `tests/nav_census.rs` checks all thirty stock charges. Two
   engine fixes were needed on the way: a brush model's clip now follows
   a bare `origin` write (the rubble's lift; only movers and `linkTo`
   posed it before), and a respawned brush entity links its model again
