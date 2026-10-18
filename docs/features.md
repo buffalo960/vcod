@@ -341,7 +341,8 @@ something, the bullet links it.
   it, in retail's leaf order, so a round, an item or a player slips
   through the seams retail's does. Where two brushes or terrain
   contacts nearly tie, the leaf order picks the surface a body stands
-  on. A submodel's patches and terrain clip
+  on. Terrain past a map's playable walls, which no leaf on the trace's
+  path lists, lets rounds and items through as retail's does. A submodel's patches and terrain clip
   only while its entity is linked. Shots,
   swings and throws start from each patch's muzzle (1.1's truncated
   point, 1.5's and UO's bobbed and leaned one, a UO rider's 28 over his

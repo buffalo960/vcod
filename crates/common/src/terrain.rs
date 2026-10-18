@@ -235,6 +235,11 @@ pub(crate) struct Terrain {
 }
 
 impl Terrain {
+    /// Triangle `t`'s bounds.
+    pub(crate) fn tri_bounds(&self, t: usize) -> ([f32; 3], [f32; 3]) {
+        (self.tris[t].lo, self.tris[t].hi)
+    }
+
     /// `CM_GenerateTerrainCollide` on one partition's points and
     /// triangles; the records go after every earlier partition's, so a
     /// triangle's index here is its index in the world's `tris`.

@@ -186,6 +186,10 @@ pub struct Save {
     /// from a `client-probes/probe_uofoot` placement facing that world yaw,
     /// on United Offensive.
     pub uofoot: Option<f32>,
+    /// `--probe-uoturret <yaw>`: the slope capture's walk is
+    /// [`uoturret_script`] from a `client-probes/probe_turret` placement
+    /// behind a gun facing that world yaw, on United Offensive.
+    pub uoturret: Option<f32>,
     /// `--probe-crouchjump <yaw>`: the slope capture's walk is
     /// [`crouchjump_script`] from a `client-probes/probe_crouchjump`
     /// placement facing that world yaw, on United Offensive.
@@ -372,6 +376,7 @@ pub fn probe(
         autofire: probe_autofire,
         moveshot: probe_moveshot,
         uofoot: probe_uofoot,
+        uoturret: probe_uoturret,
         crouchjump: probe_crouchjump,
         crouchjump_stand,
         patchwalk: probe_patchwalk,
@@ -445,6 +450,7 @@ pub fn probe(
         || probe_autofire
         || probe_moveshot.is_some()
         || probe_uofoot.is_some()
+        || probe_uoturret.is_some()
         || probe_crouchjump.is_some()
         || probe_patchwalk.is_some();
     let slope = slope || save_slope || prone_crawl;
@@ -462,6 +468,8 @@ pub fn probe(
         ProneScript::new(0.0, moveshot_script(part))
     } else if let Some(yaw) = probe_uofoot {
         ProneScript::switching(yaw, uofoot_script(), UOFOOT_SWITCHES)
+    } else if let Some(yaw) = probe_uoturret {
+        ProneScript::new(yaw, uoturret_script())
     } else if let Some(yaw) = probe_crouchjump {
         ProneScript::new(yaw, crouchjump_script(!crouchjump_stand))
     } else if let Some(yaw) = probe_patchwalk {
@@ -1674,6 +1682,8 @@ pub fn probe(
                                 SlopeWalk::MoveShot(part)
                             } else if probe_uofoot.is_some() {
                                 SlopeWalk::UoFoot
+                            } else if probe_uoturret.is_some() {
+                                SlopeWalk::UoTurret
                             } else if probe_crouchjump.is_some() {
                                 SlopeWalk::CrouchJump
                             } else if probe_patchwalk.is_some() {
@@ -1769,6 +1779,8 @@ pub fn probe(
                 SlopeWalk::MoveShot(part)
             } else if probe_uofoot.is_some() {
                 SlopeWalk::UoFoot
+            } else if probe_uoturret.is_some() {
+                SlopeWalk::UoTurret
             } else if probe_crouchjump.is_some() {
                 SlopeWalk::CrouchJump
             } else if probe_patchwalk.is_some() {
@@ -7311,6 +7323,7 @@ enum SlopeWalk {
     MoveShot(MoveShot),
     Vehicle,
     UoFoot,
+    UoTurret,
     CrouchJump,
     PatchWalk,
 }
@@ -7384,6 +7397,13 @@ fn write_slope_fixture(
              # +set probe_teleport 1 +set probe_spot <spot> and --net-probe --save-slope\n\
              # --probe-crouchjump <yaw> --probe-cmd-ms {cmd_ms}: crouchjump_script() from the\n\
              # placement, facing the --probe-crouchjump yaw. !cmd is a\n"
+        ));
+    } else if walk == SlopeWalk::UoTurret {
+        out.push_str(&format!(
+            "# Captured with COD_VERSION=uo tools/run_probe.sh client-probes/probe_turret {map}\n\
+             # +set probe_teleport 1 and --net-probe --save-slope --slope-every-state --probe-team allies\n\
+             # --probe-uoturret <gun yaw> --probe-cmd-ms {cmd_ms}: uoturret_script() from the\n\
+             # placement 40 units behind the gun. !cmd is a\n"
         ));
     } else if walk == SlopeWalk::UoFoot {
         out.push_str(&format!(
@@ -8128,6 +8148,64 @@ fn uofoot_script() -> Vec<ProneStep> {
         step(40500, A, 0, 0, 0, 180.0),
         step(46000, 0, 0, 0, 0, 180.0),
         step(48000, 0, 0, 0, 0, 180.0),
+    ]
+}
+
+/// `--probe-uoturret`, for a United Offensive server, from a
+/// `client-probes/probe_turret` placement 40 units behind a gun, facing
+/// along it (the yaw the steps turn from): the use tap onto the gun, the
+/// view swept past the yaw and pitch arcs, a burst, the move, jump and
+/// stance keys held against the mount, the use tap off it and a walk back
+/// (cod11-turrets.md 14, coduo-diff.md 19).
+fn uoturret_script() -> Vec<ProneStep> {
+    use net::msg::{BUTTON_ATTACK, BUTTON_USE, WBUTTON_CROUCH, WBUTTON_PRONE};
+    const U: u8 = BUTTON_USE;
+    const A: u8 = BUTTON_ATTACK;
+    let step = |at_ms, buttons, wbuttons, forward, right, up, yaw, pitch| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right,
+        up,
+        yaw,
+        pitch,
+    };
+    vec![
+        step(0, 0, 0, 0, 0, 0, 0.0, 0.0),
+        // The mount: a tap, then the view round past both yaw arcs.
+        step(1000, U, 0, 0, 0, 0, 0.0, 0.0),
+        step(1150, 0, 0, 0, 0, 0, 0.0, 0.0),
+        step(2500, 0, 0, 0, 0, 0, 0.0, 0.0),
+        step(5000, 0, 0, 0, 0, 0, 70.0, 0.0),
+        step(9000, 0, 0, 0, 0, 0, -70.0, 0.0),
+        step(10500, 0, 0, 0, 0, 0, 0.0, 0.0),
+        // Pitch past both arcs.
+        step(12000, 0, 0, 0, 0, 0, 0.0, 60.0),
+        step(14000, 0, 0, 0, 0, 0, 0.0, -60.0),
+        step(15000, 0, 0, 0, 0, 0, 0.0, 0.0),
+        // A burst, swung as it fires.
+        step(15500, A, 0, 0, 0, 0, 0.0, 0.0),
+        step(16500, A, 0, 0, 0, 0, 20.0, 5.0),
+        step(17000, 0, 0, 0, 0, 0, 20.0, 5.0),
+        step(17500, 0, 0, 0, 0, 0, 0.0, 0.0),
+        // The move, jump and stance keys against the mount.
+        step(18000, 0, 0, 127, 0, 0, 0.0, 0.0),
+        step(18500, 0, 0, 0, 127, 0, 0.0, 0.0),
+        step(19000, 0, 0, -127, -127, 0, 0.0, 0.0),
+        step(19500, 0, 0, 0, 0, 127, 0.0, 0.0),
+        step(19800, 0, 0, 0, 0, 0, 0.0, 0.0),
+        step(20300, 0, WBUTTON_CROUCH, 0, 0, -127, 0.0, 0.0),
+        step(20800, 0, 0, 0, 0, 0, 0.0, 0.0),
+        step(21300, 0, WBUTTON_PRONE, 0, 0, 0, 0.0, 0.0),
+        step(21800, 0, 0, 0, 0, 0, 0.0, 0.0),
+        // Off the gun, turned a little, and a walk back from it.
+        step(22500, 0, 0, 0, 0, 0, 30.0, 0.0),
+        step(23500, U, 0, 0, 0, 0, 30.0, 0.0),
+        step(23650, 0, 0, 0, 0, 0, 30.0, 0.0),
+        step(24500, 0, 0, -127, 0, 0, 30.0, 0.0),
+        step(25500, 0, 0, 0, 0, 0, 30.0, 0.0),
+        step(27000, 0, 0, 0, 0, 0, 30.0, 0.0),
     ]
 }
 

@@ -7126,38 +7126,63 @@ mod tests {
         assert_eq!(g.nearest_walkable(&world.collision, body), Some(3));
     }
 
+    /// mp_ship's shelf corners at (5375.1, 321.1, 352.1) and (5375.1,
+    /// -193.1, 352.1), a body respawned at rest there and run 2 s at a
+    /// yaw. Retail 1.1d (`client-probes/probe_shipcrease`, 2026-10-18,
+    /// bot-navigation.md section 3, "The corners at x 5375.1"): the north
+    /// one runs free at 200 and 225 to (5343.12, 227.13) and at 140 to
+    /// (5343.12, 332.87); the south one stays at x 5375.1 at 140 and runs
+    /// at 200 and 225 to (5343.12, -204.87). So the run at the north
+    /// node needs no unpin, and the south side's way out is the west axis,
+    /// 50 degrees off the way to its node.
     #[test]
     fn a_body_pinned_in_a_crease_runs_aside() {
         let Some(world) = map_world("mp_ship") else {
             return;
         };
         let w = &world.collision;
-        let to = Vec3::new(5344.0938, 312.65878, 352.125);
         let settled = |p: Vec3| {
             let mut ps = PlayerState::spawn(p, 0.0);
             Sim::default().tick(w, &mut ps, &NULL_USERCMD);
             ps
         };
-        let ps = settled(Vec3::new(5375.1, 321.1, 352.125));
-        let yaw = unpin_yaw(w, &[], &ps, to, &[]).expect("a way out");
-        let mut run = ps;
-        let mut sim = Sim::default();
-        for _ in 0..UNPIN_TICKS {
-            let cmd = UserCmd {
-                forward: 127,
-                angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
-                ..NULL_USERCMD
-            };
-            sim.tick(w, &mut run, &cmd);
+        let run = |ps: PlayerState, yaw: f32, ticks: usize| {
+            let mut run = ps;
+            let mut sim = Sim::default();
+            for _ in 0..ticks {
+                let cmd = UserCmd {
+                    forward: 127,
+                    angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                    ..NULL_USERCMD
+                };
+                sim.tick(w, &mut run, &cmd);
+            }
+            run.origin
+        };
+        let north = settled(Vec3::new(5375.1, 321.1, 352.125));
+        let south = settled(Vec3::new(5375.1, -193.1, 352.125));
+        for (ps, yaw, x, y) in [
+            (north, 200.0, 5343.12, 227.13),
+            (north, 225.0, 5343.12, 227.13),
+            (north, 140.0, 5343.12, 332.87),
+            (south, 140.0, 5375.1, -193.1),
+            (south, 200.0, 5343.12, -204.87),
+            (south, 225.0, 5343.12, -204.87),
+        ] {
+            let at = run(ps, yaw, 40);
+            assert!(
+                (at.x - x).abs() < 0.05 && (at.y - y).abs() < 0.05,
+                "{} at {yaw}: {at}",
+                ps.origin
+            );
         }
-        assert!(run.origin.x < 5360.0, "{yaw} {}", run.origin);
-        // From the node the run at it is free.
-        let node = settled(Vec3::new(5373.6216, 326.14114, 352.125));
-        assert_eq!(unpin_yaw(w, &[], &node, to, &[]), None);
+        // The north run at its node is free; nothing to unpin.
+        let to = Vec3::new(5344.0938, 312.65878, 352.125);
+        assert_eq!(unpin_yaw(w, &[], &north, to, &[]), None);
         // The south side's crease, 50 degrees off the way north-west.
-        let ps = settled(Vec3::new(5375.1, -193.1, 352.125));
         let to = Vec3::new(5344.4, -156.1, 352.125);
-        assert!(unpin_yaw(w, &[], &ps, to, &[]).is_some());
+        let yaw = unpin_yaw(w, &[], &south, to, &[]).expect("a way out");
+        assert!(run(south, yaw, UNPIN_TICKS).x < 5360.0, "{yaw}");
     }
 
     #[test]

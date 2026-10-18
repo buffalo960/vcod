@@ -634,6 +634,16 @@ struct Args {
     /// replays it under UO's rules.
     #[arg(long, allow_negative_numbers = true)]
     probe_uofoot: Option<f32>,
+    /// With --save-slope, on a United Offensive server: the mounted MG
+    /// script from a `client-probes/probe_turret` placement on mp_carentan
+    /// (`+set probe_teleport 1`, 40 units behind the gun at (1712 1830)):
+    /// the use tap onto the gun, the view swept past both arcs, a burst,
+    /// the move, jump and stance keys pushed against the mount, the use tap
+    /// off it and a walk away. The value is the gun's world yaw (229 there).
+    /// Tag the fixture `uoturret-uo`; predict_ab.rs replays it under UO's
+    /// rules.
+    #[arg(long, allow_negative_numbers = true)]
+    probe_uoturret: Option<f32>,
     /// With --save-slope, on a United Offensive server: a run at the wall
     /// under a window too low for a standing body, a jump and crouch held
     /// in the air, from a placement of `client-probes/probe_crouchjump`
@@ -1190,6 +1200,7 @@ fn main() -> Result<()> {
                 autofire: args.probe_autofire,
                 moveshot: args.probe_moveshot,
                 uofoot: args.probe_uofoot,
+                uoturret: args.probe_uoturret,
                 crouchjump: args.probe_crouchjump,
                 crouchjump_stand: args.probe_crouchjump_stand,
                 patchwalk: args.probe_patchwalk,

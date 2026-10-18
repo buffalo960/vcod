@@ -15,7 +15,7 @@
 //! `predictor_matches_the_1_5_server_step` run the same comparison on a
 //! protocol 22 and a protocol 6 sim, fed retail's own cmd streams (the
 //! `moves_ab.rs` slope captures: UO's sprint, bipod, automatic fire, mounts
-//! and cook, its tank and jeep seats, 1.5's moves and turns). The UO one runs
+//! and cook, its tank and jeep seats, a mounted MG, 1.5's moves and turns). The UO one runs
 //! at a UO install, the 1.5 one at a 1.5 or UO install.
 //!
 //! `predictor_replays_retail_slope_runs` is `playerstate_slope_ab.rs`'s
@@ -744,7 +744,8 @@ fn step_side_by_side(ring: bool) {
 
 /// UO's slope captures and their maps (`moves_ab.rs`): the seats, the sprint
 /// to exhaustion and the bipod, automatic fire, the mounts and the cook, and
-/// a death, a spectator spell and a link (`follow_state`).
+/// a death, a spectator spell and a link (`follow_state`), and a mounted MG
+/// (`follow_turret`).
 const UO_RUNS: &[(&str, &str)] = &[
     ("mp_cassino-tdm-slope-8ms-tank-seats-uo.txt", "mp_cassino"),
     ("mp_cassino-tdm-slope-8ms-tank-drive-uo.txt", "mp_cassino"),
@@ -758,6 +759,7 @@ const UO_RUNS: &[(&str, &str)] = &[
     ("mp_foy-dm-slope-8ms-uofoot-crouch.txt", "mp_foy"),
     ("mp_foy-dm-slope-8ms-uofoot-mount.txt", "mp_foy"),
     ("mp_carentan-dm-slope-8ms-uostates-uo.txt", "mp_carentan"),
+    ("mp_carentan-dm-slope-8ms-uoturret-uo.txt", "mp_carentan"),
     ("mp_carentan-dm-slope-8ms-speedgrav-uo.txt", "mp_carentan"),
 ];
 
@@ -873,6 +875,40 @@ fn follow_seat(
     match &mut sim.seat {
         Some(on) if on.pos == seat.pos && on.kind == seat.kind => on.angles = vang,
         _ => sim.enter_seat(seat, origin, w.viewangles(p)),
+    }
+    sim.ps.origin = Vec3::from(origin);
+    true
+}
+
+/// Retail's mounted MG at a capture's snapshot, put on the sim the way the
+/// gun's use and its turret pass put it there (`client-probes/probe_turret`,
+/// a `--probe-uoturret` capture): the use tap and its release are the
+/// game's, and the gunner's origin is the turret pass's `place_gunner`, so
+/// the sim mounts and lets go where retail's playerstate does and takes
+/// retail's origin while on the gun, as `follow_seat` does a seat's. The
+/// capture mounts standing, and its release carries 1.1's
+/// `EV_STANCE_FORCE_STAND` in the ring. Whether the snapshot's body was on a
+/// gun.
+fn follow_turret(sim: &mut ClientSim, p: &Protocol, w: &msg::PlayerState) -> bool {
+    use vcod_common::net::flags::{
+        EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND,
+    };
+    use vcod_server::game::turret::{self, AimRule, TurretStance};
+    let origin = w.origin(p);
+    let stance = match w.field_i32(p, "eFlags") & EF_MOUNTED {
+        EF_MOUNTED_STAND => TurretStance::Stand,
+        EF_MOUNTED_DUCK => TurretStance::Duck,
+        EF_MOUNTED_PRONE => TurretStance::Prone,
+        _ => {
+            if sim.mounted_on.is_some() {
+                turret::release_sim(sim, 0, origin, Some(pm::Stance::Stand));
+            }
+            return false;
+        }
+    };
+    if sim.mounted_on.is_none() {
+        let gun = w.field_i32(p, "viewlocked_entNum") as u32;
+        turret::mount_sim(sim, AimRule::of(p), gun, stance, w.viewangles(p));
     }
     sim.ps.origin = Vec3::from(origin);
     true
@@ -1009,7 +1045,8 @@ fn capture_side_by_side(
         counts: BTreeMap::new(),
     };
     run.rebuild();
-    let (mut sprinted, mut deployed, mut cooked, mut seated, mut states) = (0, 0, 0, 0, 0);
+    let (mut sprinted, mut deployed, mut cooked, mut seated, mut states, mut manned) =
+        (0, 0, 0, 0, 0, 0);
     for line in &lines {
         match line {
             CaptureLine::Snap(w, vang) => {
@@ -1019,6 +1056,7 @@ fn capture_side_by_side(
                 );
                 seated += usize::from(follow_seat(&mut run.sim, p, w, *vang));
                 states += usize::from(follow_state(&mut run, w));
+                manned += usize::from(follow_turret(&mut run.sim, p, w));
                 run.rebuild();
             }
             CaptureLine::Cmd(c) if c.server_time > run.st => {
@@ -1035,7 +1073,7 @@ fn capture_side_by_side(
     println!(
         "{file}: {} cmds, {} rebuilds, sprinting {sprinted}, deployed {deployed}, \
          fuse armed {cooked}, seated snapshots {seated}, dead, spectating or linked \
-         snapshots {states}, {} unpredicted cmds, {} mismatching reads {:?}",
+         snapshots {states}, mounted snapshots {manned}, {} unpredicted cmds, {} mismatching reads {:?}",
         run.cmds,
         run.rebuilds,
         run.unpredicted,
@@ -1053,7 +1091,7 @@ fn capture_side_by_side(
     }
 }
 
-/// United Offensive's sprint, bipod, automatic fire, mounts and cook through
+/// United Offensive's sprint, bipod, automatic fire, mounts, cook and MG through
 /// the protocol 22 round trip. Needs `COD_DIR` at a United Offensive install.
 #[test]
 fn predictor_matches_the_uo_server_step() {
