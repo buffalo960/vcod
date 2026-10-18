@@ -14,27 +14,160 @@ use vcod_common::net::protocol::CsLayout;
 #[cfg(test)]
 pub use vcod_common::net::protocol::{CS_LOCALIZED, CS_SHADERS};
 
-/// Retail's 640x480 virtual screen, scaled by the window height and centred
-/// horizontally, so a wider window letterboxes to 4:3.
+/// Retail's 640x480 virtual screen, scaled to fit the window and centred,
+/// so a wider window pillarboxes it to 4:3 and a narrower one letterboxes
+/// it. `spread` is how far an edge-anchored element may move past the box
+/// (`Virtual::at`): the pillarbox's width, or 0 with `vc_widescreen 0`
+/// (docs/research/cod11-hud-protocol.md, "vcod: wide windows").
 #[derive(Clone, Copy, Debug)]
 pub struct Virtual {
     pub scale: f32,
     pub x0: f32,
+    pub y0: f32,
+    /// The window's width in px, what a full-width element stretches over.
+    pub w: f32,
+    spread: f32,
+}
+
+/// Which window edge a HUD element keeps to on a window wider than 4:3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    Left,
+    Centre,
+    Right,
+}
+
+impl Anchor {
+    /// vcod's rule for an element with no fixed side (a hud elem, a mod's
+    /// `hud.menu` item): by where its span `x0..x1` on the 640 grid has its
+    /// middle, the left third, the middle third or the right third.
+    pub fn of_span(x0: f32, x1: f32) -> Anchor {
+        let mid = (x0 + x1) * 0.5;
+        if mid < 640.0 / 3.0 {
+            Anchor::Left
+        } else if mid > 1280.0 / 3.0 {
+            Anchor::Right
+        } else {
+            Anchor::Centre
+        }
+    }
+}
+
+/// Whether a span on the 640 grid covers the whole width: a fade, a
+/// backdrop, a killcam bar. Such an element stretches over the window.
+pub fn full_width(x: f32, w: f32) -> bool {
+    x <= 0.0 && x + w >= 640.0
 }
 
 const FULL_UV: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
+/// One axis of [`Virtual::quad_fill`]: the span `at..at + len` of a grid
+/// `grid` long, placed at `offset` px with `scale`, or, when it covers the
+/// whole grid, stretched over the window's `window` px, overhang kept.
+fn stretch(at: f32, len: f32, grid: f32, offset: f32, window: f32, scale: f32) -> (f32, f32) {
+    if at <= 0.0 && at + len >= grid {
+        (at * scale, window + (at + len - grid) * scale)
+    } else {
+        (offset + at * scale, offset + (at + len) * scale)
+    }
+}
+
 impl Virtual {
+    /// The grid on a `w` x `h` window, edge anchoring on.
     pub fn new((w, h): (f32, f32)) -> Virtual {
-        let scale = h / 480.0;
+        let scale = (h / 480.0).min(w / 640.0);
+        let x0 = (w - 640.0 * scale) / 2.0;
         Virtual {
             scale,
-            x0: (w - 640.0 * scale) / 2.0,
+            x0,
+            y0: (h - 480.0 * scale) / 2.0,
+            w,
+            spread: x0.max(0.0),
         }
     }
 
+    /// The same grid with every element kept inside the 4:3 box.
+    pub fn boxed(self) -> Virtual {
+        Virtual {
+            spread: 0.0,
+            ..self
+        }
+    }
+
+    /// [`Virtual::new`], boxed unless `edges`.
+    pub fn with_edges(screen: (f32, f32), edges: bool) -> Virtual {
+        let v = Virtual::new(screen);
+        if edges { v } else { v.boxed() }
+    }
+
+    /// The grid moved to keep to `anchor`'s window edge: a left element
+    /// draws as far left of the box as the window allows, a right one as
+    /// far right.
+    pub fn at(self, anchor: Anchor) -> Virtual {
+        let x0 = match anchor {
+            Anchor::Left => self.x0 - self.spread,
+            Anchor::Centre => self.x0,
+            Anchor::Right => self.x0 + self.spread,
+        };
+        Virtual {
+            x0,
+            spread: 0.0,
+            ..self
+        }
+    }
+
+    pub fn left(self) -> Virtual {
+        self.at(Anchor::Left)
+    }
+
+    pub fn right(self) -> Virtual {
+        self.at(Anchor::Right)
+    }
+
+    /// The window's size in px.
+    pub fn screen(&self) -> (f32, f32) {
+        (self.w, 2.0 * self.y0 + 480.0 * self.scale)
+    }
+
     pub fn point(&self, x: f32, y: f32) -> [f32; 2] {
-        [self.x0 + x * self.scale, y * self.scale]
+        [self.x0 + x * self.scale, self.y0 + y * self.scale]
+    }
+
+    /// Window px back to the grid, clamped to it: the menu cursor's map.
+    pub fn grid_point(&self, px: f32, py: f32) -> [f32; 2] {
+        [
+            ((px - self.x0) / self.scale).clamp(0.0, 640.0),
+            ((py - self.y0) / self.scale).clamp(0.0, 480.0),
+        ]
+    }
+
+    /// A rect on the grid; one that spans the whole width ([`full_width`])
+    /// spans the whole window's width instead, and one that spans the whole
+    /// height its height.
+    pub fn quad_fill(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        rgba: [f32; 4],
+        texture: &str,
+    ) -> HudQuad {
+        let (left, right) = stretch(x, w, 640.0, self.x0, self.w, self.scale);
+        let (top, bottom) = stretch(
+            y,
+            h,
+            480.0,
+            self.y0,
+            2.0 * self.y0 + 480.0 * self.scale,
+            self.scale,
+        );
+        HudQuad {
+            verts: [[left, top], [right, top], [right, bottom], [left, bottom]],
+            uvs: FULL_UV,
+            rgba,
+            texture: texture.to_string(),
+        }
     }
 
     pub fn quad(&self, x: f32, y: f32, w: f32, h: f32, rgba: [f32; 4], texture: &str) -> HudQuad {
@@ -195,10 +328,9 @@ pub fn build(
     bound: &dyn Fn(&str) -> Option<String>,
     fonts: &UiFonts,
     server_time: i32,
-    screen: (f32, f32),
+    v: &Virtual,
     out: &mut Vec<HudQuad>,
 ) {
-    let v = Virtual::new(screen);
     let mut order: Vec<&HudElem> = elems.iter().collect();
     order.sort_by(|a, b| {
         a.get_f32(f::SORT)
@@ -214,7 +346,7 @@ pub fn build(
             bound,
             fonts,
             server_time,
-            &v,
+            v,
             out,
         );
     }
@@ -258,8 +390,10 @@ fn draw(
         if s.is_empty() {
             return;
         }
-        let pos = place(e, now, tf.width(&s), tf.height);
-        tf.draw(&s, pos, color, v, out);
+        let w = tf.width(&s);
+        let pos = place(e, now, w, tf.height);
+        let v = v.at(Anchor::of_span(pos.0, pos.0 + w));
+        tf.draw(&s, pos, color, &v, out);
         return;
     }
 
@@ -282,6 +416,11 @@ fn draw(
         tf.width(&label)
     };
     let (x, y) = place(e, now, label_w + w, h);
+    // A full-width shader (a fade, a killcam bar) covers the window; the
+    // rest keep to the edge their span is nearest.
+    let stretched = full_width(x + label_w, w);
+    let edge = v.at(Anchor::of_span(x, x + label_w + w));
+    let v = if stretched { v } else { &edge };
     if label_w > 0.0 {
         let (_, label_y) = place(e, now, label_w + w, tf.height);
         tf.draw(&label, (x, label_y), color, v, out);
@@ -290,7 +429,7 @@ fn draw(
         return;
     };
     let x = x + label_w;
-    out.push(v.quad(x, y, w, h, color, material));
+    out.push(v.quad_fill(x, y, w, h, color, material));
     if ty >= 8 {
         let ms = timer_ms(ty, e.get(f::TIME), now) as f32;
         let turn = match e.get(f::DURATION) {
@@ -539,7 +678,7 @@ pub(crate) mod tests {
             &|_| None,
             &fonts,
             now,
-            screen,
+            &Virtual::new(screen),
             &mut out,
         );
         out
@@ -824,5 +963,81 @@ pub(crate) mod tests {
         assert_eq!(merge_label("Score: ", "5"), "Score: 5");
         assert_eq!(merge_label("", "5"), "5");
         assert_eq!(merge_label("Score: %s", ""), "Score: %s");
+    }
+
+    /// The grid on a 21:9 window: scaled by the height, centred, and an
+    /// edge element moved by the pillarbox's width; boxed, none moves.
+    #[test]
+    fn a_wide_window_centres_the_grid_and_anchors_the_edges() {
+        let v = Virtual::new((2520.0, 1080.0));
+        assert!(close(v.scale, 2.25) && close(v.x0, 540.0) && v.y0 == 0.0);
+        assert_eq!(v.point(0.0, 0.0), [540.0, 0.0]);
+        assert_eq!(v.left().point(0.0, 480.0), [0.0, 1080.0]);
+        assert_eq!(v.right().point(640.0, 0.0), [2520.0, 0.0]);
+        assert_eq!(v.at(Anchor::Centre).point(320.0, 0.0), [1260.0, 0.0]);
+        let boxed = v.boxed();
+        assert_eq!(boxed.left().point(0.0, 0.0), [540.0, 0.0]);
+        assert_eq!(boxed.right().point(640.0, 0.0), [1980.0, 0.0]);
+        // A 5:4 window letterboxes: scaled by the width, centred down.
+        let v = Virtual::new((1280.0, 1024.0));
+        assert!(close(v.scale, 2.0) && v.x0 == 0.0 && close(v.y0, 32.0));
+        assert_eq!(v.left().point(0.0, 0.0), [0.0, 32.0]);
+        assert_eq!(v.screen(), (1280.0, 1024.0));
+    }
+
+    #[test]
+    fn the_cursor_maps_through_the_box_and_clamps_to_it() {
+        let v = Virtual::new((1920.0, 1080.0));
+        assert_eq!(v.grid_point(960.0, 540.0), [320.0, 240.0]);
+        assert_eq!(v.grid_point(240.0, 0.0), [0.0, 0.0]);
+        assert_eq!(v.grid_point(10.0, 1080.0), [0.0, 480.0], "left of the box");
+        assert_eq!(v.grid_point(1910.0, 2.25), [640.0, 1.0]);
+        for (px, py) in [(500.0, 100.0), (1500.0, 900.0)] {
+            let [x, y] = v.grid_point(px, py);
+            let [bx, by] = v.point(x, y);
+            assert!(close(bx, px) && close(by, py));
+        }
+    }
+
+    /// A span keeps to the third its middle is in.
+    #[test]
+    fn a_span_anchors_by_its_middle_third() {
+        assert_eq!(Anchor::of_span(6.0, 120.0), Anchor::Left);
+        assert_eq!(
+            Anchor::of_span(192.0, 448.0),
+            Anchor::Centre,
+            "a progress bar"
+        );
+        assert_eq!(Anchor::of_span(505.0, 635.0), Anchor::Right);
+        assert_eq!(Anchor::of_span(0.0, 640.0), Anchor::Centre);
+    }
+
+    /// A full-screen shader (a killcam bar, a fade) covers the window; a
+    /// script's clock at 520 keeps to the right edge, its progress bar to
+    /// the middle.
+    #[test]
+    fn hud_elems_stretch_full_width_and_keep_to_their_edge() {
+        let cs = cs_with(&[(CS_SHADERS + 1, "black"), (CS_LOCALIZED + 1, "9")]);
+        let bar = elem(&[
+            (f::TYPE, 3),
+            (f::SHADER, 1),
+            (f::WIDTH, 640),
+            (f::HEIGHT, 50),
+        ]);
+        let out = run(&[bar], &cs, 0, (2520.0, 1080.0));
+        assert_eq!(out[0].verts[0], [0.0, 0.0]);
+        assert_eq!(out[0].verts[2], [2520.0, 112.5]);
+        let clock = elem(&[(f::TYPE, 1), (f::TEXT, 1), (f::X, 520), (f::Y, 100)]);
+        let b = glyph_bounds(&run(&[clock], &cs, 0, (2520.0, 1080.0)));
+        assert!(close(b[0], 540.0 * 2.0 + 520.0 * 2.25), "{b:?}");
+        let progress = elem(&[
+            (f::TYPE, 3),
+            (f::SHADER, 1),
+            (f::X, 192),
+            (f::WIDTH, 256),
+            (f::HEIGHT, 8),
+        ]);
+        let out = run(&[progress], &cs, 0, (2520.0, 1080.0));
+        assert_eq!(out[0].verts[0][0], 540.0 + 192.0 * 2.25);
     }
 }

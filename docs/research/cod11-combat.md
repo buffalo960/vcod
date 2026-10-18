@@ -4283,6 +4283,34 @@ VERIFIED: the six writes of `"cg_weaponSelect"` sit in `0x30028a70`,
   `eFlags & 0xc000` (a mounted gun) and prints
   `CGAME_THIS_WEAPON_HAS_NO_ALTERNATE` for a selection with no alt;
   `weapnext` calls the cycle `0x30038570(1, 0)`, `weapprev` `(0, 0)`.
+- INFERRED, off `0x30038040` and `0x300380b0`'s first branch: ahead of those gates, while
+  `+scores` holds the board (`0x3020c030`, set by `+scores` 0x30013d1f and
+  cleared by `-scores` 0x30013cce), `weapnext` scrolls it up (`0x3020c03c`
+  less `cg_scoreboardScrollStep` `0x301ad4ec`, floored at 0, only from
+  above 0) and `weapprev` down (only while `0x3020c040`, the board ran out
+  of room, at most to the last row), the same moves as the wheel
+  (`0x30027180`, `0x3002b720`); neither cycles nor stamps. VERIFIED, the
+  instructions: 1.5's
+  `0x300399d0` / `0x30039a40` and UO's `0x300474c0` / `0x30047550` open
+  with the same branch, UO's ahead of its seat test. vcod:
+  `Scoreboard::take_cycle`, ahead of the seat and view gates in `main.rs`.
+- VERIFIED: the stamp (`0x3020c920 = cg.time`) is written by `weapnext`
+  and `weapprev` before the cycle (`0x300380a2`, `0x3003811c`), by
+  `weaponslot` before it parses its argument (`0x30038342`), and by the
+  select `0x30037f20` (`weapalt`, `weapon`, `a`). INFERRED, off that
+  order: every one of the three cycle binds that passes the gates and the
+  delay stamps, a slot with no weapon or a cycle that finds nothing
+  included; only `weapalt` and
+  `weapon` stamp on a select alone. VERIFIED: 1.5 (`0x30039a32`,
+  `0x30039aac`, `0x30039c52`) and UO (`0x3004753f`, `0x300475dd`,
+  `0x300477b5`) store it at the same points. vcod stamps the same way
+  (`main.rs`, the `Effect::Impulse` arm); the earlier note that an empty
+  `weaponslot` does not stamp was wrong.
+- VERIFIED, the gates' bits: the snapshot's `0x40000` is 1.5's `0x20000`
+  (`0x30039a0e`) and UO's `0x80000` (`0x3004751b`), each version's own-view
+  bit, which vcod reads off `cg.snap` (`Held::cg_snap`). The predicted
+  `0x4000` is never set by any server (`cod11-mantle.md`, "`pm_flags`
+  0x4000"; `coduo-diff.md`), so vcod models no arm for it.
 - VERIFIED, `0x3002e139`: the server's `a <n>` selects `atol(n)` through
   `0x30037f20`, unchecked.
 - VERIFIED, the cycle `0x30038570(forward, need_ammo)`, gated on the
@@ -7836,8 +7864,8 @@ vieworg) * fWeaponPosFrac` into `0x3020cb88`-`0x3020cb90` for an
 `aimDownSight` weapon with the fraction non-zero, zero otherwise. 17.5
 has the landing term between the two.
 
-vcod: `pmove::aim::GunMove` is `0x300362c0` (`SPEED_RUN` standing in for
-`ps->speed`, as in the tilt; no `cg_gun_*` cvars). `hud::scope::GunAim`
+vcod: `pmove::aim::GunMove` is `0x300362c0` (`PlayerState::speed`, the
+wire's `ps->speed`, as in the tilt; no `cg_gun_*` cvars). `hud::scope::GunAim`
 steps the sway, the angles and the movement term once a frame, called by
 `Hud::step_gun` after the view is final and before the view weapon is
 posed (not on pm_type 4 or 5, dead or on a mounted gun; vcod has no

@@ -6,6 +6,7 @@
 
 use super::HudQuad;
 use super::font::UiFonts;
+use super::hudelem::{Anchor, Virtual};
 use crate::frontend::Painter;
 use vcod_common::localize::Localized;
 use vcod_common::pk3::Pk3Fs;
@@ -45,21 +46,22 @@ impl HudMenu {
         HudMenu { items }
     }
 
-    /// Paints the items on the 640x480 grid; `cvar` reads a client cvar.
+    /// Paints the items on the 640x480 grid, each kept to the window edge
+    /// its rect is nearest ([`Anchor::of_span`]); `cvar` reads a client cvar.
     pub fn build(
         &self,
         fonts: &UiFonts,
-        screen: (f32, f32),
+        v: &Virtual,
         loc: &Localized,
         cvar: &dyn Fn(&str) -> Option<String>,
         out: &mut Vec<HudQuad>,
     ) {
-        let p = Painter {
-            sx: screen.0 / 640.0,
-            sy: screen.1 / 480.0,
-            fonts: Some(fonts),
-        };
         for item in &self.items {
+            let [x, _, w, _] = item.rect;
+            let p = Painter {
+                v: v.at(Anchor::of_span(x, x + w)),
+                fonts: Some(fonts),
+            };
             if !item
                 .gate
                 .as_ref()
@@ -169,7 +171,7 @@ mod tests {
         let loc = Localized::default();
         let quads = |cvar: &dyn Fn(&str) -> Option<String>| {
             let mut out = Vec::new();
-            h.build(&fonts, (640.0, 480.0), &loc, cvar, &mut out);
+            h.build(&fonts, &Virtual::new((640.0, 480.0)), &loc, cvar, &mut out);
             out.len()
         };
         let label = quads(&|_| None);

@@ -1431,8 +1431,7 @@ vertex lighting.
 - Live: every bind, `sensitivity`, invert mouse (`m_pitch`), `name` (on
   closing Multiplayer Options), `rate`, `mss_volume` (the master volume,
   read every frame), and `r_mode` / `r_fullscreen`, which `vid_restart`
-  and start-up apply to the window (Q3's mode table; borderless full
-  screen), and `r_gamma`, read every frame and applied as retail's gamma
+  and start-up apply to the window (section 21), and `r_gamma`, read every frame and applied as retail's gamma
   ramp in a final pass, and `r_ignorehwgamma`, latched at start-up and
   `vid_restart`, which moves `r_gamma` into the TGA and JPG textures at
   each map load (`cod11-gamma.md` section 4). `cg_drawCrosshair` and
@@ -1816,12 +1815,49 @@ carries its label.
   (cod11-sound-system.md, `snd_restart`). INFERRED. `snd_restart`
   restores its saved streams after the restart (`0x40fea7`), so they
   outlive this stop. VERIFIED (calls).
+- The stop runs whether a game is up or not: the call sits after the
+  listen server refusal and the save block, under no condition, so a
+  `vid_restart` from the main menu ends its music and clicks too, before
+  the reloaded UI opens the main menu again. VERIFIED (the
+  decompilation). 1.5's restart calls `0x452c50(1)` and UO's
+  `0x454dd0(1)` at the same spot. VERIFIED (calls); INFERRED (that
+  they are the same stop, by position).
 - `CL_InitCGame` and `CL_SendPureChecksums` run only past `CA_LOADING`
   (`0x40fda5`), so a `vid_restart` during a load restarts no cgame.
   VERIFIED (asm). 1.5 (`0x404ab0`, `0x4106d0`) and UO (`0x405310`,
   `0x411450`) keep the same tail; `0x404ab0` and `0x405310` carry
   `maps/mp/%s.bsp` and `CL_InitCGame: %5.2f seconds`. VERIFIED (calls,
   strings).
+
+### A map change reloads the cgame
+
+- Every gamestate goes through the same reload. `CL_ParseGamestate`
+  (`0x416050`) ends in `CL_InitDownloads` (`0x410240`), which reaches
+  `CL_DownloadsComplete` (`0x40ffb0`) once the downloads are done. That
+  sets state 4, and with no local server (the cvar at `0x163a23c` the
+  listen server check of `vid_restart` reads) calls `0x40ee30`, which runs `CL_ShutdownCGame`
+  (`0x401a20`), the UI shutdown (`0x418e30`, the `FreeLibrary` of the UI
+  module at `0x161747c`) and the renderer's shutdown with 0, then
+  `0x432140`, which runs both shutdowns again, `0x457970`, `0x404fe0`,
+  `Hunk_Clear` (`0x432090`) and `0x460420`; then `CL_InitCGame`
+  (`0x4049c0`), `CL_SendPureChecksums` (`0x40fac0`) and three packets
+  (`0x40ba50`). VERIFIED (calls). With a local server and a cgame already
+  up it returns before `CL_InitCGame`. VERIFIED (the branch on
+  `0x1617348`). This is Q3's `CL_DownloadsComplete` with
+  `CL_FlushMemory` inlined. INFERRED.
+- 1.5's `CL_DownloadsComplete` (`CoDMP.exe` `0x410bc0`: `0x40fb00`,
+  whose first call is the cgame shutdown `0x401b70`, `0x434320`, then
+  `CL_InitCGame` `0x404ab0`) and UO's (`CoDUOMP.exe` `0x411940`:
+  `0x4104a0`, first call `0x401b70`, `0x435d20`, then `0x405310`) have
+  the same shape. VERIFIED (calls; `0x401b70` `FreeLibrary`s the module
+  at `0x18e2a28` on 1.5 and `0x4e19990` on UO).
+- So a map change starts the cgame over as a `vid_restart` does: the
+  chat ring and everything else above go. `CG_Init` takes the client's
+  current command sequence (`0x15de9a4`), so the commands parsed while
+  the map loaded, a chat line among them, never reach the new cgame.
+  INFERRED (Q3's `CL_InitCGame` passes it, and the cgame starts its
+  command walk there). A `map_restart` sends no gamestate
+  (cod11-map-cycle.md section 4) and reloads nothing.
 
 ### vcod
 
@@ -1853,6 +1889,14 @@ carries its label.
   marks start over, every sound stops and the ambient starts from the
   top (not after `snd_restart`, whose restored streams play on), and
   `cp` goes out again. Before the game is live nothing restarts.
+- A map load runs the same reset (`fresh_cgame`) once the new map is up,
+  where `CL_DownloadsComplete` loads the cgame: the chat ring, the view
+  and the prediction start over and the lines that came in during the
+  load are dropped. The gamestate parse itself keeps the chat, so the
+  loading screen still shows it.
+- Every `vid_restart` but `snd_restart`'s stops every sound first, a
+  game up or not; the offline viewer keeps its ambient. The Mods pick's
+  restart stops them too.
 - The pick forces the `fs_game` cvar, as `RunMod`'s `trap_Cvar_Set`
   does. A server that names no `fs_game` keeps whatever the cvar holds;
   one that names another replaces it, and leaving keeps the server's
@@ -2682,3 +2726,56 @@ context the module calls through sits at `0x401c3ce0` (`_UI_Init`,
   the cursor over it. Enter joining the selected server anywhere in the
   browser (unless the focused item's handler takes Enter), and an arrow
   with nothing selected picking the first row, are vcod's own.
+
+## 21. Video modes, fullscreen and wide windows
+
+Retail's:
+
+- `R_Register` (CoDMP.exe 0x4b3300) registers `r_mode` "3",
+  `r_fullscreen` "1", `r_customwidth` "1600", `r_customheight` "1024"
+  and `r_customaspect` "1", each with flags 0x21 (archive, latch).
+  VERIFIED, the calls at 0x4b3718..0x4b3786 and the default strings at
+  0x568730, 0x5685e4, 0x558064 and 0x55804c.
+- The mode table at 0x5716c0 holds 13 rows of name, width, height and
+  pixel aspect, the count at 0x571790: 320x240, 400x300, 512x384,
+  640x480, 800x600, 960x720, 1024x768, 1152x864, 1280x1024, 1600x1200,
+  2048x1536, 856x480 "(wide)" and 1920x1200 "(wide)", every pixel aspect
+  1.0. VERIFIED, the table's bytes.
+- `R_GetModeInfo` (0x4b0ec0) fails a mode below -1 or past the table and
+  takes mode -1's size from `r_customwidth` and `r_customheight` and its
+  aspect from `r_customaspect`. INFERRED, its branches.
+- The options screen's Video Mode list is the stock
+  `ui/options_graphics.menu` (`localized_english_pak0.pk3`), a
+  `cvarFloatList` on `ui_r_mode`, so its rows are the menu file's, not the
+  engine's. VERIFIED, the menu file.
+- Alt+Enter: the window procedure's `WM_SYSKEYDOWN` (0x104) arm tests
+  `wParam` 0xd at 0x466e52. VERIFIED, the compares at 0x466c65 and
+  0x466e52. Unless `cls.state` (0x155f2c0) is 4, a map loading, it sets
+  `r_fullscreen` to `!r_fullscreen->integer` (`Cvar_SetValue` 0x439960
+  with the name at 0x55cd5c) and queues `vid_restart\n` (0x55bc8c).
+  INFERRED, the branch and the call order.
+- `gfxinfo` (0x4b2e40) prints "fullscreen" only when `r_fullscreen` is
+  exactly 1. INFERRED, its index expression. Retail's fullscreen is a
+  display mode change to the `r_mode` size.
+
+vcod's (`crate::video`, `apply_video_mode` in `main.rs`):
+
+- `r_mode` reads the same 13 rows. vcod registers `r_mode` -1 and
+  `r_customwidth` / `r_customheight` 0, and -1 with either at 0 keeps the
+  window's own size (1600x900 logical at first start), so a wide size is
+  `r_mode -1` with the custom pair (`r_customaspect` is registered and
+  ignored). None of them latches; `vid_restart` reads them.
+- `r_fullscreen 1` is a borderless window over the monitor the window is
+  on, at the desktop's resolution, whatever `r_mode` says. `r_fullscreen
+  2` is exclusive: the monitor switches to its video mode closest to the
+  `r_mode` size (the monitor's own size when `r_mode` names none): the
+  same size at its highest refresh and colour depth, else the least
+  difference in area, then in aspect. Wayland has no exclusive mode, so 2
+  is borderless there. Any other non-zero value reads as 1.
+- At start-up the window opens windowed at the asked size and goes full
+  screen once it knows its monitor.
+- Alt+Enter runs `r_fullscreen <!r_fullscreen>; vid_restart`, so 2 goes
+  to windowed and windowed to 1, as retail's boolean flip.
+- The 3D view, the HUD and the menus on a window that is not 4:3 are
+  `vc_widescreen`'s (cod11-hud-protocol.md section 10, `camera::view_fov_x`).
+

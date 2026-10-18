@@ -1490,7 +1490,13 @@ in a steady clip and 2.9 through a strafe-to-strafe blend.
 vcod: `crates/client/src/entities.rs` keeps a `ChannelClock` pair per
 entity number and updates it each drawn frame with `Times { clock_ms:
 render_time, snapshot_ms: newest snapshot }`, the newer snapshot's
-`pos.trBase` and `eFlags`.
+`pos.trBase` and `eFlags`. INFERRED: the `ci` lerp frames sit in the
+cgame's static client and body queue arrays and nothing on the draw path
+clears them, so they outlive any stretch the body is unseen; vcod keeps the
+pair for the cgame's life too (until 2026-10-18 it dropped it after 5 s
+unseen). vcod's clips run on the drawn clock while unseen, where the DObj
+advances only when drawn (0x3001bd00): a body back in view resumes its loop
+at another phase than retail's.
 
 ### A bone asked for before the anim update
 
