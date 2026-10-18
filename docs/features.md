@@ -339,7 +339,9 @@ something, the bullet links it.
   patches, terrain and brushes clip a round or a moving player in the
   arithmetic of each patch's server build, and a patch only from the BSP leaves that list
   it, in retail's leaf order, so a round, an item or a player slips
-  through the seams retail's does. A submodel's patches and terrain clip
+  through the seams retail's does. Where two brushes or terrain
+  contacts nearly tie, the leaf order picks the surface a body stands
+  on. A submodel's patches and terrain clip
   only while its entity is linked. Shots,
   swings and throws start from each patch's muzzle (1.1's truncated
   point, 1.5's and UO's bobbed and leaned one, a UO rider's 28 over his
@@ -348,7 +350,9 @@ something, the bullet links it.
   works. Grenades are real
   missiles that bounce (off script models, and off a player's posed bones
   at an eighth of their speed), rest (on a player too, falling once he
-  leaves on 1.5 and UO) and explode with retail's falloff, and a blast
+  leaves on 1.5 and UO; on 1.1 the bounce and the arc keep 1.1d's x87
+  arithmetic, so a frag rolls down terrain on retail's bits) and explode
+  with retail's falloff, and a blast
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind. The panzerfaust (and UO's bazooka and
   panzerschreck) fires a rocket that flies, strikes and explodes as
