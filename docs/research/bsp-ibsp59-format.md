@@ -434,7 +434,7 @@ VERIFIED (measured 2026-10-18, `nav_build`, release, user time under a loaded ma
 
 | Constant | Value | Origin |
 |---|---|---|
-| `GRAVITY` | 800 | `bg_public.h` `DEFAULT_GRAVITY` (g_gravity default) |
+| `GRAVITY` | 800 | `bg_public.h` `DEFAULT_GRAVITY` (g_gravity default); pmove reads `ps.gravity`, which `ClientEndFrame` stores from `g_gravity` (`cod15-movement.md`, "ps.gravity") |
 | `SPEED_RUN` | 190 | CoD 1 `g_speed` default |
 | `SCALE_WALK` | 0.4 | retail's wire `ps.walkSpeedScale`; the ADS walk (`cod11-mantle.md`, "The wish speed") |
 | `SCALE_CROUCH` | 0.65 | retail's wire `ps.crouchSpeedScale` |

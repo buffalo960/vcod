@@ -672,7 +672,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - Every mover's speed is `ps.speed` (`PlayerState::speed`): `g_speed` on
   1.1, the client's `maxspeed` on 1.5 and UO, 400 for a spectator. A wire
   playerstate built by hand without `speed` predicts a body that never
-  moves (cod15-movement.md, "ps.speed").
+  moves (cod15-movement.md, "ps.speed"). Gravity is `ps.gravity`
+  likewise, `(int)g_gravity` on all three: one built without `gravity`
+  never falls. A map load writes `g_gravity` back to 800, so a `+set` of
+  it on retail's command line never sticks ("ps.gravity").
 
 ### Combat and items
 

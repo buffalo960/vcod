@@ -1238,6 +1238,7 @@ fn mirror_vitals(clients: &mut [Option<Client>], rt: &script::ScriptRuntime) {
 /// [`mirror_vitals`] for one client.
 fn mirror_vitals_of(sim: &mut ClientSim, rt: &script::ScriptRuntime, slot: usize) {
     sim.max_speed = rt.host.client_speed(slot);
+    sim.gravity = rt.host.client_gravity();
     if sim.pm_type != crate::spectate::PmType::Normal {
         return;
     }
@@ -13198,6 +13199,62 @@ mod tests {
         assert!((h - 250.0).abs() < 1.0, "{h}");
         let w = sim.to_wire(&PROTOCOL_V1, 0, 0);
         assert_eq!(w.field_i32(&PROTOCOL_V1, "speed"), 250);
+    }
+
+    /// `ClientEndFrame` stores `(int)g_gravity` in a player's `ps.gravity`
+    /// (game.mp 0x410aa): a jump climbs as high and stays up `sqrt 2` times
+    /// as long at 400, and the wire carries it (cod15-movement.md,
+    /// "ps.gravity").
+    #[test]
+    fn a_player_jumps_at_g_gravity() {
+        let airtime = |gravity: &str| {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.load_world(World {
+                collision: test_world(&[]),
+                vis: vcod_common::bsp::Visibility::none(),
+                spawn: ([0.0, 0.0, 1.0], 0.0),
+                spawn_points: Vec::new(),
+                hazards: Vec::new(),
+                rubble: Vec::new(),
+            });
+            install_script(
+                &mut sv,
+                crate::game::script::ScriptRuntime::for_test("main() {}"),
+            );
+            let _nc = begun(&mut sv, now);
+            sv.tick(now);
+            sv.place_client(0, [0.0, 0.0, 0.125], 0.0);
+            let rt = sv.script.as_mut().unwrap();
+            rt.set_client_state_for_test(0, "playing");
+            rt.host.cvars.set("g_gravity", gravity);
+            sv.tick(now + Duration::from_millis(50));
+            let st = sv.clients[0].as_ref().unwrap().last_processed_st;
+            let mut top = 0.0f32;
+            for i in 1..=60 {
+                sv.clients[0].as_mut().unwrap().pending.push(
+                    UserCmd {
+                        server_time: st + 50 * i,
+                        up: if i == 1 { 127 } else { 0 },
+                        ..NULL_USERCMD
+                    }
+                    .into(),
+                );
+                sv.tick(now + Duration::from_millis(50 + 50 * i as u64));
+                let sim = sv.clients[0].as_ref().unwrap().sim.as_ref().unwrap();
+                top = top.max(sim.ps.origin.z);
+                if i > 1 && sim.ps.on_ground {
+                    let w = sim.to_wire(&PROTOCOL_V1, 0, 0);
+                    return (w.field_i32(&PROTOCOL_V1, "gravity"), top, 50 * i);
+                }
+            }
+            panic!("no landing at g_gravity {gravity}");
+        };
+        let (stock, light) = (airtime("800"), airtime("400.7"));
+        assert_eq!((stock.0, light.0), (800, 400));
+        assert!((light.1 - stock.1).abs() < 1.5, "{light:?} vs {stock:?}");
+        let ratio = light.2 as f32 / stock.2 as f32;
+        assert!((ratio - 2f32.sqrt()).abs() < 0.1, "{light:?} vs {stock:?}");
     }
 
     #[test]

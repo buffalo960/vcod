@@ -517,6 +517,7 @@ mod tests {
         set(&mut w, "origin[0]", x.to_bits() as i32);
         set(&mut w, "commandTime", time);
         set(&mut w, "speed", 190);
+        set(&mut w, "gravity", 800);
         w
     }
 

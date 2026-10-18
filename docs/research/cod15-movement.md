@@ -453,6 +453,56 @@ takes `framed`, which lands him on retail's float after the script's
   The client predicts no spectator (`predict::predictable`), so the fly
   speed reaches only the server's sims.
 
+### ps.gravity
+
+- Every mover reads the int `ps.gravity` (`ps+0x3c`, UO `ps+0x40`),
+  never a constant: 1.1d's `PM_CrashLand` (0x2fdb4), the jump
+  (0x2ec45), the slick walk (0x2f5a9), the dive (0x31cf9), the
+  ladder's decay (0x33bb2, 0x33bd2), `PM_SlideMove`'s fall (0x34813) and
+  the jump step's cap (0x355f2) `fildl 0x3c(...)` off `pm->ps`. 1.5b's
+  and UO's builds have the same eight loads (1.5b 0x1f8de..0x2a3e8, UO
+  0x243dc..0x2fcdc, each the same function in order). VERIFIED,
+  disassembly. 1.1's cgame loads `ps+0x3c` at seven sites in its pmove
+  range (0x30007bd1..0x3000da2a), so the predictor reads the same field
+  (INFERRED, address range and load shape; the cgame has no symbols).
+- `ClientEndFrame` stores `(int)g_gravity.value` there, truncated
+  (`fistp` under `| 0xc00`), every frame, on all three: 1.1d
+  0x410aa-0x410c3 (then copied to `ps+0x3c`), 1.5b 0x3ad81-0x3ad96, UO
+  0x43278-0x4328d. VERIFIED, disassembly. The `g_speed` store follows it.
+  The wire's 16-bit `gravity` field carries it.
+- `SP_worldspawn` sets `g_gravity` to the map's `gravity` key, default
+  `"800"` (1.1d 0x61df6-0x61e0a, rodata 0x7962c `800`, 0x79630
+  `gravity`, 0x79638 `g_gravity`; 1.5b and UO decompile, same call).
+  VERIFIED. So a `+set g_gravity 400` on the command line is overwritten
+  by the map load; only a later `set` or a script `setCvar` sticks, until
+  the next load. No BSP in the stock 1.1, 1.5 or UO paks holds a
+  `"gravity"` key (VERIFIED, a byte search of all 131).
+- vcod: `PlayerState::gravity`, mirrored onto `ClientSim::gravity` by
+  `GameHost::client_gravity` each frame and stored at the end frame and
+  the spawn; the predictor reads it off the wire (`predict::from_wire`).
+  `spawn::spawn_entities_from_string` writes the worldspawn key.
+
+#### The speedgrav captures
+
+`mp_carentan-dm-slope-8ms-speedgrav-{1.1,1.5,uo}.txt` (2026-10-18): the
+moves script from probe_prone's street placement under
+`client-probes/probe_speedgrav`, `ps.speed` 250 (`+set g_speed 250` on
+1.1d, the script's `maxspeed` 250 on 1.5b and UO, `g_speed` left at 190)
+and `ps.gravity` 400 (`setCvar` after the load) on every snapshot.
+VERIFIED: the 1.5 and UO servers send the `maxspeed`, not `g_speed`, and
+a jump's peak stays 39 to 41 while its flight lasts about `sqrt 2` times
+the stock one. `moves_ab.rs` replays all three through the predictor and
+again with the wire's speed and gravity put back to 190 and 800, which
+must fail; `predict_ab.rs` runs the 1.5 and UO ones through the server
+sim side by side. The 1.5 and UO replays match on every gated field. The
+1.1 one carries two `GAPS` rows that are not about speed or gravity: the
+faster run reaches the kerb wall at x 1656, where (1) the prone press
+leaves the body airborne on the wall's near-vertical face for a second,
+its torso pitch easing 0.01 to 0.02 degrees off retail's and the pitch
+cap's `delta_angles[0]` pushes 1 to 3 shorts off, and (2) one diagonal
+step onto the kerb (ct 62946) reads as if retail stepped a cmd or two
+after vcod. Neither is settled.
+
 ## 6. Weapons and view
 
 - `PM_UpdateAimDownSightLerp` (0x2d1a9): `rechamberWhileAds 0` with

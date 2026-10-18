@@ -1269,6 +1269,13 @@ impl GameHost {
         }
     }
 
+    /// What `ClientEndFrame` stores in every playing body's `ps.gravity`:
+    /// `(int)g_gravity.value`, truncated, on all three servers (1.1d
+    /// game.mp 0x410aa-0x410cc, cod15-movement.md "ps.gravity").
+    pub fn client_gravity(&self) -> i32 {
+        crate::game::builtins::cvar::atof(self.cvars.get("g_gravity")) as i32
+    }
+
     /// The server speaks 1.1's protocol 1.
     pub fn speaks_1_1(&self) -> bool {
         self.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V1.version
