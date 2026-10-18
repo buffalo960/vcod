@@ -1742,8 +1742,11 @@ pub struct ProbeHold {
     /// [`ProbeHold::cmds`], and the snapshot's before it: a cmd stamped
     /// inside [`ProbeHold::lead_ms`] before the newest went out on the
     /// older one.
-    pub seen: [Option<(i32, [f32; 3], [i32; 3])>; 2],
+    pub seen: [Option<SeenSnap>; 2],
 }
+
+/// A snapshot's time, view and `delta_angles`, as [`ProbeHold::seen`] keeps it.
+pub type SeenSnap = (i32, [f32; 3], [i32; 3]);
 
 /// The input changes of a client's `CMDS` lines: each `in=<k>:<buttons>:
 /// <wbuttons>:<up>` as the `serverTime` of the line's `k`-th cmd and the
