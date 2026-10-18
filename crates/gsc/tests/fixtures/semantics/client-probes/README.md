@@ -2305,7 +2305,7 @@ and `crates/common/tests/fixtures/net/{gamestate,snapshots}-dyingpose.bin`,
 gated by `crates/server/tests/dyingpose_ab.rs`. The death clip is a
 `rand()` draw: the gate seeds ours to draw retail's `legsAnim` 20.
 
-## probe_dmgtrig and probe_dmgshot
+## probe_dmgtrig, probe_dmgshot, probe_dmgtouch, probe_belltower, probe_dmgspawn
 
 `trigger_damage` on United Offensive's mp_uo_stanjel
 (docs/research/cod11-combat.md 14.8). `probe_dmgtrig` needs no client: it
@@ -2328,4 +2328,17 @@ cargo run -p vcod -- --game-dir <UO install> --mod-dir uo \
     --probe-uo-weapon direct --probe-secs 48
 ```
 
-Retail's lines are in `crates/server/tests/dmgtrig_ab.rs`.
+`probe_dmgtouch` runs the same client on mp_uo_stanjel through a frag's
+flight with `enableGrenadeTouchDamage` on and off and two panzerschreck
+shells; `probe_belltower` runs it on mp_foy against the belltower, the
+last shell from inside the belfry. Each takes `SECS=75` and
+`--probe-secs 62` with the same command lines (map `mp_foy` for the
+second). A gdb breakpoint on `G_CheckHitTriggerDamage` (run the server
+binary under `gdb -batch` through `COD_LNXDED`, and read the arguments
+off `$ebp+8` on) prints each walk's segment.
+
+`probe_dmgspawn` needs no client: it spawns a `trigger_damage` from
+script on any 1.1d map and blasts at it twice.
+
+Retail's lines are in `crates/server/tests/dmgtrig_ab.rs` (the
+belltower's, the touch walks') and `cod11-combat.md` 14.8 (the spawn).
