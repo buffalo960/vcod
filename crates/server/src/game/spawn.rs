@@ -75,7 +75,8 @@ pub fn spawn_entities_from_string(
         return Err(ErrorKind::BadType("first entity block is not worldspawn"));
     }
     // `SP_worldspawn` (0x61cec) writes 2, the start time, 3, 4 (the
-    // `message` key, 0x61dcc), `g_motd` (0x61dde) and 11, in that order.
+    // `message` key, 0x61dcc), `g_motd` (0x61dde), `g_gravity` (0x61e0a)
+    // and 11, in that order.
     let layout = host.allocators.layout();
     host.configstrings
         .set(layout.level_start, host.level_time_ms.to_string());
@@ -84,6 +85,10 @@ pub fn spawn_entities_from_string(
         .set(4, world.get("message").cloned().unwrap_or_default());
     let motd = host.cvars.get("g_motd").to_string();
     host.configstrings.set(layout.motd, motd);
+    // The map's `gravity` key or 800, over whatever `+set` put there
+    // (cod15-movement.md, "ps.gravity").
+    let gravity = world.get("gravity").map_or("800", String::as_str);
+    host.cvars.set("g_gravity", gravity);
     host.configstrings
         .set(CS_NORTHYAW, worldspawn_northyaw(&world));
     // `G_ParseScrVehicleInfo` runs ahead of every other alias of the level.
@@ -1533,6 +1538,25 @@ mod tests {
         })
         .unwrap();
         assert_eq!(host.configstrings[11], "90");
+    }
+
+    /// `SP_worldspawn` writes `g_gravity` from the map's `gravity` key, 800
+    /// without one (0x61df6-0x61e0a), over whatever was set before the load.
+    #[test]
+    fn worldspawn_sets_g_gravity_from_its_key_or_800() {
+        for (block, want) in [
+            ("{\n\"classname\" \"worldspawn\"\n}\n", "800"),
+            (
+                "{\n\"classname\" \"worldspawn\"\n\"gravity\" \"350\"\n}\n",
+                "350",
+            ),
+        ] {
+            let (mut vm, mut host) = fixture();
+            host.cvars.set("g_gravity", "400");
+            vm.with_cx(|cx| super::spawn_entities_from_string(&mut host, cx, block))
+                .unwrap();
+            assert_eq!(host.cvars.get("g_gravity"), want);
+        }
     }
 
     /// `SP_worldspawn` writes the `message` key into 4 and `g_motd` into

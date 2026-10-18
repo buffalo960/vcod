@@ -525,6 +525,10 @@ pub struct PlayerState {
     /// flight (`SpectatorThink`, 1.5 game.mp 0x389eb). The predictor reads
     /// it off the wire (cod15-movement.md, "ps.speed").
     pub speed: f32,
+    /// `ps.gravity`, which the fall, the jump, the dive, the ladder's decay
+    /// and the slick slide read: `(int)g_gravity` stored by `ClientEndFrame`
+    /// (cod15-movement.md, "ps.gravity").
+    pub gravity: f32,
     /// Plane normal of that surface; persists while off the wall so the
     /// airborne probe can stick with the ladder we left.
     pub ladder_normal: Vec3,
@@ -839,6 +843,7 @@ impl PlayerState {
             on_ladder: false,
             weapon_disabled: false,
             speed: SPEED_RUN,
+            gravity: GRAVITY,
             ladder_normal: Vec3::ZERO,
             since_jump_ms: f32::INFINITY,
             jump_latched: false,
@@ -1915,11 +1920,11 @@ fn crash_land(ps: &mut PlayerState, start_vz: f32, dead: bool, events: &mut Vec<
     }
     // Retail solves the impact speed and squares it back over 2g; this is the
     // same height in closed form, and no landing at all when it has no root.
-    let den = start_vz * start_vz + 2.0 * GRAVITY * (ps.move_start.z - ps.origin.z);
+    let den = start_vz * start_vz + 2.0 * ps.gravity * (ps.move_start.z - ps.origin.z);
     if den < 0.0 {
         return 0;
     }
-    let height = den / (2.0 * GRAVITY);
+    let height = den / (2.0 * ps.gravity);
     let sf = ps.ground_surface_flags;
     let damage = if dead {
         0
@@ -2721,7 +2726,7 @@ fn enter_prone(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) {
             } else {
                 DIVE_HEIGHT_STAND
             };
-            ps.velocity.z = (2.0 * height * GRAVITY).sqrt();
+            ps.velocity.z = (2.0 * height * ps.gravity).sqrt();
             ps.on_ground = false;
             ps.ground_plane = None;
         }
@@ -3738,7 +3743,7 @@ fn walk_move(
     // Q3's slick-or-knockback gravity, which the clip below turns into
     // ground speed.
     if sliding {
-        ps.velocity.z = (f64::from(ps.velocity.z) - f64::from(GRAVITY) * f64::from(dt)) as f32;
+        ps.velocity.z = (f64::from(ps.velocity.z) - f64::from(ps.gravity) * f64::from(dt)) as f32;
     }
     // The clip onto the ground keeps the speed whenever it leaves the
     // velocity pointing the same way (0x2f5b8-0x2f6b3), so a landing that
@@ -3883,14 +3888,14 @@ fn check_jump(
     ps.jump_latched = true;
     match ps.rules {
         MoveRules::V1_1 => {
-            ps.velocity.z = (2.0 * JUMP_HEIGHT * GRAVITY).sqrt();
+            ps.velocity.z = (2.0 * JUMP_HEIGHT * ps.gravity).sqrt();
             ps.jump_origin_z = ps.origin.z + JUMP_HEIGHT;
         }
         MoveRules::V1_5 | MoveRules::Uo => {
             // 1.5's takeoff (0x1f882): the penalty divides the squared
             // speed, then restarts with the timer stopped until the landing,
             // and the origin is the takeoff height itself.
-            let mut v2 = 2.0 * JUMP_HEIGHT * GRAVITY;
+            let mut v2 = 2.0 * JUMP_HEIGHT * ps.gravity;
             if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
                 v2 = (f64::from(v2) / f64::from(jump_penalty_scale(ps.knockback_ms))) as f32;
             }
@@ -4026,7 +4031,7 @@ fn ladder_move(
     if f == 0.0 {
         // no climb key: vertical velocity decays toward zero by gravity
         // instead of falling (0x33b95-0x33bf9)
-        let g = GRAVITY * dt;
+        let g = ps.gravity * dt;
         if ps.velocity.z > 0.0 {
             ps.velocity.z = (ps.velocity.z - g).max(0.0);
         } else {
@@ -4124,7 +4129,7 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
     if gravity {
         // The x87 keeps `v - g * frametime` unrounded into the average and
         // rounds each store once (0x34811-0x34838).
-        let mut end_z = f64::from(ps.velocity.z) - f64::from(GRAVITY) * f64::from(dt);
+        let mut end_z = f64::from(ps.velocity.z) - f64::from(ps.gravity) * f64::from(dt);
         end_velocity.z = end_z as f32;
         if ps.rules.v15() || world.world.arith() == crate::patch::Arith::Msvc {
             // 1.5b stores it first (0x28e34) and averages the float
@@ -4449,7 +4454,7 @@ fn step_slide(
         ps.velocity.z = if left < 0.1 {
             0.0
         } else {
-            ps.velocity.z.min((2.0 * left * GRAVITY).sqrt())
+            ps.velocity.z.min((2.0 * left * ps.gravity).sqrt())
         };
     }
     // The step-up and the snap both reach this, and so does a reverted step:
