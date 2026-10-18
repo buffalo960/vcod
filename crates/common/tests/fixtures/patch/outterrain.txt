@@ -1,0 +1,21 @@
+# Retail 1.1d, 2026-10-18: straight down 400 units from spots 8 units over
+# mp_powcamp's terrain past its playable walls, where the BSP walk enters
+# only solid leaves, which list no partition: a bulletTrace (hitCharacters
+# false: map, spot, `point`, fraction, end z) and a script-spawned
+# mpweapon_kar98k falling under G_RunItem (map, spot, `item`, its z 3 s
+# later). An item's (-1,-1,-1)..(1,1,1) sweep is a capsule. Neither trace
+# clips the terrain; vcod's BVH stopped both on it at about 0.02.
+# Recipe (dm, no client):
+#   COD_DIR=<1.1 install> tools/run_probe.sh client-probes/probe_outterrain mp_powcamp
+mp_powcamp 2621.4 -1478.0 93.5 point 1 -306.50
+mp_powcamp 3019.1 3012.3 205.2 point 1 -194.80
+mp_powcamp 1248.4 6964.5 197.5 point 1 -202.50
+mp_powcamp 3755.4 2968.9 161.3 point 1 -238.70
+mp_powcamp 2306.4 7020.1 262.4 point 1 -137.60
+mp_powcamp 1827 6983 206 point 1 -194.00
+mp_powcamp 2621.4 -1478.0 93.5 item -3387.50
+mp_powcamp 3019.1 3012.3 205.2 item -3275.80
+mp_powcamp 1248.4 6964.5 197.5 item -3283.50
+mp_powcamp 3755.4 2968.9 161.3 item -3319.70
+mp_powcamp 2306.4 7020.1 262.4 item -3218.60
+mp_powcamp 1827 6983 206 item -3275.00

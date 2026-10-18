@@ -632,8 +632,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   (`bsp-ibsp59-format.md`, "The leaf walk"). So is a sweep whose contact
   nearly ties another (brushes a float step apart, terrain within its
   1e-5 back-off of a brush or a partition, a submodel against the world)
-  and a box stopped at fraction 0: leaf order names the surface a body
-  standing on two floors steps on.
+  and a box stopped at fraction 0, a capsule stopped there on two
+  contacts or starting all in solid, and a sweep stopped on terrain no
+  leaf on its walk lists (out of the world it never clips): leaf order
+  names the surface a body standing on two floors steps on.
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule

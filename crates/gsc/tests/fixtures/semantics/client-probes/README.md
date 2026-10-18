@@ -285,6 +285,19 @@ cargo run -p vcod -- --net-probe 127.0.0.1:28970 --save-turret --probe-secs 170
 The server's `PROBE` lines and `games_mp.log`'s `D;`/`K;` records are the
 retail evidence a later capture reads; this probe itself writes no fixture.
 
+On United Offensive the same placement feeds `predict_ab`'s turret
+capture: one allied `--save-slope` client mounts, sweeps, fires and lets go
+(`docs/research/coduo-movement.md` 15):
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=75 \
+    tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1
+# second shell, about 10 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --game-dir <UO install> --mod-dir uo \
+    --save-slope --slope-every-state --probe-team allies --probe-weapon m1carbine_mp \
+    --probe-uoturret 229 --probe-cmd-ms 8 --capture-tag uoturret-uo --probe-secs 60
+```
+
 `probe_pose 1` is the pose measurement of `docs/research/cod11-combat.md`
 16.2: every hit logs `PROBE hit <time> <clientnum> <sHitLoc> <iDamage>
 <point>` and none lands. The target flips its own view pitch and logs the
