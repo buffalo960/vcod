@@ -5438,6 +5438,19 @@ trace fraction into it, and the fraction it snaps the origin back with is the
 1.5-unit trace's, not the move trace's. Reproducing the committed arcs to
 within 0.1 units needed both.
 
+VERIFIED, `missile_ab.rs` on 2026-10-18: on every one of the three throws'
+`!missile` samples (all 1.1d, through the bounces, the rest and the explode
+frames) our `pos` matches retail's field for field at the probe's one
+decimal (`traj_str`), `trTime` counted from the pullback (a resting one's
+is 0 on both). The gate compares those strings, with no distance
+tolerance. VERIFIED, same run: `apos` does not match past `trType`. Its
+`trDelta` is the throw's random spin (703.5, 0, 335.9 on retail's
+`cook_release`, 679.8, 0, 344.8 on ours), a different draw on ours, and
+retail's pitch rate changes at every bounce (593.7, -474.7, 323.1 on
+`cook_release`'s first three) where ours keeps the throw's
+(`G_MissileLandAngles` is not read, `missile.rs`), so the gate still
+compares only the `apos` `trType`.
+
 VERIFIED, off the same lines: the exploded entity stays on the wire for about
 300 ms after the event frame, which is `EVENT_VALID_MS` in the file. Retail's
 `freeAfterEvent` frees it once the event has been sent to everyone who can

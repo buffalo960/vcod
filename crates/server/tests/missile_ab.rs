@@ -4,10 +4,10 @@
 //!
 //! What is compared is the flight from the pullback on: the frame the
 //! missile first reached the wire, how many bounces the contact loop
-//! produced, where the arc had reached at each of retail's samples, when the
-//! fuse went off and where and how it came to rest. A flight that runs on into
-//! the steps after its throw is followed there, so a long cook's explode is
-//! compared too. Both sides are timed from the first snapshot whose
+//! produced, the wire `pos` at each of retail's samples to the capture's
+//! one decimal, when the fuse went off and where and how it came to rest. A
+//! flight that runs on into the steps after its throw is followed there, so
+//! a long cook's explode is compared too. Both sides are timed from the first snapshot whose
 //! playerstate reads the pullback, not from the step's first snapshot, which
 //! on retail is wherever the probe's next snapshot landed
 //! (`docs/research/cod11-combat.md` 13.4).
@@ -27,14 +27,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use vcod_common::net::msg::EntityState;
 use vcod_common::net::protocol::PROTOCOL_V1;
 use vcod_common::net::trajectory::{TR_STATIONARY, Trajectory};
-
-/// How far our arc may sit from retail's at one of its samples. A bounce
-/// resolved a millisecond earlier or later moves the rest of the flight by
-/// about this much, and the impact time retail interpolates is whole
-/// milliseconds (`docs/research/cod11-combat.md` 12.4).
-const POS_TOL: f32 = 8.0;
-/// How far our resting height may sit from retail's.
-const REST_TOL: f32 = 1.0;
 
 const ET_MISSILE: i32 = 4;
 const EV_GRENADE_BOUNCE: i32 = 177;
@@ -359,24 +351,43 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
                 "{label}: exploded {re:?} ms after the pullback on retail, {oe:?} on ours"
             ));
         }
-        // Per retail sample, where our arc had reached at the same time.
-        let mut worst = (0.0f32, String::new());
+        // Per retail sample, our `pos` on the snapshot at the same time
+        // after the pullback, as the probe prints it (`traj_str`, one
+        // decimal), so the whole wire trajectory matches to the capture's
+        // precision. A moving one's `trTime` counts from the pullback; a
+        // resting one's is 0 on both.
+        let wire = |tr: &Trajectory, at: i32| {
+            let time = if tr.tr_type == TR_STATIONARY {
+                tr.tr_time
+            } else {
+                tr.tr_time - at
+            };
+            format!(
+                "{},{time},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1}",
+                tr.tr_type, tr.base.x, tr.base.y, tr.base.z, tr.delta.x, tr.delta.y, tr.delta.z
+            )
+        };
+        let mut pos_rows = 0;
         for rs in &r {
             let t = rs.server_time - ra;
-            let want = rs.at(rs.server_time);
-            let Some(os) = o.iter().rev().find(|os| os.server_time - oa <= t) else {
+            let Some(os) = o.iter().find(|os| os.server_time - oa == t) else {
+                bad.push(format!(
+                    "{label}: no snapshot of ours {t} ms after the pullback"
+                ));
                 continue;
             };
-            let got = os.at(oa + t);
-            let d = (want - got).length();
-            if d > worst.0 {
-                worst = (
-                    d,
-                    format!(
-                        "{label}: {t} ms after the pullback retail {want:?} ours {got:?} ({d:.1} apart)"
-                    ),
-                );
+            let (rw, ow) = (wire(&rs.pos, ra), wire(&os.pos, oa));
+            if rw != ow {
+                pos_rows += 1;
+                if pos_rows <= 3 {
+                    bad.push(format!(
+                        "{label}: {t} ms after the pullback pos retail {rw} ours {ow}"
+                    ));
+                }
             }
+        }
+        if pos_rows > 3 {
+            bad.push(format!("{label}: {} more pos rows differ", pos_rows - 3));
         }
         // The ring the flight ended on, events and parms.
         let ring = |ss: &[MissileSample]| {
@@ -399,12 +410,8 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
         );
         eprintln!(
             "{label}: on the wire retail +{rw} ours +{ow}, bounces retail {rb} ours {ob}, \
-             explode retail {re:?} ours {oe:?} (ms after the pullback), worst position {:.1} units",
-            worst.0
+             explode retail {re:?} ours {oe:?} (ms after the pullback), {pos_rows} pos rows differ"
         );
-        if worst.0 > POS_TOL {
-            bad.push(worst.1);
-        }
         // The blast the explode left for the radius damage pass, on the
         // frame the event reached the wire.
         if let Some(oe) = explode_at(&o) {
@@ -419,8 +426,8 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
                 ));
             }
         }
-        // The rest: same trajectory type and height, at the last sample
-        // before either exploded.
+        // The rest: same trajectory type, at the last sample before either
+        // exploded (its height is in the pos rows above).
         let (rl, ol) = (
             r.iter().take_while(|s| s.e_type == ET_MISSILE).last(),
             o.iter().take_while(|s| s.e_type == ET_MISSILE).last(),
@@ -430,12 +437,6 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
                 bad.push(format!(
                     "{label}: retail settled at trType {}, ours {}",
                     rl.pos.tr_type, ol.pos.tr_type
-                ));
-            }
-            if rl.pos.tr_type == TR_STATIONARY && (rl.pos.base.z - ol.pos.base.z).abs() > REST_TOL {
-                bad.push(format!(
-                    "{label}: retail rested at z {}, ours {}",
-                    rl.pos.base.z, ol.pos.base.z
                 ));
             }
             eprintln!(
