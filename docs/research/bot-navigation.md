@@ -1200,9 +1200,17 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   unstick. On the ground more than 48 under its waypoint, with no ladder
   leading there, the bot fell off the path: it plans again at once, round
   the edge it fell off. On the ground more than a jump over its waypoint,
-  within 24 of it flat and more than a step under the edge's top, it
+  within 24 of it flat and more than a jump under the edge's top, it
   landed partway down a drop and plans again too, the edge kept
-  (2026-10-18b, below). On the ground on a run-off drop's top, the
+  (2026-10-18b, below; a jump, not a step, since 2026-10-18d). On the
+  ground off the rungs, it holds still for up to 60 ticks while its step
+  toward the waypoint would close within two half-widths and 6 flat of
+  a climber rising under it whose top is less than 48 under its feet,
+  unless the waypoint is more than a jump down; and of two bodies
+  pressed together on the ground (within two half-widths and 2 flat,
+  a step in z), both slower than 20 units/s for 10 ticks and within
+  48 of the waypoint, the one farther from it steps 24 back from the
+  other for 20 ticks (2026-10-18d, below). On the ground on a run-off drop's top, the
   waypoint more than a jump under it and more than 24 off flat, slower
   than 20 units/s, where the forward walk from the body at its pace no
   longer lands, it plans round the edge (2026-10-18c, below). That plan starts not at the node nearest the body
@@ -3255,6 +3263,78 @@ row: 0 / 0 / 0 and 1 / 6 / 1 on both. Without the rule's "once" (below)
   master too). Seed 1239's ledge death no longer reproduces on master.
   The stalls are seed 2553's 49 (hull crates at (5790-5830, 550-600)),
   995's 14, 3443's 13 and 1109's 7.
+
+The 2026-10-18d round, on master 1080e30d. VERIFIED (measured, same
+detector and settings, release, seeds 1-4607 odd; ours only):
+
+| | stalled bot-ticks | falls | deaths |
+|---|---|---|---|
+| master 1080e30d | 88 | 8 | 4 |
+| rising hold and the drop's own slope | 205 | 8 | 2 |
+| and of two pressed bodies one gives way (kept) | 40 | 8 | 1 |
+
+`mp_depot` and `mp_hurtgen`, seeds 1-191 odd: 0 / 0 / 0 and 1 / 6 / 1
+on master and the kept row alike.
+
+- Seed 1307, the crow's nest top (traced, both bots' cmds and
+  playerstates): bot 2 stepped east from (4928, 61, 1254) toward the
+  rim node (4964, 36, 1219) with forward 127 at yaw -36.5 while bot 1
+  climbed the hatch's rungs at (4960, 63, 1187), 24 units off flat.
+  Bot 1's box (top 1257) met bot 2's (feet 1254), and the end frame's
+  `StuckInClient` (`game::stuck`, cod11-player-clip.md 6) set bot 2's
+  velocity from (102, -75) to (-183, -53), `ps.speed` along their
+  separation, with the 300 ms knockback timer: the westward "shove" of
+  the 10-18c follow-up. It ran off the top's west side and fell to 494.
+  Now a body on the ground off the rungs holds still for up to 60 ticks
+  while its step toward the waypoint would close within two half-widths
+  and 6 flat of a climber rising under it, the climber's top less than
+  48 under its feet (`Follower::rising_hold`,
+  `nav::tests::a_body_holds_still_over_a_climber_rising_under_it`).
+  Not toward a waypoint more than a jump down: the ladder waits own a
+  body bound down the climber's own ladder.
+- Seed 2245, the dome at (3648, -317, 618) over the hold (traced, with
+  scratch point traces): the bot passed the dome node for the drop to
+  (3680, -318, 352) and backed onto the dome's 45 degree east face; on
+  the ground 23 under the node, 244 over the waypoint and 15 from it
+  flat, it read as a landing partway down (2026-10-18b), planned again
+  from there, headed for (3647, -353, 611) and walked off the dome's
+  south side. The partway rule now needs the body more than a jump (39)
+  under the edge's top, not a step (18): the slot's ledge at 336 is 60
+  under its top at 396
+  (`nav::tests::a_body_on_a_drops_own_slope_keeps_the_drop`, which fails
+  with the step).
+- Seed 3223, the run the two rules parted: bots 4 and 5 climbed the
+  ladder at x 3792 one 72-76 over the other, at y 80-89 and y 44-55,
+  both outside the hatch's lane (y 58-72, 10-12h). The upper bobbed
+  under the hatch's lip while the lower caught up (2.2 against 4.7
+  units a tick); outside `ABREAST_HEIGHT` neither gave way on the
+  rungs, and on the plate at x 3800 each pressed toward (3779, 64, 623)
+  at the lane the other's capsule stood in for 180 ticks (111 stalled
+  bot-ticks). `unpin_yaw` traces the world only, so a pin on a body has
+  no heading out. Now of two bodies pressed together on the ground,
+  both slower than `UNPIN_SPEED` for 10 ticks and within 48 of the
+  waypoint, the one farther from it (of two level, the later in
+  (y, x)) steps 24 back from the other for 20 ticks
+  (`Follower::pressed_yield`,
+  `nav::tests::of_two_bodies_pressed_together_one_gives_way`). A taller
+  `ABREAST_HEIGHT` would send the lower of every two climbers on one
+  ladder back down. With it, seed 2553's hull crates (49 on master)
+  and seed 995's (14) run clean as well.
+- Untraced by a fix: seed 4231 (on master): passed the dome node
+  (3615, -345, 635) at `REACH` 6.5 under it while climbing the dome,
+  turned for (3584, -349, 640) and flew off the crest south. The walk on
+  from the body at its pace, with the pace's rise or without, lands on
+  the dome's south face at (3591, -380, 622), a few units from its edge;
+  the bot flew 14 units further south and fell. A level edge whose walk
+  on leaves the ground over a fall that kills has no aside test (the
+  2-unit one is the drops'). Seed 2491 (on master): an unstick spell on
+  the dome's west side. Seed 2553 on master: two bots on the crate top at
+  92 by the stringer at x 5812, hopping on jump edges onto the stairs
+  (7289 to 7291 at 132, 7487 to 6850 at 76) that land back where they
+  started. All three run clean on the kept row (runs that parted).
+- Left on the kept row: the death is seed 4215 (the hold under
+  (3684, -406, 92), the 10-12 family); the stalls are 3443's 13, 3435's
+  9, 825's and 3971's 6, 3493's 4 and two of 1.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their

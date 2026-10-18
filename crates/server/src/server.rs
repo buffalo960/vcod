@@ -4597,6 +4597,17 @@ impl Server {
                         view.waypoint = Some(p);
                         view.stop = true;
                     }
+                    if let Some(w) = view.waypoint
+                        && let Some(p) = follower.rising_hold(at.into(), w.into(), body, &others)
+                    {
+                        view.waypoint = Some(p.into());
+                        view.stop = true;
+                    }
+                    if let Some(w) = view.waypoint
+                        && let Some(p) = follower.pressed_yield(at.into(), w.into(), body, &aground)
+                    {
+                        view.waypoint = Some(p.into());
+                    }
                     view.run_off = !body.on_ladder
                         && follower.running_off(
                             &g,
