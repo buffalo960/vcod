@@ -6662,9 +6662,35 @@ The other walks and links (2026-10-18):
   a leaf on every path down the BSP and appends each leaf it reaches
   (0x8054054), so it never returns 0 and the unlink never runs.
 
-Not routed through the tree: a linked turret's `G_GeneralLink` from its
-think (`turret_think` 0x5328c), which vcod makes on the turret's turn of
-the pass (`link::run_linked`), not from the gunner's end frame; the
+- VERIFIED, `TeleportPlayer` (1.1d 0x51380, 1.5b and UO alike): it reads
+  `ent+0xf0` (0x513dc; 1.5b 0x50dc8, UO `ent+0xf4` 0x5a3f8), unlinks
+  (0x513e6), writes the lifted `ps.origin` into `r.currentOrigin`
+  (0x51457..0x51469) and links again when the read was non-zero (0x5146f,
+  0x51477). INFERRED, off the 0xf0 and 0xf4 offsets
+  (`sizeof(entityState_t)`, `r` first): the read is `r.linked`. INFERRED,
+  off those branches: a turret's release, from `turret_think_client` in the gunner's end frame
+  or from `G_FreeTurret`, files him at the mount spot, at the head of his
+  node's list, ahead of his next cmd's link. vcod links there
+  (`ScriptRuntime::teleport_link`); a `G_FreeTurret` release links in
+  the gunner's end frame, where vcod applies it, not in the deleting
+  thread. `ClientSpawn`'s release (0x426e1) is followed by its own unlink
+  (0x42708) and the spawn's link, so vcod skips it there. 1.5b's and UO's
+  extra block after the lift tests `eFlags | 0xc000` (1.5b 0x50e44),
+  never zero, so it never runs. `turret_ab`'s
+  `the_release_links_the_gunner_where_it_put_him` and
+  `deleting_a_manned_turret_releases_its_gunner` read the link.
+- VERIFIED, UO `VEH_UnlinkPlayer` (0x89fb2): `G_EntUnlink` (0x8a1ac) and
+  `SetClientOrigin` (0x8a463), and neither `SetClientOrigin` (0x44210)
+  nor anything else there calls `trap_LinkEntity`. INFERRED: a dismount
+  leaves the rider filed where his seat link put him until his next cmd,
+  as vcod does.
+
+- A linked turret's `G_GeneralLink` comes from its own think
+  (`turret_think` 0x5328c, `nextthink` +50 so every frame), on its turn of
+  the entity pass, not from the gunner's end frame; vcod links it on the
+  same turn (`link::run_linked`, then the think).
+
+Not routed through the tree: the
 relink `G_RunFrame` makes of every client when `g_bounds_width` or
 `g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
 `func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the

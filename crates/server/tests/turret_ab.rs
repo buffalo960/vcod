@@ -1070,6 +1070,41 @@ fn use_on_the_gun_lets_go_and_the_barrel_walks_home() {
     assert_eq!(s.turret_angles2[1], 0.0);
 }
 
+/// `TeleportPlayer`'s link (combat doc 14.7): the release files the gunner
+/// in the area tree where it put him, in the end frame of the use cmd,
+/// ahead of his next cmd's link.
+#[test]
+fn the_release_links_the_gunner_where_it_put_him() {
+    let Some(mut rig) = rig_with(&[]) else {
+        return;
+    };
+    let slot = rig.gunner_second as u32;
+    rig.tap(BUTTON_USE);
+    rig.hold(2);
+    let mounted = rig.sv.test_area_link(slot).expect("the gunner is linked");
+    let h = rig.still();
+    let s = rig.frame([
+        UserCmd {
+            buttons: h.buttons | BUTTON_USE,
+            ..h
+        },
+        h,
+    ]);
+    assert_eq!(s.viewlocked, 0, "released");
+    let (absmin, absmax) = rig.sv.test_area_link(slot).expect("linked again");
+    let centre = [0, 1].map(|i| (absmin[i] + absmax[i]) * 0.5);
+    assert!(
+        (centre[0] - s.origin[0]).abs() < 0.01 && (centre[1] - s.origin[1]).abs() < 0.01,
+        "filed at {centre:?}, released at {:?}, mounted box {mounted:?}",
+        s.origin
+    );
+    assert!(
+        (absmin[2] - (s.origin[2] - 1.0)).abs() < 0.01,
+        "linked at the lifted origin: {absmin:?} for {:?}",
+        s.origin
+    );
+}
+
 /// `turret_think_client`'s `sessionstate` test (turrets doc 8): a gunner
 /// killed on the gun lets go that frame, and the gun is free for its next
 /// life. The clone happens before the release, but the corpse's fields are
@@ -1166,6 +1201,17 @@ fn deleting_a_manned_turret_releases_its_gunner() {
     assert_eq!(s.viewlocked, 0);
     assert_eq!(s.viewlocked_ent, 1023);
     assert_eq!(s.e_flags & 0xC000, 0);
+    // `G_FreeTurret`'s `TeleportPlayer` links him where it put him.
+    let (absmin, absmax) = rig
+        .sv
+        .test_area_link(rig.gunner_second as u32)
+        .expect("linked");
+    let centre = [0, 1].map(|i| (absmin[i] + absmax[i]) * 0.5);
+    assert!(
+        (centre[0] - s.origin[0]).abs() < 0.01 && (centre[1] - s.origin[1]).abs() < 0.01,
+        "filed at {centre:?}, released at {:?}",
+        s.origin
+    );
 }
 
 /// A gunner who drops: `G_FreeEntity` on the player clears the gun's owner

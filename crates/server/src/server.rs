@@ -3815,6 +3815,13 @@ impl Server {
         ))
     }
 
+    /// Test-facing: entity `ent`'s box in the area tree (`r.absmin`,
+    /// `r.absmax`), `None` while it is not linked.
+    pub fn test_area_link(&self, ent: u32) -> Option<([f32; 3], [f32; 3])> {
+        let link = self.script.as_ref()?.host.area.last_link(ent)?;
+        Some((link.absmin, link.absmax))
+    }
+
     /// Test-facing: whether submodel `m`'s brushes clip.
     pub fn test_model_linked(&self, m: usize) -> bool {
         self.world
@@ -7611,7 +7618,7 @@ impl Server {
                 // A gun deleted this frame queued its release for here; the
                 // spawn comes after it, as `G_FreeTurret` ran first in retail.
                 rt.apply_turret_releases(s.slot, sim);
-                let temps = rt.release_turret(s.slot, sim);
+                let temps = rt.release_turret(s.slot, sim).unwrap_or_default();
                 // And a vehicle seat (`ClientSpawn` 0x44df4).
                 if sim.seat.is_some() {
                     rt.with_host(|host, cx| {
@@ -8313,7 +8320,9 @@ impl Server {
                 );
                 rt.set_client_body(slot, sim.hit_body(slot));
                 rt.set_client_dobj(slot, sim.dobj(slot));
-                rt.apply_turret_releases(slot, sim);
+                if rt.apply_turret_releases(slot, sim) {
+                    rt.teleport_link(slot, sim);
+                }
                 let shot = rt.turret_think_client(
                     slot,
                     sim,
