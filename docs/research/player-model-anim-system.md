@@ -83,6 +83,10 @@ One skeleton, two anims, one tree. `pt_*` clips key only the upper body (spine u
 
 Inputs are all transmitted in entityState: `fTorsoPitch` (232), `fWaistPitch` (236), `fTorsoHeight` (228), `leanf` (212), `animMovetype` (224, 4 bits).
 
+### 1.5's and UO's stance window, drawn
+
+The cgame's lerp-frame setter carries the same 400 ms window as the server's (`coduo-vehicles.md` 13): 1.5's `cgame_mp_x86.dll` 0x30003870 stores `cg.time + 400` at `ci+0x4a4`, UO's `uo_cgame_mp_x86.dll` 0x30003a90 at `ci+0x4c0`, when the legs frame (`ci+0x380` on UO) changes crouch or prone class, and floors every later blend of either frame to what is left of it (VERIFIED decompile). 1.1's cgame has no such store. vcod's drawn bodies (`entities.rs`, `update_channels`) run `ChannelClock::update_windowed` off 1.1, one window per drawn entity; the cgame keeps it per client info, so a corpse sharing the dead client's info could read his last window, which vcod does not model (INFERRED). Not measured against a retail client's draw (pixels).
+
 ### The prone body on a grade
 
 VERIFIED, live (retail 1.1d, 2026-10-16, `client-probes/probe_pronebones`, fixtures in `crates/server/tests/fixtures/pronebones/`): a prone client facing downhill on mp_carentan's ~19 degree mound (-224, 60) has his pelvis at (5.92, 24.36, -0.03) off his origin and his feet about 10 under it, where on flat ground the pelvis sits 6.27 above the origin. vcod's server pose puts all eight logged bones (pelvis, spine2, neck, head, both hands, both feet) within 0.03 of retail's offsets on the mound, on flat ground on mp_carentan and on mp_brecourt's field at (1659, 781). With the slope terms zeroed, the mound's pelvis lands 5.8 too high. The bones are read through a `script_origin` linked to each tag, which shows the pose a frame late, so a still body is what the probe measures.
