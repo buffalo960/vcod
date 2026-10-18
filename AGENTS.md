@@ -105,7 +105,10 @@ check.
   1.1 tests and gates, at a UO install (`uo/` beside 1.5's `main/`) the UO
   ones and whatever reads only data the two share. A test that asserts 1.1's
   assets or replays a 1.1 capture takes `testing::game_fs_11()`, `None` at a
-  1.5 or UO install; a UO one takes `testing::uo_fs()`.
+  1.5 or UO install; a UO one takes `testing::uo_fs()`. One that asserts
+  what the stock paks hold (menus, game types, a census) takes
+  `testing::stock_fs()` / `stock_fs_11()`, the `--vanilla` search path,
+  so a third-party pak in `main/` cannot fail it.
 - `ci.yml` runs on ubuntu with no game data, so a new test needing paks
   returns early through `game_fs()` or uses `Pk3Fs::empty()`: no pak test
   and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
