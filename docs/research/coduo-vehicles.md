@@ -1066,7 +1066,12 @@ probe client cmd's travel (INFERRED, the gsc reads it after however many
 of the probe's cmds a frame ran: retail's flight steps 14, 3.8 and 17.6
 units over three frames where ours steps 10.6 each). Where a prone
 victim lies down is the probe client's timing too: retail's two prone
-runs lie 1.1 units apart.
+runs lie 1.1 units apart. The same captures carry the Horch's own ram
+sounds as it strikes the Panzer past the victim, `EV_SOUND_ALIAS` parm 7
+(`vehicle_impact`) at z 1825 and 2409 over the struck hull, 1300 and 2100
+ms after the jeep's first move in the standing run (VERIFIED, capture);
+the gate matches each one's time from that move, alias and snapped
+origin on ours (`compare_impacts`).
 
 ## 12. The drive step
 
