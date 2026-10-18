@@ -4170,9 +4170,7 @@ impl Server {
             let Some(c) = c else { continue };
             c.ping = if c.is_bot && self.bots.contains_key(&slot) {
                 0
-            } else if c.is_bot {
-                999
-            } else if c.state != ClientState::Active || c.sim.is_none() {
+            } else if c.is_bot || c.state != ClientState::Active || c.sim.is_none() {
                 999
             } else {
                 c.calc_ping()

@@ -1658,6 +1658,17 @@ userinfo values one after another, and `rcon status` for the slots.
   and the first snapshot one tick after the entering cmd. VERIFIED
   (capture, same relay). Before this change vcod sent a client neither,
   and off the LAN the first snapshot waited out the primed interval.
+- Live, 2026-10-18, `--probe-edge watch` joining 1.1d on loopback
+  (`tmp/netsmall3/r11`): the gamestate is message 1 and the first
+  snapshot message 2, since retail handles the connect and the client's
+  first message as they arrive, between frames, and the client answers
+  each before the next frame. VERIFIED (capture). vcod-server read
+  packets only at a tick's start and sent the tick's output at its end,
+  so its `connectResponse` left after the frame had already sent the new
+  client a bare message 1, and the gamestate was 2 and the first snapshot
+  3. `vcod-server`'s loop now handles a packet that arrives between ticks
+  at once and sends what it answers; the same probe against it reads
+  gamestate 1, first snapshot 2. VERIFIED (capture, 2026-10-18).
 
 ### The gamestate goes out fragmented (`SV_SendClientGameState` 0x8085eec)
 
