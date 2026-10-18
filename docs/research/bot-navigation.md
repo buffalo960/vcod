@@ -2040,6 +2040,24 @@ fixes followed, each traced tick by tick:
   2 on `mp_ship` (96 475 to 96 473), none elsewhere, and the spawn census
   does not move. With it the trap's spells over the 96 seeds went from 35
   to 0.
+- The drain test's cmd splits. VERIFIED (retail, `client-probes/probe_wedge`
+  on `cod_lnxded` 1.1d with a `--probe-fall` client, its trial spots
+  set by hand to the three spots the walk from (385.2, 2831.8, -22.2)
+  slides over under each of vcod's same-plane tests, 2026-10-18): a body
+  left at rest at (385.42, 2813.30, -29.90) comes to rest in the air at
+  (412.85, 2797.97, -65.12) and stays there; one at (385.52, 2813.39,
+  -29.87) slides into the crease at (436.76, 2824.27, -97.24); both are
+  held off the ground. Ones at (383.21, 2802.26, -42.12) and (383.39,
+  2802.37, -42.10) rest at (391.9, 2794.5, -58.0), and ones near (382.8,
+  2795.3, -50.6) at (385.1, 2792.8, -55.4). VERIFIED (measured): ours under
+  one 50 ms cmd a tick lets go of the first spot after `PM_SlideMove`'s
+  0.999 (cod11-mantle.md, "The slide's same-plane test") and of the
+  second before it, and holds each under one of a client's 16/17 ms
+  splits; a few tenths of a unit or a cmd split decide it on that slope.
+  The drain test (`nav::drains`) asks the bot's 50 ms cmds and the three
+  phases of a 60 Hz client's and takes a hold under any. It refuses 18
+  more of mp_hurtgen's 209 877 edges (`nav_build`, 1.1), moves at most 12
+  on four other stock maps, and no spawn census.
 - mp_hurtgen's crease, an unstick heading. VERIFIED (measured, seed 67
   bot 5): a spell picked off the ground at (340, 2756, -78) ran the bot
   north-east over (390.6, 2778.7, -52.2) and (411.7, 2786, -57.7) onto the

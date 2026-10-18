@@ -679,23 +679,6 @@ const CROUCHJUMP_UO: [(&str, &str); 12] = [
     ),
 ];
 
-/// The 8 ms low-window run's ct 22491 on UO: from ct 22466 the body
-/// slides along patch 462 on terrain 1536, and its second bump's crease
-/// test (`dot(clipped, plane_i) >= 0`, 1.5b 0x295c8, kept on the stack)
-/// reads +3.5e-8 under the stored build, so ours slides on where retail
-/// takes the crease and stops (velocity 0 at 22474) before walking on.
-/// The 1.1d arithmetic answered -4.6e-8 and matched by chance; with the
-/// stored terrain clip and planes (`Terrain::clip_capsule`, `PointPlanes::v22`)
-/// and the stored `PM_ClipVelocity` and `VectorNormalize` every other
-/// snapshot of the UO and 1.5 captures matches to the bit, so the last bit
-/// that flips this sign is upstream and not found (cod15-movement.md 7).
-const CROUCHJUMP_LOW_GAPS: &[(&str, usize)] = &[
-    ("bobCycle", 1),
-    ("movementDir", 1),
-    ("origin.xy", 1),
-    ("velocity", 1),
-];
-
 #[test]
 fn the_predictor_replays_uo_jumps_through_low_windows() {
     let mut failures = Vec::new();
@@ -708,12 +691,7 @@ fn the_predictor_replays_uo_jumps_through_low_windows() {
         let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
         print(file, &r);
         assert!(r.compared > 120, "{file}: only {} snapshots", r.compared);
-        let gaps = if file == "mp_streets-dm-slope-8ms-crouchjump-low.txt" {
-            CROUCHJUMP_LOW_GAPS
-        } else {
-            &[]
-        };
-        failures.extend(over(&r, gaps).into_iter().map(|f| format!("{file}: {f}")));
+        failures.extend(over(&r, &[]).into_iter().map(|f| format!("{file}: {f}")));
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
