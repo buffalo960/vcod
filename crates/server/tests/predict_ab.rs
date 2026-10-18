@@ -1095,6 +1095,8 @@ struct Snap {
     delta_angles: [i32; 3],
     frac: f32,
     pm_flags: i32,
+    /// The wire's `ps.speed`, `g_speed` on these captures.
+    speed: i32,
 }
 
 enum Line {
@@ -1146,6 +1148,10 @@ fn parse_fixture(text: &str) -> Vec<Line> {
                     delta_angles: [da[0], da[1], da[2]],
                     frac: kv["frac"].parse().unwrap(),
                     pm_flags: int("pm_flags"),
+                    speed: kv["wire"]
+                        .split(',')
+                        .find_map(|f| f.strip_prefix("speed:"))
+                        .map_or(0, |v| v.parse().unwrap()),
                 }));
             }
             _ => {}
@@ -1170,6 +1176,7 @@ fn wire_from(snap: &Snap, weapon: u8) -> msg::PlayerState {
     }
     set("groundEntityNum", snap.ground);
     set("pm_flags", snap.pm_flags);
+    set("speed", snap.speed);
     set("fWeaponPosFrac", snap.frac.to_bits() as i32);
     set("viewHeightCurrent", pm::VIEW_STAND.to_bits() as i32);
     set("weapon", i32::from(weapon));
@@ -1397,6 +1404,9 @@ fn parse_ride(text: &str, num: u32) -> (Vec<Ride>, Vec<(i32, Trajectory, Traject
                     delta_angles: [0, int("delta_yaw"), 0],
                     frac: 0.0,
                     pm_flags: int("pm_flags"),
+                    // The probe logs no speed; the capture's server ran the
+                    // stock `g_speed`.
+                    speed: 190,
                 },
             });
         } else if let Some(rest) = line.strip_prefix(&format!("entity {num} serverTime ")) {

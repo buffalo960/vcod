@@ -667,6 +667,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   met never scores (`coduo-vehicles.md` 13, "The silhouette").
 - Wish speed multiplies the weapon's `moveSpeedScale` and the sight, back,
   strafe and lean scales: a plain carbine run is 224, sighted 89.7.
+- Every mover's speed is `ps.speed` (`PlayerState::speed`): `g_speed` on
+  1.1, the client's `maxspeed` on 1.5 and UO, 400 for a spectator. A wire
+  playerstate built by hand without `speed` predicts a body that never
+  moves (cod15-movement.md, "ps.speed").
 
 ### Combat and items
 

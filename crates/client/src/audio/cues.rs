@@ -1182,6 +1182,17 @@ mod uo_capture_gates {
         );
     }
 
+    /// A shell on a hull sounds off the struck surface, metal, not a
+    /// vehicle column: the alias table is 23 surfaces a row (uo cgame
+    /// 0x3044bc30), and the tank's shell names no `projExplosionSound`.
+    #[test]
+    fn the_uo_shellveh_capture_explodes_on_the_metal_alias() {
+        let a = aliases("uo-shellveh", |e| {
+            e.event == EV_UO_PROJECTILE_EXPLODE || e.event == EV_UO_PROJECTILE_EXPLODE_NOMARKS
+        });
+        assert_eq!(a, HashMap::from([("tank_explode_metal".to_string(), 3)]));
+    }
+
     /// The smoke grenade pops on its own `projExplosionSound` alone (type
     /// 1 has no alias row) and bounces on `grenade_bounce_<surface>`.
     #[test]

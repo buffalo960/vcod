@@ -329,7 +329,7 @@ fn step_rate(stance: Stance, walking: bool, backpedal: bool) -> f32 {
     }
 }
 
-/// `PM_Footsteps`' full speed for the cmd (0x323f0-0x3268b): `g_speed`
+/// `PM_Footsteps`' full speed for the cmd (0x323f0-0x3268b): `ps.speed`
 /// through the keys' back and strafe blend (rodata 0x70c20 0.75, 0x70c24
 /// 0.5), the walk or run scale and [`stance_speed_scale`]. No weapon or wade
 /// factor, unlike the wish speed, so the cycle's rate is the gait's rate times
@@ -340,7 +340,7 @@ fn footstep_speed(ps: &PlayerState, input: &PmInput, walking: bool) -> f64 {
         (input.right * 127.0).round(),
     );
     let strafe = 1.0 + 0.75 * (f64::from(SCALE_STRAFE) - 1.0);
-    let mut w = f64::from(SPEED_RUN);
+    let mut w = f64::from(ps.speed);
     if f == 0.0 {
         if r != 0.0 {
             w *= strafe;
@@ -518,12 +518,12 @@ pub struct PlayerState {
     /// down and stays down as on a ladder (docs/research/cod15-protocol-diff.md,
     /// "Server side").
     pub weapon_disabled: bool,
-    /// A spectator's `ps.speed`: 400, or 0 under 1.5's refused free flight
-    /// (`SpectatorThink`, 1.5 game.mp 0x389eb).
-    pub fly_speed: f32,
-    /// A playing body's `ps.speed` (`g_speed`, stored by `ClientEndFrame`),
-    /// which the gun's tilt and position scale against. The predictor reads
-    /// it off the wire; vcod-server always runs 190.
+    /// `ps.speed`, the wish speed every mover and `PM_Footsteps` scale from
+    /// and the gun's tilt and position scale against: a playing body's is
+    /// `g_speed` (1.1) or the client's `maxspeed` (1.5, UO), stored by
+    /// `ClientEndFrame`; a spectator's is 400, or 0 under 1.5's refused free
+    /// flight (`SpectatorThink`, 1.5 game.mp 0x389eb). The predictor reads
+    /// it off the wire (cod15-movement.md, "ps.speed").
     pub speed: f32,
     /// Plane normal of that surface; persists while off the wall so the
     /// airborne probe can stick with the ladder we left.
@@ -838,7 +838,6 @@ impl PlayerState {
             knockback_flags: 0,
             on_ladder: false,
             weapon_disabled: false,
-            fly_speed: SPEED_SPECTATOR,
             speed: SPEED_RUN,
             ladder_normal: Vec3::ZERO,
             since_jump_ms: f32::INFINITY,
@@ -1212,7 +1211,7 @@ pub fn pmove(
         }
         let jumped = ps.on_ground && check_jump(ps, &mut cmd, None, &mut events);
         if ps.on_ground {
-            friction(ps, dt);
+            friction(ps, world, dt);
             walk_move(
                 ps,
                 &cmd,
@@ -1690,7 +1689,7 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     ps.walking = false;
     let grounded = ps.on_ground;
     if grounded {
-        friction(ps, dt);
+        friction(ps, world, dt);
         walk_move(ps, &idle, None, world, dt, MASK_DEADSOLID, None);
     } else {
         air_move(ps, &idle, world, dt, MASK_DEADSOLID, None);
@@ -2097,7 +2096,7 @@ fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt
     if max != 0.0 {
         let (f, r, u) = (f64::from(f), f64::from(r), f64::from(u));
         let total = (f * f + r * r + u * u).sqrt();
-        let scale = (f64::from(ps.fly_speed) * f64::from(max) / (127.0 * total)) as f32;
+        let scale = (f64::from(ps.speed) * f64::from(max) / (127.0 * total)) as f32;
         let scale = f64::from(scale);
         let (fwd, right) = view_vectors(ps);
         let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());
@@ -3304,7 +3303,10 @@ fn on_slick(ps: &PlayerState) -> bool {
 /// `PM_Friction`: ground friction only while walking in water level <= 1,
 /// plus a water term that already applies while wading. Unlike RTCW's it has
 /// no ladder term (game.mp.i386.so 0x2e460, cgame 0x30007430).
-fn friction(ps: &mut PlayerState, dt: f32) {
+fn friction(ps: &mut PlayerState, world: &MoveWorld, dt: f32) {
+    if world.world.arith() == crate::patch::Arith::Msvc {
+        return friction_msvc(ps, dt);
+    }
     // `PM_Friction` (0x2e460) on the x87: the speed is stored as a float,
     // the drop and the scale stay on the stack, and each component is
     // rounded once.
@@ -3342,6 +3344,60 @@ fn friction(ps: &mut PlayerState, dt: f32) {
     }
     if ps.water_level > 0 {
         drop += f64::from(ps.water_level) * s * f64::from(WATER_FRICTION) * dt;
+    }
+    let scale = (s - drop).max(0.0) / s;
+    ps.velocity = x87::scale(ps.velocity, scale);
+}
+
+/// The Windows cgames' `PM_Friction` (cgame_mp_x86.dll 1.1 0x30007430,
+/// 1.5 0x30007b40, UO 0x30008470; cod15-movement.md 8): the speed sums
+/// `(vz^2 + vy^2) + vx^2` and is kept on 1.1's 53-bit stack, stored on
+/// 1.5's and UO's; the control, the drop, the new speed and its ratio stay
+/// on the stack, and each component is rounded once. The ground term is
+/// `(frametime * 5.5) * control`, UO's `(control * frametime) * 5.5`, and
+/// 1.5's jump penalty scale `pm_time * (1.5 / 1700) + 1` with the constant
+/// folded into one float.
+fn friction_msvc(ps: &mut PlayerState, dt: f32) {
+    let v = ps.velocity.as_dvec3();
+    let vz = if ps.on_ground { 0.0 } else { v.z };
+    let mut s = ((vz * vz + v.y * v.y) + v.x * v.x).sqrt();
+    if ps.rules.v15() {
+        s = f64::from(s as f32);
+    }
+    if s < 1.0 {
+        ps.velocity.x = 0.0;
+        ps.velocity.y = 0.0;
+        if ps.rules.v15() {
+            ps.velocity.z = 0.0;
+        }
+        return;
+    }
+    let ft = f64::from(dt);
+    let mut drop = 0.0;
+    if ps.on_ground
+        && ps.water_level <= 1
+        && !on_slick(ps)
+        && ps.knockback_flags & PMF_TIME_DAMAGE == 0
+    {
+        let mut control = s.max(f64::from(PM_STOPSPEED));
+        if ps.knockback_flags & PMF_TIME_KNOCKBACK != 0 {
+            control *= f64::from(KNOCKBACK_FRICTION_SCALE);
+        } else if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
+            let scale = if ps.knockback_ms >= 1700.0 {
+                2.5
+            } else {
+                f64::from(ps.knockback_ms) * f64::from(0.000_882_352_94_f32) + 1.0
+            };
+            control *= scale;
+        }
+        drop = if ps.rules == MoveRules::Uo {
+            control * ft * f64::from(PM_FRICTION)
+        } else {
+            ft * f64::from(PM_FRICTION) * control
+        };
+    }
+    if ps.water_level > 0 {
+        drop += f64::from(ps.water_level) * f64::from(WATER_FRICTION) * ft * s;
     }
     let scale = (s - drop).max(0.0) / s;
     ps.velocity = x87::scale(ps.velocity, scale);
@@ -3387,7 +3443,7 @@ fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32) {
 /// the max is taken, then `walkSpeedScale` on the ADS walk and otherwise
 /// `runSpeedScale` with `leanSpeedScale` on a lean, the stance scale
 /// ([`stance_speed_scale`]), the wade scale and the weapon's `moveSpeedScale`. The cmd magnitude then
-/// multiplies back in, so a lone full key wishes `SPEED_RUN` and a diagonal
+/// multiplies back in, so a lone full key wishes `ps.speed` and a diagonal
 /// wishes no more (docs/research/cod11-mantle.md, "The wish speed").
 ///
 /// `walk_slow` is the client's own fly-mode key and takes the walk scale.
@@ -3414,7 +3470,7 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
         return (Vec3::ZERO, 0.0);
     }
     let total = (fd * fd + rd * rd).sqrt();
-    let mut scale = (f64::from(SPEED_RUN) * max) / (total * 127.0);
+    let mut scale = (f64::from(ps.speed) * max) / (total * 127.0);
     // UO walks an LMG's breakdown (0x23af5).
     let breakdown = ps.lmg && ps.weaponstate == weapon::WEAPON_BREAKDOWN;
     if ps.walking || input.walk_slow || breakdown && ps.rules == MoveRules::Uo {
@@ -3509,7 +3565,7 @@ fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
         return 0.0;
     }
     let total = (f * f + r * r + u * u).sqrt();
-    let mut scale = SPEED_RUN * max / (127.0 * total);
+    let mut scale = ps.speed * max / (127.0 * total);
     // 1.5 takes a lean as the walk here too (0x1eec9).
     let lean = ps.rules.v15() && ps.lean != 0.0;
     if ps.walking || input.walk_slow || lean {
@@ -4030,7 +4086,7 @@ fn air_move(
 ) {
     // `PM_AirMove` opens with `PM_Friction` (0x2f045): off the ground only
     // its sub-unit stop and the water term can bite.
-    friction(ps, dt);
+    friction(ps, world, dt);
     let (dir, len, scale) = wish_air(ps, input);
     if ps.rules.v15() {
         // 1.5b stores the product (0x1ffbb) and accelerates through the
@@ -5584,6 +5640,27 @@ mod tests {
         assert!((h - SPEED_RUN).abs() < 5.0, "run speed {h}");
         // yaw 0 => moving along +X
         assert!(ps.velocity.x > 100.0 && ps.velocity.y.abs() < 1.0);
+    }
+
+    /// The walk wishes `ps.speed`, not a fixed 190: a `g_speed` 250
+    /// server runs its bodies at 250, and a speed of 0 stands still.
+    #[test]
+    fn the_run_takes_the_playerstate_s_speed() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let run = |speed: f32| {
+            let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+            ps.speed = speed;
+            let input = PmInput {
+                forward: 1.0,
+                ..Default::default()
+            };
+            tick(&mut ps, &input, &w, 250);
+            ps.velocity.truncate().length()
+        };
+        let h = run(250.0);
+        assert!((h - 250.0).abs() < 5.0, "run speed {h}");
+        assert_eq!(run(0.0), 0.0);
     }
 
     #[test]
@@ -7542,6 +7619,7 @@ mod tests {
     #[test]
     fn spectator_flies_forward_at_spectator_speed() {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 90.0); // yaw 90 deg faces +Y
+        ps.speed = SPEED_SPECTATOR;
         for _ in 0..250 {
             spectator_move(&mut ps, None, FULL, 0.0, 0.0, 0, 1.0 / 125.0);
         }
@@ -7557,6 +7635,7 @@ mod tests {
     #[test]
     fn spectator_flies_along_the_view_at_the_key_s_speed() {
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        ps.speed = SPEED_SPECTATOR;
         ps.pitch = -45f32.to_radians();
         for _ in 0..250 {
             spectator_move(&mut ps, None, FULL, 0.0, 0.0, 0, 1.0 / 125.0);
@@ -7568,6 +7647,7 @@ mod tests {
         );
 
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        ps.speed = SPEED_SPECTATOR;
         for _ in 0..250 {
             spectator_move(&mut ps, None, 63.5, 0.0, 0.0, 0, 1.0 / 125.0);
         }
@@ -7578,6 +7658,7 @@ mod tests {
         );
 
         let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        ps.speed = SPEED_SPECTATOR;
         ps.velocity = Vec3::new(0.0, 0.0, -0.0);
         spectator_move(&mut ps, None, 0.0, 0.0, 0.0, 0, 1.0 / 125.0);
         assert_eq!(ps.velocity.z.to_bits(), 0x8000_0000);

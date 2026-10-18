@@ -674,7 +674,17 @@ vehicle bits (INFERRED from the set and test sites). 1.5's 0x100, the
 hidden model, is UO's 0x80: the per-entity runner mirrors `hide()`'s
 `flags & 0x1000` into `eFlags` 0x80 (`game.mp.uo.i386.so`, Ghidra
 `FUN_00069a35`), where 1.1's (0x602bc) writes 0x100 (VERIFIED decompile).
-Which 1.1 bit below 0x100 UO dropped to make room is not resolved.
+Which 1.1 bit below 0x100 UO dropped to make room: 1.1's 0x80, which
+nothing in 1.1 sets. VERIFIED, objdump of 1.1d's `game.mp.i386.so`:
+no `or` with an immediate 0x80 targets an entity's `s.eFlags` (`ent+8`)
+or a playerstate's `eFlags` (`ps+0x80`); its two register `or 0x80` sites
+write `pm_flags` (`PM_UpdatePlayerWalkingFlag` 0x336dd) and `ent+0xa0`
+(`G_GetHintStringIndex` 0x5a817), and 1.1's `cgame_mp_x86.dll` ORs 0x80
+only into `pm_flags` (0x3000be39) and render-side fields (0x3001ab25,
+0x30028346, 0x3004333f). INFERRED: 0x80 is the dropped bit, the bits 0x1..0x40 keep their
+places on UO, as the decode `eflags_v22_to_v1` assumes and every UO
+gate's crouch, prone and teleport bits agree with, and dropping 1.1's
+0x80 loses nothing a 1.1 server sends.
 
 **Sprint and fatigue.** The usercmd's `buttons` 0x08 is sprint (`+sprint`,
 `CL_CmdButtons` 0x40bfd0 in `CoDUOMP.exe`, VERIFIED). The tunables are

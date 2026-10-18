@@ -1237,6 +1237,7 @@ fn mirror_vitals(clients: &mut [Option<Client>], rt: &script::ScriptRuntime) {
 
 /// [`mirror_vitals`] for one client.
 fn mirror_vitals_of(sim: &mut ClientSim, rt: &script::ScriptRuntime, slot: usize) {
+    sim.max_speed = rt.host.client_speed(slot);
     if sim.pm_type != crate::spectate::PmType::Normal {
         return;
     }
@@ -4821,7 +4822,7 @@ impl Server {
             mins: sim.ps.mins(),
             maxs: sim.ps.maxs(),
             vel_xy: sim.ps.velocity.truncate(),
-            speed: vcod_common::pmove::SPEED_RUN,
+            speed: sim.ps.speed,
         })
     }
 
@@ -13155,6 +13156,50 @@ mod tests {
     /// doc, 13.2): a walk-over ammo grab is in the sim, and its 148 on the ring,
     /// before the cmd behind it fires, with no hit needed to land it there.
     /// Read straight after `replay_moves`, ahead of the script frame.
+    /// `ClientEndFrame` stores `g_speed` in a 1.1 player's `ps.speed`
+    /// (game.mp 0x41100): the body runs at it and the wire carries it.
+    #[test]
+    fn a_player_runs_at_g_speed() {
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        sv.load_world(World {
+            collision: test_world(&[]),
+            vis: vcod_common::bsp::Visibility::none(),
+            spawn: ([0.0, 0.0, 1.0], 0.0),
+            spawn_points: Vec::new(),
+            hazards: Vec::new(),
+            rubble: Vec::new(),
+        });
+        install_script(
+            &mut sv,
+            crate::game::script::ScriptRuntime::for_test("main() {}"),
+        );
+        let _nc = begun(&mut sv, now);
+        sv.tick(now);
+        sv.place_client(0, [0.0, 0.0, 1.0], 0.0);
+        let rt = sv.script.as_mut().unwrap();
+        rt.set_client_state_for_test(0, "playing");
+        rt.host.cvars.set("g_speed", "250.9");
+        sv.tick(now + Duration::from_millis(50));
+        let c = sv.clients[0].as_mut().unwrap();
+        assert_eq!(c.sim.as_ref().unwrap().ps.speed, 250.0);
+        let st = c.last_processed_st;
+        for i in 1..=20 {
+            let cmd = UserCmd {
+                server_time: st + 50 * i,
+                forward: 127,
+                ..NULL_USERCMD
+            };
+            c.pending.push(cmd.into());
+        }
+        sv.replay_moves();
+        let sim = sv.clients[0].as_ref().unwrap().sim.as_ref().unwrap();
+        let h = sim.ps.velocity.truncate().length();
+        assert!((h - 250.0).abs() < 1.0, "{h}");
+        let w = sim.to_wire(&PROTOCOL_V1, 0, 0);
+        assert_eq!(w.field_i32(&PROTOCOL_V1, "speed"), 250);
+    }
+
     #[test]
     fn a_walk_over_pickup_lands_before_the_next_cmd() {
         use vcod_common::net::msg::BUTTON_ATTACK;
