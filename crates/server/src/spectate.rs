@@ -2030,7 +2030,7 @@ impl ClientSim {
         swing_speed: f32,
         anims: Option<&vcod_common::animtree::PlayerAnims>,
     ) {
-        use vcod_common::animclock::{ChannelClock, Seen, Times};
+        use vcod_common::animclock::{self, ChannelClock, Seen, Times};
         use vcod_common::playerpose::{BodyInput, BodySlope};
         let EndFrame {
             frametime_ms,
@@ -2060,14 +2060,10 @@ impl ClientSim {
                     clock_ms: now_ms.wrapping_sub(ahead),
                     snapshot_ms: now_ms,
                 };
-                if self.ps.rules == vcod_common::pmove::MoveRules::V1_1 {
-                    legs_clock.update(a, true, legs, &seen, at);
-                    torso_clock.update(a, false, torso, &seen, at);
-                } else {
-                    let window = &mut self.stance_window_ms;
-                    legs_clock.update_windowed(a, true, legs, &seen, at, window);
-                    torso_clock.update_windowed(a, false, torso, &seen, at, window);
-                }
+                let window = (self.ps.rules != vcod_common::pmove::MoveRules::V1_1)
+                    .then_some(&mut self.stance_window_ms);
+                let clocks = (&mut legs_clock, &mut torso_clock);
+                animclock::update_body(clocks, a, (legs, torso), &seen, at, window);
             }
             None => {
                 legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());
