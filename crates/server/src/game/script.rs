@@ -1308,23 +1308,24 @@ impl ScriptRuntime {
     }
 
     /// Every weapon item lying in the world to be picked up, as `(weapon
-    /// index, origin)`: placed `mpweapon_*` entities while shown and drops.
+    /// index, origin, clip empty)`: placed `mpweapon_*` entities while
+    /// shown and drops.
     /// A taken one waits on its respawn off every snapshot and is left out.
-    pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3])> {
+    pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3], bool)> {
         let defs = self.host.defs;
-        let items: Vec<(EntId, u8)> = self
+        let items: Vec<(EntId, u8, bool)> = self
             .host
             .ents
             .iter_inuse()
             .filter_map(|(id, e)| {
                 let item = e.item?;
                 let weapon = !item.taken && defs.weapon_name(item.index as usize).is_some();
-                weapon.then_some((id, item.index))
+                weapon.then_some((id, item.index, item.clip == -1))
             })
             .collect();
         items
             .into_iter()
-            .filter_map(|(id, w)| Some((w, self.entity_origin_of(id)?)))
+            .filter_map(|(id, w, empty)| Some((w, self.entity_origin_of(id)?, empty)))
             .collect()
     }
 

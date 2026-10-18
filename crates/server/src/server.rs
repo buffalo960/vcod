@@ -4331,7 +4331,7 @@ impl Server {
         let re = self.bot_re();
         let bel = self.bot_bel();
         let uo = self.bot_uo();
-        let launchers = self.bot_launchers(uo.as_ref());
+        let (launchers, guns) = self.bot_launchers(uo.as_ref());
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -4440,6 +4440,7 @@ impl Server {
                 let breach = crate::bots::Breach {
                     rocket: view.rocket.is_some(),
                     launchers: &launchers,
+                    guns: &guns,
                     models: &breach_models,
                 };
                 view.uo = Some(self.bot_uo_view(uo, *slot, mine, rank, &breach));
@@ -4904,24 +4905,29 @@ impl Server {
     }
 
     /// The rocket launchers lying about, on a `bas` level only: what a bot
-    /// breaches a base with (bot-objectives.md 7.2).
-    fn bot_launchers(&mut self, uo: Option<&script::UoObjectives>) -> Vec<[f32; 3]> {
+    /// breaches a base with (bot-objectives.md 7.2); and the bullet
+    /// weapons with a round in the clip, what a bot with nothing left to
+    /// fire takes up.
+    fn bot_launchers(
+        &mut self,
+        uo: Option<&script::UoObjectives>,
+    ) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
         if !matches!(uo, Some(script::UoObjectives::Bas(_))) {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let weapons = self.weapon_table.clone();
         let Some(rt) = self.script.as_mut() else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
-        rt.weapon_items()
-            .into_iter()
-            .filter(|(w, _)| {
-                weapons
-                    .get(*w as usize)
-                    .is_some_and(|d| d.weapon_class == "rocketlauncher")
-            })
-            .map(|(_, at)| at)
-            .collect()
+        let (mut launchers, mut guns) = (Vec::new(), Vec::new());
+        for (w, at, empty) in rt.weapon_items() {
+            match weapons.get(w as usize) {
+                Some(d) if d.weapon_class == "rocketlauncher" => launchers.push(at),
+                Some(d) if d.weapon_type == "bullet" && !empty => guns.push(at),
+                _ => {}
+            }
+        }
+        (launchers, guns)
     }
 
     /// Where a rocket from `slot`'s muzzle is aimed to burst within
@@ -5369,6 +5375,7 @@ impl Server {
                     })
                     .collect(),
                 launchers: breach.launchers.to_vec(),
+                guns: breach.guns.to_vec(),
                 rank,
             }),
         }

@@ -927,7 +927,9 @@ fn uo_bots_leave_their_walled_in_spawns() {
 #[test]
 #[ignore = "builds mp_foy's UO graph and its rebuilds, runs 2 bots for up to 29 min of game time, ~4 min in release; run with --ignored"]
 fn uo_bots_breach_bases_until_a_bas_round_ends() {
-    bas_round(2, false);
+    for map in bas_maps() {
+        bas_round(&map, 2, false);
+    }
 }
 
 /// Four bots, two a side, shooting: an attacker and a defender each. The
@@ -937,9 +939,16 @@ fn uo_bots_breach_bases_until_a_bas_round_ends() {
 #[test]
 #[ignore = "builds mp_foy's UO graph and its rebuilds, runs 4 bots for up to 29 min of game time; run with --ignored"]
 fn four_shooting_uo_bots_end_a_bas_round() {
-    let sv = bas_round(4, true);
-    let Some(sv) = sv else { return };
-    for k in kills(&sv) {
+    for map in bas_maps() {
+        let Some(sv) = bas_round(&map, 4, true) else {
+            return;
+        };
+        own_rocket_kills(&sv);
+    }
+}
+
+fn own_rocket_kills(sv: &vcod_server::Server) {
+    for k in kills(sv) {
         let (weapon, mod_) = (&k[8], &k[10]);
         let rocket = ["bazooka", "panzerschreck", "panzerfaust"]
             .iter()
@@ -959,7 +968,27 @@ fn four_shooting_uo_bots_end_a_bas_round() {
 #[test]
 #[ignore = "builds mp_foy's UO graph and its rebuilds, runs 4 bots for up to 29 min of game time; run with --ignored"]
 fn four_uo_bots_end_a_bas_round_without_shooting() {
-    bas_round(4, false);
+    for map in bas_maps() {
+        bas_round(&map, 4, false);
+    }
+}
+
+/// The maps the bas gates play: `BAS_MAP`, a comma list or `all` for the
+/// five stock bas maps, mp_foy by default.
+fn bas_maps() -> Vec<String> {
+    match std::env::var("BAS_MAP").as_deref() {
+        Ok("all") => [
+            "mp_foy",
+            "mp_italy",
+            "mp_kursk",
+            "mp_ponyri",
+            "mp_rhinevalley",
+        ]
+        .map(String::from)
+        .to_vec(),
+        Ok(list) => list.split(',').map(String::from).collect(),
+        Err(_) => vec!["mp_foy".into()],
+    }
 }
 
 /// The script log's kills: victim guid, num, team, name, attacker guid,
@@ -972,20 +1001,19 @@ fn kills(sv: &vcod_server::Server) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// `bots` bots play mp_foy's bas round (`BAS_MAP` names another), seed 7
-/// (`BOTS_SEED`; the seed is made odd), three rockets a base; the round
-/// has to end on its bases. `None` without a UO install.
-fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
-    let map = std::env::var("BAS_MAP").unwrap_or_else(|_| "mp_foy".into());
+/// `bots` bots play `map`'s bas round, seed 7 (`BOTS_SEED`; the seed is
+/// made odd), three rockets a base; the round has to end on its bases.
+/// `None` without a UO install.
+fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server> {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         eprintln!("COD_DIR has no uo/: skipping");
         return None;
     };
-    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map(&map).unwrap()).unwrap())
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map(map).unwrap()).unwrap())
         .expect("parse the bsp");
     let mut now = Instant::now();
     let mut cfg = cfg(bots, shoot, "bas");
-    cfg.map = map;
+    cfg.map = map.into();
     let mut sv = vcod_server::Server::new(cfg, now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
     sv.test_seed_rng(std::env::var("BOTS_SEED").map_or(7, |v| v.parse().expect("BOTS_SEED")));
@@ -1056,7 +1084,7 @@ fn bas_round(bots: usize, shoot: bool) -> Option<vcod_server::Server> {
         }
     }
     eprintln!(
-        "{bots} bots, shoot {shoot}: first breach at tick {first:?}, round over at {end:?}: \
+        "{map}: {bots} bots, shoot {shoot}: first breach at tick {first:?}, round over at {end:?}: \
          {} breached, {} planted, {} destroyed, {} defused, {} kills",
         count(&sv, "bas_breached"),
         count(&sv, "bas_planted"),
