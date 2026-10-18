@@ -815,10 +815,14 @@ struct EntityAnim {
     /// `animclock::ChannelClock::update_windowed`.
     stance_window_ms: i32,
     seat: SeatLeaves,
+    /// The render time of the last frame the entity was in the snapshot;
+    /// its clips hold still while it is not (cgame 0x3001bd00).
+    present_ms: i32,
 }
 
-/// The cgame's two channel updates (0x30003be0; 1.5 0x30003870 and UO
-/// 0x30003a90 under the stance window, coduo-vehicles.md 13).
+/// The cgame's two channel updates (0x30004e40's clears and 0x30003be0;
+/// 1.5 0x30003870 and UO 0x30003a90 under the stance window,
+/// coduo-vehicles.md 13), through `animclock::update_body`.
 fn update_channels(
     (legs, torso, window): (&mut ChannelClock, &mut ChannelClock, &mut i32),
     anims: &PlayerAnims,
@@ -827,13 +831,9 @@ fn update_channels(
     seen: &Seen,
     at: Times,
 ) {
-    if rules == MoveRules::V1_1 {
-        legs.update(anims, true, legs_wire, seen, at);
-        torso.update(anims, false, torso_wire, seen, at);
-    } else {
-        legs.update_windowed(anims, true, legs_wire, seen, at, window);
-        torso.update_windowed(anims, false, torso_wire, seen, at, window);
-    }
+    let window = (rules != MoveRules::V1_1).then_some(window);
+    let wires = (legs_wire, torso_wire);
+    vcod_common::animclock::update_body((legs, torso), anims, wires, seen, at, window);
 }
 
 /// A rider's seat node and leaves this frame, and those of the node the
@@ -865,7 +865,7 @@ impl SeatLeaves {
 }
 
 impl EntityAnim {
-    fn new(key: Vec<String>, skel: &Rc<Skeleton>) -> EntityAnim {
+    fn new(key: Vec<String>, skel: &Rc<Skeleton>, now_ms: i32) -> EntityAnim {
         EntityAnim {
             key,
             skeleton: skel.clone(),
@@ -877,6 +877,7 @@ impl EntityAnim {
             controls: None,
             stance_window_ms: 0,
             seat: SeatLeaves::default(),
+            present_ms: now_ms,
         }
     }
 }
@@ -1620,9 +1621,9 @@ pub fn build_instances(
                 // from the start while `eFlags` 0x800 marks it fresh, and
                 // shows its last frame otherwise. A player's are his
                 // client's. Neither expires while unseen (movers doc 15).
-                states
-                    .entry(num)
-                    .or_insert_with(|| EntityAnim::new(key.clone(), &assembly.skeleton));
+                states.entry(num).or_insert_with(|| {
+                    EntityAnim::new(key.clone(), &assembly.skeleton, render_time)
+                });
                 let st = states.get_mut(&num).expect("inserted above");
                 if st.key != key {
                     // The clocks hold only anim indices and times, so carry
@@ -1639,6 +1640,7 @@ pub fn build_instances(
                         controls: st.controls,
                         stance_window_ms: st.stance_window_ms,
                         seat: st.seat.clone(),
+                        present_ms: st.present_ms,
                     };
                 }
                 st.visual = roster_visual;
@@ -1680,6 +1682,17 @@ pub fn build_instances(
                         ),
                         eflags,
                     };
+                    // The frames since it last was in the snapshot advanced
+                    // nothing (0x3001bd00 steps only the newest snapshot's
+                    // entities), so a body back in view resumes its clips.
+                    let unseen = render_time
+                        .wrapping_sub(frametime_ms)
+                        .wrapping_sub(st.present_ms);
+                    if unseen > 0 {
+                        st.legs.pause(unseen);
+                        st.torso.pause(unseen);
+                    }
+                    st.present_ms = render_time;
                     let channels = (&mut st.legs, &mut st.torso, &mut st.stance_window_ms);
                     update_channels(channels, anims, rules, (legs_wire, torso_wire), &seen, at);
 
