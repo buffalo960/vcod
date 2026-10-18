@@ -724,8 +724,13 @@ fn press_case(
 }
 
 /// The 1.5b capture's first round: retail's scope froze the turn sway's
-/// pitch lag 4 65536ths short of zero, ours 3 (cod11-combat.md 15.3,
-/// 15.1 "The cmd that fires"); every later round reads no lag on both.
+/// pitch lag 4 65536ths short of zero, ours 3; every later round reads no
+/// lag on both. The lag drops one 65536th a cmd from the hold's turn at
+/// 12500 until the sight starts up, which waits for the spawn drop to land:
+/// ours lands on the 12532 cmd, and retail's 4 is the sight starting a cmd
+/// earlier. The sway's float steps are no cause (each lands a fifth of a
+/// 65536th or more from a cut); what starts retail's sight a cmd early is
+/// not found (cod11-combat.md 15.1 "The cmd that fires").
 const PRESS_DIR_GAPS_15: &[&str] = &["level"];
 
 #[test]
