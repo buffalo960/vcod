@@ -83,6 +83,10 @@ One skeleton, two anims, one tree. `pt_*` clips key only the upper body (spine u
 
 Inputs are all transmitted in entityState: `fTorsoPitch` (232), `fWaistPitch` (236), `fTorsoHeight` (228), `leanf` (212), `animMovetype` (224, 4 bits).
 
+### 1.5's and UO's stance window, drawn
+
+The cgame's lerp-frame setter carries the same 400 ms window as the server's (`coduo-vehicles.md` 13): 1.5's `cgame_mp_x86.dll` 0x30003870 stores `cg.time + 400` at `ci+0x4a4`, UO's `uo_cgame_mp_x86.dll` 0x30003a90 at `ci+0x4c0`, when the legs frame (`ci+0x380` on UO) changes crouch or prone class, and floors every later blend of either frame to what is left of it (VERIFIED decompile). 1.1's cgame has no such store. vcod's drawn bodies (`entities.rs`, `update_channels`) run `ChannelClock::update_windowed` off 1.1, one window per drawn entity; the cgame keeps it per client info, so a corpse sharing the dead client's info could read his last window, which vcod does not model (INFERRED). Not measured against a retail client's draw (pixels).
+
 ### The prone body on a grade
 
 VERIFIED, live (retail 1.1d, 2026-10-16, `client-probes/probe_pronebones`, fixtures in `crates/server/tests/fixtures/pronebones/`): a prone client facing downhill on mp_carentan's ~19 degree mound (-224, 60) has his pelvis at (5.92, 24.36, -0.03) off his origin and his feet about 10 under it, where on flat ground the pelvis sits 6.27 above the origin. vcod's server pose puts all eight logged bones (pelvis, spine2, neck, head, both hands, both feet) within 0.03 of retail's offsets on the mound, on flat ground on mp_carentan and on mp_brecourt's field at (1659, 781). With the slope terms zeroed, the mound's pelvis lands 5.8 too high. The bones are read through a `script_origin` linked to each tag, which shows the pose a frame late, so a still body is what the probe measures.
@@ -510,8 +514,9 @@ both captures moves exactly that slot. VERIFIED: `weapAnim` carries the same
 and 516, the same index with and without the bit.
 
 VERIFIED: `weaponstate` 3 runs 3 samples on carentan, 100-200 ms, and 7 on
-pavlov, 300-400 ms (6, 250-350 ms, on the crouched and prone shots of the
-2026-10-17 recapture). INFERRED: that is the weapon's `fireTime`, the only
+pavlov, 300-400 ms (6, 250-350 ms, on some shots: the crouched and prone
+ones of the 2026-10-17 recapture, the single and crouched ones of the
+2026-10-18 one). INFERRED: that is the weapon's `fireTime`, the only
 weapon-file time inside both windows at 0.135 s and 0.33 s.
 
 VERIFIED: the torso index a shot writes is stance-specific. Every standing fire
@@ -621,9 +626,10 @@ VERIFIED: a rechamber ending writes no `weapAnim` either. Pavlov's
 its `sustained_fire` never shows index 0 at all between two shots.
 
 VERIFIED: pavlov's `weaponstate` goes 3 to 4 on consecutive samples, 50 ms
-of server time apart, and its `weapAnim` 2 to 4 across the same pair: 344 to
-408 ms on `sustained_fire` and 310 to 374 on `crouch_fire` (re-measured on
-the 2026-10-17 recapture; an earlier capture read 328 to 378).
+of server time apart, and its `weapAnim` 2 to 4 across the same pair: 341 to
+390 ms on `sustained_fire` and 359 to 408 on `prone_fire` (re-measured on
+the 2026-10-18 recapture; the 2026-10-17 one read 344 to 408 and 310 to 374
+on `crouch_fire`, an earlier capture 328 to 378).
 INFERRED: the shot's state ends and the rechamber opens within one server
 frame. That frame holds several cmds, so it does not show whether the
 rechamber waits a cmd for the state 3 exit; it does (`cod11-combat.md` 1.4).
@@ -646,14 +652,18 @@ VERIFIED: carentan's `prone_fire` step reads `legsAnim` 557 (index 45,
 `pb_prone_aim`) and `torsoAnim` 224 `pt_prone_shoot` across its three shots.
 That is the prone shoot pose this document previously carried as unreachable.
 VERIFIED: on the 2026-10-17 recapture pavlov's reads the same, `legsAnim` 557
-and `torsoAnim` 736 (224 with the toggle). VERIFIED: 230
+and `torsoAnim` 736 (224 with the toggle), and so does the 2026-10-18
+recapture's from another spawn. VERIFIED: 230
 `pt_reload_prone_rifle` appears in neither capture, since neither reload ran
 prone.
 
 VERIFIED: the recapture holds the spawn point's yaw. The walk of `advance`
-ends turned (carentan 135, pavlov 45), and `idle` brings the view back to the
-spawn's facing (45, 0), where every later step holds it, at (-522.6, 1997.2,
-144.1) and (-8829.7, 10319.9, -23.6).
+ends turned on pavlov (90 on the 2026-10-18 recapture) and `idle` brings
+the view back to the spawn's facing (carentan -180, pavlov 45), where every
+later step holds it, at (995.1, 1038.3, -13.0) and (-7095.1, 10360.9,
+-103.9); carentan's walk never stalled. The 2026-10-17 take ended its walks
+at 135 and 45, faced 45 and 0 and stood at (-522.6, 1997.2, 144.1) and
+(-8829.7, 10319.9, -23.6).
 
 VERIFIED, first capture (in git at `c52e9606`): pavlov's `prone_fire` read
 `legsAnim` 634 (index 122, the standing idle) and the standing shoot pose 253
@@ -679,8 +689,8 @@ carentan and stayed standing on pavlov, as retail did.
 
 ### Neither counter in `!observed` counts shots
 
-VERIFIED: carentan's `sustained_fire` reads `shots_seen` 3 against six taps and
-six 159 events (4 before the 2026-10-17 recapture), and pavlov's `single_shot` reads `seq_delta` 3 against one tap.
+VERIFIED: carentan's `sustained_fire` reads `shots_seen` 5 against six taps and
+six 159 events (3 on the 2026-10-17 recapture, 4 before it), and pavlov's `single_shot` reads `seq_delta` 3 against one tap.
 INFERRED for the first: `shots_seen` counts `weaponstate` 0 -> 3 edges, and at
 carentan's 183 ms tap period against a 135 ms `fireTime` the weapon is ready
 for under one snapshot interval between shots, so two or three of the six edges

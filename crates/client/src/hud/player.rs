@@ -59,6 +59,9 @@ pub struct PlayerView<'a> {
     pub max_health: i32,
     pub eflags: i32,
     pub weapon: Option<&'a WeaponDef>,
+    /// `weapon`'s number, the predicted `ps.weapon` the hint's swap
+    /// sentence reads (cgame 0x3020720c).
+    pub weapon_index: usize,
     /// The weapon the name and the mode icon show: the selection while it
     /// is carried, else `weapon` (0x30023c30 and 0x30023e90 read
     /// `cg_weaponSelect`).
@@ -164,10 +167,11 @@ impl PlayerHud {
         p: &PlayerView,
         cx: &Context,
         now: i32,
-        screen: (f32, f32),
+        v: &Virtual,
         out: &mut Vec<HudQuad>,
     ) {
-        let v = Virtual::new(screen);
+        let v = *v;
+        let screen = v.screen();
         let raising = self.sight.step(p.weapon, p.ads_frac);
         // Drawn first, so the menu HUD sits on top of it.
         let scoped = p
@@ -196,10 +200,11 @@ impl PlayerHud {
             let ping_ms = if p.uo.is_some() { 4000 } else { 3000 };
             self.friends.feed(now, p.friends.iter().copied(), ping_ms);
             let face_yaw = self.compass_spring.step(p.view_yaw - north, now);
-            compass(p, cx, face_yaw, &mut self.friends, now, &v, out);
+            compass(p, cx, face_yaw, &mut self.friends, now, &v.left(), out);
             if let Some(uo) = &p.uo {
                 self.vehicles.feed(now, uo.vehicles.iter().copied());
-                self.vehicles.build(now, (p.view_yaw, p.eye), &v, out);
+                self.vehicles
+                    .build(now, (p.view_yaw, p.eye), &v.left(), out);
             }
             let seat = p.uo.as_ref().and_then(|uo| uo.seat.as_ref());
             // The stance owner draw runs the notice, the hints and the flash;
@@ -207,17 +212,17 @@ impl PlayerHud {
             let bits = (p.spread_stance.prone, p.spread_stance.ducked);
             let flash = self.stance.step(bits, now);
             match (&p.uo, seat) {
-                (_, Some(seat)) => uo::vehicle_status(seat, p.view_yaw, &v, out),
+                (_, Some(seat)) => uo::vehicle_status(seat, p.view_yaw, &v.left(), out),
                 (uo, None) => {
                     if let Some(alpha) = self.prone_blocked.step(p.prone_blocked, now) {
                         prone_blocked(cx, alpha, &v, out);
                     }
                     if let Some(alpha) = self.stance.hint_alpha(now) {
-                        stance_hints(bits, cx, alpha, &v, out);
+                        stance_hints(bits, cx, alpha, &v.left(), out);
                     }
                     match uo {
-                        Some(uo) => uo::stance(uo, bits, flash, &v, out),
-                        None => stance(bits, flash, &v, out),
+                        Some(uo) => uo::stance(uo, bits, flash, &v.left(), out),
+                        None => stance(bits, flash, &v.left(), out),
                     }
                 }
             }
@@ -227,13 +232,13 @@ impl PlayerHud {
                 Some(_) => &uo::HEALTH_V22,
                 None => &uo::HEALTH_V1,
             };
-            health(frac, lag, rects, &v, out);
+            health(frac, lag, rects, &v.right(), out);
             // From a seat the weapon HUD is the jeep passenger's alone, its
             // ammo 20 up (UO hud.menu's `_VEHICLE` items).
             match seat {
-                None => weapon_info(p, cx, name_alpha, 0.0, &v, out),
+                None => weapon_info(p, cx, name_alpha, 0.0, &v.right(), out),
                 Some(seat) if seat.jeep_passenger() => {
-                    weapon_info(p, cx, name_alpha, -20.0, &v, out)
+                    weapon_info(p, cx, name_alpha, -20.0, &v.right(), out)
                 }
                 Some(_) => {}
             }
@@ -266,8 +271,15 @@ impl PlayerHud {
                 alpha: name_alpha,
                 uo: p.uo.is_some(),
             };
-            self.strip
-                .build(&view, now, cx.console_font, cx.bound_key, cx.loc, &v, out);
+            self.strip.build(
+                &view,
+                now,
+                cx.console_font,
+                cx.bound_key,
+                cx.loc,
+                &v.right(),
+                out,
+            );
         }
         if cx.draw.status {
             cursor_hint(p, cx, now, &v, out);
@@ -776,14 +788,17 @@ fn weapon_info(
 }
 
 /// How far each crosshair arm sits off the centre, in virtual pixels, `x`
-/// for the side arms and `y` for the top and bottom ones.
+/// for the side arms and `y` for the top and bottom ones. `fov` is the
+/// drawn view's; the side arms read the fov a 4:3 view as tall would be
+/// wide, since the grid is the window's height (retail's `fov_x` at 4:3).
 pub fn arm_offset(
     def: &WeaponDef,
     stance: &SpreadStance,
     aim_spread_scale: f32,
     shrink: f32,
-    (fov_x, fov_y): (f32, f32),
+    (_, fov_y): (f32, f32),
 ) -> (f32, f32) {
+    let fov_x = crate::camera::fov_x(fov_y, 4.0 / 3.0);
     let min = hip_spread_min(def, stance);
     let spread = (aim_spread_scale / 255.0 * (def.hip_spread_max - min) + min) * shrink;
     (
@@ -1005,6 +1020,11 @@ fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Ve
     };
     // The weapon icons start at 10 on 1.1, 11 on UO.
     let first_weapon = if p.uo.is_some() { 10 } else { 9 };
+    let text = match hint_text(p, cx) {
+        HintText::Hidden => return,
+        HintText::Text(text) => Some(text),
+        HintText::Server => None,
+    };
     let (x, y, w, h) = (300.0, 325.0, 40.0, 40.0);
     let pulse = ((now as f32 * 0.006_666_667).sin() + 1.0) * 0.5;
     let wide = (first_weapon + 1..=first_weapon + 64 * (1 + i32::from(p.uo.is_some())))
@@ -1017,24 +1037,121 @@ fn cursor_hint(p: &PlayerView, cx: &Context, now: i32, v: &Virtual, out: &mut Ve
     let (qx, qw) = if wide { (x - w / 2.0, w * 2.0) } else { (x, w) };
     out.push(v.quad(qx, y, qw, h, [1.0, 1.0, 1.0, pulse], &material));
 
-    if p.cursor_hint_string < 0 {
-        return;
-    }
-    let key = cx
-        .configstrings
-        .get(cx.cs.hint_strings + p.cursor_hint_string as usize)
-        .map(String::as_str)
-        .unwrap_or("");
-    if key.is_empty() {
-        return;
-    }
-    // The configstring is a packed message (`RE_PRESS_TO_PICKUP\x14...`),
-    // localized and key-bound the way a game message is (0x300229b0).
-    let s = super::bind_keys(&cx.loc.message(key), cx.bound_key);
-    let s = hint_use_key(&s, cx.bound_key, cx.loc);
+    let s = match text {
+        Some(text) => text,
+        None => {
+            if p.cursor_hint_string < 0 {
+                return;
+            }
+            let key = cx
+                .configstrings
+                .get(cx.cs.hint_strings + p.cursor_hint_string as usize)
+                .map(String::as_str)
+                .unwrap_or("");
+            if key.is_empty() {
+                return;
+            }
+            // The configstring is a packed message (`RE_PRESS_TO_PICKUP\x14...`),
+            // localized and key-bound the way a game message is (0x300229b0).
+            let s = super::bind_keys(&cx.loc.message(key), cx.bound_key);
+            hint_use_key(&s, cx.bound_key, cx.loc)
+        }
+    };
     let tw = text_width(cx.font, &s, 0.21);
     let baseline = y - text_height(cx.font, 0.21);
     menu_text(cx.font, &s, (x + (w - tw) / 2.0, baseline), 0.21, v, out);
+}
+
+/// What a cursor hint prints over its icon.
+#[derive(Debug, PartialEq)]
+enum HintText {
+    /// Neither the sentence nor the icon: the weapon on the ground is the
+    /// one the swap would give up.
+    Hidden,
+    /// The cgame's own sentence.
+    Text(String),
+    /// The server's hint string, if it sent one.
+    Server,
+}
+
+/// The sentence the cgame composes for a weapon, ammo or health hint
+/// (`0x300251f0`; 1.5 `0x30026560`, UO `0x300303a0` alike,
+/// cod11-hud-protocol.md "Cursor hint"). A weapon or ammo hint ignores the
+/// server's string; health prints its own only while none is sent.
+fn hint_text(p: &PlayerView, cx: &Context) -> HintText {
+    let uo = p.uo.is_some();
+    let (first_weapon, first_ammo, health, count) = if uo {
+        (10, 138, 8, 128)
+    } else {
+        (9, 73, 7, 64)
+    };
+    let hint = p.cursor_hint;
+    let loc = |k: &str| cx.loc.get(k).unwrap_or(k).to_string();
+    // 0x30046940 with no unbound fallback of its own: `KEY_UNBOUND`.
+    let key = || {
+        (cx.bound_key)("+activate").unwrap_or_else(|| cx.loc.translate("@KEY_UNBOUND").into_owned())
+    };
+    let def = |w: usize| cx.weapons.get(w).and_then(Option::as_ref);
+    let name = |w: usize| def(w).map_or(String::new(), |d| loc(&d.display_name));
+    let slot = |w: usize| def(w).map_or(0, WeaponDef::slot_type);
+    let weapon = |base: i32| {
+        (base + 1..=base + count)
+            .contains(&hint)
+            .then(|| (hint - base) as usize)
+    };
+    if let Some(w) = weapon(first_weapon) {
+        if free_slot(slot(w), &p.slots, uo) {
+            let text = fill_use_key(&loc("CGAME_PICKUPNEWWEAPON"), &key());
+            return HintText::Text(text.replacen("%s", &name(w), 1));
+        }
+        // The held weapon when it shares the slot type, else the one in
+        // the slot the new weapon names.
+        let old = if slot(p.weapon_index) == slot(w) {
+            p.weapon_index
+        } else {
+            usize::from(p.slots.get(slot(w)).copied().unwrap_or(0))
+        };
+        if old == w {
+            return HintText::Hidden;
+        }
+        let swap = loc("CGAME_SWAPWEAPONS").replacen("%s", &key(), 1);
+        return HintText::Text(format!(
+            "{swap} {} {} {}",
+            name(old),
+            loc("CGAME_FOR"),
+            name(w)
+        ));
+    }
+    if let Some(w) = weapon(first_ammo) {
+        let text = fill_use_key(&loc("CGAME_PICKUPAMMO"), &key());
+        return HintText::Text(text.replacen("%s", &name(w), 1));
+    }
+    if hint == health && p.cursor_hint_string < 0 {
+        return HintText::Text(loc("CGAME_PICKUPHEALTH").replacen("%s", &key(), 1));
+    }
+    HintText::Server
+}
+
+/// Whether the predicted `weaponslots` have room for a weapon of slot type
+/// `slot` (cgame 0x3000f680, 1.5 0x30010460, UO 0x30011520): either
+/// primary slot for a primary, the type's own slot for the rest (1.1 and
+/// 1.5 up to `smokegrenade`, UO up to `binocular`).
+fn free_slot(slot: usize, slots: &[u8; 8], uo: bool) -> bool {
+    match slot {
+        1 | 2 => slots[1] == 0 || slots[2] == 0,
+        3..=5 => slots[slot] == 0,
+        6 | 7 => uo && slots[slot] == 0,
+        _ => false,
+    }
+}
+
+/// The weapon and ammo sentences' `[%s]`, found as written (not
+/// case-folded, 0x3002549d): the key text spliced between the brackets.
+fn fill_use_key(text: &str, key: &str) -> String {
+    match text.find("[%s]") {
+        Some(at) => format!("{}{key}{}", &text[..=at], &text[at + 3..]),
+        None => text.to_string(),
+    }
 }
 
 /// The hint string's `[%s]` (0x300257cd), found case-folded: the key text
@@ -1134,7 +1251,7 @@ impl DamageIndicators {
 
     fn build_flash(&self, now: i32, v: &Virtual, out: &mut Vec<HudQuad>) {
         if let Some(a) = self.flash_alpha(now) {
-            out.push(v.quad(-10.0, -10.0, 650.0, 490.0, [0.2, 0.0, 0.0, a], "white"));
+            out.push(v.quad_fill(-10.0, -10.0, 650.0, 490.0, [0.2, 0.0, 0.0, a], "white"));
         }
     }
 
@@ -1221,6 +1338,7 @@ mod tests {
             max_health: 100,
             eflags: 0,
             weapon: None,
+            weapon_index: 0,
             name_weapon: None,
             ammo_weapon: None,
             turret: None,
@@ -1254,24 +1372,30 @@ mod tests {
     #[test]
     fn crosshair_arms_open_with_the_spread_scale() {
         let def = carbine();
-        // Standing, 1.5 degrees at scale 0 and 5 at 255, 640/80 px a degree.
+        // Standing, 1.5 degrees at scale 0 and 5 at 255, 640/80 px a degree
+        // across and 480/64.37 down, the refdef at `cg_fov 80` and 4:3.
+        let fov = (80.0, crate::camera::fov_y(80.0, 4.0 / 3.0));
         let stand = SpreadStance::default();
-        let (x, y) = arm_offset(&def, &stand, 0.0, 1.0, (80.0, 64.0));
-        assert!(close(x, 12.0) && close(y, 11.25), "{x} {y}");
-        let (x, y) = arm_offset(&def, &stand, 255.0, 1.0, (80.0, 64.0));
-        assert!(close(x, 40.0) && close(y, 37.5), "{x} {y}");
+        let (x, y) = arm_offset(&def, &stand, 0.0, 1.0, fov);
+        assert!(close(x, 12.0) && close(y, 11.185), "{x} {y}");
+        let (x, y) = arm_offset(&def, &stand, 255.0, 1.0, fov);
+        assert!(close(x, 40.0) && close(y, 37.287), "{x} {y}");
+        // Hor+ at 16:9 draws 96.4 wide and as tall: the same arms.
+        let wide = crate::camera::view_fov_x(80.0, 16.0 / 9.0, true);
+        let (wx, wy) = arm_offset(&def, &stand, 255.0, 1.0, (wide, fov.1));
+        assert!(close(wx, x) && close(wy, y), "{wx} {wy}");
         // Prone reads its own minimum, and `reticleMinOfs` floors it.
         let prone = SpreadStance {
             prone: true,
             ..stand
         };
-        let (x, _) = arm_offset(&def, &prone, 0.0, 1.0, (80.0, 64.0));
+        let (x, _) = arm_offset(&def, &prone, 0.0, 1.0, fov);
         assert!(close(x, 4.0), "{x}");
         let floored = WeaponDef {
             reticle_min_ofs: 17.0,
             ..carbine()
         };
-        assert_eq!(arm_offset(&floored, &prone, 0.0, 1.0, (80.0, 64.0)).0, 17.0);
+        assert_eq!(arm_offset(&floored, &prone, 0.0, 1.0, fov).0, 17.0);
     }
 
     #[test]
@@ -1386,7 +1510,7 @@ mod tests {
                 ..view(&ammo, &[])
             };
             let mut out = Vec::new();
-            PlayerHud::default().build(&p, &cx, 0, (640.0, 480.0), &mut out);
+            PlayerHud::default().build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
             out.iter()
                 .filter(|q| Some(&q.texture) == def.reticle_side.as_ref())
                 .count()
@@ -1423,7 +1547,7 @@ mod tests {
                 draw: super::super::DrawToggles { crosshair, status },
             };
             let mut out = Vec::new();
-            PlayerHud::default().build(&p, &cx, 0, (640.0, 480.0), &mut out);
+            PlayerHud::default().build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
             let arms = out
                 .iter()
                 .filter(|q| Some(&q.texture) == def.reticle_side.as_ref())
@@ -1482,7 +1606,7 @@ mod tests {
         hud.damage.hit(hit(0), [0.0; 3], 0);
         hud.damage.hit(hit(1), [0.0; 3], 0);
         let mut out = Vec::new();
-        hud.build(&p, &cx, 0, (640.0, 480.0), &mut out);
+        hud.build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
         assert_eq!(out[0].texture, "ui/assets/reticle_circle_quarter");
         let has = |t: &str| out.iter().any(|q| q.texture == t);
         assert!(has("hudSoftLineH"));
@@ -1520,7 +1644,7 @@ mod tests {
                 ..view(&ammo, &[])
             };
             let mut out = Vec::new();
-            PlayerHud::default().build(&p, &cx, 0, (1920.0, 1080.0), &mut out);
+            PlayerHud::default().build(&p, &cx, 0, &Virtual::new((1920.0, 1080.0)), &mut out);
             out.into_iter()
                 .filter(|q| Some(&q.texture) == mg.reticle_center.as_ref())
                 .collect::<Vec<_>>()
@@ -1747,10 +1871,10 @@ mod tests {
         let mut hud = PlayerHud::default();
         let has = |out: &[HudQuad], t: &str| out.iter().any(|q| q.texture == t);
         let mut out = Vec::new();
-        hud.build(&p, &cx, 10_000, (640.0, 480.0), &mut out);
+        hud.build(&p, &cx, 10_000, &Virtual::new((640.0, 480.0)), &mut out);
         assert!(has(&out, "gfx/hud/hud@weaponnameback.tga"));
         out.clear();
-        hud.build(&p, &cx, 12_000, (640.0, 480.0), &mut out);
+        hud.build(&p, &cx, 12_000, &Virtual::new((640.0, 480.0)), &mut out);
         assert!(!has(&out, "gfx/hud/hud@weaponnameback.tga"));
         assert!(has(&out, "gfx/hud/hud@ammocounterback.tga"));
     }
@@ -1788,12 +1912,12 @@ mod tests {
         let has = |out: &[HudQuad], t: &str| out.iter().any(|q| q.texture == t);
         let mut out = Vec::new();
         let mut hud = PlayerHud::default();
-        hud.build(&p, &cx, 10_000, (640.0, 480.0), &mut out);
+        hud.build(&p, &cx, 10_000, &Virtual::new((640.0, 480.0)), &mut out);
         assert!(has(&out, "gfx/hud/hud@weaponnameback.tga"));
         assert!(has(&out, "gfx/hud/hud@weaponmode_full.tga"), "while fading");
         assert!(!has(&out, "gfx/hud/hud@ammocounterback.tga"));
         out.clear();
-        hud.build(&p, &cx, 12_000, (640.0, 480.0), &mut out);
+        hud.build(&p, &cx, 12_000, &Virtual::new((640.0, 480.0)), &mut out);
         assert!(out.is_empty() || !has(&out, "gfx/hud/hud@weaponmode_full.tga"));
     }
 
@@ -1902,7 +2026,7 @@ mod tests {
                 ..view(&ammo, &[])
             };
             let mut out = Vec::new();
-            PlayerHud::default().build(&p, &cx, 0, (640.0, 480.0), &mut out);
+            PlayerHud::default().build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
             out.into_iter()
                 .filter(|q| q.texture.contains("weaponmode"))
                 .collect::<Vec<_>>()
@@ -1946,7 +2070,7 @@ mod tests {
             ..view(&ammo, &[])
         };
         let mut out = Vec::new();
-        PlayerHud::default().build(&p, &cx, 0, (640.0, 480.0), &mut out);
+        PlayerHud::default().build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
         let has = |t: &str| out.iter().any(|q| q.texture == t);
         assert!(has("gfx/hud/hud@health_back.tga"));
         assert!(!has("gfx/reticle/side_skinny.tga"));
@@ -1980,13 +2104,66 @@ mod tests {
             ..view(&ammo, &[])
         };
         let mut out = Vec::new();
-        PlayerHud::default().build(&p, &cx, 0, (640.0, 480.0), &mut out);
+        PlayerHud::default().build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
         let bar = out
             .iter()
             .find(|q| q.texture == "gfx/hud/hud@health_bar.tga")
             .expect("health bar");
         assert!(close(bar.verts[1][0] - bar.verts[0][0], 64.0));
         assert!(close(bar.uvs[1][0], 0.5), "cropped, not squeezed");
+    }
+
+    /// At 21:9 the compass and stance keep to the left edge, the health
+    /// and the ammo to the right, the crosshair to the middle; boxed, all
+    /// stay in the 4:3 box.
+    #[test]
+    fn a_wide_window_moves_the_side_pieces_to_its_edges() {
+        let font = test_font();
+        let ammo = [0i16; 64];
+        let cs = vec![String::new(); 2048];
+        let origin = |_: i32| None;
+        let cx = Context {
+            weapons: &[],
+            configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
+            loc: &Localized::default(),
+            font: &font,
+            console_font: &font,
+            entity_origin: &origin,
+            bound_key: &|_| None,
+            draw: super::super::DrawToggles {
+                status: true,
+                crosshair: true,
+            },
+        };
+        let def = carbine();
+        let p = PlayerView {
+            weapon: Some(&def),
+            ..view(&ammo, &[])
+        };
+        let span = |v: Virtual, texture: &str| {
+            let mut out = Vec::new();
+            PlayerHud::default().build(&p, &cx, 0, &v, &mut out);
+            let q = out.iter().find(|q| q.texture == texture).expect(texture);
+            let xs = q.verts.map(|[x, _]| x);
+            (
+                xs.iter().copied().fold(f32::MAX, f32::min),
+                xs.iter().copied().fold(f32::MIN, f32::max),
+            )
+        };
+        let wide = Virtual::new((2520.0, 1080.0));
+        // The compass from -25 on the grid, as far past the window's left
+        // as retail's is past a 4:3 screen's.
+        let compass = "gfx/hud/hud@compasshighlight.tga";
+        assert!(close(span(wide, compass).0, -25.0 * 2.25));
+        assert!(close(span(wide, "hudStanceStand").0, 100.0 * 2.25));
+        let (_, r) = span(wide, "gfx/hud/hud@health_back.tga");
+        assert!(r > 1980.0, "{r}");
+        let (_, r) = span(wide, "gfx/hud/hud@ammocounterback.tga");
+        assert!(close(r, 2520.0 - 2.5 * 2.25), "{r}");
+        let boxed = wide.boxed();
+        assert!(close(span(boxed, compass).0, 540.0 - 25.0 * 2.25));
+        assert!(span(boxed, "gfx/hud/hud@health_back.tga").1 <= 1980.0);
     }
 
     #[test]
@@ -2147,6 +2324,116 @@ mod tests {
             "Press [KEY_USE] to use"
         );
         assert_eq!(hint_use_key("no key", &bound, &loc), "no key");
+    }
+
+    /// The weapon, ammo and health hints print the cgame's own sentences
+    /// (0x300251f0) with the use key, and a weapon the swap would give up
+    /// draws nothing.
+    #[test]
+    fn cursor_hints_compose_the_pickup_and_swap_sentences() {
+        let font = test_font();
+        let mut loc = Localized::default();
+        loc.parse_into(
+            "cgame",
+            r#"
+REFERENCE PICKUPNEWWEAPON
+LANG_ENGLISH "Hold USE [%s] to pick up the %s"
+REFERENCE SWAPWEAPONS
+LANG_ENGLISH "Hold USE [%s] to swap"
+REFERENCE FOR
+LANG_ENGLISH "for"
+REFERENCE PICKUPAMMO
+LANG_ENGLISH "Press USE [%s] to pickup the %s ammo"
+REFERENCE PICKUPHEALTH
+LANG_ENGLISH "Press USE [%s] to pickup health"
+"#,
+        );
+        loc.parse_into("weapon", "REFERENCE KAR\nLANG_ENGLISH \"Kar98k\"\n");
+        let gun = |name: &str, slot: &str| {
+            Some(WeaponDef {
+                display_name: name.into(),
+                weapon_slot: slot.into(),
+                ..Default::default()
+            })
+        };
+        // 1 carbine, 2 kar98k, 3 colt.
+        let weapons = vec![
+            None,
+            gun("WEAPON_M1A1CARBINE", "primary"),
+            gun("WEAPON_KAR", "primary"),
+            gun("Colt", "pistol"),
+        ];
+        let cs = vec![String::new(); 2048];
+        let origin = |_: i32| None;
+        let key = |cmd: &str| (cmd == "+activate").then(|| "F".to_string());
+        let cx = Context {
+            weapons: &weapons,
+            configstrings: &cs,
+            cs: &vcod_common::net::protocol::CS_LAYOUT_V1,
+            loc: &loc,
+            font: &font,
+            console_font: &font,
+            entity_origin: &origin,
+            bound_key: &key,
+            draw: Default::default(),
+        };
+        let ammo = [0i16; 64];
+        let text = |hint: i32, held: usize, slots: [u8; 8], string: i32| {
+            let p = PlayerView {
+                cursor_hint: hint,
+                cursor_hint_string: string,
+                weapon_index: held,
+                slots,
+                ..view(&ammo, &[])
+            };
+            hint_text(&p, &cx)
+        };
+        let t = |s: &str| HintText::Text(s.to_string());
+        // A free primary slot: the pick-up sentence.
+        assert_eq!(
+            text(9 + 2, 1, [0, 1, 0, 0, 0, 0, 0, 0], -1),
+            t("Hold USE [F] to pick up the Kar98k")
+        );
+        // Both primaries full, holding one: swap the held one.
+        let full = [0, 1, 2, 3, 0, 0, 0, 0];
+        assert_eq!(
+            text(9 + 1, 2, full, -1),
+            t("Hold USE [F] to swap Kar98k for WEAPON_M1A1CARBINE")
+        );
+        // Holding the pistol: the swap names the slot's weapon.
+        assert_eq!(
+            text(9 + 2, 3, full, -1),
+            t("Hold USE [F] to swap WEAPON_M1A1CARBINE for Kar98k")
+        );
+        // The same weapon as the one it would swap out: nothing at all.
+        assert_eq!(text(9 + 2, 2, full, -1), HintText::Hidden);
+        assert_eq!(text(9 + 3, 1, full, -1), HintText::Hidden);
+        assert_eq!(
+            text(73 + 2, 1, full, 3),
+            t("Press USE [F] to pickup the Kar98k ammo")
+        );
+        assert_eq!(text(7, 1, full, -1), t("Press USE [F] to pickup health"));
+        assert_eq!(text(7, 1, full, 0), HintText::Server);
+        assert_eq!(text(2, 1, full, -1), HintText::Server);
+        // UO numbers its weapons from 11 and health 8, and has room in the
+        // satchel slot.
+        let uo = |hint: i32, slots: [u8; 8]| {
+            let p = PlayerView {
+                cursor_hint: hint,
+                weapon_index: 1,
+                slots,
+                uo: Some(Default::default()),
+                ..view(&ammo, &[])
+            };
+            hint_text(&p, &cx)
+        };
+        assert_eq!(
+            uo(10 + 2, [0, 1, 0, 0, 0, 0, 0, 0]),
+            t("Hold USE [F] to pick up the Kar98k")
+        );
+        assert_eq!(uo(8, full), t("Press USE [F] to pickup health"));
+        assert_eq!(uo(7, full), HintText::Server);
+        assert!(free_slot(6, &full, true) && !free_slot(6, &full, false));
     }
 
     #[test]

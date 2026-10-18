@@ -543,6 +543,17 @@ arguments, not an entity method:
   times a 0x40-byte bone matrix out of the entity's DObj. INFERRED, off its
   test of the bone index against 0: a bone of -1 gets the entity's frame
   alone.
+- VERIFIED, 0x3001d090 (`CG_InterpolateEntityPosition`, my name, reached from
+  0x3001d210 for a `pos.trType` 1 entity and for a `trType` 3 one under
+  64): for `eType` 1 it copies the lerped angles into the client info
+  (`ci+0x3e4`) and zeroes `lerpAngles` pitch and roll (`cent+0x204`,
+  `+0x20c`). INFERRED, off that and `CG_Player`'s `AnglesToAxis(cent+0x204)`
+  at 0x300282d7: a player's frame, drawn or bolted, turns by its yaw alone,
+  as vcod's yaw-only player frame does. A corpse (`eType` 2) takes its
+  `apos` whole through `BG_EvaluateTrajectory`; VERIFIED, every corpse in
+  the committed snapshot captures (`dyingpose`, `turret-hit`, `uo-arty`,
+  `uo-satchel`) carries pitch and roll 0, so vcod's yaw-only corpse reads
+  the same there.
 - VERIFIED, 0x493f40: a delayed element's queued record keeps the bolt,
   and the due branch calls 0x49e8d0 before the spawner. INFERRED, off its
   test of the record's entity, with the spawner's `relative` branch (R10): an
@@ -556,14 +567,13 @@ vcod plays it through `fx::registry::Resolved::OnTag`:
 drawn this frame, bone matched without regard to case as the server's tag
 check does, and `FxSystem::spawn_on_tag` plays the effect on that axis
 (`SpawnAt::Oriented`), its `relative` elements bolted to the tag and
-re-posed every frame (`FxSystem::tag_bolts`, `set_tag_bolts`). Where it
-differs:
+re-posed every frame (`FxSystem::tag_bolts`, `set_tag_bolts`). A delayed
+element, and a delayed `FxRunner`'s effect, waits in the tag's frame and
+is posed on the tag as it stands the frame it falls due (`Particle::repose`,
+`Chain::repose`); with the tag gone it spawns nothing. Where it differs:
 
-- A player's frame is vcod's drawn one, yaw only (`cod11-turrets.md`
-  14.6), where retail's is `AnglesToAxis` of the whole `lerpAngles`. A
-  plain model (`script_model`, item, missile) is posed in its bind pose,
-  which is how vcod draws it.
-- Delayed elements spawn at the pose of the play's frame.
+- A plain model (`script_model`, item, missile) is posed in its bind
+  pose, which is how vcod draws it.
 - `cullrange` is measured from the tag, not from `lerpOrigin`.
 - An effect on the body the view rides (the playerState ring, or the
   followed player) plays on its tag:

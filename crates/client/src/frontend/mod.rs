@@ -39,6 +39,7 @@ use winit::keyboard::KeyCode;
 use crate::console::shell::Shell;
 use crate::hud::HudQuad;
 use crate::hud::font::{self, Slot, UiFonts};
+use crate::hud::hudelem::Virtual;
 use browser::{AddFavorite, Browser, Filter, Source, Status};
 use status::StatusQuery;
 
@@ -1113,9 +1114,10 @@ impl Ui {
     }
 
     /// A mouse move to window px on a `w` x `h` window, for a window that
-    /// cannot capture the mouse.
+    /// cannot capture the mouse: mapped through the menus' 4:3 box, clamped
+    /// to its edges.
     pub fn mouse_move(&mut self, x: f32, y: f32, w: f32, h: f32, shell: &Shell) -> Vec<UiEffect> {
-        self.cursor = [x * 640.0 / w, y * 480.0 / h];
+        self.cursor = Virtual::new((w, h)).grid_point(x, y);
         self.cursor_moved(shell)
     }
 
@@ -1973,8 +1975,7 @@ impl Ui {
     pub fn build(&self, w: f32, h: f32, loc: &Localized, shell: &Shell) -> Vec<HudQuad> {
         let mut out = Vec::new();
         let p = Painter {
-            sx: w / 640.0,
-            sy: h / 480.0,
+            v: Virtual::new((w, h)),
             fonts: self.fonts.as_ref(),
         };
         for &m in &self.open {
@@ -2535,26 +2536,17 @@ fn text_extents(item: &UiItem, kept: Option<[f32; 4]>, widths: TextWidths) -> [f
 
 /// Draws on the 640x480 grid stretched over the window, as the UI module
 /// does.
+/// Paints menu items on the 640 grid, drawn in the window's centred 4:3
+/// box ([`Virtual`]); a rect that spans the whole grid width or height
+/// (a backdrop, a fade) spans the window's.
 pub(crate) struct Painter<'a> {
-    pub(crate) sx: f32,
-    pub(crate) sy: f32,
+    pub(crate) v: Virtual,
     pub(crate) fonts: Option<&'a UiFonts>,
 }
 
 impl Painter<'_> {
     pub(crate) fn quad(&self, r: [f32; 4], rgba: [f32; 4], texture: &str, out: &mut Vec<HudQuad>) {
-        let (x, y, w, h) = (
-            r[0] * self.sx,
-            r[1] * self.sy,
-            r[2] * self.sx,
-            r[3] * self.sy,
-        );
-        out.push(HudQuad {
-            verts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
-            uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-            rgba,
-            texture: texture.to_string(),
-        });
+        out.push(self.v.quad_fill(r[0], r[1], r[2], r[3], rgba, texture));
     }
 
     pub(crate) fn fill(&self, r: [f32; 4], rgba: [f32; 4], out: &mut Vec<HudQuad>) {
@@ -2667,7 +2659,7 @@ impl Painter<'_> {
     /// The font the UI picks for `scale` on this window.
     fn font(&self, scale: f32) -> Option<&font::Font> {
         self.fonts
-            .map(|f| f.pick(Slot::Default, scale, 480.0 * self.sy))
+            .map(|f| f.pick(Slot::Default, scale, 480.0 * self.v.scale))
     }
 
     /// Width on the 640 grid.
@@ -2695,12 +2687,13 @@ impl Painter<'_> {
     ) {
         let Some(f) = self.font(scale) else { return };
         let top = y - f.max_height as f32 * f.glyph_scale * scale;
+        let [px, py] = self.v.point(x, top);
         font::layout(
             f,
             text,
-            x * self.sx,
-            top * self.sy,
-            scale * self.sy / f.unit_scale(),
+            px,
+            py,
+            scale * self.v.scale / f.unit_scale(),
             color,
             out,
         );
@@ -2713,7 +2706,7 @@ mod tests {
 
     /// A `Ui` whose Local refresh broadcasts nowhere.
     fn ui() -> Option<Ui> {
-        let fs = vcod_common::testing::game_fs_11()?;
+        let fs = vcod_common::testing::stock_fs_11()?;
         let mut ui = Ui::new(&fs, "0");
         ui.browser.lan_targets.clear();
         Some(ui)
@@ -2746,8 +2739,7 @@ mod tests {
     #[test]
     fn a_style_3_window_draws_the_default_shader_for_no_image() {
         let p = Painter {
-            sx: 1.0,
-            sy: 1.0,
+            v: Virtual::new((640.0, 480.0)),
             fonts: None,
         };
         let mut item = UiItem {
@@ -3886,8 +3878,7 @@ mod tests {
         let (m, start) = start_as_text(&mut ui, &shell);
         let text = ["word"; 12].join(" ");
         let p = Painter {
-            sx: 1.0,
-            sy: 1.0,
+            v: Virtual::new((640.0, 480.0)),
             fonts: ui.fonts.as_ref(),
         };
         let scale = ui.menus[m].items[start].text_scale;
@@ -4283,6 +4274,25 @@ mod tests {
         );
     }
 
+    /// On a 16:9 window the menus draw in the centred 4:3 box, the
+    /// backdrop (full grid width) over the whole window, and the cursor
+    /// maps through the box.
+    #[test]
+    fn a_wide_window_boxes_the_menus_and_stretches_the_backdrop() {
+        let Some(mut ui) = ui() else { return };
+        let shell = Shell::new();
+        ui.open_main(&Shell::new(), &mut Vec::new());
+        let quads = ui.build(1920.0, 1080.0, &Localized::default(), &shell);
+        assert_eq!(quads[0].verts[0], [0.0, 0.0]);
+        assert_eq!(quads[0].verts[2], [1920.0, 720.0]);
+        let boxed = |q: &HudQuad| q.verts.iter().all(|[x, _]| (240.0..=1680.0).contains(x));
+        assert!(quads.iter().skip(2).filter(|q| !boxed(q)).count() < quads.len() / 4);
+        ui.mouse_move(960.0, 540.0, 1920.0, 1080.0, &shell);
+        assert_eq!(ui.cursor, [320.0, 240.0]);
+        ui.mouse_move(100.0, 540.0, 1920.0, 1080.0, &shell);
+        assert_eq!(ui.cursor, [0.0, 240.0], "clamped to the box");
+    }
+
     #[test]
     fn the_main_menu_draws_its_backdrop_and_buttons() {
         let Some(mut ui) = ui() else { return };
@@ -4548,7 +4558,7 @@ mod tests {
 
     #[test]
     fn the_stock_weapon_menu_hides_a_disallowed_weapon() {
-        let Some(fs) = vcod_common::testing::game_fs_11() else {
+        let Some(fs) = vcod_common::testing::stock_fs_11() else {
             return;
         };
         let mut ui = Ui::new(&fs, "0");
@@ -4578,7 +4588,7 @@ mod tests {
 
     #[test]
     fn the_quick_message_menu_opens_the_quick_commands_and_lets_other_keys_by() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::stock_fs() else {
             return;
         };
         let mut ui = Ui::new(&fs, "0");
@@ -4715,7 +4725,7 @@ mod tests {
 
     #[test]
     fn the_refresh_date_prints_retails_format_and_its_june_key() {
-        let Some(fs) = vcod_common::testing::game_fs_11() else {
+        let Some(fs) = vcod_common::testing::stock_fs_11() else {
             return;
         };
         let loc = Localized::load(&fs);

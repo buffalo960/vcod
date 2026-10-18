@@ -563,8 +563,9 @@ fn no_jump_landing_arms_the_0x2000_lockout() {
 /// speed-keeping ground clip (docs/research/cod11-mantle.md, "Jumps").
 const GAPS: &[(&str, i32, f32, &str)] = &[];
 
-/// The most a row outside `GAPS` may differ from retail, per axis.
-const ROW_TOLERANCE: f32 = 0.01;
+/// The most a row outside `GAPS` may differ from retail, per axis: none,
+/// since the body sweep took 1.1d's rounding (player-clip doc 2.4).
+const ROW_TOLERANCE: f32 = 0.0;
 
 fn is_gap(r: &Row) -> bool {
     GAPS.iter()

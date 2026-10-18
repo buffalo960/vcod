@@ -1979,6 +1979,18 @@ for 55 s and the `--probe-weapsel` shooter 3 s later for 48 s: one round
 on entity 158 as `eType` 4 for eight snapshots, its explode (185) on the
 same entity as `eType` 0 at +400 ms (live, VERIFIED). It gates the
 missile's `projectileSound` (cod11-sound-system.md section 8).
+`uo_weapons_ab`'s `the_bazooka_rocket_flies_and_explodes_as_on_uo`
+replays the shooter on ours from retail's spot and view: the rocket's
+trajectory on every snapshot (`TR_LINEAR`, `trTime` 100 ms before the
+fire's snapshot, `trBase` the muzzle to the tenth, a whole-unit
+`trDelta` 2797 to 2800 long, unchanged over the flight) and the
+explode's carrier (`eType` 0, weapon, type 2, `eFlags` 0x10000) match
+retail's; each side's explode lies on its own line on the snapshot the
+flight reaches it, and retail's line meets our mp_cassino at retail's
+explode, on its surface 16 (VERIFIED, capture and gate). The hip
+spread is a random draw, so the direction is each side's own: retail's
+went 0.45 degrees left and 0.9 up, the gate's 7.3 left and 1.4 down,
+and where they go off differs (VERIFIED, the capture's and the gate's `trDelta`).
 `cargo run -p vcod-common --example event_dump -- 22 net/gamestate-uo-flame.bin net/snapshots-uo-flame.bin`
 prints a pair's events. Without the `precacheItem`, which `dm` does not
 do, the retail server dumps core once the flamethrower comes out

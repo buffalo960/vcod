@@ -28,6 +28,23 @@ pub fn game_fs_11() -> Option<Pk3Fs> {
     (install_protocol(&fs).version == PROTOCOL_V1.version).then_some(fs)
 }
 
+/// [`game_fs`] with the install's stock paks alone (`--vanilla`,
+/// [`Pk3Fs::open_search`]): tests that assert the stock assets take it, so
+/// a third-party pak in `main/` cannot move them.
+pub fn stock_fs() -> Option<Pk3Fs> {
+    let dir = game_dir().join("main");
+    if !dir.is_dir() {
+        return None;
+    }
+    Pk3Fs::open_search(&dir, None, None, true).ok()
+}
+
+/// [`stock_fs`] when the install is 1.1's, as [`game_fs_11`].
+pub fn stock_fs_11() -> Option<Pk3Fs> {
+    let fs = stock_fs()?;
+    (install_protocol(&fs).version == PROTOCOL_V1.version).then_some(fs)
+}
+
 /// United Offensive's `uo/` over its sibling `main/`, `None` unless the
 /// install is UO's: the UO gates run only with `COD_DIR` at one.
 pub fn uo_fs() -> Option<Pk3Fs> {

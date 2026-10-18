@@ -15,8 +15,8 @@
 //! `predictor_matches_the_1_5_server_step` run the same comparison on a
 //! protocol 22 and a protocol 6 sim, fed retail's own cmd streams (the
 //! `moves_ab.rs` slope captures: UO's sprint, bipod, automatic fire, mounts
-//! and cook, 1.5's moves and turns). The UO one runs at a UO install, the
-//! 1.5 one at a 1.5 or UO install.
+//! and cook, its tank and jeep seats, 1.5's moves and turns). The UO one runs
+//! at a UO install, the 1.5 one at a 1.5 or UO install.
 //!
 //! `predictor_replays_retail_slope_runs` is `playerstate_slope_ab.rs`'s
 //! rebased replay with the predictor in place of the bare mover: retail's
@@ -164,6 +164,11 @@ impl Run<'_> {
         vcod_server::game::wire::ps_to_protocol(self.p, &mut w);
         let w = over_the_wire(self.p, &w);
         self.pred = predict::from_wire(self.p, &w, Some(&self.last_cmd));
+        // The vehicle's angles come off its entity, as the client's
+        // `seat_angles` do.
+        if let (Some(seat), Some(on)) = (&mut self.pred.ps.seat, self.sim.seat) {
+            seat.angles = on.angles;
+        }
         self.rebuilds += 1;
         self.rebuilds_dropping +=
             usize::from(self.pred.ps.weaponstate == pm::weapon::WEAPON_DROPPING);
@@ -729,6 +734,12 @@ fn step_side_by_side(ring: bool) {
 /// UO's on-foot slope captures and their maps (`moves_ab.rs`): the sprint to
 /// exhaustion and the bipod, automatic fire, and the mounts and the cook.
 const UO_RUNS: &[(&str, &str)] = &[
+    ("mp_cassino-tdm-slope-8ms-tank-seats-uo.txt", "mp_cassino"),
+    ("mp_cassino-tdm-slope-8ms-tank-drive-uo.txt", "mp_cassino"),
+    ("mp_peaks-tdm-slope-8ms-jeep-seats-uo.txt", "mp_peaks"),
+    ("mp_peaks-tdm-slope-8ms-jeep-drive-uo.txt", "mp_peaks"),
+    ("mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt", "mp_peaks"),
+    ("mp_peaks-tdm-slope-8ms-jeep-rider-uo.txt", "mp_peaks"),
     ("mp_carentan-dm-slope-8ms-sprint-uo.txt", "mp_carentan"),
     ("mp_carentan-dm-slope-8ms-autofire-uo.txt", "mp_carentan"),
     ("mp_foy-dm-slope-8ms-uofoot-stand.txt", "mp_foy"),
@@ -738,7 +749,8 @@ const UO_RUNS: &[(&str, &str)] = &[
 
 enum CaptureLine {
     Cmd(UserCmd),
-    Snap(Box<msg::PlayerState>),
+    /// With `vang`, the seat's vehicle's angles, on a seated capture.
+    Snap(Box<msg::PlayerState>, Option<[f32; 3]>),
 }
 
 /// A slope capture's cmds and decoded playerstates (`moves_ab.rs`' parser,
@@ -795,12 +807,59 @@ fn parse_capture(p: &Protocol, text: &str) -> Vec<CaptureLine> {
                 for (k, v) in pairs("clip") {
                     w.arrays.ammoclip[k.parse::<usize>().unwrap()] = v as i16;
                 }
-                out.push(CaptureLine::Snap(Box::new(w)));
+                let vang = kv.get("vang").map(|v| {
+                    let a: Vec<f32> = v.split(',').map(|x| x.parse().unwrap()).collect();
+                    [a[0], a[1], a[2]]
+                });
+                out.push(CaptureLine::Snap(Box::new(w), vang));
             }
             _ => {}
         }
     }
     out
+}
+
+/// Retail's seat at a seated capture's snapshot, put on the sim the way the
+/// server's vehicle puts it there: the boarding and the exit are script and
+/// the vehicle's step, which this harness has neither of, and in a seat the
+/// end frame places the body at the tag (coduo-vehicles.md 3). So the sim
+/// takes retail's origin and the vehicle's angles, and the cmds between
+/// snapshots run seated on both sides. Whether the sim rides now.
+fn follow_seat(
+    sim: &mut ClientSim,
+    p: &Protocol,
+    w: &msg::PlayerState,
+    vang: Option<[f32; 3]>,
+) -> bool {
+    use vcod_common::net::flags::{EF_HULL_VIEW_V22, EF_IN_VEHICLE_V22};
+    let Some(vang) = vang else {
+        return false;
+    };
+    let eflags = w.field_i32(p, "eFlags");
+    let origin = w.origin(p);
+    if eflags & EF_IN_VEHICLE_V22 == 0 {
+        if sim.seat.is_some() {
+            sim.leave_seat(None, None);
+            sim.ps.origin = Vec3::from(origin);
+            sim.ps.velocity = Vec3::ZERO;
+        }
+        return false;
+    }
+    let seat = vcod_server::spectate::Seat {
+        vehicle: w.field_i32(p, "viewlocked_entNum") as u32,
+        pos: w.field_i32(p, "vehPos"),
+        kind: w.field_i32(p, "vehType"),
+        motion: w.field_i32(p, "vehMotion"),
+        angles: vang,
+        hull_view: eflags & EF_HULL_VIEW_V22 != 0,
+        overheated: false,
+    };
+    match &mut sim.seat {
+        Some(on) if on.pos == seat.pos && on.kind == seat.kind => on.angles = vang,
+        _ => sim.enter_seat(seat, origin, w.viewangles(p)),
+    }
+    sim.ps.origin = Vec3::from(origin);
+    true
 }
 
 /// One capture's cmds run on a server sim speaking `p` and on a predictor
@@ -835,7 +894,7 @@ fn capture_side_by_side(
     let first = lines
         .iter()
         .find_map(|l| match l {
-            CaptureLine::Snap(w) => Some(&**w),
+            CaptureLine::Snap(w, _) => Some(&**w),
             CaptureLine::Cmd(_) => None,
         })
         .expect("a snapshot");
@@ -877,14 +936,15 @@ fn capture_side_by_side(
         counts: BTreeMap::new(),
     };
     run.rebuild();
-    let (mut sprinted, mut deployed, mut cooked) = (0, 0, 0);
+    let (mut sprinted, mut deployed, mut cooked, mut seated) = (0, 0, 0, 0);
     for line in &lines {
         match line {
-            CaptureLine::Snap(w) => {
+            CaptureLine::Snap(w, vang) => {
                 run.sim.set_cursor_hint(
                     w.field_i32(p, "serverCursorHint"),
                     w.field_i32(p, "serverCursorHintVal"),
                 );
+                seated += usize::from(follow_seat(&mut run.sim, p, w, *vang));
                 run.rebuild();
             }
             CaptureLine::Cmd(c) if c.server_time > run.st => {
@@ -900,7 +960,7 @@ fn capture_side_by_side(
     }
     println!(
         "{file}: {} cmds, {} rebuilds, sprinting {sprinted}, deployed {deployed}, \
-         fuse armed {cooked}, {} mismatching reads {:?}",
+         fuse armed {cooked}, seated snapshots {seated}, {} mismatching reads {:?}",
         run.cmds,
         run.rebuilds,
         run.mismatches.len(),

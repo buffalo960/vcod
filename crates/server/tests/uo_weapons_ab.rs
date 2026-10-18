@@ -104,6 +104,18 @@ pub struct Seen {
 struct Run {
     seen: Vec<Seen>,
     last_seen: BTreeMap<u32, i32>,
+    /// Every missile (`eType` 4) on each snapshot: the snapshot time, its
+    /// number and its trajectory.
+    missiles: Vec<(i32, u32, Flight)>,
+}
+
+/// A missile's `pos` trajectory as the wire carries it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Flight {
+    tr_type: i32,
+    tr_time: i32,
+    base: [f32; 3],
+    delta: [f32; 3],
 }
 
 impl Run {
@@ -114,8 +126,21 @@ impl Run {
                 ev,
             });
         }
-        for &n in s.entities.keys() {
+        for (&n, e) in &s.entities {
             self.last_seen.insert(n, s.server_time);
+            if e.field_i32(p, "eType") == 4 {
+                let f = |name: &str| e.field_f32(p, name);
+                self.missiles.push((
+                    s.server_time,
+                    n,
+                    Flight {
+                        tr_type: e.field_i32(p, "pos.trType"),
+                        tr_time: e.field_i32(p, "pos.trTime"),
+                        base: [0, 1, 2].map(|i| f(&format!("pos.trBase[{i}]"))),
+                        delta: [0, 1, 2].map(|i| f(&format!("pos.trDelta[{i}]"))),
+                    },
+                ));
+            }
         }
     }
 
@@ -830,4 +855,136 @@ fn the_satchel_charge_bounces_and_blows_as_on_uo() {
         )
     };
     assert_eq!(shape(&retail), shape(&ours));
+}
+
+/// A UO player rocket (`*-uo-bazooka.bin`, `probe_uofx` with `probe_weapon
+/// bazooka_mp` and a `--probe-weapsel` shooter from the hip, coduo-diff.md
+/// 19). Ours fires from retail's spot along retail's view. The hip spread
+/// is a random draw neither side can repeat, so the rocket's direction is
+/// each side's own: the gate compares its trajectory on every snapshot of
+/// the flight (`TR_LINEAR`, `trTime` 100 ms before the fire's snapshot,
+/// the muzzle, the 2800 speed truncated, held still), the explode's carrier (185 on
+/// the rocket as `eType` 0, the rocket type in `es.scale`, the weapon,
+/// `eFlags`), and, on each side, an explode on the snapshot its flight
+/// reaches it. Retail's flight is traced through our world too: its line
+/// meets our collision where retail's rocket went off, on its surface.
+#[test]
+fn the_bazooka_rocket_flies_and_explodes_as_on_uo() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    let (retail, origin, yaw) = retail("bazooka");
+    let p = &PROTOCOL_V22;
+    let frames = vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-uo-bazooka.bin",
+        "net/snapshots-uo-bazooka.bin",
+    );
+    let fire_t = retail.first(EV_FIRE_WEAPON_LASTSHOT).t;
+    // The view the fire's cmd carried: the shooter's on the snapshot before.
+    let view = frames
+        .iter()
+        .map(|f| &f.snapshot)
+        .take_while(|s| s.server_time < fire_t)
+        .last()
+        .expect("a snapshot before the fire")
+        .ps
+        .viewangles(p);
+    let aim = [view[0], view[1] - yaw];
+    let script = [
+        foot(5000, 0, aim),
+        foot(150, BUTTON_ATTACK, aim),
+        foot(60_000, 0, aim),
+    ];
+    let ours = ours("bazooka_mp", &script, origin, yaw, 15);
+    report("retail", &retail);
+    report("ours", &ours);
+    let flight = |run: &Run| -> (Vec<_>, Flight) {
+        let fire = run.first(EV_FIRE_WEAPON_LASTSHOT).t;
+        let on: Vec<_> = run.missiles.iter().filter(|(t, ..)| *t >= fire).collect();
+        let first = on.first().expect("the rocket on a snapshot").2;
+        assert!(
+            on.iter().all(|(.., f)| *f == first),
+            "the flight changed: {on:?}"
+        );
+        // `trDelta` goes out truncated to whole units (cod11-combat.md 13.6), so
+        // its length sits within a unit or two under the 2800 the draw turns.
+        assert!(
+            first.delta.iter().all(|v| v.fract() == 0.0),
+            "a fractional delta {:?}",
+            first.delta
+        );
+        let speed = glam::Vec3::from(first.delta).length();
+        assert!((2797.0..=2800.0).contains(&speed), "speed {speed}");
+        let rows = on
+            .iter()
+            .map(|(t, _, f)| {
+                (
+                    t - fire,
+                    f.tr_type,
+                    f.tr_time - fire,
+                    f.base.map(|v| (v * 10.0).round() as i32),
+                )
+            })
+            .collect();
+        (rows, first)
+    };
+    let carrier = |run: &Run| {
+        let x = run.first(EV_EXPLODE);
+        (x.ev.e_type, x.ev.weapon, x.ev.scale, x.ev.eflags)
+    };
+    let (r_rows, r_flight) = flight(&retail);
+    let (o_rows, o_flight) = flight(&ours);
+    // The flight's rows up to the shorter one's end: where it goes off
+    // rides the draw.
+    let n = r_rows.len().min(o_rows.len());
+    assert_eq!(r_rows[..n], o_rows[..n], "the flight");
+    assert_eq!(carrier(&retail), carrier(&ours), "the explode's carrier");
+    // Each side's explode on its own line, on the first snapshot at or past
+    // the frame the rocket reaches it, the rocket gone with it.
+    for (side, run, f) in [("retail", &retail, r_flight), ("ours", &ours, o_flight)] {
+        let x = run.first(EV_EXPLODE);
+        let (base, delta) = (glam::Vec3::from(f.base), glam::Vec3::from(f.delta));
+        let pos = glam::Vec3::from(x.ev.pos);
+        let along = (pos - base).dot(delta.normalize());
+        let off = (pos - base - delta.normalize() * along).length();
+        assert!(off < 2.0, "{side}: the explode {pos} is {off} off the line");
+        let reach = f.tr_time + (along / delta.length() * 1000.0).ceil() as i32;
+        assert!(
+            (reach..reach + common::FRAME_MS as i32).contains(&x.t),
+            "{side}: reaches {pos} at {reach}, goes off at {}",
+            x.t
+        );
+        let fire = run.first(EV_FIRE_WEAPON_LASTSHOT).t;
+        let rows = run.missiles.iter().filter(|(t, ..)| *t >= fire).count();
+        assert_eq!(
+            rows as i32,
+            (x.t - fire) / common::FRAME_MS as i32,
+            "{side}"
+        );
+    }
+    let world = cassino_world();
+    let (base, delta) = (
+        glam::Vec3::from(r_flight.base),
+        glam::Vec3::from(r_flight.delta),
+    );
+    let t = world.point_trace(
+        base,
+        base + delta * 2.0,
+        vcod_common::collision::MASK_BLAST,
+        true,
+    );
+    let x = retail.first(EV_EXPLODE);
+    assert!(
+        (t.endpos - glam::Vec3::from(x.ev.pos)).length() < 2.0,
+        "retail's line meets our world at {}, retail's rocket went off at {:?}",
+        t.endpos,
+        x.ev.pos
+    );
+    assert_eq!(
+        vcod_common::collision::sound_material(t.surface_flags),
+        x.ev.surf_type,
+        "{}",
+        t.hit.map(|h| world.describe(h)).unwrap_or_default()
+    );
 }

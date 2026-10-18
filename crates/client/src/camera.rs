@@ -31,6 +31,27 @@ pub fn fov_y(fov_x: f32, aspect: f32) -> f32 {
         .to_degrees()
 }
 
+/// The horizontal fov for a vertical `fov_y` across a viewport `aspect`
+/// wide, both in degrees: [`fov_y`]'s inverse.
+pub fn fov_x(fov_y: f32, aspect: f32) -> f32 {
+    2.0 * ((fov_y / 2.0).to_radians().tan() * aspect)
+        .atan()
+        .to_degrees()
+}
+
+/// vcod's Hor+ (`vc_widescreen 1`): the horizontal fov a viewport `aspect`
+/// wide draws for `fov_x`, every fov the game names (`cg_fov`, a sight's,
+/// a seat's) being the width of a 4:3 view. A wider viewport keeps that
+/// view's vertical fov and sees more at the sides; a 4:3 or narrower one
+/// keeps `fov_x`, as retail does at any aspect (`widescreen` false).
+pub fn view_fov_x(fov_x: f32, aspect: f32, widescreen: bool) -> f32 {
+    const FOUR_THREE: f32 = 4.0 / 3.0;
+    if !widescreen || aspect <= FOUR_THREE {
+        return fov_x;
+    }
+    self::fov_x(fov_y(fov_x, FOUR_THREE), aspect)
+}
+
 /// A projection `fov_x` degrees wide across a viewport `aspect` wide.
 pub fn perspective(fov_x: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
     glam::camera::rh::proj::directx::perspective(
@@ -150,8 +171,9 @@ impl FlyCamera {
         self.speed = (self.speed * 1.2f32.powf(scroll)).clamp(10.0, 20000.0);
     }
 
-    pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        view_proj_from(self.pos, self.yaw, self.pitch, 0.0, DEFAULT_FOV_DEG, aspect)
+    /// `fov_x` horizontal degrees across a viewport `aspect` wide.
+    pub fn view_proj(&self, fov_x: f32, aspect: f32) -> Mat4 {
+        view_proj_from(self.pos, self.yaw, self.pitch, 0.0, fov_x, aspect)
     }
 }
 
@@ -215,7 +237,8 @@ mod tests {
     #[test]
     fn view_proj_puts_point_ahead_in_front() {
         let cam = FlyCamera::new(Vec3::ZERO, 0.0);
-        let clip = cam.view_proj(16.0 / 9.0) * glam::Vec4::new(1000.0, 0.0, 0.0, 1.0);
+        let clip =
+            cam.view_proj(DEFAULT_FOV_DEG, 16.0 / 9.0) * glam::Vec4::new(1000.0, 0.0, 0.0, 1.0);
         let ndc = clip / clip.w;
         assert!(
             ndc.z > 0.0 && ndc.z < 1.0,
@@ -273,7 +296,7 @@ mod tests {
     #[test]
     fn view_proj_from_matches_flycamera_when_roll_is_zero() {
         let cam = FlyCamera::new(Vec3::new(10.0, 20.0, 30.0), 90.0);
-        let a = cam.view_proj(16.0 / 9.0);
+        let a = cam.view_proj(DEFAULT_FOV_DEG, 16.0 / 9.0);
         let b = view_proj_from(
             cam.pos,
             cam.yaw,
@@ -321,5 +344,24 @@ mod tests {
         let p = perspective(80.0, 1.6, 1.0, 100.0);
         let edge = p.project_point3(Vec3::new(-(40.0f32.to_radians().tan()), 0.0, -1.0));
         assert!((edge.x + 1.0).abs() < 1e-5, "{edge}");
+    }
+
+    /// Hor+: `cg_fov 80` is 96.4 degrees wide at 16:9 and 111.5 at 21:9,
+    /// both 64.4 tall as at 4:3; 4:3, 5:4 and `vc_widescreen 0` keep 80.
+    #[test]
+    fn hor_plus_keeps_the_four_three_vertical_fov() {
+        let close = |a: f32, b: f32| (a - b).abs() < 0.05;
+        let wide = view_fov_x(80.0, 16.0 / 9.0, true);
+        assert!(close(wide, 96.39), "{wide}");
+        let ultra = view_fov_x(80.0, 21.0 / 9.0, true);
+        assert!(close(ultra, 111.48), "{ultra}");
+        for (fov, aspect) in [(80.0, 16.0 / 9.0), (80.0, 21.0 / 9.0), (30.0, 2.4)] {
+            let drawn = view_fov_x(fov, aspect, true);
+            assert!(close(fov_y(drawn, aspect), fov_y(fov, 4.0 / 3.0)));
+        }
+        assert_eq!(view_fov_x(80.0, 4.0 / 3.0, true), 80.0);
+        assert_eq!(view_fov_x(80.0, 1.25, true), 80.0);
+        assert_eq!(view_fov_x(80.0, 16.0 / 9.0, false), 80.0);
+        assert!(close(fov_x(fov_y(80.0, 1.6), 1.6), 80.0));
     }
 }
