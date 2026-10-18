@@ -48,12 +48,6 @@ struct MissileSample {
     event_sequence: i32,
 }
 
-impl MissileSample {
-    fn at(&self, server_time: i32) -> glam::Vec3 {
-        self.pos.evaluate(server_time)
-    }
-}
-
 /// The `!missile` line writes each ring as one comma-separated field.
 fn four(raw: &str) -> [i32; 4] {
     let mut out = [0; 4];
