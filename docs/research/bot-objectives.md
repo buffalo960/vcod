@@ -768,6 +768,14 @@ first everywhere.
   none in reach or once that fetch is given up. Every shoot-on `kill` in
   six mp_foy rounds was a dry one, and two were a planter dry in its
   charge's room whose charge was then defused (seeds 1 and 7). A
+  shooting bot with only a rocket left (no gun, the pistol dry) that
+  has given up on an enemy it could not fire at (section 3, the futile
+  enemy) fetches a gun lying within 800 units, never a launcher
+  (`Bot::unarmed`, `ARMS_FETCH`). On mp_foy seed 23 an allied planter
+  and the axis defender, each with a loaded launcher and a dry pistol,
+  stood side by side in a charge room for 5 min: eight plants, seven
+  defuses, no shot. With the full 1500-unit reach the walk to the gun
+  cost seeds 7 and 11 a minute and more. A
   launcher or gun the body has come no 32 units nearer in 20 s (a node
   over it, or a tap that takes nothing) is passed over for a minute.
 - The way into a breached base opens only when its walls go, after the
@@ -925,6 +933,48 @@ base, breached (VERIFIED, measured, ours, mp_kursk shooting, seeds 1 to
 INFERRED: a plant made at once, before the defender is back in its
 room, wins more than it loses. On these seeds no attacker reached a held room one at a
 time, so nothing was merged.
+
+Rejected rules for the endgame, both sides down to one breached base
+(VERIFIED, measured, ours, 2026-10-18, release, UO install, master
+1080e30d, `four_shooting_uo_bots_end_a_bas_round`, seeds 1 to 11 odd on
+all five maps; master as above, mp_foy 13 to 23 odd at 13119, 9899,
+17639, 11319, 12639 and 23559):
+- The defender stays home once both last bases are breached: no
+  backing, charged or not. mp_kursk seed 5 went 15379 to 25039 and seed
+  7 never ended (12 defuses in 29 min); mp_foy seed 1 went 17779 to
+  19399 and mp_italy seed 1 12979 to 13379.
+- In that endgame the defender backs a ticking charge only, not the
+  other side's last base uncharged. mp_kursk seed 5 went to 26199,
+  mp_foy seed 1 to 19399, mp_italy seed 5 11619 to 13059.
+- A planter of the other side's last base waits outside the blast (520
+  to 670 off) while the other side has two alive and no teammate is
+  within 300 units of its own distance to the charge. mp_kursk seed 5
+  went to 21459 and seed 9 9839 to 23279; seeds 1, 7 and 11 lost 380 to
+  1640 ticks, mp_foy seeds 5 and 9 about 1000 each.
+- None of the three moved mp_foy seed 23, whose slow stretch is not
+  that endgame. From tick 5335 to 11861 an allied planter and the axis
+  defender each held only a loaded launcher, both pistols dry, and
+  stood 100 to 300 units apart in the charge room of the axis base at
+  (-2502, 2264), each hidden from the other for 30 s after 10 s
+  without a shot (the futile-enemy rule): eight plants, seven defuses,
+  no kill. The gun
+  fetch above ends it at 14979.
+
+VERIFIED (measured, ours, 2026-10-18, release, UO install, the gun
+fetch above, same gate): mp_foy shooting over seeds 1 to 23 odd ends at
+9899 to 17779, mean 12972 (master 9899 to 23559, mean 13517): seed 23 at
+14979, seed 7 at 13459 (master 12819), seed 11 at 11659 (9939), seed 17
+at 17319 (17639), the rest on master's tick. With the 1500-unit reach
+seed 7 took 16779 and seed 11 12059. mp_italy, mp_kursk, mp_ponyri and
+mp_rhinevalley (1 to 11 odd, mp_kursk to 23) end on master's tick at
+the 1500-unit reach, so at 800 too. The shoot-off gate on mp_foy and
+mp_kursk, seeds 1 and 5, ends on master's tick; the two-bot gate there
+at 10039 to 11779.
+On master 35198659 (after the mp_ship follow-up's nav changes, which
+reshuffled every seed: mp_kursk seed 5 22199, mp_foy seed 23 16739)
+the fetch changed two of 36 shooting runs (all five maps 1 to 11 odd,
+mp_foy to 23): mp_foy seed 1 10919 to 13419 and seed 13 17419 to
+13559; mean 12562 to 12524. Seed 23's stand-off no longer arises there.
 
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's

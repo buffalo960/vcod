@@ -981,6 +981,10 @@ const BAS_BUNKER: f32 = 300.0;
 const DRY_TICKS: u32 = 200;
 /// A dry `bas` bot fetches a weapon lying this near instead.
 const DRY_FETCH: f32 = 1500.0;
+/// A `bas` bot left with only a rocket ([`Bot::unarmed`]) fetches a gun
+/// this near: from 1000 and 1500 units off, the walk cost mp_foy's seeds 7
+/// and 11 a minute and more.
+const ARMS_FETCH: f32 = 800.0;
 /// Ticks a fetch may go without coming [`FETCH_CLOSING`] nearer its
 /// launcher (the reach included: one stood at counts down too).
 const FETCH_STALL_TICKS: u32 = 400;
@@ -1488,20 +1492,23 @@ impl Bot {
                 // `DRY_FETCH`, before the `kill` (`DRY_TICKS`). A planter
                 // that ran dry in its charge's room killed itself, and the
                 // charge was defused (seeds 1 and 7).
-                if Self::dry(view)
-                    && let Some(&w) = b
-                        .guns
-                        .iter()
-                        .chain(b.launchers.iter().filter(|l| {
-                            b.bases
-                                .iter()
-                                .all(|x| x.breached || dist_sq(**l, x.at) > BAS_BUNKER * BAS_BUNKER)
-                        }))
-                        .filter(|l| dist_sq(view.origin, **l) < DRY_FETCH * DRY_FETCH)
-                        .filter(|l| !self.shunned.iter().any(|s| arrived(s.0, **l)))
-                        .min_by(|x, y| {
-                            dist_sq(view.origin, **x).total_cmp(&dist_sq(view.origin, **y))
-                        })
+                // With a rocket left, a gun only, and from nearer.
+                let dry = Self::dry(view);
+                let reach = if dry { DRY_FETCH } else { ARMS_FETCH };
+                if (dry || self.unarmed(view))
+                    && let Some(&w) =
+                        b.guns
+                            .iter()
+                            .chain(b.launchers.iter().filter(|l| {
+                                dry && b.bases.iter().all(|x| {
+                                    x.breached || dist_sq(**l, x.at) > BAS_BUNKER * BAS_BUNKER
+                                })
+                            }))
+                            .filter(|l| dist_sq(view.origin, **l) < reach * reach)
+                            .filter(|l| !self.shunned.iter().any(|s| arrived(s.0, **l)))
+                            .min_by(|x, y| {
+                                dist_sq(view.origin, **x).total_cmp(&dist_sq(view.origin, **y))
+                            })
                 {
                     return Some(ObjTarget::Pickup { aim: w, from: w });
                 }
@@ -1976,6 +1983,20 @@ impl Bot {
             && view.rocket.is_none()
             && view.pistol.is_none_or(spent)
             && spent(view.weapon)
+    }
+
+    /// Shooting, only a rocket left (none goes at a player) and an enemy
+    /// given up on ([`Self::count_futile`]): the bot fetches a gun lying
+    /// near. Two such bots on mp_foy, seed 23, stood side by side in a
+    /// charge room while one planted and the other defused, eight times
+    /// over 5 min.
+    fn unarmed(&self, view: &BotView) -> bool {
+        let spent = |w: u8| w == 0 || w >= 64 || view.loaded >> w & 1 == 0;
+        self.shoot
+            && self.ignored.is_some()
+            && view.rocket.is_some()
+            && view.gun.is_none()
+            && view.pistol.is_none_or(spent)
     }
 
     /// Held in the air, off the rungs and unlinked, without moving for
@@ -6300,6 +6321,56 @@ mod tests {
             bot.take_kill()
         });
         assert!(killed, "nothing in reach");
+    }
+
+    /// Shooting, with only a rocket left, a `bas` bot that has given up on
+    /// an enemy it cannot fire at fetches a gun lying near, never a
+    /// launcher; before it gives up it fights, and one that does not shoot
+    /// keeps to its objective.
+    #[test]
+    fn a_bas_bot_with_only_a_rocket_fetches_a_gun_off_a_futile_enemy() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = bas_view();
+        v.origin = [1900.0, 0.0, -176.0];
+        v.gun = None;
+        v.pistol = Some(2);
+        v.rocket = Some(5);
+        v.weapon = 5;
+        v.loaded = 1 << 5;
+        let gun = [1800.0, 40.0, -176.0];
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.guns.push(gun);
+        let fetches = |bot: &Bot, v: &BotView| matches!(bot.objective_target(v), Some(ObjTarget::Pickup { from, .. }) if from == gun);
+        assert!(!fetches(&bot, &v), "no enemy given up on");
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [1950.0, 0.0, -136.0],
+            velocity: [0.0; 3],
+        });
+        assert!(!fetches(&bot, &v), "in the fight");
+        for _ in 0..FUTILE_TICKS {
+            bot.think(&v);
+        }
+        assert!(bot.ignores(3));
+        v.enemy = None;
+        assert!(fetches(&bot, &v), "the gun");
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.guns.clear();
+        assert!(
+            !matches!(bot.objective_target(&v), Some(ObjTarget::Pickup { .. })),
+            "no launcher"
+        );
+        let mut calm = Bot::new("allies", false, 1);
+        calm.ignored = Some((3, IGNORE_TICKS));
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.guns.push(gun);
+        assert!(!fetches(&calm, &v), "not shooting");
     }
 
     /// The planter holds the room of its charge against the defuse while
