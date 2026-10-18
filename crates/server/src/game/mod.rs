@@ -5,6 +5,7 @@ pub mod artillery;
 pub mod bodies;
 pub mod builtins;
 pub mod combat;
+pub mod damage_trigger;
 pub mod entity;
 pub mod fields;
 pub mod hitrig;

@@ -1981,8 +1981,15 @@ frame, at weight 0).
   cell sits within 0.08 of retail's and every hit point within 0.002, and
   so does UO's with the shift above in place. The kill frame's cells read
   0.001 to 0.08 off where the wound's read under 0.004 on every server.
-  INFERRED: a small difference on the knockback's first frame, the same on
-  all three; not found.
+- vcod measurement, 2026-10-18 (`TURRET_REPORT=1`, each grid laid out
+  9 by 9): on the kill frame the cells drift smoothly across the grid,
+  about 3e-4 of a unit per 1.5-unit cell (a turn of about 2e-4 radians),
+  -0.002..0.006 on 1.1d, -0.003..0.004 on 1.5b, -0.009..0.003 on UO; the
+  0.01 to 0.08 cells are rays that graze a box edge, where that turn
+  moves the entry most. INFERRED: the body is turned about a hundredth of
+  a degree off retail's on the knockback's first frame, the frame its legs
+  take clip 157 at weight 0, the same on all three; which input turns it
+  is not found.
 - vcod: `turret_ab`'s `hit_gate` replays each capture as `spawn_gate` does
   and holds the target's playerstate, each hit's point (0.02) and each grid
   cell (0.1) to retail's; the gunner's own rows are the `-spawn` gates'.

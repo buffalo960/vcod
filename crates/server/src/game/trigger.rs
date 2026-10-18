@@ -15,8 +15,8 @@ pub enum TriggerKind {
     Use,
     LookAt,
     Hurt,
-    /// Recognised, registered and notified, but models no damage of its own:
-    /// deliberate, and the spec's 3.6 says so.
+    /// Fired by what damages it, never touched: `Activate_trigger_damage`
+    /// (`crate::game::damage_trigger`), its keys in [`Trigger::spec`].
     Damage,
     /// United Offensive's `trigger_mount`, a map's or `spawnTriggerMount`'s:
     /// an LMG deploys on it, crouched with spawnflag 1, and a touch notifies
@@ -76,6 +76,26 @@ pub struct Trigger {
     /// Its hint-string slot (`ent+0xd8`) as `serverCursorHintString` carries
     /// it, -1 for none (retail's 0xff). Written by `setHintString`.
     pub hint_string: i32,
+    /// A `trigger_damage`'s keys; `None` on every other kind.
+    pub spec: Option<DamageSpec>,
+}
+
+/// What `SP_trigger_damage` (1.1d 0x65278, 1.5b 0x6ac1e, UO 0x76f59) reads
+/// off a `trigger_damage`'s keys, and the grenade-touch bit
+/// `enableGrenadeTouchDamage` sets (docs/research/cod11-combat.md 14.8).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DamageSpec {
+    /// `wait` and `random` in seconds (`G_SpawnFloat`, defaults "0.5" and
+    /// "0"), `random` pulled under `wait` when it reaches it.
+    pub wait: f32,
+    pub random: f32,
+    pub accumulate: i32,
+    pub threshold: i32,
+    pub spawnflags: i32,
+    /// UO's `teamname` key: 1 `axis`, 2 `allies`, else 0.
+    pub team: i32,
+    /// `flags & 0x8000`.
+    pub grenade_touch: bool,
 }
 
 // `EntId` orders by entity number first, and entity numbers are handed out
@@ -140,8 +160,17 @@ impl Triggers {
                     0
                 },
                 hint_string: -1,
+                spec: None,
             },
         );
+    }
+
+    /// A `trigger_damage` with its keys.
+    pub fn register_damage(&mut self, id: EntId, shape: TriggerShape, spec: DamageSpec) {
+        self.register(id, TriggerKind::Damage, shape, 0);
+        if let Some(t) = self.rows.get_mut(&id) {
+            t.spec = Some(spec);
+        }
     }
 
     /// A `trigger_hurt`, whose damage, flags and cadence come from
@@ -820,6 +849,7 @@ mod tests {
             dflags: 0,
             cursor_hint: 0,
             hint_string: -1,
+            spec: None,
         };
         assert_eq!(
             abs_bounds([100.0, -50.0, 8.0], &t),

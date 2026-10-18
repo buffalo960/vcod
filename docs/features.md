@@ -368,7 +368,8 @@ something, the bullet links it.
   view snap, 1.5's and UO's plain clamp), fire, dismount; 1.1d, 1.5b and
   UO captures replayed against ours. A round passes the gun, as retail's
   does, not the gunner.
-- Map triggers, script movers that carry and shove players and items, and
+- Map triggers (a `trigger_damage` fires off rounds, swings, grenades and
+  blasts, measured on UO's mp_uo_stanjel), script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them,
@@ -411,6 +412,11 @@ something, the bullet links it.
   deletes walls, as `bas` does to a breached base. A bot jumps through a
   window too low for a standing body with crouch held in the air, as
   out of mp_cassino's axis room and two rooms on mp_streets.
+- Bot management over rcon: `addbot`, `removebot` and `listbots`, names
+  like `[BOT] Sir Camps-a-Lot` drawn without repeats, team balance that
+  moves only dead bots, and a `vc_bot_minplayers` floor a joining human
+  takes a bot's place under. The `vc_bot_*` cvars apply live
+  (docs/usage.md, "Bots").
 
 ## What it doesn't do
 

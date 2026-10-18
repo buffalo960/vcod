@@ -182,6 +182,7 @@ impl Cvars {
         let base = ENGINE_DEFAULTS
             .iter()
             .chain(registry::REGISTRY)
+            .chain(registry::VCOD_ONLY)
             .filter(|(n, ..)| !overlay.iter().any(|(o, ..)| o == n));
         for &(name, flags, value) in base.chain(overlay.iter().copied()) {
             cv.register(name, value);

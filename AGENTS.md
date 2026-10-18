@@ -672,7 +672,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - Every mover's speed is `ps.speed` (`PlayerState::speed`): `g_speed` on
   1.1, the client's `maxspeed` on 1.5 and UO, 400 for a spectator. A wire
   playerstate built by hand without `speed` predicts a body that never
-  moves (cod15-movement.md, "ps.speed").
+  moves (cod15-movement.md, "ps.speed"). Gravity is `ps.gravity`
+  likewise, `(int)g_gravity` on all three: one built without `gravity`
+  never falls. A map load writes `g_gravity` back to 800, so a `+set` of
+  it on retail's command line never sticks ("ps.gravity").
 
 ### Combat and items
 
@@ -765,10 +768,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - A `trigger_lookat` is never touched; it fires off `ClientEndFrame`'s aim
   trace. A `trigger_use` is never touched either (contents 0x200000); it
   fires off the use key's aim pick. A trigger-woken thread runs on the next
-  frame's clock. A trigger's own `"trigger"` (touch, hurt, lookat) goes
-  through `G_RunFrame`'s queue, one per entity a round
+  frame's clock. A trigger's own `"trigger"` (touch, hurt, lookat,
+  damage) goes through `G_RunFrame`'s queue, one per entity a round
   (`host.trigger_fires`); what retail notifies on the spot (a touch, the
-  use key, an item take, a mover's end) goes in `host.engine_notifies`
+  use key, an item take, a mover's end, a blast's or a round's
+  `"damage"` on an entity) goes in `host.engine_notifies`
   (`cod11-gsc-language.md`, "Engine notifies and the trigger queue").
 
 ### Script

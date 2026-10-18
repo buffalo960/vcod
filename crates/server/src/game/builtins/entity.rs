@@ -44,6 +44,8 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("linkto", link_to),
     ("unlink", unlink),
     ("enablelinkto", enable_link_to),
+    ("enablegrenadetouchdamage", enable_grenade_touch_damage),
+    ("disablegrenadetouchdamage", disable_grenade_touch_damage),
     ("sethintstring", set_hint_string),
 ];
 
@@ -849,6 +851,45 @@ pub fn enable_link_to(
     super::super::link::enable(host, cx, id)
         .map(|()| Value::Undefined)
         .map_err(ErrorKind::Custom)
+}
+
+/// `trigger enableGrenadeTouchDamage()` (1.1d 0x5de94, UO 0x69bd4) and
+/// its `disable` twin (0x5def0): the `flags` 0x8000 bit
+/// `G_GrenadeTouchTriggerDamage` keeps (combat doc 14.8). Anything but a
+/// `trigger_damage` is a script error.
+pub fn enable_grenade_touch_damage(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    set_grenade_touch(host, recv, true)
+}
+
+pub fn disable_grenade_touch_damage(
+    host: &mut GameHost,
+    _cx: &mut Cx,
+    recv: Option<Target>,
+    _args: &[Value],
+) -> Result<Value, ErrorKind> {
+    set_grenade_touch(host, recv, false)
+}
+
+fn set_grenade_touch(
+    host: &mut GameHost,
+    recv: Option<Target>,
+    on: bool,
+) -> Result<Value, ErrorKind> {
+    let id = entity_receiver(recv)?;
+    match host.triggers.get_mut(id).and_then(|t| t.spec.as_mut()) {
+        Some(spec) => {
+            spec.grenade_touch = on;
+            Ok(Value::Undefined)
+        }
+        None => Err(ErrorKind::Custom(
+            "Currently on supported on damage triggers".to_string(),
+        )),
+    }
 }
 
 #[cfg(test)]

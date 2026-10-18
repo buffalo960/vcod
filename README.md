@@ -53,7 +53,8 @@ The short tour. The long one, gaps included, is
   rotation and rcon all work. Retail clients can join it.
 - **Bots** (`--bots`) join through the menus, find their way around the
   map, play the objectives and, with `--bots-shoot`, fight back. They're bad
-  at it. So am I.
+  at it. So am I. rcon's `addbot`, `removebot` and `vc_bot_minplayers`
+  manage them on a running server ([docs/bots.md](docs/bots.md)).
 - **Extras retail never had**, all off by default: soft sun shadows, SSAO,
   bloom, HDR, sun shafts, soft particles and a film grade. `--rtx-on` turns
   them all on for one run. Despite the name, no rays were harmed.
@@ -169,6 +170,8 @@ human squinting at a screen, which is where you come in.
 - [docs/features.md](docs/features.md): everything vcod does and doesn't.
 - [docs/usage.md](docs/usage.md): command lines, server options, controls,
   the console, the menus.
+- [docs/bots.md](docs/bots.md): running bots, the rcon commands, the
+  minimum player count, team balance and slots.
 - [docs/protocol-1.1.md](docs/protocol-1.1.md): the 1.1 wire protocol, both
   directions, with every divergence from RTCW/Q3 at the end.
 - [docs/research/](docs/research/): about forty documents on file formats,

@@ -342,6 +342,28 @@ The mound run is the same with `probe_spot mound`, `--probe-prone 270` and
 `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-prone-<spot>.txt`,
 named `dm` because retail runs the probe as gametype `probe_prone`.
 
+## probe_speedgrav
+
+probe_prone's street placement (always on, no `probe_teleport`) with the
+speed and gravity changed: `probe_gravity N` is `setCvar("g_gravity", N)`
+a frame after the load (`SP_worldspawn` writes 800 over any `+set`),
+`probe_maxspeed N` sets each placed allied player's `maxspeed` (1.5 and UO;
+1.1 reads `g_speed`, set with `+set`). It logs `PROBE gravity <g_gravity>
+speed <g_speed>` and probe_prone's `PROBE place` line.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=110 \
+    tools/run_probe.sh client-probes/probe_speedgrav mp_carentan +set g_speed 250 +set probe_gravity 400
+# second shell, about 10 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:28970 --save-slope --probe-moves \
+    --probe-cmd-ms 8 --capture-tag speedgrav-1.1 --probe-secs 95
+```
+
+On 1.5b and UO it is `COD_VERSION=1.5` / `COD_VERSION=uo` with `+set
+probe_maxspeed 250 +set probe_gravity 400` and the tag `speedgrav-1.5` /
+`speedgrav-uo` (UO's probe also `--mod-dir uo`). It writes
+`crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-speedgrav-<v>.txt`.
+
 ## probe_pronebones
 
 A still prone body's bones. Each live player is put once per spawn on the
@@ -2252,3 +2274,28 @@ The fixtures `crates/server/tests/fixtures/dyingpose/mp_carentan-dm.txt`
 and `crates/common/tests/fixtures/net/{gamestate,snapshots}-dyingpose.bin`,
 gated by `crates/server/tests/dyingpose_ab.rs`. The death clip is a
 `rand()` draw: the gate seeds ours to draw retail's `legsAnim` 20.
+
+## probe_dmgtrig and probe_dmgshot
+
+`trigger_damage` on United Offensive's mp_uo_stanjel
+(docs/research/cod11-combat.md 14.8). `probe_dmgtrig` needs no client: it
+watches all seventeen bushes and sets off script blasts on two of them.
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> \
+    PORT=33001 SECS=30 tools/run_probe.sh client-probes/probe_dmgtrig mp_uo_stanjel
+```
+
+`probe_dmgshot` holds one client off the first bush and has him shoot,
+miss, swing and throw a frag at it:
+
+```
+COD_VERSION=uo ... PORT=33003 SECS=60 \
+    tools/run_probe.sh client-probes/probe_dmgshot mp_uo_stanjel
+# 6 s later:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo \
+    --net-probe 127.0.0.1:33003 --probe-team axis --probe-weapon kar98k_mp \
+    --probe-uo-weapon direct --probe-secs 48
+```
+
+Retail's lines are in `crates/server/tests/dmgtrig_ab.rs`.

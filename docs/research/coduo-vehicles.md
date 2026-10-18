@@ -1704,8 +1704,21 @@ origin on ours (`compare_impacts`).
         marks lagging a frame while the gun swings (below) is not
         measured.
       The one left:
-      - 54000, `bip01 head` 0.34 off: the neck and head controls ease
-        from 0 after the change; not traced.
+      - 54000, `bip01 head` 0.34 off. The mark reads the pose of
+        53900. VERIFIED, vcod measurement (2026-10-18, the glide gate
+        with the rider's eased neck control overwritten at 53900):
+        neck (3, 27) puts the head on retail's (4690.53, -1979.62,
+        162.44); ours' (3, 18) reads 0.34 off, (0, 27) 0.1, (6, 27)
+        0.13, (3, 31) 0.16. So retail's neck is on its target (0.3 of
+        the 90-degree head turn) a frame after the change, two
+        18-degree ease steps where ours takes one. VERIFIED,
+        `game.mp.uo.i386.so`: `BG_Player_DoControllers` (0x1f2fe) has
+        one caller, the static 0x42c26, and `ClientEndFrame` stores
+        0x42c26 at `ent+0x230` (0x43510) before `G_UpdateClientInfo`.
+        INFERRED: the ease runs as the DObj's controller callback,
+        once per skeleton build, so a body built at two stamps in one
+        frame eases twice. What builds the rider twice at 53900 is not
+        found; vcod eases once per end frame.
     - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
       fresh retail jeep run (seat changes at 41550 and 53550, port
       32776) seemed to meet the passenger's stint up to 1.07 off ours,

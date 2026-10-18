@@ -1171,6 +1171,23 @@ impl Bot {
         self.answered.clear();
     }
 
+    /// The team the team menu is answered with.
+    pub fn team(&self) -> &str {
+        &self.team
+    }
+
+    /// A team move (`server/bot_admin.rs`): the team menu answers `team`
+    /// from now on and the weapon menu the switch reopens is answered again.
+    pub fn set_team(&mut self, team: &str) {
+        self.team = team.to_string();
+        self.answered.clear();
+    }
+
+    /// `vc_bot_shoot`, applied live.
+    pub fn set_shoot(&mut self, shoot: bool) {
+        self.shoot = shoot;
+    }
+
     /// Where the bot wants to be this tick: the enemy it sees, else the
     /// spot it remembers or heard, else anywhere far. Asked before
     /// [`Bot::think`], which then follows the waypoint the server planned

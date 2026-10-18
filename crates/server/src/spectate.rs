@@ -430,6 +430,10 @@ pub struct ClientSim {
     /// on 1.1, the client's `maxspeed` on 1.5 and UO, mirrored off the host
     /// every frame (cod15-movement.md, "ps.speed").
     pub max_speed: i32,
+    /// What `ClientEndFrame` stores in a playing body's `ps.gravity`:
+    /// `(int)g_gravity`, mirrored off the host every frame
+    /// (cod15-movement.md, "ps.gravity").
+    pub gravity: i32,
     /// The last frame a follow sent this spectator, the copy with its flags
     /// patched: the playerstate `StopFollowing` writes over.
     pub follow_wire: Option<msg::PlayerState>,
@@ -640,6 +644,7 @@ impl ClientSim {
             dobj_ahead: false,
             stance_window_ms: 0,
             max_speed: pmove::SPEED_RUN as i32,
+            gravity: pmove::GRAVITY as i32,
             follow_wire: None,
             residue: None,
             end_frame_wire: None,
@@ -794,6 +799,7 @@ impl ClientSim {
             PmType::Spectator => pmove::SPEED_SPECTATOR,
             _ => self.max_speed as f32,
         };
+        self.ps.gravity = self.gravity as f32;
         // `ClientSpawn`'s memset leaves `groundEntityNum` 0, not 0x3ff, and
         // `PM_CheckDuck` runs ahead of the ground trace (1.5 0x28814,
         // 0x28819): the think's first step takes 1.5's prone press, which
@@ -1945,6 +1951,7 @@ impl ClientSim {
         self.pm_dead = self.dead_arm();
         if self.pm_type == PmType::Normal {
             self.ps.speed = self.max_speed as f32;
+            self.ps.gravity = self.gravity as f32;
         }
         if self.pm_dead || self.damage.taken <= 0 || self.max_health <= 0 {
             return;
@@ -2397,7 +2404,7 @@ impl ClientSim {
         set("pm_type", self.wire_pm_type());
         set("eFlags", self.ps_eflags());
         set("speed", self.ps.speed as i32);
-        set("gravity", if player { pmove::GRAVITY as i32 } else { 0 });
+        set("gravity", if player { self.ps.gravity as i32 } else { 0 });
         // The footstep phase, which a spectator's step pushes on too. The
         // predictor rebuilds from this on every wire round-trip
         // (`vcod_common::pmove::predict::from_wire`), so a stale 0 here
