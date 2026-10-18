@@ -2755,6 +2755,20 @@ impl App {
                 }
                 Effect::Impulse(action) => {
                     if let Mode::Online { input, net, .. } = &mut self.mode {
+                        // A held board takes both first (cgame 0x30038040).
+                        if let (
+                            play::input::Action::NextWeapon | play::input::Action::PrevWeapon,
+                            Some(hud),
+                        ) = (action, &mut self.hud)
+                        {
+                            let step = self.shell.cvar_f32("cg_scoreboardScrollStep") as i32;
+                            if hud
+                                .scoreboard
+                                .take_cycle(action == play::input::Action::NextWeapon, step)
+                            {
+                                continue;
+                            }
+                        }
                         // In a UO seat `weapnext` and `weapprev` ask for the
                         // next or previous seat (uo cgame 0x300474c0,
                         // 0x30047550).
