@@ -49,6 +49,9 @@ const MAX_DROP: f32 = 250.0;
 /// along the deck with, and a bot that did fell past it to the hold
 /// (bot-navigation.md section 3).
 const PACED_DROP: f32 = 200.0;
+/// How far either side of the body a run off a drop has to land from
+/// too ([`Follower::edge_holds`]).
+const ASIDE_DROP: f32 = 2.0;
 /// An edge whose ends differ by less than this in height is level, and a
 /// walk one way stands in for the walk back.
 const LEVEL: f32 = 1.0;
@@ -2155,17 +2158,27 @@ impl Follower {
             if !self.runs_off(world, edge, a, b) {
                 return true;
             }
-            return matches!(
-                walk_with(
-                    world,
-                    at,
-                    Some(pace),
-                    b.truncate(),
-                    Some(b.z),
-                    Gait::Forward
-                ),
-                Walked::Arrived(_, false)
-            );
+            let lands = |at: Vec3| {
+                matches!(
+                    walk_with(
+                        world,
+                        at,
+                        Some(pace),
+                        b.truncate(),
+                        Some(b.z),
+                        Gait::Forward
+                    ),
+                    Walked::Arrived(_, false)
+                )
+            };
+            // The run has to land from a body a couple of units either
+            // side of this one too: off mp_ship's (3564, 252, 896) a run
+            // onto the ledge at 760 lands on a slope's corner the walk
+            // clips and the bot's own run, two units on, misses, and three
+            // bots fell to the deck at 352 (bot-navigation.md section 3).
+            let across = pace.truncate().perp().normalize_or_zero().extend(0.0) * ASIDE_DROP;
+            return lands(at)
+                && (across == Vec3::ZERO || (lands(at + across) && lands(at - across)));
         }
         if (b.z - a.z).abs() > vcod_common::pmove::JUMP_HEIGHT {
             return true;
@@ -2522,7 +2535,17 @@ impl Follower {
             return None;
         }
         let moving = coming.chain(on_head).any(|m| m);
-        Some((spot, moving, under_way))
+        // A body already past the head toward the rungs (backing down over
+        // the lip) steps back onto the head first: headed straight for the
+        // spot, a bot on mp_ship's hatch at (3806, 60, 623) slid along the
+        // hatch's side and fell through it to the deck at 304
+        // (bot-navigation.md section 3).
+        let p = if box_flat(&rungs, at) + 1.0 < box_flat(&rungs, end) {
+            end
+        } else {
+            spot
+        };
+        Some((p, moving, under_way))
     }
 
     /// The bot's own stall circle caught the body on the way to the
@@ -5851,8 +5874,10 @@ mod tests {
         assert_eq!(g.goal_node([64.0, 0.0, 0.0]), Some(2));
         g.perches.insert(2);
         assert_eq!(g.goal_node([64.0, 0.0, 0.0]), Some(1));
-        let mut f = Follower::default();
-        f.dest = g.goal_node([64.0, 0.0, 0.0]);
+        let f = Follower {
+            dest: g.goal_node([64.0, 0.0, 0.0]),
+            ..Follower::default()
+        };
         assert_eq!(f.arrival(&g, [64.0, 0.0, 0.0]), [32.0, 0.0, 0.0]);
         assert_eq!(f.arrival(&g, [0.0, 0.0, 0.0]), [0.0, 0.0, 0.0]);
         let Some(world) = map_world("mp_ship") else {
@@ -6616,6 +6641,39 @@ mod tests {
             out.is_some_and(|(p, jumped)| p.z < 360.0 && jumped),
             "out of the boat: {out:?}"
         );
+    }
+
+    /// mp_ship's run off (3564, 252, 896) onto the ledge at 760: from where
+    /// three bots passed the node (seeds 427, 2477, 4523), at their pace,
+    /// the walk lands on a slope's corner it clips, and two units across
+    /// misses it, as the bots' own runs did, and falls to the deck at 352.
+    /// The run has to land from either side too, so the drop does not
+    /// hold from there; from the node, straight at the ledge, it does.
+    #[test]
+    fn a_drop_that_lands_only_on_a_corner_does_not_hold() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let a = Vec3::new(3563.6223, 252.0, 896.125);
+        let b = Vec3::new(3520.91, 289.35446, 760.125);
+        let g = NavGraph::from_parts(vec![a, b], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let at = Vec3::new(3573.1277, 245.13213, 896.125);
+        let pace = Vec3::new(-173.0, 80.0, 0.0);
+        assert!(matches!(
+            walk_with(w, at, Some(pace), b.truncate(), Some(b.z), Gait::Forward),
+            Walked::Arrived(..)
+        ));
+        assert!(
+            !f.edge_holds(Some(w), at, pace, &g),
+            "from where the bots passed"
+        );
+        let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
+        assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
     }
 
     /// mp_ship's hull corridor at (3825, -800, -64): a beam's end stands
@@ -7521,6 +7579,44 @@ mod tests {
             None,
             "up on the rail"
         );
+    }
+
+    /// mp_ship's ladder at x 3793: a bot backing down over its hatch's
+    /// lip at (3806, 60, 623) met a climber, headed straight for the spot
+    /// aside, slid along the hatch's side and fell through to the deck at
+    /// 304 (seed 1795, the bot hurt). Past the head toward the rungs it steps back onto
+    /// the head first; from the head it goes on to the spot.
+    #[test]
+    fn a_yield_from_over_the_lip_steps_back_onto_the_head_first() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([3760.0, 65.0, 616.0]).unwrap();
+        let foot = g.nearest([3809.0, 65.0, 304.0]).unwrap();
+        assert!(g.edges[head as usize].contains(&foot));
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        // Hurt: a fall of 300 kills, so the head's climber is looked for
+        // [`HEAD_ON`] under it.
+        let up = [(Vec3::new(3808.1, 63.1, 485.6), Vec3::new(0.0, 0.0, 95.0))];
+        let mut f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            fall_kills: Some(300.0),
+            ..Default::default()
+        };
+        let lip = Vec3::new(3806.5, 60.0, 623.125);
+        assert_eq!(
+            f.ladder_yield(&g, lip, body, &up, &[]),
+            Some(g.nodes[head as usize])
+        );
+        let spot = f
+            .ladder_yield(&g, g.nodes[head as usize], body, &up, &[])
+            .expect("a spot");
+        assert_ne!(spot, g.nodes[head as usize]);
     }
 
     #[test]
