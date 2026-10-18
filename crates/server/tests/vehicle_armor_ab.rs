@@ -703,23 +703,12 @@ fn bones(log: &[String]) -> BTreeMap<(i32, String), [f32; 3]> {
     out
 }
 
-/// Bones of the tank glide that part from retail's, by time and tag (`""`
-/// for every tag), with why (docs/research/coduo-vehicles.md 13, "The
-/// glide back").
-const GLIDE_GAPS: &[(i32, &str, &str)] = &[
-    // The pose of 53900: retail's neck control is already on its target
-    // (27 yaw), two ease steps in one frame, where ours takes one (18).
-    // UO eases in the DObj's controller callback, once per skeleton build;
-    // what builds the rider's skeleton twice that frame is not found
-    // (coduo-vehicles.md 13, "The glide back").
-    (54000, "bip01 head", "the neck control's double step"),
-];
-
 /// The tank rider back from the gunner's seat into the driver's: his legs
 /// blend `standMG42_aim` out over the stance window's 400 ms, on the leaf
 /// the gunner's seat blend left at full weight, not the one the aim group
 /// descends to by the view's pitch. Every bone of the glide within 0.02 of
-/// retail's, but for [`GLIDE_GAPS`].
+/// retail's: the frame after the change each mark's build eases the neck
+/// one more step (coduo-vehicles.md 13, "The glide back").
 #[test]
 fn the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail() {
     let fixture = include_str!("fixtures/vehicles/mp_cassino-tank-glide-uo.txt");
@@ -746,16 +735,11 @@ fn the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail() {
     };
     let retail = bones(&fixture.lines().map(str::to_string).collect::<Vec<_>>());
     let ours = bones(&log);
-    let gap = |t: i32, tag: &str| {
-        GLIDE_GAPS
-            .iter()
-            .any(|&(gt, gtag, _)| gt == t && (gtag.is_empty() || gtag == tag))
-    };
     let mut misses = Vec::new();
     for ((t, tag), r) in &retail {
         let o = ours.get(&(*t, tag.clone()));
         let close = o.is_some_and(|o| (0..3).all(|i| (r[i] - o[i]).abs() <= 0.02));
-        if !close && !gap(*t, tag) {
+        if !close {
             misses.push(format!("{t} {tag}: retail {r:?}, ours {o:?}"));
         }
     }

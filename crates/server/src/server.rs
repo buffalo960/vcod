@@ -8296,6 +8296,9 @@ impl Server {
                 // `BG_PlayerAnimation` (0x41486) runs after this slot's
                 // aim trace: a higher slot's trace meets this frame's
                 // pose, a lower one's met the last (combat doc 16.1).
+                if let Some(c) = rt.take_dobj_eased(slot) {
+                    sim.keep_eased(c);
+                }
                 sim.commit_pose(
                     crate::spectate::EndFrame {
                         frametime_ms: FRAME_MS,

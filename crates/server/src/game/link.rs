@@ -174,22 +174,19 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
     let fs = host.fs.clone()?;
     let skel = host.hit_rigs.rig(&fs, &body.pose.assembly)?;
     let bone = host.hit_rigs.bone(&fs, &body.pose.assembly, &skel, tag)?;
-    // The bone and its parents, each at the time the frame first posed it.
+    // The bone and its parents, each at the time and with the controls the
+    // frame first posed it.
     let mut chain = vec![bone];
     while let Ok(p) = usize::try_from(skel.bones()[*chain.last()?].parent) {
         chain.push(p);
     }
     let now = host.dobj_time_ms;
     let posed = host.dobj_posed.get_mut(slot)?;
-    posed.resize(skel.bones().len(), None);
-    let times: Vec<i32> = chain
-        .iter()
-        .map(|&b| *posed[b].get_or_insert(now))
-        .collect();
-    let mut poses: Vec<(i32, vcod_common::skeleton::PoseBuffer)> = Vec::new();
+    let times = posed.stamp(skel.bones().len(), &chain, now, &body.pose);
+    let mut poses: Vec<((i32, usize), vcod_common::skeleton::PoseBuffer)> = Vec::new();
     for &t in &times {
         if poses.iter().all(|(pt, _)| *pt != t) {
-            let inputs = body.pose.pose_inputs(&anims, t);
+            let inputs = posed.inputs(&body.pose, &anims, t.0, t.1);
             let rigs = &mut host.hit_rigs;
             let pose = vcod_common::playerpose::pose_player(&skel, &inputs, |n| rigs.clip(&fs, n));
             poses.push((t, pose));

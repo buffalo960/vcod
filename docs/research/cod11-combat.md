@@ -6895,6 +6895,28 @@ one that pulled the trigger.
   lands 0.21 off retail's first fall row, so its cmds keep the plain
   windows (open). The `-cmds` captures' `DIR_GAPS_*` stay: they tap in
   the grid's frame and log no input by cmd.
+- The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
+  `-press-1.5` replay with the shooter's sway state logged per cmd). The
+  shooter holds the sight from his first cmd (12450, `in=10:16`), but
+  `PM_UpdateAimDownSightFlag` (1.5b 0x2cf6c) clears it off the ground
+  (`pml+0x34` zero and `pm_type` not 1, VERIFIED disassembly), so the
+  scope's freeze waits for the hold's spawn drop to land. Ours: the turn
+  onto the site at 12466 leaves 3 65536ths of pitch lag, 12482 2, the
+  re-aim after the 12500 re-pin 5, 12516 4, 12532 3 (the landing, the
+  sight starts), and 12549 reads the sight moving and freezes 3. Retail's
+  4 is the freeze a cmd earlier, the sight starting on 12516's cmd.
+  Retail's `PROBE fall` rows put the shooter's last re-pin at 12500 as on
+  ours (his first row is 12550, the target's 12500). The float steps are
+  excluded: each raw lag sits 0.19 to 0.5 of a 65536th from the cut
+  (3.50, 2.81, 5.79, 4.68, 3.74), and porting 1.5b's stored sway step
+  (helper 0x31fe6, UO 0x39236: distance and `lerp * distance * (msec *
+  0.001)` each stored as a float, VERIFIED disassembly) and the unrounded
+  `AngleNormalize360` product (1.1d 0x3eb30, 1.5b 0x36a3c keep it on the
+  x87 stack before the truncating `fistp`, VERIFIED disassembly) moved
+  no round. vcod keeps its float sway step and float product. What lands
+  or raises retail's sight a cmd early is open; a capture logging the
+  shooter's `fWeaponPosFrac` and origin per snapshot through the spawn
+  drop would settle it.
 
 ### 15.2 `BG_CalculateWeaponAngles` (`0x3a1e4`)
 
