@@ -239,7 +239,13 @@ patch grid moved `mp_brecourt` back to 159.
   hatch, the yards at 1136 to 1166, the mast top at 1030, platform edges
   at 648 and 701), `mp_depot` 9, `mp_pavlov` 7, none on `mp_hurtgen`,
   `mp_carentan`, `mp_harbor`, `mp_brecourt`, `mp_chateau`, `mp_dawnville`,
-  `mp_powcamp`, `mp_railyard` or `mp_rocket`.
+  `mp_powcamp`, `mp_railyard` or `mp_rocket`. A point goal (an enemy, an
+  item, a remembered spot, an objective point) on a perch is walked to the
+  nearest node off the perches within 128 of it instead, and the walked-out
+  path heads at that node, not the point (`NavGraph::goal_node`,
+  2026-10-18; `nav::tests::a_point_goal_on_a_perch_ends_beside_it`).
+  VERIFIED (the graph): both crow's nest rail nodes the test names have such
+  a node within 128.
 - New nodes stay within 512 units of the spawns' bounding box. Past it lies
   scenery: `mp_hurtgen`'s forest added 10 000 nodes.
 - Walks run on every core, a layer at a time, handed out one node at a time;
@@ -1167,7 +1173,13 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   than a jump is walked on too when the graph's forward walk ran off it
   (`Follower::runs_off`; a drop that walk misses was backed down, and is
   taken as proved), and the bot then runs off it rather than backing onto
-  it (`BotView::run_off`, 2026-10-12, below).
+  it (`BotView::run_off`, 2026-10-12, below). Where a miss of such a drop
+  can hurt (`nav::a_miss_hurts`: a point 32 to 96 units out from 48 over
+  the landing, in the open, with no floor within 256 under the landing)
+  the run has to land from 2 units either side of the body across its
+  pace too, unless the body stands within 12 of the node and, turned
+  round with no key held, would coast off a lip anyway
+  (`nav::coasts_off`, 16 ticks) (2026-10-18, below).
   Where that walk fails the bot heads on at the waypoint, and within 12
   units of it flat takes the edge out of its plans as a stuck one, unless
   the plan took the edge while it was out of its plans (no way round it):
@@ -1977,7 +1989,12 @@ above).
   within a step of the head's height), a climber within a jump (39) under
   the head counts whichever way it moves (the bob under the plate), and
   the spot stands a body's width (30) clear of every neighbour of the
-  head, three steps off where two are not. Below.
+  head, three steps off where two are not. Since 2026-10-18 a bot already
+  past the end toward the rungs (flat, by more than a half-width, 15:
+  backing down over the lip) walks back onto the end before it heads for
+  the spot
+  (`nav::tests::a_yield_from_over_the_lip_steps_back_onto_the_head_first`).
+  Below.
 
 VERIFIED (measured 2026-10-12d, same detector, `mp_ship` dm, 6 bots, 4000
 ticks, release; master 7de7be23; `stalled` and `spells` over seeds 1-767
@@ -3033,6 +3050,57 @@ ours only):
   crow's nest's (seeds 1053, 1389, 3329, 3785, 4475) and seed 2229's two
   bots meeting in the air off the ridge node (3496, -318, 611) onto the
   floor at 520, the lower knocked into the hold.
+
+The 2026-10-18 round took the fresh-seed deaths on master 0f3ce28e.
+VERIFIED (measured, same detector and settings, release; ours only):
+
+| | seeds | stalled bot-ticks | falls | deaths |
+|---|---|---|---|---|
+| `mp_ship` master | 1-2303 odd | 38 | 6 | 4 |
+| `mp_ship` branch | 1-2303 odd | 82 | 8 | 2 |
+| `mp_ship` master | 2305-4607 odd | 130 | 7 | 2 |
+| `mp_ship` branch | 2305-4607 odd | 130 | 8 | 0 |
+| `mp_depot` master / branch | 1-191 odd | 0 / 0 | 0 / 0 | 0 / 0 |
+| `mp_hurtgen` master / branch | 1-191 odd | 7 / 7 | 2 / 2 | 1 / 1 |
+
+- None of the brief's places died or stalled on master: no crow's nest
+  death or stall over the 2304 seeds, and seeds 861, 981, 1003, 1053,
+  1389, 2229, 3329, 3785, 4475 and 4557 run clean (the runs diverged
+  since 10-16). Master's six deaths: three off the 896 deck (seeds 427,
+  2477, 4523), the mast top (311), the ledge over the hold (1239) and the
+  x 3793 hatch (1795).
+- The 896 deck, traced: all three bots came west along y 224 and passed
+  (3564, 252, 896) 12 units short at (-173, 80) units/s for the run off
+  to the ledge at (3521, 289, 760). The paced walk from there lands on a
+  slope's corner at 798 that it clips by 2 units; from 2 units across
+  the pace it misses, as the bots' own runs did, and falls to the deck at
+  352. Now a run off a drop whose miss can hurt has to land from 2 units
+  either side too (the pass rules, above;
+  `nav::tests::a_drop_that_lands_only_on_a_corner_does_not_hold`). Asked
+  of every drop, it held a bot on a node another stood on over a drop
+  into the hold (seed 439, 17 stalled bot-ticks): hence `a_miss_hurts`.
+  Without the coast exemption three bots on the mast top at (3301, 128,
+  1030), 3 units from its lip, refused the drop to the platform at 809
+  from on the node, turned round with nothing to steer by and coasted
+  off to the deck at 480 (seeds 449, 1315, 1409).
+- The x 3793 hatch (1795, traced): a hurt bot backing down over the lip
+  at (3806, 60, 623) met a climber 140 under it, headed straight for the
+  wait spot (3751, -4, 616), slid along the hatch's west side at x 3800
+  and fell through to the deck at 304. Now it walks back onto the head
+  first (the ladder wait, above). At a 1-unit margin a bot resting
+  5 past (3337, -440, 56) stood in its climber's way (seed 3769, 117
+  stalled bot-ticks), hence the half-width.
+- Left: the branch's new stalls are seed 1671 (29: the x 3793 head, a
+  bot at the wait spot while the climber stands beside it on its way
+  off the head, until the wait runs out) and seed 2001 (15: the hull
+  crates at (2395, 752, -45), as seeds 1713 and 2751). Master's mast top
+  death (311: a bump off the mast turned the run toward (3335, 128) west
+  off the platform) and the ledge over the hold (1239) are on the branch
+  too.
+- Seed 981's overrun, from scratch walks: a body at 160 units/s on
+  (3392, -316, 520) headed south falls off the floor's edge with no key
+  and with a full brake toward the node alike, so no rest rule saves it;
+  the pace has to go before the node.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their

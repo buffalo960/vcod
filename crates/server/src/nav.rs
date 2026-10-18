@@ -49,6 +49,14 @@ const MAX_DROP: f32 = 250.0;
 /// along the deck with, and a bot that did fell past it to the hold
 /// (bot-navigation.md section 3).
 const PACED_DROP: f32 = 200.0;
+/// How long [`coasts_off`] lets a body coast: 190 units/s coasts to rest
+/// in about 35 units and half a second.
+const COAST_TICKS: usize = 16;
+/// How high over a drop's landing [`a_miss_hurts`] looks out from.
+const MISS_EYE: f32 = 48.0;
+/// How far either side of the body a run off a drop whose miss can hurt
+/// has to land from too ([`Follower::edge_holds`]).
+const ASIDE_DROP: f32 = 2.0;
 /// An edge whose ends differ by less than this in height is level, and a
 /// walk one way stands in for the walk back.
 const LEVEL: f32 = 1.0;
@@ -1007,6 +1015,42 @@ impl NavGraph {
         best.map(|(_, n)| n)
     }
 
+    /// The node a point goal at `p` is walked to: [`Self::nearest`],
+    /// unless that is one of [`Self::perches`] and a node off them stands
+    /// within [`RETARGET`] of `p`, the nearest such then. A chase or a
+    /// pickup on mp_ship's crow's nest rails otherwise ends at a run on a
+    /// rail two units from its edge, as roams did (section 3).
+    pub fn goal_node(&self, p: [f32; 3]) -> Option<u32> {
+        let n = self.nearest(p)?;
+        if !self.perches.contains(&n) {
+            return Some(n);
+        }
+        let p = Vec3::from(p);
+        let (cx, cy) = self.column(p);
+        let mut best: Option<(f32, u32)> = None;
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                let Some(col) = self.columns.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
+                for &m in col {
+                    if self.perches.contains(&m) || self.edges[m as usize].is_empty() {
+                        continue;
+                    }
+                    let d = self.nodes[m as usize] - p;
+                    if d.length() > RETARGET {
+                        continue;
+                    }
+                    let score = d.truncate().length() + 4.0 * d.z.abs();
+                    if best.is_none_or(|(s, b)| score < s || (score == s && m < b)) {
+                        best = Some((score, m));
+                    }
+                }
+            }
+        }
+        Some(best.map_or(n, |(_, m)| m))
+    }
+
     /// Where a bot at `from` whose line of fire along `line` a teammate
     /// blocks steps to: a node one or two level edges (no jump, no drop)
     /// from the nearest, [`SIDESTEP_MIN`] to [`SIDESTEP_MAX`] units off and
@@ -1562,6 +1606,9 @@ pub struct Follower {
     /// The last drop asked about, and whether the graph's walk ran off it
     /// ([`Self::runs_off`]).
     run_off: Option<((u32, u32), bool)>,
+    /// The last drop asked about, and whether a miss of it hurts
+    /// ([`Self::miss_hurts`]).
+    miss_hurt: Option<((u32, u32), bool)>,
     /// The last edge asked about, and whether only a creep proved it
     /// ([`Self::creeps_off`]).
     creep_off: Option<((u32, u32), bool)>,
@@ -1679,14 +1726,14 @@ impl Follower {
                     .is_none_or(|d| g.nodes[d as usize].distance(Vec3::from(p)) > RETARGET);
                 if moved {
                     self.reset();
-                    self.dest = g.nearest(p);
+                    self.dest = g.goal_node(p);
                 } else if self.arrived {
                     let fell = here.z < self.arrived_at.z - ARRIVED_DROP;
                     if !fell {
-                        return Some(p);
+                        return Some(self.arrival(g, p));
                     }
                     self.reset();
-                    self.dest = g.nearest(p);
+                    self.dest = g.goal_node(p);
                 }
             }
         }
@@ -1906,7 +1953,7 @@ impl Follower {
                 Goal::To(p) => {
                     self.arrived = true;
                     self.arrived_at = here;
-                    Some(p)
+                    Some(self.arrival(g, p))
                 }
                 _ => {
                     self.dest = None;
@@ -2119,17 +2166,35 @@ impl Follower {
             if !self.runs_off(world, edge, a, b) {
                 return true;
             }
-            return matches!(
-                walk_with(
-                    world,
-                    at,
-                    Some(pace),
-                    b.truncate(),
-                    Some(b.z),
-                    Gait::Forward
-                ),
-                Walked::Arrived(_, false)
-            );
+            let lands = |at: Vec3| {
+                matches!(
+                    walk_with(
+                        world,
+                        at,
+                        Some(pace),
+                        b.truncate(),
+                        Some(b.z),
+                        Gait::Forward
+                    ),
+                    Walked::Arrived(_, false)
+                )
+            };
+            // Where a miss can hurt, the run has to land from a body a
+            // couple of units either side of this one too: off mp_ship's (3564, 252, 896) a run
+            // onto the ledge at 760 lands on a slope's corner the walk
+            // clips and the bot's own run, two units on, misses, and three
+            // bots fell to the deck at 352 (bot-navigation.md section 3).
+            let across = pace.truncate().perp().normalize_or_zero().extend(0.0) * ASIDE_DROP;
+            // Not where a body on the node, turned round the edge with
+            // nothing to steer by, coasts off a lip anyway: off mp_ship's
+            // mast top at (3301, 128, 1030), 3 units from its lip, one did
+            // and fell to the deck at 480 (seed 449).
+            let on_node = (at - a).truncate().length() < ON_NODE;
+            return lands(at)
+                && (across == Vec3::ZERO
+                    || (on_node && coasts_off(world, at, pace))
+                    || !self.miss_hurts(world, edge, b)
+                    || (lands(at + across) && lands(at - across)));
         }
         if (b.z - a.z).abs() > vcod_common::pmove::JUMP_HEIGHT {
             return true;
@@ -2486,7 +2551,20 @@ impl Follower {
             return None;
         }
         let moving = coming.chain(on_head).any(|m| m);
-        Some((spot, moving, under_way))
+        // A body well past the head toward the rungs (backing down over
+        // the lip) steps back onto the head first: headed straight for the
+        // spot, a bot on mp_ship's hatch at (3806, 60, 623) slid along the
+        // hatch's side and fell through it to the deck at 304
+        // (bot-navigation.md section 3).
+        // Not from beside the head: a bot that came to rest 5 units past
+        // mp_ship's (3337, -440, 56) toward its rungs went on asking for
+        // the head and stood in the climber's way off it (seed 3769).
+        let p = if box_flat(&rungs, at) + HALF_WIDTH < box_flat(&rungs, end) {
+            end
+        } else {
+            spot
+        };
+        Some((p, moving, under_way))
     }
 
     /// The bot's own stall circle caught the body on the way to the
@@ -2716,6 +2794,19 @@ impl Follower {
         to.z < at.z - deep && self.runs_off(world, (a, b), from, to)
     }
 
+    /// Whether a run that misses the drop `edge` onto `to` can fall far
+    /// enough to hurt ([`a_miss_hurts`]). Probed once per edge.
+    fn miss_hurts(&mut self, world: &CollisionWorld, edge: (u32, u32), to: Vec3) -> bool {
+        if let Some((e, hurts)) = self.miss_hurt
+            && e == edge
+        {
+            return hurts;
+        }
+        let hurts = a_miss_hurts(world, to);
+        self.miss_hurt = Some((edge, hurts));
+        hurts
+    }
+
     /// Whether a forward walk from `from` arrives on `to`'s floor without a
     /// jump: the first gait the graph's walk tries (`walk_to`), so a drop
     /// it misses was backed down. Walked once per edge.
@@ -2771,6 +2862,16 @@ impl Follower {
         }
         let foot = g.nodes[self.path[self.next - 1] as usize];
         ((foot.z - at[2]).abs() < vcod_common::pmove::STEPSIZE).then_some(foot.into())
+    }
+
+    /// Where a walked-out point goal is headed: the point, or the
+    /// destination node when [`NavGraph::goal_node`] kept it off a perch
+    /// the point stands on.
+    fn arrival(&self, g: &NavGraph, p: [f32; 3]) -> [f32; 3] {
+        match (self.dest, g.nearest(p)) {
+            (Some(d), Some(n)) if d != n && g.perches.contains(&n) => g.nodes[d as usize].into(),
+            _ => p,
+        }
     }
 
     fn reset(&mut self) {
@@ -3629,6 +3730,45 @@ fn beside_a_fall_that_hurts(world: &CollisionWorld, q: Vec3) -> bool {
                 .fraction
                 >= 1.0
         })
+    })
+}
+
+/// Whether a point 32 to 96 units from a drop's landing `q` in any of the
+/// eight octants, in the open from [`MISS_EYE`] over `q`, has no floor
+/// within `bg_fallDamageMinHeight` (256) under `q`: a run off the drop
+/// that misses it carries that far (mp_ship's run onto the ledge at
+/// (3521, 289, 760) flew 93 units before it was level with it). From
+/// lower, a slope over that ledge hides the way it flew.
+fn a_miss_hurts(world: &CollisionWorld, q: Vec3) -> bool {
+    (0..8).any(|i| {
+        let a = (i as f32 * 45.0).to_radians();
+        let dir = Vec3::new(a.cos(), a.sin(), 0.0);
+        let eye = q + Vec3::Z * MISS_EYE;
+        [32.0, 48.0, 64.0, 80.0, 96.0].iter().any(|&r| {
+            let top = eye + dir * r;
+            let down = top - Vec3::Z * (MISS_EYE + 256.0);
+            // Not through a wall: past the hull lies nothing at all.
+            world
+                .point_trace(eye, top, MASK_PLAYERSOLID, false)
+                .fraction
+                >= 1.0
+                && world
+                    .point_trace(top, down, MASK_PLAYERSOLID, false)
+                    .fraction
+                    >= 1.0
+        })
+    })
+}
+
+/// Whether a body at `at` moving at `pace` with no key held leaves the
+/// ground and falls more than a jump within [`COAST_TICKS`].
+fn coasts_off(world: &CollisionWorld, at: Vec3, pace: Vec3) -> bool {
+    let mut ps = body(at, 0.0);
+    ps.velocity = pace.truncate().extend(0.0);
+    let mut sim = Sim::default();
+    (0..COAST_TICKS).any(|_| {
+        sim.tick(world, &mut ps, &NULL_USERCMD);
+        ps.origin.z < at.z - vcod_common::pmove::JUMP_HEIGHT
     })
 }
 
@@ -4937,7 +5077,9 @@ mod tests {
         };
         let g = graph_for("mp_ship", &world);
         let w = Some(&world.collision);
-        let goal = crate::bots::Goal::To([4935.7, 126.9, 1254.125]);
+        // Down on the deck: a point goal on the rail itself is walked to
+        // the rim now (`NavGraph::goal_node`).
+        let goal = crate::bots::Goal::To([4929.0, 68.0, 692.125]);
         let mut f = Follower::default();
         let top = [4928.5, 60.75, 1254.125];
         let rim = [4961.2, 38.7, 1219.125];
@@ -5832,6 +5974,37 @@ mod tests {
         assert!(!g.perches.contains(&node([4963.9, 35.5, 1219.125])));
     }
 
+    /// A point goal on a perch is walked to the nearest node off the
+    /// perches within [`RETARGET`], and the walked-out path heads at that
+    /// node, not at the point: a chase onto mp_ship's crow's nest rails
+    /// ended at a run on the rail as a roam once did.
+    #[test]
+    fn a_point_goal_on_a_perch_ends_beside_it() {
+        let nodes = (0..3)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1], vec![0, 2], vec![1]]);
+        g.index_components();
+        assert_eq!(g.goal_node([64.0, 0.0, 0.0]), Some(2));
+        g.perches.insert(2);
+        assert_eq!(g.goal_node([64.0, 0.0, 0.0]), Some(1));
+        let f = Follower {
+            dest: g.goal_node([64.0, 0.0, 0.0]),
+            ..Follower::default()
+        };
+        assert_eq!(f.arrival(&g, [64.0, 0.0, 0.0]), [32.0, 0.0, 0.0]);
+        assert_eq!(f.arrival(&g, [0.0, 0.0, 0.0]), [0.0, 0.0, 0.0]);
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        for rail in [[5023.8, 123.7, 1254.125], [4928.5, 60.8, 1254.125]] {
+            let n = g.goal_node(rail).unwrap();
+            assert!(!g.perches.contains(&n), "{rail:?}");
+            assert!(g.nodes[n as usize].distance(Vec3::from(rail)) <= RETARGET);
+        }
+    }
+
     /// A roam from the graph's safe part never ends where only a risky
     /// edge leads: mp_ship's ledge at (3686, -354, 400), narrow over the
     /// hold at 92, is reached only by the risky back down from (3647, -353,
@@ -6582,6 +6755,49 @@ mod tests {
             out.is_some_and(|(p, jumped)| p.z < 360.0 && jumped),
             "out of the boat: {out:?}"
         );
+    }
+
+    /// mp_ship's run off (3564, 252, 896) onto the ledge at 760: from where
+    /// three bots passed the node (seeds 427, 2477, 4523), at their pace,
+    /// the walk lands on a slope's corner it clips, and two units across
+    /// misses it, as the bots' own runs did, and falls to the deck at 352.
+    /// A miss there falls to the deck, so the run has to land from either
+    /// side too, and the drop does not hold from there; from the node,
+    /// straight at the ledge, it does. A drop into the hold at (4246, 232,
+    /// 56), where a miss lands on the hold's floor, is not asked: held
+    /// for it, a bot jammed on a node another stood on (seed 439). Nor is
+    /// a body on mp_ship's mast top at (3301, 128, 1030), which turned
+    /// round coasts off its lip anyway (seed 449).
+    #[test]
+    fn a_drop_that_lands_only_on_a_corner_does_not_hold() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let a = Vec3::new(3563.6223, 252.0, 896.125);
+        let b = Vec3::new(3520.91, 289.35446, 760.125);
+        let g = NavGraph::from_parts(vec![a, b], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        assert!(a_miss_hurts(w, b));
+        assert!(!a_miss_hurts(w, Vec3::new(4246.0, 232.0, 56.125)));
+        let at = Vec3::new(3573.1277, 245.13213, 896.125);
+        let pace = Vec3::new(-173.0, 80.0, 0.0);
+        assert!(matches!(
+            walk_with(w, at, Some(pace), b.truncate(), Some(b.z), Gait::Forward),
+            Walked::Arrived(..)
+        ));
+        assert!(
+            !f.edge_holds(Some(w), at, pace, &g),
+            "from where the bots passed"
+        );
+        assert!(!coasts_off(w, at, pace));
+        let mast = Vec3::new(3309.6, 128.8, 1030.125);
+        assert!(coasts_off(w, mast, Vec3::new(-176.0, -72.0, 0.0)));
+        let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
+        assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
     }
 
     /// mp_ship's hull corridor at (3825, -800, -64): a beam's end stands
@@ -7487,6 +7703,49 @@ mod tests {
             None,
             "up on the rail"
         );
+    }
+
+    /// mp_ship's ladder at x 3793: a bot backing down over its hatch's
+    /// lip at (3806, 60, 623) met a climber, headed straight for the spot
+    /// aside, slid along the hatch's side and fell through to the deck at
+    /// 304 (seed 1795, the bot hurt). Well past the head toward the rungs it
+    /// steps back onto the head first; from the head it goes on to the spot.
+    #[test]
+    fn a_yield_from_over_the_lip_steps_back_onto_the_head_first() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([3760.0, 65.0, 616.0]).unwrap();
+        let foot = g.nearest([3809.0, 65.0, 304.0]).unwrap();
+        assert!(g.edges[head as usize].contains(&foot));
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        // Hurt: a fall of 300 kills, so the head's climber is looked for
+        // [`HEAD_ON`] under it.
+        let up = [(Vec3::new(3808.1, 63.1, 485.6), Vec3::new(0.0, 0.0, 95.0))];
+        let mut f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            fall_kills: Some(300.0),
+            ..Default::default()
+        };
+        let lip = Vec3::new(3806.5, 60.0, 623.125);
+        assert_eq!(
+            f.ladder_yield(&g, lip, body, &up, &[]),
+            Some(g.nodes[head as usize])
+        );
+        let spot = f
+            .ladder_yield(&g, g.nodes[head as usize], body, &up, &[])
+            .expect("a spot");
+        assert_ne!(spot, g.nodes[head as usize]);
+        // Come to rest just past the head, it goes on to the spot: asking
+        // for the head from there, a bot on mp_ship's (3337, -440, 56)
+        // stood in its climber's way off the rungs (seed 3769).
+        let beside = g.nodes[head as usize] + Vec3::X * 5.0;
+        assert_eq!(f.ladder_yield(&g, beside, body, &up, &[]), Some(spot));
     }
 
     #[test]
