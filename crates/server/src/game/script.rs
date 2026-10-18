@@ -1323,23 +1323,24 @@ impl ScriptRuntime {
     }
 
     /// Every weapon item lying in the world to be picked up, as `(weapon
-    /// index, origin)`: placed `mpweapon_*` entities while shown and drops.
+    /// index, origin, clip empty)`: placed `mpweapon_*` entities while
+    /// shown and drops.
     /// A taken one waits on its respawn off every snapshot and is left out.
-    pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3])> {
+    pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3], bool)> {
         let defs = self.host.defs;
-        let items: Vec<(EntId, u8)> = self
+        let items: Vec<(EntId, u8, bool)> = self
             .host
             .ents
             .iter_inuse()
             .filter_map(|(id, e)| {
                 let item = e.item?;
                 let weapon = !item.taken && defs.weapon_name(item.index as usize).is_some();
-                weapon.then_some((id, item.index))
+                weapon.then_some((id, item.index, item.clip == -1))
             })
             .collect();
         items
             .into_iter()
-            .filter_map(|(id, w)| Some((w, self.entity_origin_of(id)?)))
+            .filter_map(|(id, w, empty)| Some((w, self.entity_origin_of(id)?, empty)))
             .collect()
     }
 
@@ -3893,6 +3894,26 @@ mod tests {
             rt.run_frame(frame * 50);
         }
         assert_eq!(rt.level_field("later"), Value::Int(0));
+    }
+
+    /// `delete()` notifies `"death"` with the entity (1.1d 0x5da14, UO
+    /// 0x68bda): a thread holding `point endon("death")` on a deleted
+    /// spawn point ends there, and one waiting on it wakes with the entity.
+    /// UO's `_spawnlogic::Player_WaitForDeath` wrote through the dead point
+    /// once its player died, a script error (bot-objectives.md 7.1).
+    #[test]
+    fn delete_notifies_death() {
+        let mut rt = ScriptRuntime::for_test(
+            "hold(p) { p endon(\"death\"); level waittill(\"go\"); level.held = 1; } \
+             watch(p) { p waittill(\"death\", e); level.woke = (e == p); } \
+             main() { p = spawn(\"script_origin\", (0, 0, 0)); level thread hold(p); \
+             level thread watch(p); wait 0.05; p delete(); wait 0.05; level notify(\"go\"); }",
+        );
+        for frame in 1..=4 {
+            rt.run_frame(frame * 50);
+        }
+        assert_eq!(rt.level_field("woke"), Value::Int(1));
+        assert_eq!(rt.level_field("held"), Value::Undefined);
     }
 
     /// `probe_entnum` on retail: the free a `delete()` schedules 100 ms out

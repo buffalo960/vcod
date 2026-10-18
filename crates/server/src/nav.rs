@@ -150,24 +150,34 @@ impl NavGraph {
     /// point of the map) and keeps an edge only where a standing run, one
     /// usercmd per 50 ms through the shared cmd step under `rules`,
     /// arrives. No node stands where a body would touch one of `hazards`.
+    /// The flood also reaches [`MARGIN`] past each of `cover`
+    /// ([`crate::world::World::nav_cover`]), which leaves the pitch alone.
     pub fn build(
         world: &CollisionWorld,
         seeds: &[[f32; 3]],
+        cover: &[[f32; 3]],
         hazards: &[BrushHull],
         rules: MoveRules,
     ) -> NavGraph {
-        with_rules(rules, || Self::build_here(world, seeds, hazards))
+        with_rules(rules, || Self::build_here(world, seeds, cover, hazards))
     }
 
-    fn build_here(world: &CollisionWorld, seeds: &[[f32; 3]], hazards: &[BrushHull]) -> NavGraph {
+    fn build_here(
+        world: &CollisionWorld,
+        seeds: &[[f32; 3]],
+        cover: &[[f32; 3]],
+        hazards: &[BrushHull],
+    ) -> NavGraph {
         // The pitch cuts the spawns' box into about TARGET_CELLS, rounded up
-        // to a multiple of 16; the flood stays within MARGIN of the box.
+        // to a multiple of 16; the flood stays within MARGIN of the box and
+        // of `cover`.
         let (lo, hi) = seed_bounds(seeds);
         let area = (hi - lo).max(glam::Vec2::ZERO).element_product();
         let spacing = ((area / TARGET_CELLS).sqrt() / 16.0).ceil() * 16.0;
+        let (clo, chi) = seed_bounds(cover);
         let (lo, hi) = (
-            lo - glam::Vec2::splat(MARGIN),
-            hi + glam::Vec2::splat(MARGIN),
+            lo.min(clo) - glam::Vec2::splat(MARGIN),
+            hi.max(chi) + glam::Vec2::splat(MARGIN),
         );
         let inside = |p: Vec3| {
             let p = p.truncate();
@@ -1326,6 +1336,7 @@ type CacheKey = (
     usize,
     usize,
     Vec<[u32; 3]>,
+    Vec<[u32; 3]>,
     Vec<bool>,
 );
 static CACHE: std::sync::Mutex<Vec<(CacheKey, Arc<NavGraph>)>> = std::sync::Mutex::new(Vec::new());
@@ -1349,6 +1360,11 @@ fn cache_key(
         world.hazards.len(),
         world
             .spawn_points
+            .iter()
+            .map(|p| p.map(f32::to_bits))
+            .collect(),
+        world
+            .nav_cover
             .iter()
             .map(|p| p.map(f32::to_bits))
             .collect(),
@@ -1382,7 +1398,13 @@ fn cached(key: CacheKey, build: impl FnOnce() -> NavGraph) -> Arc<NavGraph> {
 pub fn graph_for(map: &str, world: &crate::world::World) -> Arc<NavGraph> {
     let rules = RULES.get();
     cached(cache_key(map, &world.collision, world, rules), || {
-        NavGraph::build(&world.collision, &world.spawn_points, &world.hazards, rules)
+        NavGraph::build(
+            &world.collision,
+            &world.spawn_points,
+            &world.nav_cover,
+            &world.hazards,
+            rules,
+        )
     })
 }
 
@@ -1415,12 +1437,15 @@ impl NavJob {
             };
         }
         let seeds = world.spawn_points.clone();
+        let cover = world.nav_cover.clone();
         let hazards = world.hazards.clone();
         let build = move || {
             // One core stays the tick's, so a build doesn't jitter the
             // schedule it runs beside.
             SPARE_CORE.set(true);
-            cached(key, || NavGraph::build(&collision, &seeds, &hazards, rules))
+            cached(key, || {
+                NavGraph::build(&collision, &seeds, &cover, &hazards, rules)
+            })
         };
         NavJob {
             ready: None,
@@ -1973,6 +1998,25 @@ impl Follower {
         if body.on_ground && self.next > 0 && !self.climbing(g) && w.z - here.z > FELL_BELOW {
             let edge = (self.path[self.next - 1], self.path[self.next]);
             self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
+            self.reset();
+            self.fell = true;
+            return None;
+        }
+        // Down a drop onto a floor partway, the waypoint more than a jump
+        // under the feet and within reach flat, the edge's top more than a
+        // step over them: a run off mp_ship's slot at (5403, -160, 396)
+        // for the floor at 204 landed on the ledge at 336 over its
+        // waypoint, turned on the spot until an unstick spell took it off
+        // (bot-navigation.md section 3). Plan again from where it landed,
+        // the edge not avoided: round it, the plan went back up to the
+        // shelf and on by a jump edge the bot bounced under.
+        if body.on_ground
+            && !body.on_ladder
+            && self.next > 0
+            && here.z - w.z > vcod_common::pmove::JUMP_HEIGHT
+            && flat(w) < REACH
+            && g.nodes[self.path[self.next - 1] as usize].z - here.z > vcod_common::pmove::STEPSIZE
+        {
             self.reset();
             self.fell = true;
             return None;
@@ -6413,6 +6457,7 @@ mod tests {
         let g = NavGraph::build(
             &world.collision,
             &world.spawn_points,
+            &world.nav_cover,
             &world.hazards,
             MoveRules::V1_1,
         );
@@ -7239,6 +7284,44 @@ mod tests {
             f.avoid.iter().any(|e| (e.0, e.1) == (0, 1)),
             "the drop it fell off"
         );
+    }
+
+    /// mp_ship's slot at (5403, -160, 396): a run off its drop for the
+    /// floor at 204 landed on the ledge at 336, 8 units from straight over
+    /// the waypoint, and turned there until an unstick spell threw it off
+    /// (seeds 73, 149, 183, 317, 1217, 1913, 3151, 4177, 4333). It plans
+    /// again from the ledge.
+    #[test]
+    fn a_drop_that_lands_partway_down_is_planned_again() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(5384.0, -161.0, 396.125),
+                Vec3::new(5403.0, -160.0, 396.125),
+                Vec3::new(5405.0, -192.0, 204.125),
+                Vec3::new(5376.0, -196.0, 204.125),
+            ],
+            vec![vec![1], vec![2], vec![3], vec![2]],
+        );
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To([5376.0, -196.0, 204.125]);
+        let mut budget = 100;
+        let mut at =
+            |p: [f32; 3]| f.waypoint(&g, None, goal, p, Footing::STANDING, &mut budget, &mut || 0);
+        assert_eq!(
+            at([5384.0, -161.0, 396.125]),
+            Some([5405.0, -192.0, 204.125])
+        );
+        // On the top still, the drop is under way.
+        assert_eq!(
+            at([5398.0, -184.0, 396.125]),
+            Some([5405.0, -192.0, 204.125])
+        );
+        assert_eq!(at([5404.4, -200.4, 336.125]), None);
+        assert!(f.fell, "planned from where it landed");
+        // Not round the drop: avoided, the plan from mp_ship's ledge went
+        // back up to the shelf and on by a jump edge it bounced under
+        // (seed 1409).
+        assert!(f.avoid.is_empty());
     }
 
     /// mp_ship's mast hatch, seed 2171: off the rungs at (3705, 58, 992)

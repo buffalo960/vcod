@@ -76,6 +76,10 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   at connect, `map_restart` and map change.
 - `--set sv_privateClients=N --set sv_privatePassword=<pw>` reserves the
   first N slots for clients that send that password, as retail does.
+- `--set scr_motd="..."` is the message of the day players read: on the
+  team menu (1.1) or the server info screen before it (1.5, UO), in vcod
+  and in the retail clients. `g_motd` reaches the client as configstring
+  14 (UO 15), which no retail client draws, so it shows nowhere.
 - `dedicated` defaults to 1, not retail's 2, so dev runs stay off the master
   list. `--set dedicated=2` heartbeats `codmaster.activision.com` every three
   minutes and sends a flatline on Ctrl-C or `quit`.

@@ -48,6 +48,7 @@ fn every_stock_maps_spawns_stay_in_one_component() {
         let g = NavGraph::build(
             &world.collision,
             &world.spawn_points,
+            &world.nav_cover,
             &world.hazards,
             MoveRules::V1_1,
         );
@@ -109,6 +110,7 @@ fn every_uo_maps_spawns_reach_the_fight() {
         let g = NavGraph::build(
             &world.collision,
             &world.spawn_points,
+            &world.nav_cover,
             &world.hazards,
             MoveRules::Uo,
         );
@@ -119,4 +121,62 @@ fn every_uo_maps_spawns_reach_the_fight() {
         }
     }
     assert!(lost.is_empty(), "spawns lost: {lost:?}");
+}
+
+/// Every `bas` charge room on United Offensive's base assault maps is on
+/// the graph and reached from a spawn: the graph as a tdm server builds it,
+/// every base's walls and rubble gone, which is how a breached base's
+/// room stands. mp_italy's western axis bunker lay past the spawns' box,
+/// its charge room off the graph, and the round never ended on it
+/// (`World::nav_cover`, bot-objectives.md 7.2).
+#[test]
+#[ignore = "builds 5 United Offensive nav graphs; run with --ignored and COD_DIR at a UO install"]
+fn every_bas_charge_room_is_on_the_graph() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let mut lost = Vec::new();
+    for map in [
+        "mp_foy",
+        "mp_italy",
+        "mp_kursk",
+        "mp_ponyri",
+        "mp_rhinevalley",
+    ] {
+        let entry = fs.resolve_map(map).expect("a stock bas map");
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
+        world.collision.unlink_script_brushes(&bsp.entities, "tdm");
+        let g = NavGraph::build(
+            &world.collision,
+            &world.spawn_points,
+            &world.nav_cover,
+            &world.hazards,
+            MoveRules::Uo,
+        );
+        let charges: Vec<[f32; 3]> = vcod_common::bsp::entity_blocks(&bsp.entities)
+            .iter()
+            .filter(|e| e.get("model").is_some_and(|m| m == "xmodel/mp_bomb"))
+            .filter_map(|e| vcod_common::bsp::parse_vec3(e.get("origin")?))
+            .collect();
+        assert_eq!(charges.len(), 6, "{map}: six charges");
+        let from = world
+            .spawn_points
+            .iter()
+            .filter_map(|s| g.nearest(*s))
+            .collect::<Vec<_>>();
+        for c in charges {
+            let near = g.nearest(c).filter(|&n| {
+                let d = g.nodes[n as usize] - glam::Vec3::from(c);
+                d.truncate().length() <= g.spacing && d.z.abs() < 18.0
+            });
+            let reached = near.is_some_and(|n| from.iter().any(|&s| g.reaches(s, n)));
+            eprintln!("{map}: charge {c:?} node {near:?} reached {reached}");
+            if !reached {
+                lost.push(format!("{map}: {c:?}"));
+            }
+        }
+    }
+    assert!(lost.is_empty(), "charges off the graph: {lost:?}");
 }

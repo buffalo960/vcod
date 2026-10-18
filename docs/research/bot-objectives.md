@@ -721,12 +721,18 @@ first everywhere.
   2000 units of it. An attacker goes for the next of the other side's bases after
   each of its deaths, off the defender that killed it. A standing base
   is breached with rockets (below); bots ride no tank.
-- **The breach.** An attacker with no loaded rocket launcher in hand
-  (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve) walks
-  to the nearest launcher lying about (`BasView::launchers`, off
-  `ScriptRuntime::weapon_items`) and taps use on it, the retrieval
-  pickup's tap (section 4.2): walking over a weapon it does not carry
-  takes nothing (`cod11-items.md` 1). It passes over a launcher within
+- **The breach.** An attacker with no loaded rocket launcher carried
+  (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve, the
+  one in hand first, else any) walks to the nearest launcher lying about
+  (`BasView::launchers`, off `ScriptRuntime::weapon_items`) and taps use
+  on it, the retrieval pickup's tap (section 4.2): walking over a weapon
+  it does not carry takes nothing (`cod11-items.md` 1). The pickup's
+  swap drops the weapon in hand (`cod11-items.md` 5), so a bot carrying
+  an empty launcher draws it before it taps. When the rocket read only
+  the first launcher held, an empty bazooka beside a loaded panzerschreck
+  read as none, and with its gun out at each tap one bot traded the gun,
+  then launcher after launcher, for five minutes with no breach (mp_foy,
+  shooting, seed 15). It passes over a launcher within
   300 units of a standing base of the other side's, which lies in that
   bunker behind its walls. With one in hand it walks to a breach stand:
   the server picks, once per base and graph (`Server::breach_stands`), a
@@ -756,9 +762,14 @@ first everywhere.
   -40), 190 units on and 1290 from the base, outside the 1200 the
   models were taken within then) and died of the second.
   A bot with both its weapons spent draws the gun it still has; one
-  with no round anywhere uses `kill` after 10 s, and a launcher the body
-  has come no 32 units nearer in 20 s (a node over it, or a tap that
-  takes nothing) is passed over for a minute.
+  with no round anywhere first fetches the nearest weapon lying within
+  1500 units, a drop with a round in its clip or a launcher
+  (`BasView::guns`, `DRY_FETCH`), and uses `kill` after 10 s only with
+  none in reach or once that fetch is given up. Every shoot-on `kill` in
+  six mp_foy rounds was a dry one, and two were a planter dry in its
+  charge's room whose charge was then defused (seeds 1 and 7). A
+  launcher or gun the body has come no 32 units nearer in 20 s (a node
+  over it, or a tap that takes nothing) is passed over for a minute.
 - The way into a breached base opens only when its walls go, after the
   graph was built. The server builds the graph without the `rubble`
   brushes (`World::rubble`; out of the way except over a dead base) and
@@ -766,7 +777,15 @@ first everywhere.
   and unlinked since, once that count (`GameHost::brush_links`, bumped
   by `delete`, `notSolid` and `solid` on a brush model) has held still
   2 s (`Server::relink_nav`); the cache keys on which submodels clip, so
-  a restart that puts the same walls back finds the old graph. Two
+  a restart that puts the same walls back finds the old graph. The flood
+  reaches 512 units past every bas entity as well as past the spawns
+  (`World::nav_cover`): mp_italy's western axis bunker (-4556 3760) lay
+  outside the spawns' margin, the graph stopped at x -4603 in its
+  bunker, and its charge room had no node. An allied attacker stood over
+  the breached base for good, and with the four-bot shoot-off seed 11
+  the round looped on 47 defuses at the other side's last base. The
+  ignored census `every_bas_charge_room_is_on_the_graph` in
+  `tests/nav_census.rs` checks all thirty stock charges. Two
   engine fixes were needed on the way: a brush model's clip now follows
   a bare `origin` write (the rubble's lift; only movers and `linkTo`
   posed it before), and a respawned brush entity links its model again
@@ -845,6 +864,29 @@ With the planter's guard alone (8 s, outside-the-blast before), one
 seed in eight ended; the rest stalled on defuses, a bot standing at a
 launcher it could not take, a dry defender, or a bot killing itself
 with its own rocket.
+
+VERIFIED (measured, ours, 2026-10-18, release, UO install,
+`scr_bas_basehealth 3000`, gates `uo_bots_breach_bases_until_a_bas_round_ends`,
+`four_uo_bots_end_a_bas_round_without_shooting` and
+`four_shooting_uo_bots_end_a_bas_round` over `BOTS_SEED` 1 to 11 odd on
+mp_italy, mp_kursk, mp_ponyri and mp_rhinevalley, mp_foy's shooting gate
+1 to 23 odd): before the nav cover, the `delete` notify (cod11-gsc-object-model.md
+14), the dry fetch and the rocket read above, mp_italy's four-bot
+shoot-off seed 11 looped on 47 defuses at the allied last base while an
+allied attacker stood over the western axis bunker; mp_foy's shooting
+seed 11 stopped on a `_spawnlogic::Player_WaitForDeath` script error;
+mp_foy shooting ended at 10259 to 21859 (mean 14571), mp_italy shooting
+at 10919 to 18499. After, all 96 runs end on
+their bases: mp_foy shooting 9939 to 16659 (mean 11921, eleven of twelve
+under 12800), shoot off 6419 to 6959, two bots 9839 to 13059; mp_italy
+shooting 10259 to 12979, shoot off 6399 to 7259, two bots 10039 to 12539;
+mp_kursk shooting 9939 to 21099 (seeds 3 and 5: the last base's room
+held against attacker after attacker, and 26 deaths in the open on seed
+5; before, 9399 to 15779 on other seeds), shoot off 6859 to 7079, two
+bots 9739 to 10419; mp_ponyri shooting 10659 to 13719, shoot off 6179
+to 6979, two bots 10279 to 10959; mp_rhinevalley shooting 9319 to
+11559, shoot off 6839 to 7979, two bots 9499 to 10219. No shoot-off run
+defused a charge.
 
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
