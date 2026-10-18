@@ -108,6 +108,9 @@ fn a_hitching_clients_gap_is_chopped_into_66_ms_steps_not_clamped_away() {
     // state, in the same steps. A move clamped to one 66 ms step instead
     // leaves the spectator around 5 units out rather than several hundred.
     let mut ps = vcod_common::pmove::PlayerState::spawn(glam::Vec3::new(0.0, 0.0, 64.0), 0.0);
+    // `SpectatorThink` writes the fly speed into `ps.speed` ahead of the
+    // spectator's pmove (game.mp 0x4fb84: 400).
+    ps.speed = vcod_common::pmove::SPEED_SPECTATOR;
     let mut left = gap;
     while left > 0 {
         let msec = left.min(vcod_common::pmove::MAX_FRAME_MS as i32);
