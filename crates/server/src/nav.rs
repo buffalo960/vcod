@@ -1007,6 +1007,42 @@ impl NavGraph {
         best.map(|(_, n)| n)
     }
 
+    /// The node a point goal at `p` is walked to: [`Self::nearest`],
+    /// unless that is one of [`Self::perches`] and a node off them stands
+    /// within [`RETARGET`] of `p`, the nearest such then. A chase or a
+    /// pickup on mp_ship's crow's nest rails otherwise ends at a run on a
+    /// rail two units from its edge, as roams did (section 3).
+    pub fn goal_node(&self, p: [f32; 3]) -> Option<u32> {
+        let n = self.nearest(p)?;
+        if !self.perches.contains(&n) {
+            return Some(n);
+        }
+        let p = Vec3::from(p);
+        let (cx, cy) = self.column(p);
+        let mut best: Option<(f32, u32)> = None;
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                let Some(col) = self.columns.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
+                for &m in col {
+                    if self.perches.contains(&m) || self.edges[m as usize].is_empty() {
+                        continue;
+                    }
+                    let d = self.nodes[m as usize] - p;
+                    if d.length() > RETARGET {
+                        continue;
+                    }
+                    let score = d.truncate().length() + 4.0 * d.z.abs();
+                    if best.is_none_or(|(s, b)| score < s || (score == s && m < b)) {
+                        best = Some((score, m));
+                    }
+                }
+            }
+        }
+        Some(best.map_or(n, |(_, m)| m))
+    }
+
     /// Where a bot at `from` whose line of fire along `line` a teammate
     /// blocks steps to: a node one or two level edges (no jump, no drop)
     /// from the nearest, [`SIDESTEP_MIN`] to [`SIDESTEP_MAX`] units off and
@@ -1679,14 +1715,14 @@ impl Follower {
                     .is_none_or(|d| g.nodes[d as usize].distance(Vec3::from(p)) > RETARGET);
                 if moved {
                     self.reset();
-                    self.dest = g.nearest(p);
+                    self.dest = g.goal_node(p);
                 } else if self.arrived {
                     let fell = here.z < self.arrived_at.z - ARRIVED_DROP;
                     if !fell {
-                        return Some(p);
+                        return Some(self.arrival(g, p));
                     }
                     self.reset();
-                    self.dest = g.nearest(p);
+                    self.dest = g.goal_node(p);
                 }
             }
         }
@@ -1906,7 +1942,7 @@ impl Follower {
                 Goal::To(p) => {
                     self.arrived = true;
                     self.arrived_at = here;
-                    Some(p)
+                    Some(self.arrival(g, p))
                 }
                 _ => {
                     self.dest = None;
@@ -2771,6 +2807,16 @@ impl Follower {
         }
         let foot = g.nodes[self.path[self.next - 1] as usize];
         ((foot.z - at[2]).abs() < vcod_common::pmove::STEPSIZE).then_some(foot.into())
+    }
+
+    /// Where a walked-out point goal is headed: the point, or the
+    /// destination node when [`NavGraph::goal_node`] kept it off a perch
+    /// the point stands on.
+    fn arrival(&self, g: &NavGraph, p: [f32; 3]) -> [f32; 3] {
+        match (self.dest, g.nearest(p)) {
+            (Some(d), Some(n)) if d != n && g.perches.contains(&n) => g.nodes[d as usize].into(),
+            _ => p,
+        }
     }
 
     fn reset(&mut self) {
@@ -5789,6 +5835,35 @@ mod tests {
             assert!(g.perches.contains(&node(rail)), "{rail:?}");
         }
         assert!(!g.perches.contains(&node([4963.9, 35.5, 1219.125])));
+    }
+
+    /// A point goal on a perch is walked to the nearest node off the
+    /// perches within [`RETARGET`], and the walked-out path heads at that
+    /// node, not at the point: a chase onto mp_ship's crow's nest rails
+    /// ended at a run on the rail as a roam once did.
+    #[test]
+    fn a_point_goal_on_a_perch_ends_beside_it() {
+        let nodes = (0..3)
+            .map(|i| Vec3::new(i as f32 * 32.0, 0.0, 0.0))
+            .collect();
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1], vec![0, 2], vec![1]]);
+        g.index_components();
+        assert_eq!(g.goal_node([64.0, 0.0, 0.0]), Some(2));
+        g.perches.insert(2);
+        assert_eq!(g.goal_node([64.0, 0.0, 0.0]), Some(1));
+        let mut f = Follower::default();
+        f.dest = g.goal_node([64.0, 0.0, 0.0]);
+        assert_eq!(f.arrival(&g, [64.0, 0.0, 0.0]), [32.0, 0.0, 0.0]);
+        assert_eq!(f.arrival(&g, [0.0, 0.0, 0.0]), [0.0, 0.0, 0.0]);
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        for rail in [[5023.8, 123.7, 1254.125], [4928.5, 60.8, 1254.125]] {
+            let n = g.goal_node(rail).unwrap();
+            assert!(!g.perches.contains(&n), "{rail:?}");
+            assert!(g.nodes[n as usize].distance(Vec3::from(rail)) <= RETARGET);
+        }
     }
 
     /// A roam from the graph's safe part never ends where only a risky
