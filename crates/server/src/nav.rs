@@ -1547,6 +1547,15 @@ pub fn fall_that_kills(health: i32, max_health: i32, h: vcod_common::pmove::Fall
     // gives it; past the max the whole 110 lands.
     h.min + (h.max - h.min) * percent as f32 / 100.0
 }
+/// A body on the ground holds still rather than step within this of a
+/// climber rising under it, flat ([`Follower::rising_hold`]): two
+/// half-widths are where `StuckInClient` pushes the two apart.
+const RISING_REACH: f32 = 2.0 * vcod_common::pmove::HALF_WIDTH + 6.0;
+/// How far under the feet the climber's top may be: a climb at the bots'
+/// 95 units/s rises this in half a second.
+const RISING_BELOW: f32 = 48.0;
+/// The longest such hold.
+const RISING_TICKS: u32 = 60;
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1655,6 +1664,9 @@ pub struct Follower {
     yield_ticks: u32,
     yield_hung: u32,
     yield_rest: u32,
+    /// Ticks held still for a climber rising under the body
+    /// ([`Self::rising_hold`]).
+    rising_ticks: u32,
     /// The lowest fall that kills this body now ([`fall_that_kills`]):
     /// a hurt bot dies off a shorter ladder. `None` reads [`DEADLY_LADDER`].
     pub fall_kills: Option<f32>,
@@ -2004,18 +2016,23 @@ impl Follower {
         }
         // Down a drop onto a floor partway, the waypoint more than a jump
         // under the feet and within reach flat, the edge's top more than a
-        // step over them: a run off mp_ship's slot at (5403, -160, 396)
+        // jump over them: a run off mp_ship's slot at (5403, -160, 396)
         // for the floor at 204 landed on the ledge at 336 over its
         // waypoint, turned on the spot until an unstick spell took it off
         // (bot-navigation.md section 3). Plan again from where it landed,
         // the edge not avoided: round it, the plan went back up to the
-        // shelf and on by a jump edge the bot bounced under.
+        // shelf and on by a jump edge the bot bounced under. Within a jump
+        // of the top the body may still stand on the drop's own slope: one
+        // backing off mp_ship's dome at (3648, -317, 618) stood on its 45
+        // degree face 23 under the node, planned again from there and
+        // walked off the dome's south side into the hold (seed 2245).
         if body.on_ground
             && !body.on_ladder
             && self.next > 0
             && here.z - w.z > vcod_common::pmove::JUMP_HEIGHT
             && flat(w) < REACH
-            && g.nodes[self.path[self.next - 1] as usize].z - here.z > vcod_common::pmove::STEPSIZE
+            && g.nodes[self.path[self.next - 1] as usize].z - here.z
+                > vcod_common::pmove::JUMP_HEIGHT
         {
             self.reset();
             self.fell = true;
@@ -2530,6 +2547,49 @@ impl Follower {
                     && (c - at).truncate().length() < 2.0 * HALF_WIDTH + 2.0
             })
             .then_some(head)
+    }
+
+    /// Where to stand instead of heading for `waypoint`: the body is on the
+    /// ground off the rungs, a climber rises under it with its top less
+    /// than [`RISING_BELOW`] under the feet, and the step toward the
+    /// waypoint closes on it inside [`RISING_REACH`] flat. Two players'
+    /// boxes that overlap are pushed apart at their speed
+    /// (`game::stuck::stuck_in_client`, cod11-player-clip.md 6): a bot
+    /// that stepped toward mp_ship's crow's nest rim over a climber coming
+    /// up the hatch was thrown 190 units/s west off the top's far side
+    /// (seed 1307, bot-navigation.md section 3). At most [`RISING_TICKS`].
+    /// `climbers` as in [`Self::ladder_yield`].
+    pub fn rising_hold(
+        &mut self,
+        at: Vec3,
+        waypoint: Vec3,
+        body: Footing,
+        climbers: &[(Vec3, Vec3)],
+    ) -> Option<Vec3> {
+        use vcod_common::pmove::HEIGHT_STAND;
+        let toward = (waypoint - at).truncate().normalize_or_zero();
+        let step = at.truncate() + toward * ARRIVE;
+        let rising = body.on_ground
+            && !body.on_ladder
+            && climbers.iter().any(|&(c, v)| {
+                let (now, next) = (
+                    c.truncate().distance(at.truncate()),
+                    c.truncate().distance(step),
+                );
+                v.z > 1.0
+                    && c.z < at.z
+                    && c.z + HEIGHT_STAND > at.z - RISING_BELOW
+                    && next < RISING_REACH
+                    && next < now
+            });
+        if !rising || self.rising_ticks >= RISING_TICKS {
+            if !rising {
+                self.rising_ticks = 0;
+            }
+            return None;
+        }
+        self.rising_ticks += 1;
+        Some(at)
     }
 
     fn yield_spot(
@@ -8054,6 +8114,57 @@ mod tests {
         );
         let pressed = (Vec3::new(3751.1, 32.1, 616.125), pushing);
         assert_eq!(f.ladder_yield(&g, at, body, &[], &[pressed]), None);
+    }
+
+    /// mp_ship's dome at (3648, -317, 618): backing off it for the floor
+    /// at 352, a body stands on the dome's 45 degree face 23 under the
+    /// node, still on the drop. Planned again from there, it walked off
+    /// the dome's south side into the hold (seed 2245). It backs on.
+    #[test]
+    fn a_body_on_a_drops_own_slope_keeps_the_drop() {
+        let top = Vec3::new(3648.0232, -316.91226, 618.36273);
+        let bottom = Vec3::new(3679.998, -318.20682, 352.125);
+        let g = NavGraph::from_parts(vec![top, bottom], vec![vec![1], vec![]]);
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To(bottom.into());
+        let mut budget = 100;
+        let mut at =
+            |p: [f32; 3]| f.waypoint(&g, None, goal, p, Footing::STANDING, &mut budget, &mut || 0);
+        assert_eq!(at(top.into()), Some(bottom.into()));
+        assert_eq!(at([3666.7, -317.2, 595.6]), Some(bottom.into()));
+        assert!(!f.fell);
+    }
+
+    /// mp_ship's crow's nest top at 1254: a bot stepping toward the rim
+    /// over a climber coming up the hatch met its box, and `StuckInClient`
+    /// threw it 190 units/s west off the top's far side (seed 1307). It
+    /// holds still while the step closes on the climber, and only then.
+    #[test]
+    fn a_body_holds_still_over_a_climber_rising_under_it() {
+        let at = Vec3::new(4936.2, 56.0, 1254.125);
+        let rim = Vec3::new(4963.9, 35.5, 1219.125);
+        let climber = (Vec3::new(4960.0, 63.0, 1187.0), Vec3::new(0.0, 0.0, 95.0));
+        let mut f = Follower::default();
+        let body = Footing::STANDING;
+        assert_eq!(f.rising_hold(at, rim, body, &[climber]), Some(at));
+        // Stepping away, standing on the rungs, or the climber still.
+        let away = Vec3::new(4900.0, 56.0, 1254.125);
+        assert_eq!(f.rising_hold(at, away, body, &[climber]), None);
+        let rungs = Footing {
+            on_ladder: true,
+            ..body
+        };
+        assert_eq!(f.rising_hold(at, rim, rungs, &[climber]), None);
+        let hung = (climber.0, Vec3::ZERO);
+        assert_eq!(f.rising_hold(at, rim, body, &[hung]), None);
+        // A climber far under the feet holds nothing yet.
+        let deep = (Vec3::new(4960.0, 63.0, 1100.0), climber.1);
+        assert_eq!(f.rising_hold(at, rim, body, &[deep]), None);
+        // The hold ends after RISING_TICKS (a tick without one starts it afresh).
+        for _ in 0..RISING_TICKS {
+            assert_eq!(f.rising_hold(at, rim, body, &[climber]), Some(at));
+        }
+        assert_eq!(f.rising_hold(at, rim, body, &[climber]), None);
     }
 
     #[test]
