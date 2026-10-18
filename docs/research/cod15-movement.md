@@ -370,10 +370,26 @@ takes `framed`, which lands him on retail's float after the script's
 ## 5. Ground, step, ladder, landing
 
 - Ground trace: 1.1 zeroes `fJumpOriginZ` on every hit (0x305c8); 1.5 only
-  in the steep branch. A new `pml` int at +0x34 ("near the ground", a hit
-  within a unit, or within 1/64 of a 64-unit trace on a lift) replaces
-  `pml.groundPlane` in `PM_UpdateAimDownSightFlag`'s test. The stores
-  VERIFIED. The use INFERRED. Not modelled.
+  in the steep branch. VERIFIED.
+- The sight off the ground. 1.5 adds a `pml` int at +0x34
+  (`almostGroundPlane`; `groundTrace` moves to +0x38). VERIFIED, the
+  stores: the ground trace (0x21ccd) sets it with `groundPlane` on a hit,
+  steep or walkable, and clears it on a kick-off and on an all-solid it
+  cannot correct; `PM_GroundTraceMissed` (0x21a17) traces the box from the
+  origin a unit down (`.rodata` 0x7597c, 1.0) when `groundEntityNum` is
+  already 1023 and sets it when that meets anything, else 64 down
+  (0x75968) and sets it when the fraction is under 1/64 (0x75978), a floor
+  within that unit; `PmoveSingle`'s linked arm (0x27eb7) clears it. UO's are the
+  same (0x2656d, `.rodata` 0x9b81c, 0x9b808, 0x9b818). VERIFIED, the
+  reader: `PM_UpdateAimDownSightFlag` (1.5 0x2cf6c, UO 0x32c0b) tests
+  +0x34 where 1.1's (0x37230) tests `pml.groundPlane` at +0x30; nothing
+  else reads it. 1.1's `PM_GroundTraceMissed` (0x3037c) runs no drop
+  trace. VERIFIED, `leanhit-press-1.5`: the shooter, re-pinned a unit and
+  a bit over the floor at 12500, falls 0.63 through the 12500 cmd and
+  sights on the 12516 cmd, a cmd before his landing; that is retail's
+  first-round scope lag of 4 65536ths (`cod11-combat.md` 15.1). vcod:
+  `PlayerState::sight_ground`, the near flag set in `ground_trace`; 1.1
+  reads `ground_plane`, so a body on a steep face keeps the sight there.
 - `PM_Friction`: under one unit of speed 1.5 zeroes x, y and z (0x1eb4f),
   1.1 only x and y; air moves call it, so a vertical jump's apex can snap
   vz to 0. VERIFIED.
@@ -886,5 +902,5 @@ bolt delay and `disableWeapon` of 6; `pm_flags` 0x2000 keeps its place
 through the wire rewrite and 0x100000 lands on `flags::PMF_WEAPON_DISABLED`. The client reads the bob cvars out
 of the mirror on a 1.5 server (`pmove::BobCvars`, the defaults elsewhere)
 and draws the eye bob on both. The ADS-prone zeroing runs on every patch
-(`coduo-movement.md` 13). Not modelled: `PM_trace`, the near-ground ADS
-test and the talk-button zeroing.
+(`coduo-movement.md` 13). Not modelled: `PM_trace` and the talk-button
+zeroing. The near-ground sight test is (section 5).
