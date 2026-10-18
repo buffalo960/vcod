@@ -981,6 +981,10 @@ const BAS_BUNKER: f32 = 300.0;
 const DRY_TICKS: u32 = 200;
 /// A dry `bas` bot fetches a weapon lying this near instead.
 const DRY_FETCH: f32 = 1500.0;
+/// A `bas` bot left with only a rocket ([`Bot::unarmed`]) fetches a gun
+/// this near: from 1000 and 1500 units off, the walk cost mp_foy's seeds 7
+/// and 11 a minute and more.
+const ARMS_FETCH: f32 = 800.0;
 /// Ticks a fetch may go without coming [`FETCH_CLOSING`] nearer its
 /// launcher (the reach included: one stood at counts down too).
 const FETCH_STALL_TICKS: u32 = 400;
@@ -1488,8 +1492,9 @@ impl Bot {
                 // `DRY_FETCH`, before the `kill` (`DRY_TICKS`). A planter
                 // that ran dry in its charge's room killed itself, and the
                 // charge was defused (seeds 1 and 7).
-                // With a rocket left, a gun only.
+                // With a rocket left, a gun only, and from nearer.
                 let dry = Self::dry(view);
+                let reach = if dry { DRY_FETCH } else { ARMS_FETCH };
                 if (dry || self.unarmed(view))
                     && let Some(&w) =
                         b.guns
@@ -1499,7 +1504,7 @@ impl Bot {
                                     x.breached || dist_sq(**l, x.at) > BAS_BUNKER * BAS_BUNKER
                                 })
                             }))
-                            .filter(|l| dist_sq(view.origin, **l) < DRY_FETCH * DRY_FETCH)
+                            .filter(|l| dist_sq(view.origin, **l) < reach * reach)
                             .filter(|l| !self.shunned.iter().any(|s| arrived(s.0, **l)))
                             .min_by(|x, y| {
                                 dist_sq(view.origin, **x).total_cmp(&dist_sq(view.origin, **y))
