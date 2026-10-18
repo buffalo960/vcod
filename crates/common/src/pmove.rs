@@ -3303,7 +3303,10 @@ fn on_slick(ps: &PlayerState) -> bool {
 /// `PM_Friction`: ground friction only while walking in water level <= 1,
 /// plus a water term that already applies while wading. Unlike RTCW's it has
 /// no ladder term (game.mp.i386.so 0x2e460, cgame 0x30007430).
-fn friction(ps: &mut PlayerState, _world: &MoveWorld, dt: f32) {
+fn friction(ps: &mut PlayerState, world: &MoveWorld, dt: f32) {
+    if world.world.arith() == crate::patch::Arith::Msvc {
+        return friction_msvc(ps, dt);
+    }
     // `PM_Friction` (0x2e460) on the x87: the speed is stored as a float,
     // the drop and the scale stay on the stack, and each component is
     // rounded once.
@@ -3341,6 +3344,60 @@ fn friction(ps: &mut PlayerState, _world: &MoveWorld, dt: f32) {
     }
     if ps.water_level > 0 {
         drop += f64::from(ps.water_level) * s * f64::from(WATER_FRICTION) * dt;
+    }
+    let scale = (s - drop).max(0.0) / s;
+    ps.velocity = x87::scale(ps.velocity, scale);
+}
+
+/// The Windows cgames' `PM_Friction` (cgame_mp_x86.dll 1.1 0x30007430,
+/// 1.5 0x30007b40, UO 0x30008470; cod15-movement.md 8): the speed sums
+/// `(vz^2 + vy^2) + vx^2` and is kept on 1.1's 53-bit stack, stored on
+/// 1.5's and UO's; the control, the drop, the new speed and its ratio stay
+/// on the stack, and each component is rounded once. The ground term is
+/// `(frametime * 5.5) * control`, UO's `(control * frametime) * 5.5`, and
+/// 1.5's jump penalty scale `pm_time * (1.5 / 1700) + 1` with the constant
+/// folded into one float.
+fn friction_msvc(ps: &mut PlayerState, dt: f32) {
+    let v = ps.velocity.as_dvec3();
+    let vz = if ps.on_ground { 0.0 } else { v.z };
+    let mut s = ((vz * vz + v.y * v.y) + v.x * v.x).sqrt();
+    if ps.rules.v15() {
+        s = f64::from(s as f32);
+    }
+    if s < 1.0 {
+        ps.velocity.x = 0.0;
+        ps.velocity.y = 0.0;
+        if ps.rules.v15() {
+            ps.velocity.z = 0.0;
+        }
+        return;
+    }
+    let ft = f64::from(dt);
+    let mut drop = 0.0;
+    if ps.on_ground
+        && ps.water_level <= 1
+        && !on_slick(ps)
+        && ps.knockback_flags & PMF_TIME_DAMAGE == 0
+    {
+        let mut control = s.max(f64::from(PM_STOPSPEED));
+        if ps.knockback_flags & PMF_TIME_KNOCKBACK != 0 {
+            control *= f64::from(KNOCKBACK_FRICTION_SCALE);
+        } else if ps.jump_penalty && ps.knockback_ms <= JUMP_PENALTY_MS {
+            let scale = if ps.knockback_ms >= 1700.0 {
+                2.5
+            } else {
+                f64::from(ps.knockback_ms) * f64::from(0.000_882_352_94_f32) + 1.0
+            };
+            control *= scale;
+        }
+        drop = if ps.rules == MoveRules::Uo {
+            control * ft * f64::from(PM_FRICTION)
+        } else {
+            ft * f64::from(PM_FRICTION) * control
+        };
+    }
+    if ps.water_level > 0 {
+        drop += f64::from(ps.water_level) * f64::from(WATER_FRICTION) * ft * s;
     }
     let scale = (s - drop).max(0.0) / s;
     ps.velocity = x87::scale(ps.velocity, scale);

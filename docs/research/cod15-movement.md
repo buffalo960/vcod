@@ -423,6 +423,36 @@ takes `framed`, which lands him on retail's float after the script's
 - `PM_Weapon` 0x30643: 1.1's 255 store for a prone body with move keys or a
   swing (`cod11-combat.md` 2.1). VERIFIED.
 
+### ps.speed
+
+- Every mover reads `ps.speed` (int, `ps+0x44`, UO `ps+0x48`): 1.1d's
+  `PM_CmdScale` (0x2e5bc), the walk's scale (0x2e690) and `PM_Footsteps`'
+  full speed (0x322c8) load it through `pm->ps`; 1.5b's walk scale (Ghidra
+  0x12873) and UO's air, walk and footstep scales (Ghidra 0x14013, 0x14073,
+  0x16466) read the same field. VERIFIED, decompile. The fly move reads it
+  too, so a spectator's 400 and a playing body's 190 are one field.
+- 1.1d's `ClientEndFrame` stores `(int)g_speed.value` there on its playing
+  and dead arm (`fistp` under an `| 0xc00` control word, 0x410cf-0x41100):
+  truncated, read again every frame. VERIFIED, disassembly.
+- 1.5b's and UO's store the client's `maxspeed` instead (1.5b 0x3ada2-0x3ada8
+  from `gclient_t` 0x2150, UO 0x43299-0x4329f from 0x4588). VERIFIED,
+  disassembly. `ClientConnect` seeds it with `g_speed`'s integer (1.5b
+  0x3c852, UO 0x44c86), so a `g_speed` change reaches a client at its next
+  connect; `ClientSpawn`'s save of 0x20cc..0x21dc keeps it across spawns
+  (INFERRED, decompile). `maxspeed` is a 1.5 and UO client field (0xc005,
+  1.5b `GScr_AddFieldsForClient`); its setter (1.5b 0x3b88e, UO 0x43b82)
+  takes `Scr_GetInt`, floors it at 0 and copies it as a float into the
+  entity's `speed` (`ent+0x1e8`). VERIFIED, decompile and field dump.
+- `ClientSpawn` runs `ClientEndFrame` ahead of its think (1.1d 0x42a75,
+  1.5b decompile `ClientEndFrame` then `ClientThink_real`), so the spawn's
+  own think moves at that speed. `SpectatorThink` writes 400 (0 under
+  1.5's refused free flight) ahead of the spectator's pmove. VERIFIED.
+- vcod: `PlayerState::speed`, mirrored onto `ClientSim::max_speed` by
+  `GameHost::client_speed` each frame and stored at the end frame and the
+  spawn; the predictor reads it off the wire (`predict::from_wire`).
+  The client predicts no spectator (`predict::predictable`), so the fly
+  speed reaches only the server's sims.
+
 ## 6. Weapons and view
 
 - `PM_UpdateAimDownSightLerp` (0x2d1a9): `rechamberWhileAds 0` with
@@ -606,6 +636,25 @@ and keeps the rest, at 53-bit precision. vcod predicts with it
 - `PM_SlideMove`'s gravity: stored before the average, as 1.5b's (1.1
   cgame 0x3000cc1c, 1.5 0x3000d9dd, UO 0x3000e9b1). 1.1d keeps it.
   VERIFIED.
+- `PM_Friction` (1.1 cgame 0x30007430, 1.5 0x30007b40, UO 0x30008470):
+  the speed sums `(vz^2 + vy^2) + vx^2` and is kept on 1.1's stack, stored
+  on 1.5's and UO's (`fst [esp+8]`, 1.5 0x30007b82, UO 0x300084b2); 1.5's
+  and UO's also store the control `max(speed, 100)` once (0x30007be9,
+  0x30008519), which rounds nothing. The knockback's 0.3, the jump
+  penalty's scale (1.5 0x30007ae0, UO 0x30008410: 2.5 from `pm_time`
+  1700, else `pm_time * 0.00088235294 + 1` with `1.5 / 1700` one float,
+  0x3a674db4, returned on the stack), the drop, the new speed and its ratio
+  stay on the stack, and each component is rounded once. The ground term is
+  `(frametime * 5.5) * control` on 1.1 and 1.5 and `(control * frametime)
+  * 5.5` on UO; the water term `((waterlevel * 1.0) * frametime) * speed`
+  (UO without the 1.0). 1.1 doubles the control under `pm_flags` 0x2000.
+  VERIFIED, disassembly. So 1.5's and UO's clients keep what 1.5b's
+  `PM_Friction` stores (7) and 1.1's client keeps the speed 1.1d stores.
+  vcod: `pmove::friction_msvc` under `Arith::Msvc`. Measured 2026-10-18
+  with `play::replay::the_windows_build_draws_no_new_correction`: the
+  corrections of every own-body capture read the same with it and with the
+  Linux builds' friction (1.5 moves 44, turns 14, UO sprint 125, 1.1 moves
+  7, springfield 2), so no capture tells the two apart. VERIFIED (measured).
 - The default arm's tail (1.1 cgame 0x3000c90d, 1.5 0x3000d6c4, UO
   0x3000e64f): x of the displacement stays on the stack, y and z are
   stored, and the rate `((dz^2 + dy^2) + dx^2) / (ft * ft)` and the squared
