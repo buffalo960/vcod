@@ -970,6 +970,11 @@ mp_rhinevalley (1 to 11 odd, mp_kursk to 23) end on master's tick at
 the 1500-unit reach, so at 800 too. The shoot-off gate on mp_foy and
 mp_kursk, seeds 1 and 5, ends on master's tick; the two-bot gate there
 at 10039 to 11779.
+On master 35198659 (after the mp_ship follow-up's nav changes, which
+reshuffled every seed: mp_kursk seed 5 22199, mp_foy seed 23 16739)
+the fetch changed two of 36 shooting runs (all five maps 1 to 11 odd,
+mp_foy to 23): mp_foy seed 1 10919 to 13419 and seed 13 17419 to
+13559; mean 12562 to 12524. Seed 23's stand-off no longer arises there.
 
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
