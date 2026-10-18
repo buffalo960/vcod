@@ -243,6 +243,46 @@ fn around_hit(lines: &[String], upto: i32) -> Vec<String> {
     out
 }
 
+/// The jeep's ram sounds (alias 7, `vehicle_impact`, as its Horch strikes
+/// the Panzer) up to `upto` ms past the jeep's first move, each time made
+/// relative to that move and the temp entity's number dropped.
+fn impacts(lines: &[String], upto: i32) -> Vec<String> {
+    let placed = lines
+        .iter()
+        .filter(|l| l.starts_with("PROBE a "))
+        .find(|l| l.rsplit(' ').next() != Some("0"))
+        .and_then(|l| time(l))
+        .expect("the jeep moved");
+    lines
+        .iter()
+        .filter(|l| l.starts_with("VEH ") && l.contains(" parm 7 "))
+        .filter_map(|l| {
+            let t = time(l)? - placed;
+            let w: Vec<&str> = l.split(' ').skip(4).collect();
+            (t <= upto).then(|| format!("+{t} {}", w.join(" ")))
+        })
+        .collect()
+}
+
+/// The ram sounds on ours against retail's, one for one: same times from
+/// the jeep's first move, same alias and same snapped origin.
+fn compare_impacts(retail: &[String], ours: &[String]) {
+    let upto = ours
+        .iter()
+        .filter_map(|l| time(l))
+        .max()
+        .expect("our lines")
+        - ours
+            .iter()
+            .filter(|l| l.starts_with("PROBE a "))
+            .find(|l| l.rsplit(' ').next() != Some("0"))
+            .and_then(|l| time(l))
+            .expect("our jeep moved");
+    let (r, o) = (impacts(retail, upto), impacts(ours, upto));
+    assert!(!r.is_empty(), "retail's jeep struck nothing by +{upto}");
+    assert_eq!(r, o, "the ram sounds");
+}
+
 fn time_rel(l: &str) -> i32 {
     l.split(' ')
         .find_map(|w| w.strip_prefix('+')?.parse().ok())
@@ -351,6 +391,7 @@ fn a_jeep_runs_over_a_standing_player_twice() {
         return;
     };
     compare(&r, &o, 1000, FLIGHT);
+    compare_impacts(&r, &o);
 }
 
 #[test]
@@ -360,6 +401,7 @@ fn a_prone_player_under_a_jeep_takes_ten_a_cmd() {
         return;
     };
     compare(&r, &o, 1000, CREEP);
+    compare_impacts(&r, &o);
 }
 
 /// A teammate's jeep under friendly fire 0: each cmd's crush is refused,
@@ -372,4 +414,5 @@ fn a_teammate_s_jeep_makes_a_prone_player_hurt_himself() {
         return;
     };
     compare(&r, &o, 1000, LIE_DOWN);
+    compare_impacts(&r, &o);
 }

@@ -131,10 +131,11 @@ check.
   is not a regression.
 - `Server::new` seeds its RNG with a constant; only `main.rs` passes the clock
   through `Server::with_seed`. Tests that depend on spawn picks rely on that.
-  Under `new` every level's script draws start from `RNG_SEED` again; under
-  `with_seed` each load steps a fresh seed, as retail's `G_InitGame` does
-  (`cod11-map-cycle.md` 4.8). `gametypes_ab` runs `with_seed` and replays
-  retail's spawn picks through `Server::pin_spawns`.
+  Either way each load steps a fresh script seed, as retail's `G_InitGame`
+  does (`cod11-map-cycle.md` 4.8), so a later level never repeats the
+  first's draws. A gate that compares a later level's spawn with retail's
+  replays retail's picks through `Server::pin_spawns`, as `gametypes_ab`
+  does.
 - Comments: one line where the code doesn't explain itself (an invariant, a
   unit or sign convention, a workaround and what it works around). Facts that
   live in a doc stay there; the comment is the pointer.
