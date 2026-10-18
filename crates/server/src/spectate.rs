@@ -422,6 +422,10 @@ pub struct ClientSim {
     /// 1.5's and UO's `ci+0x4a4` / `ci+0x4c0`: until when a crouch or
     /// prone change stretches every blend (`animclock::ChannelClock::update_windowed`).
     stance_window_ms: i32,
+    /// What `ClientEndFrame` stores in a playing body's `ps.speed`: `g_speed`
+    /// on 1.1, the client's `maxspeed` on 1.5 and UO, mirrored off the host
+    /// every frame (cod15-movement.md, "ps.speed").
+    pub max_speed: i32,
     /// The last frame a follow sent this spectator, the copy with its flags
     /// patched: the playerstate `StopFollowing` writes over.
     pub follow_wire: Option<msg::PlayerState>,
@@ -551,8 +555,10 @@ impl ClientSim {
     /// the view it already had survives entry instead of snapping.
     pub fn spectator(origin: [f32; 3], yaw_deg: f32, cmd_angles: [i32; 3]) -> Self {
         let view = view_angles(cmd_angles, spawn_delta_angles(yaw_deg, cmd_angles));
+        let mut ps = pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg);
+        ps.speed = pmove::SPEED_SPECTATOR;
         ClientSim {
-            ps: pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg),
+            ps,
             pm_type: PmType::Spectator,
             ring: EventRing::default(),
             viewmodel_index: 0,
@@ -629,6 +635,7 @@ impl ClientSim {
             respawned: false,
             dobj_ahead: false,
             stance_window_ms: 0,
+            max_speed: pmove::SPEED_RUN as i32,
             follow_wire: None,
             residue: None,
             end_frame_wire: None,
@@ -777,6 +784,12 @@ impl ClientSim {
         let rules = self.ps.rules;
         self.ps = pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg);
         self.ps.rules = rules;
+        // The spawn's `ClientEndFrame` stores a player's speed ahead of its
+        // think (0x42a75); a spectator's think is `SpectatorThink`'s 400.
+        self.ps.speed = match mode {
+            PmType::Spectator => pmove::SPEED_SPECTATOR,
+            _ => self.max_speed as f32,
+        };
         // `ClientSpawn`'s memset leaves `groundEntityNum` 0, not 0x3ff, and
         // `PM_CheckDuck` runs ahead of the ground trace (1.5 0x28814,
         // 0x28819): the think's first step takes 1.5's prone press, which
@@ -1218,7 +1231,7 @@ impl ClientSim {
         collision: Option<&vcod_common::collision::CollisionWorld>,
     ) {
         let freelook = crate::follow::can_spectate(no_spectate, crate::follow::FREELOOK);
-        self.ps.fly_speed = if freelook {
+        self.ps.speed = if freelook {
             pmove::SPEED_SPECTATOR
         } else {
             0.0
@@ -1923,9 +1936,12 @@ impl ClientSim {
     /// left. A dead player's feedback never runs, so the killing hit leaves
     /// all four fields as the last surviving hit left them (8.4).
     pub fn end_frame(&mut self, now_ms: i32) {
-        // `ClientEndFrame` writes `pm_type` (0x41079) ahead of its
-        // `P_DamageFeedback` call (0x41128).
+        // `ClientEndFrame` writes `pm_type` (0x41079) and `ps.speed`
+        // (0x41100) ahead of its `P_DamageFeedback` call (0x41128).
         self.pm_dead = self.dead_arm();
+        if self.pm_type == PmType::Normal {
+            self.ps.speed = self.max_speed as f32;
+        }
         if self.pm_dead || self.damage.taken <= 0 || self.max_health <= 0 {
             return;
         }
@@ -2380,14 +2396,7 @@ impl ClientSim {
         // Mode-dependent.
         set("pm_type", self.wire_pm_type());
         set("eFlags", self.ps_eflags());
-        set(
-            "speed",
-            if player {
-                pmove::SPEED_RUN
-            } else {
-                self.ps.fly_speed
-            } as i32,
-        );
+        set("speed", self.ps.speed as i32);
         set("gravity", if player { pmove::GRAVITY as i32 } else { 0 });
         // The footstep phase, which a spectator's step pushes on too. The
         // predictor rebuilds from this on every wire round-trip

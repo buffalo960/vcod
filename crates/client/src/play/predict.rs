@@ -516,6 +516,7 @@ mod tests {
         set(&mut w, "viewHeightCurrent", 60.0f32.to_bits() as i32);
         set(&mut w, "origin[0]", x.to_bits() as i32);
         set(&mut w, "commandTime", time);
+        set(&mut w, "speed", 190);
         w
     }
 

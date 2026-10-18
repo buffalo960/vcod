@@ -458,6 +458,10 @@ pub struct GameHost {
     pub client_voted: Vec<bool>,
     /// The teamkill complaint state by slot (`pers` 0x2164..0x216c).
     pub client_complaints: Vec<crate::game::vote::Complaint>,
+    /// 1.5's and UO's `maxspeed` client field by slot (`gclient_t` 0x2150,
+    /// UO 0x4588): `g_speed`'s integer at the connect, what `ClientEndFrame`
+    /// stores in `ps.speed` (cod15-movement.md, "ps.speed"). 1.1 has none.
+    pub client_max_speed: Vec<i32>,
     /// A slot `Cmd_Vote_f` drops for its complaints; `Server` drops it
     /// before it sends the vote's lines.
     pub complaint_drop: Option<usize>,
@@ -695,6 +699,11 @@ impl GameHost {
         }
         if let Some(c) = self.client_complaints.get_mut(slot) {
             *c = crate::game::vote::Complaint::default();
+        }
+        // `ClientConnect` seeds `maxspeed` (1.5b 0x3c852, UO 0x44c86).
+        let g_speed = crate::game::builtins::cvar::atoi(self.cvars.get("g_speed"));
+        if let Some(m) = self.client_max_speed.get_mut(slot) {
+            *m = g_speed;
         }
         self.reset_client_objectives(slot);
         // The carried `pers`, if the boundary this client crossed kept one;
@@ -1238,6 +1247,22 @@ impl GameHost {
         out
     }
 
+    /// What `ClientEndFrame` stores in `slot`'s `ps.speed`: 1.1's
+    /// `(int)g_speed.value` (game.mp 0x41100), 1.5's and UO's `maxspeed`
+    /// (1.5b 0x3ada8, UO 0x4329f).
+    pub fn client_speed(&self, slot: usize) -> i32 {
+        if self.speaks_1_1() {
+            crate::game::builtins::cvar::atof(self.cvars.get("g_speed")) as i32
+        } else {
+            self.client_max_speed.get(slot).copied().unwrap_or(0)
+        }
+    }
+
+    /// The server speaks 1.1's protocol 1.
+    pub fn speaks_1_1(&self) -> bool {
+        self.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V1.version
+    }
+
     /// The server speaks United Offensive's protocol 22.
     pub fn is_uo(&self) -> bool {
         self.defs.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version
@@ -1281,6 +1306,7 @@ impl GameHost {
             client_ping_until: vec![0; MAX_CLIENTS],
             client_voted: vec![false; MAX_CLIENTS],
             client_complaints: vec![crate::game::vote::Complaint::default(); MAX_CLIENTS],
+            client_max_speed: vec![vcod_common::pmove::SPEED_RUN as i32; MAX_CLIENTS],
             complaint_drop: None,
             client_buttons: vec![0; MAX_CLIENTS],
             client_last_cmd: vec![vcod_common::net::msg::NULL_USERCMD; MAX_CLIENTS],
@@ -1885,6 +1911,9 @@ impl Host for GameHost {
             match cx.resolve_folded(field) {
                 "health" => return Value::Int(self.client_vitals[ent.0 as usize].health),
                 "maxhealth" => return Value::Int(self.client_vitals[ent.0 as usize].max_health),
+                "maxspeed" if !self.speaks_1_1() => {
+                    return Value::Int(self.client_max_speed[ent.0 as usize]);
+                }
                 // Retail keeps an icon index and reads 0 back as ""
                 // (0x41b7c); the name is stored here, so only the unset
                 // case needs the answer.
@@ -2023,10 +2052,21 @@ impl GameHost {
         } else {
             fields::route_entity(cx.resolve_folded(field))
         };
+        let max_speed = !self.speaks_1_1() && cx.resolve_folded(field) == "maxspeed";
         let Some(e) = self.ents.get_mut(ent) else {
             return Err(ErrorKind::BadType("no such entity"));
         };
         if let Some(c) = e.client.as_mut() {
+            // 1.5's and UO's setter (1.5b 0x3b88e, UO 0x43b82) floors the
+            // int at 0 and copies it, as a float, into the entity's `speed`.
+            if max_speed {
+                let speed = as_health(value)?.max(0);
+                self.client_max_speed[ent.0 as usize] = speed;
+                if let Route::Engine { slot, .. } = fields::route_entity("speed") {
+                    e.engine[slot] = Value::Float(speed as f32);
+                }
+                return Ok(());
+            }
             let v = &mut self.client_vitals[ent.0 as usize];
             match cx.resolve_folded(field) {
                 "health" => {

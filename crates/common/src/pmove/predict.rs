@@ -259,6 +259,7 @@ mod tests {
         set(&mut w, "groundEntityNum", ENTITYNUM_WORLD as i32);
         setf(&mut w, "viewHeightCurrent", super::super::VIEW_STAND);
         set(&mut w, "commandTime", time);
+        set(&mut w, "speed", 190);
         w
     }
 
@@ -414,6 +415,24 @@ mod tests {
             run_cmd(&mut pred, &c, &world, &[]);
             assert_eq!(format!("{pred:?}"), format!("{before:?}"));
         }
+    }
+
+    /// A run predicts at the wire's `ps.speed`, a retail `g_speed` 250
+    /// server's included.
+    #[test]
+    fn the_run_predicts_at_the_wire_s_speed() {
+        let world = test_world(&[]);
+        let world = MoveWorld::bare(&world);
+        let mut w = standing(5000);
+        set(&mut w, "speed", 250);
+        let mut pred = from_wire(&PROTOCOL_V1, &w, None);
+        for t in (5008..=6000).step_by(8) {
+            let mut c = cmd(t);
+            c.forward = 127;
+            run_cmd(&mut pred, &c, &world, &[]);
+        }
+        let h = pred.ps.velocity.truncate().length();
+        assert!((h - 250.0).abs() < 1.0, "{h}");
     }
 
     #[test]

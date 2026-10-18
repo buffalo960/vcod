@@ -4090,6 +4090,32 @@ mod tests {
     /// travelled as text through the carry and was re-interned on the far
     /// side. The two levels default the key differently, so the value read
     /// after says which one wrote it.
+    /// 1.5's `maxspeed`: `g_speed`'s integer at the connect, floored at 0
+    /// by its setter, which copies it into the entity's `speed`; it is what
+    /// `ClientEndFrame` stores in `ps.speed`. 1.1 stores `g_speed` itself.
+    #[test]
+    fn maxspeed_seeds_from_g_speed_and_feeds_the_end_frame() {
+        let src = "main() { level.callbackPlayerConnect = ::c; }\n\
+                   CodeCallback_PlayerConnect() { [[level.callbackPlayerConnect]](); }\n\
+                   c() { level.seeded = self.maxspeed; self.maxspeed = -5; \
+                         level.floored = self.maxspeed; level.ent = self.speed; \
+                         self.maxspeed = 220; }\n";
+        let mut rt = ScriptRuntime::for_test_at(CALLBACK_SETUP, src);
+        rt.host.defs = crate::defs::Defs::of(&vcod_common::net::protocol::PROTOCOL_V6);
+        rt.host.cvars.set("g_speed", "300.9");
+        rt.reconnect_client(0, "vcod".into());
+        assert_eq!(rt.level_field("seeded"), vcod_gsc::Value::Int(300));
+        assert_eq!(rt.level_field("floored"), vcod_gsc::Value::Int(0));
+        assert_eq!(rt.level_field("ent"), vcod_gsc::Value::Float(0.0));
+        assert_eq!(rt.host.client_speed(0), 220);
+        // A later `g_speed` waits for the next connect.
+        rt.host.cvars.set("g_speed", "190");
+        assert_eq!(rt.host.client_speed(0), 220);
+
+        rt.host.defs = crate::defs::Defs::of(&vcod_common::net::protocol::PROTOCOL_V1);
+        assert_eq!(rt.host.client_speed(0), 190);
+    }
+
     #[test]
     fn a_carried_pers_is_back_on_the_client_the_next_level_connects() {
         fn src(default_team: &str) -> String {
