@@ -907,8 +907,8 @@ deaths between ticks 11548 and 13942, between (2900, -5300) and (2800,
 near its own base (`bas_defend`).
 
 Rejected regroup rules for a planter going for the other side's last
-base, breached (INFERRED, measured on mp_kursk shooting, seeds 1 to 11
-odd):
+base, breached (VERIFIED, measured, ours, mp_kursk shooting, seeds 1 to
+11 odd):
 - A planter waits 600 to 750 units off the charge, for up to 30 s, for a
   live teammate farther out. Slower: seed 7 went 11679 to 12039 and seed
   11 10119 to 10719. On seed 5 an allied planter waited by the axis
@@ -919,12 +919,11 @@ odd):
   With the wait it stopped short of the room, and the defender killed
   both axis attackers there (8812 and 8846). Seed 5 went to 15839.
 - The same, but only once the bot's last life ended within 1000 units of
-  that charge. This rule never fired in 36 shooting runs (all five maps,
-  seeds 1 to 11, and mp_kursk 13 to 23), and every round ended on the
-  tick master's did.
+  that charge. All 36 shooting runs (five maps, seeds 1 to 11, and
+  mp_kursk 13 to 23) ended on the same tick as on master.
 
-A plant made at once, before the defender is back in its room, wins more
-than it loses. On these seeds no attacker reached a held room one at a
+INFERRED: a plant made at once, before the defender is back in its
+room, wins more than it loses. On these seeds no attacker reached a held room one at a
 time, so nothing was merged.
 
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
