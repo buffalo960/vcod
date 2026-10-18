@@ -1305,12 +1305,13 @@ impl ClientSim {
     }
 
     /// `SetClientViewAngle` (0x41e30): the view becomes `angles` (degrees,
-    /// wire convention) and `delta_angles` is rewritten so the last cmd's
-    /// angles land on it. Retail's prone arm, which clamps the angles to the
-    /// prone cone first, is not modelled.
+    /// wire convention), held to the prone cone first on a prone player
+    /// (`pmove::prone_view_angle`), and `delta_angles` is rewritten so the
+    /// last cmd's angles land on it.
     pub fn set_view_angle(&mut self, angles: [f32; 3]) {
+        let angles = vcod_common::pmove::prone_view_angle(&self.ps, angles);
         for (i, a) in angles.iter().enumerate() {
-            self.delta_angles[i] = ((a * ANGLE2SHORT) as i32 & 0xffff) - self.last_cmd_angles[i];
+            self.delta_angles[i] = vcod_common::pmove::angle_shorts(*a) - self.last_cmd_angles[i];
         }
         self.view_angles = angles;
         self.ps.yaw = angles[1].to_radians();
@@ -4085,6 +4086,21 @@ mod tests {
         assert_eq!(d[0], (10.0 * ANGLE2SHORT) as i32 - 100);
         assert_eq!(d[1], (90.0 * ANGLE2SHORT) as i32 - 2000);
         assert_eq!(sim.view_angles()[1], 90.0);
+    }
+
+    /// `SetClientViewAngle`'s prone arm (0x41e30): a prone player is
+    /// handed a view no further than 45 degrees off his body, placed on the
+    /// shorts grid, and `delta_angles` follows the held view.
+    #[test]
+    fn set_view_angle_holds_a_prone_player_inside_the_cone() {
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.become_player([0.0; 3], 0.0, [0; 3]);
+        sim.ps.stance = vcod_common::pmove::Stance::Prone;
+        sim.ps.prone_direction = 10.0;
+        sim.set_view_angle([0.0, 100.0, 0.0]);
+        // AngleNormalize360(10 + 45): 55 degrees is 10012.44 shorts.
+        assert_eq!(sim.delta_angles()[1], 10012);
+        assert_eq!(sim.view_angles()[1], 10012.0 * (360.0 / 65536.0));
     }
 
     /// `step` keeps the cmd's angles, so the view `set_view_angle` wrote is

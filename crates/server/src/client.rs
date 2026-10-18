@@ -184,6 +184,10 @@ pub struct Client {
     /// A server-side bot: no socket traffic, the driver in `server.rs` feeds
     /// its commands and moves.
     pub is_bot: bool,
+    /// A bot's netadr port: `SV_AddTestClient` (0x80875cf) connects it from
+    /// a type-0 (bot) address, which `status` prints IPX-style and
+    /// `Sys_IsLANAddress` does not count as LAN. `None` for a socket client.
+    pub bot_port: Option<u16>,
     /// Frames sent to this client, indexed message_num % SV_PACKET_BACKUP;
     /// the delta base for a later frame is picked from here by message_ack.
     pub frames: Vec<Option<Snapshot>>,
@@ -256,6 +260,7 @@ impl Client {
             last_cmd: NULL_USERCMD,
             sim: None,
             is_bot: false,
+            bot_port: None,
             frames: vec![None; SV_PACKET_BACKUP],
             ping_ring: [(0, 0); SV_PACKET_BACKUP],
             ping: 999,
@@ -401,7 +406,7 @@ impl Client {
     /// on a server below `dedicated 2` reads 99999, anyone else the
     /// userinfo's `rate` clamped to 1000..90000, or 5000 when it is empty.
     pub fn rate(&self, dedicated: i32) -> i32 {
-        if dedicated != 2 && is_lan(self.addr.ip()) {
+        if dedicated != 2 && self.bot_port.is_none() && is_lan(self.addr.ip()) {
             return 99999;
         }
         match vcod_common::net::info_value_for_key(&self.userinfo, "rate") {

@@ -203,6 +203,8 @@ impl Server {
             Instant::now(),
         );
         client.is_bot = true;
+        // `status` prints it as a bot address, as retail's test clients.
+        client.bot_port = Some(slot as u16 + 1);
         self.clients[slot] = Some(client);
         self.bots.insert(slot, bot);
         if let Some(rt) = self.script.as_mut() {

@@ -732,7 +732,12 @@ const SLOPE: Tolerance = Tolerance {
 /// 2026-10-09 with `BG_CheckProneValid`'s ground samples: the street on
 /// retail's to the printed hundredth throughout, the mound `fTorsoHeight`
 /// within 0.0001 and both pitches within 0.11 degrees; without them all three
-/// read 0, up to 8 units and 19.3 degrees off.
+/// read 0, up to 8 units and 19.3 degrees off. Measured 2026-10-18 with
+/// every `AngleDelta` and cap placement through the shorts
+/// (cod11-mantle.md, "`AngleDelta` and the angle folds at every call
+/// site"): the body's yaw, both prone pitches, the view and `delta_angles`
+/// on retail's within 3.1e-5 degrees on both crawls; the view yaw had read
+/// a short (0.0055) off where the cap held it.
 const PRONE: Tolerance = Tolerance {
     p95_z: 0.02,
     p95_xy: 0.05,
@@ -741,9 +746,9 @@ const PRONE: Tolerance = Tolerance {
     max_z: 0.5,
     outlier_share: 0.0,
     view: Some(ViewTolerance {
-        direction: 1.0,
-        pitches: 2.0,
-        view: 0.1,
+        direction: 0.001,
+        pitches: 0.001,
+        view: 0.001,
         view_height: 0.01,
         body_height: 0.01,
         body_pitch: 0.2,

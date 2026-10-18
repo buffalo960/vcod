@@ -104,12 +104,13 @@ pub struct SpawnRequest {
 /// `SV_AddTestClient`'s state (cod_lnxded 0x808753c). `counter` is the
 /// process-wide `bot%d` number, also the bot address's port, and `svs_time_ms`
 /// the network clock `Server` mirrors in before the script runs; `added` are
-/// the slots the builtin connected, for `Server` to give a `Client`.
+/// the slots the builtin connected, with each one's port and name, for
+/// `Server` to give a `Client`.
 #[derive(Default)]
 pub struct TestClients {
     pub counter: u32,
     pub svs_time_ms: i32,
-    pub added: Vec<(usize, String)>,
+    pub added: Vec<(usize, u16, String)>,
 }
 
 /// Which movement path `self spawn(origin, angles)` puts a client on, read
@@ -726,16 +727,15 @@ impl GameHost {
         // The carried `pers`, if the boundary this client crossed kept one;
         // taken, so a later reconnect starts empty as retail's does.
         let pers = self.pers_carry.get_mut(slot).and_then(Option::take);
-        // 1.1's reconnect zeroes the held player's entity in place; vcod
-        // unlinks it too, so the area tree never lists an entity the
-        // fresh one does not know it is in.
+        // 1.1's reconnect zeroes the held player's entity in place and
+        // unlinks nothing: the area tree keeps its entry until the next link.
         if self
             .ents
             .handle(slot as u32)
             .and_then(|id| self.ents.get(id))
             .is_some_and(|e| e.client.is_some())
         {
-            self.area.unlink(slot as u32);
+            self.area.zero_entity(slot as u32);
         }
         let id = match self.ents.spawn_client(cx, slot, pers.as_ref()) {
             Ok(id) => id,
@@ -1061,10 +1061,10 @@ impl GameHost {
                 origin: glam::Vec3::from(at),
                 mins: glam::Vec3::from(t.shape.mins),
                 maxs: glam::Vec3::from(t.shape.maxs),
-                brush: t
-                    .shape
-                    .model
-                    .map(|m| vcod_common::collision::Pusher::Model(m as usize)),
+                brush: t.shape.model.map(|m| match m {
+                    0 => vcod_common::collision::Pusher::Copy(id.0),
+                    m => vcod_common::collision::Pusher::Model(m as usize),
+                }),
                 vehicle_link: None,
             });
         }

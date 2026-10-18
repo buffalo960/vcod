@@ -200,7 +200,7 @@ pub fn update_ads_flag(ps: &mut PlayerState, input: &PmInput, def: Option<&Weapo
             WEAPON_RAISING | WEAPON_DROPPING | WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX
         )
         // A link passes for ground here (0x3727e), though its arm clears it.
-        && (ps.on_ground || ps.linked);
+        && (ps.sight_ground() || ps.linked);
     if !keep {
         ps.ads_active = false;
     } else if ps.stance != Stance::Prone {

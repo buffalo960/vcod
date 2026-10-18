@@ -2271,7 +2271,19 @@ stored at `0x301d5ad8` to `0x301d5af4`, four bytes apart, and the weapon
 setup stores a material at `0x301d5af4 + 4 * weapon` and another at
 `0x301d5bf4 + 4 * weapon`. INFERRED, off the weapon setup's branches: the
 first is the weapon's `hudIcon` and the second its `ammoIcon`, each
-`hintActivate` when the key is blank. INFERRED, off
+`hintActivate` when the key is blank. VERIFIED, the setup (`0x30034cf0`)
+stores `hintActivate` (`0x301d5ad8`) for a blank key at `0x30035c80` and
+the registered icon at `0x30035c71`, the ammo slot at `0x30035cdc`; 1.5's
+at `0x30037602` and `0x30037657`/`0x30037666`, UO's at
+`0x300446d7`/`0x300446e6` (`0x3044b720 + 4 * weapon`) and
+`0x3004473b`/`0x3004474a` (`0x3044b920`). VERIFIED: the draw loads the
+hint's slot (`0x3002523f`; 1.5 `0x300265af` off `0x301d9658`, UO
+`0x300303e8` off `0x3044b6f8`) and leaves when it reads 0 (`0x30025255`,
+1.5 `0x300265c5`, UO `0x300303fe`), ahead of the icon and the sentence.
+INFERRED: only `CG_RegisterWeapon` writes a weapon's slots, so the slot of
+a weapon never set up (no def) stays 0 and its hint draws nothing; vcod
+draws nothing for a weapon with no def (`hud::player::hint_material`,
+`hud::uo::hint_material`). INFERRED, off
 `0x300251f0` indexing that run from `0x301d5ad0` by the hint: hint 2..8 are
 the named ones in order, 9 is `hintFriendly`, `9 + w` weapon `w`'s hud icon
 and `73 + w` its ammo icon, which agrees with the server's encoding
