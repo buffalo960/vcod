@@ -1977,6 +1977,25 @@ impl Follower {
             self.fell = true;
             return None;
         }
+        // Down a drop onto a floor partway, the waypoint more than a jump
+        // under the feet and within reach flat, the edge's top more than a
+        // step over them: a run off mp_ship's slot at (5403, -160, 396)
+        // for the floor at 204 landed on the ledge at 336 over its
+        // waypoint, turned on the spot until an unstick spell took it off
+        // (bot-navigation.md section 3). Plan again from where it landed,
+        // the edge not avoided: round it, the plan went back up to the
+        // shelf and on by a jump edge the bot bounced under.
+        if body.on_ground
+            && !body.on_ladder
+            && self.next > 0
+            && here.z - w.z > vcod_common::pmove::JUMP_HEIGHT
+            && flat(w) < REACH
+            && g.nodes[self.path[self.next - 1] as usize].z - here.z > vcod_common::pmove::STEPSIZE
+        {
+            self.reset();
+            self.fell = true;
+            return None;
+        }
         // A plan's first node more than a step over the feet is a floor
         // the body left while the search ran: a bot that wandered off
         // mp_ship's crow's nest top at 1254 onto the hatch's rim at 1219
@@ -7214,6 +7233,44 @@ mod tests {
             f.avoid.iter().any(|e| (e.0, e.1) == (0, 1)),
             "the drop it fell off"
         );
+    }
+
+    /// mp_ship's slot at (5403, -160, 396): a run off its drop for the
+    /// floor at 204 landed on the ledge at 336, 8 units from straight over
+    /// the waypoint, and turned there until an unstick spell threw it off
+    /// (seeds 73, 149, 183, 317, 1217, 1913, 3151, 4177, 4333). It plans
+    /// again from the ledge.
+    #[test]
+    fn a_drop_that_lands_partway_down_is_planned_again() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(5384.0, -161.0, 396.125),
+                Vec3::new(5403.0, -160.0, 396.125),
+                Vec3::new(5405.0, -192.0, 204.125),
+                Vec3::new(5376.0, -196.0, 204.125),
+            ],
+            vec![vec![1], vec![2], vec![3], vec![2]],
+        );
+        let mut f = Follower::default();
+        let goal = crate::bots::Goal::To([5376.0, -196.0, 204.125]);
+        let mut budget = 100;
+        let mut at =
+            |p: [f32; 3]| f.waypoint(&g, None, goal, p, Footing::STANDING, &mut budget, &mut || 0);
+        assert_eq!(
+            at([5384.0, -161.0, 396.125]),
+            Some([5405.0, -192.0, 204.125])
+        );
+        // On the top still, the drop is under way.
+        assert_eq!(
+            at([5398.0, -184.0, 396.125]),
+            Some([5405.0, -192.0, 204.125])
+        );
+        assert_eq!(at([5404.4, -200.4, 336.125]), None);
+        assert!(f.fell, "planned from where it landed");
+        // Not round the drop: avoided, the plan from mp_ship's ledge went
+        // back up to the shelf and on by a jump edge it bounced under
+        // (seed 1409).
+        assert!(f.avoid.is_empty());
     }
 
     /// mp_ship's mast hatch, seed 2171: off the rungs at (3705, 58, 992)
