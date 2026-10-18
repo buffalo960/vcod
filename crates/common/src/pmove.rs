@@ -930,13 +930,15 @@ impl PlayerState {
 
     /// What `PM_UpdateAimDownSightFlag` takes for ground: 1.1's
     /// `pml.groundPlane` (0x37230, a steep face too), 1.5's and UO's
-    /// `pml.almostGroundPlane` (1.5 0x2cf6c, UO 0x32c0b).
+    /// `pml.almostGroundPlane` (1.5 0x2cf6c, UO 0x32c0b). A ground trace
+    /// sets both whenever it sets `on_ground`.
     pub fn sight_ground(&self) -> bool {
-        if self.rules.v15() {
-            self.near_ground
-        } else {
-            self.ground_plane.is_some()
-        }
+        self.on_ground
+            || if self.rules.v15() {
+                self.near_ground
+            } else {
+                self.ground_plane.is_some()
+            }
     }
 
     pub fn mins(&self) -> Vec3 {
