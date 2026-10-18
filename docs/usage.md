@@ -95,6 +95,9 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
 
 ### Bots
 
+The full guide, with the minimum player count, team balance and slots,
+is [bots.md](bots.md).
+
 Bots are a vcod extension; retail has none. Each joins like a client,
 through the stock team and weapon menus, named `[BOT] <name>` from a pool
 of 120 (`crates/server/src/botmgmt.rs`), never two alike. Manage them over
