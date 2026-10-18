@@ -1277,17 +1277,31 @@ muzzle across the view (impacts are whole units, truncated toward zero):
   `the_jeep_passenger_s_round_lands_as_on_retail`). From his eye (60) ours
   lands at (-3815, 928, -9). VERIFIED (capture, gate).
 
-The street placement settles differently: after the gametype's
-`setOrigin` ours' body sits 0.2 off retail's on the grade, until a later
-strafe pins both on the same wall. This is the thrower's slide above
-(the spawn's landing velocity and the first frames' cmd times); these
-captures log neither the dm spawn nor the cmds before the script, so
-`moveshot_ab` cannot pin them. INFERRED.
-That moves the early rounds a unit at most, but one round on UO that
-strikes a slanted face at x 1244 a unit on two axes (`moveshot_ab`
-`GAPS`). On flat ground retail's body sits at z -23.874996 after a
-placement 0.125 over the floor (-23.875) and ours stays at -23.75. Both
-VERIFIED (captures). The UO throw's two float steps above (36.125 plus
+**The street placement.** After the gametype's `setOrigin` (900, 1930,
+-38) retail's body rests at (900, 1930, -42.944004) with no velocity, 0.18
+over the grade, which the slope its later strafes cross puts at about
+-43.122 under that spot: the ground trace caught it inside its 0.25 reach
+before the fall's step met the face, so nothing slid. VERIFIED (UO
+capture, first `!snap`); the ground height INFERRED from the strafe rows.
+Where a fall ends that way rides the cmd times against the frame, and
+the captures log no cmd before the script's first. VERIFIED, `moveshot_ab`
+2026-10-18: with ours' wait sending one cmd a frame, as the gate did, the
+body lands on the face and slides to (900, 1929.7953, -43.13387), which
+put one UO round a unit off on two axes; sending the net probe's
+`--probe-cmd-ms 8` cadence instead (the probe's loop sends a cmd every
+iteration from its first snapshot), ours rests between (900, 1929.945,
+-43.126) and (900, 1930, -42.948) over eight cmd phases one millisecond
+apart, and every round of the 1.5 and UO captures lands within the
+gate's unit on each of them. So the gate keeps no gap row; the rest
+height still differs from retail's by up to 0.18 until a capture logs the
+wait's cmds. On flat ground retail's body sits at z -23.874996 after a
+placement 0.125 over the floor (-23.875; the bipod capture). VERIFIED.
+Ours stayed at -23.75 with one cmd a frame: `setOrigin`'s z lift puts the
+body 1.125 over the floor, and one 50 ms step of the fall ends at
+-23.75, inside the ground trace's reach, where nothing moves it again.
+With the probe's 8 ms cmds ours rests on retail's -23.874996 to the bit.
+VERIFIED (`moveshot_ab` 2026-10-18, both cadences); the mechanism
+INFERRED from the arithmetic. The UO throw's two float steps above (36.125 plus
 two ulps) are that z: -23.874996 + 60. INFERRED.
 
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is
@@ -3473,8 +3487,24 @@ also stores 1 and 0 into alongside `client+0x2218`. INFERRED: the 1 goes with
 the victim's own origin and the 0 with a real direction, so the 255/255 pair is
 the sentinel for "the damage carried no direction".
 
+**The angles are `vectoangles`'.** VERIFIED, `P_DamageFeedback`
+(0x3f500): step 8's angles come from the module's `vectoangles` (0x3de94),
+whose pitch is `-atan2(z, |xy|)` and whose two angles are both wrapped
+into [0, 360) (14.8, "`vectorToAngles`"), so a direction a little up reads a
+pitch just under 360. VERIFIED, `mp_carentan-tdm-grenade-target.txt`
+(ms 9557): a frag going off under the standing target knocked him
+(-86.9, -0.6, 14.0) and wrote `damageYaw` 128 and `damagePitch` 249, 350.9
+degrees, about 9 up; Q3's `vectoangles` (pitch `+atan2`) would have written
+6. VERIFIED, `mp_carentan-tdm-hit-target.txt`: a level carbine hit with
+knockback z 0.1 wrote `damagePitch` 255. Until 2026-10-18 vcod used Q3's
+sign here and the unit test that pinned 255 fed it a direction a hair
+down; `a_blast_from_below_writes_the_capture_s_pitch_byte` now pins the
+grenade line.
+
 **As implemented** (`ClientSim::take_damage` and `end_frame`,
-`crates/server/src/spectate.rs`): steps 2 to 5 and 7 to 13 as listed, with
+`crates/server/src/spectate.rs`): steps 2 to 5 and 7 to 13 as listed,
+the angles through the same `vectoangles` port as the `vectorToAngles`
+builtin (`game::builtins::math::vectoangles`), scaled in double, with
 step 1 read as the sim's `dead` flag, which the killing hit sets before the
 end-frame runs. Step 6's view kick is not carried; nothing on the wire reads
 it. `EV_PAIN` is raised whatever the stance: nothing above names
@@ -4667,6 +4697,23 @@ INFERRED: the ordering in it.
 - `r.currentOrigin` (`+0x134`) takes the `origin` argument and
   `r.currentAngles` (`+0x140`) the finished `apos.trBase`.
 
+VERIFIED, `fire_grenade` 0x544cd-0x54589: `vectoangles` reads the
+`velocity` argument (`edi`), not the truncated `trDelta`, and
+`AngleNormalize360` (0x3eb30) scales by 182.04445 (.rodata 0x72ba4),
+truncates under a `| 0xc00` control word, masks to 16 bits and scales back
+by 0.005493164 (0x72ba8), so the launch pitch is a whole number of
+65536ths. VERIFIED, `net/snapshots-skyfrag.bin` (2026-10-18,
+`client-probes/probe_skyshot` sky part with `fraggrenade_mp`, the recipe in
+the probe's header with `--probe-uo-weapon throw --save-snapshots
+--capture-tag skyfrag`): a frag thrown 80 degrees up left with `trDelta`
+(117, 117, 1065) and `apos.trBase` (158.88977, 45, 0), the pitch exactly
+28925 65536ths. INFERRED: 158.88977 is 278.88977 less 120, a pitch of
+81.11 degrees up, which is the unrounded throw (117.8, 117.8, 1065.x); the
+truncated delta reads 81.17. vcod took the angles off the truncated
+velocity and wrapped without the 65536ths until 2026-10-18 (158.82935);
+`missile_edge_ab::launch_angles_match_retail_on_1_1` now matches the
+capture bit for bit.
+
 ### 11.3 Where the throw's origin and velocity come from
 
 VERIFIED, `FireWeapon` `0x68D68`: it takes the client's view angles from
@@ -4689,7 +4736,14 @@ the velocity in place and adds `n * dot(client->ps.velocity, n)` to the
 returned missile's `s.pos.trDelta`, where `n` is the normalized velocity.
 INFERRED: the thrower's own motion along the throw direction is therefore
 added to the grenade after `fire_grenade` has truncated the delta, so the
-final `trDelta` is not whole-numbered.
+final `trDelta` is not whole-numbered. VERIFIED, 0x6900c-0x6909c: z is
+`projectileSpeed * forward.z` plus `projectileSpeedUp` on the stack, stored
+once; `VectorNormalize` runs on the unrounded velocity, and the dot and
+each `n * dot` stay on the stack until each `trDelta` component is stored.
+VERIFIED, UO's `weapon_grenadelauncher_fire` (0x7b2c4) has the same shape
+with the dot stored as a float. vcod: `missile::throw_velocity` returns
+the unrounded velocity and `Missiles::carry` does the truncation and the
+add, so `fire_grenade` gets what retail's does.
 
 VERIFIED: `weapon_grenadelauncher_fire` (`0x69348`) is the same arithmetic
 against the `params` frame of 2.3, taking the forward axis from `params+0`,
@@ -5438,6 +5492,19 @@ trace fraction into it, and the fraction it snaps the origin back with is the
 1.5-unit trace's, not the move trace's. Reproducing the committed arcs to
 within 0.1 units needed both.
 
+VERIFIED, `missile_ab.rs` on 2026-10-18: on every one of the three throws'
+`!missile` samples (all 1.1d, through the bounces, the rest and the explode
+frames) our `pos` matches retail's field for field at the probe's one
+decimal (`traj_str`), `trTime` counted from the pullback (a resting one's
+is 0 on both). The gate compares those strings, with no distance
+tolerance. VERIFIED, same run: `apos` does not match past `trType`. Its
+`trDelta` is the throw's random spin (703.5, 0, 335.9 on retail's
+`cook_release`, 679.8, 0, 344.8 on ours), a different draw on ours, and
+retail's pitch rate changes at every bounce (593.7, -474.7, 323.1 on
+`cook_release`'s first three) where ours keeps the throw's
+(`G_MissileLandAngles` is not read, `missile.rs`), so the gate still
+compares only the `apos` `trType`.
+
 VERIFIED, off the same lines: the exploded entity stays on the wire for about
 300 ms after the event frame, which is `EVENT_VALID_MS` in the file. Retail's
 `freeAfterEvent` frees it once the event has been sent to everyone who can
@@ -5534,7 +5601,20 @@ and `splashMethodOfDeath` 6 (`MOD_PROJECTILE_SPLASH`), `clipmask`
 0x2802091, `s.pos.trType` 2 (`TR_LINEAR`), `trTime` `level.time - 50`
 (0x54708), `trBase` the muzzle, `trDelta` `dir * projectileSpeed` truncated
 toward zero per axis, `r.currentOrigin` the muzzle, and `G_SetAngle` of
-`vectoangles(trDelta)`. INFERRED: no bounce bit (0x03000000) is set, so
+`vectoangles(trDelta)` (0x547e3; `G_SetAngle` 0x67d9c copies the three
+floats into `apos.trBase` and `r.currentAngles` with no wrap). VERIFIED,
+`net/snapshots-skyrocket.bin` (2026-10-18, `probe_skyshot`'s sky part with
+`panzerfaust_mp`, `--probe-uo-weapon aim --save-snapshots --capture-tag
+skyrocket`): a rocket fired 80 degrees up with `trDelta` (344, 350, 2756)
+went out with `apos.trBase` (280.09662, 45.49534, 0): `vectoangles`' pitch,
+down positive and wrapped into [0, 360). vcod sent Q3's -79.9 until
+2026-10-18; `missile_edge_ab::launch_angles_match_retail_on_1_1` holds
+ours within the panzerfaust's 3.5 degree `adsSpread` of it (each server
+draws the spread off its own RNG). INFERRED, `net/snapshots-uo-bazooka.bin`:
+UO's 16-bit angle field cannot tell the two signs apart (the round off
+-0.88 and 359.12 is the same short). VERIFIED, `game.mp.uo.i386.so`:
+UO's `vectoangles` (0x3aded) wraps both angles into [0, 360) the same way,
+beside a separate `vectosignedangles` (0x3af4c). INFERRED: no bounce bit (0x03000000) is set, so
 13.1 explodes it on whatever it strikes: a body or anything else that takes
 damage gets `damage` (1000 for `panzerfaust_mp`) as `MOD_PROJECTILE` with
 the flight as the direction and the splash skips it; the blast is
@@ -6635,9 +6715,35 @@ The other walks and links (2026-10-18):
   a leaf on every path down the BSP and appends each leaf it reaches
   (0x8054054), so it never returns 0 and the unlink never runs.
 
-Not routed through the tree: a linked turret's `G_GeneralLink` from its
-think (`turret_think` 0x5328c), which vcod makes on the turret's turn of
-the pass (`link::run_linked`), not from the gunner's end frame; the
+- VERIFIED, `TeleportPlayer` (1.1d 0x51380, 1.5b and UO alike): it reads
+  `ent+0xf0` (0x513dc; 1.5b 0x50dc8, UO `ent+0xf4` 0x5a3f8), unlinks
+  (0x513e6), writes the lifted `ps.origin` into `r.currentOrigin`
+  (0x51457..0x51469) and links again when the read was non-zero (0x5146f,
+  0x51477). INFERRED, off the 0xf0 and 0xf4 offsets
+  (`sizeof(entityState_t)`, `r` first): the read is `r.linked`. INFERRED,
+  off those branches: a turret's release, from `turret_think_client` in the gunner's end frame
+  or from `G_FreeTurret`, files him at the mount spot, at the head of his
+  node's list, ahead of his next cmd's link. vcod links there
+  (`ScriptRuntime::teleport_link`); a `G_FreeTurret` release links in
+  the gunner's end frame, where vcod applies it, not in the deleting
+  thread. `ClientSpawn`'s release (0x426e1) is followed by its own unlink
+  (0x42708) and the spawn's link, so vcod skips it there. 1.5b's and UO's
+  extra block after the lift tests `eFlags | 0xc000` (1.5b 0x50e44),
+  never zero, so it never runs. `turret_ab`'s
+  `the_release_links_the_gunner_where_it_put_him` and
+  `deleting_a_manned_turret_releases_its_gunner` read the link.
+- VERIFIED, UO `VEH_UnlinkPlayer` (0x89fb2): `G_EntUnlink` (0x8a1ac) and
+  `SetClientOrigin` (0x8a463), and neither `SetClientOrigin` (0x44210)
+  nor anything else there calls `trap_LinkEntity`. INFERRED: a dismount
+  leaves the rider filed where his seat link put him until his next cmd,
+  as vcod does.
+
+- A linked turret's `G_GeneralLink` comes from its own think
+  (`turret_think` 0x5328c, `nextthink` +50 so every frame), on its turn of
+  the entity pass, not from the gunner's end frame; vcod links it on the
+  same turn (`link::run_linked`, then the think).
+
+Not routed through the tree: the
 relink `G_RunFrame` makes of every client when `g_bounds_width` or
 `g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
 `func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the
@@ -6806,23 +6912,70 @@ thread has deleted the trigger by then; `maps/mp/_utility.gsc`'s
 top) and keeps the `xmodel/fx` model, which plays `bell_tower_exp` after
 its `script_delay` .04.
 
-VERIFIED, `client-probes/probe_dmgspawn.gsc` on retail 1.1d, mp_carentan,
-2026-10-18 (no client): `spawn("trigger_damage", origin)` runs
-`SP_trigger_damage` with no `model` key, and the entity reads classname
-`trigger_damage` and `health` 32000. A `radiusDamage(origin + (0, 0, 32),
-64, 100, 50)` half a second later raised nothing; one 2000 units above
-the origin a second later notified `"damage"` 100 with no mod. INFERRED,
-by analogy with a spawned `script_brushmodel` (movers doc 19): with no
-`*N` it links inline model 0 and is a copy of the whole world where it
-stands; why the first blast missed it is not measured. vcod spawns no
-`trigger_damage` from script.
+**A script-spawned one.** VERIFIED, `client-probes/probe_dmgspawn.gsc` on
+retail 1.1d and 1.5b, mp_carentan, 2026-10-18, no client, both servers
+logging the same lines (`dmgtrig_ab.rs`'s fifth test):
+`spawn("trigger_damage", origin)` runs `SP_trigger_damage` with no `model`
+key and no spawn keys, and the entity reads classname `trigger_damage` and
+`health` 32000. INFERRED, by the movers doc 19 reading of the brush-model
+setter (`cod_lnxded` 0x8089544, `CM_InlineModel(s.index)` with `s.index`
+0): it links inline model 0, so its box is mp_carentan's world box,
+(-8513, -6721, -637.12) to (10817, 11649, 2369) grown a unit (the BSP's
+model 0, `bsp::Model::clip_bounds`), moved to the trigger's origin, and its
+clip is a copy of the whole world standing there. The blasts, all
+`radiusDamage(at, 64, 100, 50)` with the trigger at the first tdm spawn
+point's origin `o` (844, 3480, -21.25), and `c` the box's centre less `o`,
+(1152, 2464, 865.94):
+
+| blast at | `"damage"` |
+|---|---|
+| `o + (0, 0, 32)` | none |
+| `o + (0, 0, 2000)` | 100, no mod |
+| `o + c` | 100 |
+| `o + c - (0, 0, 40)` | 100 |
+| 70 over the box's top, over the centre | none |
+| `o + c`, the trigger moved to `o - (0, 0, 1500)` | none |
+| the moved trigger's centre | 100 |
+| `o + c`, the trigger back at `o` | 100 |
+| `o + c` after `delete` | none |
+
+INFERRED, 14.1 and 14.3 applied to that box: every blast but the one over
+the top is inside the box, distance 0 and the full 100; `CanDamage`'s
+no-client arm probes from the box's centre, (1996, 5944, 844.7) with the
+trigger at `o`, and a blast at the centre has a probe of no length. The
+blasts that miss inside the box have every probe to the centre blocked by
+the world (vcod's clip blocks the same five). Moved 1500 down, the centre
+sits under the world's bottom and the old centre is cut off from it.
+INFERRED: so the first blast's miss is `CanDamage` reading the
+world-sized box's centre, not anything about the spawn, and an `origin`
+write relinks the trigger and moves its centre with it. VERIFIED, the same
+logs: the `"damage"` notify carries two arguments on 1.1d and 1.5b (4.2),
+hence no mod.
+
+VERIFIED, `client-probes/probe_dmgspawnshot.gsc` on retail 1.1d (two runs)
+and 1.5b, mp_carentan, 2026-10-18, one axis `--probe-uo-weapon direct`
+client with a kar98k standing on the first tdm spawn point's ground and
+firing at the ground 160 units east (`dmgtrig_ab.rs`'s sixth test). The
+trigger's origin shifts the copy's ground against the world's, and so
+whether the round's segment meets it: with the trigger at (0, 0, 20) or
+(0, 0, 1) the round ends inside the copy's ground and logs `"trigger"`
+(the player) then `"damage"` 120 with the player and no mod, as 14.8's
+UO round did; at (0, 0, -20), (0, 0, -1) and (0, 0, 0) it logs nothing.
+INFERRED: `G_CheckHitTriggerDamage`'s `trap_SightTraceToEntity(start, 0,
+0, end, ent, -1)` clips the segment against the copy alone, and a round's
+end, backed off the world's face, does not reach the same face in a copy
+at the same place.
 
 **As implemented.** `crate::game::damage_trigger`: `spec_of` (the spawn's
 keys), `responds`, `activate`, `damaged` (`pain`/`die`, from
 `GameHost::damage_nonclient`) and `sweep` (both walks; the sight trace is
 the segment against the trigger's brushes, or its box without them).
 `GameHost::blast_entities` lists every linked `trigger_damage` with its
-brush model's box. A round's legs and a swing raise
+brush model's box. `spawn_scripted` is a script `spawn`'s: model 0's box,
+linked as a world copy (`CollisionWorld::set_world_copy`, contents
+0x405c0008, which no trace mask but the walks' -1 meets), measured from
+that box's centre with its own copy passed, and walked by tracing the
+segment against the copy (`pusher_box_trace` with `Pusher::Copy`). A round's legs and a swing raise
 `Effect::TriggerSweep` ahead of their hits; the missile pass sweeps a
 grenade's move with its `explosionInnerDamage`; UO's shell impact
 tests its contact point. A blast's notifies on an entity raised in the entity pass go through
@@ -6941,34 +7094,34 @@ one that pulled the trigger.
 - vcod: `leanhit_ab`'s `-press` gates replay each cmd's logged input and
   run a shooter's cmd stamped up to 6 ms before a frame after it, built
   on the snapshot before (`ProbeHold::lead_ms`). Every round of the 1.1d
-  and UO runs leaves within 2e-5 of retail's direction; 1.5b's first
-  round reads one 65536th of the frozen lag short (ours 3, retail 4,
-  `PRESS_DIR_GAPS_15`). The target's `setOrigin` drop under the same lead
-  lands 0.21 off retail's first fall row, so its cmds keep the plain
-  windows (open). The `-cmds` captures' `DIR_GAPS_*` stay: they tap in
+  and UO runs leaves within 2e-5 of retail's direction, and so does
+  every 1.5b round since its sight test was ported (below). The target's
+  `setOrigin` drop under the same lead lands 0.21 off retail's first
+  fall row, so its cmds keep the plain windows (open). The `-cmds` captures' `DIR_GAPS_*` stay: they tap in
   the grid's frame and log no input by cmd.
 - The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
   `-press-1.5` replay with the shooter's sway state logged per cmd). The
   shooter holds the sight from his first cmd (12450, `in=10:16`), but
-  `PM_UpdateAimDownSightFlag` (1.5b 0x2cf6c) clears it off the ground
-  (`pml+0x34` zero and `pm_type` not 1, VERIFIED disassembly), so the
-  scope's freeze waits for the hold's spawn drop to land. Ours: the turn
-  onto the site at 12466 leaves 3 65536ths of pitch lag, 12482 2, the
-  re-aim after the 12500 re-pin 5, 12516 4, 12532 3 (the landing, the
-  sight starts), and 12549 reads the sight moving and freezes 3. Retail's
-  4 is the freeze a cmd earlier, the sight starting on 12516's cmd.
-  Retail's `PROBE fall` rows put the shooter's last re-pin at 12500 as on
-  ours (his first row is 12550, the target's 12500). The float steps are
-  excluded: each raw lag sits 0.19 to 0.5 of a 65536th from the cut
-  (3.50, 2.81, 5.79, 4.68, 3.74), and porting 1.5b's stored sway step
-  (helper 0x31fe6, UO 0x39236: distance and `lerp * distance * (msec *
-  0.001)` each stored as a float, VERIFIED disassembly) and the unrounded
-  `AngleNormalize360` product (1.1d 0x3eb30, 1.5b 0x36a3c keep it on the
-  x87 stack before the truncating `fistp`, VERIFIED disassembly) moved
-  no round. vcod keeps its float sway step and float product. What lands
-  or raises retail's sight a cmd early is open; a capture logging the
-  shooter's `fWeaponPosFrac` and origin per snapshot through the spawn
-  drop would settle it.
+  `PM_UpdateAimDownSightFlag` (1.5b 0x2cf6c) clears it unless `pml+0x34`
+  is set or `pm_type` is 1 (VERIFIED disassembly), so the scope's freeze
+  waits on the hold's spawn drop. The turn onto the site at 12466 leaves
+  3 65536ths of pitch lag, 12482 2, the re-aim after the 12500 re-pin 5,
+  12516 4, 12532 3; the freeze takes the lag of the cmd the sight starts
+  on. The float steps are excluded: each raw lag sits 0.19 to 0.5 of a
+  65536th from the cut (3.50, 2.81, 5.79, 4.68, 3.74), and porting 1.5b's
+  stored sway step (helper 0x31fe6, UO 0x39236: distance and `lerp *
+  distance * (msec * 0.001)` each stored as a float, VERIFIED disassembly)
+  and the unrounded `AngleNormalize360` product (1.1d 0x3eb30, 1.5b
+  0x36a3c keep it on the x87 stack before the truncating `fistp`,
+  VERIFIED disassembly) moved no round; vcod keeps its float sway step and
+  float product. `pml+0x34` is 1.5's `almostGroundPlane`, set off the
+  ground when a floor lies within a unit below (`cod15-movement.md` 5,
+  "The sight off the ground", VERIFIED decompile). vcod read it as the
+  ground itself and started the sight on 12532, the landing, freezing 3.
+  The shooter is 0.63 over the floor at the 12516 cmd's ground trace, so
+  1.5b sights there and freezes 4 (VERIFIED, replay, 2026-10-18: with the
+  test ported every round of the 1.5b run leaves within 2e-5 of retail's
+  direction and `PRESS_DIR_GAPS_15` is gone).
 
 ### 15.2 `BG_CalculateWeaponAngles` (`0x3a1e4`)
 

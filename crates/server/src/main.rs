@@ -189,8 +189,9 @@ fn main() -> Result<()> {
     let sock = UdpSocket::bind(("0.0.0.0", args.port))
         .with_context(|| format!("binding udp/{}", args.port))?;
     // A thread reads the socket as packets arrive so each carries its arrival
-    // time into the tick (`Server::handle_packet_read`); the tick still
-    // handles them in arrival order at its start.
+    // time (`Server::handle_packet_read`); the loop handles them while it
+    // waits for the next frame, and those that came in during a tick at the
+    // next tick's start.
     let (packet_tx, packets) = std::sync::mpsc::sync_channel(PACKET_QUEUE);
     {
         let sock = sock.try_clone().context("cloning the socket")?;
@@ -358,9 +359,25 @@ fn main() -> Result<()> {
         if trace && stats.ticks == 20 {
             stats.log_and_reset();
         }
-        let after = Instant::now();
-        if next > after {
-            std::thread::sleep(next - after);
+        // Between frames the loop waits on the socket, as `Com_EventLoop`
+        // does in `NET_Sleep`: a packet is handled when it arrives and what
+        // it answers (a `connectResponse`, a gamestate) goes out at once, so
+        // a client's reply to it can land before the next frame. Answered
+        // only at the tick, a joining client's first message was a frame's
+        // bare one rather than its gamestate.
+        while let Some(left) = next.checked_duration_since(Instant::now()) {
+            let Ok((arrived, from, pkt)) = packets.recv_timeout(left) else {
+                break;
+            };
+            let read = arrived.max(free_at);
+            let started = Instant::now();
+            server.handle_packet_read(from, &pkt, started, arrived, read);
+            free_at = read + started.elapsed();
+            for (to, pkt) in server.take_outgoing() {
+                if let Err(e) = sock.send_to(&pkt, to) {
+                    log::debug!("send to {to}: {e}");
+                }
+            }
         }
     }
 }
