@@ -81,7 +81,9 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   minutes and sends a flatline on Ctrl-C or `quit`.
 - `--bots <n>` adds `n` bots in real client slots. The nav graph builds on
   its own thread on the first tick (a second or two on big maps); bots
-  wander until it's ready. `--bots-shoot` lets them fight.
+  wander until it's ready. `--bots-shoot` lets them fight; without it
+  `--bots` sets `vc_bot_shoot 0`. See [Bots](#bots) for managing them
+  while the server runs.
 - On a patch 1.5 install the server speaks 1.5 (protocol 6) and takes only
   1.5 clients; with `--mod-dir uo` on a UO install it speaks UO (protocol
   22). `--set protocol=1`, `6` or `22` overrides the install.
@@ -90,6 +92,42 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   exercise the entity encoding.
 - `--trace` logs every snapshot per client, and once a second the slowest
   tick and how far the loop fell behind its 20 Hz schedule.
+
+### Bots
+
+Bots are a vcod extension; retail has none. Each joins like a client,
+through the stock team and weapon menus, named `[BOT] <name>` from a pool
+of 120 (`crates/server/src/botmgmt.rs`), never two alike. Manage them over
+rcon (`--set rconPassword=<pw>`):
+
+| Command | Does |
+|---|---|
+| `addbot [allies\|axis\|auto] [count]` | Adds `count` bots (1). `auto`, the default, deals them by balance; a named team pins them there. |
+| `removebot [name\|all\|count]` | Removes one bot by name (`[BOT] ` optional), all of them, or `count` (1), lowest score first. |
+| `listbots` | Slot, team, score and name of each bot, then the counts and cvars. |
+
+The `set`/`seta` cvars below apply within half a second, over rcon or
+as `--set`:
+
+| Cvar | Default | Does |
+|---|---|---|
+| `vc_bot_minplayers` | 0 | Keeps at least this many players, topping up with bots. A human counts once he picks a team; one joining takes a bot's place (off the larger team) and one leaving brings it back. 0 is off. |
+| `vc_bot_autobalance` | 1 | In team gametypes (all but `dm` and `bel`) bots join the smaller team and move so the teams differ by at most one. A bot moves only while dead or spectating; humans and pinned bots never move. |
+| `vc_bot_shoot` | 1 | 0 leaves the bots walking the map without fighting. |
+| `vc_bot_names` | 1 | 0 names new bots `bot<slot>`. |
+
+Bots never take a private slot (`sv_privateClients`). `addbot` can fill
+the public slots; the floor leaves one free for a joining human.
+`removebot` lowers the count `addbot` and `--bots` asked for, but
+`vc_bot_minplayers` still tops the server up to its floor.
+
+```
+rcon addbot 4
+rcon addbot axis 2
+rcon set vc_bot_minplayers 8
+rcon removebot NadeSpammer
+rcon listbots
+```
 
 ## Controls
 

@@ -53,7 +53,8 @@ The short tour. The long one, gaps included, is
   rotation and rcon all work. Retail clients can join it.
 - **Bots** (`--bots`) join through the menus, find their way around the
   map, play the objectives and, with `--bots-shoot`, fight back. They're bad
-  at it. So am I.
+  at it. So am I. rcon's `addbot`, `removebot` and `vc_bot_minplayers`
+  manage them on a running server.
 - **Extras retail never had**, all off by default: soft sun shadows, SSAO,
   bloom, HDR, sun shafts, soft particles and a film grade. `--rtx-on` turns
   them all on for one run. Despite the name, no rays were harmed.

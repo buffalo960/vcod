@@ -7,6 +7,7 @@ pub const VERSION: &str = env!("VCOD_VERSION");
 pub mod archive;
 pub mod area;
 pub mod bans;
+pub mod botmgmt;
 pub mod bots;
 pub mod client;
 pub mod compass;

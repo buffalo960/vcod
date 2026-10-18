@@ -101,6 +101,14 @@ pub enum Command {
     },
     /// `Cvar_List_f` (0x806f530) and its optional filter.
     CvarList(Option<String>),
+    /// vcod's `addbot [allies|axis|auto] [count]`: the arguments as typed
+    /// (`server/bot_admin.rs`).
+    AddBot(Vec<String>),
+    /// vcod's `removebot [name|all|count]`: the arguments joined, so a name
+    /// with spaces needs no quotes.
+    RemoveBot(Option<String>),
+    /// vcod's `listbots`.
+    ListBots,
     /// Anything else, tokenized: `Cvar_Command` gets the first look, which
     /// prints a cvar named alone and sets it given a value.
     Unknown(Vec<String>),
@@ -152,6 +160,9 @@ impl Command {
             Some("banclient") => Command::BanClient(one_arg()),
             Some("unbanuser") => Command::Unban(one_arg()),
             Some("cvarlist") => Command::CvarList(argv.get(1).cloned()),
+            Some("addbot") => Command::AddBot(argv[1..].to_vec()),
+            Some("removebot") => Command::RemoveBot((argv.len() > 1).then(|| argv[1..].join(" "))),
+            Some("listbots") => Command::ListBots,
             Some(w @ ("tempbanuser" | "tempbanclient")) => Command::TempBan {
                 by_num: w == "tempbanclient",
                 arg: one_arg(),
