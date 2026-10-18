@@ -853,6 +853,8 @@ fn follow_seat(
         angles: vang,
         hull_view: eflags & EF_HULL_VIEW_V22 != 0,
         overheated: false,
+        // Not on the wire; only the entity pass reads it.
+        link_offset: [0.0; 3],
     };
     match &mut sim.seat {
         Some(on) if on.pos == seat.pos && on.kind == seat.kind => on.angles = vang,

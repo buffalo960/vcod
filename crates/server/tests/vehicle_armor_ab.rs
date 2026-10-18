@@ -707,10 +707,6 @@ fn bones(log: &[String]) -> BTreeMap<(i32, String), [f32; 3]> {
 /// for every tag), with why (docs/research/coduo-vehicles.md 13, "The
 /// glide back").
 const GLIDE_GAPS: &[(i32, &str, &str)] = &[
-    // `G_RunClient` re-reads a linked rider's `r.currentOrigin` off his
-    // link every entity pass; ours links the probe's marks to the change's
-    // placement, 21 units up, for one frame.
-    (53900, "", "the rider's fixed link"),
     // The neck and head controls ease from 0 after the change; retail's
     // head is 0.34 further along on the second frame.
     (54000, "bip01 head", "the head control's first steps"),

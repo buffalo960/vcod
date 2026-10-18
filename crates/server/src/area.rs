@@ -221,6 +221,13 @@ impl AreaTree {
         })
     }
 
+    /// The xy box an entity's last link filed it under, `None` while it is
+    /// not linked.
+    pub fn filed(&self, ent: u32) -> Option<([f32; 2], [f32; 2])> {
+        let e = self.ents.get(ent as usize).filter(|e| e.node.is_some())?;
+        Some((e.stored.mins, e.stored.maxs))
+    }
+
     /// `G_ShutdownGame`'s free of every entity in use, which a
     /// `map_restart` runs before the new level spawns into the same tree:
     /// the entities leave, the nodes the static models hold stay.

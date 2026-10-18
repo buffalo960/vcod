@@ -95,6 +95,10 @@ pub struct Seat {
     pub hull_view: bool,
     /// The gunner's MG is overheated (`pm_flags` 0x800000).
     pub overheated: bool,
+    /// The offset `VEH_LinkPlayer` linked the player at, in the seat tag's
+    /// axes: `BG_GetVehiclePosOffset` of the slot it asked for, which a use
+    /// asks as 0 (coduo-vehicles.md 13, "The tank driver's link offset").
+    pub link_offset: [f32; 3],
 }
 use vcod_common::net::event_ids::EV_DEATH;
 /// `EV_PAIN` and `EV_DEATH` (`docs/research/cod11-events-and-fx.md`).
@@ -2890,6 +2894,7 @@ mod tests {
             angles: [0.0; 3],
             hull_view: true,
             overheated: false,
+            link_offset: [0.0; 3],
         };
         sim.enter_seat(seat, [0.0, 0.0, 64.0], [0.0; 3]);
         sim.leave_seat(Some([0.0, 0.0, 100.0]), Some([0.0, 0.0, 200.0]));
@@ -4096,6 +4101,7 @@ mod tests {
             angles: [0.0; 3],
             hull_view: false,
             overheated: false,
+            link_offset: [0.0; 3],
         });
         let e = sim.to_entity(p, 3, 0);
         assert_eq!(e.field_i32(p, "pos.trType"), trajectory::TR_INTERPOLATE);

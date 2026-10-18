@@ -581,6 +581,7 @@ fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime
                 origin,
                 view,
                 angles,
+                link_offset,
                 ..
             } => sim.enter_seat(
                 crate::spectate::Seat {
@@ -591,6 +592,7 @@ fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime
                     angles,
                     hull_view: true,
                     overheated: false,
+                    link_offset,
                 },
                 origin,
                 view,
@@ -1386,6 +1388,10 @@ fn apply_callback_ops(
 /// the bombzone's `delete()` is what frees the record. This tick's per-cmd
 /// touch passes already ran at the last frame's anchor, as retail's do.
 fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim) {
+    if let (None, Some(seat)) = (sim.link_to, sim.seat) {
+        run_rider_link(rt, slot, sim, seat);
+        return;
+    }
     let Some(link) = sim.link_to else {
         return;
     };
@@ -1400,6 +1406,30 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
         }
         None => sim.link_to = None,
     }
+}
+
+/// `G_RunClient` (game.mp.uo 0x41dfc) on a seated rider: `G_SetFixedLink`
+/// mode 2 puts `r.currentOrigin` and `ps.origin` at the seat tag of the
+/// vehicle as it stands, shifted by the link's own offset, and links him
+/// there. His end frame puts `ps.origin` back on the seat
+/// (coduo-vehicles.md 13, "The tank driver's link offset").
+fn run_rider_link(
+    rt: &mut script::ScriptRuntime,
+    slot: usize,
+    sim: &mut ClientSim,
+    seat: crate::spectate::Seat,
+) {
+    let Some(at) = rt.with_host(|host, cx| {
+        let id = host.ents.handle(seat.vehicle)?;
+        let posed = crate::game::vehicle::seat::posed(host, cx, id)?;
+        let (p, r) = posed.tag(vcod_common::vehiclepose::seat_tag(seat.pos)?)?;
+        Some(p + r * glam::Vec3::from(seat.link_offset))
+    }) else {
+        return;
+    };
+    sim.ps.origin = at;
+    rt.set_client_origin(slot, at.to_array());
+    link_client(rt, slot, sim);
 }
 
 /// A brush model mover's push on its turn in the entity pass: it carries its
@@ -7762,11 +7792,21 @@ impl Server {
                     }
                     v
                 };
+            // A rider is linked to his vehicle (`G_EntLinkToWithOffset`,
+            // coduo-vehicles.md 13) as a `linkTo` client is to its parent.
             let client_links: Vec<(usize, vcod_gsc::EntId)> = self
                 .clients
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?.link_to?.parent)))
+                .filter_map(|(i, c)| {
+                    let sim = c.as_ref()?.sim.as_ref()?;
+                    let parent = match (sim.link_to, sim.seat) {
+                        (Some(l), _) => l.parent,
+                        (None, Some(seat)) => rt.host.ents.handle(seat.vehicle)?,
+                        (None, None) => return None,
+                    };
+                    Some((i, parent))
+                })
                 .collect();
             let mut pass = rt.begin_entity_pass(client_links);
             loop {

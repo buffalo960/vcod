@@ -503,11 +503,10 @@ pub fn touch_item(
     out
 }
 
-/// `G_GetActivateEnt`'s first pass for one grabbable candidate (section
-/// 2.1): `None` outside the query box, past 128 units or outside the 0.76
+/// `G_GetActivateEnt`'s first pass for one grabbable candidate the area
+/// walk listed (section 2.1): `None` past 128 units or outside the 0.76
 /// cone, else the score the candidates sort on, lowest first.
 pub fn activate_score(muzzle: [f32; 3], forward: [f32; 3], centre: [f32; 3]) -> Option<f32> {
-    const BOX: [f32; 3] = [192.0, 192.0, 96.0];
     const RANGE: f32 = 128.0;
     const COS: f32 = 0.76;
     let d = [
@@ -515,9 +514,6 @@ pub fn activate_score(muzzle: [f32; 3], forward: [f32; 3], centre: [f32; 3]) -> 
         centre[1] - muzzle[1],
         centre[2] - muzzle[2],
     ];
-    if (0..3).any(|i| d[i].abs() > BOX[i] + 1.0) {
-        return None;
-    }
     let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     if dist > RANGE || dist == 0.0 {
         return None;
