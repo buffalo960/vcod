@@ -5016,7 +5016,9 @@ mod tests {
         };
         let g = graph_for("mp_ship", &world);
         let w = Some(&world.collision);
-        let goal = crate::bots::Goal::To([4935.7, 126.9, 1254.125]);
+        // Down on the deck: a point goal on the rail itself is walked to
+        // the rim now (`NavGraph::goal_node`).
+        let goal = crate::bots::Goal::To([4929.0, 68.0, 692.125]);
         let mut f = Follower::default();
         let top = [4928.5, 60.75, 1254.125];
         let rim = [4961.2, 38.7, 1219.125];
