@@ -3057,7 +3057,7 @@ VERIFIED (measured, same detector and settings, release; ours only):
   slope's corner at 798 that it clips by 2 units; from 2 units across
   the pace it misses, as the bots' own runs did, and falls to the deck at
   352. Now a run off a drop whose miss can hurt has to land from 2 units
-  either side too (section 3 rules, above;
+  either side too (the pass rules, above;
   `nav::tests::a_drop_that_lands_only_on_a_corner_does_not_hold`). Asked
   of every drop, it held a bot on a node another stood on over a drop
   into the hold (seed 439, 17 stalled bot-ticks): hence `a_miss_hurts`.
@@ -3069,7 +3069,7 @@ VERIFIED (measured, same detector and settings, release; ours only):
   at (3806, 60, 623) met a climber 140 under it, headed straight for the
   wait spot (3751, -4, 616), slid along the hatch's west side at x 3800
   and fell through to the deck at 304. Now it walks back onto the head
-  first (section 2's yield paragraph). At a 1-unit margin a bot resting
+  first (the ladder wait, above). At a 1-unit margin a bot resting
   5 past (3337, -440, 56) stood in its climber's way (seed 3769, 117
   stalled bot-ticks), hence the half-width.
 - Left: the branch's new stalls are seed 1671 (29: the x 3793 head, a
