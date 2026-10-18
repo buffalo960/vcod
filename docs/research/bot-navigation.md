@@ -1779,6 +1779,16 @@ round that day, "2026-10-12b"):
   (`nav::tests::a_body_pinned_in_a_crease_runs_aside`), the south side's
   way out being the west axis, 50 degrees off the way to the node; the
   10-degree steps alone missed it (180 pins at 179.7).
+  VERIFIED (retail, `client-probes/probe_shipcrease` on `cod_lnxded`
+  1.1d, `probe_fall` client with `--probe-fall-walk`, 2026-10-18): a
+  body respawned at rest in the north corner runs free at yaw 200 and
+  225 to (5343.12, 227.13) and at 140 to (5343.12, 332.87); in the south
+  one it stays at x 5375.1 at 140 and runs at 200 and 225 to
+  (5343.12, -204.87). So the north corner held ours only through the
+  BVH's order: the capsule stops at fraction 0 on brushes 2100 and 2101
+  at once, and since the leaf walk names 2101 (bsp-ibsp59-format.md,
+  "The leaf walk") ours matches all six runs; the run at the north node
+  needs no unpin. The south crease is retail's.
 - The drop probe's slope. VERIFIED (measured, seed 5 with the two changes
   above, the trace): bot 2's unstick spell from (3762.4, 338.9, 352.1)
   ran north down the hull's slope, 49 units in 75, no 16-unit sample a

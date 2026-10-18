@@ -1951,6 +1951,23 @@ cargo run -p vcod -- --net-probe 127.0.0.1:30411 --probe-team allies --probe-fal
     [--probe-fall-walk 45] --probe-secs 40
 ```
 
+## probe_shipcrease
+
+Whether a body at rest in mp_ship's shelf corners at (5375.1, 321.1, 352.1)
+and (5375.1, -193.1, 352.1) runs free. probe_wedge's shape on mp_ship: under
+`probe_teleport 1` it respawns each allied player at the two corners, 3 s
+apart, and logs `PROBE f <time> <trial> <origin>` every frame for 2 s. The
+2026-10-18 runs at yaw 140, 200 and 225 are read in
+`docs/research/bot-navigation.md` section 3 ("The corners at x 5375.1").
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=30411 PROBE_SECS=32 \
+    tools/run_probe.sh client-probes/probe_shipcrease mp_ship +set probe_teleport 1
+# second shell, about 9 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:30411 --probe-team allies --probe-fall \
+    --probe-fall-walk 200 --probe-secs 22
+```
+
 ## probe_restart
 
 When the first snapshot after a `map_restart` reaches a client that was in
