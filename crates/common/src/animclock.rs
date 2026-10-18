@@ -273,13 +273,15 @@ impl ChannelClock {
         seen: &Seen,
         at: Times,
         window: Option<&mut i32>,
-    ) {
+    ) -> Touches {
         let index = wire & !TOGGLE;
-        if wire != self.anim {
-            self.set(anims, wire, legs, seen, at.clock_ms, window);
-        }
+        let touches = if wire != self.anim {
+            self.set(anims, wire, legs, seen, at.clock_ms, window)
+        } else {
+            Touches::default()
+        };
         if index == 0 {
-            return;
+            return touches;
         }
         let motion = anims.motion(index).unwrap_or_default();
         let now_ms = at.snapshot_ms;
@@ -328,6 +330,7 @@ impl ChannelClock {
         if self.current.rate != self.rate {
             self.set_rate(at.clock_ms, self.rate);
         }
+        touches
     }
 
     /// The setter 0x2a600: the old clip blends out and the new one in over
@@ -345,7 +348,7 @@ impl ChannelClock {
         seen: &Seen,
         now_ms: i32,
         window: Option<&mut i32>,
-    ) {
+    ) -> Touches {
         let motion = |i: i32| anims.motion(i).filter(|_| i != 0);
         let (old_index, new_index) = (self.anim & !TOGGLE, wire & !TOGGLE);
         let (old, new) = (motion(old_index), motion(new_index));
@@ -359,7 +362,10 @@ impl ChannelClock {
             };
             self.weight = Ramp::new(1.0, 1.0, now_ms, 0.0);
             self.fading = [None; FADES];
-            return;
+            return Touches {
+                knob_all: Some(new_index),
+                ..Touches::default()
+            };
         }
         let client_num = seen.client_num;
         let phase = match new {
@@ -421,6 +427,104 @@ impl ChannelClock {
                 legs: goal(self.nodes.legs, legs, now_ms, blend),
             };
         }
+        Touches {
+            cleared: (old_index != new_index && old_index != 0).then_some((old_index, blend)),
+            raised: (new_index != 0).then_some((new_index, self.weight)),
+            knob_all: None,
+        }
+    }
+
+    /// 0x30003e50 (1.5 0x300040b0, UO 0x300042c0; the server's
+    /// `BG_PlayerAnimation` 0x2c25d..0x2c287) ahead of the channel's update:
+    /// a lerp frame whose anim's node reads weight 0 is zeroed, so the
+    /// update sets the wire anim again as if nothing had played. Only the
+    /// other channel's setter takes a node this lerp frame holds to 0
+    /// ([`ChannelClock::touched`]); a goal weight raises a zero weight to
+    /// `0.001 * goal`, so a node this channel set never reads 0.
+    fn clear_unweighted(&mut self, now_ms: i32) {
+        if self.anim & !TOGGLE != 0 && self.weight.to == 0.0 && self.weight.at(now_ms) == 0.0 {
+            self.anim = 0;
+            self.current = Play::default();
+            self.weight = Ramp::default();
+        }
+    }
+
+    /// The other channel's setter touched nodes this lerp frame may hold:
+    /// both channels' anims live in one tree, so a `both` line's node is
+    /// one node under the two lerp frames, and a death's
+    /// `XAnimSetCompleteGoalWeightKnobAll` under `root` zeroes every node
+    /// beside its path at once.
+    fn touched(&mut self, anims: &PlayerAnims, t: &Touches, now_ms: i32) {
+        let index = self.current.index;
+        if let Some((cleared, blend)) = t.cleared
+            && cleared == index
+        {
+            // `XAnimClearGoalWeight` 0x080bf53c: to 0 over the whole time,
+            // or the sooner of the two when it was already going there.
+            let ramp = Ramp::new(self.weight.at(now_ms), 0.0, now_ms, blend);
+            let end = |r: &Ramp| r.start_ms as f32 + r.ms;
+            if self.weight.to != 0.0 || end(&ramp) < end(&self.weight) {
+                self.weight = ramp;
+            }
+        }
+        if let Some((raised, ramp)) = t.raised
+            && raised == index
+        {
+            self.weight = ramp;
+        }
+        if let Some(death) = t.knob_all {
+            let path = ancestry(anims, death);
+            let cut = |i: i32| {
+                anims.index.node_id(i).is_some_and(|n| {
+                    !path.contains(&n) && parent(anims, n).is_some_and(|p| path.contains(&p))
+                })
+            };
+            if cut(index) {
+                self.weight = Ramp::new(0.0, 0.0, now_ms, 0.0);
+            }
+            for f in self.fading.iter_mut() {
+                if f.is_some_and(|(p, _)| cut(p.index)) {
+                    *f = None;
+                }
+            }
+        }
+    }
+
+    /// The torso clock's `main` children after a KnobAll under `root` on
+    /// `death`: a node on its path at 1, one beside it at 0, both at once.
+    fn knob_nodes(&mut self, anims: &PlayerAnims, death: i32, now_ms: i32) {
+        let path = ancestry(anims, death);
+        let at = |name: &str, ramp: Ramp| {
+            let Some(n) = anims.tree.index_of(name) else {
+                return ramp;
+            };
+            if path.contains(&n) {
+                Ramp::new(1.0, 1.0, now_ms, 0.0)
+            } else if parent(anims, n).is_some_and(|p| path.contains(&p)) {
+                Ramp::new(0.0, 0.0, now_ms, 0.0)
+            } else {
+                ramp
+            }
+        };
+        self.nodes = Nodes {
+            torso: at("torso", self.nodes.torso),
+            legs: at("legs", self.nodes.legs),
+        };
+    }
+
+    /// Holds every clip and weight where it stands for `ms`: the cgame
+    /// advances a body's tree only while its entity is in the newest
+    /// snapshot (0x3001bd00), so a body back in view resumes where it left.
+    pub fn pause(&mut self, ms: i32) {
+        let shift = |t: &mut i32| *t = t.wrapping_add(ms);
+        shift(&mut self.current.base_ms);
+        shift(&mut self.weight.start_ms);
+        for (p, w) in self.fading.iter_mut().flatten() {
+            shift(&mut p.base_ms);
+            shift(&mut w.start_ms);
+        }
+        shift(&mut self.nodes.torso.start_ms);
+        shift(&mut self.nodes.legs.start_ms);
     }
 
     fn set_rate(&mut self, now_ms: i32, rate: f32) {
@@ -428,6 +532,65 @@ impl ChannelClock {
         self.current.base_ms = now_ms;
         self.current.rate = rate;
     }
+}
+
+/// What a setter did to nodes the other channel's lerp frame may hold.
+#[derive(Clone, Copy, Debug, Default)]
+struct Touches {
+    /// The old anim and the blend its node clears over.
+    cleared: Option<(i32, f32)>,
+    /// The new anim and its node's weight ramp.
+    raised: Option<(i32, Ramp)>,
+    /// A death anim loaded under `root` with `KnobAll` (0x2a9fe, cgame
+    /// 0x300039e1).
+    knob_all: Option<i32>,
+}
+
+/// One body's two lerp frames as `BG_PlayerAnimation` (`game.mp.i386.so`
+/// 0x2c1f4) and the cgame's 0x30004e40 step them: each lerp frame whose
+/// node reads weight 0 cleared, then the legs and the torso updated, each
+/// setter's touch on the shared tree passed to the other lerp frame. With
+/// `window` the 1.5 and UO setter (`ChannelClock::update_windowed`).
+pub fn update_body(
+    (legs, torso): (&mut ChannelClock, &mut ChannelClock),
+    anims: &PlayerAnims,
+    (legs_wire, torso_wire): (i32, i32),
+    seen: &Seen,
+    at: Times,
+    mut window: Option<&mut i32>,
+) {
+    let now_ms = at.clock_ms;
+    legs.clear_unweighted(now_ms);
+    torso.clear_unweighted(now_ms);
+    let t = legs.update_in(anims, true, legs_wire, seen, at, window.as_deref_mut());
+    torso.touched(anims, &t, now_ms);
+    if let Some(death) = t.knob_all {
+        torso.knob_nodes(anims, death, now_ms);
+    }
+    let t = torso.update_in(anims, false, torso_wire, seen, at, window);
+    legs.touched(anims, &t, now_ms);
+    if let Some(death) = t.knob_all {
+        torso.knob_nodes(anims, death, now_ms);
+    }
+}
+
+/// The tree nodes from `wire`'s up to the root, its own first.
+fn ancestry(anims: &PlayerAnims, wire: i32) -> Vec<usize> {
+    let mut path = Vec::new();
+    let mut n = anims.index.node_id(wire);
+    while let Some(id) = n {
+        path.push(id);
+        n = parent(anims, id);
+    }
+    path
+}
+
+fn parent(anims: &PlayerAnims, id: usize) -> Option<usize> {
+    anims
+        .tree
+        .nodes
+        .iter()
+        .position(|n| n.children.contains(&id))
 }
 
 /// `XAnimSetGoalWeight` (0x080bd674) on a node: from wherever `ramp` stands
@@ -751,5 +914,96 @@ mod tests {
         let fire = event_anim(&anims, "fireweapon", true);
         assert_eq!(anims.motion(fire).unwrap().blend_ms, 30);
         assert_eq!(blend_ms(&anims, 0, fire, false), 30);
+    }
+
+    /// A death shown at its last frame loads under `root` with `KnobAll`:
+    /// the torso node a fire anim held drops to 0 at once and the legs node
+    /// comes back to 1, where the torso's own clear would have taken its
+    /// whole blend (cgame 0x300039e1, `cod_lnxded` 0x080bf8ac).
+    #[test]
+    fn a_shown_death_zeroes_the_torso_node_at_once() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let (idle, fire) = (
+            anims.wire_of("pb_stand_alert").unwrap(),
+            event_anim(&anims, "fireweapon", true),
+        );
+        let death = event_anim(&anims, "death", false);
+        let (mut legs, mut torso) = (ChannelClock::default(), ChannelClock::default());
+        let step = |l: &mut ChannelClock, t: &mut ChannelClock, w, eflags, ms| {
+            update_body(
+                (l, t),
+                &anims,
+                w,
+                &seen(0.0, eflags),
+                Times::end_frame(ms),
+                None,
+            )
+        };
+        step(&mut legs, &mut torso, (idle, fire), 0, 1000);
+        assert_eq!(torso.node_weights(1100).torso, 1.0);
+        step(&mut legs, &mut torso, (death, TOGGLE), 0, 2000);
+        assert_eq!(torso.node_weights(2000), NodeWeights::default());
+        assert_eq!(torso.node_weights(2050), NodeWeights::default());
+        // A fresh body blends its torso out as before.
+        let (mut legs, mut torso) = (ChannelClock::default(), ChannelClock::default());
+        step(&mut legs, &mut torso, (idle, fire), 0, 1000);
+        step(
+            &mut legs,
+            &mut torso,
+            (death, TOGGLE),
+            EF_FRESH_CORPSE,
+            2000,
+        );
+        assert!(torso.node_weights(2050).torso > 0.0);
+    }
+
+    /// A `both` line puts one node under the two lerp frames. The torso
+    /// leaving it clears the node over its blend; once the node reads 0 the
+    /// legs lerp frame is cleared (0x30003e50) and the next update starts
+    /// the clip again from its start.
+    #[test]
+    fn a_shared_node_cleared_by_the_torso_restarts_the_legs_clip() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let throw = anims.wire_of("pb_stand_grenade_throw").unwrap();
+        assert_eq!(anims.motion(throw).unwrap().move_speed, 0);
+        let (mut legs, mut torso) = (ChannelClock::default(), ChannelClock::default());
+        let mut step = |w, ms| {
+            update_body(
+                (&mut legs, &mut torso),
+                &anims,
+                w,
+                &seen(0.0, 0),
+                Times::end_frame(ms),
+                None,
+            );
+            (legs.layers(ms), legs.seconds(ms))
+        };
+        step((throw, throw), 1000);
+        let blend = blend_ms(&anims, throw, 0, false);
+        let (l, _) = step((throw, 0), 1100);
+        assert_eq!(l.last().unwrap().weight, 1.0);
+        let (l, secs) = step((throw, 0), 1100 + blend / 2);
+        assert!((l.last().unwrap().weight - 0.5).abs() < 1e-3, "{l:?}");
+        assert!((secs - (100 + blend / 2) as f32 * 0.001).abs() < 1e-4);
+        // At 0 the next update clears the lerp frame and sets it again.
+        let (l, secs) = step((throw, 0), 1100 + blend + 10);
+        assert_eq!(secs, 0.0);
+        assert_eq!(l.last().unwrap().weight, 1.0);
+    }
+
+    /// A paused clock's clips and ramps stand still for the pause.
+    #[test]
+    fn a_pause_holds_the_clips_where_they_stood() {
+        let mut c = ChannelClock::started(122, 1000);
+        c.weight = Ramp::new(0.0, 1.0, 1000, 200.0);
+        c.pause(5000);
+        assert_eq!(c.seconds(6100), 0.1);
+        assert_eq!(c.layers(6100)[0].weight, 0.5);
     }
 }

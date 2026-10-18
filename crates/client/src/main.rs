@@ -38,6 +38,7 @@ mod sun_shafts;
 mod texture_settings;
 mod turret;
 mod vehicle_probe;
+mod video;
 mod viewmodel;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -156,7 +157,9 @@ struct Args {
     /// the playerstate event ring holds four slots and overwrites as it fires.
     /// Each firing step waits for weaponstate to read ready before it taps, and
     /// the reload holds the weapon file's reloadTime, so a weapon still busy
-    /// from the step before cannot be recorded under a firing label. The
+    /// from the step before cannot be recorded under a firing label. Each step
+    /// also logs every cmd it sent (`!cmds`) and each snapshot its
+    /// commandTime, which `playerstate_combat_ab` replays frame for frame. The
     /// sequence takes about 40 s, inside the default --probe-secs.
     #[arg(long)]
     save_combat: bool,
@@ -1448,6 +1451,7 @@ fn main() -> Result<()> {
         render_ms: 0.0,
         fx_ms: 0.0,
         look_zoom: (1.0, false),
+        modifiers: Default::default(),
         mouse: Default::default(),
         ignore_hw_gamma: false,
         textures: texture_settings::TextureSettings::default(),
@@ -1564,26 +1568,65 @@ fn frame_min_ms(maxfps: i32) -> u64 {
     }
 }
 
-/// `r_mode`'s size (Q3's mode table, which the stock video mode list picks
-/// from; -1 keeps the window's own) and whether `r_fullscreen` is on.
-fn video_mode(shell: &console::shell::Shell) -> (Option<winit::dpi::PhysicalSize<u32>>, bool) {
-    let size = match shell.cvar_f32("r_mode") as i32 {
-        0 => Some((320, 240)),
-        1 => Some((400, 300)),
-        2 => Some((512, 384)),
-        3 => Some((640, 480)),
-        4 => Some((800, 600)),
-        5 => Some((960, 720)),
-        6 => Some((1024, 768)),
-        7 => Some((1152, 864)),
-        8 => Some((1280, 1024)),
-        9 => Some((1600, 1200)),
-        10 => Some((2048, 1536)),
-        11 => Some((856, 480)),
-        _ => None,
+/// The video mode the cvars ask for ([`video::video_mode`]).
+fn video_mode(shell: &console::shell::Shell) -> video::VideoMode {
+    let int = |name| shell.cvar_f32(name) as i32;
+    video::video_mode(
+        int("r_mode"),
+        int("r_fullscreen"),
+        (int("r_customwidth"), int("r_customheight")),
+    )
+}
+
+/// Puts `window` in `mode`: windowed at its size, borderless over the
+/// monitor it is on, or that monitor switched to its mode closest to the
+/// size (the monitor's own size when `r_mode` names none). Wayland has no
+/// exclusive fullscreen, so there it is borderless.
+fn apply_video_mode(window: &Window, mode: video::VideoMode) {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::window::Fullscreen;
+    let monitor = window
+        .current_monitor()
+        .or_else(|| window.primary_monitor());
+    let wayland = window
+        .window_handle()
+        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
+    let exclusive = || {
+        let monitor = monitor.as_ref()?;
+        let want = mode.size.unwrap_or_else(|| monitor.size().into());
+        let modes: Vec<_> = monitor.video_modes().collect();
+        let infos: Vec<_> = modes
+            .iter()
+            .map(|m| video::MonitorMode {
+                size: m.size().into(),
+                refresh_mhz: m.refresh_rate_millihertz(),
+                bit_depth: m.bit_depth(),
+            })
+            .collect();
+        let pick = modes.get(video::closest_mode(want, &infos)?)?.clone();
+        log::info!(
+            "exclusive fullscreen {}x{} at {} Hz",
+            pick.size().width,
+            pick.size().height,
+            pick.refresh_rate_millihertz() as f32 / 1000.0
+        );
+        Some(Fullscreen::Exclusive(pick))
     };
-    let size = size.map(|(w, h)| winit::dpi::PhysicalSize::new(w, h));
-    (size, shell.cvar_f32("r_fullscreen") != 0.0)
+    match mode.fullscreen {
+        video::Fullscreen::Windowed => {
+            window.set_fullscreen(None);
+            if let Some((w, h)) = mode.size {
+                let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+            }
+        }
+        video::Fullscreen::Exclusive if !wayland => {
+            let full = exclusive().unwrap_or(Fullscreen::Borderless(monitor));
+            window.set_fullscreen(Some(full));
+        }
+        video::Fullscreen::Borderless | video::Fullscreen::Exclusive => {
+            window.set_fullscreen(Some(Fullscreen::Borderless(monitor)));
+        }
+    }
 }
 
 /// `record [name]` on `net` (CoDMP.exe 0x40e540): the file in `dir`, its
@@ -1939,6 +1982,22 @@ fn restart_live_cgame(
     };
     let weapons = live_weapons(fs, configstrings.get(7).map_or("", String::as_str));
     *phase = Phase::Live(Box::new(live.restart_cgame(weapons)));
+    fresh_cgame(view, input, predictor, hud, fx);
+    true
+}
+
+/// What a freshly loaded cgame starts without, past the live phase: the
+/// view, the HUD with its chat ring, the effects and the prediction.
+/// `CL_InitCGame` (CoDMP.exe 0x4049c0) runs on a `vid_restart` and on every
+/// gamestate's `CL_DownloadsComplete` (0x40ffb0), which frees the old
+/// cgame first (docs/research/cod11-front-end.md section 17).
+fn fresh_cgame(
+    view: &mut play::view::OnlineView,
+    input: &mut play::input::PlayInput,
+    predictor: &mut play::predict::Predictor,
+    hud: Option<&mut hud::Hud>,
+    fx: &mut fx::sim::FxSystem,
+) {
     view.restart_cgame();
     // The fresh cgame's first snapshot runs a load's resets.
     input.new_gamestate();
@@ -1947,7 +2006,16 @@ fn restart_live_cgame(
         hud.restart_cgame();
     }
     fx.clear();
-    true
+}
+
+/// The HUD between servers. Retail's disconnect (`Com_Error`'s
+/// `ERR_DISCONNECT` arm, CoDMP.exe 0x4358a0) shuts the cgame down after
+/// `CL_Disconnect`, so the chat ring goes with the game, not at the next
+/// map load (docs/research/cod11-front-end.md section 17).
+fn leave_server_hud(hud: &mut hud::Hud) {
+    hud.restart_cgame();
+    hud.chat_field = None;
+    hud.scoreboard.hide();
 }
 
 /// Parse the map, upload it to the GPU and hand back the live phase.
@@ -2186,6 +2254,8 @@ struct App {
     /// Last frame's fov over `cg_fov` and whether the view rides a mounted
     /// gun: the mouse's sensitivity scale ([`play::input::MouseLook`]).
     look_zoom: (f32, bool),
+    /// The keyboard's modifiers, for Alt+Enter.
+    modifiers: winit::keyboard::ModifiersState,
     /// The view's mouse motion since the last frame (`CL_MouseEvent`).
     mouse: play::input::MouseAccum,
     /// `r_ignorehwgamma` as of the last window start or `vid_restart`
@@ -2740,6 +2810,20 @@ impl App {
                 }
                 Effect::Impulse(action) => {
                     if let Mode::Online { input, net, .. } = &mut self.mode {
+                        // A held board takes both first (cgame 0x30038040).
+                        if let (
+                            play::input::Action::NextWeapon | play::input::Action::PrevWeapon,
+                            Some(hud),
+                        ) = (action, &mut self.hud)
+                        {
+                            let step = self.shell.cvar_f32("cg_scoreboardScrollStep") as i32;
+                            if hud
+                                .scoreboard
+                                .take_cycle(action == play::input::Action::NextWeapon, step)
+                            {
+                                continue;
+                            }
+                        }
                         // In a UO seat `weapnext` and `weapprev` ask for the
                         // next or previous seat (uo cgame 0x300474c0,
                         // 0x30047550).
@@ -2912,12 +2996,16 @@ impl App {
         }
     }
 
-    /// `vid_restart` (`CL_Vid_Restart_f`, CoDMP.exe 0x40fbe0): the latched
-    /// video cvars, the UI, the window and, in a live game, the cgame
-    /// ([`Self::restart_cgame`], `stop_sounds` passed on).
+    /// `vid_restart` (`CL_Vid_Restart_f`, CoDMP.exe 0x40fbe0): the sounds,
+    /// the latched video cvars, the UI, the window and, in a live game, the
+    /// cgame ([`Self::restart_cgame`]). `stop_sounds` is false under
+    /// `snd_restart`, whose restored streams stand for the stop.
     fn vid_restart(&mut self, event_loop: &ActiveEventLoop, stop_sounds: bool) {
         if self.refuse_vid_restart() {
             return;
+        }
+        if stop_sounds {
+            self.vid_restart_stop_sounds();
         }
         self.shell.apply_latched_video();
         // A Mods pick the listen server refused takes effect now
@@ -2938,13 +3026,19 @@ impl App {
             self.rebuild_renderer(event_loop);
         }
         if let Some(w) = &self.window {
-            let (size, fullscreen) = video_mode(&self.shell);
-            w.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
-            if let Some(size) = size {
-                let _ = w.request_inner_size(size);
-            }
+            apply_video_mode(w, video_mode(&self.shell));
         }
-        self.restart_cgame(stop_sounds);
+        self.restart_cgame();
+    }
+
+    /// `CL_Vid_Restart_f`'s `S_StopAllSounds(1)` (CoDMP.exe 0x44fa40), with
+    /// a game or without one: the main menu's music and its click go too
+    /// (docs/research/cod11-front-end.md section 17, "The cgame restart").
+    /// The offline viewer has no retail counterpart and keeps its ambient.
+    fn vid_restart_stop_sounds(&mut self) {
+        if !matches!(self.mode, Mode::Fly(_) | Mode::Walk { .. }) {
+            self.audio.stop_all();
+        }
     }
 
     /// A renderer for `window` with the current world, submodels and
@@ -3293,6 +3387,7 @@ impl App {
         if self.refuse_vid_restart() {
             return;
         }
+        self.vid_restart_stop_sounds();
         if !matches!(self.mode, Mode::Online { .. }) {
             self.switch_fs_game(game);
             self.enter_menu(None);
@@ -3331,7 +3426,7 @@ impl App {
         if let Mode::Online { view, .. } = &mut self.mode {
             view.reopen();
         }
-        self.restart_cgame(true);
+        self.restart_cgame();
     }
 
     /// A live game's map read again off the reopened search path, as
@@ -3363,11 +3458,9 @@ impl App {
     /// 0x401a20) frees the cgame module and `CL_InitCGame` (0x4049c0)
     /// loads a fresh one, so the HUD, the kick, the effects, the event
     /// rings and the prediction start over; then `CL_SendPureChecksums`
-    /// (0x40fac0) sends `cp`. `stop_sounds` is the restart's own
-    /// `S_StopAllSounds` (0x44fa40), which `snd_restart`'s stream restore
-    /// already stands for. Only past `CA_LOADING`, as retail
+    /// (0x40fac0) sends `cp`. Only past `CA_LOADING`, as retail
     /// (docs/research/cod11-front-end.md section 17, "The cgame restart").
-    fn restart_cgame(&mut self, stop_sounds: bool) {
+    fn restart_cgame(&mut self) {
         let Mode::Online {
             net,
             view,
@@ -3390,9 +3483,6 @@ impl App {
             net.configstrings(),
         ) {
             return;
-        }
-        if stop_sounds {
-            self.audio.stop_all();
         }
         // `CG_Init` replays configstring 3 (sound doc section 9).
         self.audio
@@ -3420,9 +3510,7 @@ impl App {
         self.fx.clear();
         self.audio.on_gamestate("");
         if let Some(hud) = &mut self.hud {
-            hud.on_gamestate();
-            hud.chat_field = None;
-            hud.scoreboard.hide();
+            leave_server_hud(hud);
         }
     }
 
@@ -3579,13 +3667,10 @@ impl ApplicationHandler for App {
         let mut attrs = Window::default_attributes()
             .with_title(&self.title)
             .with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0));
-        let (size, fullscreen) = video_mode(&self.shell);
+        let mode = video_mode(&self.shell);
         self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
-        if let Some(size) = size {
-            attrs = attrs.with_inner_size(size);
-        }
-        if fullscreen {
-            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        if let Some((w, h)) = mode.size {
+            attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
         }
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -3596,6 +3681,10 @@ impl ApplicationHandler for App {
                 );
             }
         };
+        // Full screen once the window knows its monitor.
+        if mode.fullscreen != video::Fullscreen::Windowed {
+            apply_video_mode(&window, mode);
+        }
         match self.build_renderer(window.clone()) {
             Ok(r) => self.renderer = Some(r),
             Err(e) => return self.fail(event_loop, e),
@@ -3628,11 +3717,28 @@ impl ApplicationHandler for App {
                     r.resize(size.width, size.height);
                 }
             }
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state == ElementState::Pressed;
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+                // Alt+Enter flips `r_fullscreen` and restarts the video
+                // ahead of the console and binds (video::toggled). Its
+                // release goes on, as retail's `WM_SYSKEYUP` does
+                // (cod11-front-end.md 17, "Alt+Enter's release").
+                if pressed
+                    && !event.repeat
+                    && self.modifiers.alt_key()
+                    && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter)
+                {
+                    let on = video::toggled(self.shell.cvar_f32("r_fullscreen") as i32);
+                    let effects = self
+                        .shell
+                        .execute(&format!("r_fullscreen {on}; vid_restart"));
+                    self.apply(event_loop, effects);
+                    return;
+                }
                 // ` and ~ toggle the console whatever they are bound to
                 // (CoDMP.exe 0x40dc30).
                 if code == KeyCode::Backquote {
@@ -3977,6 +4083,9 @@ impl ApplicationHandler for App {
                 );
                 r.set_sun_shafts(self.shell.cvar_f32("vc_sunShafts"));
                 let aspect = r.aspect();
+                // vcod's Hor+: every fov below is a 4:3 view's width until
+                // the frame widens it (camera::view_fov_x).
+                let widescreen = self.shell.cvar_f32("vc_widescreen") != 0.0;
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
                 let mut fatal: Option<anyhow::Error> = None;
@@ -4008,6 +4117,8 @@ impl ApplicationHandler for App {
                     ),
                     Mode::Fly(cam) => {
                         cam.update(&self.input, dt);
+                        let fly_fov =
+                            camera::view_fov_x(camera::DEFAULT_FOV_DEG, aspect, widescreen);
                         let (cam_forward, cam_right, cam_up) = camera::basis(cam.yaw, cam.pitch);
                         // u32::MAX: no entity pinned to the camera.
                         self.audio
@@ -4032,12 +4143,12 @@ impl ApplicationHandler for App {
                         self.fx_ms = fx_t0.elapsed().as_secs_f32() * 1000.0;
                         (
                             renderer::Frame {
-                                view_proj: cam.view_proj(aspect),
+                                view_proj: cam.view_proj(fly_fov, aspect),
                                 eye: cam.pos,
                                 fwd: cam_forward,
                                 up: Vec3::Z,
                                 time,
-                                fov_x: camera::DEFAULT_FOV_DEG,
+                                fov_x: fly_fov,
                                 cull,
                                 hud_lines: Vec::new(),
                             },
@@ -4575,8 +4686,15 @@ impl ApplicationHandler for App {
                                                     &self.fs,
                                                     net.configstrings(),
                                                 );
-                                                view.new_gamestate();
-                                                input.new_gamestate();
+                                                // `CL_DownloadsComplete` frees the
+                                                // old cgame and loads a fresh one.
+                                                fresh_cgame(
+                                                    view,
+                                                    input,
+                                                    predictor,
+                                                    self.hud.as_mut(),
+                                                    &mut self.fx,
+                                                );
                                                 if let Err(e) = load_script_menus(
                                                     &mut self.ui,
                                                     &self.fs,
@@ -5349,7 +5467,7 @@ impl ApplicationHandler for App {
                                     view.draw_gun = play::view::DrawGun::from_cvar(
                                         self.shell.cvar_f32("cg_drawGun") as i32,
                                     );
-                                    let (vm_draw, fov) = view.frame(
+                                    let (mut vm_draw, fov) = view.frame(
                                         cg_fov,
                                         weapons,
                                         view_ps.as_ref(),
@@ -5358,11 +5476,15 @@ impl ApplicationHandler for App {
                                         world_up,
                                     );
                                     // `0x30033e97`: the shellshock's sensitivity
-                                    // scale rides the zoom's.
+                                    // scale rides the zoom's, on the 4:3 fovs.
                                     self.look_zoom = (
                                         fov / cg_fov * shock.mouse.sensitivity,
                                         view_ps.as_ref().is_some_and(|v| v.mounted),
                                     );
+                                    let fov = camera::view_fov_x(fov, aspect, widescreen);
+                                    if let Some(d) = &mut vm_draw {
+                                        d.fov_x = fov;
+                                    }
                                     vm = vm_draw;
 
                                     let (cam_forward, cam_right, cam_up) =
@@ -6241,7 +6363,8 @@ impl ApplicationHandler for App {
                         self.audio
                             .set_listener(v.eye, eye_forward, eye_right, eye_up, u32::MAX);
                         let mut bone_sets = Vec::new();
-                        let mut fov = camera::DEFAULT_FOV_DEG;
+                        let mut fov =
+                            camera::view_fov_x(camera::DEFAULT_FOV_DEG, aspect, widescreen);
                         let mut gun_pose = hud::scope::GunPose::default();
                         let mut scope_quads = Vec::new();
                         let mut scoped = false;
@@ -6276,6 +6399,7 @@ impl ApplicationHandler for App {
                                 false,
                                 false,
                             );
+                            fov = camera::view_fov_x(fov, aspect, widescreen);
                             // The walk sight runs outside pmove, so the gun's
                             // sway reads its fraction off a copy.
                             let mut sighted = **ps;
@@ -6932,6 +7056,40 @@ mod tests {
         assert!(live.drawn_pos.is_empty());
         assert_eq!(live.seat_frac, 0.0);
         assert_eq!(live.weapons.iter().flatten().count(), 2);
+        assert!(hud.chat.is_empty());
+    }
+
+    /// A disconnect frees the cgame, chat ring and all.
+    #[test]
+    fn leaving_a_server_drops_the_chat_ring() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = hud::Hud::new(&fs).unwrap();
+        hud.chat.push("last words", 0);
+        leave_server_hud(&mut hud);
+        assert!(hud.chat.is_empty());
+    }
+
+    /// A map change loads a fresh cgame as `vid_restart` does: the chat
+    /// ring the gamestate's resets keep goes once the new map is up.
+    #[test]
+    fn a_map_load_starts_a_fresh_cgame() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = hud::Hud::new(&fs).unwrap();
+        hud.chat.push("before the map change", 0);
+        hud.on_gamestate();
+        assert!(!hud.chat.is_empty(), "the gamestate parse keeps the ring");
+        hud.chat.push("during the load", 1000);
+        fresh_cgame(
+            &mut play::view::OnlineView::default(),
+            &mut play::input::PlayInput::default(),
+            &mut play::predict::Predictor::default(),
+            Some(&mut hud),
+            &mut fx::sim::FxSystem::new(),
+        );
         assert!(hud.chat.is_empty());
     }
 

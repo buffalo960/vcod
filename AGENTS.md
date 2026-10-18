@@ -105,7 +105,10 @@ check.
   1.1 tests and gates, at a UO install (`uo/` beside 1.5's `main/`) the UO
   ones and whatever reads only data the two share. A test that asserts 1.1's
   assets or replays a 1.1 capture takes `testing::game_fs_11()`, `None` at a
-  1.5 or UO install; a UO one takes `testing::uo_fs()`.
+  1.5 or UO install; a UO one takes `testing::uo_fs()`. One that asserts
+  what the stock paks hold (menus, game types, a census) takes
+  `testing::stock_fs()` / `stock_fs_11()`, the `--vanilla` search path,
+  so a third-party pak in `main/` cannot fail it.
 - `ci.yml` runs on ubuntu with no game data, so a new test needing paks
   returns early through `game_fs()` or uses `Pk3Fs::empty()`: no pak test
   and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
@@ -131,10 +134,11 @@ check.
   is not a regression.
 - `Server::new` seeds its RNG with a constant; only `main.rs` passes the clock
   through `Server::with_seed`. Tests that depend on spawn picks rely on that.
-  Under `new` every level's script draws start from `RNG_SEED` again; under
-  `with_seed` each load steps a fresh seed, as retail's `G_InitGame` does
-  (`cod11-map-cycle.md` 4.8). `gametypes_ab` runs `with_seed` and replays
-  retail's spawn picks through `Server::pin_spawns`.
+  Either way each load steps a fresh script seed, as retail's `G_InitGame`
+  does (`cod11-map-cycle.md` 4.8), so a later level never repeats the
+  first's draws. A gate that compares a later level's spawn with retail's
+  replays retail's picks through `Server::pin_spawns`, as `gametypes_ab`
+  does.
 - Comments: one line where the code doesn't explain itself (an invariant, a
   unit or sign convention, a workaround and what it works around). Facts that
   live in a doc stay there; the comment is the pointer.
@@ -690,6 +694,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   second box on a merged bone as a box-only child (combat doc 3.6). A
   standing body's torso yaw stays where his spawn left it until he moves,
   fires or goes prone (16.4), so a hit-pose capture swings it first.
+- The engine's hit-box walk clips each box to the fraction already found:
+  a higher priority beats a nearer box only when its bone comes first
+  (`bonetrace::bone_trace`'s `limit`, combat doc 3.1). The aim block's
+  sight sway reads the last frame's `level.time`, the cmd's (15.1).
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
@@ -808,10 +816,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
   15, "A bone asked for before the anim update"). Its `bulletTrace` and
-  `radiusDamage` pose bodies at that clock too (`GameHost::dobj_time_ms`,
+  `radiusDamage` pose bodies at that clock too and fix every bone they
+  pose for the frame, as a bone ask does (`GameHost::dobj_time_ms`,
   combat doc 3.6). A gate replaying a `--probe-uo-weapon direct` capture
   sends `ProbeHold::framed` cmds: on even ones `leanhit_ab`'s standing
-  cells read 0.1 off.
+  cells read 0.1 off. Where a `setOrigin` drop lands rides the exact cmd
+  times, which `--probe-uo-weapon` and `--probe-vehicle` log as `CMDS`
+  lines and `ProbeHold::times` replays.
 
 ### Assets, rendering, sound
 

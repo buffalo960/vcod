@@ -408,7 +408,7 @@ fn v1_fs() -> Option<Pk3Fs> {
 /// (coduo-movement.md 15).
 #[test]
 fn a_uo_autofire_capture_plays_each_shot_once() {
-    let Some(fs) = vcod_common::testing::uo_fs().or_else(vcod_common::testing::game_fs) else {
+    let Some(fs) = vcod_common::testing::uo_fs().or_else(vcod_common::testing::stock_fs) else {
         return;
     };
     let (t, brought) = replay_own(

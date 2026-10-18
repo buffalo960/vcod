@@ -87,8 +87,8 @@ pub struct Carry {
     /// 4.7).
     pub scripts: Option<Rc<CompiledScripts>>,
     /// `G_InitGame`'s `Rand_Init` seed for the script's draws, a new one
-    /// every level, restarts included (map-cycle doc 4.8); `None` takes
-    /// [`crate::game::host::RNG_SEED`].
+    /// every level, restarts included (map-cycle doc 4.8); `None` (a test
+    /// building a runtime by hand) takes [`crate::game::host::RNG_SEED`].
     pub seed: Option<u64>,
     /// A test's replay of another server's spawn picks
     /// ([`crate::game::host::SpawnPins`]), handed to every level.
@@ -2239,6 +2239,21 @@ impl ScriptRuntime {
             .map(|_| id)
     }
 
+    /// `SV_DropClient`'s `ClientDisconnect`, run inside the drop as retail
+    /// runs it, not queued for the next frame's packet pass. The events the
+    /// netcode queued ahead of it go first, in order, so a slot's `Connect`
+    /// never lands after its own drop. Then the threads its notifies woke,
+    /// as the packet pass would run them.
+    pub fn client_disconnect(&mut self, slot: usize) {
+        for ev in std::mem::take(&mut self.host.client_events) {
+            self.dispatch_client_event(ev);
+        }
+        self.dispatch_client_event(ClientEvent::Disconnect(slot));
+        for e in self.vm.run_runnable(&mut self.host) {
+            log::warn!("script error: {e:?}");
+        }
+    }
+
     /// `SV_SpawnServer`'s client pass (docs/research/cod11-map-cycle.md,
     /// section 3 step 22): the incoming level's `ClientConnect` for a client
     /// that is already on the netchan. The object table is the new level's,
@@ -2333,6 +2348,25 @@ impl ScriptRuntime {
                 self.vm.notify(id, event, &[]);
             }
             ClientEvent::Disconnect(slot) => {
+                // `ClientDisconnect` opens with `menuresponse` ("-1",
+                // "disconnect") on the player (1.1d 0x42ad9, 1.5b 0x4cf5f,
+                // UO 0x55433). Its waiters run on the next frame's clock;
+                // the player's own die with it below
+                // (cod11-server-handshake.md, "When the game hears a drop").
+                if let Some(id) = self.client_entity(slot) {
+                    let (event, menu, response) = self.vm.with_cx(|cx| {
+                        (
+                            cx.intern_folded(MENURESPONSE_NOTIFY),
+                            cx.intern_exact("-1"),
+                            cx.intern_exact("disconnect"),
+                        )
+                    });
+                    self.vm.notify_for_frame(
+                        id,
+                        event,
+                        &[Value::String(menu), Value::String(response)],
+                    );
+                }
                 self.host.complaints_about_gone(slot);
                 // `ClientDisconnect` lets go of a vehicle seat first (0x45433).
                 self.with_host(|host, cx| {
@@ -2381,6 +2415,8 @@ impl ScriptRuntime {
                 self.host.area.unlink(slot as u32);
                 self.host.free_ground_refs(slot as u32);
                 self.host.ents.free_client(slot);
+                // `CalculateRanks` closes it on all three (1.1d 0x42c1f).
+                self.host.ranks_dirty = true;
             }
         }
     }
@@ -3004,6 +3040,7 @@ impl ScriptRuntime {
                 anims,
                 rigs: &mut host.hit_rigs,
                 now_ms,
+                posed: None,
             }),
             _ => None,
         };
@@ -4165,6 +4202,37 @@ mod tests {
             "the dropped client's carried pers reached the next occupant"
         );
         assert!(after.aborts().is_empty(), "{:?}", after.aborts());
+    }
+
+    /// `ClientDisconnect`'s `menuresponse` ("-1", "disconnect") wakes a
+    /// level thread waiting on the player, which runs on the next frame's
+    /// clock, after the callback; the player's own waiter dies with it
+    /// (`client-probes/probe_dropclient`, all three retail servers).
+    #[test]
+    fn a_drop_notifies_menuresponse_for_the_next_frame() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() { level.lvl = \"none\"; level.own = \"none\"; }\n\
+             CodeCallback_PlayerConnect() { level thread lvl(self); self thread own(); }\n\
+             CodeCallback_PlayerDisconnect() { level.cb = getTime(); }\n\
+             lvl(p) { p waittill(\"menuresponse\", menu, response); \
+                      level.lvl = menu + \" \" + response + \" \" + getTime(); }\n\
+             own() { self waittill(\"menuresponse\", menu, response); level.own = menu; }\n",
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "vcod".into(),
+        });
+        rt.run_frame(50);
+        rt.client_disconnect(0);
+        assert_eq!(rt.level_field("cb"), Value::Int(50));
+        // `CalculateRanks` closes `ClientDisconnect`.
+        assert!(rt.take_ranks_dirty());
+        assert_eq!(rt.level_field_str("lvl"), "none");
+        rt.run_frame(100);
+        assert_eq!(rt.level_field_str("lvl"), "-1 disconnect 100");
+        assert_eq!(rt.level_field_str("own"), "none");
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
     }
 
     /// Connect arms the callback's `waittill("begin")` and Begin releases it.

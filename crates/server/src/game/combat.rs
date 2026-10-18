@@ -184,6 +184,10 @@ pub struct BoneTraceCtx<'a> {
     pub rigs: &'a mut HitRigs,
     /// serverTime the shot is posed at.
     pub now_ms: i32,
+    /// `GameHost::dobj_posed`, for a script trace: a bone the frame already
+    /// posed keeps that pose, and the trace stamps every other one at
+    /// `now_ms` (movers doc 15, "A bone asked for before the anim update").
+    pub posed: Option<&'a mut [Vec<Option<i32>>]>,
 }
 
 /// One player hit, ready for `CodeCallback_PlayerDamage`.
@@ -1262,6 +1266,7 @@ pub fn trace_bodies_faced(
             anims,
             rigs,
             now_ms,
+            posed,
         } = &mut **ctx;
         let Some(skel) = rigs.rig(fs, &body.pose.assembly) else {
             let Some(t) = ray_box(start, end, body.origin + body.mins, body.origin + body.maxs)
@@ -1273,15 +1278,16 @@ pub fn trace_bodies_faced(
             best = Some(link_box(body, t));
             continue;
         };
-        let inputs = body.pose.pose_inputs(anims, *now_ms);
-        let pose = pose_player(&skel, &inputs, |name| rigs.clip(fs, name));
+        let stamps = posed.as_deref_mut().and_then(|p| p.get_mut(body.slot));
+        let pose = stamped_pose(&skel, body, anims, rigs, fs, *now_ms, stamps);
         // Into the body's own frame: its `tag_origin` sits at the feet.
         let inv = body.frame().inverse();
         let (ls, le) = (inv * (start - body.origin), inv * (end - body.origin));
         // A bone past `limit` lies behind what the trace already met: the
         // box can open in front of a hull or wall the bones stand behind
         // (docs/research/coduo-vehicles.md 13, "The silhouette").
-        let Some(hit) = bone_trace(&skel, &pose, ls, le, priority).filter(|h| h.fraction < limit)
+        let Some(hit) =
+            bone_trace(&skel, &pose, ls, le, priority, limit).filter(|h| h.fraction < limit)
         else {
             continue;
         };
@@ -1298,6 +1304,43 @@ pub fn trace_bodies_faced(
         });
     }
     best
+}
+
+/// `body` posed at `now_ms`, or with `stamps` each bone at the time the
+/// frame first posed it, those not yet posed stamped `now_ms`.
+fn stamped_pose(
+    skel: &vcod_common::skeleton::Skeleton,
+    body: &HitBody,
+    anims: &PlayerAnims,
+    rigs: &mut HitRigs,
+    fs: &vcod_common::pk3::Pk3Fs,
+    now_ms: i32,
+    stamps: Option<&mut Vec<Option<i32>>>,
+) -> vcod_common::skeleton::PoseBuffer {
+    let mut pose_at = |t: i32| {
+        let inputs = body.pose.pose_inputs(anims, t);
+        pose_player(skel, &inputs, |name| rigs.clip(fs, name))
+    };
+    let Some(stamps) = stamps else {
+        return pose_at(now_ms);
+    };
+    stamps.resize(skel.bones().len(), None);
+    let times: Vec<i32> = stamps
+        .iter_mut()
+        .map(|t| *t.get_or_insert(now_ms))
+        .collect();
+    let mut pose = pose_at(now_ms);
+    let mut earlier: Vec<i32> = times.iter().copied().filter(|&t| t != now_ms).collect();
+    earlier.sort_unstable();
+    earlier.dedup();
+    for t in earlier {
+        let then = pose_at(t);
+        for (b, _) in times.iter().enumerate().filter(|(_, bt)| **bt == t) {
+            let (p, r) = then.local(b);
+            pose.set_local(b, p, r);
+        }
+    }
+    pose
 }
 
 /// The two a swing spawns a temp entity for
@@ -2218,6 +2261,7 @@ mod tests {
             anims: &anims,
             rigs: &mut rigs,
             now_ms: 0,
+            posed: None,
         };
         let mut rng = 1u64;
         let r = bullet_fire(
@@ -2278,6 +2322,7 @@ mod tests {
                 anims: &anims,
                 rigs: &mut rigs,
                 now_ms: 50,
+                posed: None,
             };
             trace_bodies(
                 Vec3::new(-100.0, 0.0, z),
@@ -2333,6 +2378,7 @@ mod tests {
                 anims: &anims,
                 rigs: &mut rigs,
                 now_ms: 50,
+                posed: None,
             };
             trace_bodies(
                 Vec3::new(-100.0, 0.0, 30.0),
@@ -3291,6 +3337,7 @@ mod tests {
                 anims: &anims,
                 rigs: &mut rigs,
                 now_ms: 0,
+                posed: None,
             };
             let hits = radius_damage(
                 at,

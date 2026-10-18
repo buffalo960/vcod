@@ -428,6 +428,11 @@ With the seat stripped from the playerstate the same replay misses
 `delta_angles` on 44 and 230 snapshots, `fWeaponPosFrac` and the
 driver's weapon state (VERIFIED, replay): the gate sees the seat.
 
+The server's half of the round trip (`ClientSim::to_wire`, the protocol
+map and the codec, then `from_wire`) is `predict_ab`'s UO gate over the
+same six captures, the seat put on the sim at each snapshot
+(`coduo-movement.md` 15).
+
 ## 8. Captures
 
 `crates/server/tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-seats-uo.txt`
@@ -1066,7 +1071,12 @@ probe client cmd's travel (INFERRED, the gsc reads it after however many
 of the probe's cmds a frame ran: retail's flight steps 14, 3.8 and 17.6
 units over three frames where ours steps 10.6 each). Where a prone
 victim lies down is the probe client's timing too: retail's two prone
-runs lie 1.1 units apart.
+runs lie 1.1 units apart. The same captures carry the Horch's own ram
+sounds as it strikes the Panzer past the victim, `EV_SOUND_ALIAS` parm 7
+(`vehicle_impact`) at z 1825 and 2409 over the struck hull, 1300 and 2100
+ms after the jeep's first move in the standing run (VERIFIED, capture);
+the gate matches each one's time from that move, alias and snapped
+origin on ours (`compare_impacts`).
 
 ## 12. The drive step
 
@@ -1672,19 +1682,17 @@ runs lie 1.1 units apart.
       glide sits within 0.02 of retail's (VERIFIED, replay,
       `vehicle_armor_ab::the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail`,
       fixture `mp_cassino-tank-glide-uo.txt`, cut from that run) but for
-      three frames its `GLIDE_GAPS` name:
-      - 54100 and 54250, where retail repeats the last frame's pose: a
-        `bulletTrace` in the first thread pass (the profile's at 54050,
-        the aim sweep's at 54200, both run in the next frame's first
-        pass) poses the body under the frame's DObj stamp, and the link
-        pass then reads those bones (`cod11-movers.md` 15, "A bone asked
-        for before the anim update"). vcod's script trace stamps nothing.
-        VERIFIED, replay: stamping every bone of each body a thread
-        `bulletTrace` meets at `dobj_time_ms` makes ours repeat the pose
-        at the profile's frame as retail does (the aim sweep's repeats
-        land a frame early on ours, where the replay's sweep thread runs
-        50 ms ahead of retail's). Not ported: the bones a trace stamps
-        are the per-bone stamp work of `cod11-combat.md` 3.6.
+      one frame its `GLIDE_GAPS` name. 54100 and 54250, where retail
+      repeats the last frame's pose, now match: a `bulletTrace` in the
+      first thread pass (the profile's at 54050, the aim sweep's at
+      54200) poses the body under the frame's DObj stamp and the link
+      pass reads those bones (`cod11-movers.md` 15, cod11-combat.md 3.6,
+      `probe_stamp`), which vcod's script trace now does through
+      `GameHost::dobj_posed`. The gate connects its shooter as late as
+      the recipe's (placed at 23200 on both), since the sweep's
+      half-second clock runs from his placement; joined with the target
+      the sweep ran at 54150 and its repeat landed a frame early
+      (VERIFIED, replay, 2026-10-18).
       - 53900, every bone 21 units high on ours for one frame, closed
         2026-10-18: the probe's marks link to the rider, and `G_RunClient`
         (0x41dfc) re-reads a linked player's `r.currentOrigin` off his
@@ -1692,7 +1700,10 @@ runs lie 1.1 units apart.
         vcod's marks read the change's placement, 21 up, until the end
         frame put him on the seat. With the refresh ported the frame
         matches (VERIFIED, replay; without it the gate misses every bone
-        at 53900 by 21.00 in z).
+        at 53900 by 21.00 in z). Whether it also closes the jeep gunner's
+        marks lagging a frame while the gun swings (below) is not
+        measured.
+      The one left:
       - 54000, `bip01 head` 0.34 off: the neck and head controls ease
         from 0 after the change; not traced.
     - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a

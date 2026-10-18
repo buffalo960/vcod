@@ -527,7 +527,7 @@ mod tests {
     use super::*;
 
     fn ui() -> Option<(Ui, Localized)> {
-        let fs = vcod_common::testing::game_fs()?;
+        let fs = vcod_common::testing::stock_fs()?;
         Some((Ui::new(&fs, "0"), Localized::load(&fs)))
     }
 

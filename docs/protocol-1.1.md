@@ -1169,7 +1169,7 @@ VERIFIED, both committed spectator captures: `viewangles[0]` and `viewangles[1]`
 
 For a **spawned player** the same sum is measured directly:
 
-VERIFIED, from the `--save-ads` capture taken on `mp_carentan` under `tdm` with `kar98k_sniper_mp` (`crates/server/tests/fixtures/playerstate/mp_carentan-tdm-ads-sniper.txt`, recaptured 2026-10-17): `delta_angles[1]` reads 24576 and `viewangles[1]` reads 45.0, the spawn point's yaw, on every one of its 356 `!trace` lines. Those two pin the wire cmd yaw at 49152: `ANGLE2SHORT(45)` is 8192, and `8192 - 24576` is 49152 modulo 65536. Do not read the capture's `!input yaw=0` as the wire value -- that column records the script's yaw on top of the held facing, and `NetClient::send_frame` (`crates/common/src/net/mod.rs`) subtracts `delta_angles` from every axis before the cmd goes out. INFERRED, from the probe's own control flow, that the 45 is what `hold_view_yaw` produces: it reads the spawn's facing off `delta_angles` and holds it. VERIFIED, the first capture (in git at `c52e9606`): the same 24576 under `viewangles[1]` -45.0 on all 355 lines, a wire yaw of 32768, from a `hold_view_yaw` that held the view of the first snapshot it saw, the spectator's.
+VERIFIED, from the `--save-ads` capture taken on `mp_carentan` under `tdm` with `kar98k_sniper_mp` (`crates/server/tests/fixtures/playerstate/mp_carentan-tdm-ads-sniper.txt`, recaptured 2026-10-18): `delta_angles[1]` reads 32768 and `viewangles[1]` reads 90.0, the spawn point's yaw, on every one of its 355 `!trace` lines. Those two pin the wire cmd yaw at 49152: `ANGLE2SHORT(90)` is 16384, and `16384 - 32768` is 49152 modulo 65536. The 2026-10-17 take, from another spawn, read 24576 and 45.0 on all 356 lines, the same wire yaw. Do not read the capture's `!input yaw=0` as the wire value -- that column records the script's yaw on top of the held facing, and `NetClient::send_frame` (`crates/common/src/net/mod.rs`) subtracts `delta_angles` from every axis before the cmd goes out. INFERRED, from the probe's own control flow, that the 45 is what `hold_view_yaw` produces: it reads the spawn's facing off `delta_angles` and holds it. VERIFIED, the first capture (in git at `c52e9606`): the same 24576 under `viewangles[1]` -45.0 on all 355 lines, a wire yaw of 32768, from a `hold_view_yaw` that held the view of the first snapshot it saw, the spectator's.
 
 VERIFIED that the field tracks the cmd rather than pinning the spawn angle, from both motion captures: `mp_carentan-dm-motion.txt` reads 135.0 at every held pose and moves by exactly the turn steps' 60 degrees, to 75.0 at `turn_left` and -165.0 at `turn_right`; `mp_pavlov-dm-motion.txt` is the same shape off a base of 45.0.
 
@@ -1258,6 +1258,18 @@ Q3's `CL_ParseSnapshot`. `cl_timeNudge` is registered `"0"`, `CVAR_TEMP`
 registration. Until 2026-10-09 it drew 100 ms behind the newest snapshot,
 re-anchoring on every arrival (an early one stepped the view forward, a late
 one froze it), and stamped cmds off the newest snapshot plus elapsed time.
+
+`CL_CreateNewCommands` (CoDMP.exe `0x40b8d0`) builds one cmd a frame once
+`cls.state` is past 4: it takes `frame_msec` as the frame's `com_frameTime`
+step clamped to 200 (used only to scale the frame's input), bumps
+`cl.cmdNumber` and stores `CL_CreateCmd`'s (`0x40b720`) cmd at `cmdNumber &
+63`, stamped by `CL_FinishMove` as above. VERIFIED (decompile). So a hitch or a
+forward RESET reaches the server as one cmd whose time steps forward by the
+whole gap. vcod ticks cmds every 8 ms (`play::cmds::CmdClock`) and, until
+2026-10-18, built every tick a frame owed up to a packet's 32, a burst after a
+RESET or the first snapshot; a frame owing more than 200 ms now builds one
+cmd at its newest tick. The 200 ms bound is vcod's own, borrowed
+from `frame_msec`'s clamp; retail has no tick to collapse.
 
 Measured 2026-10-09 with `vcod --net-probe ADDR --probe-clock --probe-cmd-ms
 8` (frame time 8 ms), which runs both clocks on the same arrivals. "Behind"

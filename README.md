@@ -57,6 +57,9 @@ The short tour. The long one, gaps included, is
 - **Extras retail never had**, all off by default: soft sun shadows, SSAO,
   bloom, HDR, sun shafts, soft particles and a film grade. `--rtx-on` turns
   them all on for one run. Despite the name, no rays were harmed.
+- **Wide screens**: a Hor+ view and a HUD that keeps to the window's
+  edges on 16:9 and 21:9 (`vc_widescreen 0` for retail's), borderless or
+  exclusive fullscreen, and Alt+Enter.
 
 ## How to play
 

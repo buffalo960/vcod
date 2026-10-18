@@ -105,14 +105,11 @@ fn text_starts_comment(chars: &mut std::iter::Peekable<std::str::Chars>) -> bool
     ahead.peek() == Some(&'/')
 }
 
-/// `UI_LoadArenas`: the `.arena` files directly under `mp/`, in name order.
+/// `UI_LoadArenas`: the `.arena` files directly under `mp/`, in
+/// `FS_GetFileList`'s search-path order.
 pub fn load_arenas(fs: &Pk3Fs) -> Vec<Arena> {
     let mut out = Vec::new();
-    for path in fs.list_prefix("mp/") {
-        let name = &path["mp/".len()..];
-        if name.contains('/') || !name.ends_with(".arena") {
-            continue;
-        }
+    for path in fs.file_list("mp", ".arena") {
         let Some(bytes) = fs.read(&path) else {
             continue;
         };
@@ -703,7 +700,7 @@ mod tests {
 
     #[test]
     fn stock_arenas_filter_by_game_type() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::stock_fs() else {
             return;
         };
         let arenas = load_arenas(&fs);

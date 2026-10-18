@@ -1477,7 +1477,43 @@ end-frame measure at snapshot cadence.
 VERIFIED, 0x30003e50, called for both lerp frames before the updates
 (0x30004e64, 0x30004e70): when the anim in `lf+0x10` reads weight 0
 (syscall 0x93) it clears `lf+0x10`, `+0x14` and sets `+0x18` to 150, so
-the next update starts the clip again. vcod does not model it.
+the next update starts the clip again. VERIFIED: the same test sits in
+1.5's cgame (0x300040b0, syscall 0x94), UO's (0x300042c0, syscall 0x96)
+and the server's `BG_PlayerAnimation` (`game.mp.i386.so` 0x2c1f4:
+`trap_XAnimGetWeight` at 0x2c25d and 0x2c2c8, the `fucompp` against 0 at
+0x2c267, the three stores at 0x2c273..0x2c287), legs lerp frame first.
+INFERRED, off the goal weight setter raising a zero weight to `0.001 *
+goal` (0x080bd674, "The weight ramp" above): a node a lerp frame's own
+setter started never reads 0, so only the other channel's setter takes it
+there. That is a `both` line's node, which the two lerp frames share,
+cleared by the channel that leaves it (its clip then starts again on the
+channel that kept it, from 0, or a movement clip at the spread phase), or
+a node beside a shown death's path (`KnobAll`, below). vcod:
+`animclock::update_body` steps a body's two lerp frames as this routine
+and the server's do: the two clears, then the legs and the torso update,
+each setter's clear, goal weight and `KnobAll` handed to the other lerp
+frame (`ChannelClock::touched`). The server's end frame and the client's
+draw both step through it.
+
+VERIFIED, `cod_lnxded` 0x080bf8ac, the routine whose arguments (DObj,
+anim, root, weight, time, rate) match syscall 0x8a's as the setter passes
+them (cgame 0x300039e1 through 0x300317b0: the anim, `root`, 1.0, 0, 1.0):
+it clears the goal weight of every sibling of the node (0x080bd35c, the
+goal time the largest weight change times `time`, under 0.001 snapped to
+0), sets the node's own, then walks up to the root it was given, clearing
+each ancestor's siblings and raising the ancestor to 1. VERIFIED: the
+setter's root is `0x3018bbfc`, looked up from the name at 0x30068f64,
+`root` (0x30005090). INFERRED, off those: a death shown at its last frame
+on the legs takes `torso` (a sibling of `legs` under `main`) and
+`turning` to 0 and `legs` to 1 at the next frame's step, and every legs
+clip beside it with them; the torso's own leaves keep their weights under
+a node at 0. vcod: `ChannelClock::knob_nodes` puts the torso clock's two
+node weights there at once and `touched` drops the other lerp frame's
+clips beside the path. Until 2026-10-18 vcod dropped only the death
+channel's own fades, and a torso that held a fire anim faded out over the
+torso's own blend. No stock death shows it on the client: a corpse's
+torso carries no anim (combat doc 8), so its torso node already stands
+at 0; the server's dying player, whose torso can still be firing, does.
 
 Measured, vcod, `crates/server/tests/legs_ab.rs`
 (`a_drawn_body_runs_the_end_frame_clips_a_snapshot_early`): retail's
@@ -1490,7 +1526,20 @@ in a steady clip and 2.9 through a strafe-to-strafe blend.
 vcod: `crates/client/src/entities.rs` keeps a `ChannelClock` pair per
 entity number and updates it each drawn frame with `Times { clock_ms:
 render_time, snapshot_ms: newest snapshot }`, the newer snapshot's
-`pos.trBase` and `eFlags`.
+`pos.trBase` and `eFlags`. INFERRED: the `ci` lerp frames sit in the
+cgame's static client and body queue arrays and nothing on the draw path
+clears them, so they outlive any stretch the body is unseen; vcod keeps the
+pair for the cgame's life too (until 2026-10-18 it dropped it after 5 s
+unseen). INFERRED, off 0x3001bd00 stepping only the newest snapshot's
+entities and the per-`ci` XAnim tree (0x30005180 allocates one per client
+and per body queue slot with syscall 0x83, and the DObj create at
+0x30004eb0 hands it the slot's tree): a body's clips and weights stand
+still while its entity is out of the snapshot and go on from there when it
+comes back; the rate, measured on snapshot times, measures across the gap.
+vcod: the client's `EntityAnim::present_ms` notes the last frame the
+entity was in the snapshot, and the first frame back shifts both clocks by
+the frames between (`ChannelClock::pause`). 1.5's and UO's advance was not
+read.
 
 ### A bone asked for before the anim update
 
@@ -1532,10 +1581,15 @@ form. vcod: `GameHost::dobj_time_ms` (the last frame's time until
 `ScriptRuntime::run_threads` has run `Vm::run_current`), and
 `GameHost::dobj_posed`, the time each bone was posed this frame, cleared at
 the frame's start and past the entity loop; `link::client_bone` and
-`dropItem`'s tag go through it. `bulletTrace` and the script
-`radiusDamage` walk pose bodies at `dobj_time_ms` without the per-bone
-stamp (cod11-combat.md 3.6): a trace after a bone ask in one frame poses
-the whole body at the frame's clock where retail keeps the asked bones'.
+`dropItem`'s tag go through it. VERIFIED, live and vcod measurement
+(cod11-combat.md 3.6, `probe_stamp`): a script `bulletTrace` falls under
+the same stamp and poses every bone of the body, `tag_weapon_right`
+included; marks linked to the body read the trace's last-frame pose in
+that frame's entity pass on 1.1d, 1.5b and UO. `bulletTrace` and the
+script `radiusDamage` walk now take and stamp each bone through
+`dobj_posed`; the engine's own traces (shots in a cmd, turret rounds,
+missiles, the use and lookat traces) still pose at their own clock
+without it.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 

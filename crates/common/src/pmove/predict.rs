@@ -62,6 +62,7 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.rules = super::MoveRules::for_protocol(p);
     ps.pitch = (-view[0]).to_radians();
     ps.velocity = vec3("velocity");
+    ps.speed = int("speed") as f32;
 
     let eflags = int("eFlags");
     let pm_flags = int("pm_flags");
@@ -360,6 +361,7 @@ mod tests {
         set(&mut w, "weaponTime", 0xffff);
         set(&mut w, "movementDir", 0xd3);
         set(&mut w, "bobCycle", 200);
+        set(&mut w, "speed", 250);
         let pred = from_wire(p, &w, None);
         assert_eq!(pred.ps.origin.x, 100.0);
         assert_eq!(pred.ps.stance, Stance::Prone);
@@ -372,6 +374,7 @@ mod tests {
         assert_eq!(pred.ps.weapon_time_ms, -1);
         assert_eq!(pred.ps.movement_dir, -45);
         assert_eq!(pred.ps.bob_cycle, 200);
+        assert_eq!(pred.ps.speed, 250.0);
     }
 
     /// A putaway in flight raises the weapon the cmd at `commandTime` asked
