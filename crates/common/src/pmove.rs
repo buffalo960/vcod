@@ -505,6 +505,11 @@ pub struct PlayerState {
     /// the velocity carries the player off it: retail's `pml.groundPlane`
     /// and its normal. The prone pitch and [`PlayerState::sliding`] read it.
     ground_plane: Option<Vec3>,
+    /// 1.5's and UO's `pml.almostGroundPlane` (`pml+0x34`): the last ground
+    /// trace's plane, or, off the ground, a floor within a unit below. The
+    /// sight flag reads it (docs/research/cod15-movement.md 5, "The sight
+    /// off the ground"); 1.1 has no such field and reads `ground_plane`.
+    near_ground: bool,
     /// 0 dry, 1 feet, 2 waist, 3 eyes under (RTCW waterlevel).
     pub water_level: u32,
     /// `pm_time`: what is left of the knockback timer, 0 when free.
@@ -842,6 +847,7 @@ impl PlayerState {
             prone_dive: false,
             prone_blocked: false,
             ground_plane: None,
+            near_ground: false,
             water_level: 0,
             knockback_ms: 0.0,
             knockback_flags: 0,
@@ -925,6 +931,19 @@ impl PlayerState {
     /// ground trace hit one, and the velocity does not carry the body off it.
     pub fn sliding(&self) -> bool {
         !self.on_ground && self.ground_plane.is_some()
+    }
+
+    /// What `PM_UpdateAimDownSightFlag` takes for ground: 1.1's
+    /// `pml.groundPlane` (0x37230, a steep face too), 1.5's and UO's
+    /// `pml.almostGroundPlane` (1.5 0x2cf6c, UO 0x32c0b). A ground trace
+    /// sets both whenever it sets `on_ground`.
+    pub fn sight_ground(&self) -> bool {
+        self.on_ground
+            || if self.rules.v15() {
+                self.near_ground
+            } else {
+                self.ground_plane.is_some()
+            }
     }
 
     pub fn mins(&self) -> Vec3 {
@@ -1408,7 +1427,7 @@ fn ads_flag(
                 | weapon::WEAPON_MELEE_RELAX
         )
         && (ps.weaponstate != weapon::WEAPON_BREAKDOWN || input.weapon == ps.weapon)
-        && (ps.on_ground || ps.linked);
+        && (ps.sight_ground() || ps.linked);
     if !keep {
         ps.ads_active = false;
         return;
@@ -3338,6 +3357,29 @@ fn correct_all_solid(
     Some(t)
 }
 
+/// `PM_GroundTraceMissed`'s `pml.almostGroundPlane` on 1.5 (0x21a17) and
+/// UO (0x2656d): a body already off the ground is near it when a unit's
+/// drop meets a floor, one that has just left it when a 64-unit drop
+/// meets one within that unit. 1.1's (0x3037c) clears the field it lacks.
+fn near_ground_missed(ps: &PlayerState, world: &MoveWorld, mask: u32) -> bool {
+    if !ps.rules.v15() {
+        return false;
+    }
+    let reach = if ps.on_ground { 64.0 } else { 1.0 };
+    let t = world.box_trace(
+        ps.origin,
+        ps.origin - Vec3::Z * reach,
+        ps.mins(),
+        ps.maxs(),
+        mask,
+    );
+    if ps.on_ground {
+        t.fraction < 1.0 / 64.0
+    } else {
+        t.fraction < 1.0
+    }
+}
+
 /// Q3 `bg_pmove.c` `PM_GroundTrace`.
 fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
     // From a quarter unit above the origin to a quarter below (0x304c0..
@@ -3356,6 +3398,7 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
                 ps.jump_origin_z = 0.0;
                 ps.jump_penalty = false;
                 ps.ground_plane = None;
+                ps.near_ground = false;
                 ps.on_ground = false;
                 ps.ground_normal = Vec3::Z;
                 ps.ground_surface_flags = 0;
@@ -3376,6 +3419,11 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
         ps.jump_origin_z = 0.0;
     }
     ps.ground_plane = (t.fraction < 1.0 && !thrown_off).then_some(t.normal);
+    ps.near_ground = if t.fraction < 1.0 {
+        !thrown_off
+    } else {
+        near_ground_missed(ps, world, mask)
+    };
     if t.fraction < 1.0 && t.normal.z >= MIN_WALK_NORMAL && !thrown_off {
         ps.on_ground = true;
         // `groundEntityNum` is the trace's own entity (0x30732).
@@ -8283,6 +8331,47 @@ mod tests {
             ps.view_target = VIEW_CROUCH;
             assert_eq!(hold_still_sighted(&ps, &moving).forward, 1.0, "{rules:?}");
         }
+    }
+
+    /// The sight off the ground (cod15-movement.md 5): 1.5 and UO raise it
+    /// on a body falling within a unit of the floor, `PM_GroundTraceMissed`'s
+    /// `almostGroundPlane`; 1.1 and a body higher up wait for the landing.
+    #[test]
+    fn a_15_sight_starts_a_unit_over_the_floor() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let rifle = WeaponDef {
+            aim_down_sight: true,
+            ads_trans_in: 0.3,
+            ads_trans_out: 0.3,
+            clip_size: 5,
+            ammo_index: 1,
+            clip_index: 1,
+            ..WeaponDef::default()
+        };
+        let weapons = [None, Some(rifle)];
+        let sight = PmInput {
+            ads: true,
+            weapon: 1,
+            ..Default::default()
+        };
+        let first_cmd = |rules: MoveRules, z: f32| {
+            let mut ps = PlayerState {
+                rules,
+                ..PlayerState::spawn(Vec3::new(0.0, 0.0, z), 0.0)
+            };
+            weapon::give(&mut ps, 1, 1);
+            ps.weapon = 1;
+            ps.ammoclip[1] = 5;
+            ps.on_ground = false;
+            pmove(&mut ps, &sight, &w, 0.016, &weapons);
+            ps.ads_active
+        };
+        for rules in [MoveRules::V1_5, MoveRules::Uo] {
+            assert!(first_cmd(rules, 0.63), "{rules:?}");
+            assert!(!first_cmd(rules, 1.5), "{rules:?}");
+        }
+        assert!(!first_cmd(MoveRules::V1_1, 0.63));
     }
 
     /// UO's bipod from prone (coduo-movement.md 7): the sight goes down in

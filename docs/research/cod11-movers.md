@@ -1591,6 +1591,17 @@ script `radiusDamage` walk now take and stamp each bone through
 missiles, the use and lookat traces) still pose at their own clock
 without it.
 
+VERIFIED, `cod_lnxded`: 0x0808c870 bumps the same stamp (0x0833df04) on
+every packet that is not out-of-band (`cursize < 4` or a first word other
+than -1) before it matches the packet to a client by address and qport and
+runs that client's message. INFERRED, off the matching: it is
+`SV_PacketEvent`, so each client packet's cmds, and the rounds they fire,
+pose under a stamp of their own, and on 1.5 and UO each such build runs
+the controller hook again (`coduo-vehicles.md` 13, "The glide back"). vcod
+does not stamp engine traces; no gate yet shows the difference, since a
+round's build differs from the end frame's pose only while the controls
+are still easing.
+
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 
 The evidence is a second paired capture against the retail 1.1d Linux
