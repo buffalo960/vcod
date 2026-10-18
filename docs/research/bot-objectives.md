@@ -691,20 +691,34 @@ first everywhere.
   plant was defused unseen once each side had a defender. Any bot inside
   the 500-unit blast of a charge about to go (its own side's in the last
   20 s, the other side's once a defuse could no longer finish) flees it
-  before anything else but a live frag, fight or no fight. A defender
+  before anything else but a live frag, fight or no fight: in a fight
+  the gun stays on the enemy and the keys run the graph's way out, turned
+  to the aimed view, with no sight and no bipod (`rekey`). With the fight
+  steering the keys, a planter and a defender shot it out in the charge
+  room and both died in the blast (seed 5, four times a round). No bot
+  starts for a defuse that the charge's clock, less the straight-line
+  run at 190 units/s, leaves no 10.5 s for: one held use inside the
+  blast to the end. A defender
   keeps the charge room of a breached base of its side's, the only way
   a plant comes; with none breached it attacks with the rest, since a
   standing base needs no guard. With a charge of its side's ticking on
   the other side's base it holds that charge's room beside the planter
   instead: one on one, the defender in its own room won most fights and
-  defused. A defender that does not shoot (`--bots-shoot` off) stops no
+  defused. It does the same once its side has breached the other side's
+  last base, charged or not: called only by the charge, it came from its
+  own base across the map after the planter had died and the charge was
+  defused, and seed 23's last base took 20 min. A defender that does not shoot (`--bots-shoot` off) stops no
   plant from the room, and with a defender a side every plant was
   defused the moment it was down, for good: it attacks with the rest
-  and comes back only to defuse, and a side's two such bots split over
+  and defuses only a charge it is within 2000 units of, and a side's two such bots split over
   the other side's bases by rank (shooting, both take the same one), so
-  two charges can tick at once on a side with one bot left to defuse. Each side defuses a charge on one of
-  its bases (10.5 s): a defender, and an attacker within 2000 units of
-  it. An attacker goes for the next of the other side's bases after
+  two charges can tick at once on a side with one bot left to defuse. When
+  it still ran home to defuse from anywhere, it was back in time for every
+  plant (about 38 s of a 60 s fuse on mp_foy), and with a base left a
+  side the round looped on defuses for good (seeds 17 and 19, 64 to 68
+  defuses in 29 min). Each side defuses a charge on one of
+  its bases (10.5 s): a defender that shoots, and any other bot within
+  2000 units of it. An attacker goes for the next of the other side's bases after
   each of its deaths, off the defender that killed it. A standing base
   is breached with rockets (below); bots ride no tank.
 - **The breach.** An attacker with no loaded rocket launcher in hand
@@ -812,6 +826,21 @@ none to four defuses a round; seed 17 also had a bot killed by its own
 breach rocket, which the sighted spread (4 degrees) still carries into cover
 by the stand now and then. The two-bot gate, shoot off: over at tick
 12099, five gone off, none defused.
+
+VERIFIED (measured, ours, 2026-10-18, release, UO install, same setup,
+`BOTS_SEED` 1 to 23 odd, twelve runs a gate): before the rules above
+(defuse only from near without shooting, no defuse the clock cannot
+let finish, keys out of a blast through a fight, backing the attack on
+the last base) the four-bot shoot-off gate looped on defuses on seeds
+17 and 19 (64 to 68 defuses, never over) and ended the rest at ticks
+6979 to 12959; shoot on ended at 8739 to 21759. After: shoot off ends
+every seed at 6459 to 7559 with no defuse, shoot on at 8559 to 20059
+(mean 13700 against 13000 before; the slowest seed 14700 ticks short
+of the 34800-tick gate where it was 13000 short). Seed 5 traced before
+the blast rule lost a bot to a charge four times a round; intermediate, with the near-only defuse alone, shoot on
+seed 23 took 31999 ticks: its allied defender came across the map to
+the last axis base only once the charge was down and the planter dead,
+twice. The two-bot gate: over at tick 11079, five gone off.
 With the planter's guard alone (8 s, outside-the-blast before), one
 seed in eight ended; the rest stalled on defuses, a bot standing at a
 launcher it could not take, a dry defender, or a bot killing itself
