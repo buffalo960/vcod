@@ -2766,11 +2766,15 @@ impl Server {
         }
         if reconnect.is_some() {
             log::info!("{from}: reconnect");
-            // Whoever held the slot is gone, so its script state has to be
-            // torn down here: `check_timeouts` never reaches it once the new
-            // `Client` overwrites the slot with a fresh `last_packet`.
-            if let Some(rt) = self.script.as_mut() {
-                rt.push_client_event(ClientEvent::Disconnect(slot));
+            // 1.5's and UO's `SV_FreeClient` (1.5b 0x808a6e3, UO 0x808b4e7)
+            // runs the game's `ClientDisconnect` here, inside the connect.
+            // 1.1d frees only the client's script id (0x80859c8) and the
+            // game's `ClientConnect` starts the held player over: no
+            // callback, and its threads live on (cod11-server-handshake.md,
+            // "A reconnect into a held slot").
+            if self.v15() {
+                self.clients[slot] = None;
+                self.client_disconnect(slot);
             }
         } else {
             self.zombies[slot] = None;
@@ -3863,8 +3867,9 @@ impl Server {
             return;
         };
         let v15 = self.v15();
+        let mut own = Vec::new();
         if v15 {
-            self.client_disconnect(slot);
+            own = self.client_disconnect(slot);
         }
         // Match on ip, not `ch.addr == c.addr`; NAT may have moved the port
         // since the challenge was issued and the slot would stay `connected`.
@@ -3888,10 +3893,18 @@ impl Server {
         }
         self.print(&format!("{slot}:{} {reason}\n", c.name));
         if !v15 {
-            self.client_disconnect(slot);
+            own = self.client_disconnect(slot);
         }
-        // Appended with no squash or guard: the notice must not be dropped,
-        // and a full ring cannot drop a client twice.
+        // What the callback sent the leaver alone goes into its ring, and
+        // the zombie's `w` squashes every unsent ignorable command, the
+        // callback's `iPrintLn` with them: a `setClientCvar` reaches the
+        // zombie on all three, a print on none (`client-probes/probe_reconnect`).
+        for cmd in own {
+            c.queue_server_command(&cmd);
+        }
+        c.squash_ignorable();
+        // Appended with no guard: the notice must not be dropped, and a full
+        // ring cannot drop a client twice.
         c.netchan.reliable_sequence += 1;
         let at = c.netchan.reliable_sequence as usize & (MAX_RELIABLE_COMMANDS - 1);
         c.netchan.reliable[at] = format!("w \"{reason}\"");
@@ -3911,8 +3924,9 @@ impl Server {
     /// game's `trap_SendServerCommand` sends them: a drop after the frame
     /// still reaches that frame's message. Neither the zombie nor, on 1.5
     /// and UO, the client still in its slot hears the callback's lines
-    /// (`client-probes/probe_dropclient`).
-    fn client_disconnect(&mut self, slot: usize) {
+    /// (`client-probes/probe_dropclient`). Returns the commands addressed
+    /// to the leaver's own slot, for its zombie.
+    fn client_disconnect(&mut self, slot: usize) -> Vec<String> {
         let collision = self.world.as_ref().map(|w| &w.collision);
         // 1.5's and UO's `ClientDisconnect` stops a follower outright
         // (1.5b 0x4cf5f, UO 0x55433); 1.1's cycles first.
@@ -3925,7 +3939,7 @@ impl Server {
             cycle,
         );
         let Some(rt) = self.script.as_mut() else {
-            return;
+            return Vec::new();
         };
         mirror_roster(&self.clients, rt);
         rt.client_disconnect(slot);
@@ -3940,9 +3954,15 @@ impl Server {
         let console = rt.take_console();
         self.console.extend(console);
         self.copy_game_configstrings(written);
+        let mut own = Vec::new();
         for (to, cmd) in commands {
-            self.send_server_command(to, &cmd);
+            if to == slot {
+                own.push(cmd);
+            } else {
+                self.send_server_command(to, &cmd);
+            }
         }
+        own
     }
 
     /// A zombie's packet still runs the netchan and records the acks, so a
@@ -11543,42 +11563,98 @@ mod tests {
         assert_eq!(sv.client_count(), 1);
     }
 
-    /// A reconnect overwrites a slot the server may still believe is live --
-    /// `sv_timeout` is 240 s, `RECONNECT_LIMIT` 3 -- and the new `Client` carries
-    /// a fresh `last_packet`, so `check_timeouts` will never reach the old
-    /// one. Without the queued `Disconnect` nothing tears its script state
-    /// down and it leaks for the life of the map.
+    /// A reconnect overwrites a slot the server may still believe is live
+    /// (`sv_timeout` is 240 s, `RECONNECT_LIMIT` 3). 1.5's and UO's
+    /// `SV_FreeClient` runs the disconnect callback inside the connect; 1.1d
+    /// runs none and starts the held player over, its threads and script
+    /// fields kept and `pers` fresh (`client-probes/probe_reconnect`).
     #[test]
-    fn a_reconnect_disconnects_the_client_it_replaces() {
+    fn a_reconnect_into_a_held_slot_follows_the_protocol() {
         use crate::game::script::{CALLBACK_SETUP, ScriptRuntime};
-        let now = Instant::now();
-        let mut sv = Server::new(cfg(), now);
-        install_script(
-            &mut sv,
-            ScriptRuntime::for_test_at(
-                CALLBACK_SETUP,
-                "main() { level.gone = 0; level.callbackPlayerDisconnect = ::d; }\n\
-             CodeCallback_PlayerDisconnect() { [[level.callbackPlayerDisconnect]](); }\n\
-             d() { level.gone = level.gone + 1; }\n",
-            ),
-        );
-        let nc = connected(&mut sv, addr(5), now);
-        sv.tick(now);
-        sv.take_outgoing();
-        let gone = |sv: &mut Server| sv.script.as_mut().unwrap().level_field("gone");
-        assert_eq!(gone(&mut sv), vcod_gsc::Value::Int(0));
+        for (proto, callbacks) in [(&PROTOCOL_V1, 0), (&PROTOCOL_V6, 1)] {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(proto);
+            install_script(
+                &mut sv,
+                ScriptRuntime::for_test_at(
+                    CALLBACK_SETUP,
+                    "main() { level.gone = 0; level.gens = 0; level.ticks = 0; }\n\
+                     CodeCallback_PlayerConnect() { level.field = isdefined(self.mark); \
+                       level.pers = isdefined(self.pers[\"mark\"]); self.mark = 1; \
+                       self.pers[\"mark\"] = 1; level.gens++; self thread tick(level.gens); }\n\
+                     tick(gen) { for(;;) { wait 0.05; if (gen == 1) level.ticks++; } }\n\
+                     CodeCallback_PlayerDisconnect() { level.gone++; }\n",
+                ),
+            );
+            let nc = connected(&mut sv, addr(5), now);
+            sv.tick(now);
+            sv.take_outgoing();
+            let field = |sv: &mut Server, f: &str| sv.script.as_mut().unwrap().level_field(f);
 
-        // Past sv_reconnectlimit, the same peer's connect takes the slot back.
-        let t = now + RECONNECT_LIMIT + Duration::from_millis(100);
-        sv.handle_packet(
-            addr(5),
-            &connect_pkt(nc.challenge, QPORT, PROTOCOL_V1.version),
-            t,
-        );
-        assert_eq!(reply_text(&mut sv).0, "connectResponse");
-        sv.tick(t);
-        assert_eq!(gone(&mut sv), vcod_gsc::Value::Int(1));
-        assert_eq!(sv.client_count(), 1);
+            // Past sv_reconnectlimit, the same peer's connect takes the slot back.
+            let t = now + RECONNECT_LIMIT + Duration::from_millis(100);
+            sv.handle_packet(addr(5), &connect_pkt(nc.challenge, QPORT, proto.version), t);
+            assert_eq!(reply_text(&mut sv).0, "connectResponse");
+            sv.tick(t);
+            let ticks = field(&mut sv, "ticks");
+            sv.tick(t + Duration::from_millis(100));
+            let v = proto.version;
+            assert_eq!(
+                field(&mut sv, "gone"),
+                vcod_gsc::Value::Int(callbacks),
+                "{v}"
+            );
+            assert_eq!(field(&mut sv, "gens"), vcod_gsc::Value::Int(2), "{v}");
+            assert_eq!(field(&mut sv, "pers"), vcod_gsc::Value::Int(0), "{v}");
+            let held = callbacks == 0;
+            assert_eq!(
+                field(&mut sv, "field"),
+                vcod_gsc::Value::Int(held as i32),
+                "{v}"
+            );
+            let ticking = field(&mut sv, "ticks") != ticks;
+            assert_eq!(ticking, held, "{v}: the old player's thread");
+            assert_eq!(sv.client_count(), 1);
+        }
+    }
+
+    /// The disconnect callback's commands to the leaver alone go into its
+    /// ring, and the zombie's `w` squashes the unsent prints: retail's
+    /// zombie gets the `setClientCvar` and not the `iPrintLn` on all three
+    /// (`client-probes/probe_reconnect`).
+    #[test]
+    fn a_leavers_zombie_keeps_the_callbacks_reliable_commands_only() {
+        use crate::game::script::{CALLBACK_SETUP, ScriptRuntime};
+        for proto in [&PROTOCOL_V1, &PROTOCOL_V6] {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(proto);
+            install_script(
+                &mut sv,
+                ScriptRuntime::for_test_at(
+                    CALLBACK_SETUP,
+                    "main() {}\n\
+                     CodeCallback_PlayerDisconnect() { self iprintln(\"self\"); \
+                       self setclientcvar(\"probe_self\", 1); }\n",
+                ),
+            );
+            begun(&mut sv, now);
+            sv.tick(now);
+            sv.take_outgoing();
+            sv.send_server_command(0, "e \"unsent print\"");
+            sv.drop_client(0, "EXE_DISCONNECTED");
+            let z = sv.zombies[0].as_ref().expect("a zombie");
+            let ring: Vec<&str> = (z.reliable_sent + 1..=z.netchan.reliable_sequence as i32)
+                .map(|i| z.netchan.reliable[i as usize & (MAX_RELIABLE_COMMANDS - 1)].as_str())
+                .collect();
+            assert_eq!(
+                ring,
+                ["v probe_self \"1\"", "w \"EXE_DISCONNECTED\""],
+                "{}",
+                proto.version
+            );
+        }
     }
 
     #[test]

@@ -464,7 +464,14 @@ impl ObjectTable {
         if slot >= MAX_CLIENTS {
             return Err(ErrorKind::BadType("client slot out of range"));
         }
-        let script = cx.new_struct();
+        // A connect into a slot whose player the game never let go of (1.1's
+        // reconnect, cod11-server-handshake.md "A reconnect into a held
+        // slot") keeps the player's script object: its threads and its
+        // script fields live on, the engine fields and `pers` start over.
+        let script = match self.ents[slot].as_ref() {
+            Some(e) if e.client.is_some() => e.script,
+            _ => cx.new_struct(),
+        };
         // A numeric client field is a plain int or float on the `gclient_t`,
         // which `ClientConnect` has already zeroed, so retail's getter can
         // never hand script an undefined one. That is what lets every stock

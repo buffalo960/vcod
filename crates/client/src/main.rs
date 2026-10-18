@@ -521,7 +521,7 @@ struct Args {
     /// With `--net-probe`: a spectator that keeps decoding where a client
     /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
     /// drop), `zombie` (a disconnect before entering the world),
-    /// `zombie-active` (one after), `lean-fly` (the lean bits on a
+    /// `zombie-active` (one after), `reconnect` (a connect again into the held slot), `lean-fly` (the lean bits on a
     /// spectator's flight), `spec-fly` (forward held, every origin printed,
     /// beside `client-probes/probe_specspawn`) and `watch` (the entity list
     /// as it changes).

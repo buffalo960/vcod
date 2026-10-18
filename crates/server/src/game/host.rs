@@ -700,6 +700,17 @@ impl GameHost {
         // The carried `pers`, if the boundary this client crossed kept one;
         // taken, so a later reconnect starts empty as retail's does.
         let pers = self.pers_carry.get_mut(slot).and_then(Option::take);
+        // 1.1's reconnect zeroes the held player's entity in place; vcod
+        // unlinks it too, so the area tree never lists an entity the
+        // fresh one does not know it is in.
+        if self
+            .ents
+            .handle(slot as u32)
+            .and_then(|id| self.ents.get(id))
+            .is_some_and(|e| e.client.is_some())
+        {
+            self.area.unlink(slot as u32);
+        }
         let id = match self.ents.spawn_client(cx, slot, pers.as_ref()) {
             Ok(id) => id,
             Err(e) => {

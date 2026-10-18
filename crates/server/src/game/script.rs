@@ -2338,14 +2338,21 @@ impl ScriptRuntime {
                     return;
                 };
                 self.start_callback("CodeCallback_PlayerConnect", id);
+                // `ClientConnect` closes with `CalculateRanks` (1.1d 0x42677).
+                self.host.ranks_dirty = true;
             }
             ClientEvent::Begin(slot) => {
                 let Some(id) = self.client_entity(slot) else {
                     log::warn!("client {slot}: begin with no entity, connect never ran");
                     return;
                 };
+                // `ClientBegin` (1.1d 0x42f88): `CalculateRanks`, then the
+                // notify, whose waiters run in the next frame's thread pass
+                // on its clock (cod11-server-handshake.md, "When the game
+                // hears a drop").
+                self.host.ranks_dirty = true;
                 let event = self.vm.with_cx(|cx| cx.intern_folded(BEGIN_NOTIFY));
-                self.vm.notify(id, event, &[]);
+                self.vm.notify_for_frame(id, event, &[]);
             }
             ClientEvent::Disconnect(slot) => {
                 // `ClientDisconnect` opens with `menuresponse` ("-1",
@@ -4259,6 +4266,30 @@ mod tests {
         rt.push_client_event(ClientEvent::Begin(0));
         rt.run_frame(100);
         assert_eq!(rt.field_str(ent, "probe_out"), "begun");
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+    }
+
+    /// The `begin` waiter runs in the frame after the packet that entered
+    /// the client, on that frame's clock, as on all three retail servers
+    /// (`client-probes/probe_dropclient`: `PROBE begin` reads the first
+    /// snapshot's `serverTime`).
+    #[test]
+    fn the_begin_waiter_runs_on_the_next_frames_clock() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() { level.callbackPlayerConnect = ::c; }\n\
+             CodeCallback_PlayerConnect() { [[level.callbackPlayerConnect]](); }\n\
+             c() { self waittill(\"begin\"); self.probe_out = \"\" + getTime(); }\n",
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "vcod".into(),
+        });
+        rt.run_frame(50);
+        let ent = rt.client_entity(0).expect("connect allocated no entity");
+        rt.push_client_event(ClientEvent::Begin(0));
+        rt.run_frame(100);
+        assert_eq!(rt.field_str(ent, "probe_out"), "100");
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
     }
 
