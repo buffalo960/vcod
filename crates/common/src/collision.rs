@@ -5389,6 +5389,43 @@ mod tests {
         assert_eq!(check_leaf_fixture(&fs, "terrainleaf-uo.txt"), 12);
     }
 
+    /// A patch facet stops a trace only from in front of its surface:
+    /// retail UO's bulletTrace through mp_streets' arch corner 391 (x 292,
+    /// facing +x) from behind passes it and stops on its mirror 393 (x 284,
+    /// facing -x), as ours does (`tests/fixtures/patch/patchside-uo.txt`,
+    /// bsp-ibsp59-format.md "The leaf walk").
+    #[test]
+    fn a_patch_stops_traces_from_its_front_only() {
+        let Some(fs) = crate::testing::uo_fs() else {
+            return;
+        };
+        let text = std::fs::read_to_string(format!(
+            "{}/tests/fixtures/patch/patchside-uo.txt",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let bsp = crate::bsp::parse(&fs.read("maps/mp/mp_streets.bsp").unwrap()).unwrap();
+        let world = CollisionWorld::build(&bsp, &crate::props::collision_tris(&fs, &bsp.entities));
+        world.set_arith(Arith::Stored);
+        let mut checked = 0;
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let w: Vec<&str> = line.split(' ').collect();
+            let v = |i: usize| w[i].parse::<f32>().unwrap();
+            let start = Vec3::new(v(1), v(2), v(3));
+            let end = start + Vec3::X * if w[4] == "front" { -40.0 } else { 40.0 };
+            let t = world.shot_trace(start, end);
+            assert!(
+                t.fraction == v(5) && (t.endpos.x - v(6)).abs() <= 0.01 && t.normal.x == v(7),
+                "{line}: ours {} at {} normal {}",
+                t.fraction,
+                t.endpos.x,
+                t.normal.x
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 6);
+    }
+
     /// 1.5's mp_neuville: its patches 68 and 69, which no leaf lists, stand
     /// in open air, and retail 1.5b's bulletTrace passes them
     /// (`tests/fixtures/patch/neuvilleleaf-15.txt`).
