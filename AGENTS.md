@@ -741,8 +741,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   the tree is invisible to all four. A client links through
   `GameHost::link_client`, everything else through
   `GameHost::link_entity`; an `origin` write on a non-client relinks it, a
-  player `setOrigin`, spawn or death is an unlink then a link (combat doc
-  14.7).
+  player `setOrigin`, spawn, death or turret release (`TeleportPlayer`) is
+  an unlink then a link (combat doc 14.7).
 - Blast victims are measured per turn, after earlier callbacks ran. A client
   killed this frame keeps `takedamage` until its own end frame.
 - `ClientEndFrame`'s dead arm (`pm_type` 6, no contents, off the wire)

@@ -976,9 +976,10 @@ impl ScriptRuntime {
         // spectating), is released instead (0x5235c, 0x5236b).
         let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
         if self.host.turrets[&id].busy != 1 || !playing {
-            for te in self.release_turret(slot, sim) {
+            for te in self.release_turret(slot, sim).unwrap_or_default() {
                 self.push_temp_entity(te);
             }
+            self.teleport_link(slot, sim);
             return None;
         }
         let host = &mut self.host;
@@ -1133,36 +1134,59 @@ impl ScriptRuntime {
     /// `G_ClientStopUsingTurret` (0x53054, turrets doc 8) on the gun `slot`
     /// mans, if any: the record freed, the gun's loop cut and the gunner put
     /// back where it mounted, its new origin mirrored to script. Returns
-    /// `TeleportPlayer`'s temp entities for the caller to queue.
+    /// `TeleportPlayer`'s temp entities for the caller to queue, `None` when
+    /// `slot` mans no gun. The area tree's link is the caller's
+    /// ([`ScriptRuntime::teleport_link`]).
     pub fn release_turret(
         &mut self,
         slot: usize,
         sim: &mut crate::spectate::ClientSim,
-    ) -> Vec<crate::game::temp_entity::TempEntity> {
-        let Some((id, rec)) = self
+    ) -> Option<Vec<crate::game::temp_entity::TempEntity>> {
+        let (id, rec) = self
             .host
             .turrets
             .iter_mut()
-            .find(|(_, r)| r.owner == Some(slot))
-        else {
-            return Vec::new();
-        };
+            .find(|(_, r)| r.owner == Some(slot))?;
         let id = *id;
-        let Some((_, origin, stance)) = crate::game::turret::release(rec) else {
-            return Vec::new();
-        };
+        let (_, origin, stance) = crate::game::turret::release(rec)?;
         if let Some(ent) = self.host.ents.get_mut(id) {
             ent.loop_sound = 0;
         }
         let temps = crate::game::turret::release_sim(sim, slot, origin, stance);
         self.set_client_origin(slot, sim.origin());
-        temps
+        Some(temps)
+    }
+
+    /// `TeleportPlayer`'s link (1.1d 0x513dc..0x51477, 1.5b 0x50dc8,
+    /// UO 0x5a3f8): a client the tree held is unlinked and linked again at
+    /// the released origin, unsnapped, so it heads its node's list there
+    /// until its next cmd links it (combat doc 14.7). One it did not hold
+    /// stays out. `ClientSpawn`'s release skips this: its own unlink and
+    /// link at the spawn point follow, which the `spawn` builtin made.
+    pub fn teleport_link(&mut self, slot: usize, sim: &crate::spectate::ClientSim) {
+        if self.host.area.last_link(slot as u32).is_none() {
+            return;
+        }
+        let contents = self.host.area.contents(slot as u32);
+        self.host.area.unlink(slot as u32);
+        let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
+        let origin = sim.link_origin().to_array();
+        let bounds = (sim.ps.mins().to_array(), sim.ps.maxs().to_array());
+        self.host
+            .link_client(slot, origin, bounds, contents, playing);
+        self.set_client_link_origin(slot, origin);
     }
 
     /// The sim half of every release `GameHost::free_entity` queued for
     /// `slot` (`G_FreeTurret`, turrets doc 8), each temp entity queued.
-    pub fn apply_turret_releases(&mut self, slot: usize, sim: &mut crate::spectate::ClientSim) {
+    /// Whether there was one.
+    pub fn apply_turret_releases(
+        &mut self,
+        slot: usize,
+        sim: &mut crate::spectate::ClientSim,
+    ) -> bool {
         let ops = std::mem::take(&mut self.host.turret_ops);
+        let mut released = false;
         for op in ops {
             match op {
                 TurretOp::Release {
@@ -1174,10 +1198,12 @@ impl ScriptRuntime {
                         self.push_temp_entity(te);
                     }
                     self.set_client_origin(slot, sim.origin());
+                    released = true;
                 }
                 op => self.host.turret_ops.push(op),
             }
         }
+        released
     }
 
     /// Drops the releases queued for a slot with no sim to apply them to.
