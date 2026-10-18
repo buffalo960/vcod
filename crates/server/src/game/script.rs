@@ -2566,12 +2566,11 @@ impl ScriptRuntime {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
             let hit = victim.hit(blast, blast.inflictor.unwrap_or(attacker));
             host.damage_nonclient(cx, id, damage, attacker, &hit)
-                .into_iter()
-                .map(|(event, args)| (cx.intern_folded(event), args))
-                .collect::<Vec<_>>()
         });
+        // Raised inside the pass, run by the next frame's threads with the
+        // trigger queue's round (combat doc 14.8).
         for (event, args) in notifies {
-            self.vm.notify(Target::Entity(id), event, &args);
+            self.host.engine_notifies.push((id, event, args));
         }
     }
 

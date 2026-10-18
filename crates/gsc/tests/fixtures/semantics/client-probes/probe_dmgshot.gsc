@@ -11,6 +11,7 @@
 //	PROBE damage <number> <dmg> <attacker> <mod>
 //	PROBE trigger <number> <activator> <ms after the last damage>
 //	PROBE weapon <current weapon>
+//	PROBE nade <origin>      (the grenade's last origin before it went off)
 //
 //	An attacker is `player`, `world` or a classname; a round's or a swing's
 //	damage carries no mod (`-`). crates/server/tests/dmgtrig_ab.rs holds
@@ -71,6 +72,23 @@ in(buttons)
 phase(name)
 {
 	logPrint("PROBE phase " + name + "\n");
+}
+
+watch_nade()
+{
+	last = undefined;
+	for (;;)
+	{
+		g = getentarray("grenade", "classname");
+		if (g.size > 0)
+			last = g[0].origin;
+		else if (isdefined(last))
+		{
+			logPrint("PROBE nade " + last + "\n");
+			return;
+		}
+		wait 0.05;
+	}
 }
 
 ground_at(p)
@@ -169,6 +187,7 @@ run()
 	p switchtoweapon("stielhandgranate_mp");
 	wait 2;
 	logPrint("PROBE weapon " + p getcurrentweapon() + "\n");
+	thread watch_nade();
 	in(1);
 	wait 0.4;
 	in(0);
