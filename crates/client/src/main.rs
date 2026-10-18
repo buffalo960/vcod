@@ -554,6 +554,11 @@ struct Args {
     /// vcod-server overwrites it.
     #[arg(long)]
     save_slope: bool,
+    /// With --save-slope: keep the snapshots of every `pm_type` (dead,
+    /// spectator, intermission), not only a playing or linked body's. For
+    /// `predict_ab`'s state changes beside `client-probes/probe_uostates`.
+    #[arg(long, requires = "save_slope")]
+    slope_every_state: bool,
     /// With --save-slope or --probe-slope: a prone crawl instead of the
     /// route, from where `client-probes/probe_prone` puts the player on
     /// mp_carentan (`+set probe_teleport 1`, `probe_spot` street or mound),
@@ -1173,6 +1178,7 @@ fn main() -> Result<()> {
                 playerstate: args.save_playerstate,
                 motion: args.save_motion,
                 slope: args.save_slope,
+                slope_every_state: args.slope_every_state,
                 prone: args.probe_prone,
                 moves: args.probe_moves,
                 turns: args.probe_turns,

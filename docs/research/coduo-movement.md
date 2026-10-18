@@ -598,11 +598,22 @@ server took off the ammo plays one fire event and one kick, at a steady
 125 fps, at 4-25 ms frames with 1% hitches of 60-250 ms, and over a 60 ms
 link with 40 ms of jitter (VERIFIED, `each_round_of_held_fire_plays_and_kicks_once`
 on UO and 1.1). Without the field the 125 fps run plays 97 fires and 97
-kicks for 76 rounds (VERIFIED, the gate on the old `to_wire`). With 3%
-loss each way the jittery run played one fire more than the server fired:
-a round the prediction played from cmds the server never got (INFERRED,
-it stays exact with the loss off; retail's client predicts the same lost
-cmds).
+kicks for 76 rounds (VERIFIED, the gate on the old `to_wire`).
+
+With 3% loss each way the jittery run played one fire more than the
+server fired, at a UO install only. It was not lost cmds: it held with
+`cl_packetdup` 5 too. A winded sprint writes up to five fatigue events
+into the ring between snapshots, so a late snapshot's events sat 17
+sequences behind the prediction. The drain recorded one of them in the
+16-slot played table over a newer shot's slot, and that shot played again
+when the next snapshot brought it (VERIFIED, a trace of the gate's seed
+14). Retail's `CG_CheckChangedPredictableEvents` (cgame 0x30028c70)
+compares only the sequences inside `(cg.eventSequence - 16,
+cg.eventSequence)` (`add eax,-0x10` at 0x30028c8e) and leaves the rest
+alone. VERIFIED (disassembly). `PredictedEvents::filter_snapshot` now
+drops a sequence 16 or more behind without recording it. The gate runs a
+lossy case (seed 14), which played 77 fires for 76 rounds before the fix,
+and 13 seeds of it were exact after it (2026-10-18).
 
 `predict_ab`'s `predictor_matches_the_uo_server_step` checks the round
 trip field by field: each UO on-foot slope capture's cmds (sprint and
@@ -625,8 +636,22 @@ placement are the server's (`follow_seat`). Every read agrees on all six
 `vehPos` from `to_wire` puts 367 and 381 `delta_angles` misreads on the
 jeep seats and rider runs, the passenger's arcs, and six
 `weapon_pos_frac` ones on the tank seats run (VERIFIED, the gate on that
-revert). Not covered: a death, a spectator, a turret mount and a link,
-which no UO capture holds.
+revert).
+
+`mp_carentan-dm-slope-8ms-uostates-uo.txt` (2026-10-18,
+`client-probes/probe_uostates` beside a `--save-slope --slope-every-state
+--probe-moves` client) adds a death, a respawn, a spell as a spectator, a
+second respawn, and a `linkTo` to a script_origin that moves 96 units.
+At each snapshot the harness puts retail's `pm_type` on the sim
+(`follow_state`): the death; the respawn or spectator spawn, reseeded from
+retail's playerstate; the link, held at retail's origin. The client
+predicts neither a dead body nor a spectator (`predict::predictable`), so
+those cmds step the sim alone. Every read agrees on the rest, the linked
+stretch included (VERIFIED, 6855 cmds, 220 dead, spectating or linked
+snapshots, 770 cmds unpredicted, 0 mismatches). A `to_wire` that sends
+the linked `pm_type` 1 as 0 puts 1285 misreads on the gate (VERIFIED,
+the gate on that mutation). Not covered: a turret mount, which needs the
+turret's entity beside the sim.
 
 ## 16. The lean's footstep cadence
 

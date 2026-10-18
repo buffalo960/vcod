@@ -1212,6 +1212,22 @@ and ours, 2026-10-18, print the same `PROBE` lines (clocks aside); ours
 takes the reconnect a few seconds later, since it refuses a connect with a
 new challenge into a slot heard from in the last 3 s.
 
+## probe_uostates
+
+The wire round trip's state changes on United Offensive: a placed allied
+player dies, respawns, spectates, respawns and rides a `linkTo` on a moving
+script_origin, under a `--save-slope --slope-every-state` client.
+`docs/research/coduo-movement.md` 15. Two shells:
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> PROBE_SECS=90 tools/run_probe.sh client-probes/probe_uostates mp_carentan
+# 10 s later:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:<p> --save-slope --slope-every-state --probe-moves --probe-cmd-ms 8 --probe-team allies --probe-weapon m1carbine_mp --capture-tag uostates-uo --probe-secs 80
+```
+
+The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-uostates-uo.txt`
+(its header names this recipe), which `predict_ab`'s UO gate replays.
+
 ## probe_menuresponse
 
 What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for

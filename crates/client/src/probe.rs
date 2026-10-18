@@ -162,6 +162,8 @@ pub struct Save {
     pub playerstate: bool,
     pub motion: bool,
     pub slope: bool,
+    /// `--slope-every-state`: [`SlopeCapture`] keeps every `pm_type`.
+    pub slope_every_state: bool,
     /// `--probe-prone <yaw>`: the slope capture's walk is [`ProneScript`]
     /// instead of the route, facing up the grade along that world yaw.
     pub prone: Option<f32>,
@@ -362,6 +364,7 @@ pub fn probe(
         playerstate: save_playerstate,
         motion: save_motion,
         slope: save_slope,
+        slope_every_state,
         prone: prone_uphill,
         moves: probe_moves,
         turns: probe_turns,
@@ -467,7 +470,10 @@ pub fn probe(
         ProneScript::new(prone_uphill.unwrap_or(0.0), prone_script())
     };
     let mut slope_stats = SlopeStats::default();
-    let mut slope_capture = SlopeCapture::default();
+    let mut slope_capture = SlopeCapture {
+        every_state: slope_every_state,
+        ..SlopeCapture::default()
+    };
     // Every mode that needs a spawned player drives the same stock-menu join;
     // `--probe-team` alone joins and then just watches the roster.
     let joining = save_playerstate
@@ -7042,6 +7048,8 @@ impl SlopeStats {
 /// origin at every snapshot's `commandTime`.
 #[derive(Default)]
 struct SlopeCapture {
+    /// Every `pm_type`'s snapshots, not only a playing or linked body's.
+    every_state: bool,
     seen: Option<u32>,
     prev_seq: Option<i32>,
     cmds: Vec<net::msg::UserCmd>,
@@ -7076,10 +7084,12 @@ impl SlopeCapture {
         }
         let p = wire();
         // A seat is `pm_type` 1, the link (docs/research/coduo-vehicles.md).
-        if !matches!(
-            snap.ps.field_i32(p, "pm_type"),
-            PM_NORMAL | net::flags::PM_NORMAL_LINKED
-        ) {
+        if !self.every_state
+            && !matches!(
+                snap.ps.field_i32(p, "pm_type"),
+                PM_NORMAL | net::flags::PM_NORMAL_LINKED
+            )
+        {
             return;
         }
         self.seen = Some(snap.message_num);
