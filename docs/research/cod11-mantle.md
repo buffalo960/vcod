@@ -594,8 +594,73 @@ ct 48146-49088) sends `proneTorsoPitch` -47.64221 (-8673 shorts) and
 ease ran 0.01-0.02 degrees below them a snapshot, and the pitch cap's
 `delta_angles[0]` pushes off it 1-3 shorts off. 1.5b (0x2709a, 0x271ce) and
 UO (0x2c496, 0x2c5ca) store through `AngleNormalize180Accurate` instead.
-VERIFIED, call targets. vcod: `update_prone_pitch` takes the short path
-under 1.1's rules only (`short_normalize180`).
+VERIFIED, call targets. Their difference still goes through `AngleDelta`
+(1.5 0x26fc8 and 0x270fc), which truncates as 1.1's does (next section),
+so a 1.5 or UO pitch stops up to a short short of its target: a
+difference under one short reads 0 and the pitch stays. VERIFIED,
+disassembly. vcod: `update_prone_pitch` measures through `angle_delta` on
+every build and stores through `short_normalize180` on 1.1,
+`normalize180_accurate` on 1.5 and UO.
+
+### `AngleDelta` and the angle folds at every call site
+
+`AngleDelta(a, b)` is `AngleNormalize180(a - b)` on all three servers, and
+every `AngleNormalize180` and `AngleNormalize360` multiplies by 182.04445
+and truncates to a short under control word 0xc00 before scaling back.
+VERIFIED, disassembly: 1.1d `AngleNormalize360` 0x3eb30, `AngleNormalize180`
+0x3eb70, `AngleDelta` 0x3ec9c (all inline, rodata 0x72ba4, 0x72bac,
+0x72bcc); 1.5b 0x36a3c, 0x36a8f, 0x36c0a and UO 0x3dc8c, 0x3dcdf, 0x3de5a,
+where `AngleDelta` stores `a - b` to a float and calls
+`AngleNormalize180`, which calls `AngleNormalize360`. So a result is on
+the shorts grid, `AngleNormalize180` gives -180 (exclusive) to 180, and a
+difference rounds toward zero by up to a short (0.0055 degrees).
+`AngleNormalize180Accurate` (1.5 0x36b75) instead adds 360 while the angle
+is at or under -180 and takes it away while over 180, so an angle in range
+comes back as it went in. VERIFIED, disassembly and rodata 0x77954-0x7795c.
+The 1.1 cgame's `AngleNormalize180` (cgame_mp_x86.dll 0x3003c400) truncates
+the same way through MSVC's `_ftol` (0x3005a890); its callers pass the
+float difference, as 1.5 does. VERIFIED, disassembly.
+
+The call sites, read off the relocations (1.1d) and the call targets (1.5b,
+UO), and what vcod runs at each (2026-10-18):
+
+| Site | 1.1d | 1.5b / UO | vcod |
+|---|---|---|---|
+| `PM_SetMovementDir` | 0x2e9ab, 0x2eaec, 0x2eb2f | in 0x1f48f / 0x23f62 | shorts (`aim::angle_normalize_180`) |
+| Going prone, the torso clamp | 0x31ed7 | in 0x232c4 / 0x27e16 | shorts since 2026-10-18 (`enter_prone`) |
+| Ladder yaw cap, `bg_ladder_yawcap` | 0x32ed0, 0x32f68 | `PM_UpdateViewAngles` | not modelled |
+| Prone yaw delta | 0x3306e, 0x3307c | swing fit 0x25ff5 and `PM_UpdateViewAngles` | shorts |
+| Prone yaw placed | 0x33266 (`AngleNormalize360`) | `Accurate` | shorts in 0..360 since 2026-10-18 on 1.1 |
+| Prone pitch cap delta | 0x33295, 0x332a3 | `PM_UpdateViewAngles` | shorts since 2026-10-18 (`cap_prone_pitch`) |
+| Prone pitch placed | 0x33346 (`AngleNormalize180`) | `Accurate` | shorts on 1.1 since 2026-10-18 |
+| `PM_UpdatePronePitch` | 0x334e3, 0x335e0, 0x33577, 0x33674 | 0x26fc8, 0x270fc, `Accurate` | shorts (1.5 and UO's difference since 2026-10-18) |
+| `PM_LadderMove` legs | 0x33daa | `PM_LadderMove` | shorts since 2026-10-18 (`ladder_move`) |
+| UO seat arcs | | UO `PM_UpdateViewAngles` | shorts since 2026-10-18 (`cmd::clamp_view`) |
+| `SetClientViewAngle` prone arm | 0x41e83..0x4203c | 0x3bf08 / 0x44301 | modelled since 2026-10-18 (`prone_view_angle`) |
+| `BG_PlayerStateToEntityState(Extrapolate)` | 0x2ce76, 0x2ce9a, 0x2d3c8, 0x2d3ec | same | shorts (`angle_normalize180`) |
+| `BG_CheckProneValid` | 0x2e1a3, 0x2e1f8 | same | shorts |
+| `BG_Player_DoControllers` | 0x2b87c | | shorts (`playerpose`) |
+| `BG_CalculateWeaponPosition_Sway` | 0x3a8e6, 0x3a8f9 | same | shorts (`aim`) |
+| `Reached_ScriptMover` | 0x5fad8, 0x5faf2, 0x5fb0f | same | shorts (`mover.rs`) |
+| turret use cone | 0x528c2 | | shorts (`turret.rs`) |
+| `G_MissileLandAngles`, `fire_grenade` | 0x53707.., 0x54585 | same | the missile's angles (cod11-combat.md) |
+
+VERIFIED, the addresses; the table's "1.5b / UO" function names come from
+the Ghidra exports (`game15.so.c`, `game.mp.uo.i386.so.c`), whose static
+functions are unnamed. VERIFIED live (2026-10-18, `playerstate_slope_ab`,
+the two prone crawls `mp_carentan-dm-slope-8ms-prone-street.txt` and
+`-mound.txt`): with the view yaw placed by a float, our view sat up to
+0.0055 degrees (one short) off retail's on the snapshots where the cap
+held the view (street ct 37392-37934, mound ct 42437-42831); placed
+through `AngleNormalize360` it is on retail's.
+
+The view vcod holds is radians, which do not round-trip the degrees; a
+view one ulp under the grid truncates a whole short away in `AngleDelta`.
+INFERRED, arithmetic: 182.04445 as a float is 2.4e-8 over 65536/360, so a
+grid angle's product lands just over its whole short, and an ulp under it
+lands under. vcod's `view_deg` snaps a view within 0.05 of a short back to
+the grid before any of these, and the cap writes its degrees to
+`view_capped` for the cmd's view.
 
 `PitchForYawOnNormal` (0x3d274): VERIFIED, the constants: pi/180 (double at
 0x72a10), -180.0 and pi (doubles at 0x72a20, 0x72a28), 360.0 (0x72a30), and
