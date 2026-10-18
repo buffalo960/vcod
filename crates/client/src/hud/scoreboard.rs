@@ -320,6 +320,22 @@ impl Scoreboard {
         }
     }
 
+    /// `weapnext` (`forward`) or `weapprev` while `+scores` holds the board
+    /// (cgame 0x30038040, 0x300380b0; 1.5 and UO the same): the board
+    /// scrolls `step` items up or down and no weapon is cycled, ahead of
+    /// every other gate of the two commands. Whether the board took it.
+    pub fn take_cycle(&mut self, forward: bool, step: i32) -> bool {
+        if !self.held {
+            return false;
+        }
+        if forward {
+            self.scroll_up(step);
+        } else {
+            self.scroll_down(step);
+        }
+        true
+    }
+
     /// Draws the board (`0x3002b650`): the frame and its title and footer
     /// rows, the objective, the column headers, then the team blocks.
     /// False when nothing is drawn.
@@ -1137,6 +1153,32 @@ mod tests {
         board.scroll_up(3);
         let out = draw(&mut board, &fx, None);
         assert!(quad(&out, "hudScoreboardScroll_UpArrow").is_empty());
+    }
+
+    /// `weapnext` scrolls a held board up and `weapprev` down; with the
+    /// board down they cycle weapons as usual.
+    #[test]
+    fn weapon_cycle_scrolls_a_held_board() {
+        let Some(fx) = fixture() else {
+            return;
+        };
+        let mut board = Scoreboard::new();
+        assert!(!board.take_cycle(false, 3), "board down");
+        board.press(0.0);
+        let mut cmd = String::from("b 40 0 0");
+        for i in 0..40 {
+            cmd += &format!(" {} 0 0 0 0", [1, 2][i % 2]);
+        }
+        board.on_server_command(&toks(&cmd));
+        draw(&mut board, &fx, None);
+        assert!(board.take_cycle(false, 3));
+        assert_eq!(board.scroll, 3);
+        assert!(board.take_cycle(true, 2));
+        assert_eq!(board.scroll, 1);
+        assert!(board.take_cycle(true, 2));
+        assert_eq!(board.scroll, 0);
+        board.release(1.0);
+        assert!(!board.take_cycle(false, 3));
     }
 
     /// A board that fits never scrolls.

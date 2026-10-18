@@ -1157,6 +1157,34 @@ crates/gsc/tests/fixtures/semantics/client-probes/probe_hud_disconnect.gsc`.
 Plain `--net-probe` writes no fixture. Retail and ours, 2026-10-06, print
 the same three lines; the doc section quotes them.
 
+## probe_dropclient
+
+When the game hears a client leave: the disconnect callback's
+`getTime()`, the `menuresponse` (`-1`, `disconnect`) that
+`ClientDisconnect` raises on the player as its own thread and a level
+thread hear it, and which message carries the callback's `iPrintLn`
+against the drop's `e` notice. `docs/research/cod11-server-handshake.md`,
+"When the game hears a drop". Four shells (or one script): a watcher, a
+client that goes silent and times out, and one that sends `disconnect`.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> PROBE_SECS=45 tools/run_probe.sh client-probes/probe_dropclient mp_pavlov +set sv_timeout 3
+# 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge watch --probe-secs 34
+# 2 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge silence --probe-secs 25
+# 12 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge zombie-active --probe-secs 12
+```
+
+`COD_VERSION=1.5` and `COD_VERSION=uo` (map `mp_uo_carentan`: mp_cassino's
+tank script needs `level.ceasefire`) take the same recipe. Against ours:
+`vcod-server mp_pavlov --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_dropclient.gsc
+--set sv_timeout=3`. The watcher's `EDGE cmd` lines carry the order.
+Retail on all three and ours, 2026-10-18, print the same `PROBE` lines
+(clocks aside) and the same layout.
+
 ## probe_menuresponse
 
 What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for
