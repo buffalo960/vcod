@@ -49,6 +49,9 @@ const MAX_DROP: f32 = 250.0;
 /// along the deck with, and a bot that did fell past it to the hold
 /// (bot-navigation.md section 3).
 const PACED_DROP: f32 = 200.0;
+/// How long [`coasts_off`] lets a body coast: 190 units/s coasts to rest
+/// in about 35 units and half a second.
+const COAST_TICKS: usize = 16;
 /// How high over a drop's landing [`a_miss_hurts`] looks out from.
 const MISS_EYE: f32 = 48.0;
 /// How far either side of the body a run off a drop whose miss can hurt
@@ -2182,8 +2185,14 @@ impl Follower {
             // clips and the bot's own run, two units on, misses, and three
             // bots fell to the deck at 352 (bot-navigation.md section 3).
             let across = pace.truncate().perp().normalize_or_zero().extend(0.0) * ASIDE_DROP;
+            // Not where a body on the node, turned round the edge with
+            // nothing to steer by, coasts off a lip anyway: off mp_ship's
+            // mast top at (3301, 128, 1030), 3 units from its lip, one did
+            // and fell to the deck at 480 (seed 449).
+            let on_node = (at - a).truncate().length() < ON_NODE;
             return lands(at)
                 && (across == Vec3::ZERO
+                    || (on_node && coasts_off(world, at, pace))
                     || !self.miss_hurts(world, edge, b)
                     || (lands(at + across) && lands(at - across)));
         }
@@ -3748,6 +3757,18 @@ fn a_miss_hurts(world: &CollisionWorld, q: Vec3) -> bool {
                     .fraction
                     >= 1.0
         })
+    })
+}
+
+/// Whether a body at `at` moving at `pace` with no key held leaves the
+/// ground and falls more than a jump within [`COAST_TICKS`].
+fn coasts_off(world: &CollisionWorld, at: Vec3, pace: Vec3) -> bool {
+    let mut ps = body(at, 0.0);
+    ps.velocity = pace.truncate().extend(0.0);
+    let mut sim = Sim::default();
+    (0..COAST_TICKS).any(|_| {
+        sim.tick(world, &mut ps, &NULL_USERCMD);
+        ps.origin.z < at.z - vcod_common::pmove::JUMP_HEIGHT
     })
 }
 
@@ -6700,7 +6721,9 @@ mod tests {
     /// side too, and the drop does not hold from there; from the node,
     /// straight at the ledge, it does. A drop into the hold at (4246, 232,
     /// 56), where a miss lands on the hold's floor, is not asked: held
-    /// for it, a bot jammed on a node another stood on (seed 439).
+    /// for it, a bot jammed on a node another stood on (seed 439). Nor is
+    /// a body on mp_ship's mast top at (3301, 128, 1030), which turned
+    /// round coasts off its lip anyway (seed 449).
     #[test]
     fn a_drop_that_lands_only_on_a_corner_does_not_hold() {
         let Some(world) = map_world("mp_ship") else {
@@ -6726,6 +6749,9 @@ mod tests {
             !f.edge_holds(Some(w), at, pace, &g),
             "from where the bots passed"
         );
+        assert!(!coasts_off(w, at, pace));
+        let mast = Vec3::new(3309.6, 128.8, 1030.125);
+        assert!(coasts_off(w, mast, Vec3::new(-176.0, -72.0, 0.0)));
         let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
         assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
     }
