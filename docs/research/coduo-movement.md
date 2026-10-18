@@ -650,8 +650,27 @@ those cmds step the sim alone. Every read agrees on the rest, the linked
 stretch included (VERIFIED, 6855 cmds, 220 dead, spectating or linked
 snapshots, 770 cmds unpredicted, 0 mismatches). A `to_wire` that sends
 the linked `pm_type` 1 as 0 puts 1285 misreads on the gate (VERIFIED,
-the gate on that mutation). Not covered: a turret mount, which needs the
-turret's entity beside the sim.
+the gate on that mutation).
+
+`mp_carentan-dm-slope-8ms-uoturret-uo.txt` (2026-10-18,
+`client-probes/probe_turret` under `probe_teleport 1` beside a
+`--save-slope --slope-every-state --probe-uoturret 229` client) mounts the
+misc_mg42 at (1712 1830 8) standing, sweeps the view past both arcs, fires
+a burst, holds the move, jump and stance keys on the gun and lets go. What
+retail's playerstate shows on the gun, each VERIFIED off the capture:
+`eFlags` carries `EF_MOUNTED_STAND` (0xc000) from the snapshot after the
+use tap, `viewlocked_entNum` the gun (298) and `groundEntityNum` 1023;
+the origin follows the barrel's yaw, the turret pass's gunner placement
+(1746.4 1861.9 at the gun's rest, 1733.3 1873.2 swung 20 degrees); the
+back key sets `pm_flags` 0x40 (`PMF_BACKWARDS_RUN`), which outlives the
+mount; the release brings `EV_STANCE_FORCE_STAND` and puts the body at
+the mount origin raised one unit, from where it falls. The harness has no
+gun, so at each snapshot it mounts and releases the sim where retail's
+`eFlags` do and holds it at retail's origin while on the gun
+(`follow_turret`), as `follow_seat` does a seat. Every read agrees
+(VERIFIED, 2890 cmds, 450 mounted snapshots, 0 mismatches). A `from_wire`
+that ignores the mounted bits puts 8076 misreads on that run, 2416 of
+them `mounted` (VERIFIED, the gate on that mutation).
 
 ## 16. The lean's footstep cadence
 
