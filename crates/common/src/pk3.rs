@@ -561,6 +561,38 @@ impl Pk3Fs {
         out
     }
 
+    /// `FS_GetFileList(dir, ext)` (`FS_ListFilteredFiles`, CoDMP.exe
+    /// 0x42b2a0): [`Self::list_dir_in_search_order`] keeping the names that
+    /// end in `ext` (case-insensitively), the overlay's (sorted) first.
+    /// Full paths, the pak's spelling.
+    pub fn file_list(&self, dir: &str, ext: &str) -> Vec<String> {
+        let dir = dir.trim_end_matches('/');
+        let prefix = format!("{}/", dir.to_lowercase());
+        let ends = |name: &str| {
+            name.len() >= ext.len()
+                && name.is_char_boundary(name.len() - ext.len())
+                && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext)
+        };
+        let mut overlaid: Vec<&String> = self
+            .overlay
+            .keys()
+            .filter(|k| k.strip_prefix(&prefix).is_some_and(|r| !r.contains('/')))
+            .collect();
+        overlaid.sort();
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let names = overlaid
+            .into_iter()
+            .map(|k| k[prefix.len()..].to_string())
+            .chain(self.list_dir_in_search_order(dir));
+        for name in names {
+            if ends(&name) && seen.insert(name.to_lowercase()) {
+                out.push(format!("{dir}/{name}"));
+            }
+        }
+        out
+    }
+
     pub fn find_maps(&self) -> Vec<String> {
         let mut maps: Vec<String> = self
             .index
@@ -620,6 +652,32 @@ mod tests {
         let fs = Pk3Fs::open(dir.path()).unwrap();
         assert_eq!(fs.read("maps/mp/MP_TEST.bsp").unwrap(), b"data");
         assert!(fs.read("maps/mp/missing.bsp").is_none());
+    }
+
+    /// `FS_GetFileList`'s order: the newest pak first, each in its zip
+    /// order, a name a newer pak listed skipped, the extension's case and
+    /// a subdirectory ignored.
+    #[test]
+    fn a_file_list_runs_in_search_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let gt = |f: &str| format!("maps/mp/gametypes/{f}");
+        let (sd, dm, tdm, bel) = (gt("sd.gsc"), gt("dm.gsc"), gt("tdm.GSC"), gt("bel.gsc"));
+        let (txt, sub) = (gt("dm.txt"), gt("x/ctf.gsc"));
+        make_pk3(dir.path(), "pak5.pk3", &[(&sd, ""), (&dm, ""), (&txt, "")]);
+        make_pk3(
+            dir.path(),
+            "zzz_mod.pk3",
+            &[
+                (&tdm, ""),
+                (&sub, ""),
+                ("maps/MP/gametypes/SD.gsc", ""),
+                (&bel, ""),
+            ],
+        );
+        let fs = Pk3Fs::open(dir.path()).unwrap();
+        let got = fs.file_list("maps/mp/gametypes", ".gsc");
+        let want = ["tdm.GSC", "SD.gsc", "bel.gsc", "dm.gsc"].map(gt);
+        assert_eq!(got, want);
     }
 
     /// UO's impact table names its explodes with backslashes, which the

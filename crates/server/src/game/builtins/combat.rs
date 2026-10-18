@@ -575,6 +575,7 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
                 anims,
                 rigs: &mut host.hit_rigs,
                 now_ms: host.dobj_time_ms,
+                posed: Some(&mut host.dobj_posed),
             }),
             _ => None,
         };
@@ -674,6 +675,7 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
             anims,
             rigs: &mut host.hit_rigs,
             now_ms: host.dobj_time_ms,
+            posed: Some(&mut host.dobj_posed),
         }),
         _ => None,
     };
@@ -857,6 +859,7 @@ fn body_hit(
             // pose the DObjs were last advanced to: on 1.1d the first pass,
             // on 1.5 and UO their one (combat doc 3.6, cod11-turrets.md 13.7).
             now_ms: host.dobj_time_ms,
+            posed: Some(&mut host.dobj_posed),
         }),
         _ => None,
     };

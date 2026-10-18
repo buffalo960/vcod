@@ -1676,19 +1676,17 @@ origin on ours (`compare_impacts`).
       glide sits within 0.02 of retail's (VERIFIED, replay,
       `vehicle_armor_ab::the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail`,
       fixture `mp_cassino-tank-glide-uo.txt`, cut from that run) but for
-      four frames its `GLIDE_GAPS` name:
-      - 54100 and 54250, where retail repeats the last frame's pose: a
-        `bulletTrace` in the first thread pass (the profile's at 54050,
-        the aim sweep's at 54200, both run in the next frame's first
-        pass) poses the body under the frame's DObj stamp, and the link
-        pass then reads those bones (`cod11-movers.md` 15, "A bone asked
-        for before the anim update"). vcod's script trace stamps nothing.
-        VERIFIED, replay: stamping every bone of each body a thread
-        `bulletTrace` meets at `dobj_time_ms` makes ours repeat the pose
-        at the profile's frame as retail does (the aim sweep's repeats
-        land a frame early on ours, where the replay's sweep thread runs
-        50 ms ahead of retail's). Not ported: the bones a trace stamps
-        are the per-bone stamp work of `cod11-combat.md` 3.6.
+      two frames its `GLIDE_GAPS` name. 54100 and 54250, where retail
+      repeats the last frame's pose, now match: a `bulletTrace` in the
+      first thread pass (the profile's at 54050, the aim sweep's at
+      54200) poses the body under the frame's DObj stamp and the link
+      pass reads those bones (`cod11-movers.md` 15, cod11-combat.md 3.6,
+      `probe_stamp`), which vcod's script trace now does through
+      `GameHost::dobj_posed`. The gate connects its shooter as late as
+      the recipe's (placed at 23200 on both), since the sweep's
+      half-second clock runs from his placement; joined with the target
+      the sweep ran at 54150 and its repeat landed a frame early
+      (VERIFIED, replay, 2026-10-18). The two left:
       - 53900, every bone 21 units high on ours for one frame: the
         probe's marks link to the rider, and `G_RunClient` (0x41dfc)
         re-reads a linked player's `r.currentOrigin` off his link each

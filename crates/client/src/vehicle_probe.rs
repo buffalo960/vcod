@@ -566,7 +566,7 @@ impl VehicleProbe {
         println!(
             "VEH {} ps pos {:.1} {:.1} {:.1} view {:.2} {:.2} vehPos {} vehType {} vehMotion {} \
              locked {} pm_flags {:#x} eflags {:#x} weapon {} pm_type {} da {} {} frac {:.3} \
-             hint {} {} hp {} wstate {}",
+             hint {} {} hp {} wstate {} ct {} z {}",
             s.server_time,
             o[0],
             o[1],
@@ -588,6 +588,8 @@ impl VehicleProbe {
             ps("serverCursorHintString"),
             s.ps.health(),
             ps("weaponstate"),
+            ps("commandTime"),
+            o[2],
         );
         let vehicle = vcod_common::net::flags::ET_VEHICLE_V22;
         let seated = vcod_common::net::flags::EF_IN_VEHICLE_V22;

@@ -201,6 +201,10 @@ struct Particle {
     /// A `relative` element of an effect played on a tag rides that tag
     /// (R10).
     bolt: Option<Bolt>,
+    /// A delayed element of an effect played on a tag, held in the tag's
+    /// frame until it falls due and posed there on the tag as it then
+    /// stands (0x493f40), with its gravity.
+    repose: Option<f32>,
 }
 
 /// `CEmitter`'s emit cursor (CoDMP.exe 0x48fcd4, grammar doc R10): the
@@ -225,6 +229,9 @@ struct Chain {
     at: SpawnAt,
     depth: u8,
     bolt: Option<Bolt>,
+    /// `at` is in the bolt's frame, posed on it when the chain falls due
+    /// (0x493f40).
+    repose: bool,
 }
 
 /// A tag an effect was played on, this frame: its origin and axis. A
@@ -260,6 +267,33 @@ impl BoltFrame {
     fn unrotate(&self, v: Vec3) -> Vec3 {
         let (x, y, z) = self.axis;
         Vec3::new(v.dot(x), v.dot(y), v.dot(z))
+    }
+
+    /// `at` taken into this frame, or with `back` out of it.
+    fn carry(&self, at: SpawnAt, back: bool) -> SpawnAt {
+        let pos = |p: Vec3| match back {
+            false => self.unrotate(p - self.origin),
+            true => self.origin + self.rotate(p),
+        };
+        let dir = |d: Vec3| match back {
+            false => self.unrotate(d),
+            true => self.rotate(d),
+        };
+        match at {
+            SpawnAt::Point { pos: p } => SpawnAt::Point { pos: pos(p) },
+            SpawnAt::Surface { pos: p, normal } => SpawnAt::Surface {
+                pos: pos(p),
+                normal: dir(normal),
+            },
+            SpawnAt::Directed { pos: p, dir: d } => SpawnAt::Directed {
+                pos: pos(p),
+                dir: dir(d),
+            },
+            SpawnAt::Oriented { pos: p, axis } => SpawnAt::Oriented {
+                pos: pos(p),
+                axis: axis.map(dir),
+            },
+        }
     }
 }
 
@@ -503,6 +537,11 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
         },
         _ => None,
     };
+    // The tag's frame a delayed element is held in until it falls due.
+    let posed = match cx.bolt {
+        Some((id, Some(frame))) => Some((id, frame)),
+        _ => None,
+    };
     // Clamped so a malformed count (1e9) does not spin the loop before
     // push_capped evicts.
     let count = (sample_r1(rng, em.count).round().max(0.0) as usize).min(MAX_PARTICLES);
@@ -514,12 +553,18 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
             // PlayEffect on one `playfx` entry (0x492780 picks).
             let (_, pos) = element_origin(rng, em, at, spawn_frame(at));
             if let Some(fx) = pick(rng, &em.play_fx) {
+                let mut at = spawn_moved(at, pos);
+                let tag = posed.filter(|_| spawn > now);
+                if let Some((_, f)) = tag {
+                    at = f.carry(at, false);
+                }
                 out.chains.push(Chain {
                     due: spawn,
                     path: efx::chained_path(fx),
-                    at: spawn_moved(at, pos),
+                    at,
                     depth: cx.depth + 1,
                     bolt: cx.bolt.map(|(id, _)| id),
+                    repose: tag.is_some(),
                 });
             }
             continue;
@@ -572,7 +617,8 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
         let mut pos = base;
 
         // Gravity joins the acceleration on world z (0x494050).
-        accel.z += sample_r1(rng, em.gravity);
+        let gravity = sample_r1(rng, em.gravity);
+        accel.z += gravity;
         let rot = sample_r1(rng, em.rotation);
         let rot_delta = sample_r1(rng, em.rotation_delta);
         let (size0, size1) = sample_curve(rng, &em.size);
@@ -630,6 +676,21 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
             _ => None,
         };
         let mut emit = emit;
+        let mut debris = debris;
+        // A delayed non-`relative` element waits in the tag's frame.
+        let repose = posed.filter(|_| bolt.is_none() && spawn > now);
+        if let Some((_, frame)) = repose {
+            pos = frame.unrotate(pos - frame.origin);
+            vel = frame.unrotate(vel);
+            accel = frame.unrotate(accel - Vec3::Z * gravity);
+            if let Some(e) = &mut emit {
+                e.pos = pos;
+                e.vel = vel;
+            }
+            if let Some(d) = &mut debris {
+                d.angles -= forward_angles(frame.axis.0);
+            }
+        }
         if let Some((_, frame)) = bolt {
             pos = frame.unrotate(pos - frame.origin);
             vel = frame.unrotate(vel);
@@ -666,7 +727,8 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
             debris,
             emit,
             depth: cx.depth,
-            bolt: bolt.map(|(id, _)| id),
+            bolt: bolt.or(repose).map(|(id, _)| id),
+            repose: repose.map(|_| gravity),
         };
 
         push_capped(out.particles, p, MAX_PARTICLES);
@@ -751,6 +813,23 @@ fn step_pool(pool: &mut VecDeque<Particle>, cx: &StepCx, rng: &mut Rng, chains: 
         if now < p.spawn {
             return true;
         }
+        if let Some(gravity) = p.repose.take() {
+            // Posed on the tag as it stands now; a tag that no longer poses
+            // spawns nothing (INFERRED, 0x493f40's call of 0x49e8d0).
+            let Some(f) = p.bolt.take().and_then(|id| cx.bolts.get(&id).copied()) else {
+                return false;
+            };
+            p.pos = f.origin + f.rotate(p.pos);
+            p.vel = f.rotate(p.vel);
+            p.accel = f.rotate(p.accel) + Vec3::Z * gravity;
+            if let Some(e) = &mut p.emit {
+                e.pos = p.pos;
+                e.vel = p.vel;
+            }
+            if let Some(d) = &mut p.debris {
+                d.angles += forward_angles(f.axis.0);
+            }
+        }
         let frame = match p.bolt {
             None => None,
             Some(id) => match cx.bolts.get(&id) {
@@ -797,6 +876,7 @@ fn step_pool(pool: &mut VecDeque<Particle>, cx: &StepCx, rng: &mut Rng, chains: 
                     at: SpawnAt::Directed { pos, dir },
                     depth: p.depth + 1,
                     bolt: p.bolt,
+                    repose: false,
                 });
             }
             p.emit = Some(e);
@@ -832,6 +912,7 @@ fn death_chain(
         at: SpawnAt::Directed { pos, dir },
         depth: p.depth + 1,
         bolt: None,
+        repose: false,
     });
 }
 
@@ -915,6 +996,7 @@ fn update_origin(
                     },
                     depth: p.depth + 1,
                     bolt: None,
+                    repose: false,
                 });
             }
             if p.impact_kills {
@@ -1081,6 +1163,7 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32, width
         emit: None,
         depth: 0,
         bolt: None,
+        repose: None,
     }
 }
 
@@ -1369,7 +1452,14 @@ impl FxSystem {
                 i += 1;
                 continue;
             }
-            let c = self.chains.remove(i);
+            let mut c = self.chains.remove(i);
+            if c.repose {
+                let frame = c.bolt.and_then(|id| self.bolts.get(&id).copied());
+                let Some(f) = frame else {
+                    continue;
+                };
+                c.at = f.carry(c.at, true);
+            }
             sounds.extend(self.spawn_effect(fs, &c.path, c.at, now, c.depth, c.bolt));
         }
         sounds
@@ -2934,6 +3024,47 @@ mod tests {
         s.step(0.01, 0.02, None);
         assert_eq!(s.counts().0, 1);
         assert!(s.tag_bolts().is_empty());
+    }
+
+    /// A delayed element of an effect on a tag spawns on the tag as it
+    /// stands when it falls due (0x493f40), not where the play found it;
+    /// one whose tag no longer poses spawns nothing.
+    #[test]
+    fn a_delayed_element_on_a_tag_spawns_at_the_tag_when_due() {
+        let mut late = still_particle();
+        late.origin = R3 {
+            a: [5.0, 0.0, 0.0],
+            b: [5.0, 0.0, 0.0],
+        };
+        late.delay = R1 { a: 100.0, b: 100.0 };
+        let late_clone = late.clone();
+        let mut s = sys_with_files(&[("fx/late.efx", vec![late])]);
+        let tag = TagBolt {
+            entity: 70,
+            slot: 1,
+        };
+        let pose = |origin: Vec3, axis| TagPose { origin, axis };
+        let play = pose(Vec3::new(10.0, 0.0, 0.0), [Vec3::X, Vec3::Y, Vec3::Z]);
+        s.spawn_on_tag(&Pk3Fs::empty(), "fx/late.efx", tag, play, 0.0);
+        assert_eq!(s.tag_bolts(), HashSet::from([tag]));
+        // Turned to face +y and moved before the element falls due.
+        let due = pose(Vec3::new(0.0, 100.0, 0.0), [Vec3::Y, -Vec3::X, Vec3::Z]);
+        s.set_tag_bolts(&HashMap::from([(tag, due)]));
+        s.step(0.05, 0.05, None);
+        assert!(centers(&s, 0.05).is_empty());
+        s.step(0.06, 0.11, None);
+        let c = centers(&s, 0.11);
+        assert_eq!(c.len(), 1);
+        assert!((c[0] - Vec3::new(0.0, 105.0, 0.0)).length() < 1e-4, "{c:?}");
+        // Spawned, it no longer rides the tag.
+        assert!(s.tag_bolts().is_empty());
+
+        let mut s = sys_with_files(&[("fx/late.efx", vec![late_clone])]);
+        s.spawn_on_tag(&Pk3Fs::empty(), "fx/late.efx", tag, play, 0.0);
+        assert_eq!(s.counts().0, 1);
+        s.set_tag_bolts(&HashMap::new());
+        s.step(0.2, 0.2, None);
+        assert_eq!(s.counts().0, 0);
     }
 
     #[test]

@@ -317,16 +317,17 @@ pub struct GameType {
 /// `maps/mp/gametypes/*.gsc` whose name does not start with `_`, at most 31
 /// (the join list's 32 slots hold "All" first), each named by the first
 /// token of its `.txt` (docs/research/cod11-front-end.md, "The game type
-/// filter"). vcod lists them in path order, not retail's search-path order.
+/// filter"), in `FS_GetFileList`'s search-path order ([`Pk3Fs::file_list`]).
+///
+/// [`Pk3Fs::file_list`]: crate::pk3::Pk3Fs::file_list
 pub fn game_types(fs: &crate::pk3::Pk3Fs) -> Vec<GameType> {
     const DIR: &str = "maps/mp/gametypes/";
     const MAX: usize = 31;
     let mut out = Vec::new();
-    for path in fs.list_prefix(DIR) {
-        let Some(script) = path[DIR.len()..].strip_suffix(".gsc") else {
-            continue;
-        };
-        if script.contains('/') || script.starts_with('_') {
+    for path in fs.file_list(DIR, ".gsc") {
+        let name = &path[DIR.len()..];
+        let script = &name[..name.len() - ".gsc".len()];
+        if script.starts_with('_') {
             continue;
         }
         if out.len() == MAX {
@@ -1021,9 +1022,29 @@ mod tests {
         assert_eq!(got, want.map(|(a, b)| (a.to_string(), b.to_string())));
     }
 
+    /// A newer pak's game types come first, as `FS_GetFileList` walks the
+    /// search path, not in name order.
+    #[test]
+    fn game_types_follow_the_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let pak = |name: &str, scripts: &[&str]| {
+            let entries: Vec<(String, &[u8])> = scripts
+                .iter()
+                .map(|s| (format!("maps/mp/gametypes/{s}.gsc"), &b""[..]))
+                .collect();
+            let refs: Vec<(&str, &[u8])> = entries.iter().map(|(n, b)| (n.as_str(), *b)).collect();
+            std::fs::write(dir.path().join(name), crate::testing::pk3_with(&refs)).unwrap();
+        };
+        pak("pak5.pk3", &["dm", "sd"]);
+        pak("zzz_mod.pk3", &["tdm"]);
+        let fs = crate::pk3::Pk3Fs::open(dir.path()).unwrap();
+        let got: Vec<String> = game_types(&fs).into_iter().map(|g| g.script).collect();
+        assert_eq!(got, ["tdm", "dm", "sd"]);
+    }
+
     #[test]
     fn the_stock_game_types_are_the_five_in_pak5() {
-        let Some(fs) = crate::testing::game_fs_11() else {
+        let Some(fs) = crate::testing::stock_fs_11() else {
             return;
         };
         let names: Vec<String> = game_types(&fs).into_iter().map(|g| g.name).collect();
