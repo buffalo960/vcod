@@ -169,19 +169,19 @@ fn ours(
                 missiles.insert(*num);
                 let slot = (i("eventSequence") - 1) & 3;
                 lines.push(format!(
-                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} etype {} ev {} parm {} \
-                     apos {} {} {}",
+                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} apos {} {} {} \
+                     etype {} ev {} parm {}",
                     snap.server_time,
                     i("pos.trType"),
                     f("pos.trBase[0]"),
                     f("pos.trBase[1]"),
                     f("pos.trBase[2]"),
-                    i("eType"),
-                    i(&format!("events[{slot}]")),
-                    i(&format!("eventParms[{slot}]")),
                     f("apos.trBase[0]"),
                     f("apos.trBase[1]"),
                     f("apos.trBase[2]"),
+                    i("eType"),
+                    i(&format!("events[{slot}]")),
+                    i(&format!("eventParms[{slot}]")),
                 ));
             }
         }
