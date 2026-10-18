@@ -370,11 +370,19 @@ nine-column list in 1.1's six, shifted a column right (issue #3).
   `"BEL_BEHIND_ENEMY_LINES"`, `"DM_DEATHMATCH"`, `"RE_RETRIEVAL"`,
   `"SD_SEARCH_AND_DESTROY"` and `"TDM_TEAM_DEATHMATCH"`, references into
   `localizedstrings/english/<script>.str` (`dm.str`'s `DEATHMATCH` is
-  "Deathmatch"). VERIFIED (the paks). Retail lists them in
-  `FS_GetFileList`'s order; vcod sorts by path, which gives the same five
-  in the same order for the stock paks (the pak's zip order is
-  alphabetical) and may differ for a mod's. VERIFIED for the stock order
-  (`unzip -l`); retail's order for a mod is INFERRED from the Q3 lineage.
+  "Deathmatch"). VERIFIED (the paks).
+- The list runs in `FS_GetFileList`'s order. `FS_ListFilteredFiles`
+  (CoDMP.exe `0x42b2a0`) walks the search path from `0x1407420`, newest
+  pak first, and each pak's file table (`pak+0x31c`, 24-byte entries,
+  count at `pak+0x30c`) in order, adding through `0x42b200`, which skips
+  a name already listed; it never sorts. VERIFIED (decompile). That the
+  file table keeps the zip's central-directory order is INFERRED (Q3's
+  `FS_LoadZipFile`). A loose directory on the path is listed through
+  `0x460770` only on an unpure path. VERIFIED (the branch). So a mod
+  pak's game types come ahead of pak5's five, which are alphabetical in
+  the zip (`unzip -l`). VERIFIED. `UI_LoadArenas`' `.arena` files go the
+  same way. vcod reads both off `Pk3Fs::file_list`; it has no loose
+  files.
 - The UI also runs the loader from `UI_Load` (`0x4000871d`) and from the
   `loadGameInfo` menu script (`0x4002eb40`, call at `0x4000aa25`).
   VERIFIED (the calls).
@@ -1859,6 +1867,51 @@ carries its label.
   command walk there). A `map_restart` sends no gamestate
   (cod11-map-cycle.md section 4) and reloads nothing.
 
+### A disconnect frees the cgame
+
+- `0x4358a0`, the error handler's arm for codes 1, 2, 3 and 5 (a
+  `disconnect`, a drop, a server `error`), calls `CL_Disconnect(1)`
+  (`0x40ef90`), `CL_ShutdownCGame` (`0x401a20`), the UI shutdown
+  (`0x418e30`) and the renderer's shutdown with 0, then `SV_Shutdown`
+  (`0x459600`), both shutdowns again, `0x457970`, `0x404fe0`,
+  `Hunk_Clear` (`0x432090`), `0x460420` and `CL_StartHunkUsers`
+  (`0x4115c0`). VERIFIED (calls). So leaving a server unloads the cgame
+  module and its chat ring with it, as a map change does. INFERRED (the
+  module unload, as above).
+
+### `snd_restart` with no game up
+
+- `snd_restart`'s body (`0x40fe0c`) saves the streams (`0x4510f0`),
+  shuts the sound system down and starts it (`0x450130`, `0x44fe60`),
+  runs `CL_Vid_Restart_f` and then restores the streams (`0x451330`).
+  VERIFIED (calls). The restart's UI shutdown clears `KEYCATCH_UI` (bit
+  2 of `0x155f2c4`, `0x418e30`'s first store). VERIFIED (the store).
+- The client frame's check at `0x411280`: with no `0x155f2c8` pending,
+  state 0 (disconnected), no `KEYCATCH_UI` and no local server it calls
+  `S_StopAllSounds(0)` (`0x44fa40`, which closes every stream) and then
+  the UI's export 7 with 1, `UI_SetActiveMenu(UIMENU_MAIN)`. VERIFIED
+  (decompile). This is Q3's `CL_Frame` check. INFERRED.
+- So from the main menu the restored streams live until the next frame,
+  which stops them and opens the main menu, whose `onOpen` starts its
+  music from the top. INFERRED (the order of the two above; nothing
+  between them sets bit 2 again was read). vcod's `enter_menu` stops
+  every sound (`AudioSystem::on_gamestate("menu")`) before it opens the
+  main menu, so it ends the same way, a frame earlier.
+
+### Alt+Enter's release
+
+- The window procedure sends `WM_SYSKEYUP` (0x105) through the byte
+  table at `0x467050` (index 0) and the jump table at `0x467040` (entry
+  0) to `0x466f1c`, the `WM_KEYUP` (0x101) arm, which maps the key
+  (`0x466b70`) and queues a key up (`0x463580` with 1, the key, 0).
+  VERIFIED (the tables' bytes, asm). Only the down at `0x466e52` is
+  swallowed.
+- `CL_KeyEvent` (`0x40dc30`) runs a key up whatever `keys[key].down`
+  says: the `-` half of a `+` bind, then with `KEYCATCH_UI` the UI's
+  key event (export 3) with down 0. VERIFIED (decompile). So the Enter's
+  release reaches the menu on retail too, and vcod's `Ui::key_up`
+  (`Menu_HandleKey`'s focus pass at the cursor) matches.
+
 ### vcod
 
 - `mods_menu` opens from the stock button, lists `vcod_common::pk3::mod_list`
@@ -1889,6 +1942,8 @@ carries its label.
   marks start over, every sound stops and the ambient starts from the
   top (not after `snd_restart`, whose restored streams play on), and
   `cp` goes out again. Before the game is live nothing restarts.
+- Leaving a server drops the chat ring with the rest of the HUD's game
+  state (`leave_server_hud`), as retail's disconnect frees the cgame.
 - A map load runs the same reset (`fresh_cgame`) once the new map is up,
   where `CL_DownloadsComplete` loads the cgame: the chat ring, the view
   and the prediction start over and the lines that came in during the
