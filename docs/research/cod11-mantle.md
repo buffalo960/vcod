@@ -1058,7 +1058,15 @@ So ladders are brushes flagged at the material level, not entities.
   phase (59, 95, -95, -59, 38 sideways, 18 at 10 down; UO's up-and-across
   reads -26 sideways where 1.1 and 1.5 read -27, a different cmd phase).
   `ladder_ab.rs` replays each under its own `MoveRules` and matches every
-  snapshot within 0.0002. VERIFIED, vcod measurement: the 1.5 capture
+  snapshot within 0.0002. VERIFIED, vcod measurement, 2026-10-18: that
+  0.0002 was the replay world's arithmetic; with the collision world on
+  1.5b's and UO's stored floats (`Arith::Stored`, as their servers set
+  it) every row of all five captures matches retail's origin and
+  velocity to the bit except five phases a float step or three off
+  (`ladder_ab`'s `GAPS`): two 1.1d climb rows, 1.5b's first `down-back`
+  frame, and UO's body pressing into the deck's `clipplayer` brush at the
+  top, each with its phase's free run. Causes not found. VERIFIED, vcod
+  measurement: the 1.5 capture
   replayed under 1.1's rules misses by 0.84 units and 275 units/s at the
   top (`up-top`), the step off the rungs (`cod15-movement.md` 5).
 - Over the top. VERIFIED, `--save-ladder climb` with `probe_spot` at the
