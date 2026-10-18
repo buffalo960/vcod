@@ -812,6 +812,21 @@ none to four defuses a round; seed 17 also had a bot killed by its own
 breach rocket, which the sighted spread (4 degrees) still carries into cover
 by the stand now and then. The two-bot gate, shoot off: over at tick
 12099, five gone off, none defused.
+
+VERIFIED (measured, ours, 2026-10-18, release, UO install, same setup,
+`BOTS_SEED` 1 to 23 odd, twelve runs a gate): before the rules above
+(defuse only from near without shooting, no defuse the clock cannot
+let finish, keys out of a blast through a fight, backing the attack on
+the last base) the four-bot shoot-off gate looped on defuses on seeds
+17 and 19 (64 to 68 defuses, never over) and ended the rest at ticks
+6979 to 12959; shoot on ended at 8739 to 21759. After: shoot off ends
+every seed at 6459 to 7559 with no defuse, shoot on at 8559 to 20059
+(mean 13700 against 13000 before; the slowest seed now 14700 ticks
+inside the 34800-tick gate where 13000 was), no bot killed by a
+charge's blast. Intermediate, with the near-only defuse alone, shoot on
+seed 23 took 31999 ticks: its allied defender came across the map to
+the last axis base only once the charge was down and the planter dead,
+twice. The two-bot gate: over at tick 11079, five gone off.
 With the planter's guard alone (8 s, outside-the-blast before), one
 seed in eight ended; the rest stalled on defuses, a bot standing at a
 launcher it could not take, a dry defender, or a bot killing itself

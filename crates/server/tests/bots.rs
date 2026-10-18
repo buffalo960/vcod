@@ -953,10 +953,9 @@ fn four_shooting_uo_bots_end_a_bas_round() {
 }
 
 /// Four bots, two a side, nobody shooting: a defender that cannot shoot
-/// attacks too, on another base than its partner's, and comes back to
-/// defuse, so a charge goes off while its base's side is away
-/// (bot-objectives.md 7.2; seed 5 still loops on defuses there). Needs
-/// `COD_DIR` at a UO install.
+/// attacks too, on another base than its partner's, and defuses only a
+/// charge it passes near, so a charge goes off while its base's side is
+/// away (bot-objectives.md 7.2). Needs `COD_DIR` at a UO install.
 #[test]
 #[ignore = "builds mp_foy's UO graph and its rebuilds, runs 4 bots for up to 29 min of game time; run with --ignored"]
 fn four_uo_bots_end_a_bas_round_without_shooting() {
