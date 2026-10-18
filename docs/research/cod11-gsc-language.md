@@ -1206,6 +1206,20 @@ setter refuses an icon not precached and keeps its precached spelling.
 fields; the client's half is `play::shock` (`cod11-shellshock.md`). The A/B is
 `probe_late_index_matches_retail` in `crates/server/tests/semantics_ents.rs`.
 
+### `vectorToAngles`
+
+VERIFIED, `vectoangles` (1.1d 0x3de94, its `.rodata` 0x72ae8..0x72b08):
+yaw is `atan2(y, x) * 180 / PI` and pitch `atan2(z, sqrt(x² + y²)) *
+-180 / PI`, each stored as a float and given 360 while negative, roll 0;
+a vector with no horizontal part reads pitch 270 when `z > 0` and 90
+otherwise. Unlike Q3's, which negates a pitch already wrapped, both
+angles come back in [0, 360): 16 degrees down reads 15.99, not -344.01.
+VERIFIED, retail UO's log of `probe_dmgtouch` and `probe_belltower`
+(cod11-combat.md 14.8): `(15.99, 180.00, 0.00)`, `(34.99, 0.00, 0.00)`
+and `(51.34, 90.00, 0.00)` for three downward aims. vcod:
+`builtins::math::vector_to_angles`; before 2026-10-18 it returned Q3's
+negative pitch.
+
 ### Still unestablished
 
 - **Unary `!` on a string that will not parse.** `!""` is fatal and `!"1"`

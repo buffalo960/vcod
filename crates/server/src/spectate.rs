@@ -2759,9 +2759,10 @@ fn vec_to_yaw(v: Vec3) -> f32 {
     if yaw < 0.0 { yaw + 360.0 } else { yaw }
 }
 
-/// `vectoangles` as `(pitch, yaw)`, both 0..360, the reading the gsc
-/// `vectorToAngles` builtin is measured to (`crate::game::builtins::math`):
-/// a slightly downward direction is a pitch just under 360.
+/// The damage direction as `(pitch, yaw)`, both 0..360, the pitch not
+/// negated: a slightly downward direction is a pitch just under 360.
+/// Retail's `vectoangles` negates it (`crate::game::builtins::math`); this
+/// one has not been checked against the feedback byte.
 fn vec_to_angles(v: Vec3) -> (f32, f32) {
     let yaw = vec_to_yaw(v);
     let mut pitch = if v.x == 0.0 && v.y == 0.0 {

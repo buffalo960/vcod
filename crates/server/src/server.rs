@@ -7913,9 +7913,9 @@ impl Server {
                         dir: x.flight.normalize_or_zero().into(),
                     });
                 }
-                // UO's `G_MissileImpact` walks the trigger_damages from the
-                // contact to the struck face's normal read as a point
-                // (game.mp.uo 0x5df1a, combat doc 14.8).
+                // UO's `G_MissileImpact` walks the trigger_damages at the
+                // contact alone: start and end are both the trace's end
+                // position (game.mp.uo 0x5df1a, combat doc 14.8).
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version
                     && x.struck.is_some()
                     && x.shell_damage != 0
@@ -7923,7 +7923,7 @@ impl Server {
                     rt.trigger_sweep(&crate::game::combat::TriggerSweep {
                         attacker: x.owner,
                         start: x.contact,
-                        end: x.normal,
+                        end: x.contact,
                         damage: x.shell_damage,
                         mod_: x.direct_mod,
                     });

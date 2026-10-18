@@ -79,10 +79,13 @@ pub fn vector_normalize(
     Ok(Value::Vector([v[0] / len, v[1] / len, v[2] / len]))
 }
 
-/// `vectorToAngles(v)`: transcribed from the Q3/RTCW lineage's
-/// `vectoangles` (`bg_lib.c`/`math.c`); not measured against retail, no
-/// probe covers it yet. Angles come back `[pitch, yaw, roll]` with roll
-/// always 0, that lineage's convention.
+/// `vectorToAngles(v)`: `vectoangles` (1.1d 0x3de94). Unlike Q3's, the
+/// pitch is `atan2(z, |xy|) * -180 / PI` with 360 added while negative, so
+/// both angles come back in [0, 360): a vector 16 degrees down reads 16,
+/// one up 345, straight up 270 and straight down 90 (`.rodata` 0x72ae8,
+/// 0x72b08). Each angle is stored as a float before the 360 is added.
+/// Roll is 0. Measured: `client-probes/probe_dmgtouch` on retail UO logs
+/// the aim it builds this way (cod11-combat.md 14.8).
 pub fn vector_to_angles(
     _host: &mut GameHost,
     _cx: &mut Cx,
@@ -92,30 +95,29 @@ pub fn vector_to_angles(
     let Some(Value::Vector(v)) = args.first() else {
         return Err(ErrorKind::BadType("vectorToAngles takes a vector"));
     };
-    let (yaw, pitch);
+    Ok(Value::Vector(vectoangles(*v)))
+}
+
+/// `vectoangles` on the x87: the atans in double, each angle stored as a
+/// float and then wrapped into [0, 360).
+fn vectoangles(v: [f32; 3]) -> [f32; 3] {
     if v[0] == 0.0 && v[1] == 0.0 {
-        yaw = 0.0;
-        pitch = if v[2] > 0.0 { 90.0 } else { 270.0 };
-    } else {
-        let mut y = if v[0] != 0.0 {
-            v[1].atan2(v[0]).to_degrees()
-        } else if v[1] > 0.0 {
-            90.0
-        } else {
-            -90.0
-        };
-        if y < 0.0 {
-            y += 360.0;
-        }
-        let fwd = (v[0] * v[0] + v[1] * v[1]).sqrt();
-        let mut p = v[2].atan2(fwd).to_degrees();
-        if p < 0.0 {
-            p += 360.0;
-        }
-        yaw = y;
-        pitch = p;
+        let pitch = if v[2] > 0.0 { 270.0 } else { 90.0 };
+        return [pitch, 0.0, 0.0];
     }
-    Ok(Value::Vector([-pitch, yaw, 0.0]))
+    let wrap = |a: f64| {
+        let a = a as f32;
+        if a < 0.0 {
+            (a as f64 + 360.0) as f32
+        } else {
+            a
+        }
+    };
+    let (x, y, z) = (v[0] as f64, v[1] as f64, v[2] as f64);
+    let yaw = wrap(y.atan2(x) * 180.0 / std::f64::consts::PI);
+    let fwd = (x * x + y * y).sqrt() as f32 as f64;
+    let pitch = wrap(z.atan2(fwd) * -180.0 / std::f64::consts::PI);
+    [pitch, yaw, 0.0]
 }
 
 /// `anglesToForward(angles)`: `AngleVectors`'s forward half, same lineage as
@@ -317,6 +319,20 @@ mod tests {
             };
             assert!((n[0] - 0.6).abs() < 1e-6 && (n[1] - 0.8).abs() < 1e-6);
         });
+    }
+
+    /// Retail's wrap: down is a small positive pitch, up wraps past 270.
+    #[test]
+    fn vector_to_angles_wraps_both_angles_like_retail() {
+        assert_eq!(vectoangles([0.0, 0.0, 1.0]), [270.0, 0.0, 0.0]);
+        assert_eq!(vectoangles([0.0, 0.0, -1.0]), [90.0, 0.0, 0.0]);
+        let down = vectoangles([-300.0, 0.0, -85.92]);
+        assert!(
+            (down[0] - 15.99).abs() < 0.01 && down[1] == 180.0,
+            "{down:?}"
+        );
+        let up = vectoangles([0.0, -1.0, 1.0]);
+        assert!((up[0] - 315.0).abs() < 1e-4 && (up[1] - 270.0).abs() < 1e-4);
     }
 
     /// `vectorToAngles` and `anglesToForward` are inverses on a unit vector.

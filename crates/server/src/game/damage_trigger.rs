@@ -364,6 +364,24 @@ mod tests {
         });
     }
 
+    /// UO's shell walk is the contact alone: a point inside the box
+    /// notifies, one beside it does not.
+    #[test]
+    fn a_shells_walk_tests_its_contact_point() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            place(&mut host, cx, spec());
+            let who = host.ents.spawn(cx).unwrap();
+            let beside = Vec3::new(130.0, 0.0, 0.0);
+            sweep(&mut host, cx, who, beside, beside, 1000, 5, false);
+            assert!(host.engine_notifies.is_empty());
+            let inside = Vec3::new(110.0, 4.0, -15.0);
+            sweep(&mut host, cx, who, inside, inside, 1000, 5, false);
+            assert_eq!(host.engine_notifies.len(), 1);
+            assert_eq!(host.trigger_fires.len(), 1);
+        });
+    }
+
     /// `threshold` refuses a smaller hit, and `accumulate` waits for the
     /// damage `G_Damage` took off `health` to add up; a round takes none.
     #[test]

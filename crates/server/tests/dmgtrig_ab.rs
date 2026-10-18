@@ -159,27 +159,28 @@ fn direct_buttons(tokens: &[String]) -> Option<u8> {
     t.next()?.parse().ok()
 }
 
-#[test]
-fn a_players_rounds_swing_and_grenade_on_trigger_damage_match_retail_uo() {
+/// Runs `client-probes/<probe>.gsc` on ours on UO's `map` with one axis
+/// `--probe-uo-weapon direct` client holding `kar98k_mp`, until the probe
+/// logs `PROBE done`, and returns its `PROBE` lines. `None` without a UO
+/// install.
+fn direct_run(map: &str, probe: &str) -> Option<Vec<String>> {
     use common::{Join, Queues};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::time::Duration;
     use vcod_common::net::msg::UserCmd;
     use vcod_common::net::{NetClient, NetEvent};
-    let Some(fs) = vcod_common::testing::uo_fs() else {
-        return;
-    };
-    let fs = Rc::new(fs);
-    let bsp_path = fs.resolve_map("mp_uo_stanjel").unwrap();
+    let fs = Rc::new(vcod_common::testing::uo_fs()?);
+    let bsp_path = fs.resolve_map(map).unwrap();
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = std::time::Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg("mp_uo_stanjel", "probe_dmgshot"), now);
+    let mut sv = vcod_server::Server::new(common::cfg(map, probe), now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
-    let src =
-        std::fs::read_to_string("../gsc/tests/fixtures/semantics/client-probes/probe_dmgshot.gsc")
-            .expect("the probe");
-    sv.overlay_script("maps/mp/gametypes/probe_dmgshot", &src);
+    let src = std::fs::read_to_string(format!(
+        "../gsc/tests/fixtures/semantics/client-probes/{probe}.gsc"
+    ))
+    .expect("the probe");
+    sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), &src);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
     common::run_alone(&mut sv, &mut now, 3000);
@@ -192,7 +193,7 @@ fn a_players_rounds_swing_and_grenade_on_trigger_damage_match_retail_uo() {
     };
     let (mut buttons, mut selected) = (0u8, None::<u8>);
     let frame = Duration::from_millis(common::FRAME_MS as u64);
-    for _ in 0..2000 {
+    for _ in 0..3000 {
         if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
             break;
         }
@@ -232,10 +233,10 @@ fn a_players_rounds_swing_and_grenade_on_trigger_damage_match_retail_uo() {
             }
         }
     }
-    let ours: Vec<&str> = sv
+    let ours: Vec<String> = sv
         .script_log()
         .iter()
-        .map(|l| l.trim())
+        .map(|l| l.trim().to_string())
         .filter(|l| l.starts_with("PROBE"))
         .collect();
     if std::env::var_os("DMGTRIG_REPORT").is_some() {
@@ -243,6 +244,154 @@ fn a_players_rounds_swing_and_grenade_on_trigger_damage_match_retail_uo() {
             eprintln!("{l}");
         }
     }
+    Some(ours)
+}
+
+#[test]
+fn a_players_rounds_swing_and_grenade_on_trigger_damage_match_retail_uo() {
+    let Some(ours) = direct_run("mp_uo_stanjel", "probe_dmgshot") else {
+        return;
+    };
     let free = |v: &[&str]| v.iter().map(|l| landing_free(l)).collect::<Vec<_>>();
+    let ours: Vec<&str> = ours.iter().map(String::as_str).collect();
     assert_eq!(free(&ours), free(RETAIL_SHOT));
+}
+
+/// `client-probes/probe_dmgtouch.gsc` on retail UO 1.51b, mp_uo_stanjel,
+/// 2026-10-18, set up as [`RETAIL_SHOT`]. A frag through bush 86 after
+/// `enableGrenadeTouchDamage` queues one `"trigger"` with the grenade and
+/// notifies `"damage"` with the grenade and its `explosionInnerDamage`
+/// (120) on every frame of the flight inside the bush; with the walk
+/// closed it raises nothing. A panzerschreck shell into the ground inside
+/// the bush notifies `"damage"` 1000 with no mod; one 300 units the other
+/// way raises nothing off its contact. A gdb breakpoint on
+/// `G_CheckHitTriggerDamage` read both shells' segments as the contact
+/// point alone (cod11-combat.md 14.8). Of four retail runs, the frames
+/// inside the bush were 4, 5, 4, 4 and the blasts' landings, charges and
+/// victim order differed: [`touch_walks`] keeps the walks' lines.
+const RETAIL_TOUCH: &[&str] = &[
+    "PROBE weapon stielhandgranate_mp",
+    "PROBE phase touch",
+    "PROBE trigger 86 grenade -",
+    "PROBE damage 86 120 grenade -",
+    "PROBE damage 86 120 grenade -",
+    "PROBE damage 86 120 grenade -",
+    "PROBE damage 86 120 grenade -",
+    "PROBE trigger 86 player 3750",
+    "PROBE trigger 493 player -",
+    "PROBE damage 86 84 player MOD_GRENADE_SPLASH",
+    "PROBE damage 493 18 player MOD_GRENADE_SPLASH",
+    "PROBE nade (-2133.00, 3264.00, 25.00)",
+    "PROBE phase touch_off",
+    "PROBE trigger 493 player 6400",
+    "PROBE trigger 86 player 6400",
+    "PROBE trigger 92 player -",
+    "PROBE damage 86 120 player MOD_GRENADE_SPLASH",
+    "PROBE damage 493 13 player MOD_GRENADE_SPLASH",
+    "PROBE damage 92 47 player MOD_GRENADE_SPLASH",
+    "PROBE nade (-1963.00, 3272.00, 0.00)",
+    "PROBE phase shell",
+    "PROBE spot (-1852.00, 3232.00, -16.35) (-1972.00, 3232.00, 9.27) (15.99, 180.00, 0.00)",
+    "PROBE weapon panzerschreck_mp",
+    "PROBE aim (15.99, 180.00, 0.00) (-1852.00, 3232.00, -15.35) (15.99, 180.00, 0.00)",
+    "PROBE trigger 92 player 4950",
+    "PROBE trigger 86 player 4950",
+    "PROBE damage 92 26 player MOD_PROJECTILE_SPLASH",
+    "PROBE damage 86 1000 player -",
+    "PROBE rocket (-1963.00, 3248.00, 5.00)",
+    "PROBE phase shell_wide",
+    "PROBE aim (34.99, 0.00, 0.00) (-1852.00, 3232.00, -15.35) (34.99, 0.00, 0.00)",
+    "PROBE trigger 92 player 11150",
+    "PROBE damage 92 59 player MOD_PROJECTILE_SPLASH",
+    "PROBE rocket (-1570.00, 3251.00, -83.00)",
+    "PROBE done",
+];
+
+/// The lines the two walks decide: every blast line, landing and missile
+/// origin dropped, a phase's `"trigger"` kept only for a bush that took a
+/// walk's `"damage"` in it (its wait in ms as `_`), and a run of equal
+/// lines (the frames a frag spends inside a bush) as one.
+fn touch_walks(v: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let phases = v.split_inclusive(|l| l.starts_with("PROBE phase") || *l == "PROBE done");
+    for chunk in phases {
+        let walked: Vec<&str> = chunk
+            .iter()
+            .filter(|l| l.starts_with("PROBE damage") && !l.contains("SPLASH"))
+            .filter_map(|l| l.split(' ').nth(2))
+            .collect();
+        for l in chunk {
+            let t: Vec<&str> = l.split(' ').collect();
+            let keep = match t[1] {
+                "nade" | "rocket" => None,
+                "damage" if l.contains("SPLASH") => None,
+                "trigger" if !walked.contains(&t[2]) => None,
+                "trigger" if t[4] != "-" => Some(format!("{} {} {} {} _", t[0], t[1], t[2], t[3])),
+                _ => Some(l.to_string()),
+            };
+            if let Some(k) = keep
+                && out.last() != Some(&k)
+            {
+                out.push(k);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn grenade_touch_and_shell_walks_on_trigger_damage_match_retail_uo() {
+    let Some(ours) = direct_run("mp_uo_stanjel", "probe_dmgtouch") else {
+        return;
+    };
+    let ours: Vec<&str> = ours.iter().map(String::as_str).collect();
+    assert_eq!(touch_walks(&ours), touch_walks(RETAIL_TOUCH));
+}
+
+/// `client-probes/probe_belltower.gsc` on retail UO 1.51b, mp_foy,
+/// 2026-10-18, one axis client as [`RETAIL_SHOT`]'s. mp_foy's belltower
+/// (spawnflags 115) notifies a round's `"damage"` and refuses it; a frag
+/// landing below does nothing; a panzerschreck shell from inside the
+/// belfry into its floor fires it: the shell's splash hurts the shooter,
+/// `belltower_damage()`'s `radiusDamage` hurts him again with the world
+/// as attacker, the probe's `"trigger"` waiter runs after both and its
+/// `"damage"` waiter never does (`_load.gsc`'s exploder thread deleted the
+/// trigger first), and the exploder deletes the tower's `delete` brush and
+/// keeps the effect model. Four runs read alike but for the shell's
+/// splash on the shooter (78 to 84), which rides the spread.
+const RETAIL_BELLTOWER: &[&str] = &[
+    "PROBE state 1 1 1",
+    "PROBE spot (495.00, -2108.00, 475.48)",
+    "PROBE phase round",
+    "PROBE damage 120 player -",
+    "PROBE phase frag",
+    "PROBE nade (495.00, -1925.00, 1.00)",
+    "PROBE state 1 1 1",
+    "PROBE phase shell",
+    "PROBE weapon panzerschreck_mp",
+    "PROBE inside (495.00, -1508.00, 416.12) (51.34, 90.00, 0.00)",
+    "PROBE hurt 83 MOD_PROJECTILE_SPLASH player",
+    "PROBE hurt 198 MOD_EXPLOSIVE world",
+    "PROBE trigger player",
+    "PROBE rocket (496.00, -1460.00, 417.00)",
+    "PROBE state 0 0 1",
+    "PROBE done",
+];
+
+#[test]
+fn mp_foys_belltower_matches_retail_uo() {
+    let Some(ours) = direct_run("mp_foy", "probe_belltower") else {
+        return;
+    };
+    let spread_free = |v: &[&str]| {
+        v.iter()
+            .filter(|l| !l.starts_with("PROBE rocket"))
+            .map(|l| match l.strip_prefix("PROBE hurt ") {
+                Some(r) if r.contains("PROJECTILE_SPLASH") => "PROBE hurt _ splash".to_string(),
+                _ => l.to_string(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let ours: Vec<&str> = ours.iter().map(String::as_str).collect();
+    assert_eq!(spread_free(&ours), spread_free(RETAIL_BELLTOWER));
 }

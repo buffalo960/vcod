@@ -6725,14 +6725,24 @@ no point), `Activate_trigger_damage`, and `health` back to 32000 when
 start and end and `meleeDamage`, mod 7, ahead of the swing's damage;
 `Bullet_Fire_Extended` on every leg with the leg's start and the trace's
 end and the leg's damage, mod 1 or 2, ahead of the leg's `G_Damage`;
-`G_RunMissile` for a `MOD_GRENADE` missile after its link (12.2); UO's
-`G_MissileImpact` (0x5df57) for a missile with damage (+0x248), from
-`r.currentOrigin` (+0x13c) to `trace + 4`, with the missile's damage and
+`G_RunMissile` for a `MOD_GRENADE` missile after its link (12.2), from the
+origin before the move to `r.currentOrigin`, with the grenade itself as
+the attacker and its `explosionInnerDamage` (1.1d `+0x23c`, 0x54306; UO
+`+0x24c`, which UO's `fire_grenade` fills from the weapon def's
+`+0x37c`) as the damage; UO's `G_MissileImpact` (0x5df57) for a missile
+with damage (+0x248), from `r.currentOrigin` (+0x13c) to `trace + 4`,
+with the missile's owner (or the world) as the attacker, its damage and
 `methodOfDeath`. 1.1d's and 1.5b's `G_MissileImpact` make no such call.
-INFERRED, off the trace layout the rest of the code reads (`fraction` at
-+0, the normal behind it): `trace + 4` is the struck face's normal, so the
-end point sits near the world origin and the segment's box spans most of
-the map; vcod passes the normal as that point.
+VERIFIED, gdb breakpoints on retail UO's `G_MissileImpact` and
+`G_CheckHitTriggerDamage` (2026-10-18, `probe_dmgtouch` and
+`probe_belltower` below): the missile trace's float at `+4` is its end
+position, equal to `r.currentOrigin` at the impact, and the struck
+face's normal sits at `+0x10` (`DirToByte(trace + 0x10)` reads it); every
+shell's walk ran with start and end the same point, `dmg` 1000 and mod 5
+(`MOD_PROJECTILE`) for a panzerschreck. So the shell's walk tests its
+contact point alone: a `trigger_damage` fires only when the shell strikes
+inside its brushes. Before 2026-10-18 vcod read `trace + 4` as the normal
+and walked from the contact to near the world origin.
 
 **Measured.** VERIFIED, `client-probes/probe_dmgtrig.gsc` on retail UO
 1.51b, mp_uo_stanjel, 2026-10-18 (`crates/server/tests/dmgtrig_ab.rs`):
@@ -6766,6 +6776,47 @@ charges as 100/16 and 98/18: the landing rides the client's cmd timing.
 The second run logged the frag at rest at (-2021, 3339, 3), 66 units off
 bush 86's box, which 14.1's falloff gives as 98.
 
+VERIFIED, `client-probes/probe_dmgtouch.gsc` on retail UO, mp_uo_stanjel,
+2026-10-18, four runs (`dmgtrig_ab.rs`'s third test): a frag thrown
+through bush 86 after `enableGrenadeTouchDamage` logs `"trigger"` with
+the grenade as the activator, then `"damage"` 120 with the grenade and no
+mod on each frame the flight spends inside the bush (4, 5, 4 and 4
+frames); after `disableGrenadeTouchDamage` the flight raises nothing. A
+panzerschreck shell into the ground inside the bush logs `"damage"` 1000
+with the player and no mod; one 300 units the other way raises nothing
+off its contact. The shells' and frags' blasts reach bushes through
+`G_Damage` as 14.6 has it, their charges and victim order riding where
+the missile lands.
+
+VERIFIED, `client-probes/probe_belltower.gsc` on retail UO, mp_foy,
+2026-10-18, four runs (`dmgtrig_ab.rs`'s fourth test). The belltower
+(spawnflags 115, `*44`) takes a kar98k round's walk (`"damage"` 120, no
+mod) and refuses it (mod 2, flag 0x2), as it refuses a shell's splash
+(`MOD_PROJECTILE_SPLASH`, flag 0x10): a shell that strikes the tower's
+roof outside the brush logs nothing. A shell from inside the belfry into
+its floor fires it, and in two of four runs so did one fired from 600
+units off whose spread put its contact inside. What follows, in order:
+the shell's own splash hurts the shooter (78 to 84, `MOD_PROJECTILE_SPLASH`);
+`mp_foy.gsc`'s `belltower_damage()` wakes first and its
+`radiusDamage(origin, 256, 200, 190)` hurts him 198 with the world as
+attacker (`MOD_EXPLOSIVE`); the probe's own `"trigger"` waiter runs after
+it; its `"damage"` waiter never runs, because `_load.gsc`'s `exploder()`
+thread has deleted the trigger by then; `maps/mp/_utility.gsc`'s
+`exploder(2)` deletes the `script_brushmodel` `delete` (`*36`, the tower's
+top) and keeps the `xmodel/fx` model, which plays `bell_tower_exp` after
+its `script_delay` .04.
+
+VERIFIED, `client-probes/probe_dmgspawn.gsc` on retail 1.1d, mp_carentan,
+2026-10-18 (no client): `spawn("trigger_damage", origin)` runs
+`SP_trigger_damage` with no `model` key, and the entity reads classname
+`trigger_damage` and `health` 32000. A `radiusDamage(origin + (0, 0, 32),
+64, 100, 50)` half a second later raised nothing; one 2000 units above
+the origin a second later notified `"damage"` 100 with no mod. INFERRED,
+by analogy with a spawned `script_brushmodel` (movers doc 19): with no
+`*N` it links inline model 0 and is a copy of the whole world where it
+stands; why the first blast missed it is not measured. vcod spawns no
+`trigger_damage` from script.
+
 **As implemented.** `crate::game::damage_trigger`: `spec_of` (the spawn's
 keys), `responds`, `activate`, `damaged` (`pain`/`die`, from
 `GameHost::damage_nonclient`) and `sweep` (both walks; the sight trace is
@@ -6773,7 +6824,8 @@ the segment against the trigger's brushes, or its box without them).
 `GameHost::blast_entities` lists every linked `trigger_damage` with its
 brush model's box. A round's legs and a swing raise
 `Effect::TriggerSweep` ahead of their hits; the missile pass sweeps a
-grenade's move; UO's shell impact sweeps to the normal. A blast's notifies on an entity raised in the entity pass go through
+grenade's move with its `explosionInnerDamage`; UO's shell impact
+tests its contact point. A blast's notifies on an entity raised in the entity pass go through
 `engine_notifies` (the pass's other notifies' path), so they wake with
 the trigger round rather than in the next frame's packet pass.
 `enableGrenadeTouchDamage` / `disableGrenadeTouchDamage` set the bit.
