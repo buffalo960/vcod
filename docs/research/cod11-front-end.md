@@ -2834,3 +2834,84 @@ vcod's (`crate::video`, `apply_video_mode` in `main.rs`):
 - The 3D view, the HUD and the menus on a window that is not 4:3 are
   `vc_widescreen`'s (cod11-hud-protocol.md section 10, `camera::view_fov_x`).
 
+
+## 22. The message of the day
+
+A server has two motds and a retail client draws one of them. 1.1 is
+`cgame_mp_x86.dll` and `ui_mp_x86.dll` from the 1.1 install, 1.5 their
+1.5 builds, UO `uo_cgame_mp_x86.dll` and `uo_ui_mp_x86.dll`.
+
+- `g_motd` goes out as configstring 14 (UO 15), written by
+  `SP_worldspawn` (`cod11-map-cycle.md` 4.5). No client module reads it.
+  1.1's cgame keeps the configstring offsets at `0x301cc0a0`; slot 14's
+  word `0x301cc0d8` appears in no instruction (objdump) and nowhere in the
+  decompile. VERIFIED. Every call to the getter `0x30021b00` takes a
+  computed range index (`+0x20c`, `+0x4bc`, `+0x1c`), and
+  `CG_ConfigStringModified` (`0x3002c6b0`) has cases for 0, 3, 5, 6, 8,
+  11, 12, 13, 15..18 and ranges, none for 14. VERIFIED (decompile). 1.5's
+  table is at `0x301cfb20` and its slot 14 word `0x301cfb58` appears in no
+  instruction. VERIFIED. UO's `CG_ConfigStringModified` (`0x30038e70`)
+  reads 14 as its start time and has no case for 15. VERIFIED (decompile).
+- The UI reads configstrings through syscall `0x35` only for 0 (the
+  serverinfo) and for the script menu names. 1.1: wrapper `0x40019510`,
+  called with index 0 at `0x40008f12`, `0x4000b657` and `0x4000e6cc`;
+  the display context's getter `0x4000ec00` (slot `0x401c3d54`, +0x74) is
+  called only at `0x4001115d`, over `0x49c + i`. 1.5: index 0 at
+  `0x40009322`, `0x4000bad7`, `0x4000eebc`; getter `0x4000f450` called
+  only at `0x4001197d`, over `0x49c + i`. UO: index 0 pushed at
+  `0x4000a42a`, `0x4000d6d3`, `0x40011063`; its getter is called only at
+  `0x400141be`, over `0x535 + i`. VERIFIED (objdump). So configstring 14
+  (UO 15) is drawn by nothing, and vcod draws it nowhere either.
+- `g_motd` registers with no flags (`crates/server/src/cvars/registry.rs`,
+  `tools/capture_cvars.py`), and the retail `-motd` configstring captures
+  (`crates/server/tests/fixtures/configstrings/*-motd*.txt`) hold no motd
+  key in serverinfo (0). VERIFIED. So `getinfo` and `getstatus`, built
+  off the serverinfo cvars, carry none and the browser's server info
+  popup (section 10) cannot show one. INFERRED.
+- The motd a player reads is the server's `scr_motd`, through the
+  140/204 cvar mirror (`cod11-hud-protocol.md`, the table's 140..203 row):
+  - 1.1's `_teams.gsc` runs `makeCvarServerInfo("scr_motd", "")`, so the
+    mirror carries `scr_motd` (180, value 244 in the capture). The four
+    team menus (`ui_mp/scriptmenus/team_americangerman.menu`,
+    `team_britishgerman`, `team_russiangerman`, `team_germanonly` in
+    `pak0.pk3`) draw it in `text_motd`: rect
+    `208 24 216 216`, `ORIGIN_MENUWINDOW`, `autowrapped`, `cvar
+    "scr_motd"`, `UI_FONT_NORMAL`, `textscale .24`, `textaligny 20`,
+    white, `decoration`. VERIFIED (the files, the capture).
+  - 1.5's `_teams.gsc` (`pak9.pk3`) copies `scr_motd` into `ui_motd` and
+    mirrors that (186, value 250), and re-copies it when `scr_motd`
+    changes in its cvar loop; UO's (`pakuo01.pk3`) does the same (225,
+    value 353). The menu is `serverinfo_<gametype>.menu` (1.5 `pak8.pk3`,
+    UO `pakuo03.pk3`), the one the gametypes open before the team menu:
+    `text_motd` at `12 66 190 213`, `ORIGIN_MENUWINDOW`, `autowrapped`,
+    `cvar "ui_motd"`, `UI_FONT_NORMAL`, `textscale .24`, `textalignx 8`,
+    `textaligny 16`, white, `decoration`, below `ui_hostname`. VERIFIED
+    (the files, the captures).
+  - The mirror is set by the cgame's `0x3002bc60`, which stops at the
+    first empty name. VERIFIED (decompile). An empty `scr_motd` still has
+    its name, so it mirrors as an empty value and the item prints nothing.
+- The connect screen (`UI_DrawConnectScreen`, 1.1 `0x4000e4e0`) prints
+  `Info_ValueForKey(updateInfoString, "motd")` (key `0x4002e148`, the
+  `uiClientState_t` field at +0x40c, `0x4000e75b`) centred at x 320, y
+  460, scale 0.5, white (`0x4002d7dc`), in every connection state.
+  VERIFIED (asm). That string is the Activision motd service's reply, not
+  the game server's: `CoDMP.exe` sends `getmotd` to
+  `codmotd.activision.com` (`0x40f110`) and `CL_MotdPacket` (`0x410680`)
+  copies the reply into `updateInfoString` and its `motd` into
+  `cl_motdString`. VERIFIED (decompile). 1.5's and UO's executables
+  carry no `getmotd` string (`cod15-protocol-diff.md`), so their connect
+  screens (1.5 key ref `0x4000ef4b`, UO `0x400110f1`) print an empty
+  line. INFERRED.
+- `UI_SERVERMOTD`'s owner draw (1.1 `0x4000b800`) scrolls `cl_motdString`,
+  but every stock `joinserver.menu` (1.1 `pak0`, 1.5 `pak8`, `paka`) has
+  the item inside `/* */` (section 4). VERIFIED (the files).
+
+vcod draws the script menus' `text_motd` as any cvar text item
+(`Ui::label`, `Item_Text_AutoWrapped_Paint`'s wrap), off
+`ClientCvars::all`, refreshed every frame a menu is up, so a live
+`scr_motd` change reaches an open 1.5 or UO serverinfo menu once the
+gametype's loop re-copies it. vcod has no retail connect screen and sends
+no `getmotd`, so it draws neither the Activision motd nor `cl_motdString`.
+The tests are `the_team_menu_shows_scr_motd_on_1_1` and
+`the_serverinfo_menu_shows_ui_motd_on_1_5_and_uo`
+(`crates/client/src/frontend/mod.rs`), on the retail captures.

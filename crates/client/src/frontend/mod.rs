@@ -1926,6 +1926,24 @@ impl Ui {
         (left, y)
     }
 
+    /// What a text item prints: its `text`, else its cvar's value (a
+    /// multi's cvar picks a choice instead). The script menus' motd is such
+    /// a cvar item: `scr_motd` on 1.1, `ui_motd` on 1.5 and UO, both off
+    /// the 140/204 mirror (cod11-front-end.md, "The message of the day").
+    fn label(&self, item: &UiItem, loc: &Localized, shell: &Shell) -> String {
+        if !item.text.is_empty() {
+            loc.translate(&item.text).into_owned()
+        } else if let Some(cvar) = &item.cvar
+            && item.kind != ITEM_TYPE_MULTI
+        {
+            // `ui_favorite_message` holds a localized key.
+            let v = self.cvar(cvar, shell).unwrap_or_default();
+            loc.translate(&v).into_owned()
+        } else {
+            String::new()
+        }
+    }
+
     /// The text item's `textRect` from its last paint, as
     /// `Item_CorrectedTextRect` (0x40013630) hands it out: the text's width
     /// and the font's height, standing on the baseline. `None` before the
@@ -2039,17 +2057,7 @@ impl Ui {
                     p.quad(r, [1.0; 4], &self.start_map_preview(), &mut out);
                     continue;
                 }
-                let label = if !item.text.is_empty() {
-                    loc.translate(&item.text).into_owned()
-                } else if let Some(cvar) = &item.cvar
-                    && item.kind != ITEM_TYPE_MULTI
-                {
-                    // `ui_favorite_message` holds a localized key.
-                    let v = self.cvar(cvar, shell).unwrap_or_default();
-                    loc.translate(&v).into_owned()
-                } else {
-                    String::new()
-                };
+                let label = self.label(item, loc, shell);
                 let value = match item.ownerdraw {
                     UI_NETSOURCE => Some(fill(
                         &loc.translate("@EXE_NETSOURCE"),
@@ -4584,6 +4592,89 @@ mod tests {
         click_item(&mut ui, "weapon_american", "@MPMENU_MAIN_MENU", &shell);
         assert_eq!(top_name(&ui), "main");
         assert_eq!(ui.cvar("cl_ingame", &shell).as_deref(), Some("1"));
+    }
+
+    /// A retail `--save-configstrings` capture, one `<index> <value>` line
+    /// per slot, as a gamestate's table.
+    fn capture_configstrings(name: &str) -> Vec<String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../server/tests/fixtures/configstrings")
+            .join(name);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut cs = vec![String::new(); 2048];
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let (i, v) = line.split_once(' ').unwrap_or((line, ""));
+            cs[i.parse::<usize>().unwrap()] = v.to_string();
+        }
+        cs
+    }
+
+    /// The motd a player reads is the script menu's `text_motd`: `scr_motd`
+    /// in 1.1's team menu, `ui_motd` (the server's `scr_motd`) in 1.5's
+    /// and UO's `serverinfo_<gametype>`, both off the 140/204 mirror.
+    /// `g_motd`'s configstring (14, UO 15) reaches no menu.
+    fn shows_the_mirrors_motd(
+        fs: &Pk3Fs,
+        proto: &vcod_common::net::protocol::Protocol,
+        capture: &str,
+        menu: &str,
+    ) {
+        let cs = capture_configstrings(capture);
+        assert_eq!(cs[proto.cs.motd], "Welcome to vcod");
+        let mut cvars = crate::play::cvars::ClientCvars::default();
+        cvars.set_layout(proto.cs);
+        let mut ui = Ui::new(fs, "0");
+        assert!(ui.load_script_menus(fs, &[menu.into()], "0").is_empty());
+        let shell = Shell::new();
+        ui.set_server_cvars(cvars.all(&cs));
+        assert!(ui.open_script_popup(menu, false, &shell, &mut Vec::new()));
+        let m = ui.find(menu).unwrap();
+        let i = (ui.menus[m].items.iter())
+            .position(|i| i.name == "text_motd")
+            .unwrap();
+        let loc = Localized::default();
+        let item = &ui.menus[m].items[i];
+        assert!(item.autowrap && item.decoration, "{menu}");
+        assert_eq!(ui.label(item, &loc, &shell), "scr motd text", "{menu}");
+        ui.build(640.0, 480.0, &loc, &shell);
+        assert!(ui.text_rect(m, i).is_some(), "{menu}: not painted");
+    }
+
+    #[test]
+    fn the_team_menu_shows_scr_motd_on_1_1() {
+        let Some(fs) = vcod_common::testing::stock_fs_11() else {
+            return;
+        };
+        use vcod_common::net::protocol::PROTOCOL_V1;
+        for menu in [
+            "team_americangerman",
+            "team_britishgerman",
+            "team_russiangerman",
+            "team_germanonly",
+        ] {
+            shows_the_mirrors_motd(&fs, &PROTOCOL_V1, "mp_carentan-dm-motd.txt", menu);
+        }
+    }
+
+    #[test]
+    fn the_serverinfo_menu_shows_ui_motd_on_1_5_and_uo() {
+        use vcod_common::net::protocol::{
+            PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, install_protocol,
+        };
+        if let Some(fs) = vcod_common::testing::stock_fs()
+            && install_protocol(&fs).version != PROTOCOL_V1.version
+        {
+            for gt in ["dm", "tdm", "sd", "re", "bel", "hq"] {
+                let menu = format!("serverinfo_{gt}");
+                shows_the_mirrors_motd(&fs, &PROTOCOL_V6, "mp_carentan-dm-motd-15.txt", &menu);
+            }
+        }
+        if let Some(fs) = vcod_common::testing::uo_fs() {
+            for gt in ["dm", "tdm", "sd", "re", "bel", "hq", "ctf", "dom", "bas"] {
+                let menu = format!("serverinfo_{gt}");
+                shows_the_mirrors_motd(&fs, &PROTOCOL_V22, "mp_cassino-dm-motd-uo.txt", &menu);
+            }
+        }
     }
 
     #[test]
