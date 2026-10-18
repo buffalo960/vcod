@@ -386,20 +386,13 @@ impl OnlineView {
         self.spawn = None;
     }
 
-    /// A map load: the first snapshot's setup clears both kicks too
-    /// (`0x3003037f`).
-    pub fn new_gamestate(&mut self) {
-        self.spawn = None;
-        self.recoil.reset();
-        self.quakes.reset();
-        self.shock.new_gamestate();
-    }
-
-    /// An in-game `vid_restart` frees the cgame and starts it again
-    /// (docs/research/cod11-front-end.md section 17, "The cgame restart"):
-    /// everything it held starts fresh. The cvars (`cg_drawGun`, the
-    /// shellshock file `cg_shellshock` reuses), the connection's
-    /// configstring layout and the loaded rigs, which are assets, stay.
+    /// An in-game `vid_restart` and every map load free the cgame and
+    /// start it again (docs/research/cod11-front-end.md section 17, "The
+    /// cgame restart"): everything it held starts fresh, the kicks the
+    /// first snapshot's setup clears (`0x3003037f`) included. The cvars
+    /// (`cg_drawGun`, the shellshock file `cg_shellshock` reuses), the
+    /// connection's configstring layout and the loaded rigs, which are
+    /// assets, stay.
     pub fn restart_cgame(&mut self) {
         *self = OnlineView {
             draw_gun: self.draw_gun,
@@ -769,7 +762,7 @@ mod tests {
         view.track_spawn((3, 2));
         assert_eq!(view.view_kick(), [0.0; 3], "a new followed client");
         kicked(&mut view);
-        view.new_gamestate();
+        view.restart_cgame();
         assert_eq!(view.view_kick(), [0.0; 3], "map load");
     }
 

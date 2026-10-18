@@ -181,6 +181,28 @@ impl Vm {
         self.notify_from(None, target, event, args);
     }
 
+    /// [`Vm::notify`] for an engine notify raised outside any frame, whose
+    /// waiters wait for the next frame's pass rather than run in the
+    /// packet pass ([`Vm::run_runnable`]): each is parked due on the
+    /// current clock. `ClientDisconnect`'s `menuresponse` wakes a level
+    /// thread that then runs on the next frame's `level.time`
+    /// (`client-probes/probe_dropclient`).
+    pub fn notify_for_frame(&mut self, target: impl Into<Target>, event: Atom, args: &[Value]) {
+        let woken: Vec<ThreadId> = self
+            .threads
+            .iter()
+            .filter(|t| matches!(t.state, ThreadState::Runnable))
+            .map(|t| t.id)
+            .collect();
+        self.notify_from(None, target, event, args);
+        let now = self.now_ms;
+        for t in &mut self.threads {
+            if matches!(t.state, ThreadState::Runnable) && !woken.contains(&t.id) {
+                t.state = ThreadState::WaitingUntil(now);
+            }
+        }
+    }
+
     /// [`Vm::notify`] knowing which thread executed the `notify`, which its
     /// own endons do not kill: a thread that notifies an event it is itself
     /// registered against runs on and resumes past its next `wait`

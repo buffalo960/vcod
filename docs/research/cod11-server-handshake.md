@@ -709,6 +709,62 @@ and the zombie half of `Server::drop_client`.
   `a_never_active_zombie_is_sent_not_active_snapshots_for_two_seconds`
   pins the first.
 
+### When the game hears a drop (`SV_DropClient`, `ClientDisconnect`)
+
+- 1.1d's `SV_DropClient` (0x8085cf4) sets the slot `CS_ZOMBIE`, clears
+  its challenge, sends the `e` notice and prints `<slot>:<name> <reason>`,
+  then calls the game's `ClientDisconnect` (`VM_Call` 5, guarded by
+  `sv.state == SS_GAME`, returning to 0x8085e56), then queues the
+  zombie's `w`. INFERRED (control flow).
+- 1.5b's (0x808ac11) and UO's (0x808ba15) call the game first: their
+  `SV_FreeClient` (1.5b 0x8089daf, UO 0x808abb3; `VM_Call` 7, then
+  `SV_SetUserinfo(slot, "")`) runs before `Going to CS_ZOMBIE`, the state
+  write and the `e` notice. INFERRED (control flow).
+- `ClientDisconnect` (1.1d 0x42aac, 1.5b 0x4cf5f, UO 0x55433) opens with
+  `Scr_Notify(player, "menuresponse", "-1", "disconnect")` (1.1d strings
+  0x73113 and 0x73108, the `scr_const` slot `Cmd_MenuResponse_f` uses),
+  then the follower pass (1.1d `Cmd_FollowCycle_f(ent, 1)` and
+  `StopFollowing` when that fails; 1.5b and UO `StopFollowing` alone),
+  the first complaint window naming the leaver and its `m -2`, UO's
+  `VEH_UnlinkPlayer`, `HudElem_ClientDisconnect`, the callback,
+  `G_FreeEntity`, and `CalculateRanks` last (1.1d 0x42c1f). INFERRED
+  (control flow).
+- Live, 2026-10-18, `client-probes/probe_dropclient` on all three retail
+  servers (`+set sv_timeout 3`), a `--probe-edge watch` spectator beside a
+  `--probe-edge silence` client and a `--probe-edge zombie-active` one,
+  the same on 1.1d, 1.5b and UO 1.51b unless a bullet says otherwise:
+  - The timeout drop's callback reads `getTime()` of the frame just run,
+    and its `iPrintLn` rides that frame's message beside the drop notice:
+    `e "...EXE_TIMEDOUT"` then `f "PROBE_GONE 1"` on 1.1d, `f` then `e`
+    on 1.5b and UO. VERIFIED (capture).
+  - A `disconnect` between frames runs the callback on the last frame's
+    `getTime()` and its line rides the next message. VERIFIED (capture).
+  - Neither the zombie (its message holds only `w`) nor, on 1.5b and UO,
+    the client the game still sees in its slot hears the callback's
+    `iPrintLn`. VERIFIED (capture).
+  - The `menuresponse` waiter on the player's own thread never runs. A
+    level thread waiting on the player wakes with `[-1] [disconnect]` and
+    runs on the next frame's `getTime()`, after the callback; a `wait
+    0.05` the callback started runs a frame after that. VERIFIED
+    (capture).
+- vcod, before 2026-10-18: the drop queued the disconnect for the next
+  frame's packet pass, so a timeout's line went out a message after the
+  notice, and nothing notified `menuresponse`. Now `Server::drop_client`
+  runs `ScriptRuntime::client_disconnect` inside the drop, after the
+  notice on 1.1 and before it on 1.5 and UO, with the slot already out
+  of `clients`, and sends its commands and configstrings at once; the
+  notify's waiters park for the next frame (`Vm::notify_for_frame`), and
+  the disconnect sets `ranks_dirty`. The same three runs against
+  vcod-server print the same lines and the same message layout.
+  `a_timed_out_clients_callback_lines_go_out_with_its_drop_notice`,
+  `a_drop_notifies_menuresponse_for_the_next_frame` and
+  `a_dropped_client_stops_its_followers_on_1_5` pin it.
+- Not ported: a 1.1 command the callback addresses to the leaver alone
+  would reach the zombie on retail (`SV_GameSendServerCommand` to one
+  slot does not test the state, as in Q3); vcod drops it. A reconnect
+  into a held slot still queues its disconnect (`SV_DirectConnect`'s path
+  was not read).
+
 ### Console commands over rcon
 
 Measured 2026-10-08 the same way (retail on a spare port, `rconPassword pw`,

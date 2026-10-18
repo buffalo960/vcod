@@ -11,7 +11,7 @@
 //! extended precision: at a few million milliseconds an f32 argument has
 //! lost the fractional part that decides the phase.
 
-use super::{PlayerState, SPEED_RUN, Stance};
+use super::{PlayerState, Stance};
 use crate::weapon::{AimDef, WeaponDef};
 use glam::Vec3;
 
@@ -409,7 +409,7 @@ fn movement_rot(
     let frac = ps.weapon_pos_frac;
     let mut target = [0.0f32; 3];
     if spd > min_speed && ps.weaponstate != super::weapon::WEAPON_RELOADING {
-        let f = ((spd - min_speed) / (SPEED_RUN - min_speed)).clamp(0.0, 1.0);
+        let f = ((spd - min_speed) / (ps.speed - min_speed)).clamp(0.0, 1.0);
         let rot = match ps.stance {
             _ if ps.sprinting => aim.sprint_rot,
             Stance::Prone => aim.prone_rot,
@@ -482,7 +482,7 @@ impl GunMove {
         };
         let mut target = [0.0f32; 3];
         if spd > min_speed && ps.weaponstate != super::weapon::WEAPON_RELOADING {
-            let f = ((spd - min_speed) / (SPEED_RUN - min_speed)).clamp(0.0, 1.0);
+            let f = ((spd - min_speed) / (ps.speed - min_speed)).clamp(0.0, 1.0);
             let mv = match ps.stance {
                 _ if ps.sprinting => aim.sprint_move,
                 Stance::Prone => aim.prone_move,
@@ -812,6 +812,7 @@ pub fn aim_angles(ps: &PlayerState, st: &mut AimState, input: &AimInput) -> [f32
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pmove::SPEED_RUN;
     use glam::Vec3;
     use std::collections::HashMap;
 
@@ -954,6 +955,36 @@ mod tests {
             g.step(&ps, &aim, 50);
         }
         assert_eq!(g.step(&ps, &aim, 50), [-2.0, 1.0, -0.2], "crouched still");
+    }
+
+    /// The run's fraction is over the wire's `ps.speed`, not 190: under a
+    /// `g_speed` of 250 a 190 run settles at (190 - 80) / (250 - 80) of
+    /// the stance's pose.
+    #[test]
+    fn the_gun_move_scales_against_the_server_s_speed() {
+        let mut m = HashMap::new();
+        for (k, v) in [
+            ("standMoveR", "0.6"),
+            ("standMoveU", "-1"),
+            ("posMoveRate", "4"),
+            ("standMoveMinSpeed", "80"),
+        ] {
+            m.insert(k.to_string(), v.to_string());
+        }
+        let aim = WeaponDef::from_map(&m).aim;
+        let mut ps = still(0.0);
+        ps.speed = 250.0;
+        ps.velocity = Vec3::new(SPEED_RUN, 0.0, 0.0);
+        let mut g = GunMove::default();
+        for _ in 0..400 {
+            g.step(&ps, &aim, 50);
+        }
+        let f = 110.0 / 170.0;
+        let [_, l, u] = g.step(&ps, &aim, 50);
+        assert!(
+            (l - 0.6 * f).abs() < 1e-5 && (u + f).abs() < 1e-5,
+            "{l} {u}"
+        );
     }
 
     /// UO's sprint pose: the stock files' `sprintMove*` past

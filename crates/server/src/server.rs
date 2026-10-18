@@ -1131,12 +1131,14 @@ fn follow_end_frame(
 }
 
 /// `ClientDisconnect`'s pass over the spectators following `gone`
-/// (0x42b25..0x42b5b): each cycles on to the next client, or stops.
+/// (0x42b25..0x42b5b): each cycles on to the next client under `cycle`
+/// (1.1), or stops.
 fn pass_followers_on(
     clients: &mut [Option<Client>],
     gone: usize,
     mut rt: Option<&mut script::ScriptRuntime>,
     collision: Option<&vcod_common::collision::CollisionWorld>,
+    cycle: bool,
 ) {
     for slot in 0..clients.len() {
         let Some(sim) = clients[slot].as_ref().and_then(|c| c.sim.as_ref()) else {
@@ -1149,7 +1151,7 @@ fn pass_followers_on(
         if session.state != follow::SessionState::Spectator {
             continue;
         }
-        let next = (session.spectator_client < 0)
+        let next = (cycle && session.spectator_client < 0)
             .then(|| follow::cycle(Some(gone), 1, clients.len(), |t| followable(clients, t)))
             .flatten();
         let sim = clients[slot].as_mut().and_then(|c| c.sim.as_mut()).unwrap();
@@ -1532,10 +1534,9 @@ pub struct Server {
     rng: u64,
     /// The next level's script seed, `G_InitGame`'s `Rand_Init` argument:
     /// retail passes the wall clock at every load and restart, so no level
-    /// repeats the last one's draws (map-cycle doc 4.8). `None` under
-    /// [`Server::new`], whose every level draws from `RNG_SEED`, so a test's
-    /// spawn picks hold at each level; [`Server::with_seed`] steps it.
-    level_seed: Option<u64>,
+    /// repeats the last one's draws (map-cycle doc 4.8). Stepped at every
+    /// load, from `RNG_SEED` under [`Server::new`].
+    level_seed: u64,
     /// [`Server::pin_spawns`]'s queues, handed to every level's script.
     spawn_pins: Option<crate::game::host::SpawnPins>,
     /// The map's collision and spawn, loaded by the binary; tests run
@@ -1992,9 +1993,7 @@ impl Server {
     /// A server whose generator starts from a fixed seed, so a test run
     /// replays the same bot picks, script `randomInt`s and spawn choices.
     pub fn new(cfg: ServerConfig, now: Instant) -> Self {
-        let mut sv = Self::with_seed(cfg, now, 0x9e37_79b9_7f4a_7c15);
-        sv.level_seed = None;
-        sv
+        Self::with_seed(cfg, now, crate::game::host::RNG_SEED)
     }
 
     /// Test-facing: each client slot's playing spawns, in order, go to these
@@ -2048,7 +2047,7 @@ impl Server {
             outbox: Vec::new(),
             limiter: RateLimiter::new(now),
             rng: seed,
-            level_seed: Some(seed),
+            level_seed: seed,
             spawn_pins: None,
             world: None,
             sv_time_ms: 0,
@@ -3850,18 +3849,19 @@ impl Server {
         out
     }
 
-    /// `SV_DropClient` (cod_lnxded 0x8085cf4). The game hears the disconnect
-    /// at once; the slot goes `CS_ZOMBIE` with the drop notice queued, and
-    /// `send_zombies` keeps sending it until [`ZOMBIE_TIME`] past the
-    /// client's last packet. A bot has nobody to tell and is freed now.
+    /// `SV_DropClient` (cod_lnxded 0x8085cf4). The game's `ClientDisconnect`
+    /// runs inside it: on 1.1 after the drop notice, on 1.5 and UO before it
+    /// (cod11-server-handshake.md, "When the game hears a drop"). The slot
+    /// goes `CS_ZOMBIE` with the drop notice queued, and `send_zombies`
+    /// keeps sending it until [`ZOMBIE_TIME`] past the client's last packet.
+    /// A bot has nobody to tell and is freed now.
     fn drop_client(&mut self, slot: usize, reason: &str) {
         let Some(mut c) = self.clients[slot].take() else {
             return;
         };
-        let collision = self.world.as_ref().map(|w| &w.collision);
-        pass_followers_on(&mut self.clients, slot, self.script.as_mut(), collision);
-        if let Some(rt) = self.script.as_mut() {
-            rt.push_client_event(ClientEvent::Disconnect(slot));
+        let v15 = self.v15();
+        if v15 {
+            self.client_disconnect(slot);
         }
         // Match on ip, not `ch.addr == c.addr`; NAT may have moved the port
         // since the challenge was issued and the slot would stay `connected`.
@@ -3884,6 +3884,9 @@ impl Server {
             }
         }
         self.print(&format!("{slot}:{} {reason}\n", c.name));
+        if !v15 {
+            self.client_disconnect(slot);
+        }
         // Appended with no squash or guard: the notice must not be dropped,
         // and a full ring cannot drop a client twice.
         c.netchan.reliable_sequence += 1;
@@ -3897,6 +3900,45 @@ impl Server {
         // The last client gone (0x8085ebc).
         if self.client_count() == 0 {
             self.masters.force();
+        }
+    }
+
+    /// The game's `ClientDisconnect` for a slot already out of `clients`,
+    /// whose server commands and configstrings go out at once, as the
+    /// game's `trap_SendServerCommand` sends them: a drop after the frame
+    /// still reaches that frame's message. Neither the zombie nor, on 1.5
+    /// and UO, the client still in its slot hears the callback's lines
+    /// (`client-probes/probe_dropclient`).
+    fn client_disconnect(&mut self, slot: usize) {
+        let collision = self.world.as_ref().map(|w| &w.collision);
+        // 1.5's and UO's `ClientDisconnect` stops a follower outright
+        // (1.5b 0x4cf5f, UO 0x55433); 1.1's cycles first.
+        let cycle = !self.v15();
+        pass_followers_on(
+            &mut self.clients,
+            slot,
+            self.script.as_mut(),
+            collision,
+            cycle,
+        );
+        let Some(rt) = self.script.as_mut() else {
+            return;
+        };
+        mirror_roster(&self.clients, rt);
+        rt.client_disconnect(slot);
+        let written: Vec<usize> = rt
+            .host
+            .configstrings
+            .writes()
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        let commands = rt.take_client_commands();
+        let console = rt.take_console();
+        self.console.extend(console);
+        self.copy_game_configstrings(written);
+        for (to, cmd) in commands {
+            self.send_server_command(to, &cmd);
         }
     }
 
@@ -5863,12 +5905,10 @@ impl Server {
             area: carry.area.filter(|_| restart),
             map: carry.map.filter(|_| restart),
             scripts: carry.scripts.filter(|_| restart),
-            seed: self.level_seed,
+            seed: Some(self.level_seed),
             spawn_pins: self.spawn_pins.clone(),
         };
-        if let Some(seed) = self.level_seed.as_mut() {
-            *seed = vcod_common::rng::xorshift(seed) | 1;
-        }
+        self.level_seed = vcod_common::rng::xorshift(&mut self.level_seed) | 1;
         let fs_paks = fs.clone();
         let source = crate::game::script::PakScripts::new(fs.clone(), self.script_overlay.clone());
         let mut rt = crate::game::script::ScriptRuntime::load_from(
@@ -11177,7 +11217,7 @@ mod tests {
         };
         let fs = Rc::new(fs);
         let now = Instant::now();
-        let mut sv = Server::with_seed(cfg(), now, 7);
+        let mut sv = Server::new(cfg(), now);
         sv.set_cvar("g_gametype", "dm");
         let path = fs.resolve_map("mp_carentan").expect("map in paks");
         let bsp = vcod_common::bsp::parse(&fs.read(&path).expect("read bsp")).expect("parse bsp");
@@ -14385,6 +14425,18 @@ mod tests {
         assert_eq!(ps_i32(&s, "pm_flags") & 0x10000, 0);
     }
 
+    /// 1.5's and UO's `ClientDisconnect` stops a follower outright, with
+    /// another client still there to cycle to (1.5b 0x4cf5f, UO 0x55433).
+    #[test]
+    fn a_dropped_client_stops_its_followers_on_1_5() {
+        let rt = crate::game::script::ScriptRuntime::for_test("main() {}");
+        let mut rig = FollowRig::with_protocol(rt, &PROTOCOL_V6, &PROTOCOL_V6);
+        assert_eq!(ps_i32(&rig.press(msg::BUTTON_ATTACK), "clientNum"), 1);
+        rig.sv.drop_client(1, "EXE_DISCONNECTED");
+        let s = rig.step(0);
+        assert_eq!(ps_i32(&s, "clientNum"), 0);
+    }
+
     /// A script's `spectatorclient` is a forced follow: both bits on the
     /// frame, the buttons do nothing to it, and one naming a slot with
     /// nothing to follow is written back to -1.
@@ -14891,6 +14943,58 @@ mod tests {
         sv.tick(t);
         assert_eq!(sv.client_count(), 0);
         assert!(sv.zombies[0].is_none());
+    }
+
+    /// `SV_DropClient` runs the game's `ClientDisconnect` inside the drop, so
+    /// a timeout after the frame still puts the callback's line in that
+    /// frame's message: after the drop notice on 1.1, ahead of it on 1.5 and
+    /// UO (`client-probes/probe_dropclient`, handshake doc "When the game
+    /// hears a drop").
+    #[test]
+    fn a_timed_out_clients_callback_lines_go_out_with_its_drop_notice() {
+        use crate::game::script::{CALLBACK_SETUP, ScriptRuntime};
+        for (proto, gone_first) in [(&PROTOCOL_V1, false), (&PROTOCOL_V6, true)] {
+            let t = Instant::now();
+            let mut sv = Server::new(cfg(), t);
+            sv.set_protocol(proto);
+            install_script(
+                &mut sv,
+                ScriptRuntime::for_test_at(
+                    CALLBACK_SETUP,
+                    "main() {}\n\
+                     CodeCallback_PlayerDisconnect() { iprintln(\"gone\"); }\n",
+                ),
+            );
+            sv.set_cvar("sv_timeout", "1");
+            let mut watcher = begun(&mut sv, t);
+            sv.clients[1] = Some(Client::new(addr(6), 0x3001, 0, "\\name\\quiet".into(), t));
+            sv.script
+                .as_mut()
+                .unwrap()
+                .push_client_event(ClientEvent::Connect {
+                    slot: 1,
+                    name: "quiet".into(),
+                });
+            sv.tick(t);
+            sv.take_outgoing();
+            let huff = Huffman::new();
+            sv.clients[1].as_mut().unwrap().last_packet_ms = sv.sv_time_ms - 1001;
+            sv.clients[1].as_mut().unwrap().timeout_count = 5;
+            sv.clients[0].as_mut().unwrap().last_packet_ms = sv.sv_time_ms;
+            sv.tick(t);
+            assert_eq!(sv.client_count(), 1);
+            let out = sv.take_outgoing();
+            let (_, pkt) = out.iter().find(|(to, _)| *to == addr(5)).unwrap();
+            let cmds = server_commands(&mut watcher, pkt, &huff);
+            let notice = "e \"\u{15}quiet^7 \u{14}EXE_TIMEDOUT\"".to_string();
+            let gone = "f \"gone\"".to_string();
+            let want = if gone_first {
+                [gone, notice]
+            } else {
+                [notice, gone]
+            };
+            assert!(cmds.ends_with(&want), "{}: {cmds:?}", proto.version);
+        }
     }
 
     #[test]
