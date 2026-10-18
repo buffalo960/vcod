@@ -49,8 +49,10 @@ const MAX_DROP: f32 = 250.0;
 /// along the deck with, and a bot that did fell past it to the hold
 /// (bot-navigation.md section 3).
 const PACED_DROP: f32 = 200.0;
-/// How far either side of the body a run off a drop has to land from
-/// too ([`Follower::edge_holds`]).
+/// How high over a drop's landing [`a_miss_hurts`] looks out from.
+const MISS_EYE: f32 = 48.0;
+/// How far either side of the body a run off a drop whose miss can hurt
+/// has to land from too ([`Follower::edge_holds`]).
 const ASIDE_DROP: f32 = 2.0;
 /// An edge whose ends differ by less than this in height is level, and a
 /// walk one way stands in for the walk back.
@@ -1601,6 +1603,9 @@ pub struct Follower {
     /// The last drop asked about, and whether the graph's walk ran off it
     /// ([`Self::runs_off`]).
     run_off: Option<((u32, u32), bool)>,
+    /// The last drop asked about, and whether a miss of it hurts
+    /// ([`Self::miss_hurts`]).
+    miss_hurt: Option<((u32, u32), bool)>,
     /// The last edge asked about, and whether only a creep proved it
     /// ([`Self::creeps_off`]).
     creep_off: Option<((u32, u32), bool)>,
@@ -2171,14 +2176,16 @@ impl Follower {
                     Walked::Arrived(_, false)
                 )
             };
-            // The run has to land from a body a couple of units either
-            // side of this one too: off mp_ship's (3564, 252, 896) a run
+            // Where a miss can hurt, the run has to land from a body a
+            // couple of units either side of this one too: off mp_ship's (3564, 252, 896) a run
             // onto the ledge at 760 lands on a slope's corner the walk
             // clips and the bot's own run, two units on, misses, and three
             // bots fell to the deck at 352 (bot-navigation.md section 3).
             let across = pace.truncate().perp().normalize_or_zero().extend(0.0) * ASIDE_DROP;
             return lands(at)
-                && (across == Vec3::ZERO || (lands(at + across) && lands(at - across)));
+                && (across == Vec3::ZERO
+                    || !self.miss_hurts(world, edge, b)
+                    || (lands(at + across) && lands(at - across)));
         }
         if (b.z - a.z).abs() > vcod_common::pmove::JUMP_HEIGHT {
             return true;
@@ -2773,6 +2780,19 @@ impl Follower {
         };
         let (from, to) = (g.nodes[a as usize], g.nodes[b as usize]);
         to.z < at.z - deep && self.runs_off(world, (a, b), from, to)
+    }
+
+    /// Whether a run that misses the drop `edge` onto `to` can fall far
+    /// enough to hurt ([`a_miss_hurts`]). Probed once per edge.
+    fn miss_hurts(&mut self, world: &CollisionWorld, edge: (u32, u32), to: Vec3) -> bool {
+        if let Some((e, hurts)) = self.miss_hurt
+            && e == edge
+        {
+            return hurts;
+        }
+        let hurts = a_miss_hurts(world, to);
+        self.miss_hurt = Some((edge, hurts));
+        hurts
     }
 
     /// Whether a forward walk from `from` arrives on `to`'s floor without a
@@ -3700,6 +3720,33 @@ fn beside_a_fall_that_hurts(world: &CollisionWorld, q: Vec3) -> bool {
                 .point_trace(top, down, MASK_PLAYERSOLID, false)
                 .fraction
                 >= 1.0
+        })
+    })
+}
+
+/// Whether a point 32 to 96 units from a drop's landing `q` in any of the
+/// eight octants, in the open from [`MISS_EYE`] over `q`, has no floor
+/// within `bg_fallDamageMinHeight` (256) under `q`: a run off the drop
+/// that misses it carries that far (mp_ship's run onto the ledge at
+/// (3521, 289, 760) flew 93 units before it was level with it). From
+/// lower, a slope over that ledge hides the way it flew.
+fn a_miss_hurts(world: &CollisionWorld, q: Vec3) -> bool {
+    (0..8).any(|i| {
+        let a = (i as f32 * 45.0).to_radians();
+        let dir = Vec3::new(a.cos(), a.sin(), 0.0);
+        let eye = q + Vec3::Z * MISS_EYE;
+        [32.0, 48.0, 64.0, 80.0, 96.0].iter().any(|&r| {
+            let top = eye + dir * r;
+            let down = top - Vec3::Z * (MISS_EYE + 256.0);
+            // Not through a wall: past the hull lies nothing at all.
+            world
+                .point_trace(eye, top, MASK_PLAYERSOLID, false)
+                .fraction
+                >= 1.0
+                && world
+                    .point_trace(top, down, MASK_PLAYERSOLID, false)
+                    .fraction
+                    >= 1.0
         })
     })
 }
@@ -6647,8 +6694,11 @@ mod tests {
     /// three bots passed the node (seeds 427, 2477, 4523), at their pace,
     /// the walk lands on a slope's corner it clips, and two units across
     /// misses it, as the bots' own runs did, and falls to the deck at 352.
-    /// The run has to land from either side too, so the drop does not
-    /// hold from there; from the node, straight at the ledge, it does.
+    /// A miss there falls to the deck, so the run has to land from either
+    /// side too, and the drop does not hold from there; from the node,
+    /// straight at the ledge, it does. A drop into the hold at (4246, 232,
+    /// 56), where a miss lands on the hold's floor, is not asked: held
+    /// for it, a bot jammed on a node another stood on (seed 439).
     #[test]
     fn a_drop_that_lands_only_on_a_corner_does_not_hold() {
         let Some(world) = map_world("mp_ship") else {
@@ -6662,6 +6712,8 @@ mod tests {
             path: vec![0, 1],
             ..Follower::default()
         };
+        assert!(a_miss_hurts(w, b));
+        assert!(!a_miss_hurts(w, Vec3::new(4246.0, 232.0, 56.125)));
         let at = Vec3::new(3573.1277, 245.13213, 896.125);
         let pace = Vec3::new(-173.0, 80.0, 0.0);
         assert!(matches!(
