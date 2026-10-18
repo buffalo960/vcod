@@ -888,6 +888,45 @@ to 6979, two bots 10279 to 10959; mp_rhinevalley shooting 9319 to
 11559, shoot off 6839 to 7979, two bots 9499 to 10219. No shoot-off run
 defused a charge.
 
+VERIFIED (measured, ours, 2026-10-18, release, UO install, master
+7256c89c, same setup and the same three gates over `BOTS_SEED` 1 to 11
+odd on all five maps, 90 runs): every run ends on its bases. Shooting:
+mp_foy 9939 to 16659, mp_italy 10259 to 12979, mp_kursk 8479 to 15379,
+mp_ponyri 10659 to 12899, mp_rhinevalley 9339 to 12359. Shoot off: 6179
+to 9559 (mp_rhinevalley seed 7 the slowest). Two bots: 9519 to 12539.
+mp_kursk shooting over 13 to 23 odd: 9939 to 12279. The collision
+changes merged since the numbers above reshuffled the seeds: mp_kursk
+seed 3 now ends at 8479, and seed 5 at 15379. Seed 5's slow stretch
+(ticks 10303 to 15142, both sides down to a breached last base) is not a
+room held against one attacker after another. The allied planter
+planted alone, while its backing teammate was still fighting at its own
+base. Both axis bots came home, killed it and defused. After that all
+four bots crossed the map toward each other's last base, and seven
+deaths between ticks 11548 and 13942, between (2900, -5300) and (2800,
+-10400), decided it. Only three kills in the round were a defender's
+near its own base (`bas_defend`).
+
+Rejected regroup rules for a planter going for the other side's last
+base, breached (INFERRED, measured on mp_kursk shooting, seeds 1 to 11
+odd):
+- A planter waits 600 to 750 units off the charge, for up to 30 s, for a
+  live teammate farther out. Slower: seed 7 went 11679 to 12039 and seed
+  11 10119 to 10719. On seed 5 an allied planter waited by the axis
+  spawn and was killed by the bots spawning there.
+- The same wait, but only for a teammate that has come 64 units nearer
+  in the last 3 s. Seed 1 went 10879 to 18979. On master the axis
+  breacher killed the allied defender (tick 9027) and planted at 9437.
+  With the wait it stopped short of the room, and the defender killed
+  both axis attackers there (8812 and 8846). Seed 5 went to 15839.
+- The same, but only once the bot's last life ended within 1000 units of
+  that charge. This rule never fired in 36 shooting runs (all five maps,
+  seeds 1 to 11, and mp_kursk 13 to 23), and every round ended on the
+  tick master's did.
+
+A plant made at once, before the defender is back in its room, wins more
+than it loses. On these seeds no attacker reached a held room one at a
+time, so nothing was merged.
+
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
 changes, four bots with shoot off on mp_foy, seeds 3 and 7, planted 97
