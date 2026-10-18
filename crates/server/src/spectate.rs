@@ -2045,6 +2045,14 @@ impl ClientSim {
         })
     }
 
+    /// The controls the frame's skeleton builds eased to, which the record
+    /// keeps for the next end frame's ease (coduo-vehicles.md 13).
+    pub fn keep_eased(&mut self, c: vcod_common::playerpose::Controllers) {
+        if self.pose.eased.is_some() {
+            self.pose.eased = Some(c);
+        }
+    }
+
     /// `ClientEndFrame`'s `BG_UpdatePlayerDObj` and `BG_PlayerAnimation`:
     /// the models, the two anim indices with the phase each started at, and
     /// the record the controllers read, its swings stepped over
@@ -2134,6 +2142,7 @@ impl ClientSim {
             rules: self.ps.rules,
             eased: None,
             seat_ramp: Default::default(),
+            ease_ms: frametime_ms,
         };
         // The hook runs the controls toward this frame's targets
         // (docs/research/coduo-vehicles.md 14, "The controllers").

@@ -1614,6 +1614,12 @@ impl ScriptRuntime {
         }
     }
 
+    /// The controls the slot's skeleton builds eased to past his last end
+    /// frame, once (`GameHost::dobj_eased`).
+    pub fn take_dobj_eased(&mut self, slot: usize) -> Option<vcod_common::playerpose::Controllers> {
+        self.host.dobj_eased.get_mut(slot).and_then(Option::take)
+    }
+
     /// The animtree a builtin poses a body with.
     pub fn set_player_anims(&mut self, anims: Option<Rc<vcod_common::animtree::PlayerAnims>>) {
         self.host.anims = anims;
@@ -2892,7 +2898,7 @@ impl ScriptRuntime {
         // `G_RunFrame` starts under a new skeleton stamp, with the DObjs
         // where the last frame left them.
         self.host.dobj_time_ms = self.host.level_time_ms;
-        self.host.dobj_posed.iter_mut().for_each(Vec::clear);
+        self.host.clear_dobj_stamps();
         self.host.level_time_ms = now_ms;
         // The notifies retail raises where they happen: the last entity
         // pass's movers and the cmds' touches, use key and item takes. They
@@ -3030,7 +3036,7 @@ impl ScriptRuntime {
         }
         // Past the loop no script asks for a bone this frame; a callback
         // between frames poses under the packet's own stamp.
-        self.host.dobj_posed.iter_mut().for_each(Vec::clear);
+        self.host.clear_dobj_stamps();
         None
     }
 

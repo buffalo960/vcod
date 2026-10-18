@@ -1703,22 +1703,47 @@ origin on ours (`compare_impacts`).
         at 53900 by 21.00 in z). Whether it also closes the jeep gunner's
         marks lagging a frame while the gun swings (below) is not
         measured.
-      The one left:
-      - 54000, `bip01 head` 0.34 off. The mark reads the pose of
-        53900. VERIFIED, vcod measurement (2026-10-18, the glide gate
-        with the rider's eased neck control overwritten at 53900):
-        neck (3, 27) puts the head on retail's (4690.53, -1979.62,
-        162.44); ours' (3, 18) reads 0.34 off, (0, 27) 0.1, (6, 27)
-        0.13, (3, 31) 0.16. So retail's neck is on its target (0.3 of
-        the 90-degree head turn) a frame after the change, two
-        18-degree ease steps where ours takes one. VERIFIED,
-        `game.mp.uo.i386.so`: `BG_Player_DoControllers` (0x1f2fe) has
-        one caller, the static 0x42c26, and `ClientEndFrame` stores
-        0x42c26 at `ent+0x230` (0x43510) before `G_UpdateClientInfo`.
-        INFERRED: the ease runs as the DObj's controller callback,
-        once per skeleton build, so a body built at two stamps in one
-        frame eases twice. What builds the rider twice at 53900 is not
-        found; vcod eases once per end frame.
+      - 54000, `bip01 head` 0.34 off, closed 2026-10-18. The mark reads
+        the pose of 53900. VERIFIED, vcod measurement (the glide gate
+        with the rider's eased neck control overwritten at 53900): neck
+        (3, 27) puts the head on retail's (4690.53, -1979.62, 162.44);
+        ours' (3, 18) read 0.34 off, (0, 27) 0.1, (6, 27) 0.13, (3, 31)
+        0.16. So retail's neck was on its target (0.3 of the 90-degree
+        head turn) a frame after the change, two or more 18-degree ease
+        steps where ours took one. VERIFIED, `game.mp.uo.i386.so`:
+        `BG_Player_DoControllers` (0x1f2fe) has one caller, the static
+        0x42c26, and `ClientEndFrame` stores 0x42c26 at `ent+0x230`
+        (0x43510) before `G_UpdateClientInfo`; the hook's only reader
+        is the pair `G_DObjCalcPose` (0x78f4f) and `G_DObjCalcBone`
+        (0x78fe2), each of which runs it between `trap_DObjCalcAnim`
+        and `trap_DObjCalcSkel` unless `trap_DObjCreateSkelForBones`,
+        or `trap_DObjCreateSkelForBone` (syscall 0x6e), returns non-zero.
+        INFERRED, off 1.1d's engine case for that syscall (`cod11-movers.md`
+        15, "A bone asked for before the anim update"; UO's engine not
+        read): it returns zero when a bone asked for is not yet built
+        under the frame's stamp. The ease step is
+        `0.36 * bg.frametime`, and `G_RunFrame` sets `bg.frametime` to
+        `level.frametime` (0x59c21), so it is 18 degrees a run however
+        often the hook runs (VERIFIED decompile). INFERRED, off the
+        same: the controls step once for every build that finds a bone
+        missing, not once a frame, and a bone keeps the controls of
+        the build that first posed it. The probe's ten marks each ask
+        for their own tag in the entity pass (pelvis, spine, spine2,
+        neck, head, ...), each a new chain, so a frame that changes the
+        target eases it up to ten times; with every bone built once a
+        frame (one script trace) it eases once, and a frame no build
+        happens in eases nothing. vcod: `combat::DobjStamps` keeps, for
+        each client and frame, each bone's stamp and build and the
+        controls each build eased to: the first build takes the end
+        frame's ease, each later one eases a step more toward the end
+        frame's target, and the last build's controls go back to the
+        record at the slot's next end frame (`GameHost::dobj_eased`,
+        `ClientSim::keep_eased`). With that every bone of the glide
+        sits within 0.02 of retail's (VERIFIED, replay; `GLIDE_GAPS` is
+        gone). Not ported: the engine's own traces (rounds in a cmd,
+        turret rounds, missiles, the use and lookat traces) pose
+        without the stamps and so add no build, and vcod still eases
+        once at each end frame where retail eases at the first build.
     - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
       fresh retail jeep run (seat changes at 41550 and 53550, port
       32776) seemed to meet the passenger's stint up to 1.07 off ours,

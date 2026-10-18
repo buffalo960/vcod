@@ -187,7 +187,82 @@ pub struct BoneTraceCtx<'a> {
     /// `GameHost::dobj_posed`, for a script trace: a bone the frame already
     /// posed keeps that pose, and the trace stamps every other one at
     /// `now_ms` (movers doc 15, "A bone asked for before the anim update").
-    pub posed: Option<&'a mut [Vec<Option<i32>>]>,
+    pub posed: Option<&'a mut [DobjStamps]>,
+}
+
+/// One client's skeleton under the frame's stamp (`GameHost::dobj_posed`):
+/// when each bone was first posed and by which build. Each build that finds
+/// a bone missing runs the DObj's controller hook, which on 1.5 and UO eases
+/// the controls one more step (docs/research/coduo-vehicles.md 13, "The
+/// glide back").
+#[derive(Clone, Default, Debug)]
+pub struct DobjStamps {
+    /// Each bone's posing time and build.
+    bones: Vec<Option<(i32, usize)>>,
+    /// The controls each build posed with, the first the end frame's.
+    builds: Vec<Option<vcod_common::playerpose::Controllers>>,
+}
+
+impl DobjStamps {
+    pub fn clear(&mut self) {
+        self.bones.clear();
+        self.builds.clear();
+    }
+
+    /// Stamps each bone of `want` the frame has not posed with `now_ms`
+    /// under a new build (one hook run), and returns every `want` bone's
+    /// stamp in order.
+    pub fn stamp(
+        &mut self,
+        n_bones: usize,
+        want: &[usize],
+        now_ms: i32,
+        pose: &BodyPose,
+    ) -> Vec<(i32, usize)> {
+        self.bones.resize(n_bones, None);
+        if want.iter().any(|&b| self.bones[b].is_none()) {
+            let build = self.builds.len();
+            let controls = match self.builds.last() {
+                None => pose.eased,
+                Some(last) => last.map(|mut c| {
+                    if let Some(target) = pose.target_controllers() {
+                        c.ease_toward(&target, pose.ease_ms);
+                    }
+                    c
+                }),
+            };
+            self.builds.push(controls);
+            for &b in want {
+                self.bones[b].get_or_insert((now_ms, build));
+            }
+        }
+        want.iter()
+            .map(|&b| self.bones[b].expect("stamped"))
+            .collect()
+    }
+
+    /// `pose`'s inputs at `now_ms` with the controls of `build`.
+    pub fn inputs<'a>(
+        &self,
+        pose: &'a BodyPose,
+        anims: &'a PlayerAnims,
+        now_ms: i32,
+        build: usize,
+    ) -> vcod_common::playerpose::PoseInputs<'a> {
+        let mut inputs = pose.pose_inputs(anims, now_ms);
+        if let Some(c) = self.builds.get(build).copied().flatten() {
+            inputs.controllers = Some(c);
+        }
+        inputs
+    }
+
+    /// The controls the frame's builds eased to, when any build eased past
+    /// the end frame's: the record keeps them.
+    pub fn eased_past_end_frame(&self) -> Option<vcod_common::playerpose::Controllers> {
+        (self.builds.len() > 1)
+            .then(|| self.builds.last().copied().flatten())
+            .flatten()
+    }
 }
 
 /// One player hit, ready for `CodeCallback_PlayerDamage`.
@@ -1036,6 +1111,8 @@ pub struct BodyPose {
     pub eased: Option<vcod_common::playerpose::Controllers>,
     /// The seat blend's weights as the end frames ramped them.
     pub seat_ramp: vcod_common::playerpose::SeatRamp,
+    /// `bg.frametime` at the end frame, each ease's step.
+    pub ease_ms: i32,
 }
 
 impl BodyPose {
@@ -1342,8 +1419,9 @@ pub fn trace_bodies_faced(
     best
 }
 
-/// `body` posed at `now_ms`, or with `stamps` each bone at the time the
-/// frame first posed it, those not yet posed stamped `now_ms`.
+/// `body` posed at `now_ms`, or with `stamps` each bone at the time and
+/// with the controls the frame first posed it, those not yet posed stamped
+/// `now_ms` under one new build.
 fn stamped_pose(
     skel: &vcod_common::skeleton::Skeleton,
     body: &HitBody,
@@ -1351,32 +1429,32 @@ fn stamped_pose(
     rigs: &mut HitRigs,
     fs: &vcod_common::pk3::Pk3Fs,
     now_ms: i32,
-    stamps: Option<&mut Vec<Option<i32>>>,
+    stamps: Option<&mut DobjStamps>,
 ) -> vcod_common::skeleton::PoseBuffer {
-    let mut pose_at = |t: i32| {
-        let inputs = body.pose.pose_inputs(anims, t);
-        pose_player(skel, &inputs, |name| rigs.clip(fs, name))
-    };
     let Some(stamps) = stamps else {
-        return pose_at(now_ms);
+        let inputs = body.pose.pose_inputs(anims, now_ms);
+        return pose_player(skel, &inputs, |name| rigs.clip(fs, name));
     };
-    stamps.resize(skel.bones().len(), None);
-    let times: Vec<i32> = stamps
-        .iter_mut()
-        .map(|t| *t.get_or_insert(now_ms))
-        .collect();
-    let mut pose = pose_at(now_ms);
-    let mut earlier: Vec<i32> = times.iter().copied().filter(|&t| t != now_ms).collect();
-    earlier.sort_unstable();
-    earlier.dedup();
-    for t in earlier {
-        let then = pose_at(t);
-        for (b, _) in times.iter().enumerate().filter(|(_, bt)| **bt == t) {
-            let (p, r) = then.local(b);
-            pose.set_local(b, p, r);
+    let all: Vec<usize> = (0..skel.bones().len()).collect();
+    let marks = stamps.stamp(all.len(), &all, now_ms, &body.pose);
+    let mut kinds: Vec<(i32, usize)> = marks.clone();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let mut pose: Option<vcod_common::skeleton::PoseBuffer> = None;
+    for k in kinds {
+        let inputs = stamps.inputs(&body.pose, anims, k.0, k.1);
+        let then = pose_player(skel, &inputs, |name| rigs.clip(fs, name));
+        match pose.as_mut() {
+            None => pose = Some(then),
+            Some(p) => {
+                for (b, _) in marks.iter().enumerate().filter(|(_, m)| **m == k) {
+                    let (lp, lr) = then.local(b);
+                    p.set_local(b, lp, lr);
+                }
+            }
         }
     }
-    pose
+    pose.expect("a skeleton has bones")
 }
 
 /// The two a swing spawns a temp entity for
