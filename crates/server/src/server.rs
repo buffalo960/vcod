@@ -5027,6 +5027,7 @@ impl Server {
             // Checked in pass 2 against this tick's teammates.
             friend_in_line: false,
             sidestep: None,
+            use_takes_weapon: sim.cursor_hint >= self.proto.cursor_hints.weapon,
             grenade,
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))

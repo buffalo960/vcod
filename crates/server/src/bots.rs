@@ -171,6 +171,10 @@ pub struct BotView {
     /// on the graph from whose eye the round would pass the teammate
     /// ([`crate::nav::NavGraph::sidestep`]); the bot steps to it.
     pub sidestep: Option<[f32; 3]>,
+    /// The cursor hint the end frame left is a weapon lying in reach: a
+    /// use press from this view takes it (`Cmd_Activate_f` picks what
+    /// `G_GetActivateEnt` scores best) and swaps the held weapon away.
+    pub use_takes_weapon: bool,
     /// A held frag's configstring index, when one is in the kit (not a
     /// UO smoke grenade or satchel charge).
     pub grenade: Option<u8>,
@@ -830,6 +834,10 @@ struct Objective {
     /// Ticks stood at a breach stand with no shot from it; past
     /// [`BREACH_IDLE_TICKS`] the next stand is tried (`pick`).
     idle: u32,
+    /// Ticks since an S&D defuser's settled view picked a weapon lying by
+    /// the bomb instead of its trigger; while set it closes in to
+    /// [`DEFUSE_CLOSE`].
+    close_in: u32,
 }
 
 /// What the objective wants of the bot right now.
@@ -887,6 +895,14 @@ const PLANT_TICKS: u32 = 120;
 const DEFUSE_TICKS: u32 = 210;
 /// The defuse wants `distance(origin, trigger.origin) < 64`.
 const DEFUSE_REACH: f32 = 48.0;
+/// A defuser whose press would take a weapon lying by the bomb stands this
+/// near the bomb instead: `G_GetActivateEnt` scores an entity dead on the
+/// view at its distance from the eye, so with the eye over the bomb the
+/// trigger's middle is nearer than anything lying on the floor.
+const DEFUSE_CLOSE: f32 = 16.0;
+/// Past this long closing in (the bomb's own body in the way), the press
+/// goes ahead whatever it takes.
+const DEFUSE_CLOSE_TICKS: u32 = 100;
 const GUARD_RADIUS: f32 = 250.0;
 /// A guard ring is at least this wide.
 const GUARD_BAND: f32 = 150.0;
@@ -1253,7 +1269,11 @@ impl Bot {
             (ObjRole::Attack, None) => site().map(ObjTarget::Plant),
             (ObjRole::Defend, Some(b)) if sd.lead => Some(ObjTarget::Defuse {
                 bomb: b,
-                reach: DEFUSE_REACH,
+                reach: if (1..DEFUSE_CLOSE_TICKS).contains(&self.obj.close_in) {
+                    DEFUSE_CLOSE
+                } else {
+                    DEFUSE_REACH
+                },
                 ticks: DEFUSE_TICKS,
             }),
             // Everyone else keeps off the defuser's line to the bomb.
@@ -1619,6 +1639,13 @@ impl Bot {
     fn think_objective(&mut self, view: &BotView, cmd: UserCmd) -> Option<UserCmd> {
         self.obj.rest = self.obj.rest.saturating_sub(1);
         let t = self.objective_target(view);
+        if view.sd.is_some() && matches!(t, Some(ObjTarget::Defuse { .. })) {
+            if self.obj.close_in > 0 {
+                self.obj.close_in += 1;
+            }
+        } else {
+            self.obj.close_in = 0;
+        }
         let at = t.is_some_and(|t| Self::at_objective(view, &t));
         if let Some(re) = view.re.as_ref() {
             if matches!(t, Some(ObjTarget::Sweep(_))) && at {
@@ -1678,7 +1705,16 @@ impl Bot {
                     0
                 };
                 let mut cmd = self.hold_use(view, cmd, aim);
-                if self.obj.settled >= SETTLE_TICKS {
+                let swaps = view.sd.is_some()
+                    && view.use_takes_weapon
+                    && self.obj.close_in < DEFUSE_CLOSE_TICKS;
+                if self.obj.settled >= SETTLE_TICKS && swaps {
+                    // A weapon lying by the bomb outscores the trigger
+                    // from here: close in over the bomb.
+                    self.obj.close_in = self.obj.close_in.max(1);
+                    self.obj.settled = 0;
+                    cmd.buttons = 0;
+                } else if self.obj.settled >= SETTLE_TICKS {
                     self.obj.held = 1;
                 } else {
                     cmd.buttons = 0;
@@ -3450,6 +3486,7 @@ mod tests {
             enemy: None,
             friend_in_line: false,
             sidestep: None,
+            use_takes_weapon: false,
             grenade: Some(6),
             grenade_cooks: false,
             frag_near: None,
@@ -3618,6 +3655,44 @@ mod tests {
         v.sd.as_mut().unwrap().bomb = None;
         v.linked = false;
         assert_eq!(bot.think(&v).buttons & BUTTON_USE, 0);
+    }
+
+    /// A weapon lying by the bomb that the settled view would take
+    /// (a planter's, dropped where he died) keeps the press back: the
+    /// defuser closes in over the bomb and presses there, and presses
+    /// anyway once [`DEFUSE_CLOSE_TICKS`] run out.
+    #[test]
+    fn a_defuser_closes_in_rather_than_take_a_weapon_by_the_bomb() {
+        let mut bot = Bot::new("axis", true, 1);
+        let mut v = sd_view(ObjRole::Defend);
+        let bomb = [30.0, 0.0, 64.0];
+        plant_bomb(&mut v, bomb);
+        let (tp, ty) = aim_angles(&v, [30.0, 0.0, 72.0]);
+        v.view = [tp, ty, 0.0];
+        v.use_takes_weapon = true;
+        for tick in 0..10 {
+            assert_eq!(bot.think(&v).buttons & BUTTON_USE, 0, "tick {tick}");
+        }
+        assert_eq!(bot.goal(&v), Goal::To(bomb), "closes in");
+        // Over the bomb the trigger is the pick.
+        v.origin = [26.0, 0.0, 64.0];
+        v.use_takes_weapon = false;
+        assert_eq!(bot.goal(&v), Goal::Hold);
+        let (tp, ty) = aim_angles(&v, [30.0, 0.0, 72.0]);
+        v.view = [tp, ty, 0.0];
+        assert!((0..4).any(|_| bot.think(&v).buttons & BUTTON_USE != 0));
+
+        let mut bot = Bot::new("axis", true, 1);
+        v.origin = [0.0, 0.0, 64.0];
+        let (tp, ty) = aim_angles(&v, [30.0, 0.0, 72.0]);
+        v.view = [tp, ty, 0.0];
+        v.use_takes_weapon = true;
+        let pressed =
+            (0..2 * DEFUSE_CLOSE_TICKS).position(|_| bot.think(&v).buttons & BUTTON_USE != 0);
+        assert!(
+            pressed.is_some_and(|t| t >= DEFUSE_CLOSE_TICKS as usize - 2),
+            "{pressed:?}"
+        );
     }
 
     #[test]
