@@ -1277,17 +1277,31 @@ muzzle across the view (impacts are whole units, truncated toward zero):
   `the_jeep_passenger_s_round_lands_as_on_retail`). From his eye (60) ours
   lands at (-3815, 928, -9). VERIFIED (capture, gate).
 
-The street placement settles differently: after the gametype's
-`setOrigin` ours' body sits 0.2 off retail's on the grade, until a later
-strafe pins both on the same wall. This is the thrower's slide above
-(the spawn's landing velocity and the first frames' cmd times); these
-captures log neither the dm spawn nor the cmds before the script, so
-`moveshot_ab` cannot pin them. INFERRED.
-That moves the early rounds a unit at most, but one round on UO that
-strikes a slanted face at x 1244 a unit on two axes (`moveshot_ab`
-`GAPS`). On flat ground retail's body sits at z -23.874996 after a
-placement 0.125 over the floor (-23.875) and ours stays at -23.75. Both
-VERIFIED (captures). The UO throw's two float steps above (36.125 plus
+**The street placement.** After the gametype's `setOrigin` (900, 1930,
+-38) retail's body rests at (900, 1930, -42.944004) with no velocity, 0.18
+over the grade, which the slope its later strafes cross puts at about
+-43.122 under that spot: the ground trace caught it inside its 0.25 reach
+before the fall's step met the face, so nothing slid. VERIFIED (UO
+capture, first `!snap`); the ground height INFERRED from the strafe rows.
+Where a fall ends that way rides the cmd times against the frame, and
+the captures log no cmd before the script's first. VERIFIED, `moveshot_ab`
+2026-10-18: with ours' wait sending one cmd a frame, as the gate did, the
+body lands on the face and slides to (900, 1929.7953, -43.13387), which
+put one UO round a unit off on two axes; sending the net probe's
+`--probe-cmd-ms 8` cadence instead (the probe's loop sends a cmd every
+iteration from its first snapshot), ours rests between (900, 1929.945,
+-43.126) and (900, 1930, -42.948) over eight cmd phases one millisecond
+apart, and every round of the 1.5 and UO captures lands within the
+gate's unit on each of them. So the gate keeps no gap row; the rest
+height still differs from retail's by up to 0.18 until a capture logs the
+wait's cmds. On flat ground retail's body sits at z -23.874996 after a
+placement 0.125 over the floor (-23.875; the bipod capture). VERIFIED.
+Ours stayed at -23.75 with one cmd a frame: `setOrigin`'s z lift puts the
+body 1.125 over the floor, and one 50 ms step of the fall ends at
+-23.75, inside the ground trace's reach, where nothing moves it again.
+With the probe's 8 ms cmds ours rests on retail's -23.874996 to the bit.
+VERIFIED (`moveshot_ab` 2026-10-18, both cadences); the mechanism
+INFERRED from the arithmetic. The UO throw's two float steps above (36.125 plus
 two ulps) are that z: -23.874996 + 60. INFERRED.
 
 VERIFIED, `ClientEndFrame` `0x410f1`: `client+0x2240` is

@@ -34,19 +34,11 @@ const PROBE: &str = "probe_moveshot";
 const TOL: f32 = 1.0;
 
 /// Rounds of ours that may land off retail's by more than [`TOL`]: part,
-/// tag, round and why.
-const GAPS: &[(&str, &str, usize, &str)] = &[("walk", "uo", 5, PLACEMENT)];
-
-/// After the teleport onto the street's grade ours' body settles 0.2 units
-/// off retail's until the crouched strafes push both against the same
-/// wall. `setOrigin` keeps the velocity of the spawn's landing and the
-/// slide rides the cmds' times in the first frames (cod11-combat.md 2.1,
-/// the thrower's slide); these captures log neither the dm spawn nor the
-/// cmds before the script starts, so the gate cannot pin them as
-/// scriptmodel_ab does. Every earlier round lands a unit over at most,
-/// except this one: it strikes a slanted face at x 1244, where that offset
-/// moves the impact a unit on two axes.
-const PLACEMENT: &str = "the placement's settle";
+/// tag, round and why. Empty since the wait before the script sends the
+/// probe's 8 ms cmds: the street placement's fall then lands near enough
+/// retail's on every cmd phase (cod11-combat.md 2.1, "The street
+/// placement").
+const GAPS: &[(&str, &str, usize, &str)] = &[];
 
 /// One part of the probe: its `probe_spot`, the weapon and where the
 /// gametype places the body.
@@ -236,15 +228,35 @@ fn ours(p: &'static Protocol, mut fs: Pk3Fs, part: Part, cap: &Capture) -> (Vec<
             }
         }
     };
+    // The net probe's cmds while it waits, idle at world yaw 0: one every
+    // `--probe-cmd-ms` (8 here) from its first snapshot on, so the fall
+    // after the placement steps as retail's did.
+    let idle = |cl: &mut vcod_common::net::NetClient<common::ClientEnd>| {
+        let Some(s) = cl.snapshots().newest() else {
+            cl.send_frame(&UserCmd {
+                weapon,
+                ..NULL_USERCMD
+            });
+            return;
+        };
+        let da = [0, 1, 2].map(|i| s.ps.field_i32(p, &format!("delta_angles[{i}]")));
+        let frame_ms = common::FRAME_MS as i32;
+        let batch: Vec<UserCmd> = (1..=6)
+            .map(|k| UserCmd {
+                server_time: s.server_time + (k * frame_ms + 5) / 6,
+                angles: da.map(|d| (-d) & 0xffff),
+                weapon,
+                ..NULL_USERCMD
+            })
+            .collect();
+        cl.send_cmds(&batch);
+    };
     // Until the gametype has put the body on the spot, and a second more,
     // as retail's capture opens.
     let mut placed_at = None;
     for i in 0..400 {
         now += Duration::from_millis(common::FRAME_MS as u64);
-        cl.send_frame(&UserCmd {
-            weapon,
-            ..NULL_USERCMD
-        });
+        idle(&mut cl);
         frame(&mut sv, &mut cl, &mut join, now);
         let on_spot = cl.snapshots().newest().is_some_and(|s| {
             let o = s.ps.origin(p);
@@ -279,10 +291,7 @@ fn ours(p: &'static Protocol, mut fs: Pk3Fs, part: Part, cap: &Capture) -> (Vec<
             break;
         }
         if t < first {
-            cl.send_frame(&UserCmd {
-                weapon,
-                ..NULL_USERCMD
-            });
+            idle(&mut cl);
         } else {
             let ct = cap
                 .snaps
