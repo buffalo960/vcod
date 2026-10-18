@@ -1438,10 +1438,14 @@ impl Bot {
                 let open: Vec<&&BasBaseView> = mine.iter().filter(|x| x.breached).collect();
                 // A charge of ours ticking: a defender that shoots joins
                 // its planter in holding its room. One on one, the
-                // defender in the room won most fights and defused.
+                // defender in the room won most fights and defused. So does
+                // one whose side has breached the other side's last base,
+                // charged or not: it came from its own base after the
+                // planter had died and the charge was defused (seed 23).
                 let backing = theirs
                     .iter()
                     .find(|x| x.planted && x.charge.is_some())
+                    .or_else(|| theirs.first().filter(|x| theirs.len() == 1 && x.breached))
                     .filter(|_| self.shoot);
                 if theirs.is_empty()
                     || (defends && self.shoot && !open.is_empty() && backing.is_none())
@@ -5930,7 +5934,8 @@ mod tests {
     }
 
     /// A defender with a charge of its side's ticking on the other side's
-    /// base leaves its own breached base's room to hold that one's.
+    /// base leaves its own breached base's room to hold that one's, and so
+    /// does one whose side has breached the other side's last base.
     #[test]
     fn a_bas_defender_backs_a_ticking_charge() {
         let bot = Bot::new("allies", true, 1);
@@ -5951,7 +5956,17 @@ mod tests {
             origin: theirs,
             aim: [2000.0, 0.0, -160.0],
         });
+        let mut standing = t.clone();
+        standing.at = [2000.0, 3000.0, 0.0];
+        standing.breached = false;
+        standing.charge = None;
+        b.bases.push(standing);
         assert_eq!(bot.goal(&v), Goal::To([-2000.0, 0.0, -176.0]), "its room");
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.bases.pop();
+        assert_eq!(bot.goal(&v), Goal::To(theirs), "their last base");
         let t = their_base(&mut v);
         t.planted = true;
         t.blows_in = Some(40.0);
