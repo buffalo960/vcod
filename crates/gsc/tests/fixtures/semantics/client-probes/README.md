@@ -2252,3 +2252,28 @@ The fixtures `crates/server/tests/fixtures/dyingpose/mp_carentan-dm.txt`
 and `crates/common/tests/fixtures/net/{gamestate,snapshots}-dyingpose.bin`,
 gated by `crates/server/tests/dyingpose_ab.rs`. The death clip is a
 `rand()` draw: the gate seeds ours to draw retail's `legsAnim` 20.
+
+## probe_dmgtrig and probe_dmgshot
+
+`trigger_damage` on United Offensive's mp_uo_stanjel
+(docs/research/cod11-combat.md 14.8). `probe_dmgtrig` needs no client: it
+watches all seventeen bushes and sets off script blasts on two of them.
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> \
+    PORT=33001 SECS=30 tools/run_probe.sh client-probes/probe_dmgtrig mp_uo_stanjel
+```
+
+`probe_dmgshot` holds one client off the first bush and has him shoot,
+miss, swing and throw a frag at it:
+
+```
+COD_VERSION=uo ... PORT=33003 SECS=60 \
+    tools/run_probe.sh client-probes/probe_dmgshot mp_uo_stanjel
+# 6 s later:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo \
+    --net-probe 127.0.0.1:33003 --probe-team axis --probe-weapon kar98k_mp \
+    --probe-uo-weapon direct --probe-secs 48
+```
+
+Retail's lines are in `crates/server/tests/dmgtrig_ab.rs`.

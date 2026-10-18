@@ -6743,7 +6743,22 @@ inside the 500 ms wait reached `Activate_trigger_damage` with `nextthink`
 queue entry is dropped because it is raised from a script thread
 (`radiusDamage`) inside `G_RunFrame`'s trigger rounds, whose queue is
 cleared once a round keeps nothing; vcod's `trigger_rounds` clears it the
-same way. A player's rounds, swing and grenade are not captured yet.
+same way.
+
+VERIFIED, `client-probes/probe_dmgshot.gsc` on retail UO, mp_uo_stanjel,
+2026-10-18, one `--probe-uo-weapon direct` client with a kar98k held 160
+units off bush 86 (`dmgtrig_ab.rs`'s second test). A round through the
+bush logs `"trigger"` (the player) then `"damage"` 120 with the player and
+no mod: the queue's `"trigger"` and the cmd's `"damage"` wake in the next
+frame's first round, the trigger's waiter first. A second round 2.1 s on
+fires again; a round 40 degrees wide fires nothing; a swing from 90 units
+reads `"damage"` 150 (the kar98k's `meleeDamage`) and fires. A frag's
+blast reaches two bushes through `G_Damage`'s six-argument arm
+(`MOD_GRENADE_SPLASH`), both `"trigger"`s ahead of both `"damage"`s in the
+same frame. Two runs read the round and swing lines alike and the blast's
+charges as 100/16 and 98/18: the landing rides the client's cmd timing.
+The second run logged the frag at rest at (-2021, 3339, 3), 66 units off
+bush 86's box, which 14.1's falloff gives as 98.
 
 **As implemented.** `crate::game::damage_trigger`: `spec_of` (the spawn's
 keys), `responds`, `activate`, `damaged` (`pain`/`die`, from
@@ -6752,7 +6767,9 @@ the segment against the trigger's brushes, or its box without them).
 `GameHost::blast_entities` lists every linked `trigger_damage` with its
 brush model's box. A round's legs and a swing raise
 `Effect::TriggerSweep` ahead of their hits; the missile pass sweeps a
-grenade's move; UO's shell impact sweeps to the normal.
+grenade's move; UO's shell impact sweeps to the normal. A blast's notifies on an entity raised in the entity pass go through
+`engine_notifies` (the pass's other notifies' path), so they wake with
+the trigger round rather than in the next frame's packet pass.
 `enableGrenadeTouchDamage` / `disableGrenadeTouchDamage` set the bit.
 
 ---
