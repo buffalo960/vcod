@@ -169,7 +169,8 @@ fn ours(
                 missiles.insert(*num);
                 let slot = (i("eventSequence") - 1) & 3;
                 lines.push(format!(
-                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} etype {} ev {} parm {}",
+                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} etype {} ev {} parm {} \
+                     apos {} {} {}",
                     snap.server_time,
                     i("pos.trType"),
                     f("pos.trBase[0]"),
@@ -178,6 +179,9 @@ fn ours(
                     i("eType"),
                     i(&format!("events[{slot}]")),
                     i(&format!("eventParms[{slot}]")),
+                    f("apos.trBase[0]"),
+                    f("apos.trBase[1]"),
+                    f("apos.trBase[2]"),
                 ));
             }
         }
@@ -729,4 +733,83 @@ fn a_uo_smoke_grenade_into_water_is_freed() {
     let (rg, og) = (gone(&fixture), gone(&log));
     assert_eq!(og, rg, "retail {rg:?}, ours {og:?}");
     assert_eq!(rg.0, 50);
+}
+
+/// The first missile's `apos.trBase` in a committed net capture
+/// (`crates/common/tests/fixtures/net/`).
+fn retail_launch_angles(tag: &str) -> [f32; 3] {
+    let p = &vcod_common::net::protocol::PROTOCOL_V1;
+    let frames = vcod_common::testing::fixture_frames(
+        p,
+        &format!("net/gamestate-{tag}.bin"),
+        &format!("net/snapshots-{tag}.bin"),
+    );
+    frames
+        .iter()
+        .flat_map(|f| f.snapshot.entities.values())
+        .find(|e| e.field_i32(p, "eType") == 4)
+        .map(|e| [0, 1, 2].map(|k| e.field_f32(p, &format!("apos.trBase[{k}]"))))
+        .expect("a missile in the capture")
+}
+
+/// Our first missile line's `apos`.
+fn our_launch_angles(log: &[String]) -> [f32; 3] {
+    let l = log
+        .iter()
+        .find(|l| l.contains(" missile "))
+        .expect("a missile on our wire");
+    let v: Vec<f32> = l[l.find(" apos ").unwrap() + 6..]
+        .split(' ')
+        .take(3)
+        .map(|c| c.parse().unwrap())
+        .collect();
+    [v[0], v[1], v[2]]
+}
+
+/// 1.1d's launch angles go through retail's `vectoangles` (0x3de94), down
+/// positive and both in [0, 360): the sky part's rocket 80 degrees up reads
+/// pitch 280.1, where Q3's sign sent -79.9 (combat doc 13.6). A frag's
+/// pitch is `AngleNormalize360` of that less 120, in 65536ths truncated,
+/// off the throw's velocity before `fire_grenade` truncates it (11.2):
+/// bit for bit retail's. The rocket leaves along the bullet spread, drawn
+/// off each server's own RNG inside the panzerfaust's `adsSpread` of 3.5
+/// degrees, so its angles are held to that. Retail:
+/// `net/snapshots-skyrocket.bin` and `net/snapshots-skyfrag.bin`,
+/// `probe_skyshot`'s sky part by the recipe in its header (`throw` for the
+/// frag), with `--save-snapshots --capture-tag`.
+#[test]
+fn launch_angles_match_retail_on_1_1() {
+    if vcod_common::testing::game_fs_11().is_none() {
+        return;
+    }
+    for (tag, weapon, run) in [
+        ("skyrocket", "panzerfaust_mp", Script::Aim),
+        ("skyfrag", "fraggrenade_mp", Script::Throw),
+    ] {
+        let log = ours(
+            vcod_common::testing::game_fs_11().unwrap(),
+            "mp_carentan",
+            "probe_skyshot",
+            SKYSHOT,
+            &[("probe_part", "sky"), ("probe_weapon", weapon)],
+            run,
+            15_000,
+        );
+        report(&[], &log);
+        let (r, o) = (retail_launch_angles(tag), our_launch_angles(&log));
+        if tag == "skyfrag" {
+            assert_eq!(o, r, "{tag}");
+            continue;
+        }
+        assert!((r[0] - 280.1).abs() < 0.05, "retail {r:?}");
+        let forward = |a: [f32; 3]| {
+            let (p, y) = (a[0].to_radians(), a[1].to_radians());
+            glam::Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
+        };
+        let off = forward(r).angle_between(forward(o)).to_degrees();
+        assert!(
+            (0.0..360.0).contains(&o[0]) && off < 3.5,
+            "{tag}: retail {r:?}, ours {o:?}, {off} degrees apart"
+        );
+    }
 }

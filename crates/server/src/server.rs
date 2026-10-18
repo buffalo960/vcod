@@ -9124,6 +9124,7 @@ impl Server {
             return;
         };
         let (origin, velocity) = crate::game::missile::throw_velocity(&me.ps, aim, def);
+        let carried = me.ps.velocity;
         // The projectile's model, indexed when the item was registered
         // (`GameHost::register_item`). A miss means the map load stopped
         // registering it and the client has no model to draw the grenade
@@ -9142,6 +9143,7 @@ impl Server {
                 model,
                 origin,
                 velocity,
+                carried,
                 fuse_left_ms,
                 level_ms,
             );

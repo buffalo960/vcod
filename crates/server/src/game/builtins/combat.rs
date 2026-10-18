@@ -233,14 +233,13 @@ fn drop_cooking_grenade(host: &mut GameHost, cx: &mut Cx, slot: usize) {
     };
     // `rand() * -2^-31`, one draw per component in retail's order.
     let (rx, ry, rz) = (-host.rand_unit(), -host.rand_unit(), -host.rand_unit());
-    // Truncated the way `fire_grenade` truncates a throw's delta (11.2);
-    // `missile::throw_velocity` is where the throw's own truncation sits.
+    // Unrounded: `fire_grenade` truncates its `trDelta` and takes the
+    // launch angles off it as it is (11.2).
     let velocity = Vec3::new(
         DEATH_DROP_SPEED * (2.0 * rx - 1.0),
         DEATH_DROP_SPEED * (2.0 * ry - 1.0),
         DEATH_DROP_SPEED * rz,
-    )
-    .trunc();
+    );
     let name = def.projectile_model.clone().unwrap_or_default();
     let model = crate::configstrings::weapon_model_index(
         &host.configstrings,
@@ -261,6 +260,7 @@ fn drop_cooking_grenade(host: &mut GameHost, cx: &mut Cx, slot: usize) {
         weapon,
         origin,
         velocity,
+        Vec3::ZERO,
         fuse,
         now,
     );
