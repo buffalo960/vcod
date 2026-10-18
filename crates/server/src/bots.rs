@@ -1406,13 +1406,18 @@ impl Bot {
                 // near: the planter cannot stop it, and a side's defuser
                 // back from across the map in time for every plant left
                 // two lone bases standing for good (seeds 17 and 19).
-                // Not one that goes off before a defuse could finish: the
-                // defuser held use inside the blast to the end (seed 5).
+                // Not one that goes off before a defuse could finish, nor
+                // one whose hold under way cannot: the defuser held use
+                // inside the blast to the end (seed 5). A second to settle
+                // the view on the trigger.
                 let fits = |x: &BasBaseView, c: BombView| {
-                    let trip = dist_sq(view.origin, c.origin).sqrt() / BAS_RUN_SPEED;
-                    self.obj.held > 0
-                        || x.blows_in
-                            .is_none_or(|s| s > BAS_DEFUSE_TICKS as f32 / 20.0 + trip)
+                    let need = if self.obj.held > 0 {
+                        BAS_DEFUSE_TICKS.saturating_sub(self.obj.held) as f32 / 20.0
+                    } else {
+                        let trip = dist_sq(view.origin, c.origin).sqrt() / BAS_RUN_SPEED;
+                        BAS_DEFUSE_TICKS as f32 / 20.0 + trip + 1.0
+                    };
+                    x.blows_in.is_none_or(|s| s > need)
                 };
                 let ticking = mine
                     .iter()
@@ -5974,7 +5979,8 @@ mod tests {
     }
 
     /// A charge on a base of its side's: a shooting defender comes back from
-    /// anywhere to defuse it, one that does not shoot only from near.
+    /// anywhere to defuse it while the clock leaves time for the run and
+    /// the hold, one that does not shoot only from near.
     #[test]
     fn a_bas_defender_that_does_not_shoot_defuses_only_from_near() {
         let mut v = bas_view();
@@ -5993,6 +5999,17 @@ mod tests {
         });
         v.origin = [2500.0, 0.0, 0.0];
         assert_eq!(Bot::new("allies", true, 1).goal(&v), Goal::To(ours));
+        // 4500 units off, 30 s left: no time for the run and the hold.
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.bases[0].blows_in = Some(30.0);
+        let late = Bot::new("allies", true, 1).objective_target(&v);
+        assert!(!matches!(late, Some(ObjTarget::Defuse { .. })), "too late");
+        let Some(UoView::Bas(b)) = v.uo.as_mut() else {
+            unreachable!()
+        };
+        b.bases[0].blows_in = Some(50.0);
         let calm = Bot::new("allies", false, 1);
         assert_eq!(calm.goal(&v), Goal::To([300.0, 200.0, 8.0]), "attacks on");
         v.origin = [-1000.0, 0.0, 0.0];

@@ -677,13 +677,23 @@ first everywhere.
   plant was defused unseen once each side had a defender. Any bot inside
   the 500-unit blast of a charge about to go (its own side's in the last
   20 s, the other side's once a defuse could no longer finish) flees it
-  before anything else but a live frag, fight or no fight. A defender
+  before anything else but a live frag, fight or no fight: in a fight
+  the gun stays on the enemy and the keys run the graph's way out, turned
+  to the aimed view, with no sight and no bipod (`rekey`). With the fight
+  steering the keys, a planter and a defender shot it out in the charge
+  room and both died in the blast (seed 5, four times a round). No bot
+  starts for a defuse that the charge's clock, less the straight-line
+  run at 190 units/s, leaves no 10.5 s for: one held use inside the
+  blast to the end. A defender
   keeps the charge room of a breached base of its side's, the only way
   a plant comes; with none breached it attacks with the rest, since a
   standing base needs no guard. With a charge of its side's ticking on
   the other side's base it holds that charge's room beside the planter
   instead: one on one, the defender in its own room won most fights and
-  defused. A defender that does not shoot (`--bots-shoot` off) stops no
+  defused. It does the same once its side has breached the other side's
+  last base, charged or not: called only by the charge, it came from its
+  own base across the map after the planter had died and the charge was
+  defused, and seed 23's last base took 20 min. A defender that does not shoot (`--bots-shoot` off) stops no
   plant from the room, and with a defender a side every plant was
   defused the moment it was down, for good: it attacks with the rest
   and defuses only a charge it is within 2000 units of, and a side's two such bots split over
