@@ -78,7 +78,7 @@ pub fn add_test_client(
 ) -> Result<Value, ErrorKind> {
     let taken = |host: &GameHost, slot: usize| {
         host.client_roster.get(slot).is_some_and(Option::is_some)
-            || host.test_clients.added.iter().any(|(s, _)| *s == slot)
+            || host.test_clients.added.iter().any(|(s, _, _)| *s == slot)
             || host
                 .ents
                 .handle(slot as u32)
@@ -98,7 +98,7 @@ pub fn add_test_client(
     let Some(id) = host.connect_client(cx, slot, &name) else {
         return Ok(Value::Undefined);
     };
-    host.test_clients.added.push((slot, name));
+    host.test_clients.added.push((slot, port as u16, name));
     let me = Target::Entity(id);
     let connect = cx.func_ref(
         crate::game::script::CALLBACK_SETUP,

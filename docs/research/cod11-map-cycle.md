@@ -685,6 +685,12 @@ the `+set ... +map x` case. The configstring gates' motd rows push their
 sets after the load the same way, as `run_server.sh` placed them.
 `server::tests::a_set_applies_once_and_a_scripts_write_outlives_later_loads`
 and `a_set_after_the_map_outranks_the_scripts_load_time_write` pin both.
+`sv_hostname` follows the same rule: the config's (`--hostname`) goes
+into the first level's table only, so a script's or an rcon `set` of it
+survives later loads (`a_scripts_hostname_outlives_later_loads`). A map
+change writes configstring 0 again after the scripts and the settle
+frames (step 24), so a serverinfo cvar the level's init set is in the
+gamestate.
 
 One divergence on the wire:
 
