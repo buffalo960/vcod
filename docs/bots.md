@@ -20,10 +20,11 @@ vcod-server mp_carentan --gametype tdm --bots 6 --bots-shoot --set rconPassword=
 ```
 
 Or keep a server busy on its own: with a floor of 10, an empty server runs a
-5v5 of bots, and each human who joins takes a bot's place.
+5v5 of bots, and each human who joins takes a bot's place. `--max-clients`
+defaults to 8, so raise it above the floor.
 
 ```
-vcod-server mp_carentan --gametype tdm --set vc_bot_minplayers=10 --set rconPassword=secret
+vcod-server mp_carentan --gametype tdm --max-clients 16 --set vc_bot_minplayers=10 --set rconPassword=secret
 ```
 
 Everything below can also be changed on a running server over rcon, from a
