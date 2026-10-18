@@ -1,0 +1,15 @@
+# Retail UO 1.51b, 2026-10-18: mp_streets' arch corner patch 391 (plane
+# x = 292, facing +x, y -6657..-6633, z 173..201) and its mirror 393 on
+# the wall's other face (x = 284, facing -x). A bulletTrace (hitCharacters
+# false) 40 units along x at three spots on the facets, from in front of
+# 391 (x 312 to 272) and from behind it (272 to 312): map, start, `front`
+# or `back`, fraction, end x, normal x. From behind, 391 lets the round
+# through and 393 stops it.
+# Recipe (dm, no client):
+#   COD_VERSION=uo COD_DIR=<UO install> tools/run_probe.sh client-probes/probe_patchside mp_streets
+mp_streets 312 -6650 199.5 front 0.496875 292.12 1
+mp_streets 272 -6650 199.5 back 0.296875 283.88 -1
+mp_streets 312 -6640 195 front 0.496875 292.12 1
+mp_streets 272 -6640 195 back 0.296875 283.88 -1
+mp_streets 312 -6634.5 180 front 0.496875 292.12 1
+mp_streets 272 -6634.5 180 back 0.296875 283.88 -1

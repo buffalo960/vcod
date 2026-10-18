@@ -24,6 +24,7 @@ use vcod_common::net::trajectory::{
 use vcod_common::pmove::PlayerState;
 use vcod_common::pmove::cmd::EventRing;
 use vcod_common::weapon::WeaponDef;
+use vcod_common::x87;
 use vcod_gsc::{Cx, EntId, ErrorKind, Value};
 
 pub use vcod_common::net::event_ids::EV_GRENADE_BOUNCE;
@@ -381,8 +382,15 @@ pub fn throw_velocity(ps: &PlayerState, aim: [f32; 2], def: &WeaponDef) -> (Vec3
 }
 
 /// `BG_EvaluateTrajectoryDelta` for the two types a missile ever carries.
-fn delta_at(traj: &Trajectory, at_ms: i32) -> Vec3 {
+/// `kept` is 1.1d's build (`.so` 0x2c964): `delta.z - ms * 0.001 * 800` on
+/// the x87 stack, rounded once.
+fn delta_at(traj: &Trajectory, at_ms: i32, kept: bool) -> Vec3 {
     match traj.tr_type {
+        TR_GRAVITY if kept => {
+            let dt = f64::from(at_ms - traj.tr_time) * f64::from(0.001f32);
+            let z = f64::from(traj.delta.z) - dt * f64::from(DEFAULT_GRAVITY);
+            traj.delta.with_z(z as f32)
+        }
         TR_GRAVITY => {
             let dt = (at_ms - traj.tr_time) as f32 * 0.001;
             traj.delta - Vec3::Z * (DEFAULT_GRAVITY * dt)
@@ -405,6 +413,25 @@ fn vectoangles(v: Vec3) -> Vec3 {
     let forward = (v.x * v.x + v.y * v.y).sqrt();
     let pitch = v.z.atan2(forward).to_degrees();
     Vec3::new(-pitch, yaw, 0.0)
+}
+
+/// 1.1d's `G_BounceMissile` damping (0x53828-0x53942) for a grenade, both
+/// bounce bits set: the reflection `v - 2 (v . n) n` with the dot on the
+/// x87 stack, each component stored; then off a surface the stored
+/// reflection plus `n (v . n)` (the tangential part) times 0.75 less
+/// `n (v . n) 0.3`, all on the stack and each component rounded once, or
+/// the stored reflection times 0.125 off a body or in water.
+fn bounce_kept(v: Vec3, n: Vec3, soft: bool) -> Vec3 {
+    let dot = x87::dot(v, n);
+    let (vd, nd) = (v.as_dvec3(), n.as_dvec3());
+    let reflected = (vd + nd * (-2.0 * dot)).as_vec3();
+    if soft {
+        return reflected * BOUNCE_SOFT;
+    }
+    let r = reflected.as_dvec3();
+    let friction = f64::from(BOUNCE_FRICTION);
+    let restitution = dot * f64::from(BOUNCE_RESTITUTION);
+    ((r + nd * dot) * friction - nd * restitution).as_vec3()
 }
 
 impl Missile {
@@ -615,11 +642,22 @@ impl Missile {
                 };
             }
         }
-        let to = self.traj.evaluate(now_ms);
+        let kept = self.kept();
+        let to = if kept {
+            self.traj.evaluate_kept(now_ms)
+        } else {
+            self.traj.evaluate(now_ms)
+        };
         let travel = to - self.origin;
         // 12.1: a move shorter than this is not traced at all, which is what
-        // makes a resting missile free.
-        if travel.length() < 0.001 {
+        // makes a resting missile free. 1.1d's `VectorNormalize` leaves the
+        // length on the stack (0x54034).
+        let moved = if kept {
+            x87::dot(travel, travel).sqrt()
+        } else {
+            f64::from(travel.length())
+        };
+        if moved < f64::from(0.001f32) {
             return Stepped::Flew;
         }
         let Some(world) = world else {
@@ -675,9 +713,18 @@ impl Missile {
                     && down.model.is_none()
                     && world.entity_num(&down.tr) == ENTITYNUM_WORLD);
             if down.tr.fraction < 1.0 && onto {
-                let dz = down.tr.endpos.z + GROUND_SNAP - self.origin.z;
-                self.origin.z += dz;
-                self.traj.base.z += dz;
+                if kept {
+                    // 0x542bd: the snapped height stays on the stack into
+                    // both stores.
+                    let z = f64::from(down.tr.endpos.z) + f64::from(GROUND_SNAP);
+                    let base = (z - f64::from(self.origin.z)) + f64::from(self.traj.base.z);
+                    self.traj.base.z = base as f32;
+                    self.origin.z = z as f32;
+                } else {
+                    let dz = down.tr.endpos.z + GROUND_SNAP - self.origin.z;
+                    self.origin.z += dz;
+                    self.traj.base.z += dz;
+                }
                 MissileHit {
                     tr,
                     player,
@@ -766,30 +813,43 @@ impl Missile {
         // fraction is whichever trace 12.3 read -- the downward one on a
         // ground snap, where it is a fraction of 1.5 units and not of the
         // frame. That is retail's arithmetic, and the capture's bounce
-        // deltas only come out on it.
-        let at = prev_ms + ((now_ms - prev_ms) as f32 * tr.fraction) as i32;
-        let v = delta_at(&self.traj, at);
+        // deltas only come out on it. 1.1d keeps the product on the x87
+        // stack and truncates it (0x537f4).
+        let kept = self.kept();
+        let at = if kept {
+            prev_ms + (f64::from(now_ms - prev_ms) * f64::from(tr.fraction)) as i32
+        } else {
+            prev_ms + ((now_ms - prev_ms) as f32 * tr.fraction) as i32
+        };
+        let v = delta_at(&self.traj, at, kept);
         let n = tr.normal;
-        let dot = v.dot(n);
-        let reflected = v - n * (2.0 * dot);
         if n.z > GROUND_NORMAL_Z {
             self.ground = entity as i32;
         }
-        let damped = if self.uo {
-            reflected * if soft { UO_BOUNCE_WATER } else { UO_BOUNCE }
-        } else if soft {
-            reflected * BOUNCE_SOFT
-        } else if self.falls {
-            // 1.5: `falls` without `uo`.
-            reflected * BOUNCE_15
+        let damped = if kept {
+            bounce_kept(v, n, soft)
         } else {
-            // The tangential component keeps 0.75, the normal one 0.3.
-            (reflected + n * dot) * BOUNCE_FRICTION - n * (dot * BOUNCE_RESTITUTION)
+            let dot = v.dot(n);
+            let reflected = v - n * (2.0 * dot);
+            if self.uo {
+                reflected * if soft { UO_BOUNCE_WATER } else { UO_BOUNCE }
+            } else if soft {
+                reflected * BOUNCE_SOFT
+            } else {
+                // 1.5: `falls` without `uo`.
+                reflected * BOUNCE_15
+            }
         };
         self.traj.delta = damped;
         // The angles land wherever the tumble had reached at the impact.
         let landed = self.apos.evaluate(at);
-        if n.z > GROUND_NORMAL_Z && damped.length() < REST_SPEED {
+        // 1.1d sums the squares on the stack and stores the root (0x5396e).
+        let speed = if kept {
+            x87::dot(damped, damped).sqrt() as f32
+        } else {
+            damped.length()
+        };
+        if n.z > GROUND_NORMAL_Z && speed < REST_SPEED {
             // `G_SetOrigin` and `G_SetAngle`: trType 0, trTime 0, no delta.
             self.traj = Trajectory {
                 tr_type: TR_STATIONARY,
@@ -823,7 +883,21 @@ impl Missile {
             normalize_360(landed.z),
         );
         self.apos.tr_time = now_ms;
-        !silent && (damped - v).length() > BOUNCE_EVENT_SPEED
+        // 1.1d stores each component of the change, sums their squares on
+        // the stack and stores the root (0x53a5e).
+        let change = if kept {
+            let d = damped - v;
+            x87::dot(d, d).sqrt() as f32
+        } else {
+            (damped - v).length()
+        };
+        !silent && change > BOUNCE_EVENT_SPEED
+    }
+
+    /// 1.1d's arithmetic: its server build keeps the bounce and the arc on
+    /// the x87 stack where 1.5b and UO store them.
+    fn kept(&self) -> bool {
+        !self.falls && !self.uo
     }
 
     /// `G_ExplodeMissile` (13.2): the origin truncated, `eType` 0, the event

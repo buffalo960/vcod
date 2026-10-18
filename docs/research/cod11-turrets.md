@@ -1783,12 +1783,39 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
   the same) the fall down the face drifts ours along -x, at least 0.05 off
   by 37000 and 0.16 by the landing at 37050, while y stays within print.
   No cmd early or late reproduces it (each of 36866..37084 tried), and
-  the 1.5b and UO falls down the same face match. Projected through the
-  face's clip, an air acceleration across it some 13% under ours would
-  move x and leave y about a third as far off (INFERRED, arithmetic on
-  the snapshots, not read from 1.1d's `PM_AirMove`). The fixture prints
+  the 1.5b and UO falls down the same face match. The fixture prints
   origins to 0.1, so the 0.256 at 37350 is that drift where the print
   rounds it past the gate's 0.25; `GAPS_VICTIM` names that row.
+  - VERIFIED, 1.1d disassembly: the air move is not the difference.
+    `PM_AirMove` (0x2f03c) runs `PM_Friction`, then `PM_CmdScale`
+    (0x2e5bc: `ps.speed * max / (127 * total)`, times
+    `walkSpeedScale` (ps+0x34c) under `pm_flags` 0x80 and
+    `runSpeedScale` (ps+0x350) otherwise). Then comes the accelerate
+    inline: `max(wishspeed, 100)` (0x708ec) times the frame time,
+    capped at the lack, divided by `ps.friction` (ps+0x37c, always 1)
+    under a ground entity. Last are the overbounce clip on
+    `pml.groundPlane` (0x2f1d3) and `PM_StepSlideMove(1)`. vcod's
+    `air_move` is that.
+  - VERIFIED, ours: x moves by the accelerate alone, since the face's
+    normal is (0, 0.789, 0.614) (brush 6's bevel, which the step's down
+    pass lands on at its +x end). The drift is one velocity snap. The
+    step cmd (36884) lands 13.92 above its start, and the step's speed
+    scale (0x35761: `0.2 + 0.8 (1 - dz / 18)`, the 0.2 being 0x3e4ccccc
+    at 0x70f14) takes vx from -35.44 to -13.516. That snaps to -14.
+  - INFERRED, from the prints: the snapshots after the step read about
+    1 unit/s less in x on retail (0.06 to 0.16 over 66 to 166 ms), so
+    retail snapped -13. That needs a landing at least 0.0102 higher on the
+    bevel, or a walk velocity 0.12% slower into the step. The 0.1 prints
+    cannot tell the two apart.
+  - VERIFIED, live (retail 1.1d, 2026-10-18, fixture
+    `mp_carentan-dm-turret-full.txt`, the probe's `!trace` now carrying
+    `exact=` and `velocity=`): the same strafe, a different run. It
+    steps 7 onto the face (parm 135) and falls down it, and ours lands
+    on retail's origin to the bit on every snapshot from the strafe on
+    (`the_fall_off_the_sandbags_matches_retail_to_the_bit`). So the step
+    scale, the air move and the slide down the face are retail's. What
+    remains is whatever put the old run's 142 step at a rounding edge,
+    which only a full-precision run through that same corner can show.
 
 ### 13.4 The target's spawn and cmds
 

@@ -10315,7 +10315,8 @@ fn turret_strafe_stop(bearing: f32, dist: f32) -> StrafeStop {
     }
 }
 
-/// The gunner's playerstate as one `!trace` line.
+/// The gunner's playerstate as one `!trace` line; `exact=` and `velocity=`
+/// carry the origin and velocity at full precision.
 fn turret_trace_line(ms: u128, snap: &net::snapshot::Snapshot) -> String {
     let p = wire();
     let f = |n: &str| snap.ps.field_i32(p, n);
@@ -10323,7 +10324,7 @@ fn turret_trace_line(ms: u128, snap: &net::snapshot::Snapshot) -> String {
         "!trace ms={ms} serverTime={} pm_type={} pm_flags={} eFlags={} groundEntityNum={} \
 origin={} viewangles={} delta_angles={},{},{} viewlocked={} viewlocked_entNum={} gunfx={} \
 hint={}:{}:{} weapon={} legsAnim={} torsoAnim={} eventSequence={} events={},{},{},{} \
-eventParms={},{},{},{}",
+eventParms={},{},{},{} exact={} velocity={}",
         snap.server_time,
         f("pm_type"),
         f("pm_flags"),
@@ -10352,6 +10353,10 @@ eventParms={},{},{},{}",
         f("eventParms[1]"),
         f("eventParms[2]"),
         f("eventParms[3]"),
+        vec_exact(snap.ps.origin(p)),
+        vec_exact(std::array::from_fn(|i| {
+            snap.ps.field_f32(p, &format!("velocity[{i}]"))
+        })),
     )
 }
 

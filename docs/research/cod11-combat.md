@@ -5149,11 +5149,46 @@ fraction. VERIFIED, live (retail 1.1d, mp_brecourt, 2026-10-16, fixture
 `mp_brecourt-scriptmodel-prone.txt`): the prone part's second frag
 bounces down the field's terrain and rolls to rest on it; ours lands every
 contact on retail's snapshot with retail's `groundEntityNum`, every
-`trBase` within 0.001 (`a_frag_rolls_down_terrain_like_retail`).
-INFERRED: the 2 or 3 float steps left from the second contact come from
-`G_BounceMissile` and the trajectory, which vcod computes in `f32` where
-retail keeps the x87 stack; the old clip was no closer (3 steps off in the
-first contact's `trBase.y` where the port is 2).
+`trBase` retail's to the bit since 2026-10-18 (below;
+`a_frag_rolls_down_terrain_like_retail` compares the bits). Until then
+every base from the second contact sat 2 or 3 float steps off, the old
+clip no closer (3 steps off in the first contact's `trBase.y` where the
+port is 2).
+
+**The x87 arithmetic of the bounce and the arc (1.1d).** Read in the
+disassembly of `game.mp.i386.so` 1.1d. VERIFIED: none of the steps below stores an
+intermediate, so each sum and product stays on the x87 stack and only the
+named stores round to a float.
+
+- VERIFIED: `BG_EvaluateTrajectory`'s gravity arm (0x2c6c0): `dt` is the integer ms
+  times the float 0.001 (`.rodata 0x7008c`). `x` and `y` are `base +
+  delta * dt`, and `z` is `(base + delta * dt) - 400 * dt * dt`
+  (`.rodata 0x70098`). Each is rounded once.
+- VERIFIED: `BG_EvaluateTrajectoryDelta`'s gravity arm (0x2c964): `delta.z - dt *
+  800`, with 800 at `.rodata 0x70120`, rounded once.
+- VERIFIED: `G_BounceMissile`'s impact time (0x537f4): the integer frame length
+  times `tr.fraction`, truncated by `fistp` under control word `| 0xc00`.
+- VERIFIED: The reflection (0x53828-0x53873): the dot is `(vx nx + vy ny) + vz nz`
+  and `-2 dot` stays on the stack. Each `trDelta` component is stored
+  once.
+- VERIFIED: The grenade arm (0x538b7-0x53942): `t = stored reflection + n dot` is
+  `fst`ored and kept on the stack. Then comes `t * 0.75`, which is stored,
+  then `- n * dot * 0.3`. Each component is rounded once, at its last
+  store.
+- VERIFIED: The rest test (0x5396e) and the event gate (0x53a8b): the sum of
+  squares is on the stack and its root is stored before the compare. The
+  event gate stores each component of `newDelta - v` first.
+- VERIFIED: The nudge: each `0.1 * n` component is stored.
+- VERIFIED: `G_RunMissile`'s ground snap (0x542bd): `E = endpos.z + 1.5` stays on the
+  stack. `trBase.z` takes `(E - currentOrigin.z) + trBase.z` and
+  `currentOrigin.z` takes `E`, each rounded once.
+- VERIFIED: The 0.001 move test (0x54034) reads `VectorNormalize`'s length off the
+  stack.
+
+vcod: `Trajectory::evaluate_kept`, `missile::delta_at` and
+`missile::bounce_kept` port these in `f64`. They run under 1.1's rules
+only (`Missile::kept`). 1.5b and UO keep the `f32` arithmetic they had,
+which no capture has measured against their -O0 stores.
 
 ### 12.6 1.5's and UO's fall test
 
