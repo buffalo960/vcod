@@ -992,17 +992,20 @@ pub fn hint_material(hint: i32, weapons: &[Option<WeaponDef>]) -> Option<String>
         "hintLadder",
         "hintFriendly",
     ];
+    // A weapon never set up leaves its slot 0 and draws nothing; one with
+    // a blank icon key holds `hintActivate` (cod11-hud-protocol.md "Cursor hint").
     let weapon_icon = |w: i32, icon: fn(&WeaponDef) -> &Option<String>| {
-        weapons
-            .get(w as usize)
-            .and_then(Option::as_ref)
-            .and_then(|def| icon(def).clone())
-            .unwrap_or_else(|| "hintActivate".to_string())
+        let def = weapons.get(w as usize).and_then(Option::as_ref)?;
+        Some(
+            icon(def)
+                .clone()
+                .unwrap_or_else(|| "hintActivate".to_string()),
+        )
     };
     match hint {
         2..=9 => Some(NAMED[hint as usize - 2].to_string()),
-        10..=73 => Some(weapon_icon(hint - 9, |d| &d.hud_icon)),
-        74..=137 => Some(weapon_icon(hint - 73, |d| &d.ammo_icon)),
+        10..=73 => weapon_icon(hint - 9, |d| &d.hud_icon),
+        74..=137 => weapon_icon(hint - 73, |d| &d.ammo_icon),
         _ => None,
     }
 }
@@ -2452,8 +2455,16 @@ LANG_ENGLISH "Press USE [%s] to pickup health"
             hint_material(73 + 1, &weapons).as_deref(),
             Some("gfx/icons/hud@ammo2.tga")
         );
-        // A weapon with no icon falls back to the use hint.
+        // A weapon with a blank icon key shows the use hint, one never set
+        // up nothing (0x30035c71, 0x30025255).
         let bare = vec![None, None, Some(WeaponDef::default())];
         assert_eq!(hint_material(9 + 2, &bare).as_deref(), Some("hintActivate"));
+        assert_eq!(
+            hint_material(73 + 2, &bare).as_deref(),
+            Some("hintActivate")
+        );
+        assert_eq!(hint_material(9 + 1, &bare), None);
+        assert_eq!(hint_material(73 + 1, &bare), None);
+        assert_eq!(hint_material(9 + 3, &bare), None);
     }
 }
