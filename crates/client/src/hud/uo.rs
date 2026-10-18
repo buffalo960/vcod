@@ -216,17 +216,20 @@ pub fn hint_material(hint: i32, weapons: &[Option<WeaponDef>]) -> Option<String>
         "hintLadder",
         "hintFriendly",
     ];
+    // A weapon never set up leaves its slot 0 and draws nothing; one with
+    // a blank icon key holds `hintActivate` (cod11-hud-protocol.md "Cursor hint").
     let weapon_icon = |w: i32, icon: fn(&WeaponDef) -> &Option<String>| {
-        weapons
-            .get(w as usize)
-            .and_then(Option::as_ref)
-            .and_then(|def| icon(def).clone())
-            .unwrap_or_else(|| "hintActivate".to_string())
+        let def = weapons.get(w as usize).and_then(Option::as_ref)?;
+        Some(
+            icon(def)
+                .clone()
+                .unwrap_or_else(|| "hintActivate".to_string()),
+        )
     };
     match hint {
         2..=10 => Some(NAMED[hint as usize - 2].to_string()),
-        11..=138 => Some(weapon_icon(hint - 10, |d| &d.hud_icon)),
-        139..=266 => Some(weapon_icon(hint - 138, |d| &d.ammo_icon)),
+        11..=138 => weapon_icon(hint - 10, |d| &d.hud_icon),
+        139..=266 => weapon_icon(hint - 138, |d| &d.ammo_icon),
         _ => None,
     }
 }
@@ -455,6 +458,12 @@ mod tests {
         assert_eq!(hint_material(11, &weapons).as_deref(), Some("w_icon"));
         assert_eq!(hint_material(139, &weapons).as_deref(), Some("a_icon"));
         assert_eq!(hint_material(267, &weapons), None);
+        // Unset slots draw nothing (0x300303fe), blank keys `hintActivate`.
+        assert_eq!(hint_material(12, &weapons), None);
+        assert_eq!(hint_material(140, &weapons), None);
+        let bare = vec![None, Some(WeaponDef::default())];
+        assert_eq!(hint_material(11, &bare).as_deref(), Some("hintActivate"));
+        assert_eq!(hint_material(139, &bare).as_deref(), Some("hintActivate"));
     }
 
     #[test]

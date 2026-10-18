@@ -371,7 +371,8 @@ something, the bullet links it.
   does, not the gunner.
 - Map triggers (a `trigger_damage` fires off rounds, swings, grenades,
   blasts and UO shells, measured on UO's mp_uo_stanjel and mp_foy's
-  belltower), script movers that carry and shove players and items, and
+  belltower; a script-spawned one is a copy of the world, measured on
+  1.1d and 1.5b), script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them,
