@@ -150,24 +150,34 @@ impl NavGraph {
     /// point of the map) and keeps an edge only where a standing run, one
     /// usercmd per 50 ms through the shared cmd step under `rules`,
     /// arrives. No node stands where a body would touch one of `hazards`.
+    /// The flood also reaches [`MARGIN`] past each of `cover`
+    /// ([`crate::world::World::nav_cover`]), which leaves the pitch alone.
     pub fn build(
         world: &CollisionWorld,
         seeds: &[[f32; 3]],
+        cover: &[[f32; 3]],
         hazards: &[BrushHull],
         rules: MoveRules,
     ) -> NavGraph {
-        with_rules(rules, || Self::build_here(world, seeds, hazards))
+        with_rules(rules, || Self::build_here(world, seeds, cover, hazards))
     }
 
-    fn build_here(world: &CollisionWorld, seeds: &[[f32; 3]], hazards: &[BrushHull]) -> NavGraph {
+    fn build_here(
+        world: &CollisionWorld,
+        seeds: &[[f32; 3]],
+        cover: &[[f32; 3]],
+        hazards: &[BrushHull],
+    ) -> NavGraph {
         // The pitch cuts the spawns' box into about TARGET_CELLS, rounded up
-        // to a multiple of 16; the flood stays within MARGIN of the box.
+        // to a multiple of 16; the flood stays within MARGIN of the box and
+        // of `cover`.
         let (lo, hi) = seed_bounds(seeds);
         let area = (hi - lo).max(glam::Vec2::ZERO).element_product();
         let spacing = ((area / TARGET_CELLS).sqrt() / 16.0).ceil() * 16.0;
+        let (clo, chi) = seed_bounds(cover);
         let (lo, hi) = (
-            lo - glam::Vec2::splat(MARGIN),
-            hi + glam::Vec2::splat(MARGIN),
+            lo.min(clo) - glam::Vec2::splat(MARGIN),
+            hi.max(chi) + glam::Vec2::splat(MARGIN),
         );
         let inside = |p: Vec3| {
             let p = p.truncate();
@@ -1326,6 +1336,7 @@ type CacheKey = (
     usize,
     usize,
     Vec<[u32; 3]>,
+    Vec<[u32; 3]>,
     Vec<bool>,
 );
 static CACHE: std::sync::Mutex<Vec<(CacheKey, Arc<NavGraph>)>> = std::sync::Mutex::new(Vec::new());
@@ -1349,6 +1360,11 @@ fn cache_key(
         world.hazards.len(),
         world
             .spawn_points
+            .iter()
+            .map(|p| p.map(f32::to_bits))
+            .collect(),
+        world
+            .nav_cover
             .iter()
             .map(|p| p.map(f32::to_bits))
             .collect(),
@@ -1382,7 +1398,13 @@ fn cached(key: CacheKey, build: impl FnOnce() -> NavGraph) -> Arc<NavGraph> {
 pub fn graph_for(map: &str, world: &crate::world::World) -> Arc<NavGraph> {
     let rules = RULES.get();
     cached(cache_key(map, &world.collision, world, rules), || {
-        NavGraph::build(&world.collision, &world.spawn_points, &world.hazards, rules)
+        NavGraph::build(
+            &world.collision,
+            &world.spawn_points,
+            &world.nav_cover,
+            &world.hazards,
+            rules,
+        )
     })
 }
 
@@ -1415,12 +1437,15 @@ impl NavJob {
             };
         }
         let seeds = world.spawn_points.clone();
+        let cover = world.nav_cover.clone();
         let hazards = world.hazards.clone();
         let build = move || {
             // One core stays the tick's, so a build doesn't jitter the
             // schedule it runs beside.
             SPARE_CORE.set(true);
-            cached(key, || NavGraph::build(&collision, &seeds, &hazards, rules))
+            cached(key, || {
+                NavGraph::build(&collision, &seeds, &cover, &hazards, rules)
+            })
         };
         NavJob {
             ready: None,
@@ -6432,6 +6457,7 @@ mod tests {
         let g = NavGraph::build(
             &world.collision,
             &world.spawn_points,
+            &world.nav_cover,
             &world.hazards,
             MoveRules::V1_1,
         );

@@ -24,6 +24,11 @@ pub struct World {
     /// destroyed base, and every other gametype deletes it, so the
     /// navigation graph is built without them.
     pub rubble: Vec<usize>,
+    /// Where the navigation graph has to reach besides the spawns' box:
+    /// every `script_gameobjectname bas` entity, its bases, charges and
+    /// launchers. mp_italy's western axis bunker lay past the box's margin,
+    /// its charge room off the graph (bot-objectives.md 7.2).
+    pub nav_cover: Vec<[f32; 3]>,
 }
 
 /// The unit the engine grows a linked entity's box by on each axis before
@@ -217,6 +222,14 @@ impl World {
                 .into_iter()
                 .filter(|e| e.get("script_noteworthy").is_some_and(|n| n == "rubble"))
                 .filter_map(|e| e.get("model")?.strip_prefix('*')?.parse().ok())
+                .collect(),
+            nav_cover: bsp::entity_blocks(&b.entities)
+                .into_iter()
+                .filter(|e| {
+                    e.get("script_gameobjectname")
+                        .is_some_and(|n| n.split_whitespace().any(|n| n == "bas"))
+                })
+                .filter_map(|e| bsp::parse_vec3(e.get("origin")?))
                 .collect(),
         }
     }

@@ -1299,6 +1299,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         }));
         for (slot, name) in [(0, "victim"), (1, "blocker")] {
             rt.push_client_event(ClientEvent::Connect {
@@ -1381,6 +1382,7 @@ mod tests {
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
                 rubble: Vec::new(),
+                nav_cover: Vec::new(),
             }));
             for (slot, name) in [(0, "a"), (1, "b")] {
                 rt.push_client_event(ClientEvent::Connect {
@@ -1499,6 +1501,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         }));
         for (slot, name) in [(0, "a"), (1, "b")] {
             rt.push_client_event(ClientEvent::Connect {
@@ -1587,6 +1590,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         }));
         for slot in 0..4 {
             rt.push_client_event(ClientEvent::Connect {
@@ -1693,6 +1697,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         }));
         rt.place_turret([0.0, 0.0, 8.0]);
         for t in [50, 100, 150, 200, 250] {
@@ -1813,6 +1818,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         }));
         vm.with_cx(|cx| {
             let from = Value::Vector([0.0, 0.0, 100.0]);

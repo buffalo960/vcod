@@ -247,7 +247,12 @@ patch grid moved `mp_brecourt` back to 159.
   VERIFIED (the graph): both crow's nest rail nodes the test names have such
   a node within 128.
 - New nodes stay within 512 units of the spawns' bounding box. Past it lies
-  scenery: `mp_hurtgen`'s forest added 10 000 nodes.
+  scenery: `mp_hurtgen`'s forest added 10 000 nodes. The box also takes in
+  every `script_gameobjectname bas` entity (`World::nav_cover`), which
+  leaves the pitch alone. VERIFIED (UO's ents lumps): mp_italy is the one
+  stock bas map with such entities past the spawns' box, and its western
+  axis bunker's stair and charge room (base at -4556 3760, the box's west
+  edge at -4646) had no node (bot-objectives.md 7.2).
 - Walks run on every core, a layer at a time, handed out one node at a time;
   the merge is serial in job order, so the graph does not depend on the thread
   count.
