@@ -1556,6 +1556,12 @@ const RISING_REACH: f32 = 2.0 * vcod_common::pmove::HALF_WIDTH + 6.0;
 const RISING_BELOW: f32 = 48.0;
 /// The longest such hold.
 const RISING_TICKS: u32 = 60;
+/// Two bodies on the ground pressed together this long, both slow and
+/// near their waypoints, and one of them gives way for `GIVE_TICKS`,
+/// stepping `GIVE_STEP` back from the other ([`Follower::pressed_yield`]).
+const PRESSED_TICKS: u32 = 10;
+const GIVE_TICKS: u32 = 20;
+const GIVE_STEP: f32 = 24.0;
 /// The longest wait: a climb of mp_ship's 296-unit ladders takes about
 /// 110 ticks. With the climber still, the most of it: a climber that hangs
 /// on with the way clear is stuck for another reason (mp_ship's ladder at
@@ -1667,6 +1673,10 @@ pub struct Follower {
     /// Ticks held still for a climber rising under the body
     /// ([`Self::rising_hold`]).
     rising_ticks: u32,
+    /// Ticks pressed on another body, and the spot and ticks of a give way
+    /// ([`Self::pressed_yield`]).
+    pressed_ticks: u32,
+    give: Option<(Vec3, u32)>,
     /// The lowest fall that kills this body now ([`fall_that_kills`]):
     /// a hurt bot dies off a shorter ladder. `None` reads [`DEADLY_LADDER`].
     pub fall_kills: Option<f32>,
@@ -2557,7 +2567,10 @@ impl Follower {
     /// (`game::stuck::stuck_in_client`, cod11-player-clip.md 6): a bot
     /// that stepped toward mp_ship's crow's nest rim over a climber coming
     /// up the hatch was thrown 190 units/s west off the top's far side
-    /// (seed 1307, bot-navigation.md section 3). At most [`RISING_TICKS`].
+    /// (seed 1307, bot-navigation.md section 3). At most [`RISING_TICKS`],
+    /// and not toward a waypoint more than a jump down: a body bound down
+    /// the climber's own ladder is [`Self::ladder_yield`]'s, and held at
+    /// mp_ship's x 3793 head it stood in the climber's way off (seed 3223).
     /// `climbers` as in [`Self::ladder_yield`].
     pub fn rising_hold(
         &mut self,
@@ -2571,6 +2584,7 @@ impl Follower {
         let step = at.truncate() + toward * ARRIVE;
         let rising = body.on_ground
             && !body.on_ladder
+            && waypoint.z > at.z - vcod_common::pmove::JUMP_HEIGHT
             && climbers.iter().any(|&(c, v)| {
                 let (now, next) = (
                     c.truncate().distance(at.truncate()),
@@ -2590,6 +2604,59 @@ impl Follower {
         }
         self.rising_ticks += 1;
         Some(at)
+    }
+
+    /// Where to step instead of heading for `waypoint`: the body and
+    /// another off the rungs stand pressed together on the ground (within
+    /// two half-widths and 2 flat, a step in z), both slower than
+    /// [`UNPIN_SPEED`] for [`PRESSED_TICKS`], the body within two reaches
+    /// of its waypoint and farther from it than the other is from the
+    /// body's waypoint (of two level, the later in (y, x)). It steps
+    /// [`GIVE_STEP`] back from the other for [`GIVE_TICKS`]. Neither moves
+    /// otherwise: `unpin_yaw` traces the world only. Two bots off mp_ship's
+    /// ladder at x 3792 onto the plate at x 3800, at y 45 and y 79, each
+    /// held the other out of the hatch's lane at y 58-72 for 180 ticks
+    /// (seed 3223, bot-navigation.md section 3). `off_rungs` as in
+    /// [`Self::ladder_yield`].
+    pub fn pressed_yield(
+        &mut self,
+        at: Vec3,
+        waypoint: Vec3,
+        body: Footing,
+        off_rungs: &[(Vec3, Vec3)],
+    ) -> Option<Vec3> {
+        use vcod_common::pmove::{HALF_WIDTH, STEPSIZE};
+        if let Some((spot, left)) = self.give {
+            self.give = (left > 1).then_some((spot, left - 1));
+            return Some(spot);
+        }
+        let slow = |v: Vec3| v.truncate().length() < UNPIN_SPEED;
+        let flat = |p: Vec3| (p - waypoint).truncate().length();
+        let me = flat(at);
+        let other = (body.on_ground && !body.on_ladder && slow(body.velocity) && me < 2.0 * REACH)
+            .then(|| {
+                off_rungs.iter().find(|&&(o, v)| {
+                    slow(v)
+                        && (o - at).truncate().length() < 2.0 * HALF_WIDTH + 2.0
+                        && (o.z - at.z).abs() < STEPSIZE
+                })
+            })
+            .flatten();
+        let Some(&(o, _)) = other else {
+            self.pressed_ticks = 0;
+            return None;
+        };
+        self.pressed_ticks += 1;
+        let them = flat(o);
+        let gives = me > them + 1.0 || ((me - them).abs() <= 1.0 && (at.y, at.x) > (o.y, o.x));
+        if self.pressed_ticks < PRESSED_TICKS || !gives {
+            return None;
+        }
+        self.pressed_ticks = 0;
+        let back = (at - o).truncate().normalize_or_zero().extend(0.0);
+        let spot = at + back * GIVE_STEP;
+        self.give = Some((spot, GIVE_TICKS - 1));
+        Some(spot)
     }
 
     fn yield_spot(
@@ -8157,6 +8224,9 @@ mod tests {
         assert_eq!(f.rising_hold(at, rim, rungs, &[climber]), None);
         let hung = (climber.0, Vec3::ZERO);
         assert_eq!(f.rising_hold(at, rim, body, &[hung]), None);
+        // Nor a body bound down the ladder, which the ladder waits own.
+        let foot = Vec3::new(4959.0, 64.0, 692.125);
+        assert_eq!(f.rising_hold(at, foot, body, &[climber]), None);
         // A climber far under the feet holds nothing yet.
         let deep = (Vec3::new(4960.0, 63.0, 1100.0), climber.1);
         assert_eq!(f.rising_hold(at, rim, body, &[deep]), None);
@@ -8165,6 +8235,53 @@ mod tests {
             assert_eq!(f.rising_hold(at, rim, body, &[climber]), Some(at));
         }
         assert_eq!(f.rising_hold(at, rim, body, &[climber]), None);
+    }
+
+    /// mp_ship's plate over the ladder at x 3792: two bots off the rungs at
+    /// y 49 and y 79, each pressed on the other out of the hatch's lane
+    /// (y 58-72) toward the same waypoint, stood 180 ticks (seed 3223).
+    /// After `PRESSED_TICKS` one of the two steps back from the other.
+    #[test]
+    fn of_two_bodies_pressed_together_one_gives_way() {
+        let wp = Vec3::new(3779.0, 64.0, 623.125);
+        let (south, north) = (
+            Vec3::new(3800.1, 48.9, 623.125),
+            Vec3::new(3800.1, 79.0, 623.125),
+        );
+        let body = Footing::STANDING;
+        let (mut s, mut n) = (Follower::default(), Follower::default());
+        for _ in 1..PRESSED_TICKS {
+            assert_eq!(
+                s.pressed_yield(south, wp, body, &[(north, Vec3::ZERO)]),
+                None
+            );
+            assert_eq!(
+                n.pressed_yield(north, wp, body, &[(south, Vec3::ZERO)]),
+                None
+            );
+        }
+        assert_eq!(
+            s.pressed_yield(south, wp, body, &[(north, Vec3::ZERO)]),
+            None
+        );
+        let spot = n
+            .pressed_yield(north, wp, body, &[(south, Vec3::ZERO)])
+            .expect("the later in (y, x) gives way");
+        assert!(
+            (spot - Vec3::new(3800.1, 103.0, 623.125)).length() < 0.5,
+            "{spot}"
+        );
+        // It holds the spot for the give way, the other body gone or not.
+        for _ in 1..GIVE_TICKS {
+            assert_eq!(n.pressed_yield(north, wp, body, &[]), Some(spot));
+        }
+        assert_eq!(n.pressed_yield(north, wp, body, &[]), None);
+        // A body on the move is no press.
+        let mut m = Follower::default();
+        let moving = (south, Vec3::new(0.0, 60.0, 0.0));
+        for _ in 0..2 * PRESSED_TICKS {
+            assert_eq!(m.pressed_yield(north, wp, body, &[moving]), None);
+        }
     }
 
     #[test]
