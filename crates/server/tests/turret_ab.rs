@@ -1432,6 +1432,10 @@ const FIXTURE_UO: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-uo.txt"
 );
+const FIXTURE_FULL: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-full.txt"
+);
 const FIXTURE_VICTIM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
@@ -1555,11 +1559,13 @@ const KILLING_ROUND: &str = "the killing round meets a target the round before k
     -spawn captures, which log both, match the killing round on 1.1d and 1.5b with no row \
     (cod11-turrets.md 13.4)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
-    ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
-    print, which reads as a smaller air acceleration across the face on retail; no cmd \
-    arriving early or late reproduces it, the 1.5b and UO captures fall down the same face \
-    in step, and the capture prints origins to 0.1, so the 0.256 at 37350 is that drift \
-    where the print rounds it past 0.25 (cod11-turrets.md 13.3)";
+    ours at least 0.16 further along -x than retail by the landing (37050): one velocity snap, \
+    the step scale taking vx to -13.516 (snapped -14) where retail's fall reads -13. 1.1d's \
+    air move is ours (0x2f03c read), and the full-precision run of the same strafe falls down \
+    the face on retail's bits (`the_fall_off_the_sandbags_matches_retail_to_the_bit`); this \
+    capture prints origins to 0.1, which cannot tell a landing 0.0102 higher from a walk 0.12% \
+    slower, so the 0.256 at 37350 is that drift where the print rounds it past 0.25 \
+    (cod11-turrets.md 13.3)";
 const ENTRY_POINT: &str = "the round enters the target's body a truncation step off \
     retail's along the same ray: where it enters is the posed bone box the locational trace \
     meets (cod11-combat.md 3.4), whose idle runs from the landing after the target's spawn, \
@@ -3017,4 +3023,45 @@ fn a_gunner_spawned_off_the_gun_reads_retail_s_origin_uo() {
         &PROTOCOL_V22,
         include_str!("fixtures/seatspawn/mp_carentan-turret-uo.txt"),
     );
+}
+
+/// `mp_carentan-dm-turret-full.txt`: the recipe once more, its `!trace`
+/// lines carrying the gunner's origin and velocity at full precision
+/// (`exact=`, `velocity=`). From the strafe off the sandbags to the end
+/// (the step onto the 52-degree face, the fall down it and the run on)
+/// ours lands on retail's origin to the bit on every snapshot: 1.1d's air
+/// move, step scale and slide down a steep face are retail's
+/// (cod11-turrets.md 13.3).
+#[test]
+fn the_fall_off_the_sandbags_matches_retail_to_the_bit() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let text = read(FIXTURE_FULL);
+    let exact: BTreeMap<i32, String> = text
+        .lines()
+        .filter(|l| l.starts_with("!trace "))
+        .map(|l| {
+            let m = kv(l);
+            (m["serverTime"].parse().unwrap(), m["exact"].to_string())
+        })
+        .collect();
+    let cap = parse(&text);
+    let strafe = cap
+        .traces
+        .iter()
+        .find(|(phase, _)| phase == "strafe")
+        .map(|(_, s)| s.t)
+        .unwrap();
+    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V1, REBASE_MAX_VICTIM) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let mut checked = 0;
+    for o in ours.iter().filter(|o| o.t >= strafe) {
+        let got = format!("{},{},{}", o.origin[0], o.origin[1], o.origin[2]);
+        assert_eq!(got, exact[&o.t], "t={}", o.t);
+        checked += 1;
+    }
+    assert!(checked > 20, "{checked}");
 }
