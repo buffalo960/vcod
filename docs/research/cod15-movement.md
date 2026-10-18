@@ -494,14 +494,16 @@ a jump's peak stays 39 to 41 while its flight lasts about `sqrt 2` times
 the stock one. `moves_ab.rs` replays all three through the predictor and
 again with the wire's speed and gravity put back to 190 and 800, which
 must fail; `predict_ab.rs` runs the 1.5 and UO ones through the server
-sim side by side. The 1.5 and UO replays match on every gated field. The
-1.1 one carries two `GAPS` rows that are not about speed or gravity: the
-faster run reaches the kerb wall at x 1656, where (1) the prone press
-leaves the body airborne on the wall's near-vertical face for a second,
-its torso pitch easing 0.01 to 0.02 degrees off retail's and the pitch
-cap's `delta_angles[0]` pushes 1 to 3 shorts off, and (2) one diagonal
-step onto the kerb (ct 62946) reads as if retail stepped a cmd or two
-after vcod. Neither is settled.
+sim side by side. All three replays match on every gated field. The
+faster 1.1 run reaches the kerb wall at x 1656, where the prone press
+leaves the body airborne on the wall's near-vertical face for a second.
+Its torso pitch eased 0.01 to 0.02 degrees off retail's, and the pitch
+cap's `delta_angles[0]` pushes came out 1 to 3 shorts off, until 1.1's
+prone pitch ease took the short truncation (cod11-mantle.md, "The prone
+pitches"). One diagonal step onto the kerb (ct 62946) read a cmd or two
+early when the capture landed. It already matched at master 7256c89c, the
+first commit this was checked on, with no step change of its own; INFERRED
+that the capsule tie fixes merged between (fix/smalls-4) closed it.
 
 ## 6. Weapons and view
 

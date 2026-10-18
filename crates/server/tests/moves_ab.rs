@@ -510,23 +510,7 @@ const SPEEDGRAV_UO: &str = "mp_carentan-dm-slope-8ms-speedgrav-uo.txt";
 /// Fields a capture's replay may miss, with how many snapshots and why.
 /// The 1.5 captures replay under 1.5b's stored arithmetic
 /// (cod15-movement.md 7).
-const GAPS: &[(&str, &str, usize)] = &[
-    // The run at 250 carries the body to the kerb wall at x 1656, where the
-    // prone press lands it on the wall's near-vertical face (proneDirection
-    // pitch 273.7) and it hangs there airborne for a second: the torso pitch
-    // eases 0.01-0.02 degrees off retail's and the pitch cap's pushes land
-    // 1-3 shorts off (ct 48146-48895, 58943-58988). Not speed or gravity:
-    // the stock captures never reach the face. Unsettled; cod15-movement.md,
-    // "ps.gravity".
-    (SPEEDGRAV_1_1, "delta_angles[0]", 11),
-    // The diagonal run's step onto the same kerb (ct 62946): retail's
-    // velocity reads as if the step came a cmd or two later than ours. One
-    // snapshot; the next agrees. Unsettled, same section.
-    (SPEEDGRAV_1_1, "origin.xy", 1),
-    (SPEEDGRAV_1_1, "velocity", 1),
-    (SPEEDGRAV_1_1, "bobCycle", 1),
-    (SPEEDGRAV_1_1, "movementDir", 1),
-];
+const GAPS: &[(&str, &str, usize)] = &[];
 
 fn setup() -> Option<(CollisionWorld, Vec<Option<WeaponDef>>)> {
     let fs = vcod_common::testing::game_fs()?;

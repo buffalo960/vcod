@@ -578,6 +578,25 @@ plane normal while `pml.groundPlane` is set, and 0 otherwise. The airborne
 branch also runs `BG_CheckProne` and raises event 141 with `pm_flags` 0x8000
 on a refusal ("Prone Blocked", measured there).
 
+The step's arithmetic (1.1d `game.mp.i386.so`, 0x334e2-0x33585 and
+0x335df-0x33685). VERIFIED, disassembly: the difference is
+`AngleDelta(target, cur)` (0x3ec9c), which multiplies `a - b` by 182.04445
+(rodata 0x72bcc) on the x87 stack and truncates it to a short under control
+word 0xc00, then scales back by 360/65536 and takes 360 off above 180. A
+difference of exactly 0 leaves the pitch alone. Past the rate the pitch
+moves by `±70 * frametime`, the sign that of the difference; within it,
+by the difference. The sum is stored and run through `AngleNormalize180`
+(0x3eb70), the same short truncation (rodata 0x72bac). So both pitches are
+whole shorts after every step. VERIFIED live: the speedgrav capture's
+airborne prone body on the kerb wall (`mp_carentan-dm-slope-8ms-speedgrav-1.1.txt`,
+ct 48146-49088) sends `proneTorsoPitch` -47.64221 (-8673 shorts) and
+-50.35034 (-9166), and `proneDirectionPitch` -85.56152 (-15576). A float
+ease ran 0.01-0.02 degrees below them a snapshot, and the pitch cap's
+`delta_angles[0]` pushes off it 1-3 shorts off. 1.5b (0x2709a, 0x271ce) and
+UO (0x2c496, 0x2c5ca) store through `AngleNormalize180Accurate` instead.
+VERIFIED, call targets. vcod: `update_prone_pitch` takes the short path
+under 1.1's rules only (`short_normalize180`).
+
 `PitchForYawOnNormal` (0x3d274): VERIFIED, the constants: pi/180 (double at
 0x72a10), -180.0 and pi (doubles at 0x72a20, 0x72a28), 360.0 (0x72a30), and
 the degenerate answers 270.0 and 90.0 (0x72a18, 0x72a1c). INFERRED, from the
