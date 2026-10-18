@@ -304,15 +304,12 @@ pub struct Explosion {
     /// Where the shell struck (`r.currentOrigin` at the contact) and the
     /// way it flew there (`BG_EvaluateTrajectoryDelta`): the point and
     /// the direction `G_MissileImpact` hands the struck entity's
-    /// `G_Damage` (game.mp.uo 0x5db67).
+    /// `G_Damage` (game.mp.uo 0x5db67); UO's trigger walk tests the point
+    /// alone (combat doc 14.8).
     pub contact: Vec3,
     pub flight: Vec3,
     /// A shell's `damage`, which the struck entity takes whole.
     pub shell_damage: i32,
-    /// The struck face's normal, zero for a fuse's blast. UO's
-    /// `G_MissileImpact` hands its address to `G_CheckHitTriggerDamage` as
-    /// the segment's end (combat doc 14.8).
-    pub normal: Vec3,
 }
 
 /// What one frame of the missile pass produced. `temp` holds the water
@@ -982,7 +979,6 @@ impl Missile {
             contact: org,
             flight: Vec3::ZERO,
             shell_damage: 0,
-            normal: Vec3::ZERO,
         }
     }
 
@@ -1082,7 +1078,6 @@ impl Missile {
             contact: c.at,
             flight,
             shell_damage: damage,
-            normal: c.normal,
         }
     }
 

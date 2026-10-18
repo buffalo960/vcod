@@ -3071,12 +3071,16 @@ impl ScriptRuntime {
             .missiles
             .run_one(id, world, sims, &models, bones.as_mut(), now_ms);
         // `G_GrenadeTouchTriggerDamage` over the move, after its link and
-        // ahead of the fuse's think (combat doc 12.2, 14.8).
+        // ahead of the fuse's think, charged to the grenade with its
+        // `explosionInnerDamage` (combat doc 12.2, 14.8).
         if let Some((from, weapon)) = grenade
             && matches!(turn, Some(Turn::Flew | Turn::Exploded(_)))
             && let Some(to) = host.missiles.origin_of(id)
         {
-            let damage = host.weapons.get(weapon as usize).map_or(0, |d| d.damage);
+            let damage = host
+                .weapons
+                .get(weapon as usize)
+                .map_or(0, |d| d.explosion_inner_damage);
             let grenade_mod = host.defs.mod_index("MOD_GRENADE").unwrap_or(3);
             self.vm.with_cx(|cx| {
                 crate::game::damage_trigger::sweep(
