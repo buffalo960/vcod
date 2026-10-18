@@ -16,7 +16,7 @@ use crate::game::builtins::entity::entity_receiver;
 use crate::game::host::{GameHost, SimOp, WeaponOp};
 use crate::game::say::SayMode;
 use vcod_common::pmove;
-use vcod_gsc::{Cx, EntId, ErrorKind, Host, Target, Value};
+use vcod_gsc::{Cx, ErrorKind, Host, Target, Value};
 
 pub type Builtin = fn(&mut GameHost, &mut Cx, Option<Target>, &[Value]) -> Result<Value, ErrorKind>;
 
@@ -1014,22 +1014,14 @@ fn slot_argument(cx: &Cx, args: &[Value]) -> Result<usize, ErrorKind> {
 }
 
 /// `positionWouldTelefrag(origin)` (free function 96, 0x5a834): the player
-/// bounding box at `origin` against every player already standing there.
-/// Object model doc, section 20.
-///
-/// Three of retail's inputs are missing here, and all three err the same way.
-/// Its area query returns only entities linked into the world, and nothing
-/// links a client entity yet. Its `pm_type <= 5` filter has nothing to read,
-/// `pm_type` living in the sim rather than the object table, so a dead or
-/// spectating player is not told apart from a live one. And a client entity's
-/// `origin` field is only written by `spawn`, never synced from the sim, so
-/// this tests where each client last spawned rather than where it now is.
-/// Each makes the answer 1 where retail's is 0, never the reverse, so a spawn
-/// point is refused a little too eagerly rather than handed out on top of
-/// somebody.
+/// bounding box at `origin` against the area tree, mask 0x2000000, and 1 for
+/// the first entity it lists that is a client with `pm_type` below 6
+/// (0x5a8f4..0x5a8fc). The tree holds a client's link as its last cmd, spawn
+/// or `setOrigin` made it; a spectator and a dead player are not in it with
+/// that contents bit (object model doc 20, combat doc 14.7).
 pub fn position_would_telefrag(
     host: &mut GameHost,
-    cx: &mut Cx,
+    _cx: &mut Cx,
     _recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
@@ -1037,28 +1029,24 @@ pub fn position_would_telefrag(
         return Err(ErrorKind::BadType("positionWouldTelefrag takes an origin"));
     };
     let at = *at;
-    // The same box the playerstate carries, taken from the playerstate
-    // rather than written out a second time.
+    // `playerMins`/`playerMaxs`, the standing box the playerstate carries.
     let box_of = pmove::PlayerState::spawn(glam::Vec3::ZERO, 0.0);
     let (mins, maxs) = (box_of.mins(), box_of.maxs());
-    let clients: Vec<EntId> = host
-        .ents
-        .iter_inuse()
-        .filter(|(_, e)| e.client.is_some())
-        .map(|(id, _)| id)
-        .collect();
-    let origin = cx.intern_folded("origin");
-    for id in clients {
-        let Value::Vector(other) = host.get_field(cx, id, origin) else {
-            continue;
-        };
-        let overlaps = (0..3)
-            .all(|i| at[i] + mins[i] < other[i] + maxs[i] && at[i] + maxs[i] > other[i] + mins[i]);
-        if overlaps {
-            return Ok(Value::Int(1));
-        }
-    }
-    Ok(Value::Int(0))
+    let lo = std::array::from_fn(|i| at[i] + mins[i]);
+    let hi = std::array::from_fn(|i| at[i] + maxs[i]);
+    let hit = host
+        .area
+        .entities_in_box(lo, hi, vcod_common::movetrace::CONTENTS_BODY as i32)
+        .into_iter()
+        .any(|n| {
+            (n as usize) < crate::server::MAX_CLIENTS
+                && host
+                    .ents
+                    .handle(n)
+                    .is_some_and(|id| host.ents.get(id).is_some_and(|e| e.client.is_some()))
+                && host.client_pm_type.get(n as usize).copied().unwrap_or(0) < 6
+        });
+    Ok(Value::Int(hit.into()))
 }
 
 /// `self setViewmodel(name)` (player method 17, 0x4512c): the name becomes a
@@ -1180,6 +1168,7 @@ mod tests {
     use crate::configstrings::{CsRange, weapon_index};
     use crate::game::entity::ThinkFn;
     use crate::game::testing::fixture;
+    use vcod_gsc::EntId;
 
     /// A builtin's ammo op lands on the host's mirror at once, so a pickup
     /// or a `dropItem` later in the same frame reads it; the sim still gets
@@ -1363,17 +1352,25 @@ mod tests {
     ///
     /// The two near cases pin the box rather than just its existence: the
     /// player box is 30 units across and 70 tall (`pmove::HALF_WIDTH`,
-    /// `Stance::height`), so two boxes 24 apart on one axis overlap and two 40
-    /// apart do not. A width used where a height belongs, or the reverse,
-    /// moves one of these.
+    /// `Stance::height`) and the link grows it a unit, so two boxes 31 apart
+    /// on one axis still touch and two 40 apart do not.
+    ///
+    /// The answer comes off the tree's links, not the entities' `origin`
+    /// fields: a client set down without a link is not there, and one whose
+    /// `pm_type` reads 6 or more is skipped (0x6a89f).
     #[test]
     fn a_spawn_point_inside_another_player_would_telefrag() {
         let (mut vm, mut host) = fixture();
         vm.with_cx(|cx| {
+            let body = vcod_common::movetrace::CONTENTS_BODY as i32;
             let a = host.ents.spawn_client(cx, 0, None).unwrap();
             set_origin(&mut host, cx, a, [0.0, 0.0, 0.0]);
+            host.link_client(0, [0.0; 3], host.client_box(0), body, true);
             let b = host.ents.spawn_client(cx, 1, None).unwrap();
             set_origin(&mut host, cx, b, [512.0, 0.0, 0.0]);
+            host.link_client(1, [512.0, 0.0, 0.0], host.client_box(1), body, true);
+            let c = host.ents.spawn_client(cx, 2, None).unwrap();
+            set_origin(&mut host, cx, c, [0.0, 512.0, 0.0]);
             let recv = Some(Target::Entity(b));
             let ask = |host: &mut GameHost, cx: &mut Cx, at: [f32; 3]| {
                 position_would_telefrag(host, cx, recv, &[Value::Vector(at)]).unwrap()
@@ -1381,8 +1378,13 @@ mod tests {
 
             assert_eq!(ask(&mut host, cx, [0.0, 0.0, 0.0]), Value::Int(1));
             assert_eq!(ask(&mut host, cx, [24.0, 0.0, 0.0]), Value::Int(1));
+            assert_eq!(ask(&mut host, cx, [31.0, 0.0, 0.0]), Value::Int(1));
             assert_eq!(ask(&mut host, cx, [40.0, 0.0, 0.0]), Value::Int(0));
             assert_eq!(ask(&mut host, cx, [512.0, 512.0, 0.0]), Value::Int(0));
+            // `c`'s origin says it stands here, but it never linked.
+            assert_eq!(ask(&mut host, cx, [0.0, 512.0, 0.0]), Value::Int(0));
+            host.client_pm_type[0] = 6;
+            assert_eq!(ask(&mut host, cx, [0.0, 0.0, 0.0]), Value::Int(0));
         });
     }
 

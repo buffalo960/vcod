@@ -1338,9 +1338,13 @@ walk runs out. INFERRED: that is the branch structure at 0x5a8f4-0x5a8fc, not
 a live test. Playerstate +0x4 is the `pm_type` offset `cod11-sound-system.md`
 and `cod11-hud-protocol.md` already read it at.
 
-Two of those filters have no analogue in a server that does not link entities
-into a world model and keeps `pm_type` outside the script object table; both
-omissions make the answer 1 where retail's is 0, never the reverse.
+VERIFIED, `tools/re/annotate_func.py`: the two rodata vectors are
+`playerMins` and `playerMaxs`. vcod (`builtins::client::position_would_telefrag`)
+walks its area tree (`crate::area::AreaTree`, `cod11-combat.md` 14.7) over
+the same box and mask, and filters on the client and its last wire
+`pm_type`: a client counts where its last cmd, spawn or `setOrigin` linked
+it, a spectator (contents 0) and a dead player (`CONTENTS_CORPSE`) never.
+Before 2026-10-18 it tested every client's `origin` field.
 
 ### `weaponSlot`: the name table at `.data` 0x7c940
 

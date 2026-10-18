@@ -691,13 +691,6 @@ pub fn angles_of(host: &mut GameHost, cx: &mut Cx, id: EntId) -> [f32; 3] {
     }
 }
 
-fn live_items(host: &GameHost) -> Vec<(EntId, ItemState)> {
-    host.ents
-        .iter_inuse()
-        .filter_map(|(id, e)| e.item.filter(|i| !i.taken).map(|i| (id, i)))
-        .collect()
-}
-
 /// What the use key and the cursor hint found: an item to take, a turret to
 /// man or a `trigger_use` to fire.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -712,9 +705,11 @@ pub enum Activate {
     Vehicle(EntId),
 }
 
-/// A turret's bounds centre above its origin: `G_SpawnTurret`'s box is
-/// (-32, -32, 0) to (32, 32, 56) (`docs/research/cod11-turrets.md` 3, 4.1).
-const TURRET_CENTRE_Z: f32 = 28.0;
+/// `G_GetActivateEnt`'s query box about the muzzle (`.rodata` 0x7544c,
+/// 0x75450, 0x75454; items doc 2.1).
+const ACTIVATE_BOX: [f32; 3] = [192.0, 192.0, 96.0];
+/// Its contents mask: items, turrets and `trigger_use` all carry 0x200000.
+const CONTENTS_ACTIVATE: i32 = 0x20_0000;
 
 /// `G_GetActivateEnt`'s choice (section 2.1): the best-scoring grabbable
 /// item, usable turret or `trigger_use` in reach whose centre the muzzle can see past the
@@ -735,64 +730,62 @@ pub fn activate_ent(
     let forward = crate::game::spawn::angle_forward(view);
     let inv = inventory(host, slot);
     let weapons = host.weapons.clone();
-    let mut scored: Vec<(Activate, f32, [f32; 3])> = Vec::new();
-    for (id, item) in live_items(host) {
-        let Some(kind) = item_kind(host.defs, item.index as usize) else {
-            continue;
-        };
-        if !can_grab(
-            &inv,
-            kind,
-            item.owner.map(usize::from),
-            slot,
-            false,
-            &weapons,
-        ) {
-            continue;
-        }
-        let centre = origin_of(host, cx, id);
-        if let Some(s) = activate_score(muzzle, forward, centre) {
-            scored.push((Activate::Item(id), s, centre));
-        }
-    }
     let player = host
         .ents
         .handle(slot as u32)
         .map_or([0.0; 3], |c| origin_of(host, cx, c));
     let grenade_ms = host.client_grenade_ms.get(slot).copied().unwrap_or(0);
     let on_ground = host.client_on_ground.get(slot).copied().unwrap_or(false);
-    let mut turrets: Vec<EntId> = host.turrets.keys().copied().collect();
-    turrets.sort();
-    for id in turrets {
-        if host.ents.get(id).is_none() {
+    // The walk over `muzzle ± (192, 192, 96)` under mask 0x200000, in the
+    // tree's order (0x4f224..0x4f237), which the stable score sort keeps
+    // for ties; the centre is the link's `(absmin + absmax) * 0.5`.
+    let lo = std::array::from_fn(|i| muzzle[i] - ACTIVATE_BOX[i]);
+    let hi = std::array::from_fn(|i| muzzle[i] + ACTIVATE_BOX[i]);
+    let walk = host.area.entities_in_box(lo, hi, CONTENTS_ACTIVATE);
+    let mut scored: Vec<(Activate, f32, [f32; 3])> = Vec::new();
+    for n in walk {
+        if n as usize == slot {
             continue;
         }
-        let origin = origin_of(host, cx, id);
-        let yaw = angles_of(host, cx, id)[1];
-        let rec = &host.turrets[&id];
-        if !crate::game::turret::usable(rec, origin, yaw, player, grenade_ms, on_ground) {
+        let (Some(id), Some(link)) = (host.ents.handle(n), host.area.last_link(n)) else {
             continue;
-        }
-        let centre = [origin[0], origin[1], origin[2] + TURRET_CENTRE_Z];
+        };
+        let centre: [f32; 3] = std::array::from_fn(|i| (link.absmin[i] + link.absmax[i]) * 0.5);
+        let hit = if let Some(item) = host.ents.get(id).and_then(|e| e.item) {
+            let grabbable = !item.taken
+                && item_kind(host.defs, item.index as usize).is_some_and(|kind| {
+                    can_grab(
+                        &inv,
+                        kind,
+                        item.owner.map(usize::from),
+                        slot,
+                        false,
+                        &weapons,
+                    )
+                });
+            if !grabbable {
+                continue;
+            }
+            Activate::Item(id)
+        } else if host.turrets.contains_key(&id) {
+            let origin = origin_of(host, cx, id);
+            let yaw = angles_of(host, cx, id)[1];
+            let rec = &host.turrets[&id];
+            if !crate::game::turret::usable(rec, origin, yaw, player, grenade_ms, on_ground) {
+                continue;
+            }
+            Activate::Turret(id)
+        } else if host
+            .triggers
+            .get(id)
+            .is_some_and(|t| t.kind == crate::game::trigger::TriggerKind::Use)
+        {
+            Activate::Trigger(id)
+        } else {
+            continue;
+        };
         if let Some(s) = activate_score(muzzle, forward, centre) {
-            scored.push((Activate::Turret(id), s, centre));
-        }
-    }
-    let uses: Vec<EntId> = host
-        .triggers
-        .iter()
-        .filter(|(_, t)| t.kind == crate::game::trigger::TriggerKind::Use)
-        .map(|(id, _)| id)
-        .collect();
-    for id in uses {
-        let (lo, hi) = crate::game::trigger::entity_abs_bounds(host, cx, id);
-        let centre = [
-            (lo[0] + hi[0]) * 0.5,
-            (lo[1] + hi[1]) * 0.5,
-            (lo[2] + hi[2]) * 0.5,
-        ];
-        if let Some(s) = activate_score(muzzle, forward, centre) {
-            scored.push((Activate::Trigger(id), s, centre));
+            scored.push((hit, s, centre));
         }
     }
     // A vehicle is scored on its hit along the view, the dot there 1

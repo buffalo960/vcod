@@ -5148,6 +5148,9 @@ mod tests {
                 0.0,
             ),
         );
+        // `G_SpawnTurret`'s link: the use key's walk lists it off the tree.
+        let host = &mut rt.host;
+        rt.vm.with_cx(|cx| host.link_turret(cx, gun));
         (rt, gun)
     }
 
