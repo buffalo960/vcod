@@ -3405,10 +3405,7 @@ pub struct Creases(std::collections::HashMap<[i32; 3], bool>);
 impl Creases {
     fn drains(&mut self, world: &CollisionWorld, p: Vec3) -> bool {
         let cell = (p / 8.0).floor().as_ivec3().to_array();
-        *self
-            .0
-            .entry(cell)
-            .or_insert_with(|| held_off_ground(world, body(p, 0.0), Sim::default()))
+        *self.0.entry(cell).or_insert_with(|| drains(world, p))
     }
 }
 
@@ -3690,12 +3687,7 @@ fn walk_with(
     let mut slid = Vec::new();
     let walked = walk_sliding(world, from, pace, 1.0, target, floor, gait, &mut slid);
     let proving = pace.is_none() && matches!(gait, Gait::Forward | Gait::Backward);
-    if proving
-        && matches!(walked, Walked::Arrived(..))
-        && slid
-            .iter()
-            .any(|&p| held_off_ground(world, body(p, 0.0), Sim::default()))
-    {
+    if proving && matches!(walked, Walked::Arrived(..)) && slid.iter().any(|&p| drains(world, p)) {
         return Walked::Blocked;
     }
     walked
@@ -3720,6 +3712,28 @@ fn held_off_ground(world: &CollisionWorld, mut ps: PlayerState, mut sim: Sim) ->
         !ps.on_ground && !ps.on_ladder && ps.origin.distance(at) < 1.0
     })
 }
+
+/// Whether a body left at rest at `p` comes to rest held off the ground
+/// ([`held_off_ground`]) under a bot's 50 ms cmds or any of a client's
+/// three 16/17 ms splits. On mp_hurtgen's slope the answer turns on the
+/// cmd split and the last bits of the move: retail holds a body left at
+/// (385.42, 2813.30, -29.90) and one a tenth of a unit off it, where one
+/// split of ours lets each go (bot-navigation.md section 3, "The drain
+/// test's cmd splits").
+fn drains(world: &CollisionWorld, p: Vec3) -> bool {
+    std::iter::once(None)
+        .chain(CLIENT_SPLITS.iter().map(Some))
+        .any(|split| {
+            let sim = Sim {
+                split: split.copied(),
+                ..Sim::default()
+            };
+            held_off_ground(world, body(p, 0.0), sim)
+        })
+}
+
+/// A 60 Hz client's cmds over a 50 ms frame, each phase.
+const CLIENT_SPLITS: [[i32; 3]; 3] = [[16, 17, 17], [17, 16, 17], [17, 17, 16]];
 
 const SETTLE_TICKS: usize = 40;
 const HELD_TICKS: usize = 10;
@@ -4295,6 +4309,9 @@ struct Sim {
     /// Weapon 0's def, when the body moves at a `moveSpeedScale` other
     /// than 1 ([`Sim::scaled`]).
     weapons: Option<Arc<[Option<vcod_common::weapon::WeaponDef>]>>,
+    /// Off the rungs, the tick's cmds as a client's lengths instead of one
+    /// 50 ms cmd ([`drains`]).
+    split: Option<[i32; 3]>,
 }
 
 impl Sim {
@@ -4316,7 +4333,27 @@ impl Sim {
     fn tick(&mut self, world: &CollisionWorld, ps: &mut PlayerState, cmd: &UserCmd) {
         let mw = MoveWorld::bare(world);
         let weapons = self.weapons.as_deref().unwrap_or(&[]);
-        for server_time in tick_times(self.time, ps.on_ladder && !ps.on_ground) {
+        let climbing = ps.on_ladder && !ps.on_ground;
+        // At most a climb's six cmds; no allocation on the walks' hot path.
+        let mut times = [0; 6];
+        let mut n = 0;
+        match self.split {
+            Some(split) if !climbing => {
+                let mut t = self.time;
+                for ms in split {
+                    t += ms;
+                    times[n] = t;
+                    n += 1;
+                }
+            }
+            _ => {
+                for t in tick_times(self.time, climbing) {
+                    times[n] = t;
+                    n += 1;
+                }
+            }
+        }
+        for &server_time in &times[..n] {
             let cmd = UserCmd {
                 server_time,
                 ..*cmd
@@ -5183,6 +5220,10 @@ mod tests {
         assert!(held(416.7, 2799.0, -60.0));
         assert!(held(392.1, 2797.3, -55.1));
         assert!(!held(428.2, 2783.2, -59.0));
+        // Retail's `probe_wedge` holds a body left at the walk's first slid
+        // spot and lands one at its second (bot-navigation.md section 3).
+        assert!(drains(w, Vec3::new(385.4227, 2813.2952, -29.899721)));
+        assert!(!drains(w, Vec3::new(383.21103, 2802.2563, -42.117294)));
         let node = |x: f32, y: f32, z: f32| settle(w, Vec3::new(x, y, z + 2.0), 0.0).unwrap();
         let (top, patch) = (node(385.2, 2831.8, -22.2), node(385.6, 2785.7, -52.6));
         let mut slid = Vec::new();
