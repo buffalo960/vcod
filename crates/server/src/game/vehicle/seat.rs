@@ -67,6 +67,8 @@ pub enum SeatOp {
         origin: [f32; 3],
         view: [f32; 3],
         angles: [f32; 3],
+        /// `BG_GetVehiclePosOffset(type, requested)`, the link's offset.
+        link_offset: [f32; 3],
     },
     /// `VEH_UnlinkPlayer`'s: the bits off, `viewlocked_entNum` 1023,
     /// `vehPos` 0 (`vehType` kept), the sight off; a voluntary exit moves
@@ -452,6 +454,7 @@ pub fn link_player(
         origin,
         view,
         angles,
+        link_offset: vcod_common::vehiclepose::seat_offset(info.kind, requested as i32).to_array(),
     });
     send(host, slot, "v cl_run 1");
     send(host, slot, "v cl_stance 0");

@@ -209,6 +209,9 @@ struct Mover {
     /// A `func_static` with `takedamage` (0x5828a, 0x582d0): its `use` is
     /// `Use_Static`, which `G_Damage` calls in place of any damage.
     use_static: bool,
+    /// The groups whose running segment ended this frame: one
+    /// `Reached_ScriptMover` link each (0x5fa17, 0x5faba).
+    reach_links: u8,
 }
 
 /// One frame's move of a brush model mover, for the server to push players
@@ -401,6 +404,10 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     let moving = [&m.pos, &m.apos]
         .iter()
         .any(|p| p.started && p.current.tr_type != TR_STATIONARY);
+    m.reach_links = [&m.pos, &m.apos]
+        .iter()
+        .filter(|p| p.notify.is_some() && level_ms >= p.current.tr_time + p.current.tr_duration)
+        .count() as u8;
     for plan in [&mut m.pos, &mut m.apos] {
         if let Some(e) = plan.advance(level_ms) {
             done.push(Done { ent: id, event: e });
@@ -487,7 +494,17 @@ pub fn verb_linked(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) {
 /// `Reached_BinaryMover`, whose `G_Error` on the mover state no `SP_`
 /// function set drops the level (docs/research/cod11-movers.md 18); the
 /// verbs' plans retire their own segments.
+///
+/// A verb's `Reached_ScriptMover` links again where `G_MoverPush` just
+/// linked, once per group whose segment ended: the entity keeps its place
+/// in the area tree, but each link runs the node's push-down.
 pub fn reached(host: &mut GameHost, id: EntId) {
+    let links = host.movers.rows.get(&id).map_or(0, |m| m.reach_links);
+    for _ in 0..links {
+        if let Some(link) = host.area.last_link(id.0) {
+            host.area.link(id.0, &link);
+        }
+    }
     let Some(m) = host.movers.rows.get(&id).filter(|m| m.sine) else {
         return;
     };
@@ -675,6 +692,7 @@ pub fn spawn_sine(
             sine: true,
             init_mover: true,
             use_static: false,
+            reach_links: 0,
         },
     );
     true
@@ -769,6 +787,7 @@ fn spawn_static(
             sine: false,
             init_mover: true,
             use_static,
+            reach_links: 0,
         },
     );
     true

@@ -95,6 +95,10 @@ pub struct Seat {
     pub hull_view: bool,
     /// The gunner's MG is overheated (`pm_flags` 0x800000).
     pub overheated: bool,
+    /// The offset `VEH_LinkPlayer` linked the player at, in the seat tag's
+    /// axes: `BG_GetVehiclePosOffset` of the slot it asked for, which a use
+    /// asks as 0 (coduo-vehicles.md 13, "The tank driver's link offset").
+    pub link_offset: [f32; 3],
 }
 use vcod_common::net::event_ids::EV_DEATH;
 /// `EV_PAIN` and `EV_DEATH` (`docs/research/cod11-events-and-fx.md`).
@@ -2030,7 +2034,7 @@ impl ClientSim {
         swing_speed: f32,
         anims: Option<&vcod_common::animtree::PlayerAnims>,
     ) {
-        use vcod_common::animclock::{ChannelClock, Seen, Times};
+        use vcod_common::animclock::{self, ChannelClock, Seen, Times};
         use vcod_common::playerpose::{BodyInput, BodySlope};
         let EndFrame {
             frametime_ms,
@@ -2060,14 +2064,10 @@ impl ClientSim {
                     clock_ms: now_ms.wrapping_sub(ahead),
                     snapshot_ms: now_ms,
                 };
-                if self.ps.rules == vcod_common::pmove::MoveRules::V1_1 {
-                    legs_clock.update(a, true, legs, &seen, at);
-                    torso_clock.update(a, false, torso, &seen, at);
-                } else {
-                    let window = &mut self.stance_window_ms;
-                    legs_clock.update_windowed(a, true, legs, &seen, at, window);
-                    torso_clock.update_windowed(a, false, torso, &seen, at, window);
-                }
+                let window = (self.ps.rules != vcod_common::pmove::MoveRules::V1_1)
+                    .then_some(&mut self.stance_window_ms);
+                let clocks = (&mut legs_clock, &mut torso_clock);
+                animclock::update_body(clocks, a, (legs, torso), &seen, at, window);
             }
             None => {
                 legs_clock = ChannelClock::started(legs, self.anim.legs_start_ms());
@@ -2894,6 +2894,7 @@ mod tests {
             angles: [0.0; 3],
             hull_view: true,
             overheated: false,
+            link_offset: [0.0; 3],
         };
         sim.enter_seat(seat, [0.0, 0.0, 64.0], [0.0; 3]);
         sim.leave_seat(Some([0.0, 0.0, 100.0]), Some([0.0, 0.0, 200.0]));
@@ -4100,6 +4101,7 @@ mod tests {
             angles: [0.0; 3],
             hull_view: false,
             overheated: false,
+            link_offset: [0.0; 3],
         });
         let e = sim.to_entity(p, 3, 0);
         assert_eq!(e.field_i32(p, "pos.trType"), trajectory::TR_INTERPOLATE);

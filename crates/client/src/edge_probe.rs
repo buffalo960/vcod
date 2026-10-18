@@ -21,6 +21,10 @@ pub enum EdgeMode {
     Zombie,
     /// Fly 5 s, then `disconnect` and keep decoding: a zombie that was.
     ZombieActive,
+    /// Fly 5 s, then connect again from the same socket and qport with no
+    /// `disconnect`: a crashed client coming back into the slot it still
+    /// holds (`client-probes/probe_reconnect`).
+    Reconnect,
     /// Hold each lean bit in turn on an otherwise idle spectator and print
     /// the velocity per snapshot, beside the cmds sent: `PM_FlyMove`'s lean
     /// terms (0x2ef19..0x2ef4a).
@@ -53,6 +57,7 @@ const ACTIVE_FOR: Duration = Duration::from_secs(5);
 
 pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result<()> {
     let mut client = NetClient::connect(addr)?;
+    let mut reconnected = false;
     client.listen_after_drop();
     let start = Instant::now();
     let ms = |at: Instant| at.duration_since(start).as_millis();
@@ -186,6 +191,13 @@ pub fn run(addr: &str, mode: EdgeMode, secs: u64, cmd_ms: u64) -> anyhow::Result
                     disconnect_and_listen(&mut client);
                     disconnected = true;
                     println!("EDGE disconnect t={} entered=yes", ms(now));
+                }
+                EdgeMode::Reconnect if !reconnected => {
+                    client = client.reconnect(now);
+                    reconnected = true;
+                    printed = None;
+                    last_seq = 0;
+                    println!("EDGE reconnect t={}", ms(now));
                 }
                 _ => {}
             }

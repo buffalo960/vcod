@@ -105,7 +105,10 @@ check.
   1.1 tests and gates, at a UO install (`uo/` beside 1.5's `main/`) the UO
   ones and whatever reads only data the two share. A test that asserts 1.1's
   assets or replays a 1.1 capture takes `testing::game_fs_11()`, `None` at a
-  1.5 or UO install; a UO one takes `testing::uo_fs()`.
+  1.5 or UO install; a UO one takes `testing::uo_fs()`. One that asserts
+  what the stock paks hold (menus, game types, a census) takes
+  `testing::stock_fs()` / `stock_fs_11()`, the `--vanilla` search path,
+  so a third-party pak in `main/` cannot fail it.
 - `ci.yml` runs on ubuntu with no game data, so a new test needing paks
   returns early through `game_fs()` or uses `Pk3Fs::empty()`: no pak test
   and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
@@ -613,8 +616,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
   collision on 1.5 and UO"), and so does the patch capsule arm and the terrain capsule clip, which
   reads the UO-built planes; pmove's fall stores its gravity,
-  its tail and the trace's end point, and `PM_ClipVelocity` and
-  `VectorNormalize` store theirs (`cod15-movement.md` 7). A 1.5 or
+  its tail and the trace's end point, and `PM_ClipVelocity`,
+  `VectorNormalize` and `PM_Friction` store theirs (`cod15-movement.md` 7). A 1.5 or
   UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
   a replay world in a test sets it too. The client's world runs
   `Arith::for_client()` on every protocol: the Windows clients are one
@@ -693,6 +696,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   second box on a merged bone as a box-only child (combat doc 3.6). A
   standing body's torso yaw stays where his spawn left it until he moves,
   fires or goes prone (16.4), so a hit-pose capture swings it first.
+- The engine's hit-box walk clips each box to the fraction already found:
+  a higher priority beats a nearer box only when its bone comes first
+  (`bonetrace::bone_trace`'s `limit`, combat doc 3.1). The aim block's
+  sight sway reads the last frame's `level.time`, the cmd's (15.1).
 - A stock frag bounces off a live player: `fraggrenade_mp` has `damage 0`.
   The move trace scores his posed bones under `bulletPriorityMap` and
   reflects off the struck bone's face, not his link box (combat doc 12.4).
@@ -719,9 +726,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   stance, never `pm_flags` alone (player-model-anim-system.md, "How
   retail picks the movetype"): a test that sets `ps.stance` by hand idles
   standing; `PlayerState::settle_stance` sets the whole stance.
-- A blast and the touch pass walk `crate::area::AreaTree`, retail's entity
-  area tree, so victim and touch order is link history, not entity order. A
-  client links through `GameHost::link_client`, everything else through
+- A blast, the touch pass, the use key and `positionWouldTelefrag` walk
+  `crate::area::AreaTree`, retail's entity area tree, so victim and touch
+  order is link history, not entity order, and an entity no link put in
+  the tree is invisible to all four. A client links through
+  `GameHost::link_client`, everything else through
   `GameHost::link_entity`; an `origin` write on a non-client relinks it, a
   player `setOrigin`, spawn or death is an unlink then a link (combat doc
   14.7).
@@ -809,10 +818,13 @@ dropped, so test such a builtin through `ScriptRuntime`.
   update, and a player bone it asks for keeps that pose, with every bone
   above it, for the rest of the frame (`GameHost::dobj_posed`, movers doc
   15, "A bone asked for before the anim update"). Its `bulletTrace` and
-  `radiusDamage` pose bodies at that clock too (`GameHost::dobj_time_ms`,
+  `radiusDamage` pose bodies at that clock too and fix every bone they
+  pose for the frame, as a bone ask does (`GameHost::dobj_time_ms`,
   combat doc 3.6). A gate replaying a `--probe-uo-weapon direct` capture
   sends `ProbeHold::framed` cmds: on even ones `leanhit_ab`'s standing
-  cells read 0.1 off.
+  cells read 0.1 off. Where a `setOrigin` drop lands rides the exact cmd
+  times, which `--probe-uo-weapon` and `--probe-vehicle` log as `CMDS`
+  lines and `ProbeHold::times` replays.
 
 ### Assets, rendering, sound
 

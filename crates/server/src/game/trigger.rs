@@ -714,6 +714,7 @@ pub fn aim_trace(
             anims,
             rigs: &mut host.hit_rigs,
             now_ms,
+            posed: None,
         }),
         _ => None,
     };

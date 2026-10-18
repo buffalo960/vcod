@@ -369,15 +369,15 @@ its time does. VERIFIED, capture: `mp_carentan-dm-slope-8ms-springfield-1.1.txt`
 `weaponTime` 0 on the snapshot whose `commandTime` is the cmd each of its
 four shots' time ran out on, and the rechamber's 162 on a later one; vcod
 before this read `weaponstate` 4 there (`moves_ab`). VERIFIED, capture: the
-older per-snapshot combat captures caught that one-cmd idle on four of their
+per-snapshot combat captures catch that one-cmd idle on some of their
 fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
 between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
-`prone_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
-`mp_carentan-tdm-ads-sniper.txt` `ads_shot`, `mp_cassino-dm-combat-uo.txt`
-`crouch_fire`; re-counted on the 2026-10-17 recapture of the 1.1 files,
-where the sniper's is new); whether a snapshot lands on it is the cmd grid's business, so
+`single_shot` and `crouch_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
+`mp_carentan-tdm-ads-sniper.txt` `hip_shot`, `mp_cassino-dm-combat-uo.txt`
+`crouch_fire`: five of fourteen on the 2026-10-18 recapture of the 1.1
+files, four on the 2026-10-17 one); whether a snapshot lands on it is the cmd grid's business, so
 `playerstate_combat_ab` and `combat_uo_ab` leave that lone sample out of the
-`weapAnim` sets they compare. UO's jeep passenger
+`weapAnim` sets they compare, unless the capture logs its cmds (1.13). UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
@@ -589,8 +589,8 @@ stock segmented files ship `reloadStartAdd` equal to `reloadAmmoAdd`
 the two fields apart. VERIFIED, `mp_carentan-tdm-ads-sniper` `ads_reload`
 and `ads_release`: after one shot from a full five, the reload reads
 `weaponstate` 7 with `weapAnim` 13 and event 153 for `reloadStartTime`,
-its `weaponDelay` counting 1367 to 0 from `reloadStartAddTime` (1366 before
-the 2026-10-17 recapture; the first sample's phase), then 9 with
+its `weaponDelay` counting 1399 to 0 from `reloadStartAddTime` (1367 on
+the 2026-10-17 recapture and 1366 before it; the first sample's phase), then 9 with
 `weapAnim` 526 and event 154 for `reloadEndTime`, then 0; state 5 never
 appears. INFERRED: the start's one-round add filled the clip, the reload
 test refused a loop segment, and the reload went straight to its end.
@@ -918,18 +918,19 @@ reload and not at the key.
 (`crates/server/tests/fixtures/playerstate/<map>-dm-ads.txt`, `!trace` per
 snapshot with `fWeaponPosFrac` and `aimSpreadScale` as decimals), the probe
 standing still and holding each input in turn; the numbers below are
-re-measured on the 2026-10-17 recapture. VERIFIED, every number;
+re-measured on the 2026-10-17 recapture, the mosin's on the 2026-10-18
+one. VERIFIED, every number;
 INFERRED, that they are the file's fields, which is arithmetic.
 
 - The ramp is linear and the rates are the reciprocal times: up, both
   weapons step about 0.1667 a snapshot, the carbine reading 0.1067 at 32 ms and
-  1.0 at 328, the mosin 0.1567 at 48 and 1.0 at 346, which is
+  1.0 at 328, the mosin 0.0533 at 16 and 1.0 at 308, which is
   `adsTransInTime` 0.3 s; down, the carbine steps about 0.125 a snapshot and
   reaches 0 at 408 ms (`adsTransOutTime` 0.4) and the mosin about 0.0833
-  a snapshot, 0 at 630 (0.6).
+  a snapshot, 0 at 632 (0.6).
 - Through a reload with the sight held: the fraction ramps *down* from the
   reload's first frame at the out rate (carbine 1.0 to 0 over 445 ms, mosin
-  over 673), sits at 0, and ramps back up at the in rate from about 2080 ms
+  over 670), sits at 0, and ramps back up at the in rate from about 2080 ms
   on the carbine (`reloadTime` 2650 less 600) and 1840 on the mosin (2400
   less 600), reaching 1.0 some 300 ms before `weaponstate` leaves 5. A
   reload asked for on a full clip does nothing at all, which the first
@@ -942,6 +943,27 @@ The trace fields in a snapshot are the state after the last of that
 frame's pmove steps, and the probe sends a cmd every 16 ms, so a 48 ms gap
 holds three steps. That is why the counter below can read a decay on the
 same snapshot the fraction first reads 1.0.
+
+**The cmds behind each sample.** Since 2026-10-18 the combat and sight
+captures log every cmd the probe sent while a step was current (`!cmds`:
+each `serverTime` and the `buttons`/`wbuttons` that differ from the step's
+input) and each snapshot's `commandTime`. VERIFIED, all four 1.1d captures
+taken that day (`mp_carentan-dm-combat`, `mp_pavlov-dm-combat`,
+`mp_pavlov-dm-ads`, `mp_carentan-tdm-ads-sniper`): a snapshot's frame can
+run fewer cmds than their stamps put before it, 15 of 1774 snapshots across
+the four, as at carentan's `idle` 29300, whose `commandTime` is 29282 while
+the probe had sent 29298 too; the rest run in the next frame. VERIFIED: a
+frame whose last cmd is the tap reads exactly `hipSpreadFireAdd` 0.7 times
+255, 178.50 on the carbine (carentan `sustained_fire` 32150, `commandTime`
+32132, the tap's stamp). INFERRED: the shot's own cmd decays before it
+adds, since `PM_AdjustAimSpreadScale` runs ahead of the fire (2.1). vcod: `playerstate_combat_ab` replays each
+logged step's cmds at retail's stamps, each frame running up to the
+`commandTime` retail's snapshot read (`common::CmdLog`), and then the
+sight fraction and the spread counter match on every sample to the
+capture's print, the `weaponstate` runs and `weapAnim` indices exactly. The
+older captures' first sample after a tap read anywhere from 0 to 50 ms of
+decay, where the replay's 25 ms cmd grid always read 25-35, which is what
+their six tap phase rows were.
 
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for
@@ -1389,8 +1411,9 @@ The `--save-ads` captures (1.13) put numbers on the rest, re-measured on
 the 2026-10-17 recapture. VERIFIED: a hip shot from the carbine reads 128.52
 on the first snapshot after it, 49 ms into a decay from `hipSpreadFireAdd`
 0.7 times 255, and then 94.86, 40.80, 5.10, 0, two or three 16 ms cmds a
-snapshot at the decay of 4 times 255 a second; the mosin's reads 255 and
-comes down 41.44 a full step. A walk climbs 51 a full step on the carbine
+snapshot at the decay of 4 times 255 a second; the mosin's reads 241.74,
+one 16 ms cmd of decay off 255 (255 on the 2026-10-17 capture), and comes
+down 41.44 a full step. A walk climbs 51 a full step on the carbine
 (the add of 8 less the decay of 4, times 255, times the frame) to 255 in
 276 ms, and stopping brings it down 51 a step to 0 in 247. A shot down the
 settled sight adds nothing, and a walk begun with the sight coming up adds
@@ -2055,8 +2078,16 @@ branches:
   (mins) and `boxRecord+0x0c` (maxs).
 - On a hit at `0x80c4c21` onward: an equal `prio` is discarded unless it is
   nearer than the fraction already stored, and a differing one -- necessarily
-  greater, by the skip above -- raises `bestPriority` and takes the hit
-  regardless of distance. The result gets the fraction, the bone's name id, the
+  greater, by the skip above -- raises `bestPriority` and takes the hit.
+  VERIFIED, `cod_lnxded` `0x080c4564` and UO's `coduo_lnxded` `0x080c7394`:
+  each bone's slab test starts its exit bound at the stored fraction
+  (`*param_5`, the caller's fraction before any hit), so a box the segment
+  enters past the hit already stored is rejected whatever its priority.
+  INFERRED: a higher priority beats distance only when its bone comes first
+  in the walk; listed after a nearer lower-priority hit, it never scores.
+  VERIFIED, vcod measurement (`leanhit_ab`, 3.6): ours took the farther
+  higher-priority box, and with this rule the 1.5b and UO rounds that took
+  `torso_upper` where retail took `torso_lower` now match. The result gets the fraction, the bone's name id, the
   effective hit-location code, and a normal that is a signed row of the bone
   matrix.
 - A segment that starts inside a box sets the two flag bytes at `+0x18`/`+0x19`
@@ -2400,28 +2431,65 @@ Against ours (`leanhit_ab`, cmds as above, each capture's join times):
   round as retail's.
 - UO: every bone, the origin and every cell likewise, the standing,
   crouched and prone leans included, so the `Split::Later` lean terms of
-  16.4 hold as ported. One round differs: the crouched target leaning
-  left takes it in `torso_lower` 0.06 higher where ours takes
-  `torso_upper` a unit nearer, the ray along the seam of the two boxes;
-  1.5b's capture reads the same (`leanhit_ab::ROUND_GAPS_15_UO`). Open:
-  it is the shooter's ray, since the target's bones and the phase's cells
-  match.
+  16.4 hold as ported. One round differed, here and on 1.5b: the crouched
+  target leaning left took it in `torso_lower` where ours took
+  `torso_upper` a unit farther along the ray. VERIFIED, vcod measurement:
+  that is the hit-box walk's clip (3.1), which ours lacked; with it the
+  round matches on both (`ROUND_GAPS_15_UO` removed).
 - 1.5b: the target's origin stands 0.0402 under ours (offset -0.0306
   against ours' 0.0096) in both 1.5b runs; every bone of a standing or
   crouched body carries the same offset and none else (to 0.0006), and a
   prone body's bones match without it. The hold's `setOrigin` raises him
-  a unit and he drops to the ground over the next cmds. VERIFIED, vcod
-  measurement: ours' landing rides the cmd split, from 0.013 over the
-  spot to 0.125 under it as one cmd moves a millisecond, and the 16, 16,
-  18 split lands the 1.1d and UO targets on retail's height to the bit.
-  The net probe logs no cmd times, so whether 1.5b's split differs or
-  its fall does is open (`leanhit_ab::STAND_DZ_15`, five grazing cells in
-  `CELL_GAPS_15`).
-- The head and the gear are random draws (`PROBE models`): the 1.1d and
-  UO captures' target wore `basehead_axis_a_01`, ours `b_08`, and the
-  cells match all the same. A `detachAll` and re-`attach` of the same
-  list on ours moved 150 cells on UO, so the gate leaves ours' draw.
-  Open: what ours' re-attach changes in the hit rig.
+  a unit and he drops to the ground over the next cmds. The `-cmds`
+  captures below settle it as the split: `leanhit_ab::STAND_DZ_15` and the
+  five grazing cells of `CELL_GAPS_15` stay, as that capture logged no cmd
+  times to replay.
+- The head and the gear are random draws (`PROBE models`).
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-18, `probe_leanhit`
+with `probe_bones`, `probe_fall`, `probe_pin` and `probe_stamp` set,
+fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
+`-cmds-uo.txt`, each with both net probe clients' `CMDS` lines):
+
+- The drop. `probe_fall` logs each player's height off his spot for ten
+  frames after each `setOrigin` (`PROBE fall`). He settles in one frame,
+  and where rides the cmds: across four runs a server's target landed
+  anywhere from 0.125 under the spot to 0.024 over it, 1.1d included.
+  VERIFIED, vcod measurement: replaying each capture's own cmd times
+  (`ProbeHold::times`), every fall row and bone of ours sits on retail's
+  within the gate's 0.005 on all three servers, so 1.5b's fall is not the difference.
+- The spawn. `PROBE spawnat` names the spawn point a player stood on at
+  his first `setOrigin`, and the gate pins it (`Server::pin_spawns`): a
+  sloped one leaves the spawn think's velocity on him through the drop
+  (retail's shooter `trDelta` (1, 4, 0) off (976, -864)), and the drift it
+  leaves moves with the spawn point's z in the last hundredth, so the
+  probe logs the origin to six figures.
+- `detachAll` and re-`attach`. `probe_pin` puts a fixed head and gear on
+  the target (`basehead_axis_a_01`, the falshrm helmet, `load1`, the
+  bandolier) and, after the level phase's grid, takes every attachment off
+  and puts the same ones back on their tags, then runs the grid again in
+  that frame (`level_re`). VERIFIED: on all three servers `level_re`
+  reads cell for cell as `level`. VERIFIED, vcod measurement: so does
+  ours', and with the pin every cell of all three captures matches.
+- Bones a trace posed. `probe_stamp` crosses the target with one
+  `bulletTrace` right after the second of the three `bones` rows, in the
+  thread that logs them, which runs ahead of the anim update. VERIFIED: on
+  all three servers every bone's third row, `tag_weapon_right` included,
+  reads exactly the second, where the first two differ by up to 0.17. So
+  the trace posed every bone at the last frame's time and the frame's
+  entity pass, which moves the linked marks, read those poses (movers doc
+  15). VERIFIED, vcod measurement: ours re-posed the marks' bones at the
+  frame's own time (97 rows off); a script trace now stamps every bone of
+  each body it poses (`GameHost::dobj_posed`), and they match.
+- The rounds. The damage callback logs each round's direction
+  (`PROBE dir`). VERIFIED, vcod measurement: with the aim block on the
+  last frame's clock (15.1) and the hit-box clip (3.1), every round's part
+  and point match on all three servers. The directions match to 2e-5 but
+  for up to 8e-5 (0.02 units at the target) on the shooter's left lean
+  against the target's right on all three, every phase in which the target
+  leans or lies on 1.5b and UO, and two more on UO
+  (`leanhit_ab::DIR_GAPS_*`). Open: the aim point is the same script
+  vector on every server, so what moves those is not found.
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
@@ -6521,14 +6589,57 @@ as retail does, where the entity-number order took d.
 `radiusdamage_walks_its_victims_in_the_area_trees_order`
 (`crates/server/src/game/builtins/combat.rs`) replay the blast table.
 
-Not routed through the tree: a linked client's per-frame relink in
-`G_RunClient`, a gunner's relink in the turret think, `func_*` entities
-(vcod spawns none of them), the link `ScriptEntCmd_MoveTo` and
-`Reached_ScriptMover` make at a move's ends, and an entity whose box
-touches no BSP leaf, which `SV_LinkEntity` unlinks
-(the leaf count at 0x8090c68, the unlink at 0x8090c84). Not walking it yet: `G_GetActivateEnt` (the use key; sorted
-by score, so the order reaches it only through ties), `G_KillBox`, `positionWouldTelefrag` and
-the two trigger-damage walks. vcod raises the `"touch"` notifies at the
+The other walks and links (2026-10-18):
+
+- `positionWouldTelefrag` walks the tree under 0x2000000 over
+  `playerMins`/`playerMaxs` at the point and answers 1 off the first
+  client whose `pm_type` is below 6 (`builtins::client::position_would_telefrag`,
+  cod11-gsc-object-model.md 20).
+- `G_GetActivateEnt` takes its candidates off the walk over the muzzle
+  ±(192, 192, 96) under 0x200000, in its order, and scores each at its
+  link's `(absmin + absmax) * 0.5` (`item::activate_ent`, cod11-items.md
+  2.1). VERIFIED, the relocation at 0x4f421: the sort is the C library's
+  `qsort`. INFERRED: glibc's `qsort` merges when it can allocate, which
+  keeps ties in walk order, so vcod sorts stably.
+- `G_KillBox` (1.1d 0x66bf8, 1.5b 0x6d57d, UO 0x79dd9) has no caller:
+  VERIFIED, no relocation in 1.1d's `.rel.text` names it and no `call`
+  reaches it in the 1.5b or UO disassembly. Nothing to port.
+- The trigger-damage walks: VERIFIED, 14.6: no 1.1 MP map places a
+  `trigger_damage`; UO's `mp_uo_stanjel` places 17 and `mp_foy` one
+  (`coduo-diff.md`, "Map entities"). vcod links them (0x405c0008) but runs
+  no `Activate_trigger_damage`, so neither walk has anything to do yet.
+- VERIFIED, `game.mp.i386.so` and `game.mp.uo.i386.so`: `setModel` links
+  after `G_SetModel` and `G_DObjUpdate` (1.1d 0x5db16, UO 0x68ce4),
+  `setContents` links after its store (1.1d 0x5dd4a, UO 0x6970b), and UO's
+  `setBounds` writes `r.mins` (+0x108) and `r.maxs` (+0x114) and links
+  (0x6976c). vcod links in all three (`builtins::entity::set_model`,
+  `builtins::uo::set_contents`, `set_bounds`): a `script_model` spawned
+  with no model is filed under its world box until its `setModel` files it
+  under the model's bounds.
+- VERIFIED, `Reached_ScriptMover` (0x5f98c): each group whose segment has
+  ended is evaluated and linked (0x5fa17, 0x5faba), behind
+  `G_MoverPush`'s link of the same frame. vcod relinks in place once per
+  such group (`mover::reached`). INFERRED: the entity keeps its place, but
+  each link runs its node's push-down, one level further.
+  `ScriptEntCmd_MoveTo` and the other verbs link at their start
+  (`mover::verb_linked`).
+- `G_RunClient` (UO 0x41dfc) on a seated rider: `G_SetFixedLink` mode 2
+  writes `r.currentOrigin` from the seat link, the tag of the vehicle as it
+  stands shifted by the link's offset, then links him (coduo-vehicles.md
+  13). vcod runs it on the rider's turn of the pass, his vehicle first
+  (`run_rider_link` in `server.rs`), with the offset `VEH_LinkPlayer`
+  asked for (`Seat::link_offset`).
+- VERIFIED, `cod_lnxded` `SV_LinkEntity`: the unlink at 0x8090c84 runs
+  when `CM_BoxLeafnums` (0x8053d94) returns 0. INFERRED: that walk ends in
+  a leaf on every path down the BSP and appends each leaf it reaches
+  (0x8054054), so it never returns 0 and the unlink never runs.
+
+Not routed through the tree: a linked turret's `G_GeneralLink` from its
+think (`turret_think` 0x5328c), which vcod makes on the turret's turn of
+the pass (`link::run_linked`), not from the gunner's end frame; the
+relink `G_RunFrame` makes of every client when `g_bounds_width` or
+`g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
+`func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the
 top of the next script frame in the order the walk made them and hands the
 `"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);
 `crates/server/tests/touchorder_ab.rs` replays the probe and reads every
@@ -6579,6 +6690,18 @@ order and every gate, which are control flow.
   `AxisToAngles` back into `aim` (`0x403c4`).
 - `0x4044a` / `0x40456`: `client+0x220c = aim[0]`, `client+0x2210 = aim[1]`.
 - `0x40466`: `Pmove`.
+
+The `level.time` the block reads is the one a cmd runs on, the last
+frame's: cmds run ahead of `G_RunFrame` (player-clip doc 8.12). VERIFIED,
+vcod measurement (`leanhit_ab`'s `-cmds` captures, 1.1d, 1.5b and UO, each
+round's direction logged by the damage callback): fed the frame's own
+time, ours' scoped rounds left 0.01 to 0.02 degrees off retail's in pitch
+and yaw. Read as a shift of the idle's sines, the pitch residual of 12
+of the 1.1d capture's 13 rounds, and the yaw residual of every round whose
+yaw moved more than 0.005 degrees, put retail's time 48.5 to 51.8 ms
+behind ours; the odd one is the shooter's left lean against the target's
+right (`s_left_t_right`). On the last frame's time every 1.1d round but
+that one leaves within 2e-5 of retail's direction.
 
 VERIFIED: `MatrixMultiply` (`0x3b5a8`) is the row product `out[i][j] =
 Σ in1[i][k] * in2[k][j]`, `AnglesToAxis` (`0x3ef3c`) is `AngleVectors` with

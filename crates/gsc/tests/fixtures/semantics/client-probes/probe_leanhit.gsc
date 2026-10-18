@@ -47,9 +47,35 @@
 //
 //	PROBE body <time> <phase> <dx> <dy> <dz>
 //	PROBE bone <time> <phase> <tag> <dx> <dy> <dz>
+//	PROBE eye <time> <phase> <dx> <dy> <dz>
+//
+//	`eye` is the shooter's origin off his spot. `probe_fall 1` logs each
+//	player's height off his spot for ten frames after every `setOrigin`
+//	the hold makes, the drop of a unit and a bit it starts:
+//
+//	PROBE fall <time> <shooter|target> <dz>
+//	PROBE spawnat <time> <shooter|target> <x> <y> <z> <pitch> <yaw> <roll>
+//	PROBE dir <time> <phase> <x> <y> <z>
+//
+//	`spawnat`, under `probe_fall`, is the tdm spawn point nearest the
+//	player at his first `setOrigin`, which a replay pins: a sloped one
+//	leaves the spawn think's velocity on him through the drop. `dir` is
+//	each round's direction, after its `hit`.
+//
+//	`probe_pin 1` puts a fixed head and gear on the target before the
+//	phases (the character script draws them at random), and after the
+//	level phase's grid takes his attachments off and puts the same ones
+//	back, then runs the grid again in that frame as phase `level_re`.
+//	`probe_stamp 1` crosses the target with one `bulletTrace` right after
+//	the second `bones` row, in that thread (movers doc 15).
 
 main()
 {
+	//	`probe_pin`'s models, which the axis character scripts precache.
+	precacheModel("xmodel/basehead_axis_a_01");
+	precacheModel("xmodel/gear_german_helmet_falshrm_blk");
+	precacheModel("xmodel/gear_german_load1_falshrm");
+	precacheModel("xmodel/gear_german_bandolier");
 	thread run();
 	maps\mp\gametypes\tdm::main();
 	level.callbackPlayerDamage = ::probe_damage;
@@ -61,6 +87,8 @@ probe_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vP
 	if (isdefined(self.pers["team"]))
 		who = self.pers["team"];
 	logPrint("PROBE hit " + gettime() + " " + level.probe_phase + " " + who + " dmg " + iDamage + " loc " + sHitLoc + " point " + vPoint + "\n");
+	if (getcvarint("probe_fall"))
+		logPrint("PROBE dir " + gettime() + " " + level.probe_phase + " " + vDir[0] + " " + vDir[1] + " " + vDir[2] + "\n");
 }
 
 ground_at(p)
@@ -203,15 +231,47 @@ bones(name, site, target, delay)
 	{
 		d = target.origin - site.b;
 		logPrint("PROBE body " + gettime() + " " + name + " " + d[0] + " " + d[1] + " " + d[2] + "\n");
+		shooter = team_player("allies");
+		if (isdefined(shooter))
+		{
+			d = shooter.origin - site.a;
+			logPrint("PROBE eye " + gettime() + " " + name + " " + d[0] + " " + d[1] + " " + d[2] + "\n");
+		}
 		for (j = 0; j < tags.size; j++)
 		{
 			d = marks[j].origin - site.b;
 			logPrint("PROBE bone " + gettime() + " " + name + " " + tags[j] + " " + d[0] + " " + d[1] + " " + d[2] + "\n");
 		}
+		if (k == 1 && getcvarint("probe_stamp"))
+			bullettrace(site.b + (0, 0, 40) - (site.fwd[0] * 64, site.fwd[1] * 64, 0), site.b + (0, 0, 40) + (site.fwd[0] * 80, site.fwd[1] * 80, 0), true, undefined);
 		wait 0.05;
 	}
 	for (j = 0; j < marks.size; j++)
 		marks[j] delete();
+}
+
+//	Takes every attachment off and puts `models` back on the same tags, or
+//	the ones the target wears when `models` is undefined.
+reattach(models)
+{
+	n = self getattachsize();
+	tags = [];
+	have = [];
+	for (i = 0; i < n; i++)
+	{
+		tags[i] = self getattachtagname(i);
+		have[i] = self getattachmodelname(i);
+	}
+	if (!isdefined(models))
+		models = have;
+	self detachall();
+	for (i = 0; i < n; i++)
+	{
+		if (tags[i] == "")
+			self attach(models[i]);
+		else
+			self attach(models[i], tags[i]);
+	}
 }
 
 log_models()
@@ -258,9 +318,41 @@ grid(name, site, target)
 	}
 }
 
+log_spawn(who)
+{
+	if (isdefined(self.probe_spawnat))
+		return;
+	self.probe_spawnat = 1;
+	spawns = getentarray("mp_teamdeathmatch_spawn", "classname");
+	if (!spawns.size)
+		spawns = getentarray("mp_tdm_spawn", "classname");
+	best = undefined;
+	for (i = 0; i < spawns.size; i++)
+		if (!isdefined(best) || distance(spawns[i].origin, self.origin) < distance(best.origin, self.origin))
+			best = spawns[i];
+	if (isdefined(best))
+	{
+		o = best.origin;
+		a = best.angles;
+		logPrint("PROBE spawnat " + gettime() + " " + who + " " + o[0] + " " + o[1] + " " + o[2] + " " + a[0] + " " + a[1] + " " + a[2] + "\n");
+	}
+}
+
+fall_log(who, spot)
+{
+	self notify("probe_fall");
+	self endon("probe_fall");
+	for (k = 0; k < 10; k++)
+	{
+		wait 0.05;
+		logPrint("PROBE fall " + gettime() + " " + who + " " + (self.origin[2] - spot[2]) + "\n");
+	}
+}
+
 //	Holds both players on their spots and the shooter's aim, every frame.
 hold(site)
 {
+	logfall = getcvarint("probe_fall");
 	for (;;)
 	{
 		shooter = team_player("allies");
@@ -268,12 +360,24 @@ hold(site)
 		if (isdefined(shooter) && isdefined(target))
 		{
 			if (distance(shooter.origin, site.a) > 0.5)
+			{
+				if (logfall)
+					shooter log_spawn("shooter");
 				shooter setorigin(site.a);
+				if (logfall)
+					shooter thread fall_log("shooter", site.a);
+			}
 			off = target.origin - site.b;
 			if (level.probe_twb & 64)
 				off = (off[0], off[1], 0);
 			if (length(off) > 0.5)
+			{
+				if (logfall)
+					target log_spawn("target");
 				target setorigin(site.b);
+				if (logfall)
+					target thread fall_log("target", site.b);
+			}
 			shooter setWeaponSlotClipAmmo("primary", 5);
 			shooter giveMaxAmmo(shooter getcurrentweapon());
 			eye = site.a + (0, 0, 60) + lean_off(level.probe_swb, site.yaw);
@@ -328,6 +432,15 @@ run()
 	//	clients joined.
 	while (gettime() < 20000)
 		wait 0.05;
+	if (getcvarint("probe_pin") && team_player("axis") getattachsize() == 4)
+	{
+		pin = [];
+		pin[0] = "xmodel/basehead_axis_a_01";
+		pin[1] = "xmodel/gear_german_helmet_falshrm_blk";
+		pin[2] = "xmodel/gear_german_load1_falshrm";
+		pin[3] = "xmodel/gear_german_bandolier";
+		team_player("axis") reattach(pin);
+	}
 	team_player("axis") log_models();
 	ps = phases();
 	for (i = 0; i < ps.size; i++)
@@ -347,6 +460,11 @@ run()
 			thread bones(p.name, site, target, p.settle - 0.35);
 		wait p.settle;
 		grid(p.name, site, target);
+		if (p.name == "level" && getcvarint("probe_pin"))
+		{
+			target reattach(undefined);
+			grid("level_re", site, target);
+		}
 		send_in(shooter, 17, p.swb);
 		wait 0.05;
 		send_in(shooter, 16, p.swb);

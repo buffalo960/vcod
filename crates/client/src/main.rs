@@ -157,7 +157,9 @@ struct Args {
     /// the playerstate event ring holds four slots and overwrites as it fires.
     /// Each firing step waits for weaponstate to read ready before it taps, and
     /// the reload holds the weapon file's reloadTime, so a weapon still busy
-    /// from the step before cannot be recorded under a firing label. The
+    /// from the step before cannot be recorded under a firing label. Each step
+    /// also logs every cmd it sent (`!cmds`) and each snapshot its
+    /// commandTime, which `playerstate_combat_ab` replays frame for frame. The
     /// sequence takes about 40 s, inside the default --probe-secs.
     #[arg(long)]
     save_combat: bool,
@@ -522,10 +524,11 @@ struct Args {
     /// With `--net-probe`: a spectator that keeps decoding where a client
     /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
     /// drop), `zombie` (a disconnect before entering the world),
-    /// `zombie-active` (one after), `lean-fly` (the lean bits on a
-    /// spectator's flight), `spec-fly` (forward held, every origin printed,
-    /// beside `client-probes/probe_specspawn`) and `watch` (the entity list
-    /// as it changes).
+    /// `zombie-active` (one after), `reconnect` (a connect again into the
+    /// held slot), `lean-fly` (the lean bits on a spectator's flight),
+    /// `spec-fly` (forward held, every origin printed, beside
+    /// `client-probes/probe_specspawn`) and `watch` (the entity list as it
+    /// changes).
     /// Prints `EDGE` lines; writes no fixture (`edge_probe.rs`).
     #[arg(long, value_enum)]
     probe_edge: Option<edge_probe::EdgeMode>,
@@ -555,6 +558,11 @@ struct Args {
     /// vcod-server overwrites it.
     #[arg(long)]
     save_slope: bool,
+    /// With --save-slope: keep the snapshots of every `pm_type` (dead,
+    /// spectator, intermission), not only a playing or linked body's. For
+    /// `predict_ab`'s state changes beside `client-probes/probe_uostates`.
+    #[arg(long, requires = "save_slope")]
+    slope_every_state: bool,
     /// With --save-slope or --probe-slope: a prone crawl instead of the
     /// route, from where `client-probes/probe_prone` puts the player on
     /// mp_carentan (`+set probe_teleport 1`, `probe_spot` street or mound),
@@ -1174,6 +1182,7 @@ fn main() -> Result<()> {
                 playerstate: args.save_playerstate,
                 motion: args.save_motion,
                 slope: args.save_slope,
+                slope_every_state: args.slope_every_state,
                 prone: args.probe_prone,
                 moves: args.probe_moves,
                 turns: args.probe_turns,
@@ -2004,6 +2013,16 @@ fn fresh_cgame(
         hud.restart_cgame();
     }
     fx.clear();
+}
+
+/// The HUD between servers. Retail's disconnect (`Com_Error`'s
+/// `ERR_DISCONNECT` arm, CoDMP.exe 0x4358a0) shuts the cgame down after
+/// `CL_Disconnect`, so the chat ring goes with the game, not at the next
+/// map load (docs/research/cod11-front-end.md section 17).
+fn leave_server_hud(hud: &mut hud::Hud) {
+    hud.restart_cgame();
+    hud.chat_field = None;
+    hud.scoreboard.hide();
 }
 
 /// Parse the map, upload it to the GPU and hand back the live phase.
@@ -3498,9 +3517,7 @@ impl App {
         self.fx.clear();
         self.audio.on_gamestate("");
         if let Some(hud) = &mut self.hud {
-            hud.on_gamestate();
-            hud.chat_field = None;
-            hud.scoreboard.hide();
+            leave_server_hud(hud);
         }
     }
 
@@ -3714,7 +3731,9 @@ impl ApplicationHandler for App {
                     return;
                 };
                 // Alt+Enter flips `r_fullscreen` and restarts the video
-                // ahead of the console and binds (video::toggled).
+                // ahead of the console and binds (video::toggled). Its
+                // release goes on, as retail's `WM_SYSKEYUP` does
+                // (cod11-front-end.md 17, "Alt+Enter's release").
                 if pressed
                     && !event.repeat
                     && self.modifiers.alt_key()
@@ -7044,6 +7063,18 @@ mod tests {
         assert!(live.drawn_pos.is_empty());
         assert_eq!(live.seat_frac, 0.0);
         assert_eq!(live.weapons.iter().flatten().count(), 2);
+        assert!(hud.chat.is_empty());
+    }
+
+    /// A disconnect frees the cgame, chat ring and all.
+    #[test]
+    fn leaving_a_server_drops_the_chat_ring() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = hud::Hud::new(&fs).unwrap();
+        hud.chat.push("last words", 0);
+        leave_server_hud(&mut hud);
         assert!(hud.chat.is_empty());
     }
 

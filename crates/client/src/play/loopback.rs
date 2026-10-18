@@ -60,6 +60,8 @@ struct Conditions {
     /// for 60 to 250 ms instead.
     frame_ms: (f64, f64),
     hitch_pct: f64,
+    /// Percentage of datagrams lost, each way.
+    loss_pct: f64,
     seed: u64,
 }
 
@@ -69,6 +71,9 @@ struct Lane(VecDeque<(f64, Vec<u8>)>);
 
 impl Lane {
     fn push(&mut self, c: &Conditions, rng: &mut Rng, at: f64, data: Vec<u8>) {
+        if c.loss_pct > 0.0 && rng.next() * 100.0 < c.loss_pct {
+            return;
+        }
         let t = at + c.delay + (rng.next() - 0.5) * c.jitter;
         let t = self.0.back().map_or(t, |&(last, _)| t.max(last));
         self.0.push_back((t, data));
@@ -327,26 +332,30 @@ fn run(c: Conditions, weapon: &str) -> Option<Outcome> {
 }
 
 /// The mp44 held through every stance, the sight and UO's sprint, at a
-/// steady 125 fps, at an uneven rate with hitches, and over a delayed,
-/// jittery link: each round the server fired plays one fire event and one
-/// kick. A UO server that left `iFatigueSoundTime` off the wire had the
+/// steady 125 fps, at an uneven rate with hitches, over a delayed, jittery
+/// link and over one that also loses 3% each way: each round the server
+/// fired plays one fire event and one kick. A UO server that left `iFatigueSoundTime` off the wire had the
 /// predictor breathe on every snapshot while winded, which pushed the next
 /// shot's event to another slot and played it again: 97 fires and kicks for
 /// 76 rounds (coduo-movement.md 15).
 #[test]
 fn each_round_of_held_fire_plays_and_kicks_once() {
     let cases = [
-        ("125 fps", (7.9, 8.1), 0.0, 0.0, 0.0),
-        ("uneven", (4.0, 25.0), 1.0, 0.0, 0.0),
-        ("jittery link", (6.0, 18.0), 0.5, 60.0, 40.0),
+        ("125 fps", (7.9, 8.1), 0.0, 0.0, 0.0, 0.0, 1),
+        ("uneven", (4.0, 25.0), 1.0, 0.0, 0.0, 0.0, 2),
+        ("jittery link", (6.0, 18.0), 0.5, 60.0, 40.0, 0.0, 3),
+        // Seed 14 at a UO install played a shot twice before the snapshot
+        // drain kept to the remembered window (`events::filter_snapshot`).
+        ("lossy link", (6.0, 18.0), 0.5, 60.0, 40.0, 3.0, 14),
     ];
-    for (seed, (name, frame_ms, hitch_pct, delay, jitter)) in cases.into_iter().enumerate() {
+    for (name, frame_ms, hitch_pct, delay, jitter, loss_pct, seed) in cases {
         let c = Conditions {
             delay,
             jitter,
             frame_ms,
             hitch_pct,
-            seed: seed as u64 + 1,
+            loss_pct,
+            seed,
         };
         let Some(o) = run(c, "mp44_mp") else {
             return;

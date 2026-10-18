@@ -581,6 +581,7 @@ fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime
                 origin,
                 view,
                 angles,
+                link_offset,
                 ..
             } => sim.enter_seat(
                 crate::spectate::Seat {
@@ -591,6 +592,7 @@ fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime
                     angles,
                     hull_view: true,
                     overheated: false,
+                    link_offset,
                 },
                 origin,
                 view,
@@ -708,6 +710,7 @@ fn vehicle_fire(
                     anims,
                     rigs: &mut *rigs,
                     now_ms,
+                    posed: None,
                 }),
                 _ => None,
             };
@@ -1385,6 +1388,10 @@ fn apply_callback_ops(
 /// the bombzone's `delete()` is what frees the record. This tick's per-cmd
 /// touch passes already ran at the last frame's anchor, as retail's do.
 fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim) {
+    if let (None, Some(seat)) = (sim.link_to, sim.seat) {
+        run_rider_link(rt, slot, sim, seat);
+        return;
+    }
     let Some(link) = sim.link_to else {
         return;
     };
@@ -1399,6 +1406,30 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
         }
         None => sim.link_to = None,
     }
+}
+
+/// `G_RunClient` (game.mp.uo 0x41dfc) on a seated rider: `G_SetFixedLink`
+/// mode 2 puts `r.currentOrigin` and `ps.origin` at the seat tag of the
+/// vehicle as it stands, shifted by the link's own offset, and links him
+/// there. His end frame puts `ps.origin` back on the seat
+/// (coduo-vehicles.md 13, "The tank driver's link offset").
+fn run_rider_link(
+    rt: &mut script::ScriptRuntime,
+    slot: usize,
+    sim: &mut ClientSim,
+    seat: crate::spectate::Seat,
+) {
+    let Some(at) = rt.with_host(|host, cx| {
+        let id = host.ents.handle(seat.vehicle)?;
+        let posed = crate::game::vehicle::seat::posed(host, cx, id)?;
+        let (p, r) = posed.tag(vcod_common::vehiclepose::seat_tag(seat.pos)?)?;
+        Some(p + r * glam::Vec3::from(seat.link_offset))
+    }) else {
+        return;
+    };
+    sim.ps.origin = at;
+    rt.set_client_origin(slot, at.to_array());
+    link_client(rt, slot, sim);
 }
 
 /// A brush model mover's push on its turn in the entity pass: it carries its
@@ -2763,11 +2794,15 @@ impl Server {
         }
         if reconnect.is_some() {
             log::info!("{from}: reconnect");
-            // Whoever held the slot is gone, so its script state has to be
-            // torn down here: `check_timeouts` never reaches it once the new
-            // `Client` overwrites the slot with a fresh `last_packet`.
-            if let Some(rt) = self.script.as_mut() {
-                rt.push_client_event(ClientEvent::Disconnect(slot));
+            // 1.5's and UO's `SV_FreeClient` (1.5b 0x808a6e3, UO 0x808b4e7)
+            // runs the game's `ClientDisconnect` here, inside the connect.
+            // 1.1d frees only the client's script id (0x80859c8) and the
+            // game's `ClientConnect` starts the held player over: no
+            // callback, and its threads live on (cod11-server-handshake.md,
+            // "A reconnect into a held slot").
+            if self.v15() {
+                self.clients[slot] = None;
+                self.client_disconnect(slot);
             }
         } else {
             self.zombies[slot] = None;
@@ -3717,6 +3752,7 @@ impl Server {
                 anims,
                 rigs: &mut self.hit_rigs,
                 now_ms: self.sv_time_ms,
+                posed: None,
             }),
             _ => None,
         };
@@ -3860,8 +3896,9 @@ impl Server {
             return;
         };
         let v15 = self.v15();
+        let mut own = Vec::new();
         if v15 {
-            self.client_disconnect(slot);
+            own = self.client_disconnect(slot);
         }
         // Match on ip, not `ch.addr == c.addr`; NAT may have moved the port
         // since the challenge was issued and the slot would stay `connected`.
@@ -3885,10 +3922,18 @@ impl Server {
         }
         self.print(&format!("{slot}:{} {reason}\n", c.name));
         if !v15 {
-            self.client_disconnect(slot);
+            own = self.client_disconnect(slot);
         }
-        // Appended with no squash or guard: the notice must not be dropped,
-        // and a full ring cannot drop a client twice.
+        // What the callback sent the leaver alone goes into its ring, and
+        // the zombie's `w` squashes every unsent ignorable command, the
+        // callback's `iPrintLn` with them: a `setClientCvar` reaches the
+        // zombie on all three, a print on none (`client-probes/probe_reconnect`).
+        for cmd in own {
+            c.queue_server_command(&cmd);
+        }
+        c.squash_ignorable();
+        // Appended with no guard: the notice must not be dropped, and a full
+        // ring cannot drop a client twice.
         c.netchan.reliable_sequence += 1;
         let at = c.netchan.reliable_sequence as usize & (MAX_RELIABLE_COMMANDS - 1);
         c.netchan.reliable[at] = format!("w \"{reason}\"");
@@ -3908,8 +3953,9 @@ impl Server {
     /// game's `trap_SendServerCommand` sends them: a drop after the frame
     /// still reaches that frame's message. Neither the zombie nor, on 1.5
     /// and UO, the client still in its slot hears the callback's lines
-    /// (`client-probes/probe_dropclient`).
-    fn client_disconnect(&mut self, slot: usize) {
+    /// (`client-probes/probe_dropclient`). Returns the commands addressed
+    /// to the leaver's own slot, for its zombie.
+    fn client_disconnect(&mut self, slot: usize) -> Vec<String> {
         let collision = self.world.as_ref().map(|w| &w.collision);
         // 1.5's and UO's `ClientDisconnect` stops a follower outright
         // (1.5b 0x4cf5f, UO 0x55433); 1.1's cycles first.
@@ -3922,7 +3968,7 @@ impl Server {
             cycle,
         );
         let Some(rt) = self.script.as_mut() else {
-            return;
+            return Vec::new();
         };
         mirror_roster(&self.clients, rt);
         rt.client_disconnect(slot);
@@ -3937,9 +3983,15 @@ impl Server {
         let console = rt.take_console();
         self.console.extend(console);
         self.copy_game_configstrings(written);
+        let mut own = Vec::new();
         for (to, cmd) in commands {
-            self.send_server_command(to, &cmd);
+            if to == slot {
+                own.push(cmd);
+            } else {
+                self.send_server_command(to, &cmd);
+            }
         }
+        own
     }
 
     /// A zombie's packet still runs the netchan and records the acks, so a
@@ -5069,6 +5121,7 @@ impl Server {
             // Checked in pass 2 against this tick's teammates.
             friend_in_line: false,
             sidestep: None,
+            use_takes_weapon: sim.cursor_hint >= self.proto.cursor_hints.weapon,
             grenade,
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
@@ -7727,6 +7780,7 @@ impl Server {
                     anims,
                     rigs: &mut self.hit_rigs,
                     now_ms: self.sv_time_ms,
+                    posed: None,
                 }),
                 _ => None,
             };
@@ -7759,11 +7813,21 @@ impl Server {
                     }
                     v
                 };
+            // A rider is linked to his vehicle (`G_EntLinkToWithOffset`,
+            // coduo-vehicles.md 13) as a `linkTo` client is to its parent.
             let client_links: Vec<(usize, vcod_gsc::EntId)> = self
                 .clients
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?.link_to?.parent)))
+                .filter_map(|(i, c)| {
+                    let sim = c.as_ref()?.sim.as_ref()?;
+                    let parent = match (sim.link_to, sim.seat) {
+                        (Some(l), _) => l.parent,
+                        (None, Some(seat)) => rt.host.ents.handle(seat.vehicle)?,
+                        (None, None) => return None,
+                    };
+                    Some((i, parent))
+                })
                 .collect();
             let mut pass = rt.begin_entity_pass(client_links);
             loop {
@@ -8273,15 +8337,27 @@ impl Server {
                         anims,
                         rigs: &mut self.hit_rigs,
                         now_ms: self.sv_time_ms,
+                        posed: None,
                     }),
                     _ => None,
                 };
-                // The callback is told the gunner's own weapon (turrets doc
-                // 12.6); `player_die` credits the gun.
+                // 1.1 and 1.5 hand `G_Damage` the gunner as the inflictor,
+                // so the callback is told his own weapon and `player_die`
+                // credits the gun (turrets doc 12.6); UO hands it the gun,
+                // whose weapon the callback is told (turrets doc 11).
+                let uo = self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version;
+                let gun = rt.host.turrets.iter().find(|(id, _)| id.0 == shot.gun);
                 let carried = sims
                     .iter()
                     .find(|(s, _)| *s == shot.slot)
                     .map_or(0, |(_, sim)| sim.ps.weapon as usize);
+                let weapon_name = match gun {
+                    Some((_, rec)) if uo => rec.weapon.clone(),
+                    _ => crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
+                        .unwrap_or_default()
+                        .to_string(),
+                };
+                let gun_id = gun.map(|(id, _)| *id).filter(|_| uo);
                 let r = crate::game::combat::bullet_fire_from(
                     shot.slot,
                     shot.pass(),
@@ -8290,8 +8366,7 @@ impl Server {
                     shot.damage,
                     shot.rifle_bullet,
                     None,
-                    crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
-                        .unwrap_or_default(),
+                    &weapon_name,
                     &sims,
                     &rt.host.missiles.shot_targets(),
                     collision,
@@ -8306,8 +8381,10 @@ impl Server {
                 // A world impact names the gun, `Bullet_Fire_Extended`'s
                 // inflictor (1.1d 0x68b05), so the tracer leaves its tag.
                 for e in &mut effects {
-                    if let Effect::Impact(t) = e {
-                        t.other = shot.gun;
+                    match e {
+                        Effect::Impact(t) => t.other = shot.gun,
+                        Effect::Hit(h) => h.inflictor = gun_id,
+                        Effect::EntityHit(h) => h.inflictor = gun_id,
                     }
                 }
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {
@@ -8591,8 +8668,9 @@ impl Server {
             let mut overlap = None;
             if !frozen {
                 // The aim block runs once per cmd, on the whole cmd, before
-                // the chop (`ClientThink_real` 0x40169-0x40456).
-                sim.update_aim(dt_ms, now_ms, weapons.defs());
+                // the chop (`ClientThink_real` 0x40169-0x40456), on the last
+                // frame's `level.time` (combat doc 15.1).
+                sim.update_aim(dt_ms, level_ms, weapons.defs());
                 // A UO body inside a vehicle's collmap: the vehicle may sit
                 // out this cmd's pmove (coduo-vehicles.md 11.6).
                 overlap = match (collision, self.script.as_ref()) {
@@ -9155,6 +9233,7 @@ impl Server {
                 anims,
                 rigs: &mut self.hit_rigs,
                 now_ms: self.sv_time_ms,
+                posed: None,
             }),
             _ => None,
         };
@@ -9410,6 +9489,7 @@ impl Server {
                     anims,
                     rigs: &mut self.hit_rigs,
                     now_ms: self.sv_time_ms,
+                    posed: None,
                 }),
                 _ => None,
             };
@@ -11538,42 +11618,98 @@ mod tests {
         assert_eq!(sv.client_count(), 1);
     }
 
-    /// A reconnect overwrites a slot the server may still believe is live --
-    /// `sv_timeout` is 240 s, `RECONNECT_LIMIT` 3 -- and the new `Client` carries
-    /// a fresh `last_packet`, so `check_timeouts` will never reach the old
-    /// one. Without the queued `Disconnect` nothing tears its script state
-    /// down and it leaks for the life of the map.
+    /// A reconnect overwrites a slot the server may still believe is live
+    /// (`sv_timeout` is 240 s, `RECONNECT_LIMIT` 3). 1.5's and UO's
+    /// `SV_FreeClient` runs the disconnect callback inside the connect; 1.1d
+    /// runs none and starts the held player over, its threads and script
+    /// fields kept and `pers` fresh (`client-probes/probe_reconnect`).
     #[test]
-    fn a_reconnect_disconnects_the_client_it_replaces() {
+    fn a_reconnect_into_a_held_slot_follows_the_protocol() {
         use crate::game::script::{CALLBACK_SETUP, ScriptRuntime};
-        let now = Instant::now();
-        let mut sv = Server::new(cfg(), now);
-        install_script(
-            &mut sv,
-            ScriptRuntime::for_test_at(
-                CALLBACK_SETUP,
-                "main() { level.gone = 0; level.callbackPlayerDisconnect = ::d; }\n\
-             CodeCallback_PlayerDisconnect() { [[level.callbackPlayerDisconnect]](); }\n\
-             d() { level.gone = level.gone + 1; }\n",
-            ),
-        );
-        let nc = connected(&mut sv, addr(5), now);
-        sv.tick(now);
-        sv.take_outgoing();
-        let gone = |sv: &mut Server| sv.script.as_mut().unwrap().level_field("gone");
-        assert_eq!(gone(&mut sv), vcod_gsc::Value::Int(0));
+        for (proto, callbacks) in [(&PROTOCOL_V1, 0), (&PROTOCOL_V6, 1)] {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(proto);
+            install_script(
+                &mut sv,
+                ScriptRuntime::for_test_at(
+                    CALLBACK_SETUP,
+                    "main() { level.gone = 0; level.gens = 0; level.ticks = 0; }\n\
+                     CodeCallback_PlayerConnect() { level.field = isdefined(self.mark); \
+                       level.pers = isdefined(self.pers[\"mark\"]); self.mark = 1; \
+                       self.pers[\"mark\"] = 1; level.gens++; self thread tick(level.gens); }\n\
+                     tick(gen) { for(;;) { wait 0.05; if (gen == 1) level.ticks++; } }\n\
+                     CodeCallback_PlayerDisconnect() { level.gone++; }\n",
+                ),
+            );
+            let nc = connected(&mut sv, addr(5), now);
+            sv.tick(now);
+            sv.take_outgoing();
+            let field = |sv: &mut Server, f: &str| sv.script.as_mut().unwrap().level_field(f);
 
-        // Past sv_reconnectlimit, the same peer's connect takes the slot back.
-        let t = now + RECONNECT_LIMIT + Duration::from_millis(100);
-        sv.handle_packet(
-            addr(5),
-            &connect_pkt(nc.challenge, QPORT, PROTOCOL_V1.version),
-            t,
-        );
-        assert_eq!(reply_text(&mut sv).0, "connectResponse");
-        sv.tick(t);
-        assert_eq!(gone(&mut sv), vcod_gsc::Value::Int(1));
-        assert_eq!(sv.client_count(), 1);
+            // Past sv_reconnectlimit, the same peer's connect takes the slot back.
+            let t = now + RECONNECT_LIMIT + Duration::from_millis(100);
+            sv.handle_packet(addr(5), &connect_pkt(nc.challenge, QPORT, proto.version), t);
+            assert_eq!(reply_text(&mut sv).0, "connectResponse");
+            sv.tick(t);
+            let ticks = field(&mut sv, "ticks");
+            sv.tick(t + Duration::from_millis(100));
+            let v = proto.version;
+            assert_eq!(
+                field(&mut sv, "gone"),
+                vcod_gsc::Value::Int(callbacks),
+                "{v}"
+            );
+            assert_eq!(field(&mut sv, "gens"), vcod_gsc::Value::Int(2), "{v}");
+            assert_eq!(field(&mut sv, "pers"), vcod_gsc::Value::Int(0), "{v}");
+            let held = callbacks == 0;
+            assert_eq!(
+                field(&mut sv, "field"),
+                vcod_gsc::Value::Int(held as i32),
+                "{v}"
+            );
+            let ticking = field(&mut sv, "ticks") != ticks;
+            assert_eq!(ticking, held, "{v}: the old player's thread");
+            assert_eq!(sv.client_count(), 1);
+        }
+    }
+
+    /// The disconnect callback's commands to the leaver alone go into its
+    /// ring, and the zombie's `w` squashes the unsent prints: retail's
+    /// zombie gets the `setClientCvar` and not the `iPrintLn` on all three
+    /// (`client-probes/probe_reconnect`).
+    #[test]
+    fn a_leavers_zombie_keeps_the_callbacks_reliable_commands_only() {
+        use crate::game::script::{CALLBACK_SETUP, ScriptRuntime};
+        for proto in [&PROTOCOL_V1, &PROTOCOL_V6] {
+            let now = Instant::now();
+            let mut sv = Server::new(cfg(), now);
+            sv.set_protocol(proto);
+            install_script(
+                &mut sv,
+                ScriptRuntime::for_test_at(
+                    CALLBACK_SETUP,
+                    "main() {}\n\
+                     CodeCallback_PlayerDisconnect() { self iprintln(\"self\"); \
+                       self setclientcvar(\"probe_self\", 1); }\n",
+                ),
+            );
+            begun(&mut sv, now);
+            sv.tick(now);
+            sv.take_outgoing();
+            sv.send_server_command(0, "e \"unsent print\"");
+            sv.drop_client(0, "EXE_DISCONNECTED");
+            let z = sv.zombies[0].as_ref().expect("a zombie");
+            let ring: Vec<&str> = (z.reliable_sent + 1..=z.netchan.reliable_sequence as i32)
+                .map(|i| z.netchan.reliable[i as usize & (MAX_RELIABLE_COMMANDS - 1)].as_str())
+                .collect();
+            assert_eq!(
+                ring,
+                ["v probe_self \"1\"", "w \"EXE_DISCONNECTED\""],
+                "{}",
+                proto.version
+            );
+        }
     }
 
     #[test]

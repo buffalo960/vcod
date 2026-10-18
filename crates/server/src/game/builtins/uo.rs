@@ -396,29 +396,35 @@ fn entity_damage(
     Ok(Value::Undefined)
 }
 
-/// `setBounds(mins, maxs)` (0x69716): `r.mins` and `r.maxs`, relinked. vcod
-/// keeps no per-entity bounds for a script model's link, so the call is
-/// checked and has no effect.
+/// `setBounds(mins, maxs)` (0x69716): `r.mins` (+0x108) and `r.maxs`
+/// (+0x114), then the link (0x6976c), so the walks test the new world box;
+/// a `script_model` stays filed under its model's bounds. An entity with no
+/// link shape keeps none.
 pub fn set_bounds(
-    _host: &mut GameHost,
-    _cx: &mut Cx,
+    host: &mut GameHost,
+    cx: &mut Cx,
     recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
-    entity_receiver(recv)?;
-    match (args.first(), args.get(1)) {
-        (Some(Value::Vector(_)), Some(Value::Vector(_))) => Ok(Value::Undefined),
-        _ => Err(ErrorKind::BadType("setBounds takes two vectors")),
+    let id = entity_receiver(recv)?;
+    let (Some(Value::Vector(mins)), Some(Value::Vector(maxs))) = (args.first(), args.get(1)) else {
+        return Err(ErrorKind::BadType("setBounds takes two vectors"));
+    };
+    if let Some(shape) = host.ents.get_mut(id).and_then(|e| e.link.as_mut()) {
+        shape.mins = *mins;
+        shape.maxs = *maxs;
     }
+    host.link_entity(cx, id);
+    Ok(Value::Undefined)
 }
 
-/// `setContents(int)` (0x696b9): `r.contents` set and the entity relinked,
-/// returning the old contents. vcod relinks through the link shape, which
-/// an entity with none (a model never linked) lacks; the new contents then
-/// stay unread, and the old read 0.
+/// `setContents(int)` (0x696b9; 1.1d 0x5dcec, its link 0x5dd4a): `r.contents`
+/// set and the entity relinked, returning the old contents. vcod relinks
+/// through the link shape, which an entity with none (a model never linked)
+/// lacks; the new contents then stay unread, and the old read 0.
 pub fn set_contents(
     host: &mut GameHost,
-    _cx: &mut Cx,
+    cx: &mut Cx,
     recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
@@ -432,6 +438,7 @@ pub fn set_contents(
         .and_then(|e| e.link.as_ref())
         .map_or(0, |l| l.contents);
     host.set_link_contents(id, *contents);
+    host.link_entity(cx, id);
     Ok(Value::Int(old))
 }
 
@@ -510,6 +517,39 @@ pub fn print_3d(
 mod tests {
     use super::*;
     use crate::game::testing::fixture;
+
+    /// `setBounds` and `setContents` each link (0x6976c, 0x6970b): the
+    /// tree's world box takes the new bounds at once, and contents 0 takes
+    /// the entity out.
+    #[test]
+    fn set_bounds_and_set_contents_relink() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let origin = cx.intern_folded("origin");
+            host.set_field(cx, e, origin, Value::Vector([0.0; 3]))
+                .unwrap();
+            crate::game::spawn::link_script_model(&mut host, cx, e);
+            assert_eq!(host.area.last_link(e.0).unwrap().absmax, [1.0; 3]);
+            let recv = Some(Target::Entity(e));
+            let bounds = [
+                Value::Vector([-6.0, -6.0, 0.0]),
+                Value::Vector([6.0, 6.0, 128.0]),
+            ];
+            set_bounds(&mut host, cx, recv, &bounds).unwrap();
+            let link = host.area.last_link(e.0).unwrap();
+            assert_eq!(link.absmin, [-7.0, -7.0, -1.0]);
+            assert_eq!(link.absmax, [7.0, 7.0, 129.0]);
+            assert_eq!(
+                host.area
+                    .entities_in_box([0.0, 0.0, 100.0], [0.0, 0.0, 100.0], 0x2080),
+                [e.0]
+            );
+            let old = set_contents(&mut host, cx, recv, &[Value::Int(0)]).unwrap();
+            assert_eq!(old, Value::Int(0x2080));
+            assert!(host.area.last_link(e.0).is_none());
+        });
+    }
 
     /// A script model `setTakeDamage` opened takes `doDamage` as UO's `eType`
     /// 8 arm does: the six-argument notify, its `health` untouched.

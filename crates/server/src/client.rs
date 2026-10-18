@@ -292,6 +292,27 @@ impl Client {
         self.commands_at.clear();
     }
 
+    /// `SV_AddServerCommand`'s squash: the unsent [`CmdKind::CanIgnore`]
+    /// commands leave the ring, the rest close up. What a zombie's drop
+    /// notice runs, its state no longer active (0x8085e74).
+    pub fn squash_ignorable(&mut self) {
+        let slot = |seq: i32| seq as usize & (MAX_RELIABLE_COMMANDS - 1);
+        let seq = self.netchan.reliable_sequence as i32;
+        let mut to = self.reliable_sent + 1;
+        for from in self.reliable_sent + 1..=seq {
+            if self.reliable_kind[slot(from)] == CmdKind::CanIgnore {
+                continue;
+            }
+            if slot(from) != slot(to) {
+                self.netchan.reliable[slot(to)] =
+                    std::mem::take(&mut self.netchan.reliable[slot(from)]);
+                self.reliable_kind[slot(to)] = self.reliable_kind[slot(from)];
+            }
+            to += 1;
+        }
+        self.netchan.reliable_sequence = (to - 1) as u32;
+    }
+
     /// `SV_AddServerCommand` (cod_lnxded 0x808b680) without the overflow's
     /// drop, which is the caller's. A client neither active nor within 32
     /// of its acks first loses its unsent [`CmdKind::CanIgnore`] commands
@@ -307,20 +328,8 @@ impl Client {
         let mut queued = Queued::Added;
         if !self.is_bot {
             if seq - self.reliable_ack > 31 || self.state != ClientState::Active {
-                let mut to = self.reliable_sent + 1;
-                for from in self.reliable_sent + 1..=seq {
-                    if self.reliable_kind[slot(from)] == CmdKind::CanIgnore {
-                        continue;
-                    }
-                    if slot(from) != slot(to) {
-                        self.netchan.reliable[slot(to)] =
-                            std::mem::take(&mut self.netchan.reliable[slot(from)]);
-                        self.reliable_kind[slot(to)] = self.reliable_kind[slot(from)];
-                    }
-                    to += 1;
-                }
-                seq = to - 1;
-                self.netchan.reliable_sequence = seq as u32;
+                self.squash_ignorable();
+                seq = self.netchan.reliable_sequence as i32;
                 if kind == CmdKind::CanIgnore {
                     return Queued::Dropped;
                 }

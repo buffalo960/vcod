@@ -144,7 +144,14 @@ VERIFIED: the list is sorted with `qsort` and the comparator at 0x50f88
 (0x4f42c). VERIFIED: the comparator returns the difference of the two scores
 truncated to an int under a control word `| 0xc00` (0x50f94..0x50fb0).
 INFERRED: the sort is ascending, and two scores less than 1.0 apart compare
-equal, so their order is whatever `qsort` leaves.
+equal, so their order is whatever `qsort` leaves. INFERRED: glibc's `qsort`
+on a list this short is its top-down merge sort, which takes from the left
+run on equal, so tied candidates keep the area walk's order
+(cod11-combat.md 14.7). vcod: `item::activate_ent` walks the tree as above
+and sorts with the same merge and the truncating compare (`item::msort`);
+before 2026-10-18 it scanned items, turrets and `trigger_use`s by number,
+scored an item at its origin instead of its link's centre and sorted on the
+exact score.
 
 VERIFIED, the second pass (0x4f450..0x4f565): a loop over the list that
 traces from the muzzle to a candidate's centre with `trap_Trace`, contents
