@@ -630,7 +630,9 @@ is in 1.5's paks already and `_callbacksetup.gsc` comes from `main/`
   inactivity (`g_inactivityspectator`, `noInactivityKick`), `g_obituary`,
   `g_night` (VERIFIED, symbols).
 - **Map entities.** Beside the vehicles: `script_vehicle_collmap` (46),
-  `trigger_damage` (18), `mpweapon_bazooka`, `mpweapon_panzerschreck`,
+  `trigger_damage` (18: stanjel's 17 birdbushes, foy's belltower; UO's
+  spawn adds a `teamname` gate and its own `Respond_trigger_damage` table,
+  cod11-combat.md 14.8), `mpweapon_bazooka`, `mpweapon_panzerschreck`,
   `mpweapon_flamethrower`, `mpweapon_satchelcharge`,
   `mpweapon_stielhandgranate`, `mp_uo_spawn_{allies,axis}[_secondary]`,
   `mp_gmi_bas_*`, `mp_gmi_ctf_flag`, `mp_{ctf,dom}_intermission`, and the

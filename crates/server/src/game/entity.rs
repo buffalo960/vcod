@@ -283,6 +283,10 @@ pub enum ThinkFn {
     /// passes the stored end, then swaps itself for `G_FreeEntity` 100 ms
     /// on (combat doc 13.2). It does nothing else.
     Concussive(i32),
+    /// `multi_wait` (1.1d 0x65870): clears `nextthink`, nothing else. A
+    /// `trigger_damage` takes no damage while it is armed
+    /// (`crate::game::damage_trigger`).
+    MultiWait,
 }
 
 /// `Concussive_think`'s re-arm and the first think `G_ExplodeMissile` arms
@@ -691,6 +695,7 @@ impl ObjectTable {
         e.nextthink = 0;
         match think {
             ThinkFn::Free | ThinkFn::RespawnItem => Some(think),
+            ThinkFn::MultiWait => None,
             ThinkFn::ClearOwner => {
                 if let Some(item) = e.item.as_mut() {
                     item.owner = None;

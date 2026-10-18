@@ -1355,8 +1355,9 @@ behaviour (`probe_notify_twice`, §9).
     point of those bounds. vcod walks the client entities in the box, each
     tested for `takedamage` on its turn and measured at the script `origin`
     field, then the turrets in the box, which take `G_Damage`'s entity arm
-    (14.6). Doors, `func_static` and `trigger_damage` have `takedamage` on
-    retail and no spawn here; no stock MP map places one. It walks in entity
+    (14.6). Doors have `takedamage` on retail and no spawn here; no stock MP
+    map places one. `func_static` and `trigger_damage` are walked
+    (`cod11-combat.md` 14.6, 14.8). It walks in entity
     order, where retail's order is the area tree's (14.7), which depends on
     every link since the map load.
   - **The victim's box and eye are the standing ones.** VERIFIED: retail's

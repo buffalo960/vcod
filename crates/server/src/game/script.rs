@@ -543,6 +543,21 @@ impl ScriptRuntime {
     /// step 4): a UO vehicle's branch ([`crate::game::vehicle::vehicle_damage`])
     /// with the shot's forward as the direction, any other entity's generic
     /// arm. The notifies wake their waiters with the frame's threads.
+    /// A round's, a swing's or a shell's `G_CheckHitTriggerDamage`
+    /// (`crate::game::damage_trigger::sweep`), charged to the attacker's
+    /// client entity, or the world when it has none.
+    pub fn trigger_sweep(&mut self, t: &crate::game::combat::TriggerSweep) {
+        let attacker = self.client_entity(t.attacker);
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
+            let mod_ = host.defs.mod_index(t.mod_).unwrap_or(0);
+            crate::game::damage_trigger::sweep(
+                host, cx, attacker, t.start, t.end, t.damage, mod_, false,
+            );
+        });
+    }
+
     pub fn deliver_entity_hit(&mut self, hit: &crate::game::combat::EntityHit) {
         let id = hit.target;
         if self.host.ents.get(id).is_none() {
@@ -2551,12 +2566,11 @@ impl ScriptRuntime {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
             let hit = victim.hit(blast, blast.inflictor.unwrap_or(attacker));
             host.damage_nonclient(cx, id, damage, attacker, &hit)
-                .into_iter()
-                .map(|(event, args)| (cx.intern_folded(event), args))
-                .collect::<Vec<_>>()
         });
+        // Raised inside the pass, run by the next frame's threads with the
+        // trigger queue's round (combat doc 14.8).
         for (event, args) in notifies {
-            self.vm.notify(Target::Entity(id), event, &args);
+            self.host.engine_notifies.push((id, event, args));
         }
     }
 
@@ -3051,9 +3065,31 @@ impl ScriptRuntime {
             }),
             _ => None,
         };
+        let grenade = host.missiles.grenade_at(id);
         let turn = host
             .missiles
             .run_one(id, world, sims, &models, bones.as_mut(), now_ms);
+        // `G_GrenadeTouchTriggerDamage` over the move, after its link and
+        // ahead of the fuse's think (combat doc 12.2, 14.8).
+        if let Some((from, weapon)) = grenade
+            && matches!(turn, Some(Turn::Flew | Turn::Exploded(_)))
+            && let Some(to) = host.missiles.origin_of(id)
+        {
+            let damage = host.weapons.get(weapon as usize).map_or(0, |d| d.damage);
+            let grenade_mod = host.defs.mod_index("MOD_GRENADE").unwrap_or(3);
+            self.vm.with_cx(|cx| {
+                crate::game::damage_trigger::sweep(
+                    host,
+                    cx,
+                    id,
+                    from,
+                    to,
+                    damage,
+                    grenade_mod,
+                    true,
+                )
+            });
+        }
         // A water entry splash is `G_TempEntity`'d inside the move (12.1).
         for te in host.missiles.take_splashes() {
             self.vm.with_cx(|cx| host.add_temp_entity(cx, te));
