@@ -46,3 +46,51 @@ fn probe_testclient_matches_retail_on_a_server() {
         .collect();
     assert_eq!(ours, retail);
 }
+
+/// `status` over rcon with `probe_testclient`'s three test clients in, as
+/// retail 1.1d answered it on mp_pavlov (2026-10-18): a bot's type-0
+/// address prints IPX-style with its counter byte-swapped, ping 999, qport
+/// 0, the userinfo's rate 5000 (cod11-server-handshake.md, "Console
+/// commands over rcon"). `lastmsg` is the time since the connect and is
+/// masked.
+#[test]
+fn status_lists_test_clients_as_retail() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        eprintln!("COD_DIR unset or not a 1.1 install: skipping");
+        return;
+    };
+    let mut now = Instant::now();
+    let bsp_path = fs.resolve_map("mp_pavlov").unwrap();
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut sv = vcod_server::Server::new(common::cfg("mp_pavlov", "probe_testclient"), now);
+    sv.overlay_script(
+        "maps/mp/gametypes/probe_testclient",
+        include_str!("../../gsc/tests/fixtures/semantics/probe_testclient.gsc"),
+    );
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    sv.set_cvar("rconPassword", "pw");
+    common::run_alone(&mut sv, &mut now, 8000);
+    sv.take_outgoing();
+    let from = std::net::SocketAddr::from(([127, 0, 0, 1], 40000));
+    sv.handle_packet(from, b"\xff\xff\xff\xffrcon pw status", now);
+    let reply: String = sv
+        .take_outgoing()
+        .into_iter()
+        .filter(|(to, _)| *to == from)
+        .map(|(_, p)| String::from_utf8_lossy(&p[4..]).into_owned())
+        .collect();
+    let rows: Vec<String> = reply
+        .lines()
+        .filter(|l| l.contains("bot"))
+        .map(|l| format!("{}{}", &l[..31], &l[39..]))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "  0     0  999 bot1            00000000.000000000000:256    0  5000",
+            "  1     0  999 bot2            00000000.000000000000:512    0  5000",
+            "  2     0  999 bot3            00000000.000000000000:768    0  5000",
+        ]
+    );
+}

@@ -723,16 +723,6 @@ fn press_case(
     }
 }
 
-/// The 1.5b capture's first round: retail's scope froze the turn sway's
-/// pitch lag 4 65536ths short of zero, ours 3; every later round reads no
-/// lag on both. The lag drops one 65536th a cmd from the hold's turn at
-/// 12500 until the sight starts up, which waits for the spawn drop to land:
-/// ours lands on the 12532 cmd, and retail's 4 is the sight starting a cmd
-/// earlier. The sway's float steps are no cause (each lands a fifth of a
-/// 65536th or more from a cut); what starts retail's sight a cmd early is
-/// not found (cod11-combat.md 15.1 "The cmd that fires").
-const PRESS_DIR_GAPS_15: &[&str] = &["level"];
-
 #[test]
 fn a_round_leaves_along_retails_aim_on_its_press() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
@@ -748,10 +738,7 @@ fn a_round_on_15_leaves_along_retails_aim_on_its_press() {
         return;
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press-1.5.txt");
-    check(
-        fs,
-        &press_case(fixture, PRESS_JOIN_15, PRESS_LATE_15, PRESS_DIR_GAPS_15),
-    );
+    check(fs, &press_case(fixture, PRESS_JOIN_15, PRESS_LATE_15, &[]));
 }
 
 #[test]

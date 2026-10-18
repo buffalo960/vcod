@@ -4170,12 +4170,14 @@ impl Server {
 
     /// `SV_CalcPings` (0x808cab8), once a frame after the packets and before
     /// the clock moves. Only an active client in the world is measured; a
-    /// bot, which retail does not have, reads 0 as Q3's do.
+    /// test client acks nothing and reads 999 (retail's `status`), vcod's
+    /// own bots, which retail does not have, 0 as Q3's do.
     fn calc_pings(&mut self) {
-        for c in self.clients.iter_mut().flatten() {
-            c.ping = if c.is_bot {
+        for (slot, c) in self.clients.iter_mut().enumerate() {
+            let Some(c) = c else { continue };
+            c.ping = if c.is_bot && self.bots.contains_key(&slot) {
                 0
-            } else if c.state != ClientState::Active || c.sim.is_none() {
+            } else if c.is_bot || c.state != ClientState::Active || c.sim.is_none() {
                 999
             } else {
                 c.calc_ping()
@@ -4595,6 +4597,17 @@ impl Server {
                         view.waypoint = Some(p);
                         view.stop = true;
                     }
+                    if let Some(w) = view.waypoint
+                        && let Some(p) = follower.rising_hold(at.into(), w.into(), body, &others)
+                    {
+                        view.waypoint = Some(p.into());
+                        view.stop = true;
+                    }
+                    if let Some(w) = view.waypoint
+                        && let Some(p) = follower.pressed_yield(at.into(), w.into(), body, &aground)
+                    {
+                        view.waypoint = Some(p.into());
+                    }
                     view.run_off = !body.on_ladder
                         && follower.running_off(
                             &g,
@@ -4743,6 +4756,7 @@ impl Server {
     fn install_test_client(
         clients: &mut [Option<Client>],
         slot: usize,
+        port: u16,
         name: String,
         proto: &'static Protocol,
         sv_time_ms: i32,
@@ -4757,6 +4771,7 @@ impl Server {
         let addr = SocketAddr::from(([127, 0, 0, 1], 65000 - slot as u16));
         let mut client = Client::new(addr, 0, 0, userinfo, Instant::now());
         client.is_bot = true;
+        client.bot_port = Some(port);
         client.state = ClientState::Active;
         let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
         sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(proto);
@@ -5691,8 +5706,9 @@ impl Server {
     }
 
     /// The cvar table a gametype script starts with: the engine defaults,
-    /// then `default_mp.cfg`, then `g_gametype`, `sv_hostname` and
-    /// `sv_maxclients` mirroring this run's `ServerConfig`, and the engine
+    /// then `default_mp.cfg`, then `g_gametype` and `sv_maxclients`
+    /// mirroring this run's `ServerConfig` (`sv_hostname` too, at the first
+    /// load only), and the engine
     /// cvars `Server` keeps in its own fields. None of
     /// them are flagged into the 140/204 mirror; only `makeCvarServerInfo`
     /// does that.
@@ -5740,7 +5756,6 @@ impl Server {
         // `SV_SpawnServer`'s `Cvar_Set("mapname", ...)` (map-cycle doc,
         // section 3 step 15), which a script's `getCvar("mapname")` reads.
         cvars.set("mapname", &self.cfg.map);
-        cvars.set("sv_hostname", &self.cfg.hostname);
         // Latched: a `set` while a level ran waits in the overrides.
         cvars.set(
             "sv_maxclients",
@@ -5756,6 +5771,7 @@ impl Server {
         // `default_mp.cfg`; past that a script's `setCvar` stands
         // (map-cycle doc 4.5).
         if self.carried_cvars.is_none() {
+            cvars.set("sv_hostname", &self.cfg.hostname);
             for (name, value) in &self.cvar_overrides {
                 cvars.set(name, value);
             }
@@ -6328,6 +6344,10 @@ impl Server {
                 rt.reconnect_client(slot, name);
             }
         }
+        // Step 24 proper: configstring 0 again from the table the scripts
+        // and settle frames left, so a `setCvar` of a serverinfo cvar in the
+        // level's init is in the gamestate.
+        self.flush_serverinfo();
         self.last_spawn_tick = Some(self.svs_time_ms());
         log::info!(
             "map {map} ({}), serverId {:#04x}, {} clients kept",
@@ -7348,7 +7368,9 @@ impl Server {
                 // The drop nukes the userinfo, and the name with it.
                 name: if zombie { "" } else { &c.name },
                 last_msg_ms: now.saturating_duration_since(c.last_packet).as_millis() as i64,
-                addr: c.addr,
+                addr: c
+                    .bot_port
+                    .map_or(console::Adr::Ip(c.addr), console::Adr::Bot),
                 qport: c.netchan.qport,
                 rate: c.rate(self.dedicated),
             };
@@ -7558,10 +7580,11 @@ impl Server {
             let counter = self.test_client_counter.max(rt.host.test_clients.counter);
             rt.host.test_clients.counter = counter;
             rt.set_network_time(svs_now);
-            for (slot, name) in std::mem::take(&mut rt.host.test_clients.added) {
+            for (slot, port, name) in std::mem::take(&mut rt.host.test_clients.added) {
                 Self::install_test_client(
                     &mut self.clients,
                     slot,
+                    port,
                     name,
                     self.proto,
                     self.sv_time_ms,
@@ -7570,10 +7593,11 @@ impl Server {
             mirror_roster(&self.clients, rt);
             rt.run_threads(self.sv_time_ms);
             self.test_client_counter = rt.host.test_clients.counter;
-            for (slot, name) in std::mem::take(&mut rt.host.test_clients.added) {
+            for (slot, port, name) in std::mem::take(&mut rt.host.test_clients.added) {
                 Self::install_test_client(
                     &mut self.clients,
                     slot,
+                    port,
                     name,
                     self.proto,
                     self.sv_time_ms,
@@ -9133,6 +9157,7 @@ impl Server {
             return;
         };
         let (origin, velocity) = crate::game::missile::throw_velocity(&me.ps, aim, def);
+        let carried = me.ps.velocity;
         // The projectile's model, indexed when the item was registered
         // (`GameHost::register_item`). A miss means the map load stopped
         // registering it and the client has no model to draw the grenade
@@ -9151,6 +9176,7 @@ impl Server {
                 model,
                 origin,
                 velocity,
+                carried,
                 fuse_left_ms,
                 level_ms,
             );
@@ -11233,6 +11259,49 @@ mod tests {
         assert_eq!(sv.script_cvar("vc_trail").as_deref(), Some("bx"));
     }
 
+    /// `sv_hostname` is a cvar like any other: the config's goes in at the
+    /// first load and a script's `setCvar` of it outlives a restart and a
+    /// map change (map-cycle doc 4.5).
+    #[test]
+    fn a_scripts_hostname_outlives_later_loads() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let mut now = Instant::now();
+        let mut sv = Server::new(
+            ServerConfig {
+                gametype: "trail".into(),
+                ..cfg()
+            },
+            now,
+        );
+        sv.overlay_script(
+            "maps/mp/gametypes/trail",
+            "main() { maps\\mp\\gametypes\\_callbacksetup::SetupCallbacks(); \
+             setCvar(\"sv_hostname\", getCvar(\"sv_hostname\") + \"x\"); }",
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        assert_eq!(sv.script_cvar("sv_hostname").as_deref(), Some("vcod testx"));
+        now += Duration::from_millis(50);
+        sv.push_console("map_restart");
+        sv.tick(now);
+        assert_eq!(
+            sv.script_cvar("sv_hostname").as_deref(),
+            Some("vcod testxx")
+        );
+        sv.spawn_server("mp_brecourt").expect("the map load failed");
+        assert_eq!(
+            sv.script_cvar("sv_hostname").as_deref(),
+            Some("vcod testxxx")
+        );
+        let cs0 = sv.configstring(0).to_string();
+        assert_eq!(
+            info_value_for_key(&cs0, "sv_hostname"),
+            Some("vcod testxxx")
+        );
+    }
+
     /// Doc 4.5: a `+set` after `+map` runs again once the level is up
     /// (`Com_AddStartupCommands`), so it outranks the script's load-time
     /// write, as `scr_allow_vote 0` read back on 1.1d over `dm.gsc`'s
@@ -11670,6 +11739,39 @@ mod tests {
     /// `SV_FreeClient` runs the disconnect callback inside the connect; 1.1d
     /// runs none and starts the held player over, its threads and script
     /// fields kept and `pers` fresh (`client-probes/probe_reconnect`).
+    /// 1.1's reconnect zeroes the held player's entity without an unlink:
+    /// the area tree keeps the entry where it was filed, and a walk reads
+    /// it with no contents.
+    #[test]
+    fn a_reconnect_on_1_1_leaves_the_area_entry() {
+        let now = Instant::now();
+        let mut sv = Server::new(cfg(), now);
+        install_script(
+            &mut sv,
+            crate::game::script::ScriptRuntime::for_test("main() {}"),
+        );
+        let nc = connected(&mut sv, addr(5), now);
+        sv.tick(now);
+        sv.take_outgoing();
+        fn area(sv: &mut Server) -> &mut crate::area::AreaTree {
+            &mut sv.script.as_mut().unwrap().host.area
+        }
+        let link = crate::area::Link::boxed([0.0; 3], [-15.0; 3], [15.0; 3], 0x2000000);
+        area(&mut sv).link(0, &link);
+        let filed = area(&mut sv).filed(0);
+        assert!(filed.is_some());
+        let t = now + RECONNECT_LIMIT + Duration::from_millis(100);
+        sv.handle_packet(addr(5), &connect_pkt(nc.challenge, QPORT, 1), t);
+        assert_eq!(reply_text(&mut sv).0, "connectResponse");
+        sv.tick(t);
+        assert_eq!(area(&mut sv).filed(0), filed, "still filed where it was");
+        assert_eq!(
+            area(&mut sv).contents(0),
+            0,
+            "the walk reads zeroed contents"
+        );
+    }
+
     #[test]
     fn a_reconnect_into_a_held_slot_follows_the_protocol() {
         use crate::game::script::{CALLBACK_SETUP, ScriptRuntime};

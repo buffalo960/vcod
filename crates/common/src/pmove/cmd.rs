@@ -105,7 +105,7 @@ fn clamp_view(
             if arc.abs() < 1.0 {
                 continue;
             }
-            let d = super::angle_delta(seat.angles[i], view[i]);
+            let d = super::angle_delta(seat.angles[i], view[i], ps.rules);
             if arc.abs() >= d.abs() {
                 continue;
             }
@@ -234,11 +234,15 @@ pub fn player_step(
     // cap off the ground by pushing `delta_angles`, so the client's own
     // prediction lands in the same place, and the view the snapshot and the
     // aim carry is the capped one (docs/research/cod11-mantle.md, "Prone").
+    // Each push is the excess times 182.04445 on the x87 stack, truncated.
     let corrections = [ps.view_pitch_correction, ps.view_yaw_correction];
-    let capped = [-ps.pitch.to_degrees(), ps.yaw.to_degrees()];
+    let capped = [
+        ps.view_capped[0].unwrap_or(-ps.pitch.to_degrees()),
+        ps.view_capped[1].unwrap_or(ps.yaw.to_degrees()),
+    ];
     for (i, c) in corrections.into_iter().enumerate() {
         if c != 0.0 {
-            delta_angles[i] = (delta_angles[i] + (c * ANGLE2SHORT) as i32) & 0xffff;
+            delta_angles[i] = (delta_angles[i] + super::angle_shorts(c)) & 0xffff;
             view[i] = capped[i];
         }
     }

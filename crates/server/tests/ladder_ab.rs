@@ -20,6 +20,7 @@ use vcod_common::collision::CollisionWorld;
 use vcod_common::movetrace::MoveWorld;
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::ENTITYNUM_NONE;
+use vcod_common::patch::Arith;
 use vcod_common::pmove::cmd;
 use vcod_common::pmove::{MoveRules, PlayerState, pmove};
 use vcod_common::weapon::WeaponDef;
@@ -320,12 +321,34 @@ fn fixture(name: &str) -> Vec<Line> {
     parse_fixture(&text)
 }
 
-/// The most a rebased row may miss retail's origin by, per axis, and its
-/// velocity by.
-const ROW_TOLERANCE: f32 = 0.01;
-const VEL_TOLERANCE: f32 = 0.05;
-/// The most a phase's free run may drift from retail's origin.
-const FREE_TOLERANCE: f32 = 0.05;
+/// Phases whose rows miss retail's origin by a float step or a few: the
+/// fixture, the phase, the most a row (rebased or free) may miss by and
+/// why. Each is checked to still miss, so one that starts matching fails.
+/// Every other row matches to the bit, origin and velocity, on all three
+/// servers (docs/research/cod11-mantle.md, "Ladders").
+const GAPS: &[(&str, &str, f32, &str)] = &[
+    ("mp_ship-dm-ladder.txt", "up-level", 2e-5, CLIMB_11),
+    ("mp_ship-dm-ladder.txt", "up-top", 4e-5, CLIMB_11),
+    ("mp_ship-dm-ladder-1.5.txt", "down-back", 4e-5, LETGO_15),
+    ("mp_ship-dm-ladder-uo.txt", "up-top", 3e-5, DECK_UO),
+    ("mp_ship-dm-ladder-uo.txt", "off", 2e-5, DECK_UO),
+];
+
+/// 1.1d's level climb, two rows (ct 8720, 21188): z a float step over
+/// retail's after a 29 + 20 ms and a 52 + 19 ms pair of cmds, which the
+/// phase's free run carries. A 59.375 climb from either start reaches
+/// ours' z in f32 or extended arithmetic alike. Cause not found.
+const CLIMB_11: &str = "1.1d's climb, a float step on two rows";
+/// 1.5b's first `down-back` frame after the pitched climb (ct 16932, the
+/// climb slowing from 66 to 23): z a float step under retail's, which
+/// the phase's free run carries. Cause not found.
+const LETGO_15: &str = "1.5b's turn from the climb to the back-down";
+/// UO's body on the deck at the ladder's top, pressing forward into the
+/// `clipplayer` brush at y -87.125: each frame's overclip sets it back a
+/// few ten-thousandths, and ours lands two or three float steps further
+/// back than retail's. The free run of `off` starts on the last of them.
+/// Cause not found.
+const DECK_UO: &str = "UO's push into the deck's clipplayer";
 
 #[test]
 fn the_ladder_mover_climbs_where_retail_does() {
@@ -341,17 +364,21 @@ fn the_ladder_mover_climbs_where_retail_does() {
             continue;
         }
         println!("{name}");
-        check(&replay(
-            &fixture(name),
-            *yaw,
-            *rules,
-            &world,
-            weapons.defs(),
-        ));
+        // 1.5b's and UO's servers store their floats (AGENTS.md, "Movement
+        // and collision").
+        world.set_arith(if rules.v15() {
+            Arith::Stored
+        } else {
+            Arith::Kept
+        });
+        check(
+            name,
+            &replay(&fixture(name), *yaw, *rules, &world, weapons.defs()),
+        );
     }
 }
 
-fn check(rows: &[Row]) {
+fn check(name: &str, rows: &[Row]) {
     assert!(rows.len() > 150, "only {} snapshots", rows.len());
     report(rows);
     let mut worst: BTreeMap<&str, (f32, f32, f32)> = BTreeMap::new();
@@ -362,27 +389,42 @@ fn check(rows: &[Row]) {
         w.2 = w.2.max(r.rebased.dv);
     }
     for (p, (free, rebased, dv)) in &worst {
-        println!("{p:<15} free {free:.4} rebased {rebased:.4} dv {dv:.4}");
+        println!("{p:<15} free {free:e} rebased {rebased:e} dv {dv:e}");
     }
+    let gap = |phase: &str| {
+        GAPS.iter()
+            .find(|g| g.0 == name && g.1 == phase)
+            .map(|g| (g.2, g.3))
+    };
     for r in rows {
         assert!(
             !r.rebased.ladder_disagrees,
             "{} ct={}: ours on the ladder {}, retail pm_flags {:#x}",
             r.phase, r.retail.ct, r.ours_rebased.on_ladder, r.retail.pm_flags
         );
+        let bound = gap(&r.phase).map_or(0.0, |g| g.0);
         assert!(
-            size(r.rebased) <= ROW_TOLERANCE && r.rebased.dv <= VEL_TOLERANCE,
+            size(r.rebased) <= bound && r.rebased.dv == 0.0,
             "{} ct={}: rebased {:?}",
             r.phase,
             r.retail.ct,
             r.rebased
         );
         assert!(
-            size(r.free) <= FREE_TOLERANCE,
+            size(r.free) <= bound,
             "{} ct={}: free {:?}",
             r.phase,
             r.retail.ct,
             r.free
+        );
+    }
+    for (_, phase, _, why) in GAPS.iter().filter(|g| g.0 == name) {
+        let (free, rebased, _) = worst
+            .get(phase)
+            .unwrap_or_else(|| panic!("GAPS names {name} {phase}, which the replay lacks"));
+        assert!(
+            free.max(*rebased) > 0.0,
+            "GAPS entry {name} {phase} ({why}) matches retail now: drop it"
         );
     }
 }

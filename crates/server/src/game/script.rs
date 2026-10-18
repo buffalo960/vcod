@@ -2668,6 +2668,7 @@ impl ScriptRuntime {
         model: i32,
         origin: glam::Vec3,
         velocity: glam::Vec3,
+        carried: glam::Vec3,
         fuse_left_ms: i32,
         now_ms: i32,
     ) {
@@ -2681,6 +2682,7 @@ impl ScriptRuntime {
                 weapon,
                 origin,
                 velocity,
+                carried,
                 fuse_left_ms,
                 now_ms,
             )
