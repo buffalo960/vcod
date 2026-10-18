@@ -2705,6 +2705,15 @@ pub fn angle_normalize180(deg: f32) -> f32 {
     if a > 180.0 { a - 360.0 } else { a }
 }
 
+/// [`angle_normalize180`] on the x87's unrounded product: the float
+/// argument times rodata's 182.04445 truncated to a short, as 1.1d's
+/// `AngleNormalize180` (0x3eb70) and `AngleDelta` (0x3ec9c, on `a - b`) do.
+fn short_normalize180(deg: f64) -> f32 {
+    let short = ((deg * f64::from(cmd::ANGLE2SHORT)) as i32) & 0xffff;
+    let a = short as f32 * (360.0 / 65536.0);
+    if a > 180.0 { a - 360.0 } else { a }
+}
+
 /// Degrees folded to -180..180, the `AngleNormalize180` the prone code runs
 /// its yaw difference through.
 fn normalize180(deg: f32) -> f32 {
@@ -3059,7 +3068,25 @@ fn update_prone_pitch(ps: &mut PlayerState, world: &MoveWorld, dt: f32, events: 
         }
     }
     let rate = PRONE_PITCH_DEG_PER_SEC * dt;
+    let v11 = !ps.rules.v15();
     let ease = |cur: f32, target: f32| {
+        if v11 {
+            // 1.1 eases through the short-truncating `AngleDelta` (0x3ec9c)
+            // and `AngleNormalize180` (0x3eb70), so both pitches stay whole
+            // shorts; 1.5 and UO store through `AngleNormalize180Accurate`
+            // (cod11-mantle.md, "The prone pitches").
+            let d = short_normalize180(f64::from(target) - f64::from(cur));
+            if d == 0.0 {
+                return cur;
+            }
+            let rate = f64::from(dt) * f64::from(PRONE_PITCH_DEG_PER_SEC);
+            let next = if f64::from(d.abs()) > rate {
+                (f64::from(cur) + rate.copysign(f64::from(d))) as f32
+            } else {
+                cur + d
+            };
+            return short_normalize180(f64::from(next));
+        }
         let d = angle_delta(target, cur);
         if d == 0.0 {
             return cur;
@@ -5895,6 +5922,27 @@ mod tests {
             [EV_STANCE_FORCE_CROUCH]
         );
         assert_eq!(ps.stance, Stance::Crouch);
+    }
+
+    /// `PM_UpdatePronePitch`'s ease (0x334e2-0x33585): 1.1 truncates both
+    /// pitches to whole shorts after each step, 1.5 keeps the float.
+    #[test]
+    fn the_prone_pitches_ease_in_whole_shorts_on_1_1() {
+        let w = crate::collision::test_world(&[]);
+        let w = MoveWorld::bare(&w);
+        let eased = |rules| {
+            let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+            ps.rules = rules;
+            ps.stance = Stance::Prone;
+            ps.on_ground = true;
+            ps.ground_plane = None;
+            // -8673 shorts, the wire's value at the speedgrav capture's ct 48146.
+            ps.prone_torso_pitch = -47.642_21;
+            update_prone_pitch(&mut ps, &w, 0.008, &mut Vec::new());
+            ps.prone_torso_pitch
+        };
+        assert_eq!(eased(MoveRules::V1_1), -8571.0 * (360.0 / 65536.0));
+        assert!((eased(MoveRules::V1_5) - (-47.642_21 + 0.56)).abs() < 1e-5);
     }
 
     /// `PM_UpdatePronePitch`'s airborne arm (0x33434-0x33461): a prone body
