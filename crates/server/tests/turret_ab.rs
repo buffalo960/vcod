@@ -1400,10 +1400,13 @@ fn the_first_locked_snapshot_is_already_placed() {
 
 // ------------------------------------------------------------ the retail gate
 //
-// The retail capture replayed on ours. `turret/mp_carentan-dm-turret.txt` is
-// the gunner's side (every cmd, every snapshot, the gun's entity, every drained
-// event and impact) and `-turret-script.txt` the server's `D;`/`K;` lines,
-// both from one run (`docs/research/cod11-turrets.md` 12). The rig numbers
+// The retail captures replayed on ours. `turret/mp_carentan-dm-turret-<tag>.txt`
+// is the gunner's side (every cmd, every snapshot, the gun's entity, every
+// drained event and impact) and its `-script.txt` the server's log, both from
+// one run (`docs/research/cod11-turrets.md` 12, 13.4). The first captures
+// (`-turret.txt`, `-15`, `-uo`, `-victim-15`, `-victim-uo`) logged neither the
+// target's spawn time nor its cmds and are not replayed: the `-spawn` captures
+// of the same recipe carry both and match on all three servers (13.4). The rig numbers
 // the clients as retail did, target 0 and gunner 1, since a victim numbered
 // below its gunner takes its pain a frame late (12.5).
 //
@@ -1415,37 +1418,13 @@ fn the_first_locked_snapshot_is_already_placed() {
 // plus retail's `delta_angles` of snapshot `T - 50`, which is the view ours
 // builds too whatever `delta_angles` the join left us.
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret.txt"
-);
-const SCRIPT_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-script.txt"
-);
-
-const FIXTURE_15: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-15.txt"
-);
-const FIXTURE_UO: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-uo.txt"
-);
 const FIXTURE_VICTIM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
 );
-const FIXTURE_VICTIM_15: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-15.txt"
-);
-const FIXTURE_VICTIM_UO: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-uo.txt"
-);
 const LATE_VICTIM: &[i32] = &[];
-/// [`EARLY_VICTIM_15`] for the `-spawn` capture: cmd 21551 (sent at probe
+/// The cmds, by the probe's send `ms`, that reached the server a frame
+/// early on the `-spawn` capture (turrets doc 13.3, 13.4): cmd 21551 (sent at probe
 /// ms 2089), whose yaw -101 the snapshot at 21550 reads; the 21550 sent
 /// after it is stamped below it and never runs.
 const EARLY_SPAWN: &[i32] = &[2089];
@@ -1462,110 +1441,18 @@ const EARLY_SPAWN_UO: &[i32] = &[1536, 1987, 15238];
 /// The strafe's 36284, which the landing at 36300 does not show: retail's
 /// body moved one cmd's way that frame and two the next.
 const LATE_SPAWN_UO: &[i32] = &[36284];
-/// The sweep's cmd 19985 (sent at ms 1733), whose view snapshot 20000
-/// does not show yet (it reads cmd 19969's -141), and two strafe cmds
-/// that reached the server behind the cmd after them and so never ran:
-/// 33700, without which 33716 runs from 33682 and leaves the body against
-/// the clip brush where retail's 33750 has it, so the step onto the
-/// sandbags raises retail's 139, and 34016 on the landing, without which
-/// 34032 runs from 34000 (turrets doc 13.3).
-const LATE_VICTIM_15: &[i32] = &[19985, 33700, 34016];
-const LATE_VICTIM_UO: &[i32] = &[];
-/// Cmds stamped at or past a snapshot's time whose view that snapshot
-/// already shows (turrets doc 13.3), keyed by the probe's send `ms`
-/// because the probe's clock repeats a stamp: 1.5b's first cmd 23550 and
-/// first 23750, whose pitches -32 and -8 the snapshots at 23550 and 23750
-/// read.
-const EARLY_VICTIM_15: &[i32] = &[5284, 5483];
-/// The same on UO: cmd 20651 (145 at snapshot 20650), the first 25150
-/// (pitch 4 at 25150) and the strafe's first 34800, whose 16 ms of
-/// running right the snapshot at 34800 carries.
-const EARLY_VICTIM_UO: &[i32] = &[1077, 5576, 15229];
-/// [`GAPS`] for the `-victim` capture: where the fall off the sandbags
-/// comes to rest.
+/// The rows [`finish`] lets through on the `-victim` capture: where the
+/// fall off the sandbags comes to rest.
 const GAPS_VICTIM: &[(&str, &str)] = &[(
     "[refused] origin t=37350: retail [1684.3, 1948.5",
     SLOPE_FALL_11,
 )];
-/// [`GAPS`] for the `-victim-15` capture: the wounding round.
-const GAPS_VICTIM_15: &[(&str, &str)] = &[
-    (
-        "[target] impact t=28950: retail only 174@[1519.0, 1612.0",
-        ENTRY_POINT,
-    ),
-    (
-        "[target] impact t=28950: ours only 174@[1519.0, 1611.0",
-        ENTRY_POINT,
-    ),
-];
-/// [`GAPS`] for the `-victim-uo` capture: the killing round, the target's
-/// entity matching retail's on that snapshot to the unit.
-const GAPS_VICTIM_UO: &[(&str, &str)] = &[
-    (
-        "[target] impact t=30250: retail only 173@[1515.0, 1611.0",
-        ENTRY_POINT,
-    ),
-    (
-        "[target] impact t=30250: ours only 173@[1516.0, 1611.0",
-        ENTRY_POINT,
-    ),
-];
-const LATE_15: &[i32] = &[];
-const LATE_UO: &[i32] = &[];
-/// [`GAPS`] for the 1.5b capture: the killing round's rows as on 1.1.
-const GAPS_15: &[(&str, &str)] = &[
-    (
-        "[target] impact t=30100: retail only 174@[1515.0, 1610.0, 22.0",
-        KILLING_ROUND,
-    ),
-    ("[target] impact t=30100: ours only 174@[151", KILLING_ROUND),
-];
-/// [`GAPS`] for the UO 1.51b capture: the killing round's rows.
-const GAPS_UO: &[(&str, &str)] = &[
-    (
-        "[target] impact t=29300: retail only 173@[1515.0, 1610.0, 22.0",
-        KILLING_ROUND,
-    ),
-    ("[target] impact t=29300: ours only 173@[151", KILLING_ROUND),
-];
-/// Cmds that reached retail's server after the frame their stamp puts them
-/// in (12.1): the stand mount's use cmd, whose 24750 is still unmounted and
-/// 24800 mounted and placed, and 30148, whose pitch clamp at 30150 is built
-/// off 30132's wire angles.
-const LATE: &[i32] = &[24736, 30148];
-
-/// Rows the diff lets through, each a substring of the rows it excuses and
-/// the reason, which `docs/research/cod11-turrets.md` 13 carries too.
-const GAPS: &[(&str, &str)] = &[
-    (
-        "[target] impact t=34900: retail only 174@[1518.0, 1612.0",
-        ENTRY_POINT,
-    ),
-    ("[target] impact t=34900: ours only 174@[151", ENTRY_POINT),
-    (
-        "[target] impact t=34950: retail only 174@[1514.0, 1609.0",
-        KILLING_ROUND,
-    ),
-    ("[target] impact t=34950: ours only 174@[151", KILLING_ROUND),
-];
-
-const KILLING_ROUND: &str = "the killing round meets a target the round before knocked back, \
-    moved by however many ms of its own cmds retail's frame ran and posed off its spawn's \
-    landing; this capture logs neither the target's cmd stamps nor its spawn time, and the \
-    -spawn captures, which log both, match the killing round on 1.1d and 1.5b with no row \
-    (cod11-turrets.md 13.4)";
 const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
     ours at least 0.16 further along -x than retail by the landing (37050) and y stays within \
     print, which reads as a smaller air acceleration across the face on retail; no cmd \
     arriving early or late reproduces it, the 1.5b and UO captures fall down the same face \
     in step, and the capture prints origins to 0.1, so the 0.256 at 37350 is that drift \
     where the print rounds it past 0.25 (cod11-turrets.md 13.3)";
-const ENTRY_POINT: &str = "the round enters the target's body a truncation step off \
-    retail's along the same ray: where it enters is the posed bone box the locational trace \
-    meets (cod11-combat.md 3.4), whose idle runs from the landing after the target's spawn, \
-    and that landing from the target's own cmd stamps; this capture logs neither the spawn \
-    time nor the stamps, and the -spawn captures, which log both, match the round on all \
-    three servers (cod11-turrets.md 13.4)";
 /// When in a frame the target's cmds go out: the net probe sends one every
 /// 16 ms of its own clock, three a frame.
 const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
@@ -1575,18 +1462,10 @@ const PRINT_EPS: f32 = 0.05;
 /// One `ANGLE2SHORT` step.
 const SHORT_DEG: f32 = 360.0 / 65536.0;
 const ANGLES2_EPS: f32 = 0.01;
-/// The largest move the start rebase may make on any axis: retail's
-/// placement landed 0.31 off the spot; anything bigger is a placement
-/// regression, not that.
-const REBASE_MAX: f32 = 0.5;
-/// The same on 1.5 and UO, whose joins run the `serverinfo` menu first: our
-/// spawn lands a frame before the placement and carries the spawn point's
-/// slide, (-2, -11) units/s, into the fall, ending (-0.6, -3.3) off the
-/// spot, where UO's retail capture ended too and 1.5's did not.
-const REBASE_MAX_15: f32 = 4.0;
-/// The same for the `-victim` captures: retail's own landings there ended
-/// from 2.4 units short of the spot (1.1) to 0.9 past it (1.5b, UO), so
-/// ours, 3.3 short on 1.5 and UO, starts up to 4.2 off retail's.
+/// The largest move the start rebase may make on any axis: retail's own
+/// landings from the gsc's placement ended from 2.4 units short of the spot
+/// (1.1) to 0.9 past it (1.5b, UO), so ours, 3.3 short on 1.5 and UO, starts
+/// up to 4.2 off retail's.
 const REBASE_MAX_VICTIM: f32 = 4.5;
 
 fn report() -> bool {
@@ -1636,10 +1515,10 @@ struct RetailCmd {
 }
 
 struct Capture {
-    /// The cmds that reached the server a frame late (see [`LATE`]).
+    /// The cmds that reached the server a frame late (see [`LATE_SPAWN_15`]).
     late: &'static [i32],
     /// The cmds, by send `ms`, that reached the server a frame early (see
-    /// [`EARLY_VICTIM_15`]).
+    /// [`EARLY_SPAWN`]).
     early: &'static [i32],
     weapon: String,
     gun: u32,
@@ -1783,23 +1662,10 @@ fn parse(text: &str) -> Capture {
     }
 }
 
-/// The rig as the capture's recipe left retail: the gunner joined with the
-/// header's weapon, as client 1, standing where retail's did. Retail's
-/// landing from the gsc's placement ended 0.31 units off the spot in y, which
-/// no line of the capture explains and ours does not reproduce; every
-/// release teleports back to that spot, so ours starts there, to the
-/// fixture's print precision (`docs/research/cod11-turrets.md` 13).
-fn rig(cap: &Capture) -> Option<Rig> {
-    rig_on(
-        cap,
-        vcod_common::testing::game_fs_11()?,
-        &PROTOCOL_V1,
-        REBASE_MAX,
-    )
-}
-
-/// [`rig`] on the paks of `fs`, the server speaking `p`, the start rebased
-/// at most `rebase_max` on any axis.
+/// The rig as the capture's recipe left retail, on the paks of `fs`, the
+/// server speaking `p`: the gunner joined with the header's weapon, as
+/// client 1, standing where retail's did, the start rebased at most
+/// `rebase_max` on any axis (`docs/research/cod11-turrets.md` 13.1).
 fn rig_on(cap: &Capture, fs: Pk3Fs, p: &'static Protocol, rebase_max: f32) -> Option<Rig> {
     rig_after(cap, fs, p, rebase_max, 0)
 }
@@ -2190,7 +2056,7 @@ fn target_rows(cap: &Capture, log: &str, ours: &[Sample]) -> Vec<String> {
     rows
 }
 
-/// Fails on any row no [`GAPS`] entry names, and on any entry that named no
+/// Fails on any row no `gaps` entry names, and on any entry that named no
 /// row, so the list cannot outlive what it excuses.
 fn finish(rows: Vec<String>, gaps: &[(&str, &str)]) {
     let (gapped, real): (Vec<String>, Vec<String>) = rows
@@ -2217,62 +2083,8 @@ fn finish(rows: Vec<String>, gaps: &[(&str, &str)]) {
     );
 }
 
-#[test]
-fn the_mount_sweep_fire_and_release_match_retail_on_mp_carentan() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        return;
-    };
-    let cap = Capture {
-        late: LATE,
-        ..parse(&read(FIXTURE))
-    };
-    let Some(mut rig) = rig(&cap) else { return };
-    let ours = replay(&mut rig, &cap);
-    finish(diff(&cap, &ours, &fs), GAPS);
-}
-
-/// The 1.1 gate's replay of `mp_carentan-dm-turret-15.txt` on a 1.5 install
-/// (turrets doc 14.3): the same probe, cmds and diff on a protocol 6 server.
-#[test]
-fn the_mount_sweep_fire_and_release_match_15b_on_mp_carentan() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
-        return;
-    };
-    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
-        return;
-    }
-    let cap = Capture {
-        late: LATE_15,
-        ..parse(&read(FIXTURE_15))
-    };
-    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V6, REBASE_MAX_15) else {
-        return;
-    };
-    let ours = replay(&mut rig, &cap);
-    let fs = vcod_common::testing::game_fs().unwrap();
-    finish(diff(&cap, &ours, &fs), GAPS_15);
-}
-
-/// The same for `mp_carentan-dm-turret-uo.txt` on a United Offensive
-/// install.
-#[test]
-fn the_mount_sweep_fire_and_release_match_uo_on_mp_carentan() {
-    let Some(fs) = vcod_common::testing::uo_fs() else {
-        return;
-    };
-    let cap = Capture {
-        late: LATE_UO,
-        ..parse(&read(FIXTURE_UO))
-    };
-    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V22, REBASE_MAX_15) else {
-        return;
-    };
-    let ours = replay(&mut rig, &cap);
-    let fs = vcod_common::testing::uo_fs().unwrap();
-    finish(diff(&cap, &ours, &fs), GAPS_UO);
-}
-
-/// The same recipe rerun with the target's entity logged (`!victim`) on
+/// The mount, sweep, fire and release recipe (turrets doc 12) with the
+/// target's entity logged (`!victim`) on
 /// each fire and target snapshot: its `pos.trTime` drives the target's cmd
 /// clock and its trajectory, anims and `solid` are diffed, with every
 /// other phase (`docs/research/cod11-turrets.md` 13.1, 13.3).
@@ -2333,7 +2145,31 @@ fn spawn_gate(
         read(&path("-script")).lines(),
         rig.sv.script_log().iter().map(String::as_str),
     ));
+    rows.extend(credit_rows(&read(&path("-script")), &rig));
     finish(rows, gaps);
+}
+
+/// The kill credit: ours logs the `D;` and `K;` records retail's server log
+/// carries, the wound on `m1carbine_mp` and the kill on the gun (turrets doc
+/// 13.1).
+fn credit_rows(script: &str, rig: &Rig) -> Vec<String> {
+    let retail: Vec<String> = script
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(damage_key)
+        .collect();
+    assert_eq!(retail.len(), 2, "{retail:?}");
+    let ours: Vec<String> = rig
+        .sv
+        .script_log()
+        .iter()
+        .filter_map(|l| damage_key(l))
+        .collect();
+    if ours == retail {
+        Vec::new()
+    } else {
+        vec![format!("[credit] retail {retail:?} ours {ours:?}")]
+    }
 }
 
 /// The hit-grid captures: the `-spawn` recipe with `probe_hitlog` and
@@ -2644,47 +2480,6 @@ fn the_grounded_hitgrid_capture_matches_uo_on_mp_carentan() {
     );
 }
 
-/// [`the_victim_capture_matches_retail_on_mp_carentan`] on 1.5b.
-#[test]
-fn the_victim_capture_matches_15b_on_mp_carentan() {
-    let Some(fs) = vcod_common::testing::game_fs() else {
-        return;
-    };
-    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
-        return;
-    }
-    let cap = Capture {
-        late: LATE_VICTIM_15,
-        early: EARLY_VICTIM_15,
-        ..parse(&read(FIXTURE_VICTIM_15))
-    };
-    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V6, REBASE_MAX_VICTIM) else {
-        return;
-    };
-    let ours = replay(&mut rig, &cap);
-    let fs = vcod_common::testing::game_fs().unwrap();
-    finish(diff(&cap, &ours, &fs), GAPS_VICTIM_15);
-}
-
-/// [`the_victim_capture_matches_retail_on_mp_carentan`] on UO 1.51b.
-#[test]
-fn the_victim_capture_matches_uo_on_mp_carentan() {
-    let Some(fs) = vcod_common::testing::uo_fs() else {
-        return;
-    };
-    let cap = Capture {
-        late: LATE_VICTIM_UO,
-        early: EARLY_VICTIM_UO,
-        ..parse(&read(FIXTURE_VICTIM_UO))
-    };
-    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V22, REBASE_MAX_VICTIM) else {
-        return;
-    };
-    let ours = replay(&mut rig, &cap);
-    let fs = vcod_common::testing::uo_fs().unwrap();
-    finish(diff(&cap, &ours, &fs), GAPS_VICTIM_UO);
-}
-
 /// A `D;` or `K;` line's kind, teams, weapon, damage, means of death and hit
 /// location: the client numbers and names are each server's own. Retail's
 /// lines carry the log's `m:ss` stamp first.
@@ -2697,35 +2492,13 @@ fn damage_key(line: &str) -> Option<String> {
         return None;
     }
     let f: Vec<&str> = body.split(';').collect();
-    Some(
+    // 1.5 and UO put a guid ahead of each client number.
+    let fields = if f.len() == 13 {
+        [0, 3, 7, 9, 10, 11, 12]
+    } else {
         [0, 2, 5, 7, 8, 9, 10]
-            .map(|i| f.get(i).copied().unwrap_or("?"))
-            .join(";"),
-    )
-}
-
-#[test]
-fn the_turret_kill_is_credited_to_the_mg42() {
-    let cap = Capture {
-        late: LATE,
-        ..parse(&read(FIXTURE))
     };
-    let Some(mut rig) = rig(&cap) else { return };
-    replay(&mut rig, &cap);
-    let script = read(SCRIPT_FIXTURE);
-    let retail: Vec<String> = script
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .filter_map(damage_key)
-        .collect();
-    assert_eq!(retail.len(), 2, "{retail:?}");
-    let ours: Vec<String> = rig
-        .sv
-        .script_log()
-        .iter()
-        .filter_map(|l| damage_key(l))
-        .collect();
-    assert_eq!(ours, retail);
+    Some(fields.map(|i| f.get(i).copied().unwrap_or("?")).join(";"))
 }
 
 /// 1.5's `turret_think_client` (0x62305) runs the aim, the gunner's

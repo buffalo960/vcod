@@ -8276,12 +8276,23 @@ impl Server {
                     }),
                     _ => None,
                 };
-                // The callback is told the gunner's own weapon (turrets doc
-                // 12.6); `player_die` credits the gun.
+                // 1.1 and 1.5 hand `G_Damage` the gunner as the inflictor,
+                // so the callback is told his own weapon and `player_die`
+                // credits the gun (turrets doc 12.6); UO hands it the gun,
+                // whose weapon the callback is told (turrets doc 11).
+                let uo = self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version;
+                let gun = rt.host.turrets.iter().find(|(id, _)| id.0 == shot.gun);
                 let carried = sims
                     .iter()
                     .find(|(s, _)| *s == shot.slot)
                     .map_or(0, |(_, sim)| sim.ps.weapon as usize);
+                let weapon_name = match gun {
+                    Some((_, rec)) if uo => rec.weapon.clone(),
+                    _ => crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
+                        .unwrap_or_default()
+                        .to_string(),
+                };
+                let gun_id = gun.map(|(id, _)| *id).filter(|_| uo);
                 let r = crate::game::combat::bullet_fire_from(
                     shot.slot,
                     shot.pass(),
@@ -8290,8 +8301,7 @@ impl Server {
                     shot.damage,
                     shot.rifle_bullet,
                     None,
-                    crate::items::item_name(crate::defs::Defs::of(self.proto), carried)
-                        .unwrap_or_default(),
+                    &weapon_name,
                     &sims,
                     &rt.host.missiles.shot_targets(),
                     collision,
@@ -8306,8 +8316,10 @@ impl Server {
                 // A world impact names the gun, `Bullet_Fire_Extended`'s
                 // inflictor (1.1d 0x68b05), so the tracer leaves its tag.
                 for e in &mut effects {
-                    if let Effect::Impact(t) = e {
-                        t.other = shot.gun;
+                    match e {
+                        Effect::Impact(t) => t.other = shot.gun,
+                        Effect::Hit(h) => h.inflictor = gun_id,
+                        Effect::EntityHit(h) => h.inflictor = gun_id,
                     }
                 }
                 if self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version {

@@ -369,15 +369,15 @@ its time does. VERIFIED, capture: `mp_carentan-dm-slope-8ms-springfield-1.1.txt`
 `weaponTime` 0 on the snapshot whose `commandTime` is the cmd each of its
 four shots' time ran out on, and the rechamber's 162 on a later one; vcod
 before this read `weaponstate` 4 there (`moves_ab`). VERIFIED, capture: the
-older per-snapshot combat captures caught that one-cmd idle on four of their
+per-snapshot combat captures catch that one-cmd idle on some of their
 fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
 between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
-`prone_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
-`mp_carentan-tdm-ads-sniper.txt` `ads_shot`, `mp_cassino-dm-combat-uo.txt`
-`crouch_fire`; re-counted on the 2026-10-17 recapture of the 1.1 files,
-where the sniper's is new); whether a snapshot lands on it is the cmd grid's business, so
+`single_shot` and `crouch_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
+`mp_carentan-tdm-ads-sniper.txt` `hip_shot`, `mp_cassino-dm-combat-uo.txt`
+`crouch_fire`: five of fourteen on the 2026-10-18 recapture of the 1.1
+files, four on the 2026-10-17 one); whether a snapshot lands on it is the cmd grid's business, so
 `playerstate_combat_ab` and `combat_uo_ab` leave that lone sample out of the
-`weapAnim` sets they compare. UO's jeep passenger
+`weapAnim` sets they compare, unless the capture logs its cmds (1.13). UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
@@ -589,8 +589,8 @@ stock segmented files ship `reloadStartAdd` equal to `reloadAmmoAdd`
 the two fields apart. VERIFIED, `mp_carentan-tdm-ads-sniper` `ads_reload`
 and `ads_release`: after one shot from a full five, the reload reads
 `weaponstate` 7 with `weapAnim` 13 and event 153 for `reloadStartTime`,
-its `weaponDelay` counting 1367 to 0 from `reloadStartAddTime` (1366 before
-the 2026-10-17 recapture; the first sample's phase), then 9 with
+its `weaponDelay` counting 1399 to 0 from `reloadStartAddTime` (1367 on
+the 2026-10-17 recapture and 1366 before it; the first sample's phase), then 9 with
 `weapAnim` 526 and event 154 for `reloadEndTime`, then 0; state 5 never
 appears. INFERRED: the start's one-round add filled the clip, the reload
 test refused a loop segment, and the reload went straight to its end.
@@ -918,18 +918,19 @@ reload and not at the key.
 (`crates/server/tests/fixtures/playerstate/<map>-dm-ads.txt`, `!trace` per
 snapshot with `fWeaponPosFrac` and `aimSpreadScale` as decimals), the probe
 standing still and holding each input in turn; the numbers below are
-re-measured on the 2026-10-17 recapture. VERIFIED, every number;
+re-measured on the 2026-10-17 recapture, the mosin's on the 2026-10-18
+one. VERIFIED, every number;
 INFERRED, that they are the file's fields, which is arithmetic.
 
 - The ramp is linear and the rates are the reciprocal times: up, both
   weapons step about 0.1667 a snapshot, the carbine reading 0.1067 at 32 ms and
-  1.0 at 328, the mosin 0.1567 at 48 and 1.0 at 346, which is
+  1.0 at 328, the mosin 0.0533 at 16 and 1.0 at 308, which is
   `adsTransInTime` 0.3 s; down, the carbine steps about 0.125 a snapshot and
   reaches 0 at 408 ms (`adsTransOutTime` 0.4) and the mosin about 0.0833
-  a snapshot, 0 at 630 (0.6).
+  a snapshot, 0 at 632 (0.6).
 - Through a reload with the sight held: the fraction ramps *down* from the
   reload's first frame at the out rate (carbine 1.0 to 0 over 445 ms, mosin
-  over 673), sits at 0, and ramps back up at the in rate from about 2080 ms
+  over 670), sits at 0, and ramps back up at the in rate from about 2080 ms
   on the carbine (`reloadTime` 2650 less 600) and 1840 on the mosin (2400
   less 600), reaching 1.0 some 300 ms before `weaponstate` leaves 5. A
   reload asked for on a full clip does nothing at all, which the first
@@ -942,6 +943,27 @@ The trace fields in a snapshot are the state after the last of that
 frame's pmove steps, and the probe sends a cmd every 16 ms, so a 48 ms gap
 holds three steps. That is why the counter below can read a decay on the
 same snapshot the fraction first reads 1.0.
+
+**The cmds behind each sample.** Since 2026-10-18 the combat and sight
+captures log every cmd the probe sent while a step was current (`!cmds`:
+each `serverTime` and the `buttons`/`wbuttons` that differ from the step's
+input) and each snapshot's `commandTime`. VERIFIED, all four 1.1d captures
+taken that day (`mp_carentan-dm-combat`, `mp_pavlov-dm-combat`,
+`mp_pavlov-dm-ads`, `mp_carentan-tdm-ads-sniper`): a snapshot's frame can
+run fewer cmds than their stamps put before it, 15 of 1774 snapshots across
+the four, as at carentan's `idle` 29300, whose `commandTime` is 29282 while
+the probe had sent 29298 too; the rest run in the next frame. VERIFIED: a
+frame whose last cmd is the tap reads exactly `hipSpreadFireAdd` 0.7 times
+255, 178.50 on the carbine (carentan `sustained_fire` 32150, `commandTime`
+32132, the tap's stamp), so the shot's own cmd decays before it adds
+(INFERRED, `PM_AdjustAimSpreadScale` runs ahead of the fire, 2.1). vcod: `playerstate_combat_ab` replays each
+logged step's cmds at retail's stamps, each frame running up to the
+`commandTime` retail's snapshot read (`common::CmdLog`), and then the
+sight fraction and the spread counter match on every sample to the
+capture's print, the `weaponstate` runs and `weapAnim` indices exactly. The
+older captures' first sample after a tap read anywhere from 0 to 50 ms of
+decay, where the replay's 25 ms cmd grid always read 25-35, which is what
+their six tap phase rows were.
 
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for
@@ -1389,8 +1411,9 @@ The `--save-ads` captures (1.13) put numbers on the rest, re-measured on
 the 2026-10-17 recapture. VERIFIED: a hip shot from the carbine reads 128.52
 on the first snapshot after it, 49 ms into a decay from `hipSpreadFireAdd`
 0.7 times 255, and then 94.86, 40.80, 5.10, 0, two or three 16 ms cmds a
-snapshot at the decay of 4 times 255 a second; the mosin's reads 255 and
-comes down 41.44 a full step. A walk climbs 51 a full step on the carbine
+snapshot at the decay of 4 times 255 a second; the mosin's reads 241.74,
+one 16 ms cmd of decay off 255 (255 on the 2026-10-17 capture), and comes
+down 41.44 a full step. A walk climbs 51 a full step on the carbine
 (the add of 8 less the decay of 4, times 255, times the frame) to 255 in
 276 ms, and stopping brings it down 51 a step to 0 in 247. A shot down the
 settled sight adds nothing, and a walk begun with the sight coming up adds
