@@ -3859,6 +3859,26 @@ mod tests {
         assert_eq!(rt.level_field("later"), Value::Int(0));
     }
 
+    /// `delete()` notifies `"death"` with the entity (1.1d 0x5da14, UO
+    /// 0x68bda): a thread holding `point endon("death")` on a deleted
+    /// spawn point ends there, and one waiting on it wakes with the entity.
+    /// UO's `_spawnlogic::Player_WaitForDeath` wrote through the dead point
+    /// once its player died, a script error (bot-objectives.md 7.1).
+    #[test]
+    fn delete_notifies_death() {
+        let mut rt = ScriptRuntime::for_test(
+            "hold(p) { p endon(\"death\"); level waittill(\"go\"); level.held = 1; } \
+             watch(p) { p waittill(\"death\", e); level.woke = (e == p); } \
+             main() { p = spawn(\"script_origin\", (0, 0, 0)); level thread hold(p); \
+             level thread watch(p); wait 0.05; p delete(); wait 0.05; level notify(\"go\"); }",
+        );
+        for frame in 1..=4 {
+            rt.run_frame(frame * 50);
+        }
+        assert_eq!(rt.level_field("woke"), Value::Int(1));
+        assert_eq!(rt.level_field("held"), Value::Undefined);
+    }
+
     /// `probe_entnum` on retail: the free a `delete()` schedules 100 ms out
     /// runs in that frame's entity pass, after the frame's threads, so a
     /// thread woken on it still reads the entity (combat doc 14.7, "Entity

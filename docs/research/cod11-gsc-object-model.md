@@ -806,6 +806,20 @@ high-water mark. Two facts fall out of that:
   constants are VERIFIED at 0x5da9a and 0x5daa4. During the map load the
   `SP_` functions call `G_FreeEntity` directly, so there is no such delay
   there (INFERRED from the same reading).
+- VERIFIED (`game.mp.i386.so` 1.1d, `delete` at 0x5da14; UO 1.51b's
+  `game.mp.uo.i386.so` at 0x68bda, the same body): the notify is
+  `Scr_AddEntity(self)` then `Scr_Notify(self, scr_const+0x1c, 1)`, and
+  `scr_const+0x1c` is `"death"` (`GScr_LoadConsts`, 1.1d 0x58550 storing
+  the string at 0x75f9e, UO 0x652d2 the one at 0xa1c8a). So a delete
+  ends every `ent endon("death")` and wakes `ent waittill("death", e)`
+  with the entity. UO's `clearVehiclePosition` (0x6950e) runs the same
+  four steps inline on each entity in its box. INFERRED (the stock
+  script): UO's `_spawnlogic::Player_WaitForDeath` holds `point
+  endon("death")` and writes `point.delay_use` once its player dies, and
+  `bas.gsc` deletes a base's spawn points (`BaseAssault_KillBase`
+  3519-3530, `BaseAssault_base_think` 4029-4037); without the notify the write lands
+  on a dead entity, a script error (ours before 2026-10-18, mp_foy bas
+  with four shooting bots, seed 11).
 
 `ObjectTable::schedule`/`run_thinks` (`crates/server/src/game/entity.rs`)
 reproduce the think pass this implies. A think is an absolute `nextthink` in

@@ -519,8 +519,8 @@ fn verify_position(
 }
 
 /// `clearVehiclePosition()` (0x6950e): whatever stands in the vehicle's box
-/// (mask 0x4000100: corpses and dropped items) is notified `death`,
-/// unlinked and freed 100 ms on.
+/// (mask 0x4000100: corpses and dropped items) is deleted as `delete()`
+/// does it: notified `death` with itself, unlinked and freed 100 ms on.
 fn clear_vehicle_position(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -529,8 +529,6 @@ fn clear_vehicle_position(
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
     for e in crate::game::vehicle::clutter_in_box(host, cx, id) {
-        let death = cx.intern_folded("death");
-        cx.notify(Target::Entity(e), death, Vec::new());
         crate::game::builtins::entity::delete(host, cx, Some(Target::Entity(e)), &[])?;
     }
     Ok(Value::Undefined)

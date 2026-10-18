@@ -395,14 +395,24 @@ pub fn spawn_struct(
 /// (`SP_script_brushmodel`, game.mp 0x60fb8), and retail's `G_FreeEntity`
 /// unlinks, which is how `_gameobjects::main` takes carentan's bombzone
 /// clips out of every gametype but sd (docs/research/cod11-mantle.md, "A
-/// submodel's brushes are its entity's").
+/// submodel's brushes are its entity's"). It notifies `"death"` with the
+/// entity first (cod11-gsc-object-model.md 14), which ends a stock
+/// `point endon("death")` on a deleted `bas` spawn point.
 pub fn delete(
     host: &mut GameHost,
-    _cx: &mut Cx,
+    cx: &mut Cx,
     recv: Option<Target>,
     _args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let id = entity_receiver(recv)?;
+    let death = cx.intern_folded("death");
+    cx.notify(Target::Entity(id), death, vec![Value::Entity(id)]);
+    unlink_and_free(host, id);
+    Ok(Value::Undefined)
+}
+
+/// `delete()`'s unlink, and its free armed [`DELETE_DEFER_MS`] out.
+fn unlink_and_free(host: &mut GameHost, id: EntId) {
     link_submodel(host, id, false);
     // The unlink (0x5da81) is now; the slot's reuse waits.
     if let Some(e) = host.ents.get_mut(id).filter(|e| e.client.is_none()) {
@@ -412,7 +422,6 @@ pub fn delete(
     host.unlink_world_copy(id);
     host.ents
         .schedule(id, ThinkFn::Free, host.level_time_ms + DELETE_DEFER_MS);
-    Ok(Value::Undefined)
 }
 
 fn set_hidden(host: &mut GameHost, recv: Option<Target>, hidden: bool) -> Result<Value, ErrorKind> {
@@ -1322,7 +1331,7 @@ mod tests {
         let (mut vm, mut host) = fixture();
         vm.with_cx(|cx| {
             let e = host.ents.spawn(cx).unwrap();
-            delete(&mut host, cx, Some(Target::Entity(e)), &[]).unwrap();
+            unlink_and_free(&mut host, e);
             assert_eq!(
                 host.ents.iter_inuse().count(),
                 1,
@@ -1425,7 +1434,7 @@ mod tests {
 
             let e = host.ents.spawn(cx).unwrap();
             let ent = Value::Entity(e);
-            delete(&mut host, cx, Some(Target::Entity(e)), &[]).unwrap();
+            unlink_and_free(&mut host, e);
             assert_eq!(
                 is_defined(&mut host, cx, None, &[ent]).unwrap(),
                 Value::Int(1),
