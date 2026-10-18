@@ -521,6 +521,10 @@ pub struct PlayerState {
     /// A spectator's `ps.speed`: 400, or 0 under 1.5's refused free flight
     /// (`SpectatorThink`, 1.5 game.mp 0x389eb).
     pub fly_speed: f32,
+    /// A playing body's `ps.speed` (`g_speed`, stored by `ClientEndFrame`),
+    /// which the gun's tilt and position scale against. The predictor reads
+    /// it off the wire; vcod-server always runs 190.
+    pub speed: f32,
     /// Plane normal of that surface; persists while off the wall so the
     /// airborne probe can stick with the ladder we left.
     pub ladder_normal: Vec3,
@@ -835,6 +839,7 @@ impl PlayerState {
             on_ladder: false,
             weapon_disabled: false,
             fly_speed: SPEED_SPECTATOR,
+            speed: SPEED_RUN,
             ladder_normal: Vec3::ZERO,
             since_jump_ms: f32::INFINITY,
             jump_latched: false,
