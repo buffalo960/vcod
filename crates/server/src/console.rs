@@ -311,6 +311,27 @@ pub enum Ping {
     Ms(i32),
 }
 
+/// A client's address as `NET_AdrToString` (0x8080ef4) prints it.
+#[derive(Clone, Copy)]
+pub enum Adr {
+    Ip(std::net::SocketAddr),
+    /// A type-0 (bot) address with this port, stored as `SV_AddTestClient`
+    /// writes it (host order, 0x80875e3).
+    Bot(u16),
+}
+
+impl std::fmt::Display for Adr {
+    // The port goes through `BigShort` and prints as a signed short
+    // (`127.0.0.1:-17522`); a bot's type falls to the IPX branch, whose
+    // ten address bytes are zero (0x8080f60, format at 0x80d3180).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Adr::Ip(a) => write!(f, "{}:{}", a.ip(), a.port() as i16),
+            Adr::Bot(port) => write!(f, "00000000.000000000000:{}", port.swap_bytes() as i16),
+        }
+    }
+}
+
 /// One row of `status`, in `SV_Status_f`'s format (0x80846b4, strings at
 /// 0x80d3f5c..0x80d3fa8).
 pub struct StatusRow<'a> {
@@ -319,7 +340,7 @@ pub struct StatusRow<'a> {
     pub ping: Ping,
     pub name: &'a str,
     pub last_msg_ms: i64,
-    pub addr: std::net::SocketAddr,
+    pub addr: Adr,
     pub qport: u16,
     pub rate: i32,
 }
@@ -332,8 +353,7 @@ impl std::fmt::Display for StatusRow<'_> {
             Ping::Zombie => f.write_str("ZMBI ")?,
             Ping::Ms(ms) => write!(f, "{:4} ", ms.min(9999))?,
         }
-        // `NET_AdrToString` prints the port as a signed short.
-        let addr = format!("{}:{}", self.addr.ip(), self.addr.port() as i16);
+        let addr = self.addr.to_string();
         writeln!(
             f,
             "{:<16}{:7} {:<22}{:5} {:5}",
@@ -409,7 +429,7 @@ mod tests {
                 ping,
                 name,
                 last_msg_ms,
-                addr: "127.0.0.1:48014".parse().unwrap(),
+                addr: Adr::Ip("127.0.0.1:48014".parse().unwrap()),
                 qport: 12038,
                 rate: 25000,
             }

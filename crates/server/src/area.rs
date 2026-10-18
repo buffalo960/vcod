@@ -254,6 +254,19 @@ impl AreaTree {
         }
     }
 
+    /// A `memset` of the `gentity` with no unlink (1.1's `ClientConnect`
+    /// over a held player, cod11-server-handshake.md, "A reconnect into a
+    /// held slot"): the engine's svEntity keeps its node, its place in the
+    /// list and the contents and box it was filed under, while every walk
+    /// reads the zeroed `r.contents`, `r.absmin` and `r.absmax`.
+    pub fn zero_entity(&mut self, ent: u32) {
+        if let Some(e) = self.ents.get_mut(ent as usize) {
+            e.absmin = [0.0; 3];
+            e.absmax = [0.0; 3];
+            e.contents = 0;
+        }
+    }
+
     /// `0x80594c4`: a static model, filed once at map load in the order the
     /// entity string lists them. It never moves, but it keeps every node on
     /// its path from being freed and its push-downs split nodes the entities

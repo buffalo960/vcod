@@ -585,6 +585,20 @@ and the zombie half of `Server::drop_client`.
   `%7i ` milliseconds since the last packet, the address padded to 22,
   `%5i` qport, ` %5i` rate. The port prints as a signed short
   (`127.0.0.1:-17446`). VERIFIED by capture.
+- A test client's row: `NET_AdrToString` (0x8080ef4) prints `loopback`
+  for type 2 and `%i.%i.%i.%i:%i` for type 4 (`NA_IP`); every other type,
+  the bot address `SV_AddTestClient` builds (type 0, 0x80875cf) among them,
+  takes the IPX format at 0x80d3180 over ten zero bytes. The port is the
+  `bot%d` counter stored in host order (0x80875e3) and goes through
+  `BigShort` and a sign extension like an IP's. VERIFIED (asm). None of the
+  three Linux servers holds a `bot` string. VERIFIED (strings). Live,
+  2026-10-18, `probe_testclient` on 1.1d mp_pavlov with `rcon status`:
+  `  0     0  999 bot1               8700 00000000.000000000000:256    0  5000`
+  (`bot2` `:512`, `bot3` `:768`): ping 999 (nothing acked), qport 0, and
+  the userinfo's rate 5000, so the bot address is not LAN. VERIFIED
+  (capture). vcod prints the same for a test client
+  (`status_lists_test_clients_as_retail`) and gives its own bots the same
+  address form with the slot plus one as the port; their ping stays 0.
 - `clientkick <n>` (`SV_KickNum_f` 0x8084be4, usage `kicknum`) prints
   `Usage: kicknum <client number>`, `Bad slot number: %s`, `Bad client slot:
   %i` or `Client %i is not active` (0x8083b9c) and otherwise drops with
@@ -809,8 +823,13 @@ free, past `sv_reconnectlimit`, prints `%s:reconnect` and takes that slot.
 - vcod: the reconnect arm runs `Server::client_disconnect` inside the
   connect on 1.5 and UO. On 1.1 it runs none, and `ObjectTable::
   spawn_client` keeps the held player's script object (its threads and
-  script fields), with the engine fields and `pers` fresh; vcod also
-  unlinks the held entity from the area tree before the new one links.
+  script fields), with the engine fields and `pers` fresh. The area tree's
+  entry stays where it was filed, since the link lives in the engine's
+  svEntity (cod11-combat.md 14.7) and `SV_UnlinkEntity` (0x8091f94) is not
+  called; a walk reads the zeroed `r.contents` and box, so it never takes
+  the entity, and the next link (the spawn's unlink, or the contents-0
+  unlink of a spectator) takes it out (`AreaTree::zero_entity`,
+  `a_reconnect_on_1_1_leaves_the_area_entry`). INFERRED.
   `a_reconnect_into_a_held_slot_follows_the_protocol` pins it. The same
   runs against vcod-server print the same lines. vcod's own guard stays:
   a connect with another challenge into a slot still heard from in the
