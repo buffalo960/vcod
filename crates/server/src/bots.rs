@@ -263,6 +263,10 @@ pub struct BotView {
     /// A held rocket launcher (`weaponClass rocketlauncher`) with a round
     /// left, clip or reserve: what breaches a `bas` base.
     pub rocket: Option<u8>,
+    /// A held rocket launcher with no round left: what a `bas` bot holds
+    /// when it taps for another, so the pickup's swap drops it and not
+    /// the gun (`cod11-items.md` 5).
+    pub spent_rocket: Option<u8>,
     /// A held bullet weapon other than the pistol with a round left, clip
     /// or reserve: what the bot fights with once its primary is a spent
     /// launcher.
@@ -1792,7 +1796,15 @@ impl Bot {
                     0
                 };
                 let mut cmd = self.hold_use(view, cmd, aim);
-                if self.obj.settled < SETTLE_TICKS {
+                // An empty launcher in hand first: the swap drops what is
+                // held, and a bot that tapped with its gun out traded it.
+                let swap = view
+                    .spent_rocket
+                    .filter(|&r| r != view.weapon && matches!(view.uo, Some(UoView::Bas(_))));
+                if let Some(r) = swap {
+                    cmd.weapon = r;
+                    cmd.buttons = 0;
+                } else if self.obj.settled < SETTLE_TICKS {
                     cmd.buttons = 0;
                 } else {
                     // A tap: two ticks down, then up for a while. Held, the
@@ -3600,6 +3612,7 @@ mod tests {
             unpin: None,
             pistol: None,
             rocket: None,
+            spent_rocket: None,
             gun: None,
             reload_ms: 2500,
             draw_ms: 750,
@@ -5988,6 +6001,29 @@ mod tests {
             bot.tapped_launcher([300.0, 200.0, 8.0]);
         }
         assert_eq!(bot.goal(&v), Goal::To([-900.0, 0.0, 8.0]));
+    }
+
+    /// At a launcher with an empty one carried, the bot draws the empty
+    /// one before it taps: the swap drops what is held, and with the gun
+    /// out it traded the gun.
+    #[test]
+    fn a_bas_bot_taps_for_a_launcher_with_its_empty_one_in_hand() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = bas_view();
+        v.origin = [260.0, 200.0, 8.0];
+        let (pitch, yaw) = aim_angles(&v, [300.0, 200.0, 8.0]);
+        v.view = [pitch.clamp(-80.0, 80.0), yaw, 0.0];
+        v.spent_rocket = Some(5);
+        let mut used = false;
+        for _ in 0..60 {
+            let cmd = bot.think(&v);
+            assert_eq!(cmd.weapon, 5, "the empty launcher drawn");
+            used |= cmd.buttons & BUTTON_USE != 0;
+        }
+        assert!(!used, "a tap with the gun out");
+        v.weapon = 5;
+        let used = (0..60).any(|_| bot.think(&v).buttons & BUTTON_USE != 0);
+        assert!(used, "no tap once it is in hand");
     }
 
     /// A bot with no round left anywhere asks for `kill`, once it has

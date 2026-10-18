@@ -5088,12 +5088,18 @@ impl Server {
             })
             .fold(0u64, |m, i| m | 1 << i);
         // The one in hand first: with two launchers carried, the other
-        // read as the rocket and the one in hand fired at players.
-        let rocket = def
-            .is_some_and(|d| d.weapon_class == "rocketlauncher")
-            .then_some(sim.ps.weapon)
-            .or_else(|| held(&|d| d.weapon_class == "rocketlauncher"))
-            .filter(|r| loaded >> r & 1 == 1);
+        // read as the rocket and the one in hand fired at players. Else
+        // any loaded one: an empty bazooka carried beside a loaded
+        // panzerschreck read as no rocket, and the bot traded launcher
+        // after launcher away fetching more (mp_foy, seed 15).
+        let is_launcher = |w: u8| {
+            weapons
+                .get(w as usize)
+                .is_some_and(|d| d.weapon_class == "rocketlauncher")
+        };
+        let rocket = held_rocket(sim.ps.weapon, sim.ps.weapons_held & loaded, is_launcher);
+        let spent_rocket = (1u8..64)
+            .find(|&w| sim.ps.weapons_held >> w & 1 == 1 && loaded >> w & 1 == 0 && is_launcher(w));
         let gun = (1u8..64).find(|&i| {
             loaded >> i & 1 == 1
                 && weapons
@@ -5201,6 +5207,7 @@ impl Server {
             unpin: None,
             pistol,
             rocket,
+            spent_rocket,
             gun,
             reload_ms,
             draw_ms,
@@ -10164,6 +10171,16 @@ fn breach_aim(
     })
 }
 
+/// The loaded rocket launcher a bot carries ([`crate::bots::BotView::rocket`]):
+/// the one in `hand` if loaded, else the first loaded one in `loaded`
+/// (the held weapons with a round left).
+fn held_rocket(hand: u8, loaded: u64, launcher: impl Fn(u8) -> bool) -> Option<u8> {
+    let ok = |w: u8| w < 64 && loaded >> w & 1 == 1 && launcher(w);
+    Some(hand)
+        .filter(|&w| ok(w))
+        .or_else(|| (1u8..64).find(|&w| ok(w)))
+}
+
 /// The launchers' sighted spread standing (`adsSpread`: 4 for the
 /// bazooka and the panzerschreck, 3.5 for the panzerfaust).
 const BREACH_SPREAD_DEG: f32 = 4.0;
@@ -10197,6 +10214,18 @@ fn spread_clear(
 
 #[cfg(test)]
 mod tests {
+    /// A loaded launcher counts whatever else is carried: an empty bazooka
+    /// beside a loaded panzerschreck, the pistol in hand.
+    #[test]
+    fn a_loaded_launcher_beside_an_empty_one_is_the_rocket() {
+        let launcher = |w: u8| w == 5 || w == 43;
+        let loaded = (1 << 9) | (1 << 43);
+        assert_eq!(held_rocket(9, loaded, launcher), Some(43));
+        assert_eq!(held_rocket(5, loaded, launcher), Some(43));
+        assert_eq!(held_rocket(43, loaded | (1 << 5), launcher), Some(43));
+        assert_eq!(held_rocket(9, 1 << 9, launcher), None);
+    }
+
     use super::*;
     use crate::world::World;
     use vcod_common::collision::test_world;
