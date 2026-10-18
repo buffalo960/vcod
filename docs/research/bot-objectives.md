@@ -876,7 +876,7 @@ shoot-off seed 11 looped on 47 defuses at the allied last base while an
 allied attacker stood over the western axis bunker; mp_foy's shooting
 seed 11 stopped on a `_spawnlogic::Player_WaitForDeath` script error;
 mp_foy shooting ended at 10259 to 21859 (mean 14571), mp_italy shooting
-at 10919 to 18499, only ever won by the axis. After, all 96 runs end on
+at 10919 to 18499. After, all 96 runs end on
 their bases: mp_foy shooting 9939 to 16659 (mean 11921, eleven of twelve
 under 12800), shoot off 6419 to 6959, two bots 9839 to 13059; mp_italy
 shooting 10259 to 12979, shoot off 6399 to 7259, two bots 10039 to 12539;
