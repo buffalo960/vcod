@@ -3116,6 +3116,9 @@ and settings, release, seeds 1-4607 odd; ours only):
 | partway landing replanned, drop avoided | 220 | 11 | 6 |
 | partway landing replanned (kept) | 181 | 10 | 6 |
 
+`mp_depot` and `mp_hurtgen`, seeds 1-191 odd: 0 / 0 / 0 and 0 / 3 / 0 on
+master and the kept row alike.
+
 - None of the 10-18 follow-ups reproduce on master: seeds 1671, 2001 and
   311 run clean, seed 1239 still dies at the ledge over the hold. Master's
   stalls are 143 of 161 in three spells: seed 1415 (two bots pinning
