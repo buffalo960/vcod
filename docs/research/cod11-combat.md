@@ -955,8 +955,8 @@ the four, as at carentan's `idle` 29300, whose `commandTime` is 29282 while
 the probe had sent 29298 too; the rest run in the next frame. VERIFIED: a
 frame whose last cmd is the tap reads exactly `hipSpreadFireAdd` 0.7 times
 255, 178.50 on the carbine (carentan `sustained_fire` 32150, `commandTime`
-32132, the tap's stamp), so the shot's own cmd decays before it adds
-(INFERRED, `PM_AdjustAimSpreadScale` runs ahead of the fire, 2.1). vcod: `playerstate_combat_ab` replays each
+32132, the tap's stamp). INFERRED: the shot's own cmd decays before it
+adds, since `PM_AdjustAimSpreadScale` runs ahead of the fire (2.1). vcod: `playerstate_combat_ab` replays each
 logged step's cmds at retail's stamps, each frame running up to the
 `commandTime` retail's snapshot read (`common::CmdLog`), and then the
 sight fraction and the spread counter match on every sample to the
