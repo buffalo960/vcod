@@ -517,7 +517,9 @@ pub fn not_solid(
 
 /// `setModel(name)` allocates a model configstring slot and stores the name,
 /// so `.model` reads back what was set, then drops the links of children on
-/// a tag the new model lacks (`G_DObjUpdate`, `link::model_changed`).
+/// a tag the new model lacks (`G_DObjUpdate`, `link::model_changed`), and
+/// links the entity (0x5db16): a `script_model` is filed under its new
+/// model's bounds from here (combat doc 14.7).
 pub fn set_model(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -544,6 +546,13 @@ pub fn set_model(
     let field = cx.intern_folded("model");
     host.set_field(cx, id, field, Value::String(name))?;
     super::super::link::model_changed(host, cx, id);
+    if id.0 < crate::server::MAX_CLIENTS as u32 {
+        if let Some(link) = host.area.last_link(id.0) {
+            host.area.link(id.0, &link);
+        }
+    } else {
+        host.link_entity(cx, id);
+    }
     Ok(Value::Undefined)
 }
 
@@ -839,6 +848,34 @@ mod tests {
     use crate::game::testing::fixture;
     use crate::world::World;
     use std::rc::Rc;
+
+    /// `setModel` links (0x5db16): a `script_model` spawned with no model
+    /// is filed under its world box, and from its `setModel` under the
+    /// model's bounds about its origin (combat doc 14.7).
+    #[test]
+    fn set_model_refiles_a_script_model_under_its_model_bounds() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let (mut vm, mut host) = fixture();
+        host.fs = Some(Rc::new(fs));
+        host.initializing = true;
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn(cx).unwrap();
+            let origin = cx.intern_folded("origin");
+            host.set_field(cx, e, origin, Value::Vector([100.0, 0.0, 0.0]))
+                .unwrap();
+            crate::game::spawn::link_script_model(&mut host, cx, e);
+            assert_eq!(host.area.filed(e.0), Some(([99.0, -1.0], [101.0, 1.0])));
+            let name = Value::String(cx.intern_exact("xmodel/weapon_panzerfaust_ammo"));
+            set_model(&mut host, cx, Some(Target::Entity(e)), &[name]).unwrap();
+            let (lo, hi) = host.area.filed(e.0).unwrap();
+            assert_ne!((lo, hi), ([99.0, -1.0], [101.0, 1.0]));
+            assert!(lo[0] < 100.0 && hi[0] > 100.0, "{lo:?} {hi:?}");
+            // The world box stays the origin's.
+            assert_eq!(host.area.last_link(e.0).unwrap().absmax, [101.0, 1.0, 1.0]);
+        });
+    }
 
     /// The two `spawn`s the one name dispatches. A receiver picks the
     /// `ClientSpawn` form: it moves the client, queues the sim's move with
