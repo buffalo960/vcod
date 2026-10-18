@@ -222,6 +222,10 @@ pub struct BotView {
     /// On a ladder, the middle of the rungs level with the body
     /// (`nav::NavGraph::ladder_middle`): a climb strafes toward it.
     pub ladder_middle: Option<[f32; 2]>,
+    /// Backing down a ladder whose fall kills, the yaw square into its face
+    /// and the middle of its rungs (`nav::Follower::back_face`): the creep
+    /// off the head holds the one and strafes to the other.
+    pub back_face: Option<(f32, [f32; 2])>,
     /// `ps.on_ground`.
     pub on_ground: bool,
     /// The way to [`Self::waypoint`] is a jump edge: jump where the body
@@ -2742,6 +2746,18 @@ impl Bot {
         if (dz < -BACK_DOWN_HEIGHT && !view.run_off) || (view.on_ladder && dz < 0.0 && !over_top) {
             let flat = (to[0] - from[0]).hypot(to[1] - from[1]);
             let forward = crate::nav::back_move(flat, view.on_ladder);
+            // Off the head of a ladder whose fall kills, the creep faces
+            // the rungs and strafes to their middle: backed toward the
+            // foot from a few units off the line, bots slid past mp_ship's
+            // crow's nest rungs down the hatch (bot-navigation.md section 3).
+            if !view.on_ladder
+                && forward == -crate::nav::CREEP
+                && let Some((face, middle)) = view.back_face
+            {
+                let yaw = self.creep.hold(forward, face);
+                let right = along_face(yaw, from, middle).clamp(forward, -forward);
+                return (-crate::nav::LADDER_PITCH, yaw, forward, right);
+            }
             let yaw = self.creep.hold(forward, yaw_diff(yaw + 180.0, 0.0));
             // On the rungs only the strafe moves a body along the face, and
             // only facing it: square into it, sliding toward the waypoint,
@@ -3614,6 +3630,7 @@ mod tests {
             on_ladder: false,
             ladder_normal: [0.0; 3],
             ladder_middle: None,
+            back_face: None,
             on_ground: true,
             jump: false,
             leap: false,
@@ -4610,7 +4627,7 @@ mod tests {
         // The foot is 300 below, 20 ahead in +x: back toward it facing -x.
         v.waypoint = Some([20.0, 0.0, -236.0]);
         let first = bot.think(&v);
-        assert_eq!(first.forward, -crate::nav::CREEP_KEY);
+        assert_eq!(first.forward, -crate::nav::CREEP);
         assert_eq!(first.angles[1], deg_short(-180.0));
         // Over the lip and past the foot's column: same heading.
         v.origin[0] = 21.0;
@@ -4619,6 +4636,31 @@ mod tests {
             (past.forward, past.angles[1]),
             (first.forward, first.angles[1])
         );
+    }
+
+    /// mp_ship's crow's nest: backed toward the foot from a few units off
+    /// the rungs' line, bots slid past the rungs down the hatch (seeds
+    /// 1919, 3941, 4161, 4545). Off the head of a ladder whose fall kills
+    /// the creep faces the rungs and strafes to their middle.
+    #[test]
+    fn a_creep_off_a_deadly_head_faces_the_rungs_and_strafes_to_them() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        // The rungs face -x at x 4975, y 59 to 69; the body is 8 south.
+        v.origin = [4963.9, 56.0, 1219.125];
+        v.waypoint = Some([4959.0, 64.0, 692.125]);
+        v.back_face = Some((0.0, [4959.0, 64.0]));
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.forward, -crate::nav::CREEP);
+        assert_eq!(cmd.angles[1], deg_short(0.0));
+        // Facing +x, the middle at +y is to the left.
+        assert!(
+            cmd.right < 0 && cmd.right >= -crate::nav::CREEP,
+            "{}",
+            cmd.right
+        );
+        v.origin[1] = 64.0;
+        assert_eq!(bot.think(&v).right, 0, "on the line");
     }
 
     #[test]
@@ -4652,7 +4694,7 @@ mod tests {
         v.waypoint = Some([20.0, 0.0, -236.0]);
         for _ in 0..30 {
             let cmd = bot.think(&v);
-            assert_eq!(cmd.forward, -crate::nav::CREEP_KEY);
+            assert_eq!(cmd.forward, -crate::nav::CREEP);
             assert!(!bot.unsticking(), "creeping at {:?}", v.origin);
             v.origin[0] += 0.7;
         }

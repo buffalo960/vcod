@@ -2021,6 +2021,47 @@ impl Follower {
             self.fell = true;
             return None;
         }
+        // Run off a drop and brought to a stop short of the lip on the
+        // edge's top, where the run on from rest no longer lands: plan
+        // round the edge. A bot that ran along the wall at y -400 on
+        // mp_ship's hold floor at 56 for the drop to (3264, -378, -64)
+        // bumped a bot dropping ahead of it, then pressed at its waypoint
+        // behind the wall until an unstick spell ran it off the floor's
+        // south side (seed 2195, bot-navigation.md section 3). Once: a
+        // plan with no way round takes the edge again from rest, and on
+        // mp_depot's roof at 212 a run off from rest misses every drop, so
+        // the bot planned round and back for good.
+        if let Some(world) = world
+            && body.on_ground
+            && !body.on_ladder
+            && self.next > 0
+            && here.z - w.z > vcod_common::pmove::JUMP_HEIGHT
+            && flat(w) > REACH
+            && body.velocity.truncate().length() < UNPIN_SPEED
+        {
+            let edge = (self.path[self.next - 1], self.path[self.next]);
+            let top = g.nodes[edge.0 as usize];
+            if (here.z - top.z).abs() < vcod_common::pmove::STEPSIZE
+                && !g.jumps.contains(&edge)
+                && !self.avoid.iter().any(|a| (a.0, a.1) == edge)
+                && self.runs_off(world, edge, top, w)
+                && !matches!(
+                    walk_with(
+                        world,
+                        here,
+                        Some(body.velocity),
+                        w.truncate(),
+                        Some(w.z),
+                        Gait::Forward
+                    ),
+                    Walked::Arrived(_, false)
+                )
+            {
+                self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
+                self.reset();
+                return None;
+            }
+        }
         // A plan's first node more than a step over the feet is a floor
         // the body left while the search ran: a bot that wandered off
         // mp_ship's crow's nest top at 1254 onto the hatch's rim at 1219
@@ -2582,12 +2623,17 @@ impl Follower {
         // climber stepped off, mp_ship's waiting bots walked back onto the
         // crow's nest's exit and shoved it off the plate down the hatch
         // (bot-navigation.md section 3).
+        // Not one pressed against the waiter where a fall off is no death:
+        // it stepped off and is on its way out through the spot. At mp_ship's
+        // x 3793 head the climber pressed on the bot waiting at
+        // (3751, -4, 616) on its way south until the wait ran out (seed 761).
         let mut on_head = off_rungs
             .iter()
             .filter(|&&(c, _)| {
                 waiting
                     && (c.z - end.z).abs() < STEPSIZE
                     && box_flat(&rungs, c) < box_flat(&rungs, spot)
+                    && (deadly_head || (c - at).truncate().length() > 2.0 * HALF_WIDTH + 2.0)
             })
             .map(|&(_, v)| v.truncate().length() > 1.0)
             .peekable();
@@ -2733,6 +2779,47 @@ impl Follower {
         }
         let foot = g.nodes[self.path[self.next - 1] as usize];
         g.face_ahead(foot).map(|_| foot.truncate())
+    }
+
+    /// Down a ladder whose fall kills, from its head: the yaw square into
+    /// the rungs' face and the middle of the rungs along it. The creep off
+    /// the head backs along that yaw strafing to the middle
+    /// (`bots::Bot::steer`). Backed toward the foot, as the graph's walk
+    /// did, it grabs mp_ship's crow's nest rungs only from a diamond about
+    /// 4 units across round the head; a bot that came onto the head off
+    /// the line, or along the rim, fell down the hatch past them
+    /// (bot-navigation.md section 3).
+    pub fn back_face(&self, g: &NavGraph) -> Option<(f32, glam::Vec2)> {
+        let i = self.next.checked_sub(1)?;
+        let (head, foot) = (
+            g.nodes[*self.path.get(i)? as usize],
+            g.nodes[*self.path.get(self.next)? as usize],
+        );
+        if foot.z > head.z - self.deadly_fall() {
+            return None;
+        }
+        let (lo, hi) = *g
+            .ladder_boxes
+            .iter()
+            .filter(|b| box_flat(b, head) < LADDER_NEAR && box_flat(b, foot) < LADDER_NEAR)
+            .min_by(|a, b| {
+                (box_flat(a, head) + box_flat(a, foot))
+                    .total_cmp(&(box_flat(b, head) + box_flat(b, foot)))
+            })?;
+        let ext = hi - lo;
+        // The thin axis is across the face; the foot stands on the
+        // climber's side of it.
+        let (a, b) = if ext.x < ext.y { (0, 1) } else { (1, 0) };
+        let into = ((lo[a] + hi[a]) * 0.5 - foot[a]).signum();
+        let yaw = match (a, into > 0.0) {
+            (0, true) => 0.0,
+            (0, false) => 180.0,
+            (_, true) => 90.0,
+            (_, false) => -90.0,
+        };
+        let mut middle = foot.truncate();
+        middle[b] = (lo[b] + hi[b]) * 0.5;
+        Some((yaw, middle))
     }
 
     /// Whether the edge on from the current waypoint climbs more than a
@@ -3618,10 +3705,7 @@ const CREEP_RADIUS: f32 = 24.0;
 /// The creep's move key, about 16 units/s. The body leaves the lip at 15
 /// units past the face and is first low enough to grab (under the ladder's
 /// top) a tick later, so two ticks of travel have to stay under 2 units.
-const CREEP: i8 = 15;
-/// [`CREEP`], for the bots' tests.
-#[cfg(test)]
-pub const CREEP_KEY: i8 = CREEP;
+pub const CREEP: i8 = 15;
 /// The ticks the creep adds to a backing walk's budget.
 const CREEP_TICKS: usize = 16;
 
@@ -7324,6 +7408,52 @@ mod tests {
         assert!(f.avoid.is_empty());
     }
 
+    /// mp_ship's hold floor at 56: a bot run along the wall at y -400 for
+    /// the drop to (3264, -378, -64) was stopped short of the lip by a bot
+    /// dropping ahead, pressed at its waypoint behind the wall and was run
+    /// off the floor's south side by an unstick spell (seed 2195). Stopped
+    /// there, it plans round the drop; on the move it runs on.
+    #[test]
+    fn a_run_off_a_drop_stopped_short_of_the_lip_plans_round_it() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(3329.0, -419.0, 56.125),
+                Vec3::new(3296.0635, -419.05017, 56.125),
+                Vec3::new(3264.001, -378.19662, -63.875),
+                Vec3::new(3232.0, -351.0, -63.875),
+            ],
+            vec![vec![1], vec![2], vec![3], vec![2]],
+        );
+        let goal = crate::bots::Goal::To([3232.0, -351.0, -63.875]);
+        let mut budget = 100;
+        let run = |v: Vec3| Footing {
+            still: false,
+            velocity: v,
+            ..Footing::STANDING
+        };
+        let bottom = Some([3264.001, -378.19662, -63.875]);
+        let mut f = Follower::default();
+        let mut at =
+            |p: [f32; 3], v: Vec3| f.waypoint(&g, Some(w), goal, p, run(v), &mut budget, &mut || 0);
+        let west = Vec3::new(-190.0, 0.0, 0.0);
+        assert_eq!(
+            at([3329.0, -419.0, 56.125], west),
+            Some([3296.0635, -419.05017, 56.125])
+        );
+        assert_eq!(at([3299.8, -415.13, 56.125], west), bottom);
+        assert_eq!(at([3280.3, -415.13, 56.125], west), bottom, "on the move");
+        assert_eq!(
+            at([3266.6, -415.13, 56.125], Vec3::new(-6.0, 0.0, 0.0)),
+            None,
+            "stopped"
+        );
+        assert_eq!(f.avoid.len(), 1);
+    }
+
     /// mp_ship's mast hatch, seed 2171: off the rungs at (3705, 58, 992)
     /// the walk on west to (3648, 71, 994) arrives at the graph's scale and
     /// falls back down the hatch at a weapon's 0.9. The bot heading on at
@@ -7854,6 +7984,76 @@ mod tests {
         // stood in its climber's way off the rungs (seed 3769).
         let beside = g.nodes[head as usize] + Vec3::X * 5.0;
         assert_eq!(f.ladder_yield(&g, beside, body, &up, &[]), Some(spot));
+    }
+
+    /// mp_ship's crow's nest: the creep off the head faces the rungs (they
+    /// face -x at x 4975) and strafes to their middle at y 64; at the head
+    /// of the ladder at x 3793, whose fall does not kill, it backs toward
+    /// the foot as the graph's walk did.
+    #[test]
+    fn the_crows_nest_back_down_faces_the_rungs() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([4963.9, 64.0, 1219.125]).unwrap();
+        let foot = g.nearest([4959.0, 64.0, 692.125]).unwrap();
+        let f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            ..Default::default()
+        };
+        let (yaw, middle) = f.back_face(&g).expect("a face");
+        assert_eq!(yaw, 0.0);
+        assert!((middle.y - 64.0).abs() < 0.5, "{middle}");
+        let f = Follower {
+            path: vec![
+                g.nearest([3760.0, 65.0, 616.0]).unwrap(),
+                g.nearest([3809.0, 65.0, 304.0]).unwrap(),
+            ],
+            next: 1,
+            ..Default::default()
+        };
+        assert_eq!(f.back_face(&g), None);
+    }
+
+    /// mp_ship's ladder at x 3793: the climber stepped off the head and
+    /// pressed on the bot waiting aside at (3751, 2, 616), the way south
+    /// it was headed, and the wait held for the body between the spot and
+    /// the rungs until it ran out (seed 761, 26 stalled bot-ticks). A body
+    /// on the head holds the wait; one pressed on the waiter ends it.
+    #[test]
+    fn a_climber_pressed_on_the_waiter_ends_the_wait() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let g = graph_for("mp_ship", &world);
+        let head = g.nearest([3760.0, 65.0, 616.0]).unwrap();
+        let foot = g.nearest([3809.0, 65.0, 304.0]).unwrap();
+        let body = Footing {
+            still: false,
+            ..Footing::STANDING
+        };
+        let mut f = Follower {
+            path: vec![head, foot],
+            next: 1,
+            ..Default::default()
+        };
+        let up = (Vec3::new(3808.1, 65.7, 554.5), Vec3::new(0.0, 0.0, 95.0));
+        let spot = f
+            .ladder_yield(&g, g.nodes[head as usize], body, &[up], &[])
+            .expect("a spot");
+        let at = Vec3::new(3751.1, 1.9, 616.125);
+        assert!(at.truncate().distance(spot.truncate()) < 16.0, "{spot}");
+        let pushing = Vec3::new(0.0, -20.0, 0.0);
+        let off = (Vec3::new(3785.0, 58.0, 623.125), pushing);
+        assert_eq!(
+            f.ladder_yield(&g, at, body, &[], &[off]),
+            Some(spot),
+            "on the head"
+        );
+        let pressed = (Vec3::new(3751.1, 32.1, 616.125), pushing);
+        assert_eq!(f.ladder_yield(&g, at, body, &[], &[pressed]), None);
     }
 
     #[test]
