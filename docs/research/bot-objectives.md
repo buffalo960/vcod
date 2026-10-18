@@ -873,3 +873,40 @@ gate, seeds 1, 3, 5, 7: 11719, 22138, 10419, 11199. Before the
 futile-enemy rule the shooting seed 7 stood twenty minutes with both
 sides' last bases breached, an LMG bot facing a dry-pistol one; before
 the backing rule seed 5 ran out its 29 minutes on six defuses.
+
+## 8. Bot management
+
+vcod's own extension, with nothing on retail to match beyond the paths a
+bot joins and leaves by. `crate::botmgmt` holds the rules and the name
+pool, `server/bot_admin.rs` the pass that runs at the top of the bots'
+tick (every 500 ms, or the tick after an `addbot` or `removebot`).
+
+- Names. VERIFIED: 1.1d's `ClientUserinfoChanged` (game.mp.i386.so
+  0x520f4) copies the userinfo `name` into the client's 32-byte buffer at
+  `client+0x212c`, stopping once 31 bytes are written, and drops a `^`
+  code whose low three bits are 0. Every pool name with `[BOT] ` and a
+  two-digit suffix fits in 31 bytes and carries no `^`, `\`, `"`, `;` or
+  `%` (the test `the_pool_holds_a_hundred_distinct_names_that_fit`). The
+  draw has its own generator, so a name never moves the server's `rand()`
+  draws the seeded bot gates replay.
+- Joining. A bot connects as `--bots` always did: the two `rand()` draws
+  in that order, the first free slot from `sv_privateClients` up, and the
+  team menu answered with its side. `--bots` deals allies, axis, allies in
+  turn, which balance reproduces with no humans, so the seeded gates keep
+  their games.
+- Team moves. A move answers the team menu (`mr <id> <team menu> <team>`)
+  on the bot's behalf and clears its answered menus, so the weapon menu the
+  switch reopens is answered again. INFERRED from stock `tdm.gsc`'s menu
+  handler (pak5.pk3 `maps/MP/gametypes/tdm.gsc` 303-307): a player
+  answering his own team while playing is ignored, one changing team while
+  playing suicides first. The planner only moves a bot whose
+  `sessionstate` is `dead` or `spectator`, so no move costs a death.
+- Counting. Sides come from `pers["team"]`, which the team menu sets at
+  once (`sessionteam` waits for the spawn); a bot still joining counts on
+  the side it asks for. A human counts toward `vc_bot_minplayers` once his
+  `pers["team"]` is `allies` or `axis`. VERIFIED: stock `dm.gsc` sets
+  `pers["team"]` to the team menu's answer too (pak5.pk3
+  `maps/MP/gametypes/dm.gsc` 267).
+- Leaving. A removed bot goes through `SV_DropClient` with
+  `EXE_PLAYERKICKED`, so the game's `ClientDisconnect` and the drop notice
+  run as for a kick, and the slot frees at once (a bot leaves no zombie).

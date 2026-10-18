@@ -63,6 +63,7 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.pitch = (-view[0]).to_radians();
     ps.velocity = vec3("velocity");
     ps.speed = int("speed") as f32;
+    ps.gravity = int("gravity") as f32;
 
     let eflags = int("eFlags");
     let pm_flags = int("pm_flags");
@@ -260,6 +261,7 @@ mod tests {
         setf(&mut w, "viewHeightCurrent", super::super::VIEW_STAND);
         set(&mut w, "commandTime", time);
         set(&mut w, "speed", 190);
+        set(&mut w, "gravity", 800);
         w
     }
 
@@ -433,6 +435,44 @@ mod tests {
         }
         let h = pred.ps.velocity.truncate().length();
         assert!((h - 250.0).abs() < 1.0, "{h}");
+    }
+
+    /// A jump takes off and falls at the wire's `ps.gravity`, a retail
+    /// `g_gravity` 400 server's included: the takeoff speed is
+    /// `sqrt(2 * 39 * g)`, so the peak stays 39 and the flight lasts
+    /// `sqrt 2` times as long.
+    #[test]
+    fn the_jump_predicts_at_the_wire_s_gravity() {
+        let world = test_world(&[]);
+        let world = MoveWorld::bare(&world);
+        let flight = |gravity: i32| {
+            let mut w = standing(5000);
+            set(&mut w, "gravity", gravity);
+            let mut pred = from_wire(&PROTOCOL_V1, &w, None);
+            assert_eq!(pred.ps.gravity, gravity as f32);
+            let mut top = 0.0f32;
+            for t in (5008..=7000).step_by(8) {
+                let mut c = cmd(t);
+                c.up = if t == 5008 { 127 } else { 0 };
+                run_cmd(&mut pred, &c, &world, &[]);
+                top = top.max(pred.ps.origin.z);
+                if t > 5008 && pred.ps.on_ground {
+                    return (top, t - 5008);
+                }
+            }
+            panic!("no landing at g {gravity}");
+        };
+        let ((stock_top, stock_ms), (light_top, light_ms)) = (flight(800), flight(400));
+        assert!((39.0..42.0).contains(&stock_top), "{stock_top}");
+        assert!(
+            (light_top - stock_top).abs() < 1.5,
+            "{light_top} vs {stock_top}"
+        );
+        let ratio = light_ms as f32 / stock_ms as f32;
+        assert!(
+            (ratio - 2f32.sqrt()).abs() < 0.05,
+            "{light_ms} vs {stock_ms}"
+        );
     }
 
     #[test]

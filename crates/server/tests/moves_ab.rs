@@ -474,6 +474,16 @@ const CAPTURES: &[Capture] = &[
         protocol: &PROTOCOL_V1,
         rules: MoveRules::V1_1,
     },
+    Capture {
+        file: SPEEDGRAV_1_1,
+        protocol: &PROTOCOL_V1,
+        rules: MoveRules::V1_1,
+    },
+    Capture {
+        file: SPEEDGRAV_1_5,
+        protocol: &PROTOCOL_V6,
+        rules: MoveRules::V1_5,
+    },
 ];
 
 const MOVES_1_1: &str = "mp_carentan-dm-slope-8ms-moves-1.1.txt";
@@ -489,11 +499,34 @@ const SPRINGFIELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-1.1.txt";
 /// `fireTime` and its rechamber, so the latch meets states 3 and 4
 /// (cod11-combat.md 1.4).
 const SPRINGFIELD_HELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-held-1.1.txt";
+/// The moves script at `ps.speed` 250 and `ps.gravity` 400
+/// (`client-probes/probe_speedgrav`: `g_speed 250` on 1.1d, a script
+/// `maxspeed` on 1.5b and UO, `g_gravity` set after the load;
+/// cod15-movement.md, "ps.speed" and "ps.gravity").
+const SPEEDGRAV_1_1: &str = "mp_carentan-dm-slope-8ms-speedgrav-1.1.txt";
+const SPEEDGRAV_1_5: &str = "mp_carentan-dm-slope-8ms-speedgrav-1.5.txt";
+const SPEEDGRAV_UO: &str = "mp_carentan-dm-slope-8ms-speedgrav-uo.txt";
 
 /// Fields a capture's replay may miss, with how many snapshots and why.
 /// The 1.5 captures replay under 1.5b's stored arithmetic
 /// (cod15-movement.md 7).
-const GAPS: &[(&str, &str, usize)] = &[];
+const GAPS: &[(&str, &str, usize)] = &[
+    // The run at 250 carries the body to the kerb wall at x 1656, where the
+    // prone press lands it on the wall's near-vertical face (proneDirection
+    // pitch 273.7) and it hangs there airborne for a second: the torso pitch
+    // eases 0.01-0.02 degrees off retail's and the pitch cap's pushes land
+    // 1-3 shorts off (ct 48146-48895, 58943-58988). Not speed or gravity:
+    // the stock captures never reach the face. Unsettled; cod15-movement.md,
+    // "ps.gravity".
+    (SPEEDGRAV_1_1, "delta_angles[0]", 11),
+    // The diagonal run's step onto the same kerb (ct 62946): retail's
+    // velocity reads as if the step came a cmd or two later than ours. One
+    // snapshot; the next agrees. Unsettled, same section.
+    (SPEEDGRAV_1_1, "origin.xy", 1),
+    (SPEEDGRAV_1_1, "velocity", 1),
+    (SPEEDGRAV_1_1, "bobCycle", 1),
+    (SPEEDGRAV_1_1, "movementDir", 1),
+];
 
 fn setup() -> Option<(CollisionWorld, Vec<Option<WeaponDef>>)> {
     let fs = vcod_common::testing::game_fs()?;
@@ -1024,4 +1057,66 @@ fn the_predictor_replays_walks_against_patches() {
         failures.extend(over(&r, &[]).into_iter().map(|f| format!("{file}: {f}")));
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// `lines` with every snapshot's `speed` and `gravity` put back to the
+/// stock 190 and 800.
+fn at_stock_speed_and_gravity(p: &Protocol, mut lines: Vec<Line>) -> Vec<Line> {
+    let speed = msg::PlayerState::field_index(p, "speed").unwrap();
+    let gravity = msg::PlayerState::field_index(p, "gravity").unwrap();
+    for l in &mut lines {
+        if let Line::Snap(w, _) = l {
+            w.fields[speed] = 190;
+            w.fields[gravity] = 800;
+        }
+    }
+    lines
+}
+
+/// The speedgrav captures replayed at the stock speed and gravity: the
+/// runs, the jumps and the falls go wrong, which shows the gate above reads
+/// both off the wire.
+#[test]
+fn the_speedgrav_captures_fail_at_stock_speed_and_gravity() {
+    let Some((world, weapons)) = setup() else {
+        return;
+    };
+    let install_11 = vcod_common::testing::game_fs_11().is_some();
+    for (file, p, rules) in [
+        (SPEEDGRAV_1_1, &PROTOCOL_V1, MoveRules::V1_1),
+        (SPEEDGRAV_1_5, &PROTOCOL_V6, MoveRules::V1_5),
+    ] {
+        if rules == MoveRules::V1_1 && !install_11 {
+            continue;
+        }
+        let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{file}")).unwrap();
+        let lines = at_stock_speed_and_gravity(p, parse(p, &text));
+        let r = replay(p, rules, &lines, &world, &weapons);
+        print(&format!("{file} at stock"), &r);
+        let off = r.count("origin.xy") + r.count("origin.z") + r.count("velocity");
+        assert!(off > 100, "{file}: {off}");
+    }
+}
+
+/// UO's half of the speedgrav gate: a script `maxspeed` 250 and
+/// `g_gravity` 400 on the UO 1.51b server. Needs `COD_DIR` at a UO
+/// install, as the sprint gate does.
+#[test]
+fn the_predictor_replays_uo_at_maxspeed_and_gravity() {
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{SPEEDGRAV_UO}")).unwrap();
+    let Some((world, weapons)) = uo_setup(&text, "mp_carentan") else {
+        return;
+    };
+    let lines = parse(&PROTOCOL_V22, &text);
+    let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+    print(SPEEDGRAV_UO, &r);
+    assert!(r.compared > 500, "only {} snapshots", r.compared);
+    let failures = over(&r, &[]);
+    assert!(failures.is_empty(), "{failures:#?}");
+
+    let lines = at_stock_speed_and_gravity(&PROTOCOL_V22, lines);
+    let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+    print("UO speedgrav at stock", &r);
+    let off = r.count("origin.xy") + r.count("origin.z") + r.count("velocity");
+    assert!(off > 100, "{off}");
 }

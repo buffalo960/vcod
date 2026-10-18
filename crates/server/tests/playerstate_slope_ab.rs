@@ -64,6 +64,9 @@ struct ProneFields {
     /// The wire's `ps.speed`, the server's `g_speed`; 190 where a capture
     /// logs no wire.
     speed: i32,
+    /// The wire's `ps.gravity`, `g_gravity`; 800 where a capture logs no
+    /// wire.
+    gravity: i32,
 }
 
 enum Line {
@@ -147,6 +150,10 @@ fn parse_fixture(text: &str) -> Vec<Line> {
                                 .get("wire")
                                 .and_then(|w| w.split(',').find_map(|f| f.strip_prefix("speed:")))
                                 .map_or(190, |v| v.parse().unwrap()),
+                            gravity: kv
+                                .get("wire")
+                                .and_then(|w| w.split(',').find_map(|f| f.strip_prefix("gravity:")))
+                                .map_or(800, |v| v.parse().unwrap()),
                         }
                     }),
                 }));
@@ -228,6 +235,7 @@ fn state_from(snap: &Snap, weapon: u8, eye: Option<EyeLeg>) -> PlayerState {
         set("eFlags", pf.eflags);
         set("pm_flags", pf.pm_flags);
         set("speed", pf.speed);
+        set("gravity", pf.gravity);
         set(
             "groundEntityNum",
             if snap.on_ground {

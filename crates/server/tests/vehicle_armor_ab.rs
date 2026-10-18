@@ -707,9 +707,12 @@ fn bones(log: &[String]) -> BTreeMap<(i32, String), [f32; 3]> {
 /// for every tag), with why (docs/research/coduo-vehicles.md 13, "The
 /// glide back").
 const GLIDE_GAPS: &[(i32, &str, &str)] = &[
-    // The neck and head controls ease from 0 after the change; retail's
-    // head is 0.34 further along on the second frame.
-    (54000, "bip01 head", "the head control's first steps"),
+    // The pose of 53900: retail's neck control is already on its target
+    // (27 yaw), two ease steps in one frame, where ours takes one (18).
+    // UO eases in the DObj's controller callback, once per skeleton build;
+    // what builds the rider's skeleton twice that frame is not found
+    // (coduo-vehicles.md 13, "The glide back").
+    (54000, "bip01 head", "the neck control's double step"),
 ];
 
 /// The tank rider back from the gunner's seat into the driver's: his legs

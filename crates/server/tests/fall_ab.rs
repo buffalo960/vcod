@@ -215,6 +215,14 @@ fn parse_retail(text: &str) -> Retail {
     let mut cmds = Vec::new();
     for l in text.lines().filter_map(|l| l.strip_prefix("CMDS st=")) {
         let (st, rest) = l.split_once(" d=").expect("a CMDS line");
+        // Past the steps and yaws, `in=` and `snap=` (the probe's later lines).
+        let rest = rest
+            .split(" in=")
+            .next()
+            .unwrap()
+            .split(" snap=")
+            .next()
+            .unwrap();
         let (steps, yaws) = match rest.split_once(" yaw=") {
             Some((steps, yaws)) => (steps, Some(yaws)),
             None => (rest, None),

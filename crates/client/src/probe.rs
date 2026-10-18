@@ -1213,7 +1213,12 @@ pub fn probe(
             // `--probe-vehicle` and `--probe-uo-weapon` log their cmd times
             // too, which a gate replays where a landing rides the split.
             if probe_fall || vehicle.is_some() {
-                fall.record_cmd(c.server_time, fall_walk.map(|_| c.angles[1]));
+                fall.record_cmd(
+                    c.server_time,
+                    fall_walk.map(|_| c.angles[1]),
+                    (c.buttons, c.wbuttons, c.up),
+                    client.snapshots().newest().map(|s| s.server_time),
+                );
             }
             if save_plant || save_defuse {
                 sd.record(c);
@@ -11317,18 +11322,42 @@ const KILLCAM_TAIL: Duration = Duration::from_secs(3);
 /// [`FALL_CMDS_PER_LINE`] cmds sent, their `serverTime`s as a first stamp
 /// and the steps after it, and under `--probe-fall-walk` the yaw word each
 /// went out with, so a gate can replay the fall on the cmds retail ran.
+/// Each line also names, by index into it, the cmds whose buttons,
+/// `wbuttons` or `up` differ from the cmd before (`in=<k>:<buttons>:
+/// <wbuttons>:<up>`) and the cmds sent on a newer snapshot than the cmd
+/// before (`snap=<k>:<serverTime>`), so a replay presses on retail's cmd.
 /// `client-probes/probe_fall` drops the player from a height. Writes no
 /// fixture.
 #[derive(Default)]
 struct FallProbe {
     last: Option<Vec<i32>>,
     cmds: Vec<(i32, Option<i32>)>,
+    inputs: Vec<String>,
+    snaps: Vec<String>,
+    last_input: Option<(u8, u8, i8)>,
+    last_snap: Option<i32>,
 }
 
 const FALL_CMDS_PER_LINE: usize = 60;
 
 impl FallProbe {
-    fn record_cmd(&mut self, server_time: i32, yaw: Option<i32>) {
+    fn record_cmd(
+        &mut self,
+        server_time: i32,
+        yaw: Option<i32>,
+        input: (u8, u8, i8),
+        snap: Option<i32>,
+    ) {
+        let k = self.cmds.len();
+        if self.last_input != Some(input) {
+            self.inputs
+                .push(format!("{k}:{}:{}:{}", input.0, input.1, input.2));
+            self.last_input = Some(input);
+        }
+        if let Some(t) = snap.filter(|&t| self.last_snap != Some(t)) {
+            self.snaps.push(format!("{k}:{t}"));
+            self.last_snap = Some(t);
+        }
         self.cmds.push((server_time, yaw));
         if self.cmds.len() >= FALL_CMDS_PER_LINE {
             let steps: Vec<String> = self
@@ -11346,7 +11375,18 @@ impl FallProbe {
             } else {
                 format!(" yaw={}", yaws.join(","))
             };
-            println!("CMDS st={} d={}{yaws}", self.cmds[0].0, steps.join(","));
+            let mut tail = String::new();
+            for (key, list) in [("in", &mut self.inputs), ("snap", &mut self.snaps)] {
+                if !list.is_empty() {
+                    tail += &format!(" {key}={}", list.join(","));
+                    list.clear();
+                }
+            }
+            println!(
+                "CMDS st={} d={}{yaws}{tail}",
+                self.cmds[0].0,
+                steps.join(",")
+            );
             self.cmds.clear();
         }
     }
