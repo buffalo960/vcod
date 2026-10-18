@@ -1202,7 +1202,10 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   the edge it fell off. On the ground more than a jump over its waypoint,
   within 24 of it flat and more than a step under the edge's top, it
   landed partway down a drop and plans again too, the edge kept
-  (2026-10-18b, below). That plan starts not at the node nearest the body
+  (2026-10-18b, below). On the ground on a run-off drop's top, the
+  waypoint more than a jump under it and more than 24 off flat, slower
+  than 20 units/s, where the forward walk from the body at its pace no
+  longer lands, it plans round the edge (2026-10-18c, below). That plan starts not at the node nearest the body
   (`NavGraph::nearest`) but at the first of the 8 nearest by that score a
   walk from the body reaches on its floor without a jump
   (`NavGraph::nearest_walkable`): a body off the graph can stand where the
@@ -2012,6 +2015,13 @@ above).
   backing down over the lip) walks back onto the end before it heads for
   the spot
   (`nav::tests::a_yield_from_over_the_lip_steps_back_onto_the_head_first`).
+  Since 2026-10-18c, at a head whose fall does not kill, a body pressed
+  against the waiter (flat within two half-widths and 2) holds no wait:
+  it stepped off and is on its way out through the spot
+  (`nav::tests::a_climber_pressed_on_the_waiter_ends_the_wait`). And a
+  creep off the head of a ladder whose fall kills faces the rungs square
+  and strafes to their middle instead of backing at the foot
+  (`nav::Follower::back_face`, `BotView::back_face`).
   Below.
 
 VERIFIED (measured 2026-10-12d, same detector, `mp_ship` dm, 6 bots, 4000
@@ -3172,6 +3182,79 @@ master and the kept row alike.
   widens to y 48-80 at x 4964 but stays within x 4960-4964, and over the
   2304 seeds the crow's nest still killed four bots (seeds 995, 1307 and
   two in 4161): backed out.
+
+The 2026-10-18c round, on master 7256c89c. VERIFIED (measured, same
+detector and settings, release, seeds 1-4607 odd; ours only):
+
+| | stalled bot-ticks | falls | deaths |
+|---|---|---|---|
+| master 7256c89c | 141 | 11 | 6 |
+| a climber pressed on the waiter ends the wait | 75 | 12 | 7 |
+| and the crow's nest creep faces the rungs | 88 | 14 | 4 |
+| and a stopped run off a drop plans round it (kept) | 88 | 8 | 4 |
+
+`mp_depot` and `mp_hurtgen`, seeds 1-191 odd, master against the kept
+row: 0 / 0 / 0 and 1 / 6 / 1 on both. Without the rule's "once" (below)
+`mp_depot` read 6 900 stalled bot-ticks.
+
+- The x 3793 wait spot, seed 761 (26 stalled bot-ticks on master,
+  traced): bot 1 reached the head (3760, 65, 616) as bot 4 climbed from
+  the hatch's foot at 304 and waited at the spot (3751, 2, 616). Bot 4
+  stepped off the head heading south along x 3751, its way out through
+  the spot, and pressed against the waiter at (3751, 32); the wait
+  lasted while a body off the rungs stood between the spot and the
+  rungs, which bot 4 did until the wait's hung ticks ran out. Now, at a
+  head whose fall does not kill, a body within two half-widths and 2 of
+  the waiter flat holds no wait; at a deadly head the old rule stands
+  (the crow's nest's exits put the climber that close by design). Seed
+  761: 26 to 0. Seed 1415's 50 (two bots pinning each other in the
+  passage at (4140-4225, 207-256, 304)) went with it: that run parted
+  at an earlier wait.
+- The crow's nest, four of master's six deaths (seeds 1919, 3941, 4161,
+  4545, each traced): a bot waited aside at the head for a climber, came
+  back onto the head off the rim and backed down from (4957-4963,
+  45-73), the creep's heading held from its first tick toward the foot
+  (4959, 64, 692), and fell past the rungs (x 4975-4976, y 59-69) down
+  the hatch to 535 or 616. From scratch walks on a 1-unit grid round the
+  head (x 4958-4964, y 48-80, at rest and at 30 and 80 units/s across):
+  backed toward the foot, the body grabs the rungs only from the diamond
+  of 10-18b; facing the rungs square (yaw 0, pitch up 45) and strafing
+  to their middle at y 64, it grabs and climbs down to 692 from every
+  cell, at a weapon scale of 1 and 0.96 alike; square without the
+  strafe, from y 56 to 72 only. The bot now does that
+  (`bots::tests::a_creep_off_a_deadly_head_faces_the_rungs_and_strafes_to_them`,
+  `nav::tests::the_crows_nest_back_down_faces_the_rungs`), only off a
+  ladder whose fall kills: every other back down keeps the graph's
+  heading. The four seeds run clean. Its +13 stalled bot-ticks and +2
+  falls are runs that parted (seed 995: 14, a bot at the hull crates).
+- The hold floor at 56, five of master's falls (seeds 447, 1813, 2195,
+  2387, 2561) and one more on the crow's nest row (1919): the drop from
+  (3296, -419, 56) to (3264, -378, -64), and its mirror at y 547.
+  Traced (seed 2195): the bot passed the top node at `REACH` running
+  west along the wall at y -400; its walk on at that pace lands (round
+  the wall's west end at x 3257), but it bumped a bot dropping ahead of
+  it at (3246, -411), lost its pace and pressed north at its waypoint
+  behind the wall, creeping west at under 10 units/s to x 3266, where
+  the walk from rest is blocked; an unstick spell then ran it off the
+  floor's south side to -64. Now a body on the ground on a run-off
+  drop's top (within a step of the top node's height, the edge a
+  forward walk's, not a jump), more than 24 off the waypoint flat and
+  slower than `UNPIN_SPEED` (20), whose forward walk at its pace no
+  longer lands, plans round the edge
+  (`nav::tests::a_run_off_a_drop_stopped_short_of_the_lip_plans_round_it`,
+  which fails without it). All six run clean. The rule fires once per
+  edge while the edge is avoided: a plan with no way round takes it again
+  from rest, and on `mp_depot`'s roof at 212 a run off from rest misses
+  each of its drops to -24 (seeds 15, 99, 115, 119, 151), so bots
+  planned round and back with no waypoint for whole runs.
+- Left: the kept row's deaths are seed 1307 (a bot on the crow's nest
+  top at (4936, 56, 1254) took a westward shove of about 240 units/s in
+  one tick, ran off the top's west side and fell to 494; not traced to
+  its source) and three on the hold floor at 56 ((3643, -420), (3498,
+  -403), (3579, -422); seeds 2245, 2491, 4231, untraced; 2245 dies on
+  master too). Seed 1239's ledge death no longer reproduces on master.
+  The stalls are seed 2553's 49 (hull crates at (5790-5830, 550-600)),
+  995's 14, 3443's 13 and 1109's 7.
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their
