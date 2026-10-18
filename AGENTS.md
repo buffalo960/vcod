@@ -625,9 +625,11 @@ dropped, so test such a builtin through `ScriptRuntime`.
   in no list and never clip; mp_railyard's 120 is missing from leaves its
   facets cross), and a point tests its unpushed fraction against the
   trace's, so a brush or patch from an earlier leaf can keep it out
-  (`bsp-ibsp59-format.md`, "The leaf walk"). So is a capsule that meets
-  two model-0 brushes at one fraction: the first in leaf order names the
-  surface a body standing on both steps on.
+  (`bsp-ibsp59-format.md`, "The leaf walk"). So is a sweep whose contact
+  nearly ties another (brushes a float step apart, terrain within its
+  1e-5 back-off of a brush or a partition, a submodel against the world)
+  and a box stopped at fraction 0: leaf order names the surface a body
+  standing on two floors steps on.
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule

@@ -619,6 +619,9 @@ impl Terrain {
             } else {
                 let f = st((d_s - re) / dd);
                 if f > d(fraction) {
+                    if fraction < 1.0 {
+                        crate::collision::note_contact(f, d(fraction));
+                    }
                     continue;
                 }
                 (f, std::array::from_fn(|i| r(dl[i] * f + d(s[i]))))
@@ -791,6 +794,9 @@ impl Terrain {
         }
         let t = r((-disc.sqrt() - bq) / d(delta_sq));
         if t >= fraction {
+            if fraction < 1.0 {
+                crate::collision::note_contact(d(t), d(fraction));
+            }
             return Sweep::Miss;
         }
         let inv = 1.0 / d(r_eps);
@@ -837,6 +843,9 @@ impl Terrain {
         }
         let t = r((-disc.sqrt() - bq) / aa);
         if t >= fraction {
+            if fraction < 1.0 {
+                crate::collision::note_contact(d(t), d(fraction));
+            }
             return Sweep::Miss;
         }
         let dw = (dl[0] * d(ed.w[0]) + dl[1] * d(ed.w[1])) + dl[2] * d(ed.w[2]);
@@ -889,6 +898,9 @@ impl Terrain {
         }
         let t = r((-disc.sqrt() - bq) / aa);
         if t >= fraction {
+            if fraction < 1.0 {
+                crate::collision::note_contact(d(t), d(fraction));
+            }
             return Sweep::Miss;
         }
         let cw = st(d(t) * st(dot(dl, ed.w)) + c);

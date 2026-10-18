@@ -344,6 +344,9 @@ fn clip_segment(
     // no brush has.
     if enter <= leave && enter > -1.0 {
         let fraction = enter.max(0.0);
+        if trace.hit.is_some() {
+            note_contact(f64::from(fraction), f64::from(trace.fraction));
+        }
         if fraction < trace.fraction || (fraction == trace.fraction && enter > trace.enter) {
             trace.fraction = fraction;
             trace.enter = enter;
@@ -355,10 +358,25 @@ fn clip_segment(
 }
 
 thread_local! {
-    /// The fraction a capsule last entered a brush at without replacing
-    /// the trace's equal one, or -1: two brushes a sweep meets at the same
-    /// fraction, whose reported side retail's leaf order picks.
-    static BRUSH_TIE: std::cell::Cell<f32> = const { std::cell::Cell::new(-1.0) };
+    /// Set when a sweep met two contacts close enough that which one it
+    /// reports rides the order it clipped them in: brushes entered at
+    /// fractions a few float steps apart, or a terrain contact within its
+    /// `FRACTION_EPS` back-off of another. Retail's leaf order settles those
+    /// (`walk_tree`).
+    static NEAR_TIE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// How far apart two contacts' fractions may sit and still be ordered by
+/// the walk: twice the terrain back-off, and a margin over a brush's float
+/// steps.
+const TIE_WINDOW: f64 = 2.0 * crate::terrain::FRACTION_EPS as f64 + 1e-6;
+
+/// Notes a contact at `candidate` met while the trace already held one at
+/// `fraction`, kept or not.
+pub(crate) fn note_contact(candidate: f64, fraction: f64) {
+    if (candidate - fraction).abs() <= TIE_WINDOW {
+        NEAR_TIE.set(true);
+    }
 }
 
 /// Retail's brush clip (`cod_lnxded` 0x8054e90, the capsule arm) on a
@@ -377,6 +395,7 @@ thread_local! {
 /// fractions, which `arith` says. A trace a brush clips always
 /// lands closer than the trace's fraction, so the lead side replaces the
 /// trace's contact outright.
+#[allow(clippy::too_many_arguments)]
 fn clip_brush_capsule(
     trace: &mut Trace,
     sw: &CapsuleSweep,
@@ -385,6 +404,7 @@ fn clip_brush_capsule(
     side_flags: &[u32],
     prim: Prim,
     arith: Arith,
+    same_model: bool,
 ) {
     let d = f64::from;
     let var = |x: f64| arith.var(x);
@@ -398,6 +418,16 @@ fn clip_brush_capsule(
     let mut leave = frac0;
     let mut allsolid = true;
     let mut lead: Option<(Vec3, usize)> = None;
+    let contact = trace.hit.is_some();
+    // A contact that repeats the trace's own (same fraction, side and
+    // surface, a brush of the same model) reads alike in either order.
+    let (frac_f, normal0, flags0) = (trace.fraction, trace.normal, trace.surface_flags);
+    let repeats = |f: f32, normal: Vec3, k: usize| {
+        same_model
+            && f == frac_f
+            && normal == normal0
+            && side_flags.get(k).copied().unwrap_or(0) == flags0
+    };
     // One side's distances; `false` when the side rules the brush out.
     // The Windows clients store `d1`, the enter path's gap and both
     // fractions only (CoDMP15.exe 0x424fc0, cod15-movement.md 8).
@@ -429,10 +459,10 @@ fn clip_brush_capsule(
             let e = back / gap;
             enter = e as f32;
             if leave <= gcc(e) {
-                // Entering exactly at the trace's fraction is a tie the
-                // walk order settles (`walk_tree`).
-                if leave == frac0 && gcc(e) == frac0 {
-                    BRUSH_TIE.set(trace.fraction);
+                // Entering at about the trace's fraction is a tie the walk
+                // order settles (`walk_tree`).
+                if contact && leave == frac0 && !repeats(e as f32, normal, k) {
+                    note_contact(gcc(e), frac0);
                 }
                 return false;
             }
@@ -489,6 +519,9 @@ fn clip_brush_capsule(
             }
         }
         Some((normal, k)) => {
+            if contact && !repeats(enter, normal, k) {
+                note_contact(f64::from(enter), frac0);
+            }
             trace.fraction = enter;
             trace.enter = enter;
             trace.normal = normal;
@@ -1812,6 +1845,7 @@ impl CollisionWorld {
                         &brush.side_surface_flags,
                         Prim::Brush(b),
                         self.arith(),
+                        false,
                     );
                 }
                 Shape::Box(_, _) => {
@@ -2466,7 +2500,7 @@ impl CollisionWorld {
         // subsequence of them in the same order (its fraction is never
         // larger), so it replays the list instead of walking again.
         let entry = *trace;
-        BRUSH_TIE.set(-1.0);
+        NEAR_TIE.set(false);
         let mut walk = Walk {
             sweep,
             leaves: [0; LEAF_LOG],
@@ -2489,12 +2523,13 @@ impl CollisionWorld {
         }
         // A sweep that meets a patch starts over: model 0 in retail's leaf
         // order, then the submodels and the static models as before. So
-        // does one whose contact ties two model-0 brushes, as a capsule
-        // standing across two floor brushes does: the first in retail's
-        // order names the surface (bsp-ibsp59-format.md, "The leaf walk").
-        let tied = trace.fraction < 1.0
-            && BRUSH_TIE.get() == trace.fraction
-            && matches!(trace.hit, Some(Prim::Brush(b)) if self.brushes[b as usize].model == 0);
+        // does one whose contact nearly ties another, as a capsule standing
+        // across two floor brushes, a brush and a terrain partition or two
+        // partitions within the terrain's back-off do, and one stopped at
+        // fraction 0, where the walk ends on whatever got there first:
+        // retail's order names the contact (bsp-ibsp59-format.md, "The leaf
+        // walk").
+        let tied = trace.fraction < 1.0 && (NEAR_TIE.get() || sweep.boxed && trace.fraction <= 0.0);
         if (walk.patch_met.get() || tied)
             && let Some(leaves) = &self.leaf_walk
         {
@@ -2733,6 +2768,8 @@ impl CollisionWorld {
                     );
                 } else {
                     let sweep = capsule_sweep(start, end, mins, maxs);
+                    let same_model = matches!(trace.hit,
+                        Some(Prim::Brush(o)) if self.brushes[o as usize].model == brush.model);
                     clip_brush_capsule(
                         trace,
                         &sweep,
@@ -2741,6 +2778,7 @@ impl CollisionWorld {
                         &brush.side_surface_flags,
                         prim,
                         self.arith(),
+                        same_model,
                     );
                 }
             }
@@ -3517,6 +3555,7 @@ mod tests {
                 &[],
                 Prim::Brush(0),
                 Arith::Kept,
+                false,
             );
             start.x + (end.x - start.x) * trace.fraction
         };
@@ -4065,6 +4104,7 @@ mod tests {
                             &brush.side_surface_flags,
                             *prim,
                             Arith::Kept,
+                            false,
                         );
                     }
                     Prim::Terrain(i) => {
@@ -4285,6 +4325,136 @@ mod tests {
             assert_eq!(sound_material(t.surface_flags), 4, "{arith:?} {:?}", t.hit);
         }
         world.set_arith(Arith::Kept);
+    }
+
+    /// Model 0 in retail's leaf order alone, then the rest as `walk_tree`
+    /// clips it after its leaf walk: retail's answer to a trace.
+    fn leaf_order_trace(
+        world: &CollisionWorld,
+        start: Vec3,
+        end: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        boxed: bool,
+    ) -> Trace {
+        let capsule = if boxed {
+            Capsule::wide(mins, maxs)
+        } else {
+            Capsule::of(mins, maxs)
+        };
+        let sweep = TraceInput {
+            start,
+            end,
+            mins,
+            maxs,
+            capsule,
+            mask: MASK_PLAYERSOLID,
+            statics: false,
+            skip: None,
+            world_only: false,
+            boxed,
+            sphere: capsule.offset,
+        };
+        let mut trace = Trace::clear(end);
+        world.clip_leaf_walk(world.leaf_walk.as_ref().unwrap(), &sweep, &mut trace);
+        let mut rest = Walk {
+            sweep,
+            leaves: [0; LEAF_LOG],
+            logged: usize::MAX,
+            patch_met: std::cell::Cell::new(false),
+            rest: true,
+        };
+        world.trace_node(0, &mut rest, true, &mut trace);
+        world.trace_node(0, &mut rest, false, &mut trace);
+        trace
+    }
+
+    /// Ground traces, short runs and step-downs of a standing player, as a
+    /// capsule and as `trap_Trace`'s box, from random spots on the floors of
+    /// two stock maps: the tree walk reports what retail's leaf order does
+    /// wherever two contacts nearly tie (two brushes a float step apart, a
+    /// brush or a partition within the terrain's back-off of another) and,
+    /// for the box, wherever it stops at fraction 0. Before the near-tie
+    /// replay mp_depot alone gave about one answer in eighty from the
+    /// BVH's order (bsp-ibsp59-format.md, "The leaf walk"). A trace whose
+    /// walk enters only solid leaves is left out: there the terrain the
+    /// BVH meets is in no leaf the walk enters, out of the world.
+    #[test]
+    fn near_ties_read_as_retails_leaf_order() {
+        let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+        for map in ["mp_depot", "mp_brecourt"] {
+            let Some(data) =
+                crate::testing::game_fs_11().and_then(|fs| fs.read(&format!("maps/mp/{map}.bsp")))
+            else {
+                return;
+            };
+            let bsp = crate::bsp::parse(&data).unwrap();
+            let world = CollisionWorld::build(&bsp, &[]);
+            let walk = world.leaf_walk.as_ref().unwrap();
+            let (lo, hi) = crate::mesh::map_bounds(&bsp);
+            let (lo, hi) = (Vec3::from(lo), Vec3::from(hi));
+            let mut s = 0x2545F4914F6CDD1Du64;
+            let (mut traces, mut wrong) = (0, Vec::new());
+            for k in 0..6000 {
+                let r = |s: &mut u64| Vec3::new(rng(s), rng(s), rng(s));
+                let p = lo + (hi - lo) * r(&mut s);
+                let down = world.move_trace(p, p - Vec3::Z * 2000.0, mins, maxs, MASK_PLAYERSOLID);
+                if down.fraction >= 1.0 || down.startsolid {
+                    continue;
+                }
+                let o = down.endpos;
+                let (a, b) = match k % 3 {
+                    0 => (o + Vec3::Z * 0.25, o - Vec3::Z * 0.25),
+                    1 => {
+                        let run = (r(&mut s) - Vec3::splat(0.5)).with_z(0.0) * 40.0;
+                        (o + Vec3::Z * 0.125, o + run + Vec3::Z * 0.125)
+                    }
+                    _ => (o + Vec3::Z * 18.0, o - Vec3::Z * 9.0),
+                };
+                let mid = (mins + maxs) * 0.5;
+                let mut open = false;
+                walk.visit(
+                    (a + mid).to_array(),
+                    (b + mid).to_array(),
+                    (maxs - mid).to_array(),
+                    false,
+                    1.0,
+                    |leaf, _| {
+                        open |= bsp.leafs[leaf as usize].cluster >= 0;
+                        1.0
+                    },
+                );
+                if !open {
+                    continue;
+                }
+                let boxed = k % 2 == 1;
+                let ours =
+                    world.trace_shape(a, b, mins, maxs, MASK_PLAYERSOLID, false, None, boxed);
+                let retail = leaf_order_trace(&world, a, b, mins, maxs, boxed);
+                traces += 1;
+                let key = |t: &Trace| {
+                    (
+                        t.fraction.to_bits(),
+                        t.normal.to_array().map(f32::to_bits),
+                        t.surface_flags,
+                        t.startsolid,
+                        t.allsolid,
+                    )
+                };
+                if key(&ours) != key(&retail) {
+                    wrong.push(format!(
+                        "{map} {a} -> {b} boxed {boxed}: {ours:?} vs {retail:?}"
+                    ));
+                }
+            }
+            assert!(traces > 2000, "{map}: {traces}");
+            assert!(
+                wrong.is_empty(),
+                "{} of {traces}:\n{}",
+                wrong.len(),
+                wrong.join("\n")
+            );
+        }
     }
 
     #[test]
