@@ -369,8 +369,9 @@ something, the bullet links it.
   view snap, 1.5's and UO's plain clamp), fire, dismount; 1.1d, 1.5b and
   UO captures replayed against ours. A round passes the gun, as retail's
   does, not the gunner.
-- Map triggers (a `trigger_damage` fires off rounds, swings, grenades and
-  blasts, measured on UO's mp_uo_stanjel), script movers that carry and shove players and items, and
+- Map triggers (a `trigger_damage` fires off rounds, swings, grenades,
+  blasts and UO shells, measured on UO's mp_uo_stanjel and mp_foy's
+  belltower), script movers that carry and shove players and items, and
   `linkTo` on script models, brush models, items, turrets, player tags and
   tags on `attach`ed models.
 - Intermission, `map_restart` and `sv_mapRotation` the way retail runs them,
