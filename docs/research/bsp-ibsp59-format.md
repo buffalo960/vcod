@@ -426,7 +426,7 @@ vcod: the brush and terrain arms note any contact within twice the back-off of t
 
 VERIFIED (measured 2026-10-18, same sample): every other difference left is a trace whose walk enters only solid leaves (cluster -1), out of the world. There the BVH meets a listed terrain partition that no leaf the walk enters lists (mp_powcamp's terrain around (1827, 6983, 198), mp_carentan's under z -100 near (1785, 2851)). The BVH pass still clips it unless the trace is replayed.
 
-VERIFIED (measured 2026-10-18, `nav_build`, release, user time under a loaded machine): mp_depot's graph build went from about 7.0 s to 7.4-7.9 s and mp_brecourt's from 5.4 s to 5.8-6.0 s. mp_carentan's and mp_brecourt's graph digests moved and mp_depot's did not.
+VERIFIED (measured 2026-10-18, `nav_build`, release, user time under a loaded machine): mp_depot's graph build went from about 7.0 s to 7.4-7.9 s and mp_brecourt's from 5.4 s to 5.8-6.0 s. mp_carentan's and mp_brecourt's graph digests moved and mp_depot's did not; `nav_census` passes at the 1.1 and UO installs.
 
 ## Movement constants and their provenance
 
