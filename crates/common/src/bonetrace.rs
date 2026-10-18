@@ -70,15 +70,18 @@ fn slab(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, bool, Vec3)>
 ///
 /// The rules are retail's, in its order (combat doc, section 3): a bone with
 /// a zero-size box is skipped, a bone whose priority is below the best found
-/// so far is skipped before any geometry runs, a higher priority takes the
-/// hit **regardless of distance**, an equal priority takes it only when it is
-/// nearer, and a segment that starts inside a box returns at once.
+/// so far is skipped before any geometry runs, a box is clipped to the
+/// fraction found so far (`limit` before any), so it scores only where the
+/// segment enters it no farther, a higher priority then takes the hit, an
+/// equal one only when nearer, and a segment that starts inside a box
+/// returns at once. A higher priority beats distance only in bone order.
 pub fn bone_trace(
     skel: &Skeleton,
     pose: &PoseBuffer,
     start: Vec3,
     end: Vec3,
     priority: &PriorityMap,
+    limit: f32,
 ) -> Option<BoneHit> {
     let worlds = pose.bone_worlds(skel);
     let mut best: Option<BoneHit> = None;
@@ -107,7 +110,8 @@ pub fn bone_trace(
                 normal: Vec3::ZERO,
             });
         }
-        if prio == best_priority && best.is_some_and(|h| h.fraction <= t) {
+        let bound = best.map_or(limit, |h| h.fraction);
+        if t > bound || (prio == best_priority && best.is_some() && t >= bound) {
             continue;
         }
         best_priority = prio;
@@ -163,20 +167,36 @@ mod tests {
     }
 
     fn shoot(skel: &Skeleton, pose: &PoseBuffer, from: Vec3) -> Option<BoneHit> {
-        bone_trace(skel, pose, from, from + Vec3::X * 100.0, &RIFLE)
+        bone_trace(skel, pose, from, from + Vec3::X * 100.0, &RIFLE, 1.0)
     }
 
     #[test]
-    fn priority_beats_distance() {
-        // an arm (6) in front of the head (9): retail scores the head
-        let (skel, pose) = rig(vec![
-            bone("arm", Vec3::new(20.0, 0.0, 0.0), Vec3::splat(2.0), 6),
-            bone("head", Vec3::new(50.0, 0.0, 0.0), Vec3::splat(2.0), 2),
-        ]);
+    fn priority_beats_distance_only_in_bone_order() {
+        // an arm (6) in front of the head (9): the head scores when it is
+        // listed first, the arm when it is, which clips the head's box
+        let arm = bone("arm", Vec3::new(20.0, 0.0, 0.0), Vec3::splat(2.0), 6);
+        let head = bone("head", Vec3::new(50.0, 0.0, 0.0), Vec3::splat(2.0), 2);
+        let (skel, pose) = rig(vec![head.clone(), arm.clone()]);
         let hit = shoot(&skel, &pose, Vec3::ZERO).unwrap();
         assert_eq!(hit.hit_location, 2);
         assert!((hit.fraction - 0.48).abs() < 1e-3, "{}", hit.fraction);
         assert_eq!(hit.normal, -Vec3::X);
+        let (skel, pose) = rig(vec![arm, head]);
+        let hit = shoot(&skel, &pose, Vec3::ZERO).unwrap();
+        assert_eq!(hit.hit_location, 6);
+        assert!((hit.fraction - 0.18).abs() < 1e-3, "{}", hit.fraction);
+    }
+
+    #[test]
+    fn a_box_past_the_limit_never_scores() {
+        let (skel, pose) = rig(vec![bone(
+            "head",
+            Vec3::new(50.0, 0.0, 0.0),
+            Vec3::splat(2.0),
+            2,
+        )]);
+        let from = Vec3::ZERO;
+        assert!(bone_trace(&skel, &pose, from, from + Vec3::X * 100.0, &RIFLE, 0.4).is_none());
     }
 
     #[test]
@@ -258,7 +278,7 @@ mod tests {
         // a quarter turn on the root swings the head box onto +Y
         pose.set_local_rot(0, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
         assert!(shoot(&skel, &pose, Vec3::ZERO).is_none());
-        let hit = bone_trace(&skel, &pose, Vec3::ZERO, Vec3::Y * 100.0, &RIFLE).unwrap();
+        let hit = bone_trace(&skel, &pose, Vec3::ZERO, Vec3::Y * 100.0, &RIFLE, 1.0).unwrap();
         assert_eq!(hit.hit_location, 2);
         // the face met is the box's -X side, turned onto -Y with the bone
         assert!((hit.normal + Vec3::Y).length() < 1e-5, "{}", hit.normal);

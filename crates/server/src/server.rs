@@ -708,6 +708,7 @@ fn vehicle_fire(
                     anims,
                     rigs: &mut *rigs,
                     now_ms,
+                    posed: None,
                 }),
                 _ => None,
             };
@@ -3717,6 +3718,7 @@ impl Server {
                 anims,
                 rigs: &mut self.hit_rigs,
                 now_ms: self.sv_time_ms,
+                posed: None,
             }),
             _ => None,
         };
@@ -7727,6 +7729,7 @@ impl Server {
                     anims,
                     rigs: &mut self.hit_rigs,
                     now_ms: self.sv_time_ms,
+                    posed: None,
                 }),
                 _ => None,
             };
@@ -8273,6 +8276,7 @@ impl Server {
                         anims,
                         rigs: &mut self.hit_rigs,
                         now_ms: self.sv_time_ms,
+                        posed: None,
                     }),
                     _ => None,
                 };
@@ -8603,8 +8607,9 @@ impl Server {
             let mut overlap = None;
             if !frozen {
                 // The aim block runs once per cmd, on the whole cmd, before
-                // the chop (`ClientThink_real` 0x40169-0x40456).
-                sim.update_aim(dt_ms, now_ms, weapons.defs());
+                // the chop (`ClientThink_real` 0x40169-0x40456), on the last
+                // frame's `level.time` (combat doc 15.1).
+                sim.update_aim(dt_ms, level_ms, weapons.defs());
                 // A UO body inside a vehicle's collmap: the vehicle may sit
                 // out this cmd's pmove (coduo-vehicles.md 11.6).
                 overlap = match (collision, self.script.as_ref()) {
@@ -9167,6 +9172,7 @@ impl Server {
                 anims,
                 rigs: &mut self.hit_rigs,
                 now_ms: self.sv_time_ms,
+                posed: None,
             }),
             _ => None,
         };
@@ -9422,6 +9428,7 @@ impl Server {
                     anims,
                     rigs: &mut self.hit_rigs,
                     now_ms: self.sv_time_ms,
+                    posed: None,
                 }),
                 _ => None,
             };

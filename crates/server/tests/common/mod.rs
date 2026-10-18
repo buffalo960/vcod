@@ -1727,6 +1727,43 @@ pub struct ProbeHold {
     /// at 16 ms, which is what decides whether the 1.5 and UO gun kick
     /// settles between rounds (cod15-movement.md 6).
     pub sixty: bool,
+    /// The `serverTime`s a capture's client sent (its `CMDS` lines, sorted):
+    /// under [`ProbeHold::framed`] a frame's cmds are the captured ones in
+    /// the 50 ms from its time, where there are any. A `setOrigin` drop
+    /// lands where its cmds' split stops it (cod11-combat.md 3.6).
+    pub times: Vec<i32>,
+}
+
+/// The cmd times of a client's `CMDS` lines (the net probe's
+/// `--probe-fall` and `--probe-uo-weapon` stdout), each line a first
+/// `serverTime` and the steps after it, those prefixed `who` only.
+pub fn cmds_times(text: &str, who: &str) -> Vec<i32> {
+    let mut out = Vec::new();
+    for l in text.lines() {
+        let Some(rest) = l
+            .strip_prefix(who)
+            .and_then(|r| r.trim_start().strip_prefix("CMDS st="))
+        else {
+            continue;
+        };
+        let (st, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+        let mut t: i32 = st.parse().expect("a CMDS start");
+        out.push(t);
+        let steps = rest
+            .split_whitespace()
+            .next()
+            .and_then(|d| d.strip_prefix("d="));
+        for d in steps
+            .into_iter()
+            .flat_map(|d| d.split(','))
+            .filter(|d| !d.is_empty())
+        {
+            t += d.parse::<i32>().expect("a CMDS step");
+            out.push(t);
+        }
+    }
+    out.sort_unstable();
+    out
 }
 
 /// `--probe-cmd-ms`'s default.
@@ -1750,7 +1787,14 @@ impl ProbeHold {
         let mut times = Vec::new();
         if self.framed {
             let f = s.server_time;
-            times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
+            let lo = self.times.partition_point(|&c| c < f);
+            let hi = self.times.partition_point(|&c| c < f + FRAME_MS as i32);
+            let captured = &self.times[lo..hi];
+            if captured.is_empty() {
+                times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
+            } else {
+                times.extend(captured.iter().copied().filter(|&c| c > t));
+            }
         } else {
             let next = |t: i32| match self.sixty {
                 true => {

@@ -1,0 +1,1104 @@
+# Retail CoD 1.5b dedicated server, 2026-10-18: the PROBE lines of
+# client-probes/probe_leanhit on mp_carentan with probe_bones 1 and
+# probe_fall 1 (probe_pin 1 and probe_stamp 1), then each client's CMDS lines (the cmd times it sent).
+# COD_VERSION=1.5 COD_DIR=<stock 1.5> COD_LNXDED_HOME=<abs> PORT=32841 SECS=100 tools/run_probe.sh client-probes/probe_leanhit mp_carentan +set probe_bones 1 +set probe_fall 1 +set probe_pin 1 +set probe_stamp 1
+# vcod --game-dir <stock 1.5> --net-probe 127.0.0.1:32841 --probe-team axis --probe-uo-weapon direct --probe-secs 85   # 8 s in
+# vcod --game-dir <stock 1.5> --net-probe 127.0.0.1:32841 --probe-team allies --probe-weapon springfield_mp --probe-uo-weapon direct --probe-secs 80   # 3 s later
+# The target's first playing snapshot read serverTime 9750, the shooter's 13600.
+PROBE site 1050 (1000.00, 1216.00, -23.75) (1256.00, 1216.00, -23.75) 0
+PROBE spawnat 13600 shooter 1080 3488 -21.2536 0 90 0
+PROBE spawnat 13600 target 976 -864 -3.26903 0 180 0
+PROBE fall 13650 target 0.113201
+PROBE fall 13700 target 0.113201
+PROBE fall 13700 shooter -0.125002
+PROBE fall 13750 shooter -0.125002
+PROBE fall 13750 target 0.113201
+PROBE fall 13800 target 0.113201
+PROBE fall 13800 shooter -0.125002
+PROBE fall 13850 shooter -0.125002
+PROBE fall 13850 target 0.113201
+PROBE fall 13900 target 0.113201
+PROBE fall 13900 shooter -0.125002
+PROBE fall 13950 shooter -0.125002
+PROBE fall 13950 target 0.113201
+PROBE fall 14000 target 0.113201
+PROBE fall 14000 shooter -0.125002
+PROBE fall 14050 shooter -0.125002
+PROBE fall 14050 target 0.113201
+PROBE fall 14100 target 0.113201
+PROBE fall 14100 shooter -0.125002
+PROBE fall 14150 shooter -0.125002
+PROBE models 0 xmodel/basehead_axis_a_01 xmodel/gear_german_helmet_falshrm_blk xmodel/gear_german_load1_falshrm xmodel/gear_german_bandolier
+PROBE phase 20000 level
+PROBE body 21250 level 0 0 0.113201
+PROBE eye 21250 level 0 0 -0.125002
+PROBE bone 21250 level bip01 pelvis 6.24036 -1.9729 35.1548
+PROBE bone 21250 level bip01 spine2 6.09912 -2.24084 45.3494
+PROBE bone 21250 level bip01 neck 2.04871 -1.58484 57.0404
+PROBE bone 21250 level bip01 head 0.786987 -0.818848 59.6599
+PROBE bone 21250 level bip01 l upperarm -4.12341 -5.91797 51.8093
+PROBE bone 21250 level bip01 r upperarm 9.03308 2.62854 53.9342
+PROBE bone 21250 level bip01 l forearm -9.03528 -1.85583 41.5314
+PROBE bone 21250 level bip01 r forearm 10.6995 13.0763 48.0752
+PROBE bone 21250 level bip01 l hand -17.0958 5.61121 45.1594
+PROBE bone 21250 level bip01 r hand -0.14209 9.72754 45.8087
+PROBE bone 21250 level tag_weapon_right -5.23657 7.86279 47.698
+PROBE body 21300 level 0 0 0.113201
+PROBE eye 21300 level 0 0 -0.125002
+PROBE bone 21300 level bip01 pelvis 6.18774 -1.96265 35.1548
+PROBE bone 21300 level bip01 spine2 6.0531 -2.24158 45.3492
+PROBE bone 21300 level bip01 neck 1.98767 -1.67517 57.0397
+PROBE bone 21300 level bip01 head 0.684326 -0.944458 59.6488
+PROBE bone 21300 level bip01 l upperarm -4.05957 -6.1936 51.8196
+PROBE bone 21300 level bip01 r upperarm 8.83752 2.7384 54.013
+PROBE bone 21300 level bip01 l forearm -9.15479 -2.01318 41.6793
+PROBE bone 21300 level bip01 r forearm 10.3982 13.2913 48.3154
+PROBE bone 21300 level bip01 l hand -17.275 5.38428 45.3168
+PROBE bone 21300 level bip01 r hand -0.368774 9.66614 46.1194
+PROBE bone 21300 level tag_weapon_right -5.45642 7.73999 47.9646
+PROBE body 21350 level 0 0 0.113201
+PROBE eye 21350 level 0 0 -0.125002
+PROBE bone 21350 level bip01 pelvis 6.18774 -1.96265 35.1548
+PROBE bone 21350 level bip01 spine2 6.0531 -2.24158 45.3492
+PROBE bone 21350 level bip01 neck 1.98767 -1.67517 57.0397
+PROBE bone 21350 level bip01 head 0.684326 -0.944458 59.6488
+PROBE bone 21350 level bip01 l upperarm -4.05957 -6.1936 51.8196
+PROBE bone 21350 level bip01 r upperarm 8.83752 2.7384 54.013
+PROBE bone 21350 level bip01 l forearm -9.15479 -2.01318 41.6793
+PROBE bone 21350 level bip01 r forearm 10.3982 13.2913 48.3154
+PROBE bone 21350 level bip01 l hand -17.275 5.38428 45.3168
+PROBE bone 21350 level bip01 r hand -0.368774 9.66614 46.1194
+PROBE bone 21350 level tag_weapon_right -5.45642 7.73999 47.9646
+PROBE grid 21500 level f 4 - - - 78.2829 78.636 81.505 - 52.024 - - -
+PROBE grid 21500 level f 10 - - - - 75.863 78.4305 58.2572 60.4447 - - -
+PROBE grid 21500 level f 16 - - - - 71.2086 75.682 57.4796 62.209 - - -
+PROBE grid 21500 level f 22 - - - - 69.0121 69.3752 55.9079 65.0224 - - -
+PROBE grid 21500 level f 28 - - - - 68.9281 70.0243 58.4621 65.2984 - - -
+PROBE grid 21500 level f 34 - - - - 67.0591 62.8765 60.077 65.5744 - - -
+PROBE grid 21500 level f 40 - - - - 67.7082 51.7131 60.353 65.8504 - - -
+PROBE grid 21500 level f 46 - - - 62.0756 42.7108 47.3855 52.0553 69.2495 - - -
+PROBE grid 21500 level f 52 - - - 68.7286 64.8071 60.0491 55.7471 - - - -
+PROBE grid 21500 level f 58 - - - - 63.6629 58.2944 60.1956 - - - -
+PROBE grid 21500 level f 64 - - - - - 54.9346 58.0414 - - - -
+PROBE grid 21500 level f 70 - - - - - 62.5939 - - - - -
+PROBE grid 21500 level f 76 - - - - - - - - - - -
+PROBE grid 21500 level s 4 - - - 37.3894 36.0939 36.1984 - - 47.0118 - - - - - -
+PROBE grid 21500 level s 10 - - - - 36.3785 35.4496 - 51.26 47.469 - - - - - -
+PROBE grid 21500 level s 16 - - - - 37.1322 35.8142 55.6211 47.5735 50.5306 - - - - - -
+PROBE grid 21500 level s 22 - - - - 37.3928 36.4639 32.5472 35.182 43.789 - - - - - -
+PROBE grid 21500 level s 28 - - - - 38.1466 36.9006 32.7387 34.2508 42.8578 51.4648 - - - - -
+PROBE grid 21500 level s 34 - - - - - 37.0921 32.9301 33.3196 41.9266 50.5336 - - - - -
+PROBE grid 21500 level s 40 - - - 44.1975 - 37.2835 33.1216 32.3884 40.9954 49.6024 - - - - -
+PROBE grid 21500 level s 46 - - 49.1037 42.0441 37.6964 39.7382 36.071 - - - - - - - -
+PROBE grid 21500 level s 52 - - - - 37.3911 36.0602 40.3161 46.3359 - - - - - - -
+PROBE grid 21500 level s 58 - - - - 46.1638 37.8835 43.0148 - - - - - - - -
+PROBE grid 21500 level s 64 - - - - 42.0787 42.3082 44.938 - - - - - - - -
+PROBE grid 21500 level s 70 - - - - - 43.7808 - - - - - - - - -
+PROBE grid 21500 level s 76 - - - - - - - - - - - - - - -
+PROBE grid 21500 level_re f 4 - - - 78.2829 78.636 81.505 - 52.024 - - -
+PROBE grid 21500 level_re f 10 - - - - 75.863 78.4305 58.2572 60.4447 - - -
+PROBE grid 21500 level_re f 16 - - - - 71.2086 75.682 57.4796 62.209 - - -
+PROBE grid 21500 level_re f 22 - - - - 69.0121 69.3752 55.9079 65.0224 - - -
+PROBE grid 21500 level_re f 28 - - - - 68.9281 70.0243 58.4621 65.2984 - - -
+PROBE grid 21500 level_re f 34 - - - - 67.0591 62.8765 60.077 65.5744 - - -
+PROBE grid 21500 level_re f 40 - - - - 67.7082 51.7131 60.353 65.8504 - - -
+PROBE grid 21500 level_re f 46 - - - 62.0756 42.7108 47.3855 52.0553 69.2495 - - -
+PROBE grid 21500 level_re f 52 - - - 68.7286 64.8071 60.0491 55.7471 - - - -
+PROBE grid 21500 level_re f 58 - - - - 63.6629 58.2944 60.1956 - - - -
+PROBE grid 21500 level_re f 64 - - - - - 54.9346 58.0414 - - - -
+PROBE grid 21500 level_re f 70 - - - - - 62.5939 - - - - -
+PROBE grid 21500 level_re f 76 - - - - - - - - - - -
+PROBE grid 21500 level_re s 4 - - - 37.3894 36.0939 36.1984 - - 47.0118 - - - - - -
+PROBE grid 21500 level_re s 10 - - - - 36.3785 35.4496 - 51.26 47.469 - - - - - -
+PROBE grid 21500 level_re s 16 - - - - 37.1322 35.8142 55.6211 47.5735 50.5306 - - - - - -
+PROBE grid 21500 level_re s 22 - - - - 37.3928 36.4639 32.5472 35.182 43.789 - - - - - -
+PROBE grid 21500 level_re s 28 - - - - 38.1466 36.9006 32.7387 34.2508 42.8578 51.4648 - - - - -
+PROBE grid 21500 level_re s 34 - - - - - 37.0921 32.9301 33.3196 41.9266 50.5336 - - - - -
+PROBE grid 21500 level_re s 40 - - - 44.1975 - 37.2835 33.1216 32.3884 40.9954 49.6024 - - - - -
+PROBE grid 21500 level_re s 46 - - 49.1037 42.0441 37.6964 39.7382 36.071 - - - - - - - -
+PROBE grid 21500 level_re s 52 - - - - 37.3911 36.0602 40.3161 46.3359 - - - - - - -
+PROBE grid 21500 level_re s 58 - - - - 46.1638 37.8835 43.0148 - - - - - - - -
+PROBE grid 21500 level_re s 64 - - - - 42.0787 42.3082 44.938 - - - - - - - -
+PROBE grid 21500 level_re s 70 - - - - - 43.7808 - - - - - - - - -
+PROBE grid 21500 level_re s 76 - - - - - - - - - - - - - - -
+PROBE hit 21500 level axis dmg 96 loc torso_lower point (1256.07, 1217.23, 19.17)
+PROBE dir 21500 level 0.997804 0.00480271 -0.0660692
+PROBE phase 23050 t_left
+PROBE body 24300 t_left 0 0 0.113201
+PROBE eye 24300 t_left 0 0 -0.125002
+PROBE bone 24300 t_left bip01 pelvis 5.19666 -5.67896 34.9327
+PROBE bone 24300 t_left bip01 spine2 4.74841 -11.3295 43.1872
+PROBE bone 24300 t_left bip01 neck 1.00439 -14.257 54.6297
+PROBE bone 24300 t_left bip01 head -0.0932617 -13.6378 57.3595
+PROBE bone 24300 t_left bip01 l upperarm -5.90479 -15.3339 48.685
+PROBE bone 24300 t_left bip01 r upperarm 8.55371 -9.85352 52.7905
+PROBE bone 24300 t_left bip01 l forearm -7.6366 -10.457 37.7543
+PROBE bone 24300 t_left bip01 r forearm 11.1991 1.74866 50.6329
+PROBE bone 24300 t_left bip01 l hand -15.9149 -5.74744 44.3256
+PROBE bone 24300 t_left bip01 r hand 0.94397 -2.31714 47.1409
+PROBE bone 24300 t_left tag_weapon_right -4.1543 -4.85583 47.8915
+PROBE body 24350 t_left 0 0 0.113201
+PROBE eye 24350 t_left 0 0 -0.125002
+PROBE bone 24350 t_left bip01 pelvis 5.19983 -5.68481 34.9382
+PROBE bone 24350 t_left bip01 spine2 4.74341 -11.3286 43.1967
+PROBE bone 24350 t_left bip01 neck 0.999756 -14.2646 54.637
+PROBE bone 24350 t_left bip01 head -0.0983887 -13.6476 57.3671
+PROBE bone 24350 t_left bip01 l upperarm -5.90833 -15.3414 48.6911
+PROBE bone 24350 t_left bip01 r upperarm 8.54688 -9.85767 52.8054
+PROBE bone 24350 t_left bip01 l forearm -7.6344 -10.4875 37.7493
+PROBE bone 24350 t_left bip01 r forearm 11.1897 1.7417 50.6299
+PROBE bone 24350 t_left bip01 l hand -15.9148 -5.78809 44.3252
+PROBE bone 24350 t_left bip01 r hand 0.940186 -2.3385 47.1382
+PROBE bone 24350 t_left tag_weapon_right -4.15637 -4.88025 47.8898
+PROBE body 24400 t_left 0 0 0.113201
+PROBE eye 24400 t_left 0 0 -0.125002
+PROBE bone 24400 t_left bip01 pelvis 5.19983 -5.68481 34.9382
+PROBE bone 24400 t_left bip01 spine2 4.74341 -11.3286 43.1967
+PROBE bone 24400 t_left bip01 neck 0.999756 -14.2646 54.637
+PROBE bone 24400 t_left bip01 head -0.0983887 -13.6476 57.3671
+PROBE bone 24400 t_left bip01 l upperarm -5.90833 -15.3414 48.6911
+PROBE bone 24400 t_left bip01 r upperarm 8.54688 -9.85767 52.8054
+PROBE bone 24400 t_left bip01 l forearm -7.6344 -10.4875 37.7493
+PROBE bone 24400 t_left bip01 r forearm 11.1897 1.7417 50.6299
+PROBE bone 24400 t_left bip01 l hand -15.9148 -5.78809 44.3252
+PROBE bone 24400 t_left bip01 r hand 0.940186 -2.3385 47.1382
+PROBE bone 24400 t_left tag_weapon_right -4.15637 -4.88025 47.8898
+PROBE grid 24550 t_left f 4 - - - - 77.7062 80.5625 - 51.9831 - - -
+PROBE grid 24550 t_left f 10 - - - - 81.4417 76.886 58.607 56.9338 - - -
+PROBE grid 24550 t_left f 16 - - - - 70.6863 73.9415 57.3818 55.7086 - - -
+PROBE grid 24550 t_left f 22 - - - - 72.1287 71.5099 55.967 55.6403 67.1796 - -
+PROBE grid 24550 t_left f 28 - - - - 74.0388 69.0783 58.4706 57.55 66.7813 - -
+PROBE grid 24550 t_left f 34 - - - - 69.3258 63.9981 58.6704 59.4596 66.3831 - -
+PROBE grid 24550 t_left f 40 - - - - - 66.2606 48.8909 51.9599 63.9833 - -
+PROBE grid 24550 t_left f 46 - - - - - 64.3808 44.929 54.6181 55.7559 61.7949 -
+PROBE grid 24550 t_left f 52 - - - - - 69.5608 69.5714 57.2699 56.5126 - -
+PROBE grid 24550 t_left f 58 - - - - - - - 57.7582 61.6558 - -
+PROBE grid 24550 t_left f 64 - - - - - - - 55.0914 58.2065 - -
+PROBE grid 24550 t_left f 70 - - - - - - - - - - -
+PROBE grid 24550 t_left f 76 - - - - - - - - - - -
+PROBE grid 24550 t_left s 4 - - - 35.0514 34.085 34.1877 - - 44.9824 - - - - - -
+PROBE grid 24550 t_left s 10 - - - - 34.6639 32.8744 - 49.633 45.2176 - - - - - -
+PROBE grid 24550 t_left s 16 - - - - 35.2334 35.598 - 44.7168 47.3539 - - - - - -
+PROBE grid 24550 t_left s 22 - - - - 35.2962 33.2185 27.1451 33.1205 39.0964 45.0722 - - - - -
+PROBE grid 24550 t_left s 28 - - - - 35.8658 32.8154 26.742 32.3915 38.3674 44.3432 - - - - -
+PROBE grid 24550 t_left s 34 - - - - - 32.4123 26.3388 31.6625 37.6384 43.6142 - - - - -
+PROBE grid 24550 t_left s 40 - - - 34.8638 31.5085 29.9508 25.9357 30.9335 36.9094 42.8852 - - - - -
+PROBE grid 24550 t_left s 46 - - 39.944 41.035 28.1968 24.6616 29.0379 33.4141 - - - - - - -
+PROBE grid 24550 t_left s 52 - - - - 28.2095 26.4817 25.7066 36.2817 - - - - - - -
+PROBE grid 24550 t_left s 58 - - - - 30.9271 29.4055 - - - - - - - - -
+PROBE grid 24550 t_left s 64 - - - - 30.0524 28.5308 - - - - - - - - -
+PROBE grid 24550 t_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 24550 t_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 24550 t_left axis dmg 96 loc torso_lower point (1250.93, 1204.60, 18.83)
+PROBE dir 24550 t_left 0.99661 -0.0452972 -0.0686773
+PROBE phase 26100 t_right
+PROBE body 27350 t_right 0 0 0.113201
+PROBE eye 27350 t_right 0 0 -0.125002
+PROBE bone 27350 t_right bip01 pelvis 6.41565 1.59009 35.2111
+PROBE bone 27350 t_right bip01 spine2 6.26965 5.11865 44.6389
+PROBE bone 27350 t_right bip01 neck 2.28503 8.76343 55.7904
+PROBE bone 27350 t_right bip01 head 1.05933 10.1991 58.1306
+PROBE bone 27350 t_right bip01 l upperarm -4.16919 3.73682 51.6297
+PROBE bone 27350 t_right bip01 r upperarm 9.55261 11.5844 51.674
+PROBE bone 27350 t_right bip01 l forearm -8.59375 4.76184 40.421
+PROBE bone 27350 t_right bip01 r forearm 11.4434 19.9858 43.1827
+PROBE bone 27350 t_right bip01 l hand -16.5731 12.9979 41.9661
+PROBE bone 27350 t_right bip01 r hand 0.466309 16.7734 41.4288
+PROBE bone 27350 t_right tag_weapon_right -4.63782 15.5835 43.7809
+PROBE body 27400 t_right 0 0 0.113201
+PROBE eye 27400 t_right 0 0 -0.125002
+PROBE bone 27400 t_right bip01 pelvis 6.36304 1.60022 35.2106
+PROBE bone 27400 t_right bip01 spine2 6.2168 5.1228 44.642
+PROBE bone 27400 t_right bip01 neck 2.20728 8.71594 55.8013
+PROBE bone 27400 t_right bip01 head 0.966675 10.135 58.1437
+PROBE bone 27400 t_right bip01 l upperarm -4.18335 3.59314 51.6597
+PROBE bone 27400 t_right bip01 r upperarm 9.41882 11.6575 51.7116
+PROBE bone 27400 t_right bip01 l forearm -8.70093 4.6781 40.4938
+PROBE bone 27400 t_right bip01 r forearm 11.2411 20.1299 43.2759
+PROBE bone 27400 t_right bip01 l hand -16.7184 12.8634 42.1103
+PROBE bone 27400 t_right bip01 r hand 0.30127 16.7579 41.5899
+PROBE bone 27400 t_right tag_weapon_right -4.79834 15.5179 43.9257
+PROBE body 27450 t_right 0 0 0.113201
+PROBE eye 27450 t_right 0 0 -0.125002
+PROBE bone 27450 t_right bip01 pelvis 6.36304 1.60022 35.2106
+PROBE bone 27450 t_right bip01 spine2 6.2168 5.1228 44.642
+PROBE bone 27450 t_right bip01 neck 2.20728 8.71594 55.8013
+PROBE bone 27450 t_right bip01 head 0.966675 10.135 58.1437
+PROBE bone 27450 t_right bip01 l upperarm -4.18335 3.59314 51.6597
+PROBE bone 27450 t_right bip01 r upperarm 9.41882 11.6575 51.7116
+PROBE bone 27450 t_right bip01 l forearm -8.70093 4.6781 40.4938
+PROBE bone 27450 t_right bip01 r forearm 11.2411 20.1299 43.2759
+PROBE bone 27450 t_right bip01 l hand -16.7184 12.8634 42.1103
+PROBE bone 27450 t_right bip01 r hand 0.30127 16.7579 41.5899
+PROBE bone 27450 t_right tag_weapon_right -4.79834 15.5179 43.9257
+PROBE grid 27600 t_right f 4 - - - 76.7678 77.9314 - 51.9061 - - - -
+PROBE grid 27600 t_right f 10 - - - - 76.0321 - 57.8697 - - - -
+PROBE grid 27600 t_right f 16 - - - 71.973 73.6083 58.1647 56.9492 - - - -
+PROBE grid 27600 t_right f 22 - - - 72.7068 71.709 56.6219 54.7503 68.5675 - - -
+PROBE grid 27600 t_right f 28 - - - 73.4406 66.0258 59.0662 57.9337 69.1982 - - -
+PROBE grid 27600 t_right f 34 - - - 70.1179 65.26 60.4021 62.9666 69.829 - - -
+PROBE grid 27600 t_right f 40 - - 63.3776 45.4555 49.2433 59.6363 63.78 70.4597 - - -
+PROBE grid 27600 t_right f 46 - - 63.1615 44.4683 53.9928 54.94 - - - - -
+PROBE grid 27600 t_right f 52 - - 64.9867 58.3741 57.7692 56.805 - - - - -
+PROBE grid 27600 t_right f 58 - - - 58.1421 59.8479 62.0913 - - - - -
+PROBE grid 27600 t_right f 64 - - 65.4002 55.4419 58.0278 - - - - - -
+PROBE grid 27600 t_right f 70 - - - 66.7706 - - - - - - -
+PROBE grid 27600 t_right f 76 - - - - - - - - - - -
+PROBE grid 27600 t_right s 4 - - - 38.0611 38.1646 38.2682 - - 49.1672 - - - - - -
+PROBE grid 27600 t_right s 10 - - - - 38.9797 37.5848 - 54.0492 49.8127 - - - - - -
+PROBE grid 27600 t_right s 16 - - - - 40.1498 38.7549 - 50.3311 52.8785 - - - - - -
+PROBE grid 27600 t_right s 22 - - - - 40.8145 39.4196 34.8388 38.3807 45.7279 53.0751 - - - - -
+PROBE grid 27600 t_right s 28 - - - - 41.9846 40.214 35.3501 37.8645 45.2117 52.5589 - - - - -
+PROBE grid 27600 t_right s 34 - - - - - 40.7253 35.8614 37.3483 44.6955 52.0428 - - - - -
+PROBE grid 27600 t_right s 40 - - 56.9831 51.4644 50.8003 41.2366 36.3727 36.8322 44.1794 51.5266 - - - - -
+PROBE grid 27600 t_right s 46 - - 58.6986 50.7041 47.2289 47.7125 43.6127 51.8624 - - - - - - -
+PROBE grid 27600 t_right s 52 - - - - 46.9009 45.6119 50.7631 58.5156 - - - - - - -
+PROBE grid 27600 t_right s 58 - - - - 57.9172 52.3733 58.7481 - - - - - - - -
+PROBE grid 27600 t_right s 64 - - - - 54.0645 54.8656 57.0092 - - - - - - - -
+PROBE grid 27600 t_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 27600 t_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 27600 t_right axis dmg 96 loc torso_lower point (1259.78, 1226.67, 15.81)
+PROBE dir 27600 t_right 0.996123 0.0409213 -0.0778803
+PROBE phase 29150 t_crouch
+PROBE body 30400 t_crouch 0 0 0.113201
+PROBE eye 30400 t_crouch 0 0 -0.125002
+PROBE bone 30400 t_crouch bip01 pelvis 12.5759 -3.01709 15.01
+PROBE bone 30400 t_crouch bip01 spine2 11.8398 -3.32227 25.2186
+PROBE bone 30400 t_crouch bip01 neck 8.85657 -2.02649 37.1742
+PROBE bone 30400 t_crouch bip01 head 7.57959 -1.10168 39.7343
+PROBE bone 30400 t_crouch bip01 l upperarm 3.10156 -7.33618 32.62
+PROBE bone 30400 t_crouch bip01 r upperarm 13.9186 3.7251 35.6697
+PROBE bone 30400 t_crouch bip01 l forearm -6.03723 -3.59375 25.6385
+PROBE bone 30400 t_crouch bip01 r forearm 9.0437 12.4745 28.8913
+PROBE bone 30400 t_crouch bip01 l hand -13.2394 0.848633 33.5306
+PROBE bone 30400 t_crouch bip01 r hand 1.40247 4.9375 33.2152
+PROBE bone 30400 t_crouch tag_weapon_right -3.58105 2.69434 34.9854
+PROBE body 30450 t_crouch 0 0 0.113201
+PROBE eye 30450 t_crouch 0 0 -0.125002
+PROBE bone 30450 t_crouch bip01 pelvis 12.5759 -3.01709 15.01
+PROBE bone 30450 t_crouch bip01 spine2 11.8398 -3.32239 25.2186
+PROBE bone 30450 t_crouch bip01 neck 8.85632 -2.02698 37.1742
+PROBE bone 30450 t_crouch bip01 head 7.57971 -1.10352 39.735
+PROBE bone 30450 t_crouch bip01 l upperarm 3.10242 -7.33813 32.6201
+PROBE bone 30450 t_crouch bip01 r upperarm 13.917 3.72571 35.6695
+PROBE bone 30450 t_crouch bip01 l forearm -6.04468 -3.59216 25.6516
+PROBE bone 30450 t_crouch bip01 r forearm 9.03821 12.4758 28.8949
+PROBE bone 30450 t_crouch bip01 l hand -13.2413 0.846436 33.5509
+PROBE bone 30450 t_crouch bip01 r hand 1.39978 4.93835 33.2231
+PROBE bone 30450 t_crouch tag_weapon_right -3.58252 2.69507 34.9963
+PROBE body 30500 t_crouch 0 0 0.113201
+PROBE eye 30500 t_crouch 0 0 -0.125002
+PROBE bone 30500 t_crouch bip01 pelvis 12.5759 -3.01709 15.01
+PROBE bone 30500 t_crouch bip01 spine2 11.8398 -3.32239 25.2186
+PROBE bone 30500 t_crouch bip01 neck 8.85632 -2.02698 37.1742
+PROBE bone 30500 t_crouch bip01 head 7.57971 -1.10352 39.735
+PROBE bone 30500 t_crouch bip01 l upperarm 3.10242 -7.33813 32.6201
+PROBE bone 30500 t_crouch bip01 r upperarm 13.917 3.72571 35.6695
+PROBE bone 30500 t_crouch bip01 l forearm -6.04468 -3.59216 25.6516
+PROBE bone 30500 t_crouch bip01 r forearm 9.03821 12.4758 28.8949
+PROBE bone 30500 t_crouch bip01 l hand -13.2413 0.846436 33.5509
+PROBE bone 30500 t_crouch bip01 r hand 1.39978 4.93835 33.2231
+PROBE bone 30500 t_crouch tag_weapon_right -3.58252 2.69507 34.9963
+PROBE grid 30650 t_crouch f 4 - - 78.4045 72.7968 75.5612 78.6197 45.0513 72.6798 81.4083 - -
+PROBE grid 30650 t_crouch f 10 - - - 76.704 73.8598 70.7218 51.7048 71.6347 80.3631 - -
+PROBE grid 30650 t_crouch f 16 - - - - 74.711 70.5681 53.2233 53.6788 79.3179 - -
+PROBE grid 30650 t_crouch f 22 - - - - 74.5545 70.1315 54.7417 55.8536 78.2727 - -
+PROBE grid 30650 t_crouch f 28 - - - 69.0319 73.7285 51.7667 55.5902 73.1857 - - -
+PROBE grid 30650 t_crouch f 34 - - - - 64.7314 48.4112 63.0502 - - - -
+PROBE grid 30650 t_crouch f 40 - - - - - 65.6959 75.38 - - - -
+PROBE grid 30650 t_crouch f 46 - - - - - 64.5971 74.1931 - - - -
+PROBE grid 30650 t_crouch f 52 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 58 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 64 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 70 - - - - - - - - - - -
+PROBE grid 30650 t_crouch f 76 - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 4 - - 36.4417 37.2158 - - - 33.7177 30.5129 39.2026 47.8922 - - - -
+PROBE grid 30650 t_crouch s 10 - - - 38.1125 36.4542 - 36.6813 32.9992 30.7355 39.4252 48.1148 - - - -
+PROBE grid 30650 t_crouch s 16 - - - - 35.5765 35.9328 36.289 32.2808 30.9581 39.6478 48.3374 - - - -
+PROBE grid 30650 t_crouch s 22 - - - - 35.1842 35.5405 40.0766 31.5623 31.1807 39.8704 48.56 - - - -
+PROBE grid 30650 t_crouch s 28 - - - 45.0899 40.1145 37.1392 38.8044 36.5871 43.1139 - - - - - -
+PROBE grid 30650 t_crouch s 34 - - - 45.7561 - 37.8054 36.584 40.2791 46.6311 - - - - - -
+PROBE grid 30650 t_crouch s 40 - - - - - - 42.3456 42.5592 - - - - - - -
+PROBE grid 30650 t_crouch s 46 - - - - - - 42.1889 41.9186 - - - - - - -
+PROBE grid 30650 t_crouch s 52 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 58 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 64 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 70 - - - - - - - - - - - - - - -
+PROBE grid 30650 t_crouch s 76 - - - - - - - - - - - - - - -
+PROBE hit 30650 t_crouch axis dmg 107 loc torso_upper point (1260.19, 1217.05, 7.07)
+PROBE dir 30650 t_crouch 0.993814 0.00401197 -0.110981
+PROBE phase 32200 t_crouch_left
+PROBE body 33450 t_crouch_left 0 0 0.113201
+PROBE eye 33450 t_crouch_left 0 0 -0.125002
+PROBE bone 33450 t_crouch_left bip01 pelvis 12.5759 -5.61951 14.8441
+PROBE bone 33450 t_crouch_left bip01 spine2 11.847 -11.2552 23.1839
+PROBE bone 33450 t_crouch_left bip01 neck 8.97681 -13.9674 34.928
+PROBE bone 33450 t_crouch_left bip01 head 7.80347 -13.9127 37.6957
+PROBE bone 33450 t_crouch_left bip01 l upperarm 2.70752 -16.7238 28.9989
+PROBE bone 33450 t_crouch_left bip01 r upperarm 14.6245 -8.59338 35.3664
+PROBE bone 33450 t_crouch_left bip01 l forearm -6.06299 -10.8101 23.1363
+PROBE bone 33450 t_crouch_left bip01 r forearm 10.0146 2.0708 32.0069
+PROBE bone 33450 t_crouch_left bip01 l hand -12.6096 -9.79297 32.6231
+PROBE bone 33450 t_crouch_left bip01 r hand 2.16614 -6.28198 33.5957
+PROBE bone 33450 t_crouch_left tag_weapon_right -2.8855 -8.84277 34.5568
+PROBE body 33500 t_crouch_left 0 0 0.113201
+PROBE eye 33500 t_crouch_left 0 0 -0.125002
+PROBE bone 33500 t_crouch_left bip01 pelvis 12.5759 -5.61951 14.8441
+PROBE bone 33500 t_crouch_left bip01 spine2 11.8474 -11.2539 23.1849
+PROBE bone 33500 t_crouch_left bip01 neck 8.979 -13.9628 34.9302
+PROBE bone 33500 t_crouch_left bip01 head 7.80579 -13.9084 37.698
+PROBE bone 33500 t_crouch_left bip01 l upperarm 2.70728 -16.7179 29.0034
+PROBE bone 33500 t_crouch_left bip01 r upperarm 14.6288 -8.5907 35.3662
+PROBE bone 33500 t_crouch_left bip01 l forearm -6.0614 -10.7964 23.1461
+PROBE bone 33500 t_crouch_left bip01 r forearm 10.022 2.07373 32.0031
+PROBE bone 33500 t_crouch_left bip01 l hand -12.5953 -9.77576 32.6413
+PROBE bone 33500 t_crouch_left bip01 r hand 2.17029 -6.27576 33.5932
+PROBE bone 33500 t_crouch_left tag_weapon_right -2.88306 -8.83301 34.5545
+PROBE body 33550 t_crouch_left 0 0 0.113201
+PROBE eye 33550 t_crouch_left 0 0 -0.125002
+PROBE bone 33550 t_crouch_left bip01 pelvis 12.5759 -5.61951 14.8441
+PROBE bone 33550 t_crouch_left bip01 spine2 11.8474 -11.2539 23.1849
+PROBE bone 33550 t_crouch_left bip01 neck 8.979 -13.9628 34.9302
+PROBE bone 33550 t_crouch_left bip01 head 7.80579 -13.9084 37.698
+PROBE bone 33550 t_crouch_left bip01 l upperarm 2.70728 -16.7179 29.0034
+PROBE bone 33550 t_crouch_left bip01 r upperarm 14.6288 -8.5907 35.3662
+PROBE bone 33550 t_crouch_left bip01 l forearm -6.0614 -10.7964 23.1461
+PROBE bone 33550 t_crouch_left bip01 r forearm 10.022 2.07373 32.0031
+PROBE bone 33550 t_crouch_left bip01 l hand -12.5953 -9.77576 32.6413
+PROBE bone 33550 t_crouch_left bip01 r hand 2.17029 -6.27576 33.5932
+PROBE bone 33550 t_crouch_left tag_weapon_right -2.88306 -8.83301 34.5545
+PROBE grid 33700 t_crouch_left f 4 - - - 72.0505 74.7092 77.3679 75.837 44.2049 77.5427 - -
+PROBE grid 33700 t_crouch_left f 10 - - - 79.0129 72.9654 70.59 59.5408 52.0256 76.2008 - -
+PROBE grid 33700 t_crouch_left f 16 - - - - 76.5375 72.332 63.3621 53.4719 74.8588 - -
+PROBE grid 33700 t_crouch_left f 22 - - - - - 74.074 69.4807 55.6252 70.4526 - -
+PROBE grid 33700 t_crouch_left f 28 - - - - - - 53.1084 52.9557 60.5906 69.237 -
+PROBE grid 33700 t_crouch_left f 34 - - - - 72.7934 67.2 49.7674 51.516 68.1346 - -
+PROBE grid 33700 t_crouch_left f 40 - - - - - - - 66.2054 66.5668 - -
+PROBE grid 33700 t_crouch_left f 46 - - - - - - - 65.5434 64.6104 - -
+PROBE grid 33700 t_crouch_left f 52 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 58 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 64 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 70 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left f 76 - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 4 - - 34.3437 35.1248 - - - 31.1731 29.0853 36.9947 44.9041 - - - -
+PROBE grid 33700 t_crouch_left s 10 - - - 36.3239 34.1393 - 34.3406 30.1527 28.9994 36.9088 44.8182 - - - -
+PROBE grid 33700 t_crouch_left s 16 - - - - 33.1147 33.4585 33.6948 29.1322 28.9135 36.8229 44.7323 - - - -
+PROBE grid 33700 t_crouch_left s 22 - - - - 32.5764 37.5831 30.8253 28.9478 30.9773 36.737 44.6464 - - - -
+PROBE grid 33700 t_crouch_left s 28 - - - 36.4939 36.0828 28.238 22.6088 26.7636 32.4058 - - - - - -
+PROBE grid 33700 t_crouch_left s 34 - - - 35.0251 - 40.3257 29.2939 27.0226 34.5304 - - - - - -
+PROBE grid 33700 t_crouch_left s 40 - - - - - - 28.3174 29.3334 - - - - - - -
+PROBE grid 33700 t_crouch_left s 46 - - - - - 31.8536 27.211 29.3335 - - - - - - -
+PROBE grid 33700 t_crouch_left s 52 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 58 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 64 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 33700 t_crouch_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 33700 t_crouch_left axis dmg 107 loc torso_upper point (1257.74, 1204.26, 1.59)
+PROBE dir 33700 t_crouch_left 0.990134 -0.0450856 -0.132672
+PROBE phase 35250 t_crouch_right
+PROBE body 36500 t_crouch_right 0 0 0.113201
+PROBE eye 36500 t_crouch_right 0 0 -0.125002
+PROBE bone 36500 t_crouch_right bip01 pelvis 12.5759 -0.407593 15.1401
+PROBE bone 36500 t_crouch_right bip01 spine2 11.8362 5.39331 22.9208
+PROBE bone 36500 t_crouch_right bip01 neck 8.78748 11.2439 33.4085
+PROBE bone 36500 t_crouch_right bip01 head 7.39233 12.6791 35.6522
+PROBE bone 36500 t_crouch_right bip01 l upperarm 3.31152 4.28894 31.486
+PROBE bone 36500 t_crouch_right bip01 r upperarm 13.5504 16.1356 29.6198
+PROBE bone 36500 t_crouch_right bip01 l forearm -6.00293 4.71912 23.7841
+PROBE bone 36500 t_crouch_right bip01 r forearm 8.37109 21.2902 19.983
+PROBE bone 36500 t_crouch_right bip01 l hand -13.4446 11.6969 29.2453
+PROBE bone 36500 t_crouch_right bip01 r hand 0.998779 15.8696 27.0654
+PROBE bone 36500 t_crouch_right tag_weapon_right -3.8905 14.3387 29.6637
+PROBE body 36550 t_crouch_right 0 0 0.113201
+PROBE eye 36550 t_crouch_right 0 0 -0.125002
+PROBE bone 36550 t_crouch_right bip01 pelvis 12.5759 -0.407593 15.1401
+PROBE bone 36550 t_crouch_right bip01 spine2 11.8364 5.39514 22.9192
+PROBE bone 36550 t_crouch_right bip01 neck 8.79187 11.2544 33.4034
+PROBE bone 36550 t_crouch_right bip01 head 7.39868 12.7155 35.6314
+PROBE bone 36550 t_crouch_right bip01 l upperarm 3.29004 4.32373 31.4669
+PROBE bone 36550 t_crouch_right bip01 r upperarm 13.5834 16.1272 29.6263
+PROBE bone 36550 t_crouch_right bip01 l forearm -6.00403 4.74146 23.7398
+PROBE bone 36550 t_crouch_right bip01 r forearm 8.41809 21.287 19.9848
+PROBE bone 36550 t_crouch_right bip01 l hand -13.4209 11.7311 29.2195
+PROBE bone 36550 t_crouch_right bip01 r hand 1.03357 15.877 27.0624
+PROBE bone 36550 t_crouch_right tag_weapon_right -3.86072 14.3544 29.6563
+PROBE body 36600 t_crouch_right 0 0 0.113201
+PROBE eye 36600 t_crouch_right 0 0 -0.125002
+PROBE bone 36600 t_crouch_right bip01 pelvis 12.5759 -0.407593 15.1401
+PROBE bone 36600 t_crouch_right bip01 spine2 11.8364 5.39514 22.9192
+PROBE bone 36600 t_crouch_right bip01 neck 8.79187 11.2544 33.4034
+PROBE bone 36600 t_crouch_right bip01 head 7.39868 12.7155 35.6314
+PROBE bone 36600 t_crouch_right bip01 l upperarm 3.29004 4.32373 31.4669
+PROBE bone 36600 t_crouch_right bip01 r upperarm 13.5834 16.1272 29.6263
+PROBE bone 36600 t_crouch_right bip01 l forearm -6.00403 4.74146 23.7398
+PROBE bone 36600 t_crouch_right bip01 r forearm 8.41809 21.287 19.9848
+PROBE bone 36600 t_crouch_right bip01 l hand -13.4209 11.7311 29.2195
+PROBE bone 36600 t_crouch_right bip01 r hand 1.03357 15.877 27.0624
+PROBE bone 36600 t_crouch_right tag_weapon_right -3.86072 14.3544 29.6563
+PROBE grid 36750 t_crouch_right f 4 - - 75.8621 73.5506 76.4663 77.1659 43.9727 76.0484 - - -
+PROBE grid 36750 t_crouch_right f 10 - - - 73.9323 74.1621 70.7898 51.7929 75.4003 - - -
+PROBE grid 36750 t_crouch_right f 16 - - - 74.1177 72.1326 68.7603 53.3755 74.7522 - - -
+PROBE grid 36750 t_crouch_right f 22 - 75.231 65.7353 68.6532 54.8218 66.6858 54.958 74.1041 - - -
+PROBE grid 36750 t_crouch_right f 28 - - 64.6973 48.7387 55.2789 62.2962 - - - - -
+PROBE grid 36750 t_crouch_right f 34 - - 73.5116 66.2915 64.2269 - - - - - -
+PROBE grid 36750 t_crouch_right f 40 - - 64.6223 65.1374 - - - - - - -
+PROBE grid 36750 t_crouch_right f 46 - - - 66.1812 - - - - - - -
+PROBE grid 36750 t_crouch_right f 52 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 58 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 64 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 70 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right f 76 - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 4 - - 38.4381 39.2223 - - - 36.0314 32.1348 41.3089 50.4907 - - - -
+PROBE grid 36750 t_crouch_right s 10 - - - 39.0114 38.7775 - 39.0355 35.6105 32.6547 41.8364 51.0182 - - - -
+PROBE grid 36750 t_crouch_right s 16 - - - - 38.1243 38.4957 38.8671 35.1896 33.1821 42.3639 51.5456 - - - -
+PROBE grid 36750 t_crouch_right s 22 - - - - 37.9559 38.3273 43.2716 34.7687 33.7096 42.8914 52.0731 - - - -
+PROBE grid 36750 t_crouch_right s 28 - - - 55.7459 50.2876 47.5354 48.8417 45.3556 55.1502 - - - - - -
+PROBE grid 36750 t_crouch_right s 34 - - - - - 50.5285 49.3834 57.5545 - - - - - - -
+PROBE grid 36750 t_crouch_right s 40 - - - - - 64.2331 57.3743 59.1155 - - - - - - -
+PROBE grid 36750 t_crouch_right s 46 - - - - - - 58.7607 62.1051 - - - - - - -
+PROBE grid 36750 t_crouch_right s 52 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 58 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 64 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 36750 t_crouch_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 36750 t_crouch_right axis dmg 107 loc torso_upper point (1257.31, 1226.79, 4.88)
+PROBE dir 36750 t_crouch_right 0.991848 0.0415858 -0.12045
+PROBE phase 38300 t_prone
+PROBE body 40550 t_prone 0 0 0.113201
+PROBE eye 40550 t_prone 0 0 -0.125002
+PROBE bone 40550 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40550 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40550 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40550 t_prone bip01 head -1.32727 -2.64307 7.50082
+PROBE bone 40550 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40550 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40550 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40550 t_prone bip01 r forearm 1.79004 8.52039 -0.696392
+PROBE bone 40550 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40550 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40550 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE body 40600 t_prone 0 0 0.113201
+PROBE eye 40600 t_prone 0 0 -0.125002
+PROBE bone 40600 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40600 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40600 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40600 t_prone bip01 head -1.32727 -2.64307 7.50082
+PROBE bone 40600 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40600 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40600 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40600 t_prone bip01 r forearm 1.79004 8.52039 -0.696392
+PROBE bone 40600 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40600 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40600 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE body 40650 t_prone 0 0 0.113201
+PROBE eye 40650 t_prone 0 0 -0.125002
+PROBE bone 40650 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40650 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40650 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40650 t_prone bip01 head -1.32727 -2.64307 7.50082
+PROBE bone 40650 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40650 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40650 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40650 t_prone bip01 r forearm 1.79004 8.52039 -0.696392
+PROBE bone 40650 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40650 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40650 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE grid 40800 t_prone f 4 - - - 115.718 55.1037 40.4874 43.5151 51.7063 89.716 101.496 -
+PROBE grid 40800 t_prone f 10 - - - - 68.5156 55.9709 57.6116 72.63 96.4841 - -
+PROBE grid 40800 t_prone f 16 - - - - 78.6698 55.0257 77.0168 76.1903 98.1257 - -
+PROBE grid 40800 t_prone f 22 - - - - - 102.234 100.279 98.3248 99.7673 - -
+PROBE grid 40800 t_prone f 28 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 34 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 40 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 46 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 52 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 58 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 64 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 70 - - - - - - - - - - -
+PROBE grid 40800 t_prone f 76 - - - - - - - - - - -
+PROBE grid 40800 t_prone s 4 - 48.5113 39.5955 35.0417 33.8596 33.1074 36.6714 35.3313 33.708 30.874 27.818 24.7619 28.5257 35.2133 32.6478
+PROBE grid 40800 t_prone s 10 - - - - 41.955 37.9446 36.8163 34.9804 32.1328 31.2493 30.3658 29.4823 51.1109 - -
+PROBE grid 40800 t_prone s 16 - - - - 44.7186 44.0234 - 33.258 32.3745 31.491 30.6075 29.724 - - -
+PROBE grid 40800 t_prone s 22 - - - - - - - - - - - 29.9657 - - -
+PROBE grid 40800 t_prone s 28 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 34 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 40 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 46 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 52 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 58 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 64 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 70 - - - - - - - - - - - - - - -
+PROBE grid 40800 t_prone s 76 - - - - - - - - - - - - - - -
+PROBE hit 40800 t_prone axis dmg 180 loc head point (1247.09, 1215.44, -10.50)
+PROBE dir 40800 t_prone 0.982656 -0.00221334 -0.185427
+PROBE phase 42350 t_prone_left
+PROBE body 43600 t_prone_left 0 0 0.113201
+PROBE eye 43600 t_prone_left 0 0 -0.125002
+PROBE bone 43600 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43600 t_prone_left bip01 spine2 13.9933 -10.1636 5.47094
+PROBE bone 43600 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43600 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43600 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43600 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43600 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43600 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43600 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43600 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43600 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE body 43650 t_prone_left 0 0 0.113201
+PROBE eye 43650 t_prone_left 0 0 -0.125002
+PROBE bone 43650 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43650 t_prone_left bip01 spine2 13.9933 -10.1636 5.47094
+PROBE bone 43650 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43650 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43650 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43650 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43650 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43650 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43650 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43650 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43650 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE body 43700 t_prone_left 0 0 0.113201
+PROBE eye 43700 t_prone_left 0 0 -0.125002
+PROBE bone 43700 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43700 t_prone_left bip01 spine2 13.9933 -10.1636 5.47094
+PROBE bone 43700 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43700 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43700 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43700 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43700 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43700 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43700 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43700 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43700 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE grid 43850 t_prone_left f 4 - - - 115.624 81.6503 56.242 65.0568 41.3708 47.1023 99.3484 -
+PROBE grid 43850 t_prone_left f 10 - - - - 80.2354 69.2675 55.9032 41.4805 66.6014 - -
+PROBE grid 43850 t_prone_left f 16 - - - - 78.8205 77.994 57.3501 55.7081 90.6978 - -
+PROBE grid 43850 t_prone_left f 22 - - - - - 102.59 100.636 98.6811 96.7266 - -
+PROBE grid 43850 t_prone_left f 28 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 34 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 40 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 46 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 52 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 58 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 64 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 70 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left f 76 - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 4 - - 30.9028 29.8104 27.0962 26.9275 26.3735 29.6757 31.8055 29.7803 26.7242 23.6681 27.4319 34.1196 31.5541
+PROBE grid 43850 t_prone_left s 10 - 38.5229 - - 34.0054 33.646 26.2797 28.1996 30.0732 30.1555 29.272 28.3885 50.0171 - -
+PROBE grid 43850 t_prone_left s 16 - - - - 35.4573 35.6495 - 32.1642 31.2807 30.3972 29.5138 28.6303 - - -
+PROBE grid 43850 t_prone_left s 22 - - - - - - - - - - - 28.872 - - -
+PROBE grid 43850 t_prone_left s 28 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 34 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 40 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 46 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 52 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 58 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 64 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 43850 t_prone_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 43850 t_prone_left axis dmg 180 loc head point (1248.14, 1206.02, -12.83)
+PROBE dir 43850 t_prone_left 0.980325 -0.0394131 -0.193413
+PROBE phase 45400 t_prone_right
+PROBE body 46650 t_prone_right 0 0 0.113201
+PROBE eye 46650 t_prone_right 0 0 -0.125002
+PROBE bone 46650 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 46650 t_prone_right bip01 spine2 14.8746 0.19104 5.20977
+PROBE bone 46650 t_prone_right bip01 neck 3.43225 4.20178 7.7596
+PROBE bone 46650 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 46650 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 46650 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 46650 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 46650 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 46650 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 46650 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 46650 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE body 46700 t_prone_right 0 0 0.113201
+PROBE eye 46700 t_prone_right 0 0 -0.125002
+PROBE bone 46700 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 46700 t_prone_right bip01 spine2 14.8746 0.19104 5.20977
+PROBE bone 46700 t_prone_right bip01 neck 3.43225 4.20178 7.7596
+PROBE bone 46700 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 46700 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 46700 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 46700 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 46700 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 46700 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 46700 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 46700 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE body 46750 t_prone_right 0 0 0.113201
+PROBE eye 46750 t_prone_right 0 0 -0.125002
+PROBE bone 46750 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 46750 t_prone_right bip01 spine2 14.8746 0.19104 5.20977
+PROBE bone 46750 t_prone_right bip01 neck 3.43225 4.20178 7.7596
+PROBE bone 46750 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 46750 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 46750 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 46750 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 46750 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 46750 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 46750 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 46750 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE grid 46900 t_prone_right f 4 - - - 42.9549 43.1174 48.2103 59.0155 80.7991 91.8633 - -
+PROBE grid 46900 t_prone_right f 10 - - - 58.5027 57.8848 64.4052 72.9205 77.4546 - - -
+PROBE grid 46900 t_prone_right f 16 - - - - 59.5198 77.6927 76.8662 76.0397 - - -
+PROBE grid 46900 t_prone_right f 22 - - - - - 101.878 99.9231 97.9685 - - -
+PROBE grid 46900 t_prone_right f 28 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 34 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 40 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 46 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 52 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 58 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 64 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 70 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right f 76 - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 4 - - 50.604 46.169 42.2695 40.6771 42.3805 40.6381 35.2278 31.3699 28.9117 25.8556 29.6194 36.3071 33.7416
+PROBE grid 46900 t_prone_right s 10 - - - - 51.3379 45.9201 46.5842 40.1247 33.2265 32.343 31.4595 30.576 52.2046 - -
+PROBE grid 46900 t_prone_right s 16 - - - - 54.4052 52.8055 - 34.3517 33.4682 32.5847 31.7013 30.8178 - - -
+PROBE grid 46900 t_prone_right s 22 - - - - - - - - - - - 31.0595 - - -
+PROBE grid 46900 t_prone_right s 28 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 34 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 40 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 46 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 52 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 58 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 64 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 46900 t_prone_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 46900 t_prone_right axis dmg 180 loc head point (1250.44, 1226.70, -14.01)
+PROBE dir 46900 t_prone_right 0.979682 0.0418712 -0.196136
+PROBE phase 48450 t_stand
+PROBE body 50700 t_stand 0 0 0.113201
+PROBE eye 50700 t_stand 0 0 -0.125002
+PROBE bone 50700 t_stand bip01 pelvis 5.21704 -2.12622 35.1138
+PROBE bone 50700 t_stand bip01 spine2 4.70764 -2.38635 45.317
+PROBE bone 50700 t_stand bip01 neck 0.998047 -1.21936 57.0812
+PROBE bone 50700 t_stand bip01 head -0.0957031 0.296387 59.4361
+PROBE bone 50700 t_stand bip01 l upperarm -5.92029 -4.28662 51.8886
+PROBE bone 50700 t_stand bip01 r upperarm 8.52686 2.30579 53.8473
+PROBE bone 50700 t_stand bip01 l forearm -7.60657 -3.63599 39.9305
+PROBE bone 50700 t_stand bip01 r forearm 11.1813 12.3632 47.6777
+PROBE bone 50700 t_stand bip01 l hand -15.9175 2.97839 44.5209
+PROBE bone 50700 t_stand bip01 r hand 0.918335 7.31799 45.9144
+PROBE bone 50700 t_stand tag_weapon_right -4.15332 5.151 47.5218
+PROBE body 50750 t_stand 0 0 0.113201
+PROBE eye 50750 t_stand 0 0 -0.125002
+PROBE bone 50750 t_stand bip01 pelvis 5.22034 -2.13184 35.1195
+PROBE bone 50750 t_stand bip01 spine2 4.70166 -2.3822 45.3216
+PROBE bone 50750 t_stand bip01 neck 1.0199 -1.19116 57.092
+PROBE bone 50750 t_stand bip01 head -0.0682373 0.32959 59.4464
+PROBE bone 50750 t_stand bip01 l upperarm -5.91113 -4.26794 51.9219
+PROBE bone 50750 t_stand bip01 r upperarm 8.54211 2.323 53.8319
+PROBE bone 50750 t_stand bip01 l forearm -7.61707 -3.62988 39.9659
+PROBE bone 50750 t_stand bip01 r forearm 11.2003 12.344 47.6047
+PROBE bone 50750 t_stand bip01 l hand -15.9191 2.97278 44.589
+PROBE bone 50750 t_stand bip01 r hand 0.916748 7.31702 45.9102
+PROBE bone 50750 t_stand tag_weapon_right -4.14758 5.15039 47.5405
+PROBE body 50800 t_stand 0 0 0.113201
+PROBE eye 50800 t_stand 0 0 -0.125002
+PROBE bone 50800 t_stand bip01 pelvis 5.22034 -2.13184 35.1195
+PROBE bone 50800 t_stand bip01 spine2 4.70166 -2.3822 45.3216
+PROBE bone 50800 t_stand bip01 neck 1.0199 -1.19116 57.092
+PROBE bone 50800 t_stand bip01 head -0.0682373 0.32959 59.4464
+PROBE bone 50800 t_stand bip01 l upperarm -5.91113 -4.26794 51.9219
+PROBE bone 50800 t_stand bip01 r upperarm 8.54211 2.323 53.8319
+PROBE bone 50800 t_stand bip01 l forearm -7.61707 -3.62988 39.9659
+PROBE bone 50800 t_stand bip01 r forearm 11.2003 12.344 47.6047
+PROBE bone 50800 t_stand bip01 l hand -15.9191 2.97278 44.589
+PROBE bone 50800 t_stand bip01 r hand 0.916748 7.31702 45.9102
+PROBE bone 50800 t_stand tag_weapon_right -4.14758 5.15039 47.5405
+PROBE grid 50950 t_stand f 4 - - - 78.2084 78.679 81.539 - - - - -
+PROBE grid 50950 t_stand f 10 - - - - 75.2861 78.1682 58.0625 61.2294 - - -
+PROBE grid 50950 t_stand f 16 - - - - 72.0146 75.385 56.7919 62.3859 - - -
+PROBE grid 50950 t_stand f 22 - - - - 69.7443 69.9813 54.9326 64.1807 - - -
+PROBE grid 50950 t_stand f 28 - - - - 68.9585 70.393 57.3012 64.075 70.06 - -
+PROBE grid 50950 t_stand f 34 - - - - 67.7859 61.7781 59.6697 63.9694 69.9544 - -
+PROBE grid 50950 t_stand f 40 - - - - 68.1977 49.9725 55.8007 63.8638 69.8488 - -
+PROBE grid 50950 t_stand f 46 - - - 65.0939 44.8339 48.3309 53.3098 - - - -
+PROBE grid 50950 t_stand f 52 - - - - 65.2051 56.295 53.7798 - - - -
+PROBE grid 50950 t_stand f 58 - - - - 64.6536 58.2349 60.2863 - - - -
+PROBE grid 50950 t_stand f 64 - - - - 56.3059 55.482 - - - - -
+PROBE grid 50950 t_stand f 70 - - - - 65.8188 60.5902 - - - - -
+PROBE grid 50950 t_stand f 76 - - - - - - - - - - -
+PROBE grid 50950 t_stand s 4 - - - 37.7566 36.176 36.2787 - - 47.049 - - - - - -
+PROBE grid 50950 t_stand s 10 - - - - 36.9668 35.1706 - 51.8599 47.5547 - - - - - -
+PROBE grid 50950 t_stand s 16 - - - - 37.8225 37.589 - 47.3636 50.0198 - - - - - -
+PROBE grid 50950 t_stand s 22 - - - - 38.1687 36.1811 30.1661 36.0199 42.0122 48.0044 - - - - -
+PROBE grid 50950 t_stand s 28 - - - - 39.0244 36.0752 30.0602 35.6087 41.6009 47.5932 - - - - -
+PROBE grid 50950 t_stand s 34 - - - - - 35.9693 29.9543 35.1975 41.1897 47.1819 - - - - -
+PROBE grid 50950 t_stand s 40 - - - 44.8722 40.7611 35.8634 29.8484 34.7863 40.7785 46.7707 - - - - -
+PROBE grid 50950 t_stand s 46 - - 49.7988 42.9898 39.2712 38.0841 39.1128 56.4516 - - - - - - -
+PROBE grid 50950 t_stand s 52 - - - - 38.8108 38.1064 42.1467 45.0344 - - - - - - -
+PROBE grid 50950 t_stand s 58 - - - - 45.3177 39.9876 44.028 - - - - - - - -
+PROBE grid 50950 t_stand s 64 - - - - 46.2814 44.7604 - - - - - - - - -
+PROBE grid 50950 t_stand s 70 - - - - - 46.2797 - - - - - - - - -
+PROBE grid 50950 t_stand s 76 - - - - - - - - - - - - - - -
+PROBE hit 50950 t_stand axis dmg 96 loc torso_lower point (1250.60, 1214.24, 19.21)
+PROBE dir 50950 t_stand 0.997706 -0.00702572 -0.0673274
+PROBE phase 52500 s_left
+PROBE body 53750 s_left 0 0 0.113201
+PROBE eye 53750 s_left 0 0 -0.125002
+PROBE bone 53750 s_left bip01 pelvis 6.04968 -1.94604 35.1548
+PROBE bone 53750 s_left bip01 spine2 5.93457 -2.24927 45.3491
+PROBE bone 53750 s_left bip01 neck 1.86438 -1.88049 57.0458
+PROBE bone 53750 s_left bip01 head 0.395996 -1.26233 59.5957
+PROBE bone 53750 s_left bip01 l upperarm -3.92285 -6.75488 51.8514
+PROBE bone 53750 s_left bip01 r upperarm 8.41736 2.92786 54.1729
+PROBE bone 53750 s_left bip01 l forearm -9.30945 -2.4834 41.9014
+PROBE bone 53750 s_left bip01 r forearm 9.68567 13.7087 48.8412
+PROBE bone 53750 s_left bip01 l hand -17.6122 4.69763 45.5605
+PROBE bone 53750 s_left bip01 r hand -0.849609 9.42273 46.7132
+PROBE bone 53750 s_left tag_weapon_right -5.91235 7.32715 48.4388
+PROBE body 53800 s_left 0 0 0.113201
+PROBE eye 53800 s_left 0 0 -0.125002
+PROBE bone 53800 s_left bip01 pelvis 5.97241 -1.93872 35.1548
+PROBE bone 53800 s_left bip01 spine2 5.87012 -2.25281 45.3493
+PROBE bone 53800 s_left bip01 neck 1.82031 -1.97144 57.0555
+PROBE bone 53800 s_left bip01 head 0.27002 -1.41614 59.5712
+PROBE bone 53800 s_left bip01 l upperarm -3.86487 -6.98169 51.8775
+PROBE bone 53800 s_left bip01 r upperarm 8.24329 2.99048 54.2277
+PROBE bone 53800 s_left bip01 l forearm -9.28735 -2.80396 41.9073
+PROBE bone 53800 s_left bip01 r forearm 9.323 13.8802 49.0792
+PROBE bone 53800 s_left bip01 l hand -17.7173 4.21814 45.5837
+PROBE bone 53800 s_left bip01 r hand -1.05139 9.22571 46.9347
+PROBE bone 53800 s_left tag_weapon_right -6.08716 7.02454 48.6067
+PROBE body 53850 s_left 0 0 0.113201
+PROBE eye 53850 s_left 0 0 -0.125002
+PROBE bone 53850 s_left bip01 pelvis 5.97241 -1.93872 35.1548
+PROBE bone 53850 s_left bip01 spine2 5.87012 -2.25281 45.3493
+PROBE bone 53850 s_left bip01 neck 1.82031 -1.97144 57.0555
+PROBE bone 53850 s_left bip01 head 0.27002 -1.41614 59.5712
+PROBE bone 53850 s_left bip01 l upperarm -3.86487 -6.98169 51.8775
+PROBE bone 53850 s_left bip01 r upperarm 8.24329 2.99048 54.2277
+PROBE bone 53850 s_left bip01 l forearm -9.28735 -2.80396 41.9073
+PROBE bone 53850 s_left bip01 r forearm 9.323 13.8802 49.0792
+PROBE bone 53850 s_left bip01 l hand -17.7173 4.21814 45.5837
+PROBE bone 53850 s_left bip01 r hand -1.05139 9.22571 46.9347
+PROBE bone 53850 s_left tag_weapon_right -6.08716 7.02454 48.6067
+PROBE grid 54000 s_left f 4 - - - 78.0928 78.6114 81.444 - 52.0496 - - -
+PROBE grid 54000 s_left f 10 - - - - 75.8426 78.4674 58.1754 58.2928 - - -
+PROBE grid 54000 s_left f 16 - - - - 70.3823 75.5798 57.4767 62.4503 - - -
+PROBE grid 54000 s_left f 22 - - - - 68.1251 68.9742 55.9728 65.0432 - - -
+PROBE grid 54000 s_left f 28 - - - - 68.5205 69.6149 58.5612 65.3306 - - -
+PROBE grid 54000 s_left f 34 - - - - 66.3885 62.8017 59.2148 65.6181 - - -
+PROBE grid 54000 s_left f 40 - - - - 67.0292 50.4432 54.7126 65.9056 - - -
+PROBE grid 54000 s_left f 46 - - - 62.757 42.3822 46.6205 52.0023 69.5952 - - -
+PROBE grid 54000 s_left f 52 - - 71.3417 67.2326 64.455 60.2453 56.5002 59.3216 - - -
+PROBE grid 54000 s_left f 58 - - - - 62.9549 57.8019 59.6897 - - - -
+PROBE grid 54000 s_left f 64 - - - - - 55.4143 57.5341 - - - -
+PROBE grid 54000 s_left f 70 - - - - - 62.5608 - - - - -
+PROBE grid 54000 s_left f 76 - - - - - - - - - - -
+PROBE grid 54000 s_left s 4 - - - 38.8177 36.0631 36.1693 - - 47.1075 - - - - - -
+PROBE grid 54000 s_left s 10 - - - - 36.0239 35.5343 - 50.8484 47.4682 - - - - - -
+PROBE grid 54000 s_left s 16 - - - - 36.6741 35.6965 54.4413 47.515 50.9289 - - - - - -
+PROBE grid 54000 s_left s 22 - - - - 36.8363 36.3467 33.0519 34.8688 44.9055 - - - - - -
+PROBE grid 54000 s_left s 28 - - - - 37.4865 36.7914 33.2228 33.797 43.8337 - - - - - -
+PROBE grid 54000 s_left s 34 - - - - - 36.9624 33.3938 32.7253 42.762 - - - - - -
+PROBE grid 54000 s_left s 40 - - - 44.0563 46.2836 39.2238 33.5648 31.6536 41.6902 51.7269 - - - - -
+PROBE grid 54000 s_left s 46 - - 48.4704 41.6842 37.136 39.5368 35.7441 - - - - - - - -
+PROBE grid 54000 s_left s 52 - - - - 37.0018 35.9924 40.0661 46.9487 - - - - - - -
+PROBE grid 54000 s_left s 58 - - - - 45.135 37.8458 42.8908 - - - - - - - -
+PROBE grid 54000 s_left s 64 - - - - 41.1356 42.0798 - - - - - - - - -
+PROBE grid 54000 s_left s 70 - - - - - 43.6823 - - - - - - - - -
+PROBE grid 54000 s_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 54000 s_left axis dmg 107 loc torso_upper point (1251.02, 1212.06, 23.87)
+PROBE dir 54000 s_left 0.996589 -0.074048 -0.0364303
+PROBE phase 55550 s_right
+PROBE body 56800 s_right 0 0 0.113201
+PROBE eye 56800 s_right 0 0 -0.125002
+PROBE bone 56800 s_right bip01 pelvis 5.2063 -2.10754 35.0946
+PROBE bone 56800 s_right bip01 spine2 4.73328 -2.40247 45.2995
+PROBE bone 56800 s_right bip01 neck 1.00684 -1.23511 57.0583
+PROBE bone 56800 s_right bip01 head -0.0891113 0.281006 59.412
+PROBE bone 56800 s_right bip01 l upperarm -5.90649 -4.29443 51.8543
+PROBE bone 56800 s_right bip01 r upperarm 8.54504 2.28259 53.822
+PROBE bone 56800 s_right bip01 l forearm -7.62598 -3.56335 39.9056
+PROBE bone 56800 s_right bip01 r forearm 11.1753 12.4047 47.7484
+PROBE bone 56800 s_right bip01 l hand -15.9137 3.09363 44.4763
+PROBE bone 56800 s_right bip01 r hand 0.934204 7.34521 45.9008
+PROBE bone 56800 s_right tag_weapon_right -4.15137 5.19604 47.4876
+PROBE body 56850 s_right 0 0 0.113201
+PROBE eye 56850 s_right 0 0 -0.125002
+PROBE bone 56850 s_right bip01 pelvis 5.20959 -2.11316 35.1004
+PROBE bone 56850 s_right bip01 spine2 4.72827 -2.40027 45.3052
+PROBE bone 56850 s_right bip01 neck 1.01038 -1.24219 57.0676
+PROBE bone 56850 s_right bip01 head -0.0843506 0.271973 59.4232
+PROBE bone 56850 s_right bip01 l upperarm -5.90564 -4.30127 51.867
+PROBE bone 56850 s_right bip01 r upperarm 8.54407 2.28149 53.8322
+PROBE bone 56850 s_right bip01 l forearm -7.61597 -3.60071 39.9152
+PROBE bone 56850 s_right bip01 r forearm 11.1681 12.3948 47.7414
+PROBE bone 56850 s_right bip01 l hand -15.9122 3.04358 44.489
+PROBE bone 56850 s_right bip01 r hand 0.931152 7.32251 45.9059
+PROBE bone 56850 s_right tag_weapon_right -4.14832 5.16052 47.4951
+PROBE body 56900 s_right 0 0 0.113201
+PROBE eye 56900 s_right 0 0 -0.125002
+PROBE bone 56900 s_right bip01 pelvis 5.20959 -2.11316 35.1004
+PROBE bone 56900 s_right bip01 spine2 4.72827 -2.40027 45.3052
+PROBE bone 56900 s_right bip01 neck 1.01038 -1.24219 57.0676
+PROBE bone 56900 s_right bip01 head -0.0843506 0.271973 59.4232
+PROBE bone 56900 s_right bip01 l upperarm -5.90564 -4.30127 51.867
+PROBE bone 56900 s_right bip01 r upperarm 8.54407 2.28149 53.8322
+PROBE bone 56900 s_right bip01 l forearm -7.61597 -3.60071 39.9152
+PROBE bone 56900 s_right bip01 r forearm 11.1681 12.3948 47.7414
+PROBE bone 56900 s_right bip01 l hand -15.9122 3.04358 44.489
+PROBE bone 56900 s_right bip01 r hand 0.931152 7.32251 45.9059
+PROBE bone 56900 s_right tag_weapon_right -4.14832 5.16052 47.4951
+PROBE grid 57050 s_right f 4 - - - 78.2088 78.6869 81.5492 - - - - -
+PROBE grid 57050 s_right f 10 - - - - 75.2668 78.177 58.0341 61.2214 - - -
+PROBE grid 57050 s_right f 16 - - - - 72.0241 75.3946 56.7501 62.3983 - - -
+PROBE grid 57050 s_right f 22 - - - - 69.7545 69.9655 54.8865 64.1933 - - -
+PROBE grid 57050 s_right f 28 - - - - 68.9302 70.3781 57.2722 64.0861 70.0401 - -
+PROBE grid 57050 s_right f 34 - - - - 67.7794 61.7406 59.6579 63.9788 69.9329 - -
+PROBE grid 57050 s_right f 40 - - - - 68.192 49.4766 55.7462 63.8715 69.8256 - -
+PROBE grid 57050 s_right f 46 - - - 65.364 44.699 48.3283 53.2515 - - - -
+PROBE grid 57050 s_right f 52 - - - 76.3584 65.2709 56.3094 53.6999 - - - -
+PROBE grid 57050 s_right f 58 - - - - 64.5332 58.1675 60.5816 - - - -
+PROBE grid 57050 s_right f 64 - - - - 56.2437 55.4446 - - - - -
+PROBE grid 57050 s_right f 70 - - - - 65.7779 60.7272 - - - - -
+PROBE grid 57050 s_right f 76 - - - - - - - - - - -
+PROBE grid 57050 s_right s 4 - - - 36.7484 36.1743 36.2764 - - 47.0549 - - - - - -
+PROBE grid 57050 s_right s 10 - - - - 36.9655 35.1672 - 51.8754 47.5593 - - - - - -
+PROBE grid 57050 s_right s 16 - - - - 37.8278 37.7292 - 47.372 50.0292 - - - - - -
+PROBE grid 57050 s_right s 22 - - - - 38.1805 36.1948 30.1485 36.0509 42.0123 47.9737 - - - - -
+PROBE grid 57050 s_right s 28 - - - - 39.0429 36.0867 30.0404 35.6409 41.6024 47.5638 - - - - -
+PROBE grid 57050 s_right s 34 - - - - - 35.9786 29.9324 35.231 41.1924 47.1539 - - - - -
+PROBE grid 57050 s_right s 40 - - - 44.8574 40.6413 35.8705 29.8243 34.8211 40.7825 46.7439 - - - - -
+PROBE grid 57050 s_right s 46 - - 49.7408 42.9545 39.206 38.0685 39.1048 56.8194 - - - - - - -
+PROBE grid 57050 s_right s 52 - - - - 38.7202 38.1012 42.1184 44.9855 - - - - - - -
+PROBE grid 57050 s_right s 58 - - - - 45.1289 39.9647 43.9819 - - - - - - - -
+PROBE grid 57050 s_right s 64 - - - - 46.0195 44.5654 - - - - - - - - -
+PROBE grid 57050 s_right s 70 - - - - - 46.0087 - - - - - - - - -
+PROBE grid 57050 s_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 57050 s_right axis dmg 107 loc torso_upper point (1261.24, 1222.52, 21.36)
+PROBE dir 57050 s_right 0.995719 0.0809733 -0.0445862
+PROBE phase 58600 s_left_t_right
+PROBE body 59850 s_left_t_right 0 0 0.113201
+PROBE eye 59850 s_left_t_right 0 0 -0.125002
+PROBE bone 59850 s_left_t_right bip01 pelvis 6.25781 1.62061 35.2096
+PROBE bone 59850 s_left_t_right bip01 spine2 6.11438 5.13123 44.6485
+PROBE bone 59850 s_left_t_right bip01 neck 2.06946 8.60803 55.8319
+PROBE bone 59850 s_left_t_right bip01 head 0.813721 9.9906 58.188
+PROBE bone 59850 s_left_t_right bip01 l upperarm -4.14294 3.20398 51.7774
+PROBE bone 59850 s_left_t_right bip01 r upperarm 9.09705 11.8788 51.7942
+PROBE bone 59850 s_left_t_right bip01 l forearm -8.98779 4.62292 40.7876
+PROBE bone 59850 s_left_t_right bip01 r forearm 10.7974 20.5643 43.5521
+PROBE bone 59850 s_left_t_right bip01 l hand -17.0305 12.764 42.4991
+PROBE bone 59850 s_left_t_right bip01 r hand -0.0664062 16.8484 42.1162
+PROBE bone 59850 s_left_t_right tag_weapon_right -5.16296 15.5183 44.4087
+PROBE body 59900 s_left_t_right 0 0 0.113201
+PROBE eye 59900 s_left_t_right 0 0 -0.125002
+PROBE bone 59900 s_left_t_right bip01 pelvis 6.2052 1.63074 35.2091
+PROBE bone 59900 s_left_t_right bip01 spine2 6.06836 5.13232 44.6541
+PROBE bone 59900 s_left_t_right bip01 neck 2.00781 8.52209 55.8585
+PROBE bone 59900 s_left_t_right bip01 head 0.72229 9.87256 58.2172
+PROBE bone 59900 s_left_t_right bip01 l upperarm -4.08167 2.9397 51.8596
+PROBE bone 59900 s_left_t_right bip01 r upperarm 8.9032 12.0077 51.8496
+PROBE bone 59900 s_left_t_right bip01 l forearm -9.11877 4.51172 40.9776
+PROBE bone 59900 s_left_t_right bip01 r forearm 10.4999 20.8344 43.7376
+PROBE bone 59900 s_left_t_right bip01 l hand -17.2181 12.5891 42.724
+PROBE bone 59900 s_left_t_right bip01 r hand -0.293457 16.8733 42.4308
+PROBE bone 59900 s_left_t_right tag_weapon_right -5.38342 15.4695 44.694
+PROBE body 59950 s_left_t_right 0 0 0.113201
+PROBE eye 59950 s_left_t_right 0 0 -0.125002
+PROBE bone 59950 s_left_t_right bip01 pelvis 6.2052 1.63074 35.2091
+PROBE bone 59950 s_left_t_right bip01 spine2 6.06836 5.13232 44.6541
+PROBE bone 59950 s_left_t_right bip01 neck 2.00781 8.52209 55.8585
+PROBE bone 59950 s_left_t_right bip01 head 0.72229 9.87256 58.2172
+PROBE bone 59950 s_left_t_right bip01 l upperarm -4.08167 2.9397 51.8596
+PROBE bone 59950 s_left_t_right bip01 r upperarm 8.9032 12.0077 51.8496
+PROBE bone 59950 s_left_t_right bip01 l forearm -9.11877 4.51172 40.9776
+PROBE bone 59950 s_left_t_right bip01 r forearm 10.4999 20.8344 43.7376
+PROBE bone 59950 s_left_t_right bip01 l hand -17.2181 12.5891 42.724
+PROBE bone 59950 s_left_t_right bip01 r hand -0.293457 16.8733 42.4308
+PROBE bone 59950 s_left_t_right tag_weapon_right -5.38342 15.4695 44.694
+PROBE grid 60100 s_left_t_right f 4 - - - 76.7616 77.665 - 51.9477 - - - -
+PROBE grid 60100 s_left_t_right f 10 - - - - 75.697 - 57.9744 - - - -
+PROBE grid 60100 s_left_t_right f 16 - - - 71.7949 73.18 - 57.1458 - - - -
+PROBE grid 60100 s_left_t_right f 22 - - - 72.1941 71.212 56.5102 55.085 69.143 - - -
+PROBE grid 60100 s_left_t_right f 28 - - - 72.5933 65.5483 58.9942 57.5691 69.835 - - -
+PROBE grid 60100 s_left_t_right f 34 - - - 69.21 64.9501 60.6902 60.7966 70.5269 - - -
+PROBE grid 60100 s_left_t_right f 40 - - 64.0389 46.55 47.7258 60.092 64.3624 71.2189 - - -
+PROBE grid 60100 s_left_t_right f 46 - 71.2207 61.9214 42.8638 54.6576 54.0526 - - - - -
+PROBE grid 60100 s_left_t_right f 52 - - 64.2646 58.842 58.4923 56.0194 - - - - -
+PROBE grid 60100 s_left_t_right f 58 - - - 58.494 59.3431 62.4371 - - - - -
+PROBE grid 60100 s_left_t_right f 64 - - 64.5477 55.4859 57.5998 - - - - - -
+PROBE grid 60100 s_left_t_right f 70 - - - 66.3548 - - - - - - -
+PROBE grid 60100 s_left_t_right f 76 - - - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 4 - - - 38.8394 38.1406 38.2452 - - 49.0707 - - - - - -
+PROBE grid 60100 s_left_t_right s 10 - - - - 38.6871 37.7037 - 53.5963 49.8248 - - - - - -
+PROBE grid 60100 s_left_t_right s 16 - - - - 39.7543 38.7709 58.2366 50.243 53.2248 - - - - - -
+PROBE grid 60100 s_left_t_right s 22 - - - - 40.3239 39.3406 35.3939 38.2353 46.6484 - - - - - -
+PROBE grid 60100 s_left_t_right s 28 - - - - 41.3911 40.1264 35.8833 37.6172 46.0302 54.4433 - - - - -
+PROBE grid 60100 s_left_t_right s 34 - - - - - 40.6157 36.3726 36.999 45.4121 53.8251 - - - - -
+PROBE grid 60100 s_left_t_right s 40 - - - 50.442 - 41.1051 36.862 36.3809 44.7939 53.207 - - - - -
+PROBE grid 60100 s_left_t_right s 46 - - 57.0738 49.7086 46.3858 47.4614 43.9304 51.9505 - - - - - - -
+PROBE grid 60100 s_left_t_right s 52 - - - - 46.3512 45.1706 50.2283 58.8624 - - - - - - -
+PROBE grid 60100 s_left_t_right s 58 - - - - 56.2693 48.9857 58.6972 - - - - - - - -
+PROBE grid 60100 s_left_t_right s 64 - - - - 53.2765 54.5092 - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 60100 s_left_t_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 60100 s_left_t_right axis dmg 107 loc torso_upper point (1251.91, 1219.35, 20.81)
+PROBE dir 60100 s_left_t_right 0.997816 -0.0449234 -0.0484309
+PROBE done 61650
+target CMDS st=857 d=32,8711,18,16,16,17,17,16,16,18,16,16,16,18,17,16,17,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,17,17,16,16,18,16,17,17,16,18,16,16,18,16,16,16,18
+target CMDS st=10566 d=16,18,17,17,16,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,18,16,16,16,20,14,16,16,18,16,19,15,16,16,18,16,18,16,17,17,16,16,16,18,17,17,16
+target CMDS st=11566 d=18,16,16,16,18,16,17,17,17,17,16,16,17,17,16,16,18,18,18,14,17,16,17,18,18,14,16,17,17,16,16,18,16,18,16,16,19,15,16,18,16,18,32,18,17,15,19,18,13,16,16,18,16,17,17,21,18,11,16
+target CMDS st=12582 d=18,21,16,13,16,18,16,16,19,15,16,17,17,16,34,18,21,11,16,16,18,16,22,12,16,16,18,18,17,15,16,34,19,16,15,17,16,17,16,16,18,16,16,18,16,18,16,16,16,18,17,18,15,17,18,15,16,19,15
+target CMDS st=13616 d=16,18,16,34,16,18,17,-1,16,34,16,17,17,19,16,15,17,16,17,16,18,16,18,17,15,17,17,16,16,16,18,16,17,17,16,18,16,18,32,17,16,17,19,16,15,19,17,14,17,16,17,16,16,18,16,16,18,18,16
+target CMDS st=14650 d=16,16,18,16,34,16,16,18,0,16,16,18,18,32,16,18,16,20,16,14,16,16,18,16,16,18,16,16,18,18,17,15,17,19,14,18,32,16,17,17,19,31,19,18,13,19,17,14,18,18,14,18,32,17,17,16,18,16,16
+target CMDS st=15716 d=17,17,17,17,16,16,17,17,16,16,18,17,17,16,16,17,17,16,16,18,17,18,15,21,29,18,17,15,16,19,15,16,16,18,18,16,16,18,16,16,19,16,15,18,32,17,18,15,16,16,18,17,17,16,16,17,17,17,18
+target CMDS st=16750 d=16,18,16,17,18,15,19,31,16,16,18,16,17,17,16,19,15,18,17,15,17,16,17,18,16,16,17,33,17,18,15,16,17,17,17,18,15,16,17,17,18,18,14,16,18,16,17,17,16,16,16,18,17,33,16,20,14,16,17
+target CMDS st=17800 d=16,16,18,17,16,17,16,16,18,16,19,15,16,16,18,17,17,16,16,18,16,17,19,14,17,16,17,18,32,17,17,16,0,19,31,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17
+target CMDS st=18816 d=16,18,16,18,16,16,16,18,17,16,17,17,18,15,16,16,18,16,20,14,16,18,16,17,17,16,16,16,18,16,17,17,16,18,16,16,18,16,16,18,16,16,34,16,18,16,16,16,18,16,16,18,16,16,16,2,16,17,17
+target CMDS st=19817 d=16,17,16,34,16,18,16,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,18,17,15,16,16,18,16,17,17,16,16,18,19,16,15,17,16,17,17,16,17,16,16,18,17,16,17,16,17,17,17,16,17,16,16,18,16
+target CMDS st=20833 d=17,16,19,15,16,16,18,16,17,17,18,17,15,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,16,16,-14,50,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16
+target CMDS st=21833 d=17,20,17,13,17,17,16,17,16,17,16,17,17,16,17,17,17,16,17,16,16,18,19,16,15,16,16,18,18,16,16,16,16,18,18,16,16,16,17,17,20,30,19,16,15,16,17,17,16,16,18,16,16,18,19,16,15,16,16
+target CMDS st=22850 d=16,16,18,16,18,16,16,16,18,18,16,16,16,18,16,17,16,17,16,16,18,18,16,16,16,16,18,16,17,17,16,16,18,17,16,17,18,16,16,16,18,16,16,17,17,16,16,18,17,18,15,16,17,17,16,17,17,16,17
+target CMDS st=23850 d=17,18,15,17,33,16,16,17,1,16,16,18,16,17,17,18,32,18,19,13,19,18,13,17,17,16,17,16,17,18,32,17,16,17,16,16,16,2,17,17,16,16,34,17,16,16,1,16,34,16,17,16,1,17,16,17,16,16,18
+target CMDS st=24866 d=34,16,18,17,-1,17,33,17,16,17,0,16,34,16,19,15,16,16,18,16,16,18,18,16,16,16,17,17,16,17,17,16,16,18,19,17,14,16,17,17,16,16,18,16,17,17,17,16,17,16,16,18,16,19,15,17,17,16,17
+target CMDS st=25885 d=15,16,17,17,17,33,16,16,18,17,16,17,16,16,17,1,16,34,18,18,14,16,16,18,17,17,16,18,18,14,16,16,18,19,16,15,17,16,17,16,18,16,17,17,16,16,16,18,18,32,18,16,16,16,18,16,17,18,15
+target CMDS st=26919 d=16,15,16,17,17,16,17,17,18,16,16,18,17,15,16,16,18,16,18,16,16,34,18,16,16,16,18,16,17,17,16,17,16,17,17,17,16,16,16,18,16,16,18,18,18,14,18,16,16,19,16,15,17,16,17,17,18,15,18
+target CMDS st=27935 d=15,18,16,16,18,16,16,17,16,17,17,33,16,18,16,16,19,15,16,16,18,16,16,18,18,16,16,18,17,15,16,16,18,16,16,18,18,17,15,16,18,16,18,18,14,16,16,18,18,17,15,17,16,17,16,34,17,17,16
+target CMDS st=28967 d=17,16,16,21,13,16,16,18,16,17,17,20,30,16,16,16,2,16,17,17,16,16,18,17,33,16,16,18,16,16,18,16,18,16,16,16,18,16,18,16,18,16,16,16,17,17,17,16,17,16,16,18,19,16,15,16,18,16,16
+target CMDS st=29984 d=16,16,16,18,17,16,17,17,16,17,16,16,18,17,18,15,16,17,17,16,18,16,16,17,17,17,16,17,16,18,16,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,18,16,16,17,16,17,16
+target CMDS st=30982 d=18,17,16,17,16,16,18,18,16,16,16,17,17,18,32,16,16,18,16,17,17,16,18,16,16,17,17,18,16,16,16,17,17,17,16,17,18,16,16,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16
+target CMDS st=32000 d=16,16,16,2,16,16,18,16,18,16,16,16,18,16,16,18,16,34,18,17,15,16,16,16,2,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,19,31,17,18,15,16,16,18,16,18,16,16,16,18,16,16,17,1,16
+target CMDS st=33000 d=19,16,16,-1,16,16,18,16,34,16,17,16,1,17,17,16,16,34,16,17,17,16,16,18,16,17,17,16,16,18,16,16,16,2,16,34,17,18,15,16,17,17,0,17,33,17,17,16,19,16,15,17,17,16,18,16,16,16,16
+target CMDS st=34000 d=16,16,18,16,17,17,18,17,15,16,16,18,16,17,17,16,16,18,16,16,18,17,18,15,16,18,16,17,33,16,19,15,16,16,18,16,16,18,16,18,16,16,18,16,16,17,17,16,19,15,16,18,16,19,17,14,17,16,17
+target CMDS st=35016 d=16,18,16,16,18,16,17,17,17,18,15,16,34,18,17,15,16,17,17,18,16,16,16,17,17,18,17,15,18,32,18,16,16,16,16,17,1,21,29,17,17,16,17,17,16,16,19,15,16,16,18,16,19,15,17,33,16,18,16
+target CMDS st=36050 d=16,34,18,18,14,16,18,16,16,17,17,16,20,14,16,17,17,17,18,15,18,16,16,16,34,16,17,16,1,16,34,19,17,14,16,21,13,16,16,20,-2,16,34,16,16,18,16,19,15,19,31,17,16,17,16,18,16,21,18
+target CMDS st=37100 d=16,19,15,16,19,15,20,16,14,19,31,17,18,15,19,18,13,16,17,17,17,19,14,21,29,18,17,15,16,18,16,17,20,13,16,18,16,16,34,16,19,15,17,17,16,17,18,15,17,16,17,17,18,15,17,16,17,16,16
+target CMDS st=38150 d=16,34,20,16,14,16,20,14,18,18,14,17,17,16,19,17,14,16,34,18,16,16,19,16,15,16,18,16,20,18,12,17,18,15,16,34,17,16,17,20,17,13,19,18,13,17,17,16,16,19,15,17,33,16,16,16,2,18,16
+target CMDS st=39200 d=19,31,16,22,12,19,16,15,17,19,14,18,32,18,18,14,16,16,17,1,16,34,16,16,18,18,17,15,18,17,15,16,34,16,19,15,18,21,11,16,17,17,17,16,17,16,17,17,17,19,14,19,16,15,16,16,18,21,16
+target CMDS st=40250 d=18,32,17,17,16,0,18,32,18,16,16,19,16,15,17,17,16,16,18,16,16,16,18,17,17,16,19,16,15,16,16,18,16,17,17,17,16,17,16,16,18,19,31,18,16,16,17,19,14,18,16,16,16,16,18,18,17,15,18
+target CMDS st=41284 d=16,16,18,16,16,34,16,16,18,18,16,16,17,18,15,18,16,16,16,18,16,16,16,18,17,18,15,19,18,13,18,17,15,16,16,18,18,16,16,16,16,18,16,18,16,16,34,18,17,15,17,16,17,17,17,16,16,18,16
+target CMDS st=42318 d=16,16,17,18,15,16,16,18,21,16,13,16,16,18,17,17,16,16,16,18,19,20,11,18,32,16,16,18,17,16,17,16,18,16,17,18,15,17,17,16,16,16,18,16,16,18,16,20,14,18,17,15,18,16,16,16,34,19,16
+target CMDS st=43350 d=16,16,18,16,19,15,16,16,18,18,17,15,17,17,16,16,19,15,17,16,17,16,16,18,16,18,16,16,18,16,19,16,15,16,18,16,18,16,16,19,17,14,16,34,16,16,18,19,16,15,17,16,17,16,18,16,16,19,15
+target CMDS st=44366 d=16,18,17,20,13,16,16,18,16,21,13,24,26,16,19,15,16,18,16,16,16,18,16,18,16,16,16,18,16,16,18,16,21,13,16,16,18,19,31,16,18,16,17,16,17,16,17,17,16,20,14,16,17,17,20,17,13,19,16
+target CMDS st=45400 d=19,17,14,18,17,15,16,34,19,16,15,16,17,17,16,16,18,16,16,18,17,17,16,16,18,16,18,17,15,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,18,14,16,16,18,18,16,16
+target CMDS st=46416 d=18,16,17,16,17,16,16,18,18,17,15,18,16,16,19,31,16,16,18,19,16,15,18,16,16,16,16,18,0,20,30,19,16,15,17,16,17,18,32,16,16,18,16,18,16,16,16,18,17,16,17,16,20,14,16,16,18,18,16
+target CMDS st=47450 d=16,18,16,16,18,16,16,19,15,16,16,18,17,17,16,16,16,18,16,16,18,18,16,16,17,16,17,16,34,16,16,16,2,16,34,16,16,18,16,17,17,19,17,14,16,16,18,17,19,14,16,18,16,18,16,16,19,16,15
+target CMDS st=48468 d=17,15,16,16,18,16,34,16,16,18,18,16,16,18,17,15,19,16,15,20,16,14,18,16,16,17,33,16,18,16,18,17,15,18,16,16,18,17,15,18,18,14,16,16,18,16,18,16,17,18,15,18,18,14,17,33,16,20,14
+target CMDS st=49518 d=17,15,18,18,14,18,16,16,17,19,14,17,16,17,16,18,16,16,18,16,18,32,16,18,16,0,18,32,18,16,16,16,17,17,18,18,14,18,17,15,18,16,16,17,19,14,16,18,16,18,16,16,20,30,18,16,16,17,17
+target CMDS st=50550 d=16,16,18,16,16,16,2,17,33,18,16,16,16,16,18,18,18,14,16,16,18,16,18,16,0,17,33,17,17,16,16,16,18,16,19,15,16,16,18,17,17,16,16,17,17,16,16,18,18,16,16,16,17,17,16,16,18,17,16
+target CMDS st=51550 d=19,16,15,16,16,18,19,16,15,17,16,17,17,17,16,16,17,17,16,16,18,18,16,16,18,17,15,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,17,16,17,17,16,17,16,18,16,17,16,17,16,18,16,16,17
+target CMDS st=52550 d=16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,17,16,17,16,17,17,16
+target CMDS st=53532 d=18,16,16,18,16,17,17,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16
+target CMDS st=54532 d=18,16,16,18,16,18,16,16,16,18,18,16,16,16,17,17,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,17,17,16,16,16,2,16,34,16,16,17,1,17,16,17,17,33,16,16,16,2,16,16,18,16,34,16
+target CMDS st=55534 d=17,-1,16,16,18,16,34,16,17,17,16,16,16,2,16,16,18,16,17,17,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,17,18,15,16,17,17,17,17,16,16,16,18,16,19,15
+target CMDS st=56516 d=18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16
+target CMDS st=57516 d=16,18,16,16,16,2,16,34,16,17,17,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,18,32,16,16,18,0,16,16,18,17,16,17,16,34,16,16,17,1,16,34,16,16,16,2,16,34,16,16,18,16,16,18
+target CMDS st=58517 d=17,16,0,16,34,18,16,16,17,17,16,16,16,18,18,16,17,-1,17,33,17,16,17,18,16,16,17,16,17,17,16,17,16,19,15,19,16,15,18,16,16,16,17,17,16,16,18,16,18,16,16,16,18,16,18,16,16,16,18
+target CMDS st=59516 d=16,18,16,16,18,16,17,17,16,17,17,17,16,17,16,17,17,17,16,17,16,16,18,16,17,17,16,16,18,16,17,17,17,16,17,16,16,18,18,32,16,16,16,2,16,34,16,18,16,16,16,18,16,16,16,2,17,16,17
+target CMDS st=60516 d=17,17,16,16,18,16,16,18,16,17,17,16,34,16,17,16,1,16,34,17,16,17,0,16,16,18,16,34,16,16,17,1,16,17,17,19,31,16,16,17,1,16,16,18,16,16,18,19,31,18,17,15,16,16,18,16,16,18,16
+target CMDS st=61533 d=16,1,16,16,18,16,16,18,17,33,16,16,16,2,16,16,18,16,16,18,17,17,16,16,16,18,16,17,17,16,17,17,16,19,15,16,34,16,16,16,2,18,17,15,16,34,16,18,16,0,17,16,17,16,16,18,16,16,18
+target CMDS st=62516 d=34,16,18,17,-1,16,34,16,16,17,1,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,18,16,16,18,16,16,16,18,16,16,18,16,17,17,16,17,17,16,17,17,16,21,13
+target CMDS st=63517 d=33,16,18,17,-1,18,32,17,16,17,16,18,16,16,17,17,16,19,15,18,16,16,16,17,17,17,16,17,17,16,17,16,18,16,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,18,16,16,16,18,17,16,17,16
+target CMDS st=64533 d=17,16,19,15,16,17,17,18,16,16,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,19,16,15,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16
+target CMDS st=65532 d=18,16,16,18,16,16,18,17,16,17,17,17,16,16,16,18,16,17,17,16,16,18,17,16,16,1,16,34,16,19,16,-1,16,34,16,16,18,16,17,16,1,16,34,16,16,16,2,16,16,18,17,16,17,16,18,16,16,16,18
+target CMDS st=66516 d=16,18,16,16,18,16,34,17,18,15,16,16,16,2,16,34,16,16,17,1,16,34,16,16,18,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18
+target CMDS st=67516 d=16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16
+target CMDS st=68482 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+target CMDS st=69466 d=16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,17,17,16,16,18,16,16,16,18,16,16,18,16,16
+target CMDS st=70450 d=16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2
+target CMDS st=71416 d=16,18,16,16,18,16,17,17,17,17,16,16,34,18,16,16,0,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18
+target CMDS st=72416 d=17,17,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,16,2,16,16
+target CMDS st=73400 d=16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,17,33,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16
+target CMDS st=74382 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16
+target CMDS st=75350 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16
+target CMDS st=76332 d=18,16,16,18,16,16,18,16,16,17,1,17,33,16,16,17,1,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,34,16,16,18,16,16,18,16,17,17,0,16,34,16,16,17,1,16,34,16,16,17,1,16,17,17
+target CMDS st=77318 d=16,16,16,34,16,16,17,1,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,17,17,16,19,17,14,16,34,16,16,17,1,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,17,16,17,17,16,17,17,16,17
+target CMDS st=78317 d=16,17,16,17,17,18,16,16,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18
+target CMDS st=79316 d=17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,16,2,16,34,16,16,18,0,17,33,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16
+target CMDS st=80300 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2
+target CMDS st=81266 d=16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,0,16,17,17,16,34,17,17,16,0,16,16
+target CMDS st=82250 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,17,17,16,16,18,16,17,17,17,18,15,17,18,15,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16,16
+target CMDS st=83250 d=16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,17,17,16,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,19,16,15,16,17,17,16,16,18,16,18,16,16,18,16,16,16,18,16,17,17,16,16
+target CMDS st=84250 d=16,18,16,16,16,18,17,17,16,17,16,17,16,16,18,16,16,18,16,18,16,16,18,16,17,17,16,16,16,18,16,17,17,18,16,16,16,18,16,17,18,15,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,17
+target CMDS st=85250 d=18,16,16,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,19,16,15,16,17,17,18,16,16,19,16,15,16,17,17,16,16,18,18,16,16,16,34,16,17,16,1,16,16,18,16,18,16,18,16,16,17,16
+target CMDS st=86250 d=16,17,17,16,16,18,16,16,18,16,17,17,16,18,16,16,18,16,17,33,16,16,18,16,17,16,1,16,18,16,17,33,18,16,16,16,16,16,2,18,32,16,16,16,2,17,33,18,16,16,16,17,17,16,16,16,2,18,32
+target CMDS st=87266 d=16,16,2,16,34,16,16,16,2,16,16,18,19,17,14,17,33,16,16,18,16,16,16,2,17,33,16,18,16,19,16,15,16,16,18,18,16,16,16,17,17,16,16,18,16,16,18,17,16,17,16,16,16,2,16,34,18,16,16
+target CMDS st=88250 d=17,33,16,16,17,1,16,16,18,16,16,18,16,16,18,18,16,16,16,34,16,17,16,1,17,16,17,18,16,16,21,29,16,16,18,17,18,15,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18
+target CMDS st=89266 d=16,18,17,17,16,16,16,16,2,17,33,16,16,18,16,20,14,16,17,17,16,16,18,16,16,18,17,16,17,18,16,16,16,16,18,16,16,18,17,18,15,17,16,17,16,18,16,17,16,17,16,17,17,16,17,17,18,16,16
+target CMDS st=90267 d=16,17,20,16,14,16,16,18,17,17,16,16,16,18,18,16,16,16,18,16,16,16,18,17,17,16,19,31,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,17,16,17,16,17,17,19,16,15,16
+target CMDS st=91283 d=17,16,17,17,17,17,16,16,16,18,16,16,18,18,19,13,19,16,15,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,18,16,16,17,16,17,16,16,18,18,32,19,17,14,17,16,17,16,16,18,17,16,17,16,16
+target CMDS st=92300 d=18,16,16,16,16,18,18,18,14,16,17,17,18,17,15,16,16,18,16,16,18,18,17,15,16,17,17,18,32,18,16,16,16,17,16,1,17,33,17,17,16,16,17,17,16,16,17,1,18,32,18,17,15,16,17,17,16,18,16
+shooter CMDS st=1539 d=11911,16,18,16,16,34,18,18,14,16,17,17,19,16,15,16,18,16,18,16,16,18,17,15,16,16,18,16,18,16,18,16,16,18,16,16,16,16,18,16,34,18,16,16,0,18,16,16,18,32,16,16,18,16,18,16,16,18,16
+shooter CMDS st=14466 d=25,9,16,17,17,16,16,18,16,16,18,16,20,14,16,34,16,16,16,2,17,18,15,17,33,18,16,16,19,17,14,18,16,16,16,18,16,16,16,18,17,19,14,18,17,15,16,16,18,16,19,15,17,18,15,17,17,16,16
+shooter CMDS st=15500 d=16,18,16,16,16,18,18,18,14,16,17,17,16,19,15,16,19,15,19,17,14,16,16,18,16,16,18,16,16,18,20,30,20,18,12,19,16,15,17,17,16,18,32,16,18,17,-1,18,16,16,18,32,18,16,16,18,18,14,18
+shooter CMDS st=16534 d=16,17,16,17,16,34,16,16,18,17,19,14,17,16,17,19,16,15,16,16,18,17,18,15,17,17,16,16,19,15,18,16,16,18,16,16,16,18,16,17,16,17,18,16,16,17,33,17,16,17,16,16,18,16,18,16,16,16,18
+shooter CMDS st=17550 d=17,33,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,18,16,16,16,16,18,16,16,18,18,16,16,17,17,16,16,18,16,16,19,15,16,16,18,16,17,17,17,16,17,19,31,17,16,17,18,16,16,18,16,16,16
+shooter CMDS st=18583 d=17,16,19,15,17,17,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,18,16,16,16,18,16,16,16,18,16,17,17,16,16,18,17,17,16,17,17,16,16,16,18,17,17,16,16,16,18,17,17,16,16,16,18,16
+shooter CMDS st=19584 d=16,17,16,17,16,16,18,16,18,16,16,16,18,16,16,17,1,17,33,16,16,18,16,16,16,2,18,32,16,16,16,2,16,34,17,16,16,1,16,34,17,18,15,16,16,16,2,16,34,16,18,16,16,18,16,16,16,18,16
+shooter CMDS st=20582 d=18,16,16,16,2,16,34,16,16,17,1,16,34,17,16,17,16,16,17,1,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,17,17,17,16,17,17,17,16,16,16,18,16,17,17,16,18,18,-2,16,34
+shooter CMDS st=21566 d=17,17,17,16,17,16,16,18,17,19,14,16,16,18,16,16,18,18,17,15,16,16,18,17,17,16,17,16,17,16,16,18,17,18,15,16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,17,18,15,16,16,18
+shooter CMDS st=22566 d=16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,17,17,17,17,16,0,16,34,17,16,16,1,17,33,16,16,18,16,16,18,18,16,16,17,16,17,16,18,16,16,16,16,2,16,34,17,16,16
+shooter CMDS st=23550 d=16,16,18,17,16,17,16,16,18,18,32,17,18,15,17,16,17,17,17,16,16,17,17,19,16,15,17,16,17,16,16,18,16,17,17,16,16,18,17,17,16,16,17,17,17,16,17,16,16,18,17,18,15,16,16,18,16,16,17
+shooter CMDS st=24550 d=16,34,16,17,17,18,16,16,16,17,17,16,16,18,18,16,16,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,16,18,16,17,17,16,16,16,18,16,18,16,16,16,18,18,16,16,16,16,18,17,17,16,16,16,18
+shooter CMDS st=25566 d=17,17,16,16,18,16,17,17,17,16,17,16,17,17,16,16,18,16,16,16,2,16,16,18,17,33,17,17,16,19,17,14,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,19,16,15,17,16,17,19,16,15,16,16,18
+shooter CMDS st=26568 d=17,15,16,17,17,16,16,18,17,17,16,17,16,17,17,17,16,16,16,18,17,33,16,16,16,2,18,16,16,17,17,16,16,16,18,16,18,16,19,16,15,16,34,17,16,17,16,16,16,2,16,16,18,17,33,16,16,16,2
+shooter CMDS st=27566 d=16,18,16,18,16,16,16,18,16,17,17,18,32,16,17,17,18,19,13,17,19,14,16,16,18,16,19,15,16,16,18,16,34,18,16,16,17,18,15,16,16,18,16,16,18,16,17,17,17,16,17,19,16,15,16,16,18,17,16
+shooter CMDS st=28600 d=16,18,16,17,17,16,17,17,16,16,17,17,18,16,16,18,17,15,17,18,15,16,16,18,16,34,18,16,16,17,18,15,16,18,16,18,17,15,16,16,18,18,16,16,16,16,18,17,18,15,16,16,18,19,16,15,16,16,18
+shooter CMDS st=29616 d=16,18,18,16,16,16,16,18,16,18,16,16,18,16,16,16,18,16,17,17,16,18,16,17,16,17,16,17,17,19,16,15,16,16,18,16,16,18,16,16,18,16,16,18,17,19,14,16,16,18,16,16,18,17,18,15,16,16,18
+shooter CMDS st=30616 d=16,18,18,17,15,16,16,18,16,16,18,16,17,17,16,16,18,19,16,15,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,18,16,16,16,16,18,17,17,16,16,16,18,17,16,17,16,16,18
+shooter CMDS st=31616 d=17,17,16,16,18,16,16,18,16,17,17,16,17,17,16,17,17,16,17,17,16,16,18,16,16,18,17,16,17,16,17,16,1,16,34,16,16,17,1,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16
+shooter CMDS st=32600 d=17,16,17,16,16,18,18,16,16,16,17,17,16,17,17,16,16,18,16,16,18,16,34,16,16,16,2,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,18
+shooter CMDS st=33600 d=16,17,17,16,16,17,1,17,33,16,16,18,16,16,18,16,19,15,18,16,16,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,18,18,14,16,16,18,16,16,18,19,16,15,16,16,18,16,34,16,18,16,16,18,16
+shooter CMDS st=34600 d=16,34,16,16,16,2,16,16,18,19,31,16,17,17,16,17,17,20,17,13,18,17,15,17,18,15,16,18,16,16,16,18,19,16,15,16,17,17,16,16,18,18,16,16,16,16,18,16,16,18,17,17,16,16,34,17,18,15,16
+shooter CMDS st=35633 d=17,17,17,16,16,16,18,18,16,16,18,16,16,16,16,18,18,16,16,16,18,16,16,17,17,16,17,17,16,16,18,16,16,18,18,17,15,16,18,16,16,16,18,19,17,14,16,34,16,18,16,18,16,16,17,16,17,18,16
+shooter CMDS st=36650 d=19,18,13,16,16,17,1,16,34,16,34,16,16,16,2,19,16,15,20,30,16,17,17,16,16,18,20,16,14,16,17,17,16,16,18,19,17,14,18,16,16,16,16,18,18,32,16,16,16,2,16,34,17,17,16,16,16,18,21
+shooter CMDS st=37688 d=12,16,18,16,17,19,14,16,16,18,17,17,16,16,20,14,18,16,16,16,34,16,16,16,2,19,16,15,17,33,18,18,14,16,16,18,21,16,13,18,17,15,16,17,17,16,20,14,17,16,17,16,16,18,17,17,16,16,16
+shooter CMDS st=38700 d=17,33,18,17,15,18,16,16,16,18,16,18,18,14,17,17,16,16,18,16,17,16,17,17,18,15,17,17,16,20,16,14,18,32,17,17,16,0,18,32,16,18,16,16,16,18,20,17,13,17,16,17,16,16,18,16,16,18,18
+shooter CMDS st=39738 d=12,16,18,16,16,16,18,16,34,16,16,18,18,16,16,16,17,17,17,16,17,16,19,15,16,16,18,16,16,18,17,16,17,19,16,15,16,18,16,17,18,15,17,16,17,16,18,16,16,16,18,16,17,17,18,16,16,16,16
+shooter CMDS st=40750 d=16,16,18,16,34,16,16,18,16,16,18,17,17,16,16,16,18,18,18,14,17,17,16,16,17,17,20,16,14,18,18,14,19,16,15,18,32,16,18,16,16,16,18,17,16,17,18,16,16,16,17,17,17,16,17,16,19,15,16
+shooter CMDS st=41784 d=16,18,17,15,16,17,17,18,17,15,18,16,16,16,17,17,18,16,16,16,16,18,17,16,17,16,16,18,16,17,17,19,16,15,16,16,18,18,16,16,17,16,17,18,16,16,16,16,18,16,16,18,18,16,16,20,30,16,16
+shooter CMDS st=42800 d=19,16,15,16,16,18,16,16,18,19,16,15,16,18,16,17,20,13,18,16,16,16,16,18,17,16,17,17,33,17,16,16,1,17,33,16,16,18,16,17,17,17,17,16,16,17,17,16,16,18,18,17,15,16,20,14,16,17,17
+shooter CMDS st=43817 d=16,17,0,16,34,16,16,18,17,17,16,16,18,16,16,17,17,16,19,15,16,18,16,16,17,17,16,16,18,16,16,18,16,18,16,16,16,18,17,17,16,16,16,18,17,16,17,17,16,17,16,18,16,16,17,17,17,17,16
+shooter CMDS st=44817 d=18,15,20,30,16,21,13,16,16,18,18,16,16,16,16,18,16,16,18,17,17,16,16,18,16,16,16,18,17,20,13,17,33,17,16,17,16,16,18,16,17,17,17,16,17,18,17,15,17,16,17,16,16,18,16,16,18,16,16
+shooter CMDS st=45850 d=17,17,16,17,16,17,16,16,18,16,17,17,16,19,15,18,16,16,16,16,18,16,16,18,16,19,15,16,18,16,16,16,18,16,16,18,17,17,16,16,16,18,16,17,17,17,17,16,18,32,16,16,16,2,16,16,18,16,16
+shooter CMDS st=46850 d=17,17,16,0,16,34,18,16,16,16,16,18,16,34,16,17,17,16,18,16,18,16,16,16,16,18,18,18,14,16,16,16,2,18,32,16,16,18,17,18,15,16,16,18,17,16,17,16,18,16,16,18,16,16,16,18,16,18,16
+shooter CMDS st=47866 d=17,17,16,18,16,16,16,18,19,17,14,16,16,18,17,16,17,16,16,18,17,16,17,17,16,17,16,16,18,18,17,15,17,18,15,16,16,18,18,17,15,16,16,18,16,16,18,19,18,13,19,16,15,16,17,17,18,32,16
+shooter CMDS st=48882 d=17,1,17,33,18,18,14,18,16,17,-1,16,34,16,16,18,16,17,17,17,17,16,17,16,17,16,16,18,18,16,16,16,16,18,18,16,16,16,16,18,17,18,15,16,16,18,17,16,17,18,16,16,17,16,17,18,16,16,18
+shooter CMDS st=49884 d=16,17,16,17,16,16,18,16,16,18,16,16,18,17,17,16,18,18,14,16,16,18,16,16,18,18,17,15,17,17,16,16,16,18,16,34,16,16,18,18,16,16,16,19,15,16,16,18,16,18,16,16,16,18,16,16,18,17,16
+shooter CMDS st=50900 d=16,16,16,2,16,34,16,18,16,16,16,18,17,17,16,16,16,18,16,17,17,16,17,17,19,16,15,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,19,15,18,16,16,16,17,17,17,16
+shooter CMDS st=51900 d=16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,17,18,15,16,16,18,16,16,18,16,16,18,19,16,15,16,16,18,16,16,18,16,18,16,16,19,15,16,19,15,16,16,18,18,17
+shooter CMDS st=52900 d=16,16,18,17,18,15,16,17,17,18,17,15,17,17,16,16,19,15,17,18,15,17,16,17,16,16,18,16,17,17,16,16,18,17,33,16,16,16,2,18,16,16,16,16,18,16,19,15,16,16,18,16,16,18,16,16,18,18,16
+shooter CMDS st=53900 d=16,16,18,16,16,18,18,16,16,16,16,18,18,16,16,16,16,18,16,16,18,16,19,15,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16
+shooter CMDS st=54900 d=16,16,18,16,16,17,1,16,34,16,17,16,1,17,16,17,16,16,18,16,16,18,16,17,17,16,17,17,16,18,16,16,17,17,16,16,18,16,16,18,16,18,16,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16
+shooter CMDS st=55882 d=18,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,17,17,16,17,17,16,18,16,16,16,16,18,18,17,15,17,17,16,17,16,17,16,17,17,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16
+shooter CMDS st=56884 d=16,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18
+shooter CMDS st=57866 d=16,18,16,16,18,16,16,18,16,17,16,1,16,16,18,16,16,18,17,33,17,17,17,-1,17,16,17,16,16,18,17,33,16,16,18,16,17,17,16,19,16,-1,16,34,18,17,15,16,16,18,17,20,13,16,19,15,16,16,18
+shooter CMDS st=58866 d=18,16,18,16,16,16,16,18,17,17,16,16,16,18,16,18,16,17,16,17,16,21,13,16,34,18,18,14,16,18,16,16,18,16,16,16,18,17,17,16,18,16,16,17,17,16,16,16,18,18,16,16,16,16,18,17,16,17,16
+shooter CMDS st=59882 d=18,17,17,16,16,16,18,17,16,17,16,16,16,2,16,34,16,16,18,19,16,15,18,16,16,18,17,15,16,18,16,16,16,18,18,16,16,17,16,17,16,17,17,17,18,15,16,16,18,16,16,18,16,16,18,16,16,18,16
+shooter CMDS st=60883 d=17,16,16,18,16,17,17,16,16,16,2,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,17,17,16,16,17,17,16,16,18,18,32,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=61866 d=18,16,17,19,14,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,18,16,16,16,34,16,18,17,-1,16,16,18,16,16,18,18,32,16,16,18,17,16,16,1,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17
+shooter CMDS st=62866 d=18,16,17,16,17,16,16,18,16,16,18,16,18,16,17,16,17,18,16,16,16,17,17,16,17,17,17,17,16,16,16,18,17,16,17,16,16,18,16,17,17,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=63866 d=16,18,16,17,17,16,16,18,16,17,17,16,17,17,16,17,17,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,16,16,17,1,17,33,16,16,16,2,17,16,17,16,34,16,18,16,16,16,16,2,18,16,16,16,16
+shooter CMDS st=64850 d=16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,18,16,16,0,16,17,17,17
+shooter CMDS st=65833 d=17,16,34,17,16,16,1,16,34,18,16,16,0,16,34,17,16,17,16,16,17,1,16,34,16,16,16,2,16,16,18,17,16,17,16,16,18,17,18,15,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16
+shooter CMDS st=66833 d=17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=67816 d=16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,16,1,16,34,16,16
+shooter CMDS st=68798 d=2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=69766 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,17,1,16,34,16,16,17,1,16,16,18,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16
+shooter CMDS st=70750 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16
+shooter CMDS st=71736 d=14,16,18,16,16,16,18,18,16,16,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,18,16,16,16,16,18,16,16,18,16,17,17,16,17,17,16,17,17,16,16,18,17,16,17,16
+shooter CMDS st=72733 d=17,16,17,17,17,18,15,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=73716 d=16,17,1,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16
+shooter CMDS st=74682 d=18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34
+shooter CMDS st=75666 d=16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,17,17,17,16,17,16,17,17,16
+shooter CMDS st=76632 d=18,17,16,17,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,0,17,33,16,16,18,16,16,18,16,19,15,16,16,18,16
+shooter CMDS st=77633 d=17,16,19,15,16,17,17,16,16,18,18,16,16,16,17,17,16,16,18,16,17,17,16,17,17,16,16,17,1,16,34,16,16,18,16,17,17,0,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17
+shooter CMDS st=78616 d=17,17,16,16,18,16,17,17,16,17,17,16,17,17,17,17,16,17,16,17,17,17,16,17,17,16,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=79616 d=17,16,1,16,34,16,16,17,1,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,16,2,16,16,18,16
+shooter CMDS st=80582 d=18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=81566 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16
+shooter CMDS st=82532 d=18,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,16,17,17,17,16,17,18,17,15,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16
+shooter CMDS st=83532 d=18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,17,16,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16
+shooter CMDS st=84535 d=15,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,17,1,16,34,16,17,17,16,16,18,16,16,17,1,17,16,17,16,16,18,19,31,16,17,16,1,16,34,16,16,16,2,16,16,18,16,16,18,16,34,19
+shooter CMDS st=85535 d=16,-1,16,34,17,17,16,16,17,16,1,17,16,17,16,34,16,16,18,0,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18
+shooter CMDS st=86516 d=16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,18,16,16,16,18,18,16,16,16,16,18,16,16,18,17,18,15,16,16,18,18,16,16,16,16,18,17,18,15,16,16,18,17,16,17,16,16,18
+shooter CMDS st=87517 d=17,16,16,16,18,16,16,18,16,19,15,16,16,18,16,16,18,17,16,17,16,16,18,16,18,16,16,16,16,2,16,16,18,18,32,16,16,16,2,16,34,18,16,16,16,16,18,16,16,16,2,16,16,18,16,18,16,17,16
+shooter CMDS st=88500 d=16,34,16,16,16,2,16,16,18,16,17,17,16,16,18,22,28,17,16,17,19,16,15,16,16,18,17,17,16,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,0,16,16,18,18,16
+shooter CMDS st=89500 d=16,16,18,17,33,18,16,16,0,17,33,16,16,18,18,16,16,16,16,16,2,20,30,19,18,13,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,17,1,20,30,17,16,17,16,18,16,16,16,18,16,20,14
+shooter CMDS st=90516 d=16,18,16,16,18,17,16,17,16,16,18,19,16,15,17,17,16,16,18,16,16,17,17,16,19,15,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18
+shooter CMDS st=91518 d=16,16,16,16,18,16,18,16,16,17,17,17,16,17,16,16,18,16,18,16,16,16,18,16,17,17,21,16,13,16,17,17,16,16,18,17,16,17,16,19,15,16,16,18,18,16,16,16,34,16,18,16,0,18,32,16,18,16,18

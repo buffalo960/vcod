@@ -1994,10 +1994,12 @@ What 13.6 left open, read 2026-10-17. Addresses are module VAs as
 - vcod: a UO spawn sets `ClientSim::dobj_ahead`, and the next end frame
   starts its clips a frame early (`commit_pose`). On 1.5 and UO,
   `bulletTrace` poses bodies at `GameHost::dobj_time_ms`, which the thread
-  pass leaves at the last frame. 1.1d's traces stay at the frame's own
-  time in every pass: posed at the last frame in its first pass,
-  `leanhit_ab`'s 1.1d grids go off retail's by up to 11 units. Why
-  1.1d's first pass reads the new time is not traced. With both, every UO cell of the
+  pass leaves at the last frame. 1.1d's do too: its first pass runs
+  before `G_DObjUpdateServerTime` (0x506ed) and poses the last frame, its
+  second the frame's own. VERIFIED, vcod measurement (`leanhit_ab`,
+  cod11-combat.md 3.6): with the net probe's framed cmds both 1.1d
+  captures match posed at the last frame and miss 15 to 22 cells posed
+  at the frame's own, so there is no 1.1d exception to explain. With both, every UO cell of the
   `-hitgrid-uo` grids, the `-hitfine-uo` points and the `-spawn-uo` kill
   match retail's (`GAPS_SPAWN_UO`, `GAPS_HITFINE_UO`, `GAPS_HITGRID_UO`
   removed), and so do `vehicle_armor_ab`'s phase-3 silhouettes at a

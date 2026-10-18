@@ -1196,7 +1196,9 @@ pub fn probe(
         };
         last_sent = sent.or(last_sent);
         if let Some(c) = sent {
-            if probe_fall {
+            // `--probe-vehicle` and `--probe-uo-weapon` log their cmd times
+            // too, which a gate replays where a landing rides the split.
+            if probe_fall || vehicle.is_some() {
                 fall.record_cmd(c.server_time, fall_walk.map(|_| c.angles[1]));
             }
             if save_plant || save_defuse {
