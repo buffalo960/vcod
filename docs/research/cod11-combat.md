@@ -6725,8 +6725,13 @@ start and end and `meleeDamage`, mod 7, ahead of the swing's damage;
 `Bullet_Fire_Extended` on every leg with the leg's start and the trace's
 end and the leg's damage, mod 1 or 2, ahead of the leg's `G_Damage`;
 `G_RunMissile` for a `MOD_GRENADE` missile after its link (12.2); UO's
-`G_MissileImpact` (0x5df57) for a shell with damage, from the contact to
-`&trace.normal` (the struck face's normal passed as the end point).
+`G_MissileImpact` (0x5df57) for a missile with damage (+0x248), from
+`r.currentOrigin` (+0x13c) to `trace + 4`, with the missile's damage and
+`methodOfDeath`. 1.1d's and 1.5b's `G_MissileImpact` make no such call.
+INFERRED, off the trace layout the rest of the code reads (`fraction` at
++0, the normal behind it): `trace + 4` is the struck face's normal, so the
+end point sits near the world origin and the segment's box spans most of
+the map; vcod passes the normal as that point.
 
 **Measured.** VERIFIED, `client-probes/probe_dmgtrig.gsc` on retail UO
 1.51b, mp_uo_stanjel, 2026-10-18 (`crates/server/tests/dmgtrig_ab.rs`):
