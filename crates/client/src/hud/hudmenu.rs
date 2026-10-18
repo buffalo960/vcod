@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn stock_hud_menu_adds_nothing() {
-        let Some(fs) = vcod_common::testing::game_fs() else {
+        let Some(fs) = vcod_common::testing::stock_fs() else {
             return;
         };
         assert!(HudMenu::load(&fs).items.is_empty());

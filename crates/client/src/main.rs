@@ -2006,6 +2006,16 @@ fn fresh_cgame(
     fx.clear();
 }
 
+/// The HUD between servers. Retail's disconnect (`Com_Error`'s
+/// `ERR_DISCONNECT` arm, CoDMP.exe 0x4358a0) shuts the cgame down after
+/// `CL_Disconnect`, so the chat ring goes with the game, not at the next
+/// map load (docs/research/cod11-front-end.md section 17).
+fn leave_server_hud(hud: &mut hud::Hud) {
+    hud.restart_cgame();
+    hud.chat_field = None;
+    hud.scoreboard.hide();
+}
+
 /// Parse the map, upload it to the GPU and hand back the live phase.
 #[allow(clippy::too_many_arguments)]
 fn load_map(
@@ -3484,9 +3494,7 @@ impl App {
         self.fx.clear();
         self.audio.on_gamestate("");
         if let Some(hud) = &mut self.hud {
-            hud.on_gamestate();
-            hud.chat_field = None;
-            hud.scoreboard.hide();
+            leave_server_hud(hud);
         }
     }
 
@@ -3700,7 +3708,9 @@ impl ApplicationHandler for App {
                     return;
                 };
                 // Alt+Enter flips `r_fullscreen` and restarts the video
-                // ahead of the console and binds (video::toggled).
+                // ahead of the console and binds (video::toggled). Its
+                // release goes on, as retail's `WM_SYSKEYUP` does
+                // (cod11-front-end.md 17, "Alt+Enter's release").
                 if pressed
                     && !event.repeat
                     && self.modifiers.alt_key()
@@ -7030,6 +7040,18 @@ mod tests {
         assert!(live.drawn_pos.is_empty());
         assert_eq!(live.seat_frac, 0.0);
         assert_eq!(live.weapons.iter().flatten().count(), 2);
+        assert!(hud.chat.is_empty());
+    }
+
+    /// A disconnect frees the cgame, chat ring and all.
+    #[test]
+    fn leaving_a_server_drops_the_chat_ring() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let mut hud = hud::Hud::new(&fs).unwrap();
+        hud.chat.push("last words", 0);
+        leave_server_hud(&mut hud);
         assert!(hud.chat.is_empty());
     }
 
