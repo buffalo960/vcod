@@ -2447,6 +2447,83 @@ and the same 128/32/64/2000 defaults.
 
 ---
 
+## 10. vcod: wide windows
+
+This section is vcod's own design, not retail's. Retail draws its 2D layer
+on the 640x480 grid stretched over the whole window, so on anything but 4:3
+every HUD piece and menu is squashed sideways. vcod keeps the grid's
+aspect and decides where each piece goes. The code is
+`crate::hud::hudelem::Virtual` and `Anchor`.
+
+What it rests on from retail:
+
+- VERIFIED, `ui_mp/hud.menu` (`pak0.pk3`): the stock HUD is plain grid
+  rects with no alignment keyword: the stance icon at 100,434.375, the
+  "weaponinfo" menu spanning 0..640 with the weapon name at 242.5..562.5
+  and the ammo counter at 557.5..637.5, the health block at 488..631, the
+  compass at the left, the cursor hint at 300,325.
+- VERIFIED, the stock gametype scripts (`maps/MP/gametypes/*.gsc`,
+  `pak5.pk3`): hud elems carry only `x`, `y`, `alignX`, `alignY`. The
+  clock, the killcam titles, the respawn and spawn texts sit at 305 or 320
+  centred; the bomb and flag progress bar is `alignX "left"` at
+  `320 - barsize / 2`; the killcam bars and the black screen are `x 0`
+  shaders 640 wide; `bel`'s point counter and its back sit at 505-520,
+  and a right-aligned elem at 635.
+
+vcod's rules:
+
+- The grid is scaled to fit the window and centred (`Virtual::new`): by
+  the height on a window wider than 4:3, with bars at the sides, by the
+  width on a narrower one, with bars above and below.
+- With `vc_widescreen 1` (the default) a piece retail draws at a side of
+  the screen moves to that side of the window by the side bar's width
+  (`Virtual::left`, `Virtual::right`); a piece in the middle stays in the
+  box. With `vc_widescreen 0` every piece stays in the box.
+- A rect that spans the whole grid width (`hudelem::full_width`: from 0 or
+  less to 640 or more) or height stretches over the whole window, at any
+  `vc_widescreen`: the damage flash, killcam bars, a script's black screen,
+  a menu backdrop or fade.
+- A piece with no fixed side, a hud elem or a mod's `hud.menu` item,
+  keeps to the third of the grid its drawn span's middle is in
+  (`Anchor::of_span`: left of 213.3, right of 426.7). An elem's span is its
+  box after `alignX`, so the left-aligned progress bar from 192 to 448
+  stays centred and `bel`'s counter at 505 moves right.
+
+The native pieces:
+
+| Piece | Grid position | Keeps to |
+|---|---|---|
+| Compass, its friends, objectives and UO vehicle marks | -25..135 | left |
+| Stance icon, its flash, the stance hints, UO's stance and fatigue | 100..140 and right of it | left |
+| UO seat status (in the stance's place) | 100..140 | left |
+| Health block (1.1 and UO) | 488..631 | right |
+| Weapon name, its back, fire mode, ammo counter and back | 242.5..637.5 | right, as one block |
+| Weapon slot strip | from 632 leftwards, top | right |
+| Game messages (obituaries, `print`) | from 6, low | left |
+| Chat lines and the chat field | from 0 and 8 | left |
+| Vote and complaint lines | from 8 | left |
+| Crosshair, turret reticle, UO seat crosshair, cursor hint, damage direction icons | centre | centre |
+| Prone-blocked text, centre print, bold messages, match timeout text | centred on 320 | centre |
+| Scoreboard | 129..511 | centre |
+| Damage flash | -10..650 by -10..490 | whole window |
+| Scope overlay | window px | already window-wide (`hud::scope::build`) |
+| vcod's spectator status header | window px | already window-wide |
+
+The weapon name and ammo move as one block though the name's rect
+reaches past the middle, since its back butts onto the ammo backdrop.
+
+Menus, the script menus included, draw in the centred box with no edge
+anchoring (`frontend::Painter`); their full-width rects stretch as above,
+and the cursor maps from window pixels through the box, clamped to its
+edges (`Virtual::grid_point`). The raw mouse motion moving it is unscaled,
+as retail's (cod11-front-end.md section 13).
+
+The 3D view's fov follows the same cvar (`camera::view_fov_x`, Hor+:
+every fov the game names is a 4:3 view's width, and a wider view keeps
+that vertical fov). The crosshair's side arms read the fov a 4:3 view as
+tall would be wide, which at 4:3 is retail's `640 / fov_x`
+(`hud::player::arm_offset`).
+
 ## UNVERIFIED summary
 
 | # | Claim | Check that settles it |

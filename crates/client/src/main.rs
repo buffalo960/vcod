@@ -38,6 +38,7 @@ mod sun_shafts;
 mod texture_settings;
 mod turret;
 mod vehicle_probe;
+mod video;
 mod viewmodel;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -1448,6 +1449,7 @@ fn main() -> Result<()> {
         render_ms: 0.0,
         fx_ms: 0.0,
         look_zoom: (1.0, false),
+        modifiers: Default::default(),
         mouse: Default::default(),
         ignore_hw_gamma: false,
         textures: texture_settings::TextureSettings::default(),
@@ -1564,26 +1566,65 @@ fn frame_min_ms(maxfps: i32) -> u64 {
     }
 }
 
-/// `r_mode`'s size (Q3's mode table, which the stock video mode list picks
-/// from; -1 keeps the window's own) and whether `r_fullscreen` is on.
-fn video_mode(shell: &console::shell::Shell) -> (Option<winit::dpi::PhysicalSize<u32>>, bool) {
-    let size = match shell.cvar_f32("r_mode") as i32 {
-        0 => Some((320, 240)),
-        1 => Some((400, 300)),
-        2 => Some((512, 384)),
-        3 => Some((640, 480)),
-        4 => Some((800, 600)),
-        5 => Some((960, 720)),
-        6 => Some((1024, 768)),
-        7 => Some((1152, 864)),
-        8 => Some((1280, 1024)),
-        9 => Some((1600, 1200)),
-        10 => Some((2048, 1536)),
-        11 => Some((856, 480)),
-        _ => None,
+/// The video mode the cvars ask for ([`video::video_mode`]).
+fn video_mode(shell: &console::shell::Shell) -> video::VideoMode {
+    let int = |name| shell.cvar_f32(name) as i32;
+    video::video_mode(
+        int("r_mode"),
+        int("r_fullscreen"),
+        (int("r_customwidth"), int("r_customheight")),
+    )
+}
+
+/// Puts `window` in `mode`: windowed at its size, borderless over the
+/// monitor it is on, or that monitor switched to its mode closest to the
+/// size (the monitor's own size when `r_mode` names none). Wayland has no
+/// exclusive fullscreen, so there it is borderless.
+fn apply_video_mode(window: &Window, mode: video::VideoMode) {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::window::Fullscreen;
+    let monitor = window
+        .current_monitor()
+        .or_else(|| window.primary_monitor());
+    let wayland = window
+        .window_handle()
+        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
+    let exclusive = || {
+        let monitor = monitor.as_ref()?;
+        let want = mode.size.unwrap_or_else(|| monitor.size().into());
+        let modes: Vec<_> = monitor.video_modes().collect();
+        let infos: Vec<_> = modes
+            .iter()
+            .map(|m| video::MonitorMode {
+                size: m.size().into(),
+                refresh_mhz: m.refresh_rate_millihertz(),
+                bit_depth: m.bit_depth(),
+            })
+            .collect();
+        let pick = modes.get(video::closest_mode(want, &infos)?)?.clone();
+        log::info!(
+            "exclusive fullscreen {}x{} at {} Hz",
+            pick.size().width,
+            pick.size().height,
+            pick.refresh_rate_millihertz() as f32 / 1000.0
+        );
+        Some(Fullscreen::Exclusive(pick))
     };
-    let size = size.map(|(w, h)| winit::dpi::PhysicalSize::new(w, h));
-    (size, shell.cvar_f32("r_fullscreen") != 0.0)
+    match mode.fullscreen {
+        video::Fullscreen::Windowed => {
+            window.set_fullscreen(None);
+            if let Some((w, h)) = mode.size {
+                let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+            }
+        }
+        video::Fullscreen::Exclusive if !wayland => {
+            let full = exclusive().unwrap_or(Fullscreen::Borderless(monitor));
+            window.set_fullscreen(Some(full));
+        }
+        video::Fullscreen::Borderless | video::Fullscreen::Exclusive => {
+            window.set_fullscreen(Some(Fullscreen::Borderless(monitor)));
+        }
+    }
 }
 
 /// `record [name]` on `net` (CoDMP.exe 0x40e540): the file in `dir`, its
@@ -2201,6 +2242,8 @@ struct App {
     /// Last frame's fov over `cg_fov` and whether the view rides a mounted
     /// gun: the mouse's sensitivity scale ([`play::input::MouseLook`]).
     look_zoom: (f32, bool),
+    /// The keyboard's modifiers, for Alt+Enter.
+    modifiers: winit::keyboard::ModifiersState,
     /// The view's mouse motion since the last frame (`CL_MouseEvent`).
     mouse: play::input::MouseAccum,
     /// `r_ignorehwgamma` as of the last window start or `vid_restart`
@@ -2971,11 +3014,7 @@ impl App {
             self.rebuild_renderer(event_loop);
         }
         if let Some(w) = &self.window {
-            let (size, fullscreen) = video_mode(&self.shell);
-            w.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
-            if let Some(size) = size {
-                let _ = w.request_inner_size(size);
-            }
+            apply_video_mode(w, video_mode(&self.shell));
         }
         self.restart_cgame();
     }
@@ -3618,13 +3657,10 @@ impl ApplicationHandler for App {
         let mut attrs = Window::default_attributes()
             .with_title(&self.title)
             .with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0));
-        let (size, fullscreen) = video_mode(&self.shell);
+        let mode = video_mode(&self.shell);
         self.ignore_hw_gamma = ignore_hw_gamma(&self.shell);
-        if let Some(size) = size {
-            attrs = attrs.with_inner_size(size);
-        }
-        if fullscreen {
-            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        if let Some((w, h)) = mode.size {
+            attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
         }
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -3635,6 +3671,10 @@ impl ApplicationHandler for App {
                 );
             }
         };
+        // Full screen once the window knows its monitor.
+        if mode.fullscreen != video::Fullscreen::Windowed {
+            apply_video_mode(&window, mode);
+        }
         match self.build_renderer(window.clone()) {
             Ok(r) => self.renderer = Some(r),
             Err(e) => return self.fail(event_loop, e),
@@ -3667,11 +3707,26 @@ impl ApplicationHandler for App {
                     r.resize(size.width, size.height);
                 }
             }
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state == ElementState::Pressed;
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+                // Alt+Enter flips `r_fullscreen` and restarts the video
+                // ahead of the console and binds (video::toggled).
+                if pressed
+                    && !event.repeat
+                    && self.modifiers.alt_key()
+                    && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter)
+                {
+                    let on = video::toggled(self.shell.cvar_f32("r_fullscreen") as i32);
+                    let effects = self
+                        .shell
+                        .execute(&format!("r_fullscreen {on}; vid_restart"));
+                    self.apply(event_loop, effects);
+                    return;
+                }
                 // ` and ~ toggle the console whatever they are bound to
                 // (CoDMP.exe 0x40dc30).
                 if code == KeyCode::Backquote {
@@ -4016,6 +4071,9 @@ impl ApplicationHandler for App {
                 );
                 r.set_sun_shafts(self.shell.cvar_f32("vc_sunShafts"));
                 let aspect = r.aspect();
+                // vcod's Hor+: every fov below is a 4:3 view's width until
+                // the frame widens it (camera::view_fov_x).
+                let widescreen = self.shell.cvar_f32("vc_widescreen") != 0.0;
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
                 let mut fatal: Option<anyhow::Error> = None;
@@ -4047,6 +4105,8 @@ impl ApplicationHandler for App {
                     ),
                     Mode::Fly(cam) => {
                         cam.update(&self.input, dt);
+                        let fly_fov =
+                            camera::view_fov_x(camera::DEFAULT_FOV_DEG, aspect, widescreen);
                         let (cam_forward, cam_right, cam_up) = camera::basis(cam.yaw, cam.pitch);
                         // u32::MAX: no entity pinned to the camera.
                         self.audio
@@ -4071,12 +4131,12 @@ impl ApplicationHandler for App {
                         self.fx_ms = fx_t0.elapsed().as_secs_f32() * 1000.0;
                         (
                             renderer::Frame {
-                                view_proj: cam.view_proj(aspect),
+                                view_proj: cam.view_proj(fly_fov, aspect),
                                 eye: cam.pos,
                                 fwd: cam_forward,
                                 up: Vec3::Z,
                                 time,
-                                fov_x: camera::DEFAULT_FOV_DEG,
+                                fov_x: fly_fov,
                                 cull,
                                 hud_lines: Vec::new(),
                             },
@@ -5395,7 +5455,7 @@ impl ApplicationHandler for App {
                                     view.draw_gun = play::view::DrawGun::from_cvar(
                                         self.shell.cvar_f32("cg_drawGun") as i32,
                                     );
-                                    let (vm_draw, fov) = view.frame(
+                                    let (mut vm_draw, fov) = view.frame(
                                         cg_fov,
                                         weapons,
                                         view_ps.as_ref(),
@@ -5404,11 +5464,15 @@ impl ApplicationHandler for App {
                                         world_up,
                                     );
                                     // `0x30033e97`: the shellshock's sensitivity
-                                    // scale rides the zoom's.
+                                    // scale rides the zoom's, on the 4:3 fovs.
                                     self.look_zoom = (
                                         fov / cg_fov * shock.mouse.sensitivity,
                                         view_ps.as_ref().is_some_and(|v| v.mounted),
                                     );
+                                    let fov = camera::view_fov_x(fov, aspect, widescreen);
+                                    if let Some(d) = &mut vm_draw {
+                                        d.fov_x = fov;
+                                    }
                                     vm = vm_draw;
 
                                     let (cam_forward, cam_right, cam_up) =
@@ -6287,7 +6351,8 @@ impl ApplicationHandler for App {
                         self.audio
                             .set_listener(v.eye, eye_forward, eye_right, eye_up, u32::MAX);
                         let mut bone_sets = Vec::new();
-                        let mut fov = camera::DEFAULT_FOV_DEG;
+                        let mut fov =
+                            camera::view_fov_x(camera::DEFAULT_FOV_DEG, aspect, widescreen);
                         let mut gun_pose = hud::scope::GunPose::default();
                         let mut scope_quads = Vec::new();
                         let mut scoped = false;
@@ -6322,6 +6387,7 @@ impl ApplicationHandler for App {
                                 false,
                                 false,
                             );
+                            fov = camera::view_fov_x(fov, aspect, widescreen);
                             // The walk sight runs outside pmove, so the gun's
                             // sway reads its fraction off a copy.
                             let mut sighted = **ps;
