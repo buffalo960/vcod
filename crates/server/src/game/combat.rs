@@ -2035,6 +2035,35 @@ mod tests {
         ps
     }
 
+    /// A later build in the frame eases the controls a step past the end
+    /// frame's, and a bone the first build posed keeps the first's
+    /// (coduo-vehicles.md 13, "The glide back").
+    #[test]
+    fn each_build_eases_the_controls_once_more() {
+        use vcod_common::playerpose::Controllers;
+        let mut pose = BodyPose {
+            rules: MoveRules::Uo,
+            ease_ms: 50,
+            eased: Some(Controllers::default()),
+            ..Default::default()
+        };
+        pose.input.view = [0.0, 90.0, 0.0];
+        pose.angles.torso_yaw = 40.0;
+        let target = pose.target_controllers().expect("UO aims its controls");
+        let mut once = Controllers::default();
+        once.ease_toward(&target, 50);
+        assert_ne!(once, Controllers::default(), "the target moves something");
+
+        let mut stamps = DobjStamps::default();
+        assert_eq!(stamps.stamp(4, &[0, 1], 50, &pose), [(50, 0), (50, 0)]);
+        assert_eq!(stamps.stamp(4, &[1], 50, &pose), [(50, 0)], "no new build");
+        assert_eq!(stamps.eased_past_end_frame(), None);
+        assert_eq!(stamps.stamp(4, &[1, 2], 50, &pose), [(50, 0), (50, 1)]);
+        assert_eq!(stamps.eased_past_end_frame(), Some(once));
+        stamps.clear();
+        assert_eq!(stamps.stamp(4, &[3], 100, &pose), [(100, 0)]);
+    }
+
     /// 1.1d truncates the origin and the point; 1.5b and UO take the
     /// unsnapped origin plus the eye (the 1.5b throw capture's 36.1252 over
     /// feet at -23.8748).
