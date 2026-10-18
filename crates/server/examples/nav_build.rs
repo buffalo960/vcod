@@ -69,7 +69,13 @@ fn main() {
         {
             world.collision.set_model_linked(m, false);
         }
-        let g = NavGraph::build(&world.collision, &seeds, &world.hazards, rules);
+        let g = NavGraph::build(
+            &world.collision,
+            &seeds,
+            &world.nav_cover,
+            &world.hazards,
+            rules,
+        );
         let ms = t.elapsed().as_secs_f64() * 1000.0;
         let on = seeds.iter().filter(|s| g.nearest(**s).is_some()).count();
         let (reach, leave) = g.spawn_census(&world.collision, &seeds);

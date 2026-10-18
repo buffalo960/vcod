@@ -12673,6 +12673,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -12727,6 +12728,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
 
@@ -12824,6 +12826,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         install_script(&mut sv, rt);
         sv.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
@@ -13088,6 +13091,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -13169,6 +13173,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -13216,6 +13221,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         install_script(
             &mut sv,
@@ -13404,6 +13410,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = active(&mut sv, now);
 
@@ -13453,6 +13460,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -13527,6 +13535,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -13590,6 +13599,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -13666,6 +13676,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -13738,6 +13749,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -13829,6 +13841,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
@@ -13882,6 +13895,7 @@ mod tests {
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
                 rubble: Vec::new(),
+                nav_cover: Vec::new(),
             });
             let mut nc = begun(&mut sv, now);
             let sim = sv.clients[0].as_mut().unwrap().sim.as_mut().unwrap();
@@ -13931,6 +13945,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -14014,6 +14029,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -14168,6 +14184,7 @@ mod tests {
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
                 rubble: Vec::new(),
+                nav_cover: Vec::new(),
             });
             install_script(&mut sv, rt);
             let nc = begun(&mut sv, now);

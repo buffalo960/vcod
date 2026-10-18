@@ -1174,6 +1174,7 @@ mod tests {
                 spawn_points: Vec::new(),
                 hazards: Vec::new(),
                 rubble: Vec::new(),
+                nav_cover: Vec::new(),
             }))
         };
         vm.with_cx(|cx| {

@@ -1194,6 +1194,7 @@ mod tests {
             spawn_points: Vec::new(),
             hazards: Vec::new(),
             rubble: Vec::new(),
+            nav_cover: Vec::new(),
         }));
         vm.with_cx(|cx| super::spawn_entities_from_string(&mut host, cx, lump))
             .unwrap();
