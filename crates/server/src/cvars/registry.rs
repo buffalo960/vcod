@@ -316,3 +316,12 @@ pub const MIRRORED_V22: &[(&str, &str)] = &[
 /// The UO rows configstring 1 carries beside 1.5's (the UO gamestate's
 /// systeminfo).
 pub const SYSTEMINFO_V22: &[&str] = &["sv_allowDownload", "sv_night", "sv_obituary"];
+
+/// vcod's own rows, on every protocol: the bot management cvars
+/// (`crate::botmgmt::cvar`, docs/usage.md "Bots"). Retail registers none.
+pub const VCOD_ONLY: &[(&str, &str, &str)] = &[
+    ("vc_bot_autobalance", "", "1"),
+    ("vc_bot_minplayers", "", "0"),
+    ("vc_bot_names", "", "1"),
+    ("vc_bot_shoot", "", "1"),
+];

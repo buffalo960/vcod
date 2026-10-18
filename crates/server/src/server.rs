@@ -21,6 +21,8 @@ use crate::game::stuck::{StuckView, stuck_in_client};
 use crate::game::temp_entity;
 use crate::spectate::{ClientSim, PmType};
 use crate::world::{TestEntities, World};
+
+mod bot_admin;
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
@@ -1690,9 +1692,9 @@ pub struct Server {
     fatal: Option<anyhow::Error>,
     /// The debug bots, by slot. An entry whose client is gone goes with it.
     bots: BTreeMap<usize, crate::bots::Bot>,
-    /// `--bots` spawns on the first tick with scripts up, once; a map change
-    /// finds the bots already in their slots and rejoins them.
-    bots_spawned: bool,
+    /// What `server/bot_admin.rs` keeps between passes: the manual count
+    /// `--bots` seeds, the pinned bots, the name draw.
+    bot_admin: bot_admin::BotAdmin,
     /// `SV_AddTestClient`'s process-wide `bot%d` counter (cod_lnxded
     /// 0x80e2f9c), which `addTestClient` advances through the host's copy.
     test_client_counter: u32,
@@ -2050,6 +2052,7 @@ impl Server {
     pub fn with_seed(mut cfg: ServerConfig, now: Instant, seed: u64) -> Self {
         cfg.max_clients = cfg.max_clients.min(MAX_CLIENTS);
         let seed = seed | 1;
+        let (bots, bots_shoot) = (cfg.bots, cfg.bots_shoot);
         let server_id = 0x10;
         let fall = FallHeights::default();
         let mut sv = Server {
@@ -2119,7 +2122,7 @@ impl Server {
             script_overlay: None,
             fatal: None,
             bots: BTreeMap::new(),
-            bots_spawned: false,
+            bot_admin: bot_admin::BotAdmin::new(bots, bots_shoot, seed),
             test_client_counter: 0,
             bot_enemies: BTreeMap::new(),
             bot_sidesteps: BTreeMap::new(),
@@ -2154,6 +2157,10 @@ impl Server {
             let te = TestEntities::new(sv.cfg.test_entities, [0.0, 0.0, 64.0]);
             sv.baselines = te.baselines(sv.proto);
             sv.test_entities = Some(te);
+        }
+        // `--bots` without `--bots-shoot` keeps its peaceful bots.
+        if sv.cfg.bots > 0 && !sv.cfg.bots_shoot {
+            sv.set_cvar(crate::botmgmt::cvar::SHOOT, "0");
         }
         sv
     }
@@ -2837,12 +2844,8 @@ impl Server {
         }
     }
 
-    /// A slot neither a client nor a zombie holds.
-    fn free_slot(&self) -> Option<usize> {
-        self.free_slot_from(0)
-    }
-
-    /// The first free slot at `start` or above.
+    /// The first slot at `start` or above neither a client nor a zombie
+    /// holds.
     fn free_slot_from(&self, start: usize) -> Option<usize> {
         (start..self.clients.len())
             .find(|&i| self.clients[i].is_none() && self.zombies[i].is_none())
@@ -4224,12 +4227,9 @@ impl Server {
                     }),
             );
         }
-        if self.cfg.bots == 0 {
+        self.manage_bots();
+        if self.bots.is_empty() {
             return;
-        }
-        if !self.bots_spawned {
-            self.bots_spawned = true;
-            self.spawn_bots();
         }
         let links = self.script.as_ref().map_or(0, |rt| rt.host.brush_links);
         if self.nav.is_none()
@@ -4644,6 +4644,7 @@ impl Server {
             .retain(|slot, _| self.clients[*slot].is_some());
         self.bot_paths
             .retain(|slot, _| self.clients[*slot].is_some());
+        replies.append(&mut self.bot_admin.orders);
         for (slot, r) in replies {
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let seq = bot.next_command_seq;
@@ -4722,48 +4723,6 @@ impl Server {
             self.bot_paths.clear();
             self.bot_sites.clear();
             self.bot_breach_stands.clear();
-        }
-    }
-
-    /// Takes the first free slots for the configured bot count.
-    fn spawn_bots(&mut self) {
-        for i in 0..self.cfg.bots {
-            let Some(slot) = self.free_slot() else {
-                log::warn!("no free slot for bot {}", i + 1);
-                return;
-            };
-            let team = if i % 2 == 0 { "allies" } else { "axis" };
-            // `bel`'s menu takes axis only and the script deals the allied
-            // places, so that is the team the bot asks for there.
-            let bel = self.level_cvars.as_ref().is_some_and(|(g, _)| g == "bel");
-            let asks = if bel { "axis" } else { team };
-            let mut bot = crate::bots::Bot::new(team, self.cfg.bots_shoot, self.rand() as u64);
-            if self.move_rules() == vcod_common::pmove::MoveRules::Uo {
-                bot.menus = &crate::bots::WEAPON_MENUS_UO;
-            }
-            let name = format!("bot{}", i + 1);
-            bot.name = name.clone();
-            let userinfo = format!("\\name\\{name}\\snaps\\20\\rate\\25000\\cl_anonymous\\0");
-            // A loopback address nothing listens on; every transmit to a bot
-            // is skipped, the addr only has to be unique.
-            let addr = SocketAddr::from(([127, 0, 0, 1], 65535 - i as u16));
-            let mut client = Client::new(
-                addr,
-                0x7000 + i as u16,
-                self.rand(),
-                userinfo,
-                Instant::now(),
-            );
-            client.is_bot = true;
-            self.clients[slot] = Some(client);
-            self.bots.insert(slot, bot);
-            if let Some(rt) = self.script.as_mut() {
-                rt.push_client_event(ClientEvent::Connect {
-                    slot,
-                    name: name.clone(),
-                });
-            }
-            log::info!("client {slot} {name:?} connected (bot, team {asks})");
         }
     }
 
@@ -5498,7 +5457,7 @@ impl Server {
     /// line. Team rules: axis and allies only fight each other; everyone
     /// else is fair game to everyone (`dm` carries no teams).
     fn bot_enemy(&self, slot: usize, teams: &[i32]) -> Option<crate::bots::EnemyView> {
-        if !self.cfg.bots_shoot {
+        if !self.bot_admin.shoot {
             return None;
         }
         let me = self.clients[slot].as_ref()?.sim.as_ref()?;
@@ -5667,6 +5626,16 @@ impl Server {
     /// (`nav::Follower::yielding`).
     pub fn bot_yielding(&self, slot: usize) -> u32 {
         self.bot_paths.get(&slot).map_or(0, |f| f.yielding())
+    }
+
+    /// Test-facing: the name a bot joined with.
+    pub fn bot_name(&self, slot: usize) -> Option<&str> {
+        self.bots.get(&slot).map(|b| b.name.as_str())
+    }
+
+    /// Test-facing: a client command a bot sends with its next replies.
+    pub fn test_bot_command(&mut self, slot: usize, cmd: &str) {
+        self.bot_admin.orders.push((slot, cmd.to_string()));
     }
 
     /// Test-facing: the script team value a bot landed in.
@@ -6815,6 +6784,9 @@ impl Server {
             }
             console::Command::ClientKick(arg) => self.client_kick(arg.as_deref(), now),
             console::Command::Kick(arg) => self.kick(arg.as_deref(), now),
+            console::Command::AddBot(args) => self.add_bot_command(&args),
+            console::Command::RemoveBot(arg) => self.remove_bot_command(arg.as_deref()),
+            console::Command::ListBots => self.list_bots(),
             console::Command::DumpUser(arg) => self.dump_user(arg.as_deref()),
             console::Command::ServerInfo => {
                 let info = self.configstrings.first().cloned().unwrap_or_default();
@@ -7111,7 +7083,6 @@ impl Server {
         self.zombies.iter_mut().for_each(|z| *z = None);
         self.challenges.clear();
         self.bots.clear();
-        self.bots_spawned = false;
         self.pending_explosions.clear();
         self.pending_script_commands.clear();
         self.weapon_changes.clear();

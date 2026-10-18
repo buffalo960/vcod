@@ -412,6 +412,11 @@ something, the bullet links it.
   deletes walls, as `bas` does to a breached base. A bot jumps through a
   window too low for a standing body with crouch held in the air, as
   out of mp_cassino's axis room and two rooms on mp_streets.
+- Bot management over rcon: `addbot`, `removebot` and `listbots`, names
+  like `[BOT] Sir Camps-a-Lot` drawn without repeats, team balance that
+  moves only dead bots, and a `vc_bot_minplayers` floor a joining human
+  takes a bot's place under. The `vc_bot_*` cvars apply live
+  (docs/usage.md, "Bots").
 
 ## What it doesn't do
 
