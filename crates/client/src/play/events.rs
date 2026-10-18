@@ -89,10 +89,19 @@ impl PredictedEvents {
     }
 
     /// Whether a snapshot's playerstate-ring `event` at `seq` still has to
-    /// play: false only for the copy of one played at that sequence.
+    /// play: false for the copy of one played at that sequence, and for
+    /// one [`REMEMBERED`] or more behind the prediction, which retail's
+    /// `CG_CheckChangedPredictableEvents` (cgame 0x30028c8e) no longer
+    /// compares. Recording that one would overwrite a newer sequence's
+    /// slot, and the newer one would play again when the snapshot catches
+    /// up: a UO winded sprint puts five fatigue events in one snapshot.
     pub fn filter_snapshot(&mut self, seq: i32, event: i32) -> bool {
         let seq = seq & 0xff;
-        let below = self.played_to.is_some_and(|mark| ahead(seq, mark) < 0);
+        let behind = self.played_to.map(|mark| ahead(seq, mark));
+        if behind.is_some_and(|b| b <= -(REMEMBERED as i32)) {
+            return false;
+        }
+        let below = behind.is_some_and(|b| b < 0);
         if below && self.was_played(seq, event) {
             return false;
         }
@@ -401,6 +410,21 @@ mod tests {
             assert!(!e.filter_snapshot(s, ring[(s & 3) as usize]), "{s}");
         }
         assert!(e.take_predicted(16, ring, [0; 4]).is_empty());
+    }
+
+    /// A snapshot that lags the prediction by a remembered window or more
+    /// neither plays nor records: recording seq 68 over seq 84's slot made
+    /// 84's shot play again once the snapshots caught up (the loopback
+    /// gate's UO lossy link, where a winded sprint floods the ring).
+    #[test]
+    fn a_snapshot_a_window_behind_is_skipped_and_not_recorded() {
+        let mut e = tracking(64);
+        for seq in 65..=85 {
+            let ring: [i32; 4] = std::array::from_fn(|i| if i == 0 { FIRE } else { PAIN });
+            e.take_predicted(seq, ring, [0; 4]);
+        }
+        assert!(!e.filter_snapshot(68, FIRE), "17 behind the prediction");
+        assert!(!e.filter_snapshot(84, FIRE), "played by the prediction");
     }
 
     /// A respawn restarts the ring at 0 (AGENTS.md, Gotchas): the prediction

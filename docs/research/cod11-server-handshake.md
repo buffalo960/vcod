@@ -759,11 +759,80 @@ and the zombie half of `Server::drop_client`.
   `a_timed_out_clients_callback_lines_go_out_with_its_drop_notice`,
   `a_drop_notifies_menuresponse_for_the_next_frame` and
   `a_dropped_client_stops_its_followers_on_1_5` pin it.
-- Not ported: a 1.1 command the callback addresses to the leaver alone
-  would reach the zombie on retail (`SV_GameSendServerCommand` to one
-  slot does not test the state, as in Q3); vcod drops it. A reconnect
-  into a held slot still queues its disconnect (`SV_DirectConnect`'s path
-  was not read).
+- A command the callback sends the leaver alone. Neither engine tests
+  the slot's state on the way in: 1.1d's `SV_GameSendServerCommand`
+  (0x80894bc) hands any slot to `SV_SendServerCommand`, and
+  `SV_AddServerCommand` (0x808b680) only squashes. A slot not `CS_ACTIVE`
+  (or 32 commands past its ack) loses its unsent type-0 commands and
+  takes no new one; a type-1 command still goes on. The zombie's `w`
+  goes through the same call (0x8085e74) with the state already
+  `CS_ZOMBIE`, so it squashes every print still unsent. INFERRED
+  (control flow).
+- Live, 2026-10-18, `client-probes/probe_reconnect`, its callback sending
+  the leaver `self iPrintLn` and `self setClientCvar("probe_self", n)`,
+  with a `--probe-edge zombie-active` client: the zombie's message holds
+  `v probe_self "2"` then `w "EXE_DISCONNECTED"` on 1.1d, 1.5b and UO
+  1.51b, and no print. VERIFIED (capture).
+- vcod: `Server::client_disconnect` hands back the commands addressed to
+  the leaver's slot, and `drop_client` queues them on the zombie, then
+  squashes its ignorable commands (`Client::squash_ignorable`) ahead of
+  the `w`. The same run against vcod-server prints the same two
+  commands. `a_leavers_zombie_keeps_the_callbacks_reliable_commands_only`
+  pins it.
+
+### A reconnect into a held slot (`SV_DirectConnect`)
+
+A connect from the address and qport (or port) of a slot that is not
+free, past `sv_reconnectlimit`, prints `%s:reconnect` and takes that slot.
+
+- 1.1d (0x80859b1..0x80859cd): when the slot's state is above
+  `CS_ZOMBIE`, it frees only the client's script id (0x808d34c, the same
+  call `SV_DropClient` ends with) and goes on to the game's
+  `ClientConnect` (`VM_Call` 2, 0x8085baa). Nothing calls
+  `ClientDisconnect`. The game's `ClientConnect` (0x4246c) zeroes the
+  `gclient_t` and the entity and runs `G_InitGentity` over the held
+  player in place. INFERRED (control flow).
+- 1.5b (0x808a6e3) and UO 1.51b (0x808b4e7) call `SV_FreeClient` there
+  instead, which runs the game's `ClientDisconnect` before the connect.
+  INFERRED (control flow).
+- Live, 2026-10-18, `client-probes/probe_reconnect` on all three, a
+  `--probe-edge reconnect` client connecting again from its own socket
+  and qport 5 s after it entered:
+  - 1.1d runs no disconnect callback. The thread the first connect
+    started on the player keeps running and reads the second connect's
+    fields; the second connect's callback finds the first one's script
+    field defined and `pers` empty. Both threads die at the client's
+    final drop. VERIFIED (capture).
+  - 1.5b and UO run the disconnect callback, then the connect callback,
+    on the same `getTime()`. The second connect finds neither the field
+    nor `pers`. VERIFIED (capture).
+- vcod: the reconnect arm runs `Server::client_disconnect` inside the
+  connect on 1.5 and UO. On 1.1 it runs none, and `ObjectTable::
+  spawn_client` keeps the held player's script object (its threads and
+  script fields), with the engine fields and `pers` fresh; vcod also
+  unlinks the held entity from the area tree before the new one links.
+  `a_reconnect_into_a_held_slot_follows_the_protocol` pins it. The same
+  runs against vcod-server print the same lines. vcod's own guard stays:
+  a connect with another challenge into a slot still heard from in the
+  last 3 s is refused, where retail takes it at once.
+
+### When the client's `begin` is heard (`ClientBegin`)
+
+- 1.1d's `ClientBegin` (0x42f88) sets the client connected, runs
+  `CalculateRanks` and notifies `begin` on the player. INFERRED (control
+  flow).
+- Live, 2026-10-18, `client-probes/probe_dropclient` and
+  `probe_reconnect` on all three: the connect callback's line after
+  `waittill("begin")` reads the `serverTime` of the client's first
+  snapshot, a frame after the packet that entered the client. The waiter
+  runs in the next frame's thread pass, as the other engine notifies do.
+  VERIFIED (capture).
+- vcod, before 2026-10-18: the waiter ran in the packet pass, a frame
+  (50 ms) earlier. Now `ClientEvent::Begin` notifies through
+  `Vm::notify_for_frame` and sets `ranks_dirty`, as `ClientConnect`'s
+  closing `CalculateRanks` (0x42677) does. Ours prints the first
+  snapshot's `serverTime` too. `the_begin_waiter_runs_on_the_next_frames_clock`
+  pins it.
 
 ### Console commands over rcon
 

@@ -524,10 +524,11 @@ struct Args {
     /// With `--net-probe`: a spectator that keeps decoding where a client
     /// would stop, for the server's edge cases: `silence` (the `sv_timeout`
     /// drop), `zombie` (a disconnect before entering the world),
-    /// `zombie-active` (one after), `lean-fly` (the lean bits on a
-    /// spectator's flight), `spec-fly` (forward held, every origin printed,
-    /// beside `client-probes/probe_specspawn`) and `watch` (the entity list
-    /// as it changes).
+    /// `zombie-active` (one after), `reconnect` (a connect again into the
+    /// held slot), `lean-fly` (the lean bits on a spectator's flight),
+    /// `spec-fly` (forward held, every origin printed, beside
+    /// `client-probes/probe_specspawn`) and `watch` (the entity list as it
+    /// changes).
     /// Prints `EDGE` lines; writes no fixture (`edge_probe.rs`).
     #[arg(long, value_enum)]
     probe_edge: Option<edge_probe::EdgeMode>,
@@ -557,6 +558,11 @@ struct Args {
     /// vcod-server overwrites it.
     #[arg(long)]
     save_slope: bool,
+    /// With --save-slope: keep the snapshots of every `pm_type` (dead,
+    /// spectator, intermission), not only a playing or linked body's. For
+    /// `predict_ab`'s state changes beside `client-probes/probe_uostates`.
+    #[arg(long, requires = "save_slope")]
+    slope_every_state: bool,
     /// With --save-slope or --probe-slope: a prone crawl instead of the
     /// route, from where `client-probes/probe_prone` puts the player on
     /// mp_carentan (`+set probe_teleport 1`, `probe_spot` street or mound),
@@ -1176,6 +1182,7 @@ fn main() -> Result<()> {
                 playerstate: args.save_playerstate,
                 motion: args.save_motion,
                 slope: args.save_slope,
+                slope_every_state: args.slope_every_state,
                 prone: args.probe_prone,
                 moves: args.probe_moves,
                 turns: args.probe_turns,

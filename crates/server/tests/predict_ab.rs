@@ -119,6 +119,8 @@ struct Run<'a> {
     rebuilds_dropping: usize,
     rebuilds_mid_lerp: usize,
     prone_corrections: usize,
+    /// Cmds run while the sim's `pm_type` is one the client does not predict.
+    unpredicted: usize,
     mismatches: Vec<String>,
     /// Per field, how many cmds read it wrong.
     counts: BTreeMap<&'static str, usize>,
@@ -145,6 +147,14 @@ impl Run<'_> {
         };
         self.server_step(&cmd);
         self.prone_corrections += usize::from(self.sim.delta_angles() != da);
+        // The client predicts a playing or linked body only; a dead one's
+        // and a spectator's view is the snapshot's.
+        if !predict::predictable(self.sim.wire_pm_type()) {
+            self.last_cmd = cmd;
+            self.cmds += 1;
+            self.unpredicted += 1;
+            return;
+        }
         predict::run_cmd(
             &mut self.pred,
             &cmd,
@@ -503,6 +513,7 @@ fn start<'a>(
         rebuilds_dropping: 0,
         rebuilds_mid_lerp: 0,
         prone_corrections: 0,
+        unpredicted: 0,
         mismatches: Vec::new(),
         counts: BTreeMap::new(),
     }
@@ -731,8 +742,9 @@ fn step_side_by_side(ring: bool) {
 // The same side-by-side step under 1.5's and United Offensive's wires and
 // rules, driven by retail's own cmd streams.
 
-/// UO's on-foot slope captures and their maps (`moves_ab.rs`): the sprint to
-/// exhaustion and the bipod, automatic fire, and the mounts and the cook.
+/// UO's slope captures and their maps (`moves_ab.rs`): the seats, the sprint
+/// to exhaustion and the bipod, automatic fire, the mounts and the cook, and
+/// a death, a spectator spell and a link (`follow_state`).
 const UO_RUNS: &[(&str, &str)] = &[
     ("mp_cassino-tdm-slope-8ms-tank-seats-uo.txt", "mp_cassino"),
     ("mp_cassino-tdm-slope-8ms-tank-drive-uo.txt", "mp_cassino"),
@@ -745,6 +757,7 @@ const UO_RUNS: &[(&str, &str)] = &[
     ("mp_foy-dm-slope-8ms-uofoot-stand.txt", "mp_foy"),
     ("mp_foy-dm-slope-8ms-uofoot-crouch.txt", "mp_foy"),
     ("mp_foy-dm-slope-8ms-uofoot-mount.txt", "mp_foy"),
+    ("mp_carentan-dm-slope-8ms-uostates-uo.txt", "mp_carentan"),
 ];
 
 enum CaptureLine {
@@ -864,6 +877,56 @@ fn follow_seat(
     true
 }
 
+/// Retail's `pm_type` at a capture's snapshot, put on the sim the way the
+/// script put it there (`client-probes/probe_uostates`): a death, a
+/// `spawnPlayer` or `spawnSpectator` reseeded from retail's playerstate,
+/// a `linkTo` held at retail's origin, the mover being the script's. The
+/// seat captures' links are `follow_seat`'s. Whether the snapshot's body
+/// was dead, spectating or linked off a seat.
+fn follow_state(run: &mut Run<'_>, w: &msg::PlayerState) -> bool {
+    use vcod_common::net::flags::{
+        EF_IN_VEHICLE_V22, PM_DEAD, PM_NORMAL, PM_NORMAL_LINKED, PM_SPECTATOR,
+    };
+    let p = run.p;
+    let pm = w.field_i32(p, "pm_type");
+    let ours = run.sim.wire_pm_type();
+    let origin = w.origin(p);
+    let yaw = w.viewangles(p)[1];
+    let angles = run.last_cmd.angles;
+    let reseed = |run: &mut Run<'_>| {
+        run.sim.ps = predict::from_wire(p, w, Some(&run.last_cmd)).ps;
+    };
+    match pm {
+        PM_DEAD if ours != PM_DEAD => {
+            run.sim.die();
+            run.sim.end_frame(run.st);
+        }
+        PM_SPECTATOR if ours != PM_SPECTATOR => {
+            run.sim.become_spectator(origin, yaw, angles);
+            reseed(run);
+        }
+        PM_NORMAL if matches!(ours, PM_DEAD | PM_SPECTATOR) => {
+            run.sim.become_player(origin, yaw, angles);
+            reseed(run);
+        }
+        PM_NORMAL_LINKED if w.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 == 0 => {
+            run.sim.link_to.get_or_insert(vcod_server::spectate::Link {
+                parent: vcod_gsc::EntId(1, 0),
+                offset: [0.0; 3],
+                velocity: [0.0; 3],
+            });
+            run.sim.ps.origin = Vec3::from(origin);
+        }
+        PM_NORMAL if run.sim.link_to.is_some() && run.sim.seat.is_none() => {
+            run.sim.link_to = None;
+        }
+        _ => {}
+    }
+    pm == PM_DEAD
+        || pm == PM_SPECTATOR
+        || (pm == PM_NORMAL_LINKED && w.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 == 0)
+}
+
 /// One capture's cmds run on a server sim speaking `p` and on a predictor
 /// rebuilt from that sim's playerstate, mapped and round-tripped through the
 /// wire codec as a snapshot is, at every snapshot the capture holds and every
@@ -934,11 +997,12 @@ fn capture_side_by_side(
         rebuilds_dropping: 0,
         rebuilds_mid_lerp: 0,
         prone_corrections: 0,
+        unpredicted: 0,
         mismatches: Vec::new(),
         counts: BTreeMap::new(),
     };
     run.rebuild();
-    let (mut sprinted, mut deployed, mut cooked, mut seated) = (0, 0, 0, 0);
+    let (mut sprinted, mut deployed, mut cooked, mut seated, mut states) = (0, 0, 0, 0, 0);
     for line in &lines {
         match line {
             CaptureLine::Snap(w, vang) => {
@@ -947,6 +1011,7 @@ fn capture_side_by_side(
                     w.field_i32(p, "serverCursorHintVal"),
                 );
                 seated += usize::from(follow_seat(&mut run.sim, p, w, *vang));
+                states += usize::from(follow_state(&mut run, w));
                 run.rebuild();
             }
             CaptureLine::Cmd(c) if c.server_time > run.st => {
@@ -962,9 +1027,11 @@ fn capture_side_by_side(
     }
     println!(
         "{file}: {} cmds, {} rebuilds, sprinting {sprinted}, deployed {deployed}, \
-         fuse armed {cooked}, seated snapshots {seated}, {} mismatching reads {:?}",
+         fuse armed {cooked}, seated snapshots {seated}, dead, spectating or linked \
+         snapshots {states}, {} unpredicted cmds, {} mismatching reads {:?}",
         run.cmds,
         run.rebuilds,
+        run.unpredicted,
         run.mismatches.len(),
         run.counts
     );

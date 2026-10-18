@@ -860,6 +860,18 @@ impl<T: Transport> NetClient<T> {
         self.state = NetState::Disconnected;
     }
 
+    /// A fresh handshake on the same socket and qport, the connection's
+    /// protocol and userinfo kept, with no `disconnect` sent: to the server
+    /// a client that crashed and came back (`SV_DirectConnect`'s
+    /// reconnect arm). The probe's `--probe-edge reconnect` only.
+    pub fn reconnect(self, now: Instant) -> Self {
+        let (info, listen) = (self.info.clone(), self.listen);
+        let mut c = Self::start_with_protocol(self.transport, now, self.qport, self.proto);
+        c.set_userinfo(info);
+        c.listen = listen;
+        c
+    }
+
     // ---- internals ----
 
     fn send_getchallenge(&mut self) {

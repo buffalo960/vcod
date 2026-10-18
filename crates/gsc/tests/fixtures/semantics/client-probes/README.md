@@ -1185,6 +1185,49 @@ crates/gsc/tests/fixtures/semantics/client-probes/probe_dropclient.gsc
 Retail on all three and ours, 2026-10-18, print the same `PROBE` lines
 (clocks aside) and the same layout.
 
+## probe_reconnect
+
+A client that connects again into the slot it still holds, and what the
+disconnect callback sends the leaver alone: whether the game hears the old
+client go, whether a thread on the old player lives on, whether a script
+field and `pers` survive, and which of a print and a `setClientCvar` reach
+the zombie. `docs/research/cod11-server-handshake.md`, "A reconnect into a
+held slot" and "When the game hears a drop". Four shells (or one script):
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> PROBE_SECS=40 tools/run_probe.sh client-probes/probe_reconnect mp_pavlov
+# 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge watch --probe-secs 28
+# 2 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge reconnect --probe-secs 20
+# 2 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-edge zombie-active --probe-secs 12
+```
+
+`COD_VERSION=1.5` and `COD_VERSION=uo` (map `mp_uo_carentan`) take the
+same recipe. Against ours: `vcod-server mp_pavlov --gametype-script
+crates/gsc/tests/fixtures/semantics/client-probes/probe_reconnect.gsc`.
+The zombie's `EDGE cmd` lines carry what reached it. Retail on all three
+and ours, 2026-10-18, print the same `PROBE` lines (clocks aside); ours
+takes the reconnect a few seconds later, since it refuses a connect with a
+new challenge into a slot heard from in the last 3 s.
+
+## probe_uostates
+
+The wire round trip's state changes on United Offensive: a placed allied
+player dies, respawns, spectates, respawns and rides a `linkTo` on a moving
+script_origin, under a `--save-slope --slope-every-state` client.
+`docs/research/coduo-movement.md` 15. Two shells:
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> PROBE_SECS=90 tools/run_probe.sh client-probes/probe_uostates mp_carentan
+# 10 s later:
+cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:<p> --save-slope --slope-every-state --probe-moves --probe-cmd-ms 8 --probe-team allies --probe-weapon m1carbine_mp --capture-tag uostates-uo --probe-secs 80
+```
+
+The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-uostates-uo.txt`
+(its header names this recipe), which `predict_ab`'s UO gate replays.
+
 ## probe_menuresponse
 
 What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for
