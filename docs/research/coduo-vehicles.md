@@ -1627,9 +1627,15 @@ runs lie 1.1 units apart.
       high (129.08 against 109.08), and from the first `nextvehslot`,
       which requests the slot it takes, they read level (VERIFIED,
       `tank` run). The jeep's offsets are all zero and its links read
-      level in every stint (VERIFIED, `jeep` run). vcod links its rider
-      at the seat: the offset is not ported (it moves the link box and
-      what links to him, never the rays or the snapshot).
+      level in every stint (VERIFIED, `jeep` run). vcod runs the refresh
+      on the rider's turn of the entity pass, his vehicle first
+      (`run_rider_link` in `server.rs`, 2026-10-18): `r.currentOrigin` and
+      `ps.origin` at the seat tag of the vehicle as it stands, shifted by
+      the offset of the slot `VEH_LinkPlayer` asked for
+      (`Seat::link_offset`), and a link there; the end frame then puts
+      `ps.origin` and `r.currentOrigin` on the seat. Not ported: retail
+      leaves `r.currentOrigin` at the link until the rider's next cmd, so
+      a thread between them reads the first stint's driver 20 high.
     - The 400 ms after a seat change also part. Retail's bones glide to
       the new seat over eight frames; ours arrived in four (up to 6 units
       apart on the way) (VERIFIED, `tank` run). The cause is the setter
@@ -1666,7 +1672,7 @@ runs lie 1.1 units apart.
       glide sits within 0.02 of retail's (VERIFIED, replay,
       `vehicle_armor_ab::the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail`,
       fixture `mp_cassino-tank-glide-uo.txt`, cut from that run) but for
-      four frames its `GLIDE_GAPS` name:
+      three frames its `GLIDE_GAPS` name:
       - 54100 and 54250, where retail repeats the last frame's pose: a
         `bulletTrace` in the first thread pass (the profile's at 54050,
         the aim sweep's at 54200, both run in the next frame's first
@@ -1679,13 +1685,14 @@ runs lie 1.1 units apart.
         land a frame early on ours, where the replay's sweep thread runs
         50 ms ahead of retail's). Not ported: the bones a trace stamps
         are the per-bone stamp work of `cod11-combat.md` 3.6.
-      - 53900, every bone 21 units high on ours for one frame: the
-        probe's marks link to the rider, and `G_RunClient` (0x41dfc)
-        re-reads a linked player's `r.currentOrigin` off his link each
-        entity pass (the tank driver's link offset above); vcod's marks
-        read the change's placement, 21 up, until the end frame puts him
-        on the seat. The same unported refresh makes ours' marks on the
-        jeep's gunner lag retail's a frame while the gun swings (below).
+      - 53900, every bone 21 units high on ours for one frame, closed
+        2026-10-18: the probe's marks link to the rider, and `G_RunClient`
+        (0x41dfc) re-reads a linked player's `r.currentOrigin` off his
+        link each entity pass (the tank driver's link offset above);
+        vcod's marks read the change's placement, 21 up, until the end
+        frame put him on the seat. With the refresh ported the frame
+        matches (VERIFIED, replay; without it the gate misses every bone
+        at 53900 by 21.00 in z).
       - 54000, `bip01 head` 0.34 off: the neck and head controls ease
         from 0 after the change; not traced.
     - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
