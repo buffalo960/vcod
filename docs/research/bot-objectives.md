@@ -1041,8 +1041,9 @@ seed's luck, not the rule's. Nothing to fix; a per-bot generator would
 keep one bot's change from reshuffling the others' runs.
 
 The bas sweep on the pit rule (bot-navigation.md section 3; VERIFIED,
-measured, ours, release, UO install, the same gate over all five maps 1
-to 11 odd and mp_foy to 23, 36 runs): all end on their bases. mp_foy
+measured, ours, release, UO install, this branch on ee4c0d0b, the same
+gate over all five maps 1 to 11 odd and mp_foy to 23, 36 runs): all end
+on their bases. mp_foy
 10119 to 16639 (1 11819, 3 10119, 5 13939, 7 11339, 9 10559, 11 11099,
 13 13879, 15 15619, 17 13719, 19 10939, 21 16639, 23 10579); mp_italy
 9139 to 14759 (1 10539, 3 10019, 5 12959, 7 10439, 9 9139, 11 14759);
