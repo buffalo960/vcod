@@ -879,9 +879,12 @@ fn a_frag_rolls_up_terrain_like_retail_on_15() {
 /// 1.51b, whose bounce keeps 0.4 of the reflection: the second frag rolls
 /// up the grade over four contacts to retail's bit. The first strikes the
 /// target's prone body on the grade before the terrain, and that strike
-/// lands 0.007 off retail's (his pose on a grade, not the missile's or the
-/// bone trace's arithmetic), so its states are held to retail's type and
-/// ground and to 0.01. Runs only with `COD_DIR` at a UO install.
+/// lands 0.007 off retail's: this capture logged neither client's cmds,
+/// and his body rides where his drop onto the grade settled
+/// (cod11-combat.md 3.1, "The pose on 1.5 and UO"), so its states are held
+/// to retail's type and ground and to 0.01.
+/// [`a_frag_strikes_a_prone_body_on_a_grade_like_retail_on_uo`] replays a
+/// rerun's cmds to the bit. Runs only with `COD_DIR` at a UO install.
 #[test]
 fn a_frag_rolls_up_terrain_like_retail_on_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
