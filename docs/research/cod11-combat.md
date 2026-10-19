@@ -7804,8 +7804,12 @@ holds the 9-byte header read at 0x808c9d1); `SV_PacketEvent` is called from
 oversize packet") at 0x806bfec and 0x806c1b8; the frame function 0x806ce88
 calls `Com_EventLoop` in the loop at 0x806cfe0..0x806d001 and then
 `SV_Frame` (my name, 0x808cdf8) at 0x806d0e4, whose `VM_Call` with 10 at
-0x808d1fa is vmMain case 10, `G_RunFrame` (0x50ea4). INFERRED: a packet is
-executed as it is drained, between game frames and never inside one, so
+0x808d1fa is vmMain case 10, `G_RunFrame` (0x50ea4). VERIFIED, decompile
+(2026-10-19): a packet is executed as it is drained, between game frames and
+never inside one. `Com_EventLoop` hands each received datagram to
+`SV_PacketEvent` as it takes it off the queue, and its only callers are
+`Com_Frame`'s loop and, on a non-dedicated process only, a second call after
+`SV_Frame` (cod11-server-handshake.md, "The read schedule"). INFERRED: so
 within a server frame every client's cmds, and the shots in them, run in
 packet arrival order, and `G_RunFrame`'s `ClientEndFrame` pass runs after all
 of them.

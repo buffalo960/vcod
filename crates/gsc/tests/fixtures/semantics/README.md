@@ -67,8 +67,10 @@ way:
   the engine to have something to load next, so their sections in
   `retail-captures.txt` were taken one at a time with
   `PROBE_SECS=40 tools/run_probe.sh <probe> mp_pavlov +set sv_mapRotation ...`
-  and pasted in at their sorted position. A regeneration of the whole file
-  through `capture_probes.sh` drops them; put them back the same way.
+  and pasted in at their sorted position. `probe_hostname` was taken the
+  same way with `+set sv_mapRotation "gametype probe_hostname map
+  mp_brecourt"`. A regeneration of the whole file through
+  `capture_probes.sh` drops them; put them back the same way.
 
 Probes emit `PROBE at <name>` before an expression that might be fatal, so a
 run that dies names what killed it.
