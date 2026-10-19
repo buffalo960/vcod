@@ -66,30 +66,39 @@ impl ClientCvars {
         }
     }
 
+    /// The mirror's `(name, value)` pairs as the cgame sets them (1.1
+    /// 0x3002bc60, UO 0x30038430): in slot order, stopping at the first
+    /// empty name, so a name past a hole is never set.
+    fn mirrored<'a>(
+        &self,
+        configstrings: &'a [String],
+    ) -> impl Iterator<Item = (&'a str, &'a str)> {
+        let (names, offset) = self.mirror();
+        names
+            .map(move |i| {
+                let name = configstrings.get(i).map_or("", String::as_str);
+                let value = configstrings.get(i + offset).map_or("", String::as_str);
+                (name, value)
+            })
+            .take_while(|(name, _)| !name.is_empty())
+    }
+
     /// A `v`-set value, else the 140/204 mirror entry under a
     /// case-insensitive name match.
     pub fn get(&self, name: &str, configstrings: &[String]) -> Option<String> {
         if let Some(v) = self.set.get(&name.to_lowercase()) {
             return Some(v.clone());
         }
-        let (names, offset) = self.mirror();
-        let i = names.into_iter().find(|&i| {
-            configstrings
-                .get(i)
-                .is_some_and(|n| n.eq_ignore_ascii_case(name))
-        })?;
-        configstrings.get(i + offset).cloned()
+        self.mirrored(configstrings)
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.to_owned())
     }
 
     /// Every value [`Self::get`] can answer, keyed lowercase.
     pub fn all(&self, configstrings: &[String]) -> HashMap<String, String> {
-        let (names, offset) = self.mirror();
-        let mut out: HashMap<String, String> = names
-            .filter_map(|i| {
-                let name = configstrings.get(i).filter(|n| !n.is_empty())?;
-                let value = configstrings.get(i + offset)?;
-                Some((name.to_lowercase(), value.clone()))
-            })
+        let mut out: HashMap<String, String> = self
+            .mirrored(configstrings)
+            .map(|(n, v)| (n.to_lowercase(), v.to_owned()))
             .collect();
         out.extend(self.set.iter().map(|(k, v)| (k.clone(), v.clone())));
         out
@@ -111,6 +120,9 @@ mod tests {
     #[test]
     fn mirror_lookup() {
         let mut cs = vec![String::new(); 300];
+        for (i, name) in cs[140..167].iter_mut().enumerate() {
+            *name = format!("scr_pad{i}");
+        }
         cs[167] = "scr_allow_m1carbine".into();
         cs[167 + 64] = "0".into();
         let c = ClientCvars::default();
@@ -119,5 +131,21 @@ mod tests {
         let mut c = c;
         c.on_server_command(&["v".into(), "SCR_allow_m1carbine".into(), "1".into()]);
         assert_eq!(c.all(&cs)["scr_allow_m1carbine"], "1");
+    }
+
+    /// The cgame stops at the first empty name: a name past a hole is
+    /// never mirrored.
+    #[test]
+    fn mirror_stops_at_the_first_empty_name() {
+        let mut cs = vec![String::new(); 300];
+        cs[140] = "scr_first".into();
+        cs[204] = "1".into();
+        cs[142] = "scr_past_hole".into();
+        cs[206] = "2".into();
+        let c = ClientCvars::default();
+        assert_eq!(c.get("scr_first", &cs).as_deref(), Some("1"));
+        assert_eq!(c.get("scr_past_hole", &cs), None);
+        let all = c.all(&cs);
+        assert_eq!(all.len(), 1, "{all:?}");
     }
 }

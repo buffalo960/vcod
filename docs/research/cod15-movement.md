@@ -465,9 +465,29 @@ takes `framed`, which lands him on retail's float after the script's
   1.5's refused free flight) ahead of the spectator's pmove. VERIFIED.
 - vcod: `PlayerState::speed`, mirrored onto `ClientSim::max_speed` by
   `GameHost::client_speed` each frame and stored at the end frame and the
-  spawn; the predictor reads it off the wire (`predict::from_wire`).
-  The client predicts no spectator (`predict::predictable`), so the fly
-  speed reaches only the server's sims.
+  spawn; the predictor reads it off the wire (`predict::from_wire`),
+  a spectator's 400 included (`predict::predictable` takes `pm_type` 4).
+
+### The fly move
+
+- 1.5b's and UO's `PM_FlyMove` (1.5 0x1fcf9, UO 0x24838) runs
+  `PM_Friction` (1.5 0x1eab3, UO 0x234ef), whose `pm_type` 4 term adds
+  `speed * pm_spectatorfriction * frametime` to the stored drop after the
+  ground and water terms; under one unit of speed all three components
+  stop. The speed sums `(vz^2 + vy^2) + vx^2`. VERIFIED, decompile.
+- Then `PM_CmdScale` (UO 0x23905): `max * ps.speed / (127 * sqrt(u^2 +
+  f^2 + r^2))`, stored, times the run scale (1 here); the wish is `r *
+  scale * pml.right + f * scale * pml.forward`, `u * scale` added to z,
+  each component stored; the lean's 512 down (`wbuttons` 0x20) and 256 up
+  (0x10) only while `ps.speed` is not 0 (UO `cmpl $0x0,0x48(%eax)` at
+  0x2492e, 1.5 `ps+0x44`); 1.1d adds them whatever the speed
+  (0x2ef19-0x2ef4a). Then the stored `VectorNormalize` and `PM_Accelerate`
+  (UO 0x2379e) at `pm_flyaccelerate` 8 with the floor of 100, and
+  `PM_StepSlideMove(0)`. VERIFIED, decompile and disassembly.
+- VERIFIED (measured 2026-10-19): with these in (`pmove::spectator_move`'s
+  `v15` arm), the predictor replays the 79 spectating snapshots of
+  `mp_carentan-dm-slope-8ms-uostates-uo.txt` on retail's origin and
+  velocity bit for bit (`coduo-movement.md`, the uostates capture).
 
 ### ps.gravity
 
