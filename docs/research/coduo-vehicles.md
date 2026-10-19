@@ -2175,13 +2175,16 @@ attacker 160, dir (0, 0, -1), point 0.88 under its origin,
 Nothing waits on it: `tank_respawn` threads `init_tank`, which sets the
 health to 2900 and waits on `death`, only once `wait_for_safe_respawn`
 links the duplicate (VERIFIED, the scripts). Retail logs the `death`
-waiter ahead of the `damage` one; vcod's engine-notify pass runs woken
-threads in start order and logs them the other way. Giving that pass the
-frame pass's pick (a later notify's waiters first) broke
-`gametypes_ab`'s UO domination score order, so it stays and
-`vehicle_wreck_ab::the_wrecks_duplicate_takes_the_stuck_kill` compares
-the lines as a set (VERIFIED, replay; which pick retail's engine-notify
-path takes is open, INFERRED).
+waiter ahead of the `damage` one, though `G_Damage` notifies `damage`
+first (VERIFIED, the fixture). INFERRED, from that order and
+`cod11-gsc-language.md` ("Engine notifies and the trigger queue",
+`probe_touchorder`): both notifies only wake their waiters during the
+vehicle's think, and `G_RunFrame`'s `Scr_RunCurrentThreads` runs the
+last woken first. vcod raises the entity pass's notifies ahead of the
+trigger queue's first round, which runs them under the frame pass's
+pick (since 2026-10-17); `vehicle_wreck_ab::
+the_wrecks_duplicate_takes_the_stuck_kill` compares the lines in order
+(VERIFIED, replay, 2026-10-20).
 
 The same probe on vcod-server (`--gametype-script`) sent the same
 events, entities and times, but for the duplicate's `vehicle_impact`

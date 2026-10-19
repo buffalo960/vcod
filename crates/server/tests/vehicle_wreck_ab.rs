@@ -158,19 +158,14 @@ fn the_wrecks_duplicate_takes_the_stuck_kill() {
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     common::run_alone(&mut sv, &mut now, 14_000);
     let log = sv.script_log();
-    let mut ours: Vec<&str> = log
+    let ours: Vec<&str> = log
         .iter()
         .map(|l| l.trim_end())
         .filter(|l| l.starts_with("PROBE"))
         .collect();
-    let mut retail = retail;
-    // Retail logs `death` ahead of `damage`, though `G_Damage` notifies
-    // `damage` first: a later notify's waiters run first in its frame
-    // pass, where vcod's engine-notify pass runs woken threads in start
-    // order. The frame pass's pick there broke the UO domination gate's
-    // score order, so the lines compare as a set (coduo-vehicles.md 15.2).
-    ours.sort_unstable();
-    retail.sort_unstable();
+    // In order: `G_Damage` notifies `damage` and then `death`, and the
+    // frame's pass runs the newest wake first, so `death` logs ahead
+    // (coduo-vehicles.md 15.2).
     assert_eq!(ours, retail);
 }
 
