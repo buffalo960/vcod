@@ -146,6 +146,12 @@ const TUMBLE_SPREAD: f32 = 45.0;
 /// `vectoangles(velocity)` has this taken off its pitch before it becomes the
 /// launch angles (11.2).
 const LAUNCH_PITCH_LEAD: f32 = 120.0;
+/// `G_MissileLandAngles` (12.7): a contact whose normal's z is not above
+/// this is a wall, which only nudges the pitch rate; past it the pitch is
+/// laid onto the surface by how far it is off it.
+const LAND_FLOOR_Z: f32 = 0.1;
+const LAND_FLAT_OFF: f32 = 45.0;
+const LAND_TILT_OFF: f32 = 80.0;
 
 /// What one `G_RunMissile` did.
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -342,9 +348,8 @@ pub struct Missiles {
     /// The server speaks 1.5's or UO's protocol: a resting missile falls
     /// once its floor is gone ([`Missile::falls`]).
     pub falls: bool,
-    /// `flrand`'s state for the launch tumble. Its own, so a throw draws the
-    /// same numbers whatever else the frame did.
-    rng: u64,
+    /// The launch tumble's and the bounces' draws.
+    draws: Draws,
     /// Water entry splashes raised since the caller last took them
     /// ([`Missiles::take_splashes`]).
     splashes: Vec<crate::game::temp_entity::TempEntity>,
@@ -356,9 +361,7 @@ impl Default for Missiles {
             live: Vec::new(),
             uo: false,
             falls: false,
-            // xorshift degenerates on a zero state, so an unseeded pool
-            // would tumble every grenade identically.
-            rng: crate::game::host::RNG_SEED,
+            draws: Draws::default(),
             splashes: Vec::new(),
         }
     }
@@ -403,10 +406,6 @@ fn delta_at(traj: &Trajectory, at_ms: i32, kept: bool) -> Vec3 {
         TR_LINEAR => traj.delta,
         _ => Vec3::ZERO,
     }
-}
-
-fn normalize_360(deg: f32) -> f32 {
-    deg.rem_euclid(360.0)
 }
 
 /// `vectoangles` (1.1d 0x3de94, UO's alike): pitch down positive, both
@@ -595,6 +594,7 @@ impl Missile {
         sims: &[(usize, &ClientSim)],
         models: &[crate::game::combat::PlacedModel],
         mut bones: Option<&mut crate::game::combat::BoneTraceCtx>,
+        draws: &mut Draws,
         now_ms: i32,
     ) -> Stepped {
         let prev_ms = std::mem::replace(&mut self.last_run_ms, now_ms);
@@ -782,14 +782,14 @@ impl Missile {
             // UO's `G_MissileImpact` bounces off a player or a vehicle that
             // takes damage with no event (0x5d841).
             let quiet = player.is_some() || (model.is_some() && model_takes_damage);
-            let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft, silent) && !quiet;
+            let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft, silent, draws) && !quiet;
             if loud {
                 self.events.add(EV_GRENADE_BOUNCE, material);
                 return Stepped::Bounced;
             }
             return Stepped::Settled;
         }
-        let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft, silent);
+        let loud = self.bounce(prev_ms, now_ms, &tr, ground, soft, silent, draws);
         if loud {
             self.events.add(EV_GRENADE_BOUNCE, material);
             Stepped::Bounced
@@ -808,6 +808,7 @@ impl Missile {
         entity: u32,
         soft: bool,
         silent: bool,
+        draws: &mut Draws,
     ) -> bool {
         // The impact time is interpolated in whole milliseconds, and the
         // fraction is whichever trace 12.3 read -- the downward one on a
@@ -841,8 +842,6 @@ impl Missile {
             }
         };
         self.traj.delta = damped;
-        // The angles land wherever the tumble had reached at the impact.
-        let landed = self.apos.evaluate(at);
         // 1.1d sums the squares on the stack and stores the root (0x5396e).
         let speed = if kept {
             x87::dot(damped, damped).sqrt() as f32
@@ -858,13 +857,12 @@ impl Missile {
                 base: self.origin,
                 delta: Vec3::ZERO,
             };
+            let base = self.land_angles(prev_ms, now_ms, tr, true, draws);
             self.apos = Trajectory {
                 tr_type: TR_STATIONARY,
                 tr_time: 0,
                 tr_duration: 0,
-                // Flat on the surface: the capture's resting grenades read
-                // pitch 0 with the yaw and roll the tumble left.
-                base: Vec3::new(0.0, landed.y, normalize_360(landed.z)),
+                base,
                 delta: Vec3::ZERO,
             };
             return false;
@@ -874,14 +872,7 @@ impl Missile {
         self.origin += nudge;
         self.traj.base = self.origin;
         self.traj.tr_time = now_ms;
-        // `G_MissileLandAngles` has not been read: the base it writes is the
-        // tumble at the impact time, which the capture pins, and the pitch
-        // rate it redraws with is not modelled.
-        self.apos.base = Vec3::new(
-            normalize_360(landed.x),
-            normalize_360(landed.y),
-            normalize_360(landed.z),
-        );
+        self.apos.base = self.land_angles(prev_ms, now_ms, tr, false, draws);
         self.apos.tr_time = now_ms;
         // 1.1d stores each component of the change, sums their squares on
         // the stack and stores the root (0x53a5e).
@@ -892,6 +883,60 @@ impl Missile {
             (damped - v).length()
         };
         !silent && change > BOUNCE_EVENT_SPEED
+    }
+
+    /// `G_MissileLandAngles` (1.1d 0x535d0, 1.5b 0x53ad0, UO 0x5d444; 12.7):
+    /// the angles a contact leaves, off the tumble at the impact time. Yaw
+    /// and roll come back as the tumble had them, unwrapped. On a wall the
+    /// pitch rate takes a whole-degree step; on a floor it is scaled (and
+    /// reversed when the pitch lies within 80 of the surface's) and the
+    /// pitch laid flat within 45, eased a quarter of the way within 80.
+    /// `rest` is `G_BounceMissile`'s call before `G_SetAngle`: no draw, and
+    /// the pitch always laid flat.
+    fn land_angles(
+        &mut self,
+        prev_ms: i32,
+        now_ms: i32,
+        tr: &vcod_common::collision::Trace,
+        rest: bool,
+        draws: &mut Draws,
+    ) -> Vec3 {
+        use vcod_common::pmove::aim::{angle_normalize_180, angle_normalize_360, angle_subtract};
+        // Its own impact time, on the x87 stack in all three builds.
+        let at = prev_ms + (f64::from(now_ms - prev_ms) * f64::from(tr.fraction)) as i32;
+        let mut out = if self.kept() {
+            self.apos.evaluate_kept(at)
+        } else {
+            self.apos.evaluate(at)
+        };
+        if tr.normal.z <= LAND_FLOOR_Z {
+            if !rest {
+                let rate = draws.land_step() + f64::from(self.apos.delta.x);
+                self.apos.delta.x = angle_normalize_360(rate as f32);
+            }
+            return out;
+        }
+        let flat = vcod_common::pmove::pitch_for_yaw_on_normal(out.y, tr.normal);
+        let diff = angle_subtract(flat, out.x);
+        let off = diff.abs();
+        if !rest {
+            let rate = draws.land_factor(!self.falls) * f64::from(self.apos.delta.x);
+            self.apos.delta.x = if off < LAND_TILT_OFF { -rate } else { rate } as f32;
+        }
+        let a = angle_normalize_180(out.x);
+        out.x = if rest || off < LAND_FLAT_OFF {
+            // Upside down lands the other way up.
+            if a.abs() > 90.0 {
+                angle_normalize_360(flat + 180.0)
+            } else {
+                angle_normalize_360(flat)
+            }
+        } else if off < LAND_TILT_OFF {
+            angle_normalize_360((f64::from(diff) * 0.25 + f64::from(a)) as f32)
+        } else {
+            angle_normalize_360(a)
+        };
+        out
     }
 
     /// 1.1d's arithmetic: its server build keeps the bounce and the arc on
@@ -1226,9 +1271,9 @@ impl Missiles {
         angles.x = vcod_common::pmove::aim::angle_normalize_360(angles.x - LAUNCH_PITCH_LEAD);
         let delta = self.carry(velocity, carried);
         let tumble = Vec3::new(
-            self.flrand(-TUMBLE_SPREAD, TUMBLE_SPREAD) + TUMBLE_PITCH,
+            self.draws.tumble(TUMBLE_PITCH),
             0.0,
-            self.flrand(-TUMBLE_SPREAD, TUMBLE_SPREAD) + TUMBLE_ROLL,
+            self.draws.tumble(TUMBLE_ROLL),
         );
         let fuse = if fuse_left_ms > 0 {
             fuse_left_ms
@@ -1550,7 +1595,7 @@ impl Missiles {
         let m = &mut self.live[i];
         if let Some(free_at) = m.free_at_ms {
             // A popped smoke grenade flies on; `G_FreeEntity` is its think.
-            let stepped = m.step(world, sims, models, bones, now_ms);
+            let stepped = m.step(world, sims, models, bones, &mut self.draws, now_ms);
             self.splashes.extend(m.splash.take());
             if now_ms >= free_at || stepped == Stepped::Freed {
                 self.live.remove(i);
@@ -1567,7 +1612,7 @@ impl Missiles {
             }
             return Some(Turn::Flew);
         }
-        let stepped = m.step(world, sims, models, bones, now_ms);
+        let stepped = m.step(world, sims, models, bones, &mut self.draws, now_ms);
         self.splashes.extend(m.splash.take());
         let m = &mut self.live[i];
         match stepped {
@@ -1667,9 +1712,61 @@ impl Missiles {
         self.live.iter_mut()
     }
 
-    /// `flrand(lo, hi)`, off this pool's own state.
-    fn flrand(&mut self, lo: f32, hi: f32) -> f32 {
-        lo + (hi - lo) * crate::game::host::rand_unit(&mut self.rng)
+    /// Test-facing: the draws the next throws and bounces take, in order,
+    /// before the pool's own state takes over. A tumble draw is the rate
+    /// itself, a floor contact's the factor its pitch rate is scaled by, a
+    /// wall's the whole degrees added to it ([`Missile::land_angles`]).
+    pub fn pin_draws(&mut self, draws: impl IntoIterator<Item = f64>) {
+        self.draws.pinned = draws.into_iter().collect();
+    }
+}
+
+/// Retail's `rand()` for the missile code: the pool's own state, so a throw
+/// draws the same numbers whatever else the frame did, or a gate's pins.
+pub struct Draws {
+    rng: u64,
+    pinned: std::collections::VecDeque<f64>,
+}
+
+impl Default for Draws {
+    fn default() -> Draws {
+        Draws {
+            // xorshift degenerates on a zero state, so an unseeded pool
+            // would tumble every grenade identically.
+            rng: crate::game::host::RNG_SEED,
+            pinned: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl Draws {
+    /// `flrand(-spread, spread) + rate`, `fire_grenade`'s tumble (11.2).
+    fn tumble(&mut self, rate: f32) -> f32 {
+        if let Some(v) = self.pinned.pop_front() {
+            return v as f32;
+        }
+        let u = crate::game::host::rand_unit(&mut self.rng);
+        -TUMBLE_SPREAD + 2.0 * TUMBLE_SPREAD * u + rate
+    }
+
+    /// A floor contact's pitch rate factor (12.7): 1.1d's
+    /// `0.85 - 0.3 * rand() / 2^31`, 1.5b's and UO's `0.85 + 0.3 * rand() /
+    /// 2^31`, on the x87 stack.
+    fn land_factor(&mut self, v11: bool) -> f64 {
+        if let Some(v) = self.pinned.pop_front() {
+            return v;
+        }
+        let r = f64::from(crate::game::host::rand_int(&mut self.rng)) / 2_147_483_648.0;
+        let r = if v11 { -r } else { r };
+        r * f64::from(0.3f32) + f64::from(0.85f32)
+    }
+
+    /// A wall contact's pitch rate step (12.7): `(rand() & 0x7f) - 63`.
+    fn land_step(&mut self) -> f64 {
+        if let Some(v) = self.pinned.pop_front() {
+            return v;
+        }
+        f64::from((crate::game::host::rand_int(&mut self.rng) & 0x7f) - 63)
     }
 }
 
@@ -1752,7 +1849,7 @@ mod tests {
         let mut bounces = 0;
         for f in 1..=80 {
             for m in ms.missiles_mut() {
-                if m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Bounced {
+                if m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50) == Stepped::Bounced {
                     bounces += 1;
                 }
             }
@@ -1894,7 +1991,7 @@ mod tests {
         let mut loud = 0;
         for f in 1..=80 {
             for m in ms.missiles_mut() {
-                if m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Bounced {
+                if m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50) == Stepped::Bounced {
                     loud += 1;
                 }
             }
@@ -1941,7 +2038,7 @@ mod tests {
                 ms.missiles_mut()
                     .next()
                     .unwrap()
-                    .step(Some(&world), &sims, &[], None, f * 50);
+                    .step(Some(&world), &sims, &[], None, &mut Draws::default(), f * 50);
             if stepped != Stepped::Flew {
                 break;
             }
@@ -2027,11 +2124,11 @@ mod tests {
                 delta: Vec3::ZERO,
             };
             m.ground = ground;
-            m.step(Some(&world), &[], &[], None, 1000);
+            m.step(Some(&world), &[], &[], None, &mut Draws::default(), 1000);
             let want = if drops { TR_GRAVITY } else { TR_STATIONARY };
             assert_eq!(m.traj.tr_type, want, "falls {falls} ground {ground}");
             assert_eq!((m.origin, m.ground), (at, ground));
-            m.step(Some(&world), &[], &[], None, 1050);
+            m.step(Some(&world), &[], &[], None, &mut Draws::default(), 1050);
             assert_eq!(m.origin.z < at.z, drops, "falls {falls} ground {ground}");
         }
     }
@@ -2080,7 +2177,7 @@ mod tests {
             );
             let m = ms.missiles_mut().next().unwrap();
             let models = std::slice::from_ref(&top);
-            m.step(Some(&world), &[], models, None, 1050);
+            m.step(Some(&world), &[], models, None, &mut Draws::default(), 1050);
             assert_eq!(m.ground, 200, "falls {falls}: {}", m.origin);
             // The clip leaves the strike an eighth off the face.
             let lift = if falls { 0.0 } else { GROUND_SNAP };
@@ -2134,7 +2231,7 @@ mod tests {
                 1000,
             );
             let m = ms.missiles_mut().next().unwrap();
-            m.step(Some(&world), &[], std::slice::from_ref(&top), None, 1050);
+            m.step(Some(&world), &[], std::slice::from_ref(&top), None, &mut Draws::default(), 1050);
             let d = m.traj.delta;
             assert!((d.x - 300.0 * scale).abs() < 0.5, "body {body}: {d}");
         }
@@ -2162,7 +2259,7 @@ mod tests {
         );
         let m = ms.missiles_mut().next().unwrap();
         let mut f = 1;
-        while m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Flew {
+        while m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50) == Stepped::Flew {
             f += 1;
         }
         let d = m.traj.delta;
@@ -2190,7 +2287,7 @@ mod tests {
         );
         let m = ms.missiles_mut().next().unwrap();
         let mut f = 1;
-        while m.step(Some(&world), &[], &[], None, f * 50) == Stepped::Flew {
+        while m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50) == Stepped::Flew {
             f += 1;
         }
         let d = m.traj.delta;

@@ -132,16 +132,19 @@ impl Trajectory {
     }
 
     /// 1.1d's server `BG_EvaluateTrajectory` (`.so` 0x2c600) for a gravity
-    /// arc: `dt` (the ms times the float 0.001), each product and sum on
-    /// the x87 stack, every component rounded once into its store, `z`
-    /// being `base + delta * dt - 400 * dt * dt` (0x2c6c0). Other types are
-    /// [`Trajectory::evaluate`]'s.
+    /// arc or a line: `dt` (the ms times the float 0.001), each product and
+    /// sum on the x87 stack, every component rounded once into its store,
+    /// a line's `base + delta * dt` (0x2c640) and an arc's `z` less `400 *
+    /// dt * dt` (0x2c6c0). Other types are [`Trajectory::evaluate`]'s.
     pub fn evaluate_kept(&self, at_ms: i32) -> Vec3 {
+        let dt = f64::from(at_ms - self.tr_time) * f64::from(0.001f32);
+        let (b, d) = (self.base.as_dvec3(), self.delta.as_dvec3());
+        if self.tr_type == TR_LINEAR {
+            return (b + d * dt).as_vec3();
+        }
         if self.tr_type != TR_GRAVITY {
             return self.evaluate(at_ms);
         }
-        let dt = f64::from(at_ms - self.tr_time) * f64::from(0.001f32);
-        let (b, d) = (self.base.as_dvec3(), self.delta.as_dvec3());
         let half_g = f64::from(0.5 * DEFAULT_GRAVITY);
         Vec3::new(
             (b.x + d.x * dt) as f32,

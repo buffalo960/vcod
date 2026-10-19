@@ -3663,6 +3663,14 @@ impl Server {
         }
     }
 
+    /// Test-facing: the missile pool's next draws, a retail capture's
+    /// tumble rates and bounce factors (`Missiles::pin_draws`).
+    pub fn pin_missile_draws(&mut self, draws: Vec<f64>) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.missiles.pin_draws(draws);
+        }
+    }
+
     /// Test-facing: raise entity `num` by `dz` (an `origin` write) and return
     /// its origin; `dz` 0 only reads it.
     pub fn test_raise_entity(&mut self, num: u32, dz: f32) -> Option<[f32; 3]> {
