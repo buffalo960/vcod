@@ -1271,6 +1271,23 @@ cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:
 The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-uostates-uo.txt`
 (its header names this recipe), which `predict_ab`'s UO gate replays.
 
+## probe_states
+
+The states the client predicts besides a live body, on 1.1d: the placed
+allied player spends 22 s as a free spectator under the moves script (its
+runs and jumps fly him into the roofs and walls, the crouch dives him onto
+the street), respawns, kills himself inside the diagonal runs and goes to
+the intermission. `docs/research/cod11-player-clip.md` 1.1. Two shells:
+
+```
+COD_DIR=<1.1 install> COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> PROBE_SECS=100 tools/run_probe.sh client-probes/probe_states mp_carentan
+# 10 s later:
+cargo run -p vcod -- --game-dir <1.1 install> --net-probe 127.0.0.1:<p> --save-slope --slope-every-state --probe-moves --probe-cmd-ms 8 --probe-team allies --probe-weapon m1carbine_mp --capture-tag states-1.1 --probe-secs 80
+```
+
+The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-states-1.1.txt`,
+which `predict_ab` replays.
+
 ## probe_menuresponse
 
 What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for
