@@ -82,6 +82,30 @@ fn perpendicular(dir: [f32; 3]) -> [f32; 3] {
     out
 }
 
+/// `coduo_lnxded`'s `PerpendicularVector` (0x80676b4): the same axis pick,
+/// projected by its `ProjectPointOnPlane` (0x806aa4e), which stores the
+/// squared length, its reciprocal, the scaled dot and the scaled normal
+/// before each component's subtraction, then normalized by
+/// [`normalize_v22`].
+fn perpendicular_v22(dir: [f32; 3]) -> [f32; 3] {
+    let mut k = 0;
+    let mut min = 1.0f32;
+    for (i, c) in dir.iter().enumerate() {
+        if c.abs() < min {
+            min = c.abs();
+            k = i;
+        }
+    }
+    let inv = r(1.0 / d(r(dot3(dir, dir))));
+    let dd = r(d(dir[k]) * d(inv));
+    let mut out: [f32; 3] = std::array::from_fn(|i| {
+        let p = if i == k { 1.0 } else { 0.0 };
+        r(p - d(dd) * d(r(d(dir[i]) * d(inv))))
+    });
+    normalize_v22(&mut out);
+    out
+}
+
 /// One triangle's record (0x48 bytes in the binary): its plane, and the
 /// two barycentric planes `u` (along the first edge) and `v` (along the
 /// second), each as a normal and a distance.
@@ -231,6 +255,10 @@ pub(crate) struct Terrain {
     tris: Vec<TerrainTri>,
     verts: Vec<[f32; 3]>,
     edges: Vec<TerrainEdge>,
+    /// The same edge records as United Offensive's engine builds them
+    /// (0x805403e's edge loop: `VectorNormalize` 0x8066755,
+    /// [`perpendicular_v22`]), which its capsule clip reads.
+    edges_v22: Vec<TerrainEdge>,
     pub(crate) parts: Vec<TerrainPart>,
 }
 
@@ -325,6 +353,7 @@ impl Terrain {
         for &([a, b], _) in &edge_list {
             let origin = points[a as usize];
             let mut w = sub(points[b as usize], origin);
+            let mut w22 = w;
             let len = normalize(&mut w);
             let u = perpendicular(w);
             let v = cross(w, u);
@@ -333,6 +362,15 @@ impl Terrain {
                 u,
                 v,
                 w,
+                len,
+            });
+            let len = normalize_v22(&mut w22);
+            let u = perpendicular_v22(w22);
+            self.edges_v22.push(TerrainEdge {
+                origin,
+                u,
+                v: cross(w22, u),
+                w: w22,
                 len,
             });
         }
@@ -866,7 +904,8 @@ impl Terrain {
 
     /// [`Self::sweep_edge`] as 1.5b builds it (0x80562c5-0x8056690): each
     /// dot product summed x first on the stack and every variable stored,
-    /// the normal stored after its `u` term and again after its `v` term.
+    /// the normal stored after its `u` term and again after its `v` term,
+    /// on the edge frames that build made (`edges_v22`).
     fn sweep_edge_stored(
         &self,
         rec: u32,
@@ -880,7 +919,7 @@ impl Terrain {
         }
         let st = |x: f64| d(r(x));
         let dot = |a: &[f64; 3], b: [f32; 3]| (a[0] * d(b[0]) + a[1] * d(b[1])) + a[2] * d(b[2]);
-        let ed = &self.edges[rec as usize];
+        let ed = &self.edges_v22[rec as usize];
         let q: [f64; 3] = std::array::from_fn(|i| st(d(s[i]) - d(ed.origin[i])));
         let (a, b, c) = (st(dot(&q, ed.u)), st(dot(&q, ed.v)), st(dot(&q, ed.w)));
         let sep = st((a * a + b * b) - d(r_eps) * d(r_eps));
