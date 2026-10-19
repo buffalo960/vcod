@@ -760,6 +760,7 @@ const UO_RUNS: &[(&str, &str)] = &[
     ("mp_foy-dm-slope-8ms-uofoot-crouch.txt", "mp_foy"),
     ("mp_foy-dm-slope-8ms-uofoot-mount.txt", "mp_foy"),
     ("mp_carentan-dm-slope-8ms-uostates-uo.txt", "mp_carentan"),
+    ("mp_carentan-dm-slope-8ms-deadlink-uo.txt", "mp_carentan"),
     ("mp_carentan-dm-slope-8ms-uoturret-uo.txt", "mp_carentan"),
     ("mp_carentan-dm-slope-8ms-speedgrav-uo.txt", "mp_carentan"),
 ];
@@ -1142,6 +1143,7 @@ fn predictor_matches_the_1_5_server_step() {
         "mp_carentan-dm-slope-8ms-turns-1.5.txt",
         "mp_carentan-dm-slope-8ms-speedgrav-1.5.txt",
         "mp_carentan-dm-slope-8ms-states-1.5.txt",
+        "mp_carentan-dm-slope-8ms-deadlink-1.5.txt",
     ]
     .iter()
     .filter_map(|file| capture_side_by_side(&PROTOCOL_V6, &fs, file, "mp_carentan").err())
@@ -1234,19 +1236,35 @@ fn retail_state_rows(
         let eye = |w: &msg::PlayerState| w.field_f32(p, "viewHeightCurrent");
         compared += 1;
         moved += usize::from(n.origin(p) != s.origin(p));
+        // `PmoveSingle`'s head runs for a corpse too: the cone on the held
+        // weapon and the backpedal flag (cod11-player-clip.md 1.1).
+        let dead = matches!(
+            pm_type,
+            vcod_common::net::flags::PM_DEAD | vcod_common::net::flags::PM_DEAD_LINKED
+        );
+        let head_differs = dead
+            && (pred.ps.aim_spread_scale.to_bits() != n.field_f32(p, "aimSpreadScale").to_bits()
+                || pred.ps.backwards_run
+                    != (n.field_i32(p, "pm_flags") & vcod_common::net::flags::PMF_BACKWARDS_RUN
+                        != 0));
         if bits(pred.ps.origin.to_array()) != bits(n.origin(p))
             || bits(pred.ps.velocity.to_array()) != bits(vel(n))
             || pred.ps.view_height().to_bits() != eye(n).to_bits()
+            || head_differs
         {
             bad.push(format!(
-                "ct {}: predicted {} {} eye {} retail {:?} {:?} eye {}",
+                "ct {}: predicted {} {} eye {} cone {} back {} retail {:?} {:?} eye {} cone {} pm_flags {:#x}",
                 ct(n),
                 pred.ps.origin,
                 pred.ps.velocity,
                 pred.ps.view_height(),
+                pred.ps.aim_spread_scale,
+                pred.ps.backwards_run,
                 n.origin(p),
                 vel(n),
-                eye(n)
+                eye(n),
+                n.field_f32(p, "aimSpreadScale"),
+                n.field_i32(p, "pm_flags")
             ));
         }
     }
@@ -1331,6 +1349,41 @@ fn predictor_holds_retail_linked_corpse_1_1() {
         &PROTOCOL_V1,
         &fs,
         "mp_carentan-dm-slope-8ms-deadlink-1.1.txt",
+        vcod_common::net::flags::PM_DEAD_LINKED,
+        400,
+        0,
+    );
+}
+
+/// The linked corpse of retail 1.5b's `probe_deadlink` capture: 1.5's
+/// dispatch sends `pm_type` 7 to the linked arm too. Needs `COD_DIR` at a
+/// 1.5 install, or a UO one (its `main/` is 1.5's).
+#[test]
+fn predictor_holds_retail_linked_corpse_1_5() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V6,
+        &fs,
+        "mp_carentan-dm-slope-8ms-deadlink-1.5.txt",
+        vcod_common::net::flags::PM_DEAD_LINKED,
+        400,
+        0,
+    );
+}
+
+/// The linked corpse of retail UO's `probe_deadlink` capture. Needs
+/// `COD_DIR` at a United Offensive install.
+#[test]
+fn predictor_holds_retail_linked_corpse_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V22,
+        &fs,
+        "mp_carentan-dm-slope-8ms-deadlink-uo.txt",
         vcod_common::net::flags::PM_DEAD_LINKED,
         400,
         0,

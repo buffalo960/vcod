@@ -201,14 +201,24 @@ impl Boarded {
 /// `client-probes/probe_vehicle` on `map` with `cvars`, one axis client
 /// joined, placed beside the `vehicletype` and in its seat by the use key.
 fn board(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Boarded> {
-    board_with(map, vehicletype, cvars, |_| {})
+    board_with(map, vehicletype, cvars, &Setup::default(), |_| {})
 }
 
-/// [`board`] with the paks changed first.
+/// What a replay changes on the server before the load: the seed, for a
+/// death clip's random draw, and the spawn picks, for a respawn's.
+#[derive(Default)]
+struct Setup {
+    seed: Option<u64>,
+    pins: Vec<Vec<vcod_server::game::host::SpawnPin>>,
+}
+
+/// [`board`] with the paks changed first and `setup`'s seed and pins
+/// (`VEHICLE_SEED=<n>` overrides the seed).
 fn board_with(
     map: &str,
     vehicletype: &str,
     cvars: &[(&str, &str)],
+    setup: &Setup,
     edit: impl FnOnce(&mut vcod_common::pk3::Pk3Fs),
 ) -> Option<Boarded> {
     let mut fs = vcod_common::testing::uo_fs()?;
@@ -217,7 +227,16 @@ fn board_with(
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(map, "probe_vehicle"), now);
+    let seed = std::env::var("VEHICLE_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or(setup.seed);
+    let cfg = common::cfg(map, "probe_vehicle");
+    let mut sv = match seed {
+        Some(seed) => vcod_server::Server::with_seed(cfg, now, seed),
+        None => vcod_server::Server::new(cfg, now),
+    };
+    sv.pin_spawns(setup.pins.clone());
     sv.set_protocol(p);
     sv.overlay_script(
         "maps/mp/gametypes/probe_vehicle",
@@ -296,7 +315,7 @@ fn board_with(
 }
 
 fn replay(map: &str, vehicletype: &str, cvars: &[(&str, &str)], lines: &[Line]) -> Option<Replay> {
-    replay_with(map, vehicletype, cvars, lines, |_| {})
+    replay_with(map, vehicletype, cvars, lines, &Setup::default(), |_| {})
 }
 
 /// [`replay`] with the paks changed first.
@@ -305,6 +324,7 @@ fn replay_with(
     vehicletype: &str,
     cvars: &[(&str, &str)],
     lines: &[Line],
+    setup: &Setup,
     edit: impl FnOnce(&mut vcod_common::pk3::Pk3Fs),
 ) -> Option<Replay> {
     let Boarded {
@@ -314,7 +334,7 @@ fn replay_with(
         mut now,
         mut join,
         mut last_sent,
-    } = board_with(map, vehicletype, cvars, edit)?;
+    } = board_with(map, vehicletype, cvars, setup, edit)?;
     let frame = Duration::from_millis(common::FRAME_MS as u64);
     let first = lines.iter().find_map(|l| match l {
         Line::Snap(s) => Some(s.t),
@@ -783,6 +803,52 @@ fn the_jeep_drive_replays_on_ours() {
     tally(&lines, &ours).assert_within(&[]);
 }
 
+const JEEP_DIE: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-die-uo.txt";
+
+/// The jeep's driver killed in his seat 3.5 s into retail's drive
+/// (`probe_suicide`): out of the seat on the death's frame, `pm_type` 6
+/// with the view's pitch dropped, thrown off the coasting hull a cmd at a
+/// time, then respawned with the seat's `vehType` cleared
+/// (docs/research/coduo-vehicles.md 11.7).
+#[test]
+fn the_jeep_driver_killed_in_his_seat_replays_on_ours() {
+    let text = std::fs::read_to_string(JEEP_DIE).unwrap();
+    let mut lines = parse(&text);
+    // Up to the gsc's placement beside the hull after the respawn (retail's
+    // `PROBE place 37050`): the body put there slides on retail and stands
+    // on ours, which is the placement's question, not the death's.
+    let end = lines
+        .iter()
+        .position(|l| matches!(l, Line::Snap(s) if s.t > 37050))
+        .unwrap();
+    lines.truncate(end);
+    let cvars = [
+        ("probe_side", "75"),
+        ("probe_pitch", "15"),
+        ("probe_suicide", "3.5"),
+    ];
+    let setup = Setup {
+        // Seed 2 draws retail's death clip, `legsAnim` 20.
+        seed: Some(2),
+        // The first spawn the gsc moves at once; the respawn is retail's.
+        pins: vec![vec![
+            None,
+            Some(([-832.0, -504.0, 339.125], [0.0, -90.0, 0.0])),
+        ]],
+    };
+    let Some(ours) = replay_with("mp_peaks", "willyjeep_mp", &cvars, &lines, &setup, |_| {}) else {
+        return;
+    };
+    tally(&lines, &ours.samples).assert_within(&[Gap {
+        field: "eventSequence",
+        snaps: 54..=417,
+        why: "retail's corpse lands on the hull (EV_LANDING, surface 13, parm 9) on the \
+              cmd it is held inside it at ct 18793: its ground trace there is not all \
+              solid, ours is (the capsule against the turned collmap, \
+              coduo-vehicles.md 11.7); the trajectory matches either way",
+    }]);
+}
+
 const JEEP_BONES: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-bones-uo.txt";
 const JEEP_BONES_LOG: &str = "tests/fixtures/vehicles/mp_peaks-jeep-bones-uo.txt";
 
@@ -1019,9 +1085,14 @@ fn the_jeep_passenger_s_round_lands_as_on_retail() {
     let text = std::fs::read_to_string(JEEP_RIDER).unwrap();
     let lines = parse(&text);
     let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
-    let Some(ours) = replay_with("mp_peaks", "willyjeep_mp", &cvars, &lines, |fs| {
-        common::steady_weapon(fs, "kar98k_mp")
-    }) else {
+    let Some(ours) = replay_with(
+        "mp_peaks",
+        "willyjeep_mp",
+        &cvars,
+        &lines,
+        &Setup::default(),
+        |fs| common::steady_weapon(fs, "kar98k_mp"),
+    ) else {
         return;
     };
     let retail = new_impacts(lines.iter().filter_map(|l| match l {
