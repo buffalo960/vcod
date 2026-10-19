@@ -2130,7 +2130,9 @@ captures and the gates.
   (`common::walk_yaw`): 60 retail samples at -45, 60 of ours, and the
   take passes whole (VERIFIED, gate). Which cmd between two traces made
   the turn is not in the log; the replay turns on the first after the
-  last unturned trace's `commandTime` (INFERRED).
+  last unturned trace's `commandTime` (INFERRED). A take since logs each
+  cmd's view (`a=`, `cod11-combat.md` 1.13), which the replay sends
+  instead; these two predate it.
 - The server command stream of a join (team menu, weapon menu, the
   objective text and `cg_hudcompassMaxRange`) is retail's verbatim
   (VERIFIED, live, both probes' logs).
