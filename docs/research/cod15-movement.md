@@ -389,8 +389,8 @@ vcod: `Terrain` keeps a second set of edge records built 1.5b's and UO's
 way (`edges_v22`), which the stored edge sweep reads, and a test's spawn
 pin takes the origin of the one entity its `%g` print rounds from
 (`client_spawn`'s `pinned_spot`). `placespawn_ab`'s three
-`placespawnpoint_*_to_the_bit` gates hold every mp_carentan tdm point to
-retail's float, and `leanhit_ab`'s UO `-cmds` replay holds the shooter's
+`placespawnpoint_*_to_the_bit` gates hold every stock map's spawnpoints
+to retail's float but the rows cod11-gsc-object-model.md 16.2 lists, and `leanhit_ab`'s UO `-cmds` replay holds the shooter's
 eye with no offset. The 1.5b `-cmds` run's target spawned on the same
 point but lay down in the think, so no capture shows a standing 1.5b
 think on a slope.

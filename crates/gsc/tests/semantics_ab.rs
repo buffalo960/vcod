@@ -216,8 +216,9 @@ fn captures() -> BTreeMap<String, (Vec<String>, Option<String>)> {
 /// only the server's bootstrap clears.
 ///
 /// `probe_placespawn` drops every spawnpoint through the map's collision,
-/// which is `vcod-common`'s; `crates/server/tests/placespawn_ab.rs` runs it
-/// on every stock map against a fixture of its own.
+/// which is `vcod-common`'s; its two-decimal capture stays as evidence, and
+/// `crates/server/tests/placespawn_ab.rs` gates the bit-exact
+/// `client-probes/probe_placebits` on every stock map instead.
 const RUN_IN_SERVER_CRATE: &[&str] = &[
     "probe_attach_badindex",
     "probe_attach_badtag",

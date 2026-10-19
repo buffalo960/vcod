@@ -1025,6 +1025,56 @@ capsule, every spawnpoint is within 2.63 units of retail and 318 of the 383
 are within the two decimals the log prints. What the remaining 65 differ by is
 not pinned.
 
+### 16.2 The same drop to the float's last bit, on every stock map
+
+`client-probes/probe_placebits.gsc` runs as the gametype, calls
+`placeSpawnpoint` on every spawnpoint of the classes the stock gametypes
+drop (dm, tdm, sd, re, UO's `mp_uo_spawn_*` and `mp_gmi_bas_*`) and logs
+the height as sign, whole part and 2^-24ths. VERIFIED, run 2026-10-19
+against the retail 1.1d server on its twelve stock maps, the 1.5b server
+on its sixteen (the twelve, mp_bocage, mp_neuville, mp_stalingrad,
+mp_tigertown) and the UO 1.51b server on its nineteen and mp_carentan,
+committed as `crates/server/tests/fixtures/spawnpoints/placebits-retail.txt`
+(1,895 spawnpoints on 1.1d, 2,732 on 1.5b, 5,781 on UO). VERIFIED, the
+same capture: 1.5b and UO agree to the bit on mp_carentan, the one map
+both ran, and 1.1d differs from 1.5b on 451 of the twelve shared maps'
+1,895, mostly in the last bits of terrain contacts, the stored-float build
+against 1.1d's (cod15-movement.md 4 and 7). UO's mp_cassino ends in a
+script error from `_tankdrive_gmi.gsc` after the last line.
+
+VERIFIED, `placespawn_ab`'s three `placespawnpoint_*_to_the_bit` gates on
+that fixture (2026-10-19): ours places all but 141 to the bit, 25 on 1.1d,
+34 on 1.5b and 82 on UO, each pinned in `BITS_GAPS`. The 1.1d
+two-decimal capture in 16.1 is a subset (its dm points), and its 65 rows
+off by up to 2.63 units are gone: the 2.62 of them is the terrain clip's
+1e-5 back-off over the 262144-unit drop, and the last near tie of that kind
+went with `TraceInput::reach` (bsp-ibsp59-format.md, "The leaf walk").
+What is left:
+
+- 131 last-bit residuals, 1 to 160 ulps, on sloped terrain and brush
+  contacts. INFERRED, vcod measurement: the 1.1d terrain face and edge
+  clips recomputed with an 80-bit `long double` land where ours does on
+  mp_rocket's 80 and 149, and so does every rounding variant of the face
+  clip's stores, so the difference is upstream of the clip (the record
+  build) or in a step not yet transcribed. VERIFIED, vcod measurement: the
+  1.1d plane build recomputed in 80 bits gives ours' planes on all of
+  mp_rocket's triangles (18 of 13,272 differ in `u` only).
+- UO's mp_sicily 181..186: the capsule's top touches the underside of roof
+  brushes 1259 and 3508 (z 1136) at the start. Ours sweeps up through them
+  (start solid, not all solid) and lands on 3508's top at 1152.125; retail
+  lands on the floors below (1050.125, 944.125, 968.125, 1008.125), which
+  ours' own drop from the spawnpoint gives, so retail's up trace stopped at
+  once. INFERRED, vcod measurement: reading the touch (`d1 == 0`) as outside
+  in the capsule brush arm closes these six and breaks 1.1d's mp_powcamp
+  287 and 288, where the capsule's side touches a clip brush at the start,
+  on all three servers; the UO brush clip (0x8058f0a) reads `0.0 < d1` as
+  outside, as 1.1d's does. Not pinned. Nor is mp_uo_stanjel 557, which
+  starts inside playerclip brush 317 and lands at 441.125 on retail, 408.125
+  on ours.
+- UO's mp_uo_powcamp 288, 332 and 334: a floor at z 0 under a sloped
+  ceiling. Retail lands 2^-14 or so short of ours' 0.125 (0.12499). Not
+  pinned.
+
 ## 17. Placed weapons register their item at spawn, before any script runs
 
 A map's placed weapon never reaches `spawns` at all. VERIFIED, addresses and
