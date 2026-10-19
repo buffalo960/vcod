@@ -610,6 +610,7 @@ pub fn blast_step(host: &mut GameHost, cx: &mut Cx) {
                 fs,
                 anims,
                 rigs: &mut host.hit_rigs,
+                arith: vcod_common::patch::Arith::for_protocol(host.defs.proto),
                 now_ms: host.dobj_time_ms,
                 posed: Some(&mut host.dobj_posed),
             }),
@@ -710,6 +711,7 @@ fn blast_entity(host: &mut GameHost, cx: &mut Cx, id: EntId) {
             fs,
             anims,
             rigs: &mut host.hit_rigs,
+            arith: vcod_common::patch::Arith::for_protocol(host.defs.proto),
             now_ms: host.dobj_time_ms,
             posed: Some(&mut host.dobj_posed),
         }),
@@ -891,6 +893,7 @@ fn body_hit(
             fs,
             anims,
             rigs: &mut host.hit_rigs,
+            arith: vcod_common::patch::Arith::for_protocol(host.defs.proto),
             // A thread runs ahead of the frame's anim update and traces the
             // pose the DObjs were last advanced to: on 1.1d the first pass,
             // on 1.5 and UO their one (combat doc 3.6, cod11-turrets.md 13.7).

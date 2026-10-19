@@ -2157,13 +2157,75 @@ branches:
   `torso_upper` where retail took `torso_lower` now match. The result gets the fraction, the bone's name id, the
   effective hit-location code, and a normal that is a signed row of the bone
   matrix.
-- A segment that starts inside a box sets the two flag bytes at `+0x18`/`+0x19`
-  of the local result, zeroes the fraction and returns at once.
+- A segment that starts inside a box sets the flag byte at `+0x18` of the
+  local result. VERIFIED, `cod_lnxded` 0x80c4bc5 and UO's `coduo_lnxded`
+  0x80c7a8a: only when its end is inside the box too does it set `+0x19`,
+  zero the fraction and return; a segment that leaves the box goes on to
+  the next bone with the flag set. INFERRED, off `SV_ClipMoveToEntity` (UO
+  0x809aa78): with no bone hit the two bytes are ORed into the trace's
+  start-solid and all-solid. vcod's `bone_trace` returns at once on either.
 
 So the engine's box record is 40 bytes, `{ vec3 mins; vec3 maxs; vec3
 sphereCentre; float radius }`. The file supplies the first 24; INFERRED that
 the engine derives the sphere from them at load, since the file carries nothing
-else.
+else. INFERRED, off the broad phase (UO 0x80c77f1): `radius` at `+0x24` is
+compared against a squared distance, so it holds the radius squared.
+
+#### The arithmetic on 1.5 and UO
+
+1.5b's and UO's engines (gcc 3.2.3, unoptimized) store every float
+assignment, where 1.1d's keeps them on the x87 stack. VERIFIED, the
+disassembly, 1.5b `cod_lnxded` and UO `coduo_lnxded`, one instruction
+sequence apart from addresses and struct offsets in each pair:
+
+- VERIFIED, the body's frame: `AnglesToAxis` (UO 0x806a46e, 1.5b
+  0x806a55e) over `AngleVectors` (UO 0x80674ad): each angle times the
+  double `pi / 180` stored as a float, its `fsincos` (UO 0x806b4de) stored,
+  every product stored. A player's `(0, yaw, 0)` gives forward `(cos,
+  sin, 0)`, left `(-sin, cos, 0)` and up `(0, 0, 1)`.
+- VERIFIED, `start` and `end` into the body's frame (UO 0x8069416, 1.5b
+  0x8069506): each `p - origin` stored, then each axis's dot product
+  rounded once.
+- VERIFIED, each bone's matrix (UO 0x80c7d82 from the skeleton build
+  0x80c5c96, 1.5b 0x80d29ee): off the bone's quaternion, `2 / |q|^2`
+  stored, `xx`, `yy`, `zz` each stored twice (the square, then times the
+  scale), `x * s` and `y * s` stored, `xy`, `xz`, `xw`, `yz`, `yw` each
+  stored, `z * w * s` rounded once, and each element (`1 - (yy + zz)`,
+  `xy + zw`, ...) rounded once. Rows 0, 1, 2 are the bone's axes, the
+  translation the bone's origin copied as built.
+- VERIFIED, each point into the bone's frame (UO 0x80c72ea, 1.5b
+  0x80d1f56): as the body's frame above, against the bone's matrix.
+- VERIFIED, the slab test (UO 0x80c788a..0x80c7a5f, 1.5b 0x80d24f6..0x80d26cb):
+  each `(p - plane) * sign` stored, each `d1 - d2` stored, each `d1 /
+  (d1 - d2)` stored; the comparisons `d1 > enter * den` and `d1 > exit *
+  den` run on the stack.
+- VERIFIED, the world normal (UO 0x8069154, 1.5b 0x8069244): the bone row
+  times its sign, turned by the body's axes, each component rounded once.
+- VERIFIED, the end point: the locational trace's last step (UO 0x809b457
+  in 0x809afc9, 1.5b 0x809a45f in 0x8099fd1), whenever the entity pass
+  lowered the fraction, stores `end - start` and rounds each `start + move
+  * fraction` once.
+
+vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
+matrix, the slab), `HitBody::axis_stored`, `combat::trace_point` for a
+round, a swing and a missile. The bone's quaternion and origin are still
+vcod's pose, composed in `f32` (`PoseBuffer::bone_worlds`); retail's
+skeleton build composes them through its own stores (UO 0x80c8056, the
+product with each component rounded once, and 0x80c7f9a, the child's
+offset through the parent's stored matrix). INFERRED, not ported: ported
+alone on the captures below it moved UO's mp_carentan slide further from
+retail's (1-3 steps where it was 1), so the local poses it composes are
+not yet retail's bits either.
+
+VERIFIED, vcod measurement (`scriptmodel_ab`, the prone captures): before
+the port a frag's first strike on a prone body on mp_carentan landed 4
+float steps off retail's z on both 1.5b captures and on UO
+(-10.666936 against -10.666932); the frame, slab and end point alone
+brought it to 1 step and left the rest on him 10 off; with the stored
+matrix the strike is retail's bit on all three and the contacts after it
+sit 1 to 3 steps off in z. The UO mp_brecourt strike on a graded prone
+body stays 118 steps off in y and 447 in z: the pose on the grade, not
+the trace.
 
 ### 3.2 The 48-byte trace result
 
@@ -5416,10 +5478,19 @@ the stores above every base is retail's to the bit. VERIFIED, live
 wall bounce at x 1583.775 sat 4 steps off in `z` before and is exact
 after. VERIFIED, live (retail UO, mp_brecourt, 2026-10-19,
 `mp_brecourt-scriptmodel-roll-uo.txt`): the second frag's four terrain
-contacts are retail's to the bit, but they were before the port too; no
-UO capture taken so far (that one, mp_foy, mp_dawnville, the carentan
-throws, the harbor water frag) separates the two arithmetics, so UO's
-side rests on the disassembly. A frag striking a body (the first frag in
+contacts are retail's to the bit, but they were before the port too, as
+were mp_foy's, mp_dawnville's, the carentan throws' and the harbor water
+frag's. VERIFIED, live (retail UO, 2026-10-19,
+`missiles/mp_brecourt-frag-roll-uo-45.txt`, `-135.txt` and
+`mp_uo_hurtgen-frag-slide-uo.txt`, `client-probes/probe_skyshot`'s spot
+part): three frags land on terrain (lump-26 triangles under every
+contact) and roll to rest, the hurtgen one sliding down a face of normal
+z 0.59, too steep to snap or rest on, struck every frame over 21 floor
+contacts. Replayed from each launch's wire `pos` and `apos`, every
+snapshot to the explode carries retail's `pos` base and delta, ground and
+`apos` to the bit under the stores above; under 1.1d's arithmetic (the
+evaluate, the dot, `delta_at` and the move length kept) all three part
+from retail at their first contact. A frag striking a body (the first frag in
 the UO brecourt capture, the carentan prone captures) still lands a few
 float steps off in `z`: the bone trace's own stores, which vcod does not
 port (`cod11-turrets.md` 13.5).
@@ -5427,7 +5498,15 @@ port (`cod11-turrets.md` 13.5).
 vcod: `Trajectory::evaluate_stored`, `missile::delta_at` and
 `Missile::bounce` port these under 1.5's and UO's rules (`!Missile::kept`).
 `scriptmodel_ab`'s `a_frag_rolls_up_terrain_like_retail_on_15` and
-`_on_uo` compare the bits.
+`_on_uo` compare the bits, and `game::missile`'s
+`uo_frags_roll_on_brecourts_terrain_like_retail` and
+`a_uo_frag_slides_down_hurtgens_terrain_like_retail` replay the three UO
+flights above. The replay starts at the launch's wire state, not at a
+thrower: the spot part's thrower lands where his cmds' timing puts him,
+so retail's muzzle point moves by up to a unit and a half between runs on
+a grade, and a held pitch of exactly 30 puts the throw's `trDelta.z` on a
+whole unit, where retail and ours truncate to 599 and 600 (INFERRED from
+the first frames' heights; not chased).
 
 ### 12.6 1.5's and UO's fall test
 
@@ -5526,6 +5605,31 @@ constants but one (below).
   sloped floor, and the 2026-10-17 take's at 177.9, 357.9 and 173.3, the
   first and last `flat + 180`, with the roll unwrapped (533.7, 599.0 and
   298.0; 499.9, 480.6 and 298.4 before).
+- VERIFIED, `game.mp.i386.so` 1.1d `AngleNormalize360` (0x3eb30) and
+  `game.mp.uo.i386.so`'s: the angle times 182.04445 stays on the x87
+  stack into the `fistp`, not rounded to a float first. 988.76947 is
+  179999.993 65536ths, which truncates to 179999 (268.76404); an `f32`
+  product rounds it onto 180000 (268.76953). VERIFIED,
+  `missiles/mp_uo_hurtgen-frag-slide-uo.txt`: with the `f32` product
+  vcod's pitch at the 22800 contact sat one 65536th (80.04639 against
+  80.04089) off retail's.
+- VERIFIED, `game.mp.uo.i386.so`: UO's floor arm with `rest` 0 also
+  stores the evaluated angles into `s.apos.trBase` and the impact time
+  into `s.apos.trTime` (0x5d551-0x5d58a) before the draw; its caller
+  `G_BounceMissile` overwrites both after the call (0x5dab8-0x5dae2, the
+  angles and `level.time`), so the wire never shows it. UO's
+  `BG_EvaluateTrajectory` line arm (0x1fec6) stores `dt` (0x1fee1) and
+  each `base + delta * dt` (0x1fef8, 0x1ff11, 0x1ff2a).
+- VERIFIED, live (retail UO, the three `missiles/*-uo*.txt` roll
+  captures): every floor factor lies in 0.85 to 1.15 (0.867 to 1.143
+  over 29 contacts, the rate reversed on some and kept on others). VERIFIED:
+  UO sends `apos.trBase` as 16-bit angles (`bits -100`, coduo-diff.md 3),
+  so the wire carries a pitch or roll as 65536ths of a turn (a roll of
+  463.25226 reads 103.24951), and the yaw and roll leave
+  `G_MissileLandAngles` unwrapped as on 1.1d. VERIFIED: replayed with the
+  kept `apos` evaluate in place of the stored one, the three still match
+  every snapshot. INFERRED: the two evaluates differ by far less than a
+  65536th, so UO's wire cannot separate them.
 
 vcod: `Missile::land_angles` (`crates/server/src/game/missile.rs`), its
 draws off the pool's own state (`Draws`). Retail's `rand()` sequence is
@@ -5534,7 +5638,9 @@ not reproducible, so a gate pins the draws a capture shows
 `bounce_angles_match_retail_on_1_1` replays the sky frag with its tumble
 and five factors pinned, and every `apos` ours sends matches retail's bit
 for bit. Before the port ours wrapped all three angles with `rem_euclid`,
-kept the throw's pitch rate and rested every frag at pitch 0.
+kept the throw's pitch rate and rested every frag at pitch 0. On UO
+`game::missile`'s roll replays (12.5) pin each contact's draw the same way
+and compare `apos` through the wire's 65536ths.
 
 ---
 
