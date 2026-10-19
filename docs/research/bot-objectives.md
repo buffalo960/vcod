@@ -1037,8 +1037,11 @@ run's has not. INFERRED (code: `ClientSim::fire_recoil` takes
 bot pass draws `rand_from` on the same generator): every round fired
 moves every later draw of every bot, so the runs part at the first
 round one fires and the other does not, and the gap after that is the
-seed's luck, not the rule's. Nothing to fix; a per-bot generator would
-keep one bot's change from reshuffling the others' runs.
+seed's luck, not the rule's. Since 2026-10-19 the bot pass draws off
+each bot's own generator (section 8, "One generator per bot"), so a bot's
+choice no longer moves another's draws; a round fired still moves the
+shared spread and recoil draws after it, as on retail, so two runs still
+part at the first round one fires and the other does not.
 
 The bas sweep on the pit rule (bot-navigation.md section 3; VERIFIED,
 measured, ours, release, UO install, this branch on ee4c0d0b, the same
@@ -1099,8 +1102,27 @@ tick (every 500 ms, or the tick after an `addbot` or `removebot`).
   `%` (the test `the_pool_holds_a_hundred_distinct_names_that_fit`). The
   draw has its own generator, so a name never moves the server's `rand()`
   draws the seeded bot gates replay.
-- Joining. A bot connects as `--bots` always did: the two `rand()` draws
-  in that order, the first free slot from `sv_privateClients` up, and the
+- One generator per bot. Retail's game module and engine draw libc
+  `rand()`, one process-wide sequence: the spread (`gunrandom` 1.1d
+  `0x3d4ac`, combat doc 2.2), the melee roll (`rand() % 5`), 1.5's and
+  UO's fire recoil (`BG_WeaponFireRecoil`, cod15-movement.md 6), a
+  missile's tumble and the stuck push (VERIFIED, each in its doc). vcod
+  keeps them on the server's one generator (`Server::rng`), in the
+  order its tick takes them. The bots are vcod's own and have no retail
+  draw: VERIFIED, `cod_lnxded` 1.1d, no call to `rand@plt` (0x804a5d8)
+  in `SV_AddTestClient` (0x808753c..0x8087800) or `SV_DirectConnect`
+  (0x8085498..0x8085eec), and a test client sends no usercmd
+  (cod11-gsc-object-model.md 25). So each bot draws its brain's
+  choices and its path's (`nav::Follower::waypoint`'s roams) off its
+  own `Bot::rng`, and a bot's seed and challenge come off a stream of
+  their own (`BotAdmin::seed_rng`, reseeded by `Server::test_seed_rng`):
+  adding a bot moves no shared draw, and one bot's choice moves no
+  other's (`server::bot_admin::tests::adding_a_bot_draws_nothing_off_the_shared_rand`).
+  Until 2026-10-19 the path's draws, a bot's seed and its challenge
+  came off `Server::rng`, so every roam pick by any bot moved every
+  later spread and recoil draw.
+- Joining. A bot connects as `--bots` always did: two draws off the
+  bots' seed stream in that order, the first free slot from `sv_privateClients` up, and the
   team menu answered with its side. `--bots` deals allies, axis, allies in
   turn, which balance reproduces with no humans, so the seeded gates keep
   their games.
