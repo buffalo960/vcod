@@ -2771,9 +2771,9 @@ impl CollisionWorld {
     }
 
     /// Nearest child first; the sweep box shrinks with `trace.fraction`, so
-    /// prims past the current hit are never clipped. Clips the brushes or
-    /// everything else, and logs each leaf it enters while `walk.logged`
-    /// is not `usize::MAX`.
+    /// prims past the current hit and its tie window are never clipped.
+    /// Clips the brushes or everything else, and logs each leaf it enters
+    /// while `walk.logged` is not `usize::MAX`.
     fn trace_node(&self, i: u32, walk: &mut Walk, brushes: bool, trace: &mut Trace) {
         let sw = &walk.sweep;
         // The brush walk enters the static models' subtree only to log it
@@ -2785,7 +2785,7 @@ impl CollisionWorld {
         if walk.rest && !node.rest {
             return;
         }
-        let (lo, hi) = sw.bounds(trace.fraction);
+        let (lo, hi) = sw.reach(trace.fraction);
         if !(lo.cmple(node.hi).all() && hi.cmpge(node.lo).all()) {
             return;
         }
@@ -2819,7 +2819,7 @@ impl CollisionWorld {
     fn clip_leaf(&self, i: u32, walk: &Walk, brushes: bool, trace: &mut Trace) {
         let sw = &walk.sweep;
         let node = &self.nodes[i as usize];
-        let (lo, hi) = sw.bounds(trace.fraction);
+        let (lo, hi) = sw.reach(trace.fraction);
         if !(lo.cmple(node.hi).all() && hi.cmpge(node.lo).all()) {
             return;
         }
@@ -3173,6 +3173,14 @@ impl TraceInput {
             self.start.min(cur_end) + self.mins - Vec3::ONE,
             self.start.max(cur_end) + self.maxs + Vec3::ONE,
         )
+    }
+
+    /// [`Self::bounds`] past `fraction` by the tie window: a prim whose
+    /// contact lands just past the hit cannot cut the trace, but clipped
+    /// it notes the near tie that sends the sweep through retail's leaf
+    /// order (`note_contact`), where it may be met first.
+    fn reach(&self, fraction: f32) -> (Vec3, Vec3) {
+        self.bounds((f64::from(fraction) + TIE_WINDOW).min(1.0) as f32)
     }
 }
 
