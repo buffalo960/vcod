@@ -1833,10 +1833,13 @@ pub struct ProbeHold {
 /// A snapshot's time, view and `delta_angles`, as [`ProbeHold::seen`] keeps it.
 pub type SeenSnap = (i32, [f32; 3], [i32; 3]);
 
+/// A cmd's buttons, `wbuttons` and `up`.
+pub type CmdInput = (u8, u8, i8);
+
 /// Each cmd of a client's `CMDS` lines, those prefixed `who` only, in the
 /// order it went out: its `serverTime` and the input an `in=<k>:<buttons>:
 /// <wbuttons>:<up>` set on it, which the cmds after it went out with too.
-fn cmds_sent(text: &str, who: &str) -> Vec<(i32, Option<(u8, u8, i8)>)> {
+fn cmds_sent(text: &str, who: &str) -> Vec<(i32, Option<CmdInput>)> {
     let mut out = Vec::new();
     for l in text.lines() {
         let Some(rest) = l
@@ -1878,7 +1881,7 @@ fn cmds_sent(text: &str, who: &str) -> Vec<(i32, Option<(u8, u8, i8)>)> {
 /// sent before it is skipped (`SV_UserMove`), and the net probe sends
 /// those, a stamp off a snapshot's arrival a ms under its clock's last
 /// one, or the same time twice.
-fn cmds_run(text: &str, who: &str) -> Vec<(i32, (u8, u8, i8))> {
+fn cmds_run(text: &str, who: &str) -> Vec<(i32, CmdInput)> {
     let (mut out, mut input, mut newest) = (Vec::new(), (0, 0, 0), i32::MIN);
     for (t, set) in cmds_sent(text, who) {
         input = set.unwrap_or(input);
@@ -1892,8 +1895,8 @@ fn cmds_run(text: &str, who: &str) -> Vec<(i32, (u8, u8, i8))> {
 
 /// The input changes of a client's `CMDS` lines, keyed by the `serverTime`
 /// of the first cmd the server runs with each ([`cmds_run`]).
-pub fn cmds_inputs(text: &str, who: &str) -> Vec<(i32, (u8, u8, i8))> {
-    let mut out: Vec<(i32, (u8, u8, i8))> = Vec::new();
+pub fn cmds_inputs(text: &str, who: &str) -> Vec<(i32, CmdInput)> {
+    let mut out = Vec::new();
     let mut last = None;
     let changed = cmds_sent(text, who).iter().any(|c| c.1.is_some());
     for (t, input) in cmds_run(text, who) {
