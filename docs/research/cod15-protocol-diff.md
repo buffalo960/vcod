@@ -280,6 +280,18 @@ sets of both modules, VERIFIED). `cod15-movement.md` has the function by
 function diff and the captures; vcod's predictor runs 1.5's rules on a
 protocol 6 connection (`pmove::MoveRules`).
 
+The weapon channel under the combat script (`--save-combat --capture-tag
+15` beside `COD_VERSION=1.5 tools/run_server.sh mp_carentan`, the carbine:
+a walk, single shot, sustained fire, reload, crouched and prone shots)
+matches 1.5b's sample for sample when `playerstate_combat_ab` replays
+retail's logged cmds on a protocol 6 server: the shots, `weaponstate`
+runs, `weapAnim` and `torsoAnim` indices, torso flips, `weaponDelay`
+peak, sight fraction, spread counter and view, the walk included, with
+no gap (VERIFIED, gate, `mp_carentan-dm-combat-15.txt`, captured
+2026-10-19). A second take, `-combat-15-stall`, whose walk the probe's
+stall turn steered to 45 and then 90 degrees off its start, passes the
+same way off the logged view (`cod11-combat.md` 1.13; VERIFIED, gate).
+
 ## 10. Paks and pure servers
 
 - Stock pak names are hexadecimal in 1.5: `FS_idPak` (1.5 `CoDMP.exe`

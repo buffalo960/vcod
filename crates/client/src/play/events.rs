@@ -118,8 +118,8 @@ impl PredictedEvents {
 /// prediction played. `own`: the playerstate is ours, not a followed
 /// player's; `predicting`: ours, of a `pm_type` the client predicts;
 /// `predicted`: this frame's prediction, when it ran. The frame we reach a
-/// state the client does not predict (a linked corpse) still skips the
-/// copies, then tracking stops.
+/// state the client does not predict still skips the copies, then tracking
+/// stops.
 #[allow(clippy::too_many_arguments)]
 pub fn frame_events(
     tracked: &mut PredictedEvents,
