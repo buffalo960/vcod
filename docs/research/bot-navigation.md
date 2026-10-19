@@ -1102,6 +1102,18 @@ lower of the two floors and a step above the higher. VERIFIED (measured,
 bot-ticks (seed 13 had 1 561), 2 falls (seeds 43 and 49, elsewhere on
 the map, no death).
 
+VERIFIED (measured, release `ship_stalls` `UO=1`, `tdm`, 6 bots shooting
+off, 2400 ticks, master 447d904f and 47171373 alike, sprint on): over
+seeds 1 to 31 odd, sprinting / stalled / falls `mp_cassino` 27 959 / 6 /
+0, `mp_foy` 41 178 / 10 / 0, `mp_italy` 41 201 / 0 / 0, `mp_uo_stanjel`
+20 793 / 0 / 1; over 1 to 63 odd, stalled / falls 29 / 2, 768 / 0, 0 / 0
+and 13 / 2. `mp_foy`'s 768 are seed 51's one spell (751): a bot in the
+hollow at (4635, -2241, -12) jumps for the edge to (4604, -2199, 18)
+from (4601, -2213, -14), 14 units short of the top node and 32 under it,
+peaks at 25 against the lip with no ground gained, lands back, and
+replans to the foot node and back for about 1 000 ticks (`TRACE=2`,
+ticks 1040 to 2000). Not looked into further.
+
 ## 3. Following
 
 The brain stays pure. Each tick the server asks `Bot::goal(&BotView)` for a
@@ -3341,6 +3353,41 @@ on master and the kept row alike.
 - Left on the kept row: the death is seed 4215 (the hold under
   (3684, -406, 92), the 10-12 family); the stalls are 3443's 13, 3435's
   9, 825's and 3971's 6, 3493's 4 and two of 1.
+
+The 2026-10-19b round: the ladder yaw cap and the push-off that jumps
+facing the rungs (10-19, section 3 "Ladders" above; cod11-mantle.md, "The
+ladder yaw cap"), master 447d904f against 47171373, the master before
+them. VERIFIED (measured, same detector and settings, release, seeds
+1-4607 odd; ours only):
+
+| | stalled bot-ticks | falls | deaths |
+|---|---|---|---|
+| 47171373, before the cap | 40 | 8 | 1 |
+| master 447d904f | 55 | 7 | 0 |
+
+47171373 reads the 10-18d kept row to the bot-tick. `mp_depot` and
+`mp_hurtgen` (seeds 1-191 odd) read 0 / 0 / 0 and 1 / 6 / 1 on both, and
+United Offensive's four `tdm` maps (below) the same on both to the
+bot-tick, seeds 1-63 odd.
+
+- Every seed that moved is a run that parted, none at a push-off. Of
+  the first divergences traced (both builds' every bot every tick), seed
+  4229's is at the hold ladder's foot at (3369, -381.6, 56), body on
+  the ground and on the rungs with the waypoint 51 behind: 47171373
+  jumped facing out and the back key held it on the spot for 13 ticks
+  in the air; master walked off. Seeds 2025 and 501 part at the drop
+  from (5926, 64, 352) to 204, a tick's move apart with the same
+  waypoint: `mp_ship`'s graph has a new digest (`nav::Sim::tick`'s walks
+  rebase on `delta_angles`, section 3 above).
+- Master's new stalls: seed 2025's 11 (unstick spells by the crates in
+  the hull at (2189, -290, -45), no ladder), seed 501's 7 (the crow's
+  nest head: a climber turned back up the rungs for a second climber
+  below and waited on the head for it), seed 4229's 5 (off the ladder
+  top at (7232, 261, 142), twice walked off the ledge at 166 by (7250,
+  240) onto the roof sloping down to y 355 and slid to the hull floor;
+  the stair edge (7232, 261, 142) to (7260, 225, 166) the graph proved),
+  2747's 3 and 3601's 1. Gone: 825's and 3971's 6, 4215's death and five
+  falls; master's four falls are new seeds (971, 1279, 3569, 3747).
 
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their

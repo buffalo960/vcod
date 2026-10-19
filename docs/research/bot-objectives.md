@@ -976,6 +976,48 @@ the fetch changed two of 36 shooting runs (all five maps 1 to 11 odd,
 mp_foy to 23): mp_foy seed 1 10919 to 13419 and seed 13 17419 to
 13559; mean 12562 to 12524. Seed 23's stand-off no longer arises there.
 
+The two slow seeds at master 447d904f (VERIFIED, measured, ours,
+2026-10-19, release, UO install, same gate, `BAS_TRACE=1
+BAS_TRACE_EVERY=20`, which prints each bot's clip, engagement and
+waypoint and the script log's `D;` lines):
+- mp_foy seed 21 (19819): from tick 7385 to 11596 the axis planter
+  planted the allied base at (3497, -4774) three times and the allied
+  defender defused all three. Each time the two met with the planter
+  in the charge room at (3530, -4832, -169) and the defender in the
+  bunker over it at (3611 to 3642, -4705, 14), 170 to 260 units off,
+  across the hole between the floors, both holding an LMG. The one
+  below fired its MG34 up at 46 to 59 degrees, the one above its .30
+  cal down, deployed: a deployed LMG's view stops 45 degrees from level
+  (`PM_UpdateViewAngles`, coduo-movement.md 7), so the rounds left
+  under the line, inside the 2-degree trigger cone at that range, and
+  went into the hole's lip. 75 MG34 rounds, then 59 .30 cal rounds,
+  and pistol fire, drew no `D;` line. With the trigger idle 10 s the
+  futile-enemy rule hid each from the other, the planter left the room
+  at 20 s, and the defender walked down and defused. Now an LMG bot
+  whose target's pitch lies past 45 does not deploy, or breaks the
+  bipod down, the way a target past the yaw cap does, and the pistol
+  comes out when it has a round
+  (`bots::tests::an_lmg_target_past_the_pitch_clamp_breaks_the_bipod_down`).
+  A prone deploy measures the clamp from the torso's pitch, which the
+  brain does not read; it uses level.
+- mp_kursk seed 5 (22199): both sides were down to a breached last
+  base from tick 12413, and nobody planted until 18055. All four bots
+  crossed the map toward the other side's last base and met between
+  (2500, -4000) and (3700, -9700): 18 kills in that stretch, nine a
+  side, none in a charge room. It is the stretch of 10-18 above (then
+  ticks 10303 to 15142, seven deaths), longer on this seed. The
+  rejected endgame rules above are the rules for it. The pitch rule
+  does not touch it.
+
+Shooting gate, master 447d904f against the pitch rule (VERIFIED,
+measured, same setup, all five maps 1 to 11 odd, mp_foy to 23): 27 of
+36 runs end on the same tick. mp_foy seed 21 19819 to 14139, seed 11
+17579 to 11439, 13 13559 to 11779, 17 13779 to 12139, 23 12819 to
+12339; mp_kursk 1 14459 to 12179. Slower: mp_foy 7 14579 to 17519, 15
+9799 to 12199, 5 11139 to 12839; mp_italy 1 12979 to 13979 (runs that
+parted, not traced). Mean 12452 to 12176, mp_foy's 13749 to 13026 with
+its slowest 19819 to 17519; the slowest run is still mp_kursk 5.
+
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
 changes, four bots with shoot off on mp_foy, seeds 3 and 7, planted 97

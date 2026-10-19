@@ -1028,8 +1028,8 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
     };
     let mut first = None;
     let mut end = None;
-    // `BAS_TRACE=1`: the bots and the bases every 5 s (`BAS_TRACE_EVERY`
-    // ticks), and each `A;` and `K;` line.
+    // `BAS_TRACE=1`: the bots (clip, engaged, waypoint) and the bases
+    // every 5 s (`BAS_TRACE_EVERY` ticks), and each `A;`, `K;` and `D;` line.
     let trace = std::env::var_os("BAS_TRACE").is_some();
     let mut logged = 0;
     for tick in 0..BAS_ROUND_TICKS {
@@ -1041,7 +1041,7 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
                 logged = 0;
             }
             for l in &log[logged..] {
-                if l.contains("A;") || l.contains("K;") {
+                if l.contains("A;") || l.contains("K;") || l.contains("D;") {
                     eprintln!("{tick}: {}", l.trim_end());
                 }
             }
@@ -1051,11 +1051,15 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
                 for slot in sv.bot_slots() {
                     let team = sv.bot_team(slot);
                     if let Some(b) = sv.bot_body(slot) {
+                        let wp = sv.bot_waypoints(slot).0;
                         eprintln!(
-                            "{tick}: bot {slot} team {team} at {:?} dead {} hp {}",
+                            "{tick}: bot {slot} team {team} at {:?} dead {} hp {} clip {} engaged {} wp {:?}",
                             b.origin.map(|v| v as i32),
                             b.dead,
-                            b.health
+                            b.health,
+                            b.clip,
+                            b.engaged,
+                            wp.map(|w| w.map(|v| v as i32))
                         );
                     }
                 }

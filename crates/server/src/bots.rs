@@ -2917,7 +2917,7 @@ impl Bot {
             );
         }
         if view.lmg {
-            let ready = self.bipod(view, ty, cmd);
+            let ready = self.bipod(view, [tp - g[0], ty], cmd);
             self.trigger(view, dist, off, cone, ready, cmd);
             return Some(aim);
         }
@@ -2957,8 +2957,10 @@ impl Bot {
     /// the bot stands, on a mount or prone, and the body holds still. A
     /// deploy the engine refuses, or a target past the yaw cap round the
     /// deploy's facing, lets the button go for a while: the breakdown, then
-    /// a fresh deploy facing the target. Whether the trigger may go down.
-    fn bipod(&mut self, view: &BotView, target_yaw: f32, cmd: &mut UserCmd) -> bool {
+    /// a fresh deploy facing the target. A target past the deploy's pitch
+    /// clamp rests the button too, so the pistol comes out: the pinned view
+    /// fires under the line. Whether the trigger may go down.
+    fn bipod(&mut self, view: &BotView, want: [f32; 2], cmd: &mut UserCmd) -> bool {
         self.lmg_linger = LMG_LINGER_TICKS;
         cmd.forward = 0;
         cmd.right = 0;
@@ -2966,7 +2968,9 @@ impl Bot {
         if self.lmg_rest > 0 || self.switch_to.is_some() {
             return false;
         }
-        if view.deployed && yaw_diff(target_yaw, view.deploy_yaw).abs() > LMG_ARC_DEG {
+        if want[0].abs() > LMG_PITCH_DEG
+            || (view.deployed && yaw_diff(want[1], view.deploy_yaw).abs() > LMG_ARC_DEG)
+        {
             self.lmg_rest = LMG_REST_TICKS;
             return false;
         }
@@ -3385,6 +3389,10 @@ const LMG_REST_TICKS: u32 = 40;
 const LMG_LINGER_TICKS: u32 = 60;
 const LMG_READY_FRAC: f32 = 0.99;
 const LMG_ARC_DEG: f32 = 50.0;
+/// The pitch clamp of a deployed LMG's view, either way of level
+/// (`PM_UpdateViewAngles`, coduo-movement.md 7). A prone deploy measures it
+/// from the torso's pitch, which the brain does not read.
+const LMG_PITCH_DEG: f32 = 45.0;
 /// Grenade reuses are minutes apart, not seconds.
 const GRENADE_COOLDOWN_TICKS: u32 = 400;
 /// A sprint starts with this much straight path ahead and this much of the
@@ -5303,6 +5311,28 @@ mod tests {
         v.deploy_yaw = -90.0;
         let cmd = bot.think(&v);
         assert_eq!(cmd.buttons & (BUTTON_ADS | BUTTON_ATTACK), 0);
+    }
+
+    /// A target past the deployed view's pitch clamp breaks the bipod down
+    /// rather than firing from the pinned view under the line: on mp_foy
+    /// (bas, seed 21) a planter in the allied charge room emptied an MG34
+    /// at a defender 53 degrees up through the hole over it, every round
+    /// into the lip (bot-objectives.md 7.2).
+    #[test]
+    fn an_lmg_target_past_the_pitch_clamp_breaks_the_bipod_down() {
+        let (mut bot, mut v) = engaged(3);
+        v.lmg = true;
+        v.automatic = true;
+        v.deployed = true;
+        v.ads_frac = 1.0;
+        v.enemy.as_mut().unwrap().origin = [150.0, 0.0, 324.0];
+        for _ in 0..20 {
+            let cmd = bot.think(&v);
+            assert_eq!(cmd.buttons & (BUTTON_ADS | BUTTON_ATTACK), 0);
+            // The clamp pins the view 45 up.
+            let a = cmd.angles.map(|a| a as f32 / ANGLE2SHORT);
+            v.view = [a[0].max(-45.0), a[1], 0.0];
+        }
     }
 
     #[test]
