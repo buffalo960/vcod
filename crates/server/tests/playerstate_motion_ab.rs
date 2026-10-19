@@ -43,17 +43,27 @@ const MODELLED: &[&str] = &[
     // (docs/research/cod11-combat.md, 1.13 and 2.1).
     "aimSpreadScale",
     "fWeaponPosFrac",
+    "legsTimer",
+    "torsoTimer",
 ];
 
 /// Pose/field pairs the capture samples mid-transition, which an equality
 /// gate cannot hold. Both jump samples are `aimSpreadScale` in flight: the
 /// airborne climb and the decay after the landing are rates, and the sample
 /// is one frame of each, so what they pin is the sign and nothing more
-/// (combat doc, 2.1). No guard on this list: an entry here can match by
-/// luck, unlike a gap, so a match is not evidence of anything.
+/// (combat doc, 2.1). The same two samples catch `legsTimer` running down
+/// from the takeoff's 55 and the landing's 150 by the cmds between the
+/// event and the snapshot, which this capture does not log: retail reads
+/// 39 and 150 on mp_carentan, 5 and 102 on mp_pavlov, under one script.
+/// `animtimers_ab` replays logged cmd times and gates every snapshot's
+/// timers instead (player-model-anim-system.md, "The takeoff and the
+/// landing"). No guard on this list: an entry here can match by luck,
+/// unlike a gap, so a match is not evidence of anything.
 const TRANSIENT: &[(&str, &str)] = &[
     ("jump_takeoff", "aimSpreadScale"),
     ("land", "aimSpreadScale"),
+    ("jump_takeoff", "legsTimer"),
+    ("land", "legsTimer"),
 ];
 
 /// Fields the usercmd drives rather than the speed it produces: both spread

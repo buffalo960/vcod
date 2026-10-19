@@ -746,10 +746,9 @@ the xanim header (`PlayerAnims::length_ms`), truncated as the engine's
 0x08088b3d..0x08088b5b; `cod11-combat.md` 16.4, "The dying body"). Both
 timers ride the playerstate: vcod-server writes each as the event's
 expiry less `commandTime`, floored at 0 (`AnimState::timers`), which the
-death frames of all three servers match. `playerstate_motion_ab`'s
-`jump_takeoff` and pavlov `land` samples read retail `legsTimer` 5, 39 and
-102 against ours 55, 55 and 150 (2026-10-19, measured, not gated): the
-landing hold matches on carentan, the jump's does not. The hold is not the weapon state's length: VERIFIED,
+death frames of all three servers match, and so does every snapshot of
+the per-cmd captures `animtimers_ab` replays (below, "The takeoff and the
+landing"). The hold is not the weapon state's length: VERIFIED,
 carentan's reload holds the torso for 950-1050 ms of a `weaponstate` 5 that
 runs 2650, and pavlov's for 2050-2150 ms of one that runs 2400, which are the
 31-frame `pt_reload_stand_auto` and the 64-frame `pt_reload_stand_rifle` at 30
@@ -787,6 +786,70 @@ Matching on both maps: carentan reads {0, 253} over 2 flips for one shot, {0,
 253} over 7 for six, {0, 229} over 2 for the reload and {0, 249} over 4 for
 three crouched shots; pavlov reads {0, 253} over 2 and over 4, {0, 231} over 2
 and {0, 249} over 2.
+
+### The takeoff and the landing
+
+VERIFIED disassembly, 1.1d `game.mp.i386.so` `PmoveSingle` 0x33dfc, its
+walking arm: `PM_CheckDuck` (0x316f4, the call at 0x342c9), then
+`PM_GroundTrace` (0x30474, call at 0x342ce), then `PM_DropTimers`
+(0x32a44, call at 0x342f9; it runs `legsTimer` at ps+0x6c and `torsoTimer`
+at ps+0x74 down by the cmd's msec, floored at 0, 0x32a7d..0x32abc), then
+`PM_WalkMove` (0x2f258, call at 0x3431b, which opens with `PM_CheckJump`)
+and a second `PM_GroundTrace` (call at 0x34327). Three places raise the
+`jump` event, `jumpbk` where `cmd.forwardmove < 0`, each through
+`BG_AnimScriptEvent` (VERIFIED decompile, the same three on 1.5b
+`game.mp.i386.so` 0x31a17 / 0x31ccd and UO, the `%i:lift` and
+`%i:kickoff` strings):
+
+- `PM_CheckJump` (0x2eb98), forced, in its ground arm only; a ladder
+  push-off raises none.
+- `PM_GroundTrace`'s kickoff: a hit with the velocity carrying the body
+  off the plane (`velocity.z > 0`, `velocity . normal > 10`) and
+  `pm_flags` 0x10 clear, not forced, so it takes the legs only while
+  `legsTimer` reads under 50.
+- `PM_GroundTraceMissed` (0x3037c), forced, for a body that had ground
+  when a trace 64 straight down from the origin meets nothing.
+
+So the timer an event sets depends on where it is raised. VERIFIED,
+`animtimers_ab` over `mp_carentan-dm-slope-8ms-moves-1.1.txt` and
+`-springfield-1.1.txt`: a jump reads 55 (`duration 5` + 50) less the cmds
+after the jump cmd, the jump cmd's own msec not among them; the 1.1 prone
+dive, whose impulse `PM_CheckDuck` gives ahead of the first ground trace,
+is a kickoff in that trace and reads 55 less its own cmd's msec as well
+(20 at ct 48335 for a dive pressed on the cmd at 48308, 19 at 53344 for
+one at 53317); a landing (`PM_CrashLand` inside the second trace) reads
+150 less the cmds after it. Each picks its clause by the `movetype` the
+last `PM_Footsteps` left: the backward dive reads `pb_standjump_takeoff`
+off `runbk`, not the prone `pb_chicken_dance_crouch` the body has reached
+by the frame's end (VERIFIED, same capture).
+
+vcod: pmove reports the event (`pmove::Takeoff`: forced or not, `back`,
+and whether the first ground trace raised it) and the landing per cmd;
+`ClientSim` keeps the cmd's serverTime, less its msec for an event ahead
+of the drop, and the `movetype` before the move, and `update_anims`
+plays it on that clock. The motion fixtures cannot gate the two
+transient samples (`jump_takeoff`, `land`): they log no cmd times, and
+retail's reads 39 and 150 on carentan, 5 and 102 on pavlov, under one
+script, which is 55 and 150 less the cmds between the event and the
+sample (INFERRED from the model above, which the per-cmd gates VERIFY).
+
+UO's deploy and breakdown raise their own blocks, `LMG_DEPLOY` and
+`LMG_BREAKDOWN` (events 0xe and 0xf, forced; VERIFIED decompile, UO
+`game.mp.uo.i386.so` 0x347aa and 0x3484c, beside events 160 and 161), and
+`PM_Weapon`'s deploy driver (0x35b66) raises `LMG_BREAKDOWN` again on every
+cmd in `weaponstate` 13 while ps+0x100 (`viewHeightLerpTarget`) is
+non-zero, as a continue (VERIFIED disassembly, 0x35bed..0x35c23:
+`BG_AnimScriptEvent(ps, 0xf, 1, 1)`). INFERRED from the `BG_PlayAnim` decompile cited
+above (its continue argument): a continue leaves an anim already on the
+channel alone, so it only does anything when the clause changes,
+which the stance does. VERIFIED, `mp_carentan-dm-slope-8ms-sprint-uo.txt`:
+the deploy reads `torsoAnim` `c_mp_lmg_deploy_prone` with `torsoTimer`
+1825 at ct 48091, 1850 less 25 ms; the prone breakdown
+`c_mp_lmg_breakdown_prone_torso` 1926 at 58582; and the stand-up at the
+cmd of 60066 restarts the torso on `c_mp_mg34_breakdown_torso`, 1892 at
+60090, while `weaponstate` and `weapAnim` stay as they were.
+`weapon_anim_event` maps events 160 and 161 to the two blocks, and
+`ClientSim::note_footsteps` logs each continue with its cmd's `movetype`.
 
 The `death` and `pain` blocks are the two the damage path raises
 (`ClientSim::take_damage`), and they are the ones whose clauses list several
