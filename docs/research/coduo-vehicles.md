@@ -1643,9 +1643,18 @@ origin on ours (`compare_impacts`).
       `ps.origin` at the seat tag of the vehicle as it stands, shifted by
       the offset of the slot `VEH_LinkPlayer` asked for
       (`Seat::link_offset`), and a link there; the end frame then puts
-      `ps.origin` and `r.currentOrigin` on the seat. Not ported: retail
-      leaves `r.currentOrigin` at the link until the rider's next cmd, so
-      a thread between them reads the first stint's driver 20 high.
+      `ps.origin` and `r.currentOrigin` on the seat, as retail's does:
+      `G_PlayerVehiclePositionAndBlend` copies the offset `ps.origin` into
+      `r.currentOrigin` (`ent+0x13c..0x144`, 0x91869..0x91893, after its
+      `BG_PlayerStateToEntityState` at 0x91855) and the seat tag's angles
+      into `r.currentAngles` (`+0x148`) (VERIFIED disassembly,
+      2026-10-19). So only what reads him inside the entity pass after
+      his turn (a link to him, a blast or round on a later entity's turn)
+      sees the link; `G_RunFrame` (0x59c21) runs its one
+      `Scr_RunCurrentThreads` ahead of the pass and none between the pass
+      and `ClientEndFrame` (VERIFIED decompile), and the probe's threads
+      read the first-stint driver at 109.08, his seat
+      (`mp_cassino-tank-silhouette-uo.txt`'s `PROBE pose`, VERIFIED).
     - The 400 ms after a seat change also part. Retail's bones glide to
       the new seat over eight frames; ours arrived in four (up to 6 units
       apart on the way) (VERIFIED, `tank` run). The cause is the setter
