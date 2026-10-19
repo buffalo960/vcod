@@ -3115,6 +3115,7 @@ impl ScriptRuntime {
             &mut host.hit_rigs,
             now_ms,
             &mut host.dobj_posed,
+            vcod_common::patch::Arith::for_protocol(host.defs.proto),
         );
         let grenade = host.missiles.grenade_at(id);
         let turn = host

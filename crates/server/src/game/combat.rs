@@ -7,10 +7,11 @@ use crate::game::temp_entity::{Scope, TempEntity};
 use crate::spectate::ClientSim;
 use glam::{Quat, Vec3};
 use vcod_common::animtree::PlayerAnims;
-use vcod_common::bonetrace::{PriorityMap, bone_trace};
+use vcod_common::bonetrace::{PriorityMap, bone_trace_in, into_frame_stored};
 use vcod_common::collision::{CONTENTS_GLASS, CollisionWorld, sound_material};
 use vcod_common::net::events::dir_to_byte;
 use vcod_common::net::protocol::ENTITYNUM_WORLD;
+use vcod_common::patch::Arith;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::pose_player;
 use vcod_common::pmove::weapon::{SpreadStance, hip_spread_min};
@@ -188,6 +189,9 @@ pub struct BoneTraceCtx<'a> {
     /// posed keeps that pose, and the trace stamps every other one at
     /// `now_ms` (movers doc 15, "A bone asked for before the anim update").
     pub posed: Option<&'a mut [DobjStamps]>,
+    /// The server build's float arithmetic: 1.5b's and UO's store every
+    /// step of the trace (combat doc 3.1, "The arithmetic on 1.5 and UO").
+    pub arith: Arith,
 }
 
 impl<'a> BoneTraceCtx<'a> {
@@ -199,6 +203,7 @@ impl<'a> BoneTraceCtx<'a> {
         rigs: &'a mut HitRigs,
         now_ms: i32,
         posed: &'a mut [DobjStamps],
+        arith: Arith,
     ) -> Option<Self> {
         Some(Self {
             fs: fs?,
@@ -206,6 +211,7 @@ impl<'a> BoneTraceCtx<'a> {
             rigs,
             now_ms,
             posed: Some(posed),
+            arith,
         })
     }
 }
@@ -308,6 +314,19 @@ impl DobjStamps {
     pub fn frame(&self, body: &HitBody) -> Quat {
         self.angles
             .map_or_else(|| body.frame(), vcod_common::turretpose::angles_quat)
+    }
+
+    /// [`Self::frame`]'s axes for the stored arithmetic: the yaw-only
+    /// body's as 1.5b and UO round them, a tilt's turned in `f32` (its
+    /// stores are not read).
+    pub fn axis_stored(&self, body: &HitBody) -> [Vec3; 3] {
+        match self.angles {
+            None => body.axis_stored(),
+            Some(a) => {
+                let q = vcod_common::turretpose::angles_quat(a);
+                [q * Vec3::X, q * Vec3::Y, q * Vec3::Z]
+            }
+        }
     }
 
     /// The controls the last build eased to, which the end frame's record
@@ -893,10 +912,10 @@ fn fire_round(
         match traced {
             Traced::Player {
                 slot,
-                fraction,
                 hitloc,
+                point,
+                ..
             } => {
-                let point = start + (end - start) * fraction;
                 if let Some(u) = tracing {
                     out.effects.push(tracer(point, u.weapon));
                 }
@@ -1071,9 +1090,10 @@ pub fn flesh_impacts(
 enum Traced {
     Player {
         slot: usize,
-        /// Along `muzzle..end`.
-        fraction: f32,
         hitloc: &'static str,
+        /// Where along `muzzle..end`, as the server build rounds it
+        /// ([`trace_point`]).
+        point: Vec3,
     },
     /// An entity's xmodel collision (a script model, a UO vehicle's hull):
     /// `G_Damage`'s target when it takes damage, else a wall.
@@ -1098,9 +1118,10 @@ impl Traced {
     /// Where the trace from `start` to `end` stopped.
     fn endpos(&self, start: Vec3, end: Vec3) -> Vec3 {
         match self {
-            Traced::Player { fraction, .. }
-            | Traced::Model { fraction, .. }
-            | Traced::Entity { fraction, .. } => start + (end - start) * *fraction,
+            Traced::Player { point, .. } => *point,
+            Traced::Model { fraction, .. } | Traced::Entity { fraction, .. } => {
+                start + (end - start) * *fraction
+            }
             Traced::World(t) => t.endpos,
             Traced::Nothing => end,
         }
@@ -1133,6 +1154,17 @@ impl HitBody {
     /// back (0x41c74..0x41ca7) before another client's round meets him.
     pub fn frame(&self) -> Quat {
         Quat::from_rotation_z(self.yaw)
+    }
+
+    /// 1.5b's and UO's `AnglesToAxis` of `(0, yaw, 0)` (UO 0x806a46e over
+    /// `AngleVectors` 0x80674ad): the yaw's float radians, its `fsincos`
+    /// stored, forward, left and up.
+    pub fn axis_stored(&self) -> [Vec3; 3] {
+        let (s, c) = (
+            f64::from(self.yaw).sin() as f32,
+            f64::from(self.yaw).cos() as f32,
+        );
+        [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
     }
 }
 
@@ -1254,13 +1286,14 @@ fn trace_attack(
         .filter(|(s, sim)| !pass.skips(*s as u32, sim.seat.map(|seat| seat.vehicle)))
         .filter_map(|(s, sim)| sim.hit_body(*s))
         .collect();
+    let arith = bones.as_ref().map_or(Arith::Kept, |b| b.arith);
     if let Some((slot, fraction, hitloc)) =
         trace_bodies(muzzle, end, usize::MAX, &bodies, limit, priority, bones)
     {
         return Traced::Player {
             slot,
-            fraction,
             hitloc,
+            point: trace_point(muzzle, end, fraction, arith),
         };
     }
     if let Some((t, fraction)) = target {
@@ -1282,6 +1315,18 @@ fn trace_attack(
     match trace {
         Some(t) if t.fraction < 1.0 => Traced::World(t),
         _ => Traced::Nothing,
+    }
+}
+
+/// A locational trace's end point at `fraction` of `start..end`. 1.5b's
+/// and UO's last step stores the move and rounds each `start + move *
+/// fraction` once (UO 0x809b457, 1.5b 0x809a45f).
+pub fn trace_point(start: Vec3, end: Vec3, fraction: f32, arith: Arith) -> Vec3 {
+    match arith {
+        Arith::Stored => {
+            (start.as_dvec3() + (end - start).as_dvec3() * f64::from(fraction)).as_vec3()
+        }
+        Arith::Kept | Arith::Msvc => start + (end - start) * fraction,
     }
 }
 
@@ -1330,9 +1375,10 @@ pub fn strike_point(
         &BULLET_PRIORITY,
         bones,
     ) {
-        Traced::Player { fraction, .. }
-        | Traced::Entity { fraction, .. }
-        | Traced::Model { fraction, .. } => Some((muzzle + (end - muzzle) * fraction, false)),
+        Traced::Player { point, .. } => Some((point, false)),
+        Traced::Entity { fraction, .. } | Traced::Model { fraction, .. } => {
+            Some((muzzle + (end - muzzle) * fraction, false))
+        }
         Traced::World(t) => Some((t.endpos, t.surface_flags & SURF_SKY != 0)),
         Traced::Nothing => None,
     }
@@ -1432,7 +1478,9 @@ pub fn trace_bodies_faced(
             rigs,
             now_ms,
             posed,
+            arith,
         } = &mut **ctx;
+        let arith = *arith;
         let Some(skel) = rigs.rig(fs, &body.pose.assembly) else {
             let Some(t) = ray_box(start, end, body.origin + body.mins, body.origin + body.maxs)
                 .filter(|&t| t < limit)
@@ -1447,15 +1495,26 @@ pub fn trace_bodies_faced(
         let frame = stamps
             .as_deref()
             .map_or_else(|| body.frame(), |s| s.frame(body));
+        let axis_stored = stamps
+            .as_deref()
+            .map_or_else(|| body.axis_stored(), |s| s.axis_stored(body));
         let pose = stamped_pose(&skel, body, anims, rigs, fs, *now_ms, stamps);
         // Into the body's own frame: its `tag_origin` sits at the feet.
-        let inv = frame.inverse();
-        let (ls, le) = (inv * (start - body.origin), inv * (end - body.origin));
+        let (ls, le) = if arith == Arith::Stored {
+            let axis = axis_stored;
+            (
+                into_frame_stored(start, &axis, body.origin),
+                into_frame_stored(end, &axis, body.origin),
+            )
+        } else {
+            let inv = frame.inverse();
+            (inv * (start - body.origin), inv * (end - body.origin))
+        };
         // A bone past `limit` lies behind what the trace already met: the
         // box can open in front of a hull or wall the bones stand behind
         // (docs/research/coduo-vehicles.md 13, "The silhouette").
-        let Some(hit) =
-            bone_trace(&skel, &pose, ls, le, priority, limit).filter(|h| h.fraction < limit)
+        let Some(hit) = bone_trace_in(&skel, &pose, ls, le, priority, limit, arith)
+            .filter(|h| h.fraction < limit)
         else {
             continue;
         };
@@ -1464,11 +1523,19 @@ pub fn trace_bodies_faced(
             .copied()
             .unwrap_or("none");
         limit = hit.fraction;
+        let normal = if arith == Arith::Stored {
+            // UO 0x8069154: each component of the turned normal rounded once.
+            let [f, l, u] = axis_stored.map(|a| a.as_dvec3());
+            let n = hit.normal.as_dvec3();
+            (f * n.x + l * n.y + u * n.z).as_vec3()
+        } else {
+            frame * hit.normal
+        };
         best = Some(BodyHit {
             slot: body.slot,
             fraction: hit.fraction,
             hitloc,
-            normal: frame * hit.normal,
+            normal,
         });
     }
     best
@@ -1577,11 +1644,11 @@ pub fn melee_fire(
         let weapon = weapon_index as i32;
         if let Traced::Player {
             slot,
-            fraction,
             hitloc,
+            point,
+            ..
         } = traced
         {
-            let point = muzzle + (end - muzzle) * fraction;
             let damage = def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32;
             let damage = located_damage(damage, hitlocs.multiplier(hitloc));
             return ShotResult {
@@ -2488,6 +2555,7 @@ mod tests {
             fs: &fs,
             anims: &anims,
             rigs: &mut rigs,
+            arith: vcod_common::patch::Arith::Kept,
             now_ms: 0,
             posed: None,
         };
@@ -2549,6 +2617,7 @@ mod tests {
                 fs: &fs,
                 anims: &anims,
                 rigs: &mut rigs,
+                arith: vcod_common::patch::Arith::Kept,
                 now_ms: 50,
                 posed: None,
             };
@@ -2605,6 +2674,7 @@ mod tests {
                 fs: &fs,
                 anims: &anims,
                 rigs: &mut rigs,
+                arith: vcod_common::patch::Arith::Kept,
                 now_ms: 50,
                 posed: None,
             };
@@ -3572,6 +3642,7 @@ mod tests {
                 fs: &fs,
                 anims: &anims,
                 rigs: &mut rigs,
+                arith: vcod_common::patch::Arith::Kept,
                 now_ms: 0,
                 posed: None,
             };

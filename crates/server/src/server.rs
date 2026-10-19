@@ -370,25 +370,14 @@ fn mirror_weapons_of(sim: &mut ClientSim, rt: &mut script::ScriptRuntime, slot: 
 }
 
 /// The weapon ops script queued, each applied once.
-fn apply_weapon_ops(
-    clients: &mut [Option<Client>],
-    rt: &mut script::ScriptRuntime,
-    weapons: &crate::weapons::WeaponTable,
-) {
+fn apply_weapon_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
     for (slot, op) in rt.take_weapon_ops() {
         if let Some(c) = clients.get_mut(slot).and_then(Option::as_mut)
-            && applies_to(op, c.is_bot)
             && let Some(sim) = c.sim.as_mut()
         {
-            apply_weapon_op(sim, op, weapons);
+            apply_weapon_op(sim, op);
         }
     }
-}
-
-/// `switchToWeapon`'s op is a bot's stand-in for the cgame answering `a`; a
-/// client with a cgame changes weapon through its own cmds.
-fn applies_to(op: crate::game::host::WeaponOp, bot: bool) -> bool {
-    bot || !matches!(op, crate::game::host::WeaponOp::SwitchTo(_))
 }
 
 /// A standing player with its feet at `feet`, as a blast candidate in slot 0.
@@ -511,7 +500,7 @@ fn deliver_turret_rounds(
     mirror_roster(clients, rt);
     apply_effects(rt, effects);
     mirror_weapons(clients, rt);
-    apply_weapon_ops(clients, rt, weapons);
+    apply_weapon_ops(clients, rt);
     apply_sim_ops(clients, rt, anims, weapons, rng, now_ms);
     mirror_vitals(clients, rt);
     for slot in feedback_now {
@@ -724,6 +713,7 @@ fn vehicle_fire(
                 &mut *rigs,
                 now_ms,
                 &mut rt.host.dobj_posed,
+                vcod_common::patch::Arith::for_protocol(rt.host.defs.proto),
             );
             crate::game::combat::bullet_fire_from(
                 shot.attacker,
@@ -1271,7 +1261,6 @@ fn mirror_vitals_of(sim: &mut ClientSim, rt: &script::ScriptRuntime, slot: usize
 pub(crate) fn apply_weapon_op(
     sim: &mut crate::spectate::ClientSim,
     op: crate::game::host::WeaponOp,
-    weapons: &crate::weapons::WeaponTable,
 ) {
     use crate::game::host::WeaponOp;
     let ps = &mut sim.ps;
@@ -1294,18 +1283,6 @@ pub(crate) fn apply_weapon_op(
             ps.weapon = index;
             ps.weaponstate = vcod_common::pmove::weapon::WEAPON_READY;
             ps.weapon_time_ms = 0;
-        }
-        // Through the putaway, so the drop and the raise both run: the
-        // machine picks the target up when the drop ends.
-        WeaponOp::SwitchTo(index) => {
-            if weapons.get(ps.weapon as usize).is_none() {
-                return;
-            }
-            let mut events = Vec::new();
-            vcod_common::pmove::weapon::begin_switch(ps, weapons.defs(), index, &mut events);
-            for e in events {
-                sim.add_event(e.event, e.parm);
-            }
         }
     }
 }
@@ -1376,15 +1353,14 @@ fn apply_callback_ops(
     rt: &mut script::ScriptRuntime,
     sim: &mut ClientSim,
     slot: usize,
-    bot: bool,
     anims: Option<&vcod_common::animtree::PlayerAnims>,
     weapons: &crate::weapons::WeaponTable,
     rng: &mut u64,
     now_ms: i32,
 ) {
     let (weapon_ops, sim_ops) = rt.take_ops_of(slot);
-    for op in weapon_ops.into_iter().filter(|&op| applies_to(op, bot)) {
-        apply_weapon_op(sim, op, weapons);
+    for op in weapon_ops {
+        apply_weapon_op(sim, op);
     }
     for op in sim_ops {
         apply_sim_op(sim, rt, slot, op, anims, weapons, rng, now_ms);
@@ -3780,6 +3756,7 @@ impl Server {
             &mut self.hit_rigs,
             self.sv_time_ms,
             dobj_stamps(self.script.as_mut()),
+            vcod_common::patch::Arith::for_protocol(self.proto),
         );
         let mut v = standing_blast_victim(feet);
         v.slot = slot;
@@ -7754,7 +7731,7 @@ impl Server {
             // The ammo and the current weapon, which are edges rather than
             // state: applying a full clip every frame would make the weapon
             // bottomless.
-            apply_weapon_ops(&mut self.clients, rt, &weapons);
+            apply_weapon_ops(&mut self.clients, rt);
             // `linkTo` and `unlink`, before the entity pass re-anchors so a
             // link made this frame is already pinned on this frame's wire: both
             // retail captures read the new `pm_type` on the next snapshot
@@ -7815,6 +7792,7 @@ impl Server {
             self.pending_explosions.clear();
             let collision = self.world.as_ref().map(|w| &w.collision);
             let (fs, anims, now_ms) = (self.fs.as_deref(), self.anims.as_deref(), self.sv_time_ms);
+            let arith = vcod_common::patch::Arith::for_protocol(self.proto);
             // Where a callback earlier in the walk set a client down: its
             // link moved off the one its last cmd made (`setOrigin` relinks
             // at once, combat doc 14.7), and the walk measures it there.
@@ -8046,6 +8024,7 @@ impl Server {
                                     &mut self.hit_rigs,
                                     now_ms,
                                     &mut rt.host.dobj_posed,
+                                    arith,
                                 )
                                 .as_mut(),
                             ) {
@@ -8077,6 +8056,7 @@ impl Server {
                                     &mut self.hit_rigs,
                                     now_ms,
                                     &mut rt.host.dobj_posed,
+                                    arith,
                                 )
                                 .as_mut(),
                             ) {
@@ -8109,7 +8089,7 @@ impl Server {
             }
             // What the blasts' callbacks did to the sims, as above.
             mirror_weapons(&mut self.clients, rt);
-            apply_weapon_ops(&mut self.clients, rt, &weapons);
+            apply_weapon_ops(&mut self.clients, rt);
             apply_sim_ops(
                 &mut self.clients,
                 rt,
@@ -8411,6 +8391,7 @@ impl Server {
                     &mut self.hit_rigs,
                     self.sv_time_ms,
                     &mut rt.host.dobj_posed,
+                    vcod_common::patch::Arith::for_protocol(self.proto),
                 );
                 // 1.1 and 1.5 hand `G_Damage` the gunner as the inflictor,
                 // so the callback is told his own weapon and `player_die`
@@ -9047,7 +9028,6 @@ impl Server {
             // What the passes queued for the mover reaches its sim before its
             // next cmd, as `Touch_Item` and `G_Damage` write the playerstate
             // inside this one (items doc, 13.2).
-            let bot = self.clients[slot].as_ref().is_some_and(|c| c.is_bot);
             if let (Some(rt), Some(sim)) = (
                 self.script.as_mut(),
                 self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()),
@@ -9057,7 +9037,6 @@ impl Server {
                     rt,
                     sim,
                     slot,
-                    bot,
                     self.anims.as_deref(),
                     &weapons,
                     &mut self.rng,
@@ -9162,7 +9141,6 @@ impl Server {
             return;
         };
         let st = c.last_processed_st;
-        let bot = c.is_bot;
         let Some(sim) = c.sim.as_mut() else { return };
         mirror_for_callback(rt, sim, proto, slot, st);
         if !rt.kill_client(slot) {
@@ -9172,7 +9150,6 @@ impl Server {
             rt,
             sim,
             slot,
-            bot,
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
@@ -9313,6 +9290,7 @@ impl Server {
             .enumerate()
             .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
             .collect();
+
         let targets = self
             .script
             .as_ref()
@@ -9324,6 +9302,7 @@ impl Server {
             &mut self.hit_rigs,
             self.sv_time_ms,
             dobj_stamps(self.script.as_mut()),
+            vcod_common::patch::Arith::for_protocol(self.proto),
         );
         let point = crate::game::combat::strike_point(
             muzzle,
@@ -9382,7 +9361,6 @@ impl Server {
             return;
         };
         let st = c.last_processed_st;
-        let bot = c.is_bot;
         let Some(sim) = c.sim.as_mut() else { return };
         // A cmd runs on the last frame's `level.time`.
         let level_ms = now_ms.wrapping_sub(FRAME_MS);
@@ -9397,7 +9375,6 @@ impl Server {
             rt,
             sim,
             slot,
-            bot,
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
@@ -9433,7 +9410,6 @@ impl Server {
             return;
         };
         let st = c.last_processed_st;
-        let bot = c.is_bot;
         let Some(sim) = c.sim.as_mut() else { return };
         let Some(veh) = rt.host.ents.handle(overlap.entity) else {
             return;
@@ -9471,7 +9447,6 @@ impl Server {
             rt,
             sim,
             slot,
-            bot,
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
@@ -9572,6 +9547,7 @@ impl Server {
                 &mut self.hit_rigs,
                 self.sv_time_ms,
                 dobj_stamps(self.script.as_mut()),
+                vcod_common::patch::Arith::for_protocol(self.proto),
             );
             let name = crate::items::item_name(weapons.list(), weapon as usize).unwrap_or_default();
             match attack {
@@ -9657,7 +9633,6 @@ impl Server {
                 continue;
             };
             let st = c.last_processed_st;
-            let bot = c.is_bot;
             let Some(sim) = c.sim.as_mut() else { continue };
             mirror_for_callback(rt, sim, proto, victim, st);
             rt.deliver_hits(vec![hit]);
@@ -9665,7 +9640,6 @@ impl Server {
                 rt,
                 sim,
                 victim,
-                bot,
                 self.anims.as_deref(),
                 weapons,
                 &mut self.rng,

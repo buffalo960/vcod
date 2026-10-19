@@ -59,22 +59,11 @@ struct Case {
     /// none of a prone one, which rests on its own ground trace.
     stand_dz: f32,
     gaps: Gaps,
-    /// The capture logs each client's input changes by cmd (`CMDS ...
-    /// in=`): the replay presses on those cmds, not on the `PROBE_IN`
-    /// lines, and runs a cmd stamped up to [`PRESS_LEAD_MS`] before a frame
-    /// after it.
-    press: bool,
     /// Phases whose round (point and direction) may part from retail's.
     round_gaps: &'static [&'static str],
     /// Phases whose round's direction alone may part from retail's.
     dir_gaps: &'static [&'static str],
 }
-
-/// How far before a frame's time the `-press` captures' late cmds are
-/// stamped: those within 3 ms of the frame went out while it ran, the
-/// shooter's next earlier ones 11 ms or more before it
-/// (docs/research/cod11-combat.md 15.1, "The cmd that fires").
-const PRESS_LEAD_MS: i32 = 6;
 
 fn gap(gaps: Gaps, phase: &str, view: &str, height: &str, column: usize) -> bool {
     let (v, h) = (view.chars().next().unwrap(), height.parse::<u32>().unwrap());
@@ -91,10 +80,10 @@ const LATE_UO: i64 = 3000;
 /// 800 (1.1d), 1000 (1.5b) or 1150 (UO) ms, and the shooter's after it.
 const CMDS_JOIN_11: i64 = 8350;
 const CMDS_LATE_11: i64 = 3200;
-const CMDS_JOIN_15: i64 = 8250;
-const CMDS_LATE_15: i64 = 3300;
-const CMDS_JOIN_UO: i64 = 8400;
-const CMDS_LATE_UO: i64 = 3500;
+const CMDS_JOIN_15: i64 = 9050;
+const CMDS_LATE_15: i64 = 2700;
+const CMDS_JOIN_UO: i64 = 9800;
+const CMDS_LATE_UO: i64 = 2950;
 /// The second 1.1d `-cmds` run's (`-cmds-ct`), joined the same way.
 const CT_JOIN_11: i64 = 8100;
 const CT_LATE_11: i64 = 3050;
@@ -179,17 +168,10 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
     ha.ran = common::cmds_ran(c.fixture, "shooter");
     hb.ran = common::cmds_ran(c.fixture, "target");
     let (mut pa, mut pb) = (Vec::new(), Vec::new());
-    if c.press {
-        // The target's `setOrigin` drop lands on retail's height on the
-        // plain frame windows, and off it under the lead (open,
-        // cod11-combat.md 15.1, "The cmd that fires").
-        ha.lead_ms = PRESS_LEAD_MS;
-        pa = common::cmds_inputs(c.fixture, "shooter");
-        pb = common::cmds_inputs(c.fixture, "target");
-    }
     if !ha.ran.is_empty() {
         // A capture that logs each snapshot's `commandTime` places every
-        // cmd on retail's side of a frame, so it presses on the cmds too.
+        // cmd on retail's side of a frame, so it presses on the cmds too;
+        // the others press on the `PROBE_IN` lines.
         pa = common::cmds_inputs(c.fixture, "shooter");
         pb = common::cmds_inputs(c.fixture, "target");
     }
@@ -559,7 +541,6 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             late_ms: 3450,
             stand_dz: 0.0,
             gaps: &[],
-            press: false,
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -579,7 +560,6 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             late_ms: LATE_11,
             stand_dz: 0.0,
             gaps: &[],
-            press: false,
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -607,7 +587,6 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             late_ms: 2800,
             stand_dz: STAND_DZ_15,
             gaps: CELL_GAPS_15,
-            press: false,
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -627,20 +606,18 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             late_ms: LATE_UO,
             stand_dz: 0.0,
             gaps: &[],
-            press: false,
             round_gaps: &[],
             dir_gaps: &[],
         },
     );
 }
 
-/// The `-cmds` captures: `probe_fall 1` and `probe_tapwait 1`, the
-/// shooter's origin and both clients' cmd times, which the gate replays
-/// (`ProbeHold::times`). The 1.5b and UO ones press on the `PROBE_IN`
-/// lines rather than the inputs they also log by cmd; the 1.1d ones log
-/// each snapshot's `commandTime` too (`ct=`), and replay each cmd on the
-/// side of a frame retail ran it on and press on the logged inputs
-/// (`ProbeHold::ran`). A second run of the `-press` recipe on each server.
+/// The `-cmds` and `-press` captures, runs of one recipe (two on 1.5b and
+/// UO, three on 1.1d): `probe_fall 1` and `probe_tapwait 1`, both clients' cmd times
+/// and input changes, and each snapshot's `commandTime` (`ct=`). The
+/// replay runs each cmd on the side of a frame retail ran it on and
+/// presses on the logged inputs (`ProbeHold::ran`). The first 1.1d
+/// `-cmds` run's `ct=` was joined from its `VEH ... ps` lines.
 fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
     Case {
         fixture,
@@ -648,7 +625,6 @@ fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
         late_ms,
         stand_dz: 0.0,
         gaps: &[],
-        press: false,
         round_gaps: &[],
         dir_gaps: &[],
     }
@@ -693,27 +669,17 @@ fn a_dropped_body_on_uo_lands_and_poses_as_on_retail_on_its_cmds() {
     check(fs, &cmds_case(fixture, CMDS_JOIN_UO, CMDS_LATE_UO));
 }
 
-/// The `-press` captures' join times (their headers' first playing
-/// snapshots, joined as [`cmds_case`]'s are).
-const PRESS_JOIN_11: i64 = 8850;
-const PRESS_LATE_11: i64 = 3250;
-const PRESS_JOIN_15: i64 = 8900;
-const PRESS_LATE_15: i64 = 2550;
-const PRESS_JOIN_UO: i64 = 8600;
-const PRESS_LATE_UO: i64 = 3350;
-
-/// The `-press` captures: the `-cmds` recipe, each client's input changes
-/// logged by cmd, which the replay presses on. Every round leaves
-/// within [`DIR_NEAR`] of retail's direction: whether the cmd that fires
-/// aims along the view the hold's `setPlayerAngles` left or along the one
-/// a cmd after it quantized rides which cmd carries the press and which
-/// side of the frame it ran on (docs/research/cod11-combat.md 15.1).
-fn press_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
-    Case {
-        press: true,
-        ..cmds_case(fixture, join_ms, late_ms)
-    }
-}
+/// The `-press` captures' join times, as the `-cmds` ones'. Every round
+/// leaves within [`DIR_NEAR`] of retail's direction: whether the cmd that
+/// fires aims along the view the hold's `setPlayerAngles` left or along
+/// the one a cmd after it quantized rides which side of the frame each
+/// cmd ran on (docs/research/cod11-combat.md 15.1).
+const PRESS_JOIN_11: i64 = 9150;
+const PRESS_LATE_11: i64 = 3100;
+const PRESS_JOIN_15: i64 = 9450;
+const PRESS_LATE_15: i64 = 2950;
+const PRESS_JOIN_UO: i64 = 8700;
+const PRESS_LATE_UO: i64 = 3200;
 
 #[test]
 fn a_round_leaves_along_retails_aim_on_its_press() {
@@ -721,7 +687,7 @@ fn a_round_leaves_along_retails_aim_on_its_press() {
         return;
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press.txt");
-    check(fs, &press_case(fixture, PRESS_JOIN_11, PRESS_LATE_11));
+    check(fs, &cmds_case(fixture, PRESS_JOIN_11, PRESS_LATE_11));
 }
 
 #[test]
@@ -730,7 +696,7 @@ fn a_round_on_15_leaves_along_retails_aim_on_its_press() {
         return;
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press-1.5.txt");
-    check(fs, &press_case(fixture, PRESS_JOIN_15, PRESS_LATE_15));
+    check(fs, &cmds_case(fixture, PRESS_JOIN_15, PRESS_LATE_15));
 }
 
 #[test]
@@ -739,7 +705,7 @@ fn a_round_on_uo_leaves_along_retails_aim_on_its_press() {
         return;
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press-uo.txt");
-    check(fs, &press_case(fixture, PRESS_JOIN_UO, PRESS_LATE_UO));
+    check(fs, &cmds_case(fixture, PRESS_JOIN_UO, PRESS_LATE_UO));
 }
 
 /// The `-turn` and `-turnonce` captures' join times (their headers' first

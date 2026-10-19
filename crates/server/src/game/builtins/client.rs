@@ -774,11 +774,8 @@ pub fn set_spawn_weapon(
 /// `self switchToWeapon(name)` (`PlayerCmd_switchToWeapon`, player method 5,
 /// 0x44c34): for a carried weapon, `a <index>` to the client, whose cgame
 /// selects it and asks for it in its cmds, and 1; for any other, 0 (combat
-/// doc, 9.8). The playerstate is the client's to change. A bot has no
-/// cgame, so the queued `SwitchTo` stands in for its answer and only a bot
-/// applies it (`Server`'s weapon ops); it goes through the putaway and the
-/// raise (section 1.8), and the host's own `current` is left alone, since
-/// the frame mirror copies it into `ps.weapon` ahead of the drop.
+/// doc, 9.8). The playerstate is the client's to change; a bot answers the
+/// `a` as a cgame would (`Bot::observe`).
 pub fn switch_to_weapon(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -791,7 +788,6 @@ pub fn switch_to_weapon(
         return Ok(Value::Int(0));
     }
     host.client_commands.push((slot, format!("a {index}")));
-    host.weapon_op(slot, WeaponOp::SwitchTo(index as u8));
     Ok(Value::Int(1))
 }
 
@@ -1982,7 +1978,6 @@ mod tests {
                         rounds: start_ammo
                     }
                 ),
-                (0, WeaponOp::SwitchTo(thompson as u8)),
             ]
         );
     }
@@ -2042,18 +2037,16 @@ mod tests {
         // The mirror `Server` runs before the ops, then the op itself.
         sim.ps.weapons_held = host.client_weapons[0].held;
         sim.ps.weapon_slots = host.client_weapons[0].slots;
-        crate::server::apply_weapon_op(&mut sim, host.client_weapon_ops[0].1, &host.weapons);
+        crate::server::apply_weapon_op(&mut sim, host.client_weapon_ops[0].1);
         assert_eq!(sim.ps.weapons_held, 0);
         assert_eq!(sim.ps.weapon_slots, [0; crate::weapons::NUM_SLOTS]);
         assert_eq!(sim.ps.ammo, [0; vcod_common::pmove::weapon::NUM_AMMO]);
         assert_eq!(sim.ps.ammoclip, [0; vcod_common::pmove::weapon::NUM_AMMO]);
     }
 
-    /// `switchToWeapon` sends the client `a <colt>`; a bot's op asks for the
-    /// same change a usercmd's weapon byte does, so the weapon goes away and
-    /// comes back rather than teleporting into its hands: the op raises
-    /// `EV_PUTAWAY_WEAPON` and the machine raises `EV_RAISE_WEAPON` when the
-    /// drop ends, `ps.weapon` reading the colt only from there on. The
+    /// `switchToWeapon` sends the client `a <colt>` and queues nothing for
+    /// the sim: the cmds that then name the colt put the carbine away and
+    /// raise the colt, `ps.weapon` reading it only from the raise on. The
     /// host's own copy is left alone -- the mirror would otherwise force the
     /// target weapon in ahead of the putaway.
     #[test]
@@ -2082,10 +2075,7 @@ mod tests {
             ));
         });
         assert_eq!(host.client_commands, vec![(0, format!("a {colt}"))]);
-        assert_eq!(
-            host.client_weapon_ops,
-            vec![(0, WeaponOp::SwitchTo(colt as u8))]
-        );
+        assert!(host.client_weapon_ops.is_empty());
         assert_eq!(
             host.client_weapons[0].current, carbine as u8,
             "the machine picks the weapon up, not the builtin"
@@ -2102,8 +2092,8 @@ mod tests {
         sim.ps.weapons_held = host.client_weapons[0].held;
         sim.ps.weapon_slots = host.client_weapons[0].slots;
         sim.ps.weapon = host.client_weapons[0].current;
-        crate::server::apply_weapon_op(&mut sim, host.client_weapon_ops[0].1, &host.weapons);
-        assert_eq!(sim.ring.events[0], EV_PUTAWAY_WEAPON);
+        let events = sim.step(&cmd, 0.05, Some(world), host.weapons.defs());
+        assert_eq!(events[0].event, EV_PUTAWAY_WEAPON);
         assert_eq!(sim.ps.weapon, carbine as u8, "still the carbine, mid-drop");
 
         let mut raised = Vec::new();

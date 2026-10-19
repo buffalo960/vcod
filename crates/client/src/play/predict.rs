@@ -861,17 +861,23 @@ mod tests {
         assert_eq!(v.pred.ps.origin.z, 100.0);
     }
 
+    /// A linked corpse (`pm_type` 7) is predicted through the linked arm:
+    /// no fall, no slide, the eye sinking (cod11-player-clip.md 1.1).
     #[test]
-    fn not_predictable_is_none() {
+    fn a_linked_corpse_is_predicted_and_holds_still() {
         let world = test_world(&[]);
         let mut snap = standing(5000, 0.0);
         set(&mut snap, "pm_type", 7);
-        let r = ring((5008..=5040).step_by(8), false);
-        assert!(
-            Predictor::default()
-                .predict(P, &snap, &r, &world, &[], &still(), &[], 0.0)
-                .is_none()
-        );
+        set(&mut snap, "velocity[0]", 150.0f32.to_bits() as i32);
+        set(&mut snap, "origin[2]", 0.125f32.to_bits() as i32);
+        let r = ring((5008..=5200).step_by(8), true);
+        let v = Predictor::default()
+            .predict(P, &snap, &r, &world, &[], &still(), &[], 0.0)
+            .expect("a linked corpse is predicted");
+        assert_eq!(v.pred.ps.origin, glam::Vec3::new(0.0, 0.0, 0.125));
+        assert_eq!(v.pred.ps.velocity.x, 150.0);
+        assert!(!v.pred.ps.on_ground);
+        assert!(v.pred.ps.view_height() < 60.0);
     }
 
     /// Retail's cgame predicts its own corpse: one killed running slides on

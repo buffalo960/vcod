@@ -244,8 +244,9 @@ pub fn spectator_step(
     view
 }
 
-/// One `PmoveSingle` for a dead body (`pm_type` 6), on one of [`chop`]'s
-/// steps: [`super::dead_move`], its landing events into the ring, and
+/// One `PmoveSingle` for a dead body, on one of [`chop`]'s steps:
+/// [`super::dead_move`] and its landing events into the ring for `pm_type`
+/// 6, [`super::dead_linked_move`] for 7 (`ps.linked`, the caller's), and
 /// `PM_Weapon`'s `pm_type > 5` arm, which drops the weapon behind its
 /// `PMF_RESPAWNED` return (0x390ee..0x390fe). The server's dead arm and the
 /// client's prediction of its own corpse both run it
@@ -257,8 +258,12 @@ pub fn dead_step(
     world: &MoveWorld,
     respawned: bool,
 ) {
-    for e in super::dead_move(ps, world, dt) {
-        ring.add(e.event, e.parm);
+    if ps.linked {
+        super::dead_linked_move(ps, world, dt);
+    } else {
+        for e in super::dead_move(ps, world, dt) {
+            ring.add(e.event, e.parm);
+        }
     }
     if !respawned {
         ps.weapon = 0;
