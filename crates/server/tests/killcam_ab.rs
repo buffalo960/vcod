@@ -208,8 +208,8 @@ fn ours_trims_and_ends_the_killcam_as_retail_does() {
     let mut shooter_view = None;
     for frame in 0..800 {
         now += Duration::from_millis(50);
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         let (ea, eb) = common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         held.extend(ea);
         let ea = if frame >= 200 {
@@ -281,8 +281,8 @@ fn ours_trims_and_ends_the_killcam_as_retail_does() {
             &ads
         };
         now += Duration::from_millis(50);
-        ca.send_frame(a);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, a));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         let sa = ca.snapshots().newest().unwrap();
         trail.insert(sa.server_time, sa.ps.origin(p));

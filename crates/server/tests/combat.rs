@@ -107,8 +107,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
         common::step_pair(sv, (&qa, ca), (&qb, cb), now)
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     let sb = cb.snapshots().newest().unwrap();
@@ -137,8 +137,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
     };
     // A seed whose spread carries the round on past B into a wall A sees.
     sv.test_seed_rng(1);
-    ca.send_frame(&fire);
-    cb.send_frame(&facing_a);
+    ca.send_frame(&crate::common::echo_weapon(&ca, &fire));
+    cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
     step(&mut sv, &mut ca, &mut cb);
     let sa = ca.snapshots().newest().unwrap();
     let sb = cb.snapshots().newest().unwrap();
@@ -218,8 +218,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
 
     // Release, wait out fireTime and the knockback, then tap again.
     for _ in 0..30 {
-        ca.send_frame(&ads);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     let sb = cb.snapshots().newest().unwrap();
@@ -235,8 +235,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
         "the knockback has decayed"
     );
 
-    ca.send_frame(&fire);
-    cb.send_frame(&facing_a);
+    ca.send_frame(&crate::common::echo_weapon(&ca, &fire));
+    cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
     step(&mut sv, &mut ca, &mut cb);
     let sa = ca.snapshots().newest().unwrap();
     let sb = cb.snapshots().newest().unwrap();
@@ -283,15 +283,15 @@ fn a_shot_takes_health_and_a_second_one_kills() {
 
     // Dead: the eye drops to 8, and a third round finds nobody.
     for _ in 0..10 {
-        ca.send_frame(&ads);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     let sb = cb.snapshots().newest().unwrap();
     assert_eq!(sb.ps.field_f32(p, "viewHeightCurrent"), 8.0);
     assert_eq!(sb.ps.field_i32(p, "pm_type"), 6);
-    ca.send_frame(&fire);
-    cb.send_frame(&facing_a);
+    ca.send_frame(&crate::common::echo_weapon(&ca, &fire));
+    cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
     step(&mut sv, &mut ca, &mut cb);
     let sb = cb.snapshots().newest().unwrap();
     assert_eq!(
@@ -369,8 +369,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
     ca.send_reliable("score");
     let mut row = None;
     for _ in 0..10 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         let (ea, _) = step(&mut sv, &mut ca, &mut cb);
         for e in ea {
             if let NetEvent::ServerCommand(t) = e
@@ -407,8 +407,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
 
     // B respawns on the use button, after dm's two-second wait.
     for _ in 0..50 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     let use_ = UserCmd {
@@ -416,8 +416,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
         ..NULL_USERCMD
     };
     for _ in 0..20 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&use_);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &use_));
         step(&mut sv, &mut ca, &mut cb);
     }
     let sb = cb.snapshots().newest().unwrap();
@@ -466,8 +466,8 @@ fn a_shot_takes_health_and_a_second_one_kills() {
         ..NULL_USERCMD
     };
     for _ in 0..2 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&attack);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &attack));
         step(&mut sv, &mut ca, &mut cb);
     }
     let sb = cb.snapshots().newest().unwrap();
@@ -543,8 +543,8 @@ fn the_kill_command_suicides_a_player() {
     };
     // The two spawn wherever dm put them; nothing here needs a sightline.
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cb);
     }
     assert_eq!(cb.snapshots().newest().unwrap().ps.health(), 100);
@@ -573,8 +573,8 @@ fn the_kill_command_suicides_a_player() {
     let (mut born_at, mut cleared_at) = (None, None);
     cb.send_reliable("kill");
     for _ in 0..10 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cb);
         seen_a = seen_a.or_else(|| obituary(ca.snapshots().newest().unwrap()));
         seen_b = seen_b.or_else(|| obituary(cb.snapshots().newest().unwrap()));
@@ -677,8 +677,8 @@ fn the_kill_command_suicides_a_player() {
     ca.send_reliable("score");
     let mut row = None;
     for _ in 0..10 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         let (ea, _) = step(&mut sv, &mut ca, &mut cb);
         for e in ea {
             if let NetEvent::ServerCommand(t) = e
@@ -701,8 +701,8 @@ fn the_kill_command_suicides_a_player() {
     // A second `kill` while dead does nothing.
     cb.send_reliable("kill");
     for _ in 0..5 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cb);
     }
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
@@ -756,8 +756,8 @@ fn the_kill_commands_death_frame_is_retails() {
         common::step_pair(sv, (&qa, ca), (&qb, cb), now)
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&holding);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &holding));
         step(&mut sv, &mut ca, &mut cb);
     }
     let alive = cb.snapshots().newest().unwrap().clone();
@@ -765,8 +765,8 @@ fn the_kill_commands_death_frame_is_retails() {
     let seq = alive.ps.field_i32(p, "eventSequence");
 
     cb.send_reliable("kill");
-    ca.send_frame(&NULL_USERCMD);
-    cb.send_frame(&holding);
+    ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+    cb.send_frame(&crate::common::echo_weapon(&cb, &holding));
     step(&mut sv, &mut ca, &mut cb);
     let death = cb.snapshots().newest().unwrap().clone();
     assert_eq!(death.ps.field_i32(p, "pm_type"), 6, "the kill's own frame");
@@ -784,8 +784,8 @@ fn the_kill_commands_death_frame_is_retails() {
     assert_eq!(death.ps.field_i32(p, "viewHeightTarget"), 60);
     assert_eq!(death.ps.field_f32(p, "viewHeightCurrent"), 60.0);
 
-    ca.send_frame(&NULL_USERCMD);
-    cb.send_frame(&holding);
+    ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+    cb.send_frame(&crate::common::echo_weapon(&cb, &holding));
     step(&mut sv, &mut ca, &mut cb);
     let after = cb.snapshots().newest().unwrap();
     assert_eq!(after.ps.field_i32(p, "viewHeightTarget"), 8);
@@ -795,8 +795,8 @@ fn the_kill_commands_death_frame_is_retails() {
     // The respawn frame already carries the standing idle: every respawn in
     // the capture reads `legsAnim` 634 on its first frame (combat doc, 9.2).
     for _ in 0..50 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&holding);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &holding));
         step(&mut sv, &mut ca, &mut cb);
     }
     let use_ = vcod_common::net::msg::UserCmd {
@@ -805,8 +805,8 @@ fn the_kill_commands_death_frame_is_retails() {
     };
     let mut respawn = None;
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&use_);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &use_));
         step(&mut sv, &mut ca, &mut cb);
         let s = cb.snapshots().newest().unwrap();
         if s.ps.field_i32(p, "pm_type") == 0 {
@@ -896,8 +896,8 @@ fn a_bullet_deaths_frame_is_retails() {
         ..NULL_USERCMD
     };
     let mut step = |sv: &mut vcod_server::Server, a: &UserCmd, b: &UserCmd| {
-        ca.send_frame(a);
-        cb.send_frame(b);
+        ca.send_frame(&crate::common::echo_weapon(&ca, a));
+        cb.send_frame(&crate::common::echo_weapon(&cb, b));
         now += Duration::from_millis(50);
         common::step_pair(sv, (&qa, &mut ca), (&qb, &mut cb), now);
         (
@@ -1009,9 +1009,9 @@ fn a_player_killed_earlier_in_the_frame_stops_no_later_round() {
         ..NULL_USERCMD
     };
     let mut step = |sv: &mut vcod_server::Server, a: UserCmd, c: UserCmd| {
-        ca.send_frame(&a);
-        cb.send_frame(&b_idle);
-        cc.send_frame(&c);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &a));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &b_idle));
+        cc.send_frame(&crate::common::echo_weapon(&cc, &c));
         now += Duration::from_millis(50);
         common::step_trio(
             sv,
@@ -1103,8 +1103,8 @@ fn a_melee_swing_hits_and_the_kill_shows_the_melee_icon() {
         common::step_pair(sv, (&qa, ca), (&qb, cb), now)
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     assert_eq!(cb.snapshots().newest().unwrap().ps.health(), 100);
@@ -1121,8 +1121,11 @@ fn a_melee_swing_hits_and_the_kill_shows_the_melee_icon() {
     // snapshot its entity first appears on.
     let mut shown: Vec<u32> = Vec::new();
     for i in 0..80 {
-        ca.send_frame(if i % 20 == 0 { &swing } else { &NULL_USERCMD });
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            if i % 20 == 0 { &swing } else { &NULL_USERCMD },
+        ));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
         let sa = ca.snapshots().newest().unwrap();
         let now: Vec<u32> = sa
@@ -1224,8 +1227,8 @@ fn raise_frag(
     let p = &PROTOCOL_V1;
     let mut switched = false;
     for _ in 0..80 {
-        a.send_frame(aimed);
-        b.send_frame(b_cmd);
+        a.send_frame(&crate::common::echo_weapon(&a, aimed));
+        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
         step(sv, a, b);
         if a.snapshots()
             .newest()
@@ -1238,8 +1241,8 @@ fn raise_frag(
     assert!(switched, "the frag never reached the thrower's hands");
     let mut ready = false;
     for _ in 0..60 {
-        a.send_frame(aimed);
-        b.send_frame(b_cmd);
+        a.send_frame(&crate::common::echo_weapon(&a, aimed));
+        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
         step(sv, a, b);
         if a.snapshots()
             .newest()
@@ -1277,20 +1280,20 @@ fn cook_and_throw_down(
         ..aimed
     };
     for _ in 0..20 {
-        a.send_frame(&cook);
-        b.send_frame(b_cmd);
+        a.send_frame(&crate::common::echo_weapon(&a, &cook));
+        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
         step(sv, a, b);
     }
     for _ in 0..200 {
-        a.send_frame(&aimed);
-        b.send_frame(b_cmd);
+        a.send_frame(&crate::common::echo_weapon(&a, &aimed));
+        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
         step(sv, a, b);
         if let Some(x) = sv.pending_explosions().first() {
             let at = x.at.into();
             // One more frame so both clients have been sent the damage the
             // blast did on the frame it went off.
-            a.send_frame(&aimed);
-            b.send_frame(b_cmd);
+            a.send_frame(&crate::common::echo_weapon(&a, &aimed));
+            b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
             step(sv, a, b);
             return at;
         }
@@ -1407,8 +1410,8 @@ fn a_thrown_grenade_damages_a_player_in_its_blast() {
         common::step_pair(sv, (&qa, a), (&qb, b), now);
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     assert_eq!(ca.snapshots().newest().unwrap().ps.health(), 100);
@@ -1514,8 +1517,8 @@ park(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vD
         common::step_pair(sv, (&qa, a), (&qb, b), now);
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     cook_and_throw_down(
@@ -1607,8 +1610,8 @@ hit(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDi
         common::step_pair(sv, (&qa, a), (&qb, b), now);
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     cook_and_throw_down(
@@ -1738,8 +1741,8 @@ hit(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDi
         common::step_pair(sv, (&qa, a), (&qb, b), now);
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     cook_and_throw_down(
@@ -1844,8 +1847,8 @@ fn a_throw_s_first_frame_matches_retail_s_capture() {
             ..aimed
         };
         for _ in 0..20 {
-            ca.send_frame(&cook);
-            cb.send_frame(&NULL_USERCMD);
+            ca.send_frame(&crate::common::echo_weapon(&ca, &cook));
+            cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
             step(&mut sv, &mut ca, &mut cb);
         }
         let stood = ca.snapshots().newest().unwrap().ps.origin(p);
@@ -1855,8 +1858,8 @@ fn a_throw_s_first_frame_matches_retail_s_capture() {
         );
         let mut first = None;
         for _ in 0..40 {
-            ca.send_frame(&aimed);
-            cb.send_frame(&NULL_USERCMD);
+            ca.send_frame(&crate::common::echo_weapon(&ca, &aimed));
+            cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
             step(&mut sv, &mut ca, &mut cb);
             let snap = ca.snapshots().newest().unwrap();
             if let Some(e) = snap
@@ -1951,8 +1954,8 @@ fn a_player_killed_mid_cook_drops_a_live_grenade() {
         common::step_pair(sv, (&qa, a), (&qb, b), now);
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&watching);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &watching));
         step(&mut sv, &mut ca, &mut cb);
     }
     let frag = frag_index();
@@ -1970,8 +1973,8 @@ fn a_player_killed_mid_cook_drops_a_live_grenade() {
         ..armed
     };
     for _ in 0..10 {
-        ca.send_frame(&cook);
-        cb.send_frame(&watching);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &cook));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &watching));
         step(&mut sv, &mut ca, &mut cb);
     }
     let cooking = ca.snapshots().newest().unwrap();
@@ -1985,8 +1988,8 @@ fn a_player_killed_mid_cook_drops_a_live_grenade() {
     ca.send_reliable("kill");
     let (mut death_frame, mut drop, mut explode_frame) = (None, None, None);
     for frame in 0..120i32 {
-        ca.send_frame(&cook);
-        cb.send_frame(&watching);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &cook));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &watching));
         step(&mut sv, &mut ca, &mut cb);
         let sa = ca.snapshots().newest().unwrap();
         if death_frame.is_none() && sa.ps.field_i32(p, "pm_type") == 6 {
@@ -2111,8 +2114,8 @@ fn a_wall_shields_a_player_from_a_blast() {
         common::step_pair(sv, (&qa, a), (&qb, b), now);
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&still);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &still));
         step(&mut sv, &mut ca, &mut cb);
     }
     let a_feet = ca.snapshots().newest().unwrap().ps.origin(p);
@@ -2277,9 +2280,9 @@ impl Followed {
         b: &vcod_common::net::msg::UserCmd,
     ) -> [Vec<NetEvent>; 3] {
         self.now += Duration::from_millis(50);
-        self.cs.send_frame(s);
-        self.ca.send_frame(a);
-        self.cb.send_frame(b);
+        self.cs.send_frame(&crate::common::echo_weapon(&self.cs, s));
+        self.ca.send_frame(&crate::common::echo_weapon(&self.ca, a));
+        self.cb.send_frame(&crate::common::echo_weapon(&self.cb, b));
         let (es, ea, eb) = common::step_trio(
             &mut self.sv,
             (common::ADDR_C, &self.q[0], &mut self.cs),
@@ -2470,8 +2473,11 @@ fn fire_panzerfaust(
     };
     let mut seen: Option<RocketSeen> = None;
     for i in 0..60 {
-        a.send_frame(if i == 0 { &fire } else { &aimed });
-        b.send_frame(b_cmd);
+        a.send_frame(&crate::common::echo_weapon(
+            &a,
+            if i == 0 { &fire } else { &aimed },
+        ));
+        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
         step(sv, a, b);
         let snap = a.snapshots().newest().unwrap();
         let rocket = snap.entities.values().find(|e| {

@@ -78,8 +78,14 @@ fn two_joined() -> Option<(EntityState, EntityState, [f32; 3], [f32; 3])> {
     // snapshot built after the other existed.
     for _ in 0..40 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
 
@@ -171,8 +177,14 @@ fn the_scripts_can_find_both_players_by_classname() {
     );
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
 
@@ -335,8 +347,11 @@ fn a_moving_player() -> Option<Vec<EntityState>> {
         };
         for _ in 0..20 {
             now += Duration::from_millis(50);
-            ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-            cb.send_frame(&walking);
+            ca.send_frame(&crate::common::echo_weapon(
+                &ca,
+                &vcod_common::net::msg::NULL_USERCMD,
+            ));
+            cb.send_frame(&crate::common::echo_weapon(&cb, &walking));
             common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         }
         let Some(e) = ca.snapshots().newest()?.entities.get(&(nb as u32)).cloned() else {
@@ -366,8 +381,11 @@ fn a_moving_player() -> Option<Vec<EntityState>> {
             up: if frame < 2 { 127 } else { 0 },
             ..walking
         };
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&cmd);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &cmd));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         if let Some(e) = ca.snapshots().newest()?.entities.get(&(nb as u32))
             && has_parm(e)
@@ -460,8 +478,14 @@ fn a_spectator_is_sent_to_nobody() {
     sv.place_client(nb, [spot[0] + 40.0, spot[1], spot[2]], 180.0);
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     assert!(
@@ -478,8 +502,14 @@ fn a_spectator_is_sent_to_nobody() {
     sv.spectate_client(nb, [spot[0] + 40.0, spot[1], spot[2] + 200.0]);
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     let sa = ca.snapshots().newest().expect("A has no snapshot");
@@ -511,8 +541,14 @@ fn a_roster_view() -> Option<(vcod_common::net::snapshot::Snapshot, u32)> {
     );
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     let p = &PROTOCOL_V1;
@@ -583,8 +619,14 @@ fn opposite_teams_carry_different_roster_team_values() {
     );
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
 
@@ -656,8 +698,14 @@ fn a_client_is_told_where_the_other_is_this_frame() {
     sv.place_client(nb, [spot[0] + 40.0, spot[1], spot[2]], 0.0);
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     // B runs for ten ticks; on each, A's copy of B must match B's own ps
@@ -669,8 +717,11 @@ fn a_client_is_told_where_the_other_is_this_frame() {
     let mut checked = 0;
     for _ in 0..10 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&run);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &run));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         let sa = ca.snapshots().newest().unwrap();
         let sb = cb.snapshots().newest().unwrap();
@@ -749,7 +800,7 @@ fn a_weapon_switch_off_the_usercmd_byte_happens_once() {
     let mut weapons: Vec<i32> = Vec::new();
     for _ in 0..60 {
         now += Duration::from_millis(50);
-        cl.send_frame(&cmd);
+        cl.send_frame(&crate::common::echo_weapon(&cl, &cmd));
         common::step(&mut sv, &q, &mut cl, now);
         let Some(s) = cl.snapshots().newest() else {
             continue;
@@ -825,7 +876,7 @@ fn a_client_out_of_grenades_gets_its_rifle_back() {
                frames: usize| {
         for _ in 0..frames {
             *now += Duration::from_millis(50);
-            cl.send_frame(cmd);
+            cl.send_frame(&crate::common::echo_weapon(&cl, cmd));
             common::step(sv, &q, cl, *now);
         }
     };
@@ -905,7 +956,10 @@ fn a_client_out_of_grenades_gets_its_rifle_back() {
     };
     for i in 0..10 {
         now += Duration::from_millis(50);
-        cl.send_frame(if i % 2 == 0 { &shoot } else { &rifle });
+        cl.send_frame(&crate::common::echo_weapon(
+            &cl,
+            if i % 2 == 0 { &shoot } else { &rifle },
+        ));
         common::step(&mut sv, &q, &mut cl, now);
         let Some(s) = cl.snapshots().newest() else {
             continue;
@@ -974,8 +1028,14 @@ fn a_body_reaches_both_the_dead_client_and_the_other_one() {
     sv.place_client(nb, [spot[0] + 40.0, spot[1], spot[2]], 180.0);
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
 
@@ -983,8 +1043,14 @@ fn a_body_reaches_both_the_dead_client_and_the_other_one() {
     assert_eq!(body, 64, "the body queue starts at retail's entity 64");
     for _ in 0..4 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
 
@@ -1054,8 +1120,14 @@ fn a_broadcast_temp_entity_skips_the_cull_and_a_scoped_one_does_not() {
     sv.place_client(nb, [spot[0] + 40.0, spot[1], spot[2]], 180.0);
     for _ in 0..20 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
 
@@ -1085,8 +1157,14 @@ fn a_broadcast_temp_entity_skips_the_cull_and_a_scoped_one_does_not() {
     let mut seen_b = BTreeSet::new();
     for _ in 0..2 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         for (seen, client) in [(&mut seen_a, &ca), (&mut seen_b, &cb)] {
             let Some(snap) = client.snapshots().newest() else {
@@ -1164,8 +1242,14 @@ fn a_map_command_reloads_the_level_on_the_live_netchan() {
     // A map nobody has: the console logs it and the level keeps serving.
     sv.push_console("map mp_nosuchmap");
     now += Duration::from_millis(50);
-    ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-    cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+    ca.send_frame(&crate::common::echo_weapon(
+        &ca,
+        &vcod_common::net::msg::NULL_USERCMD,
+    ));
+    cb.send_frame(&crate::common::echo_weapon(
+        &cb,
+        &vcod_common::net::msg::NULL_USERCMD,
+    ));
     common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     assert_eq!(
         sv.server_id(),
@@ -1186,8 +1270,14 @@ fn a_map_command_reloads_the_level_on_the_live_netchan() {
     let mut loading = Vec::new();
     for _ in 0..600 {
         now += Duration::from_millis(50);
-        ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
+        cb.send_frame(&crate::common::echo_weapon(
+            &cb,
+            &vcod_common::net::msg::NULL_USERCMD,
+        ));
         let (ea, eb, sent) = common::step_pair_seen(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         for (to, pkt) in &sent {
             if let Some(("loadingnewmap", rest)) = vcod_common::net::connectionless::parse_oob(pkt)
@@ -1338,8 +1428,14 @@ fn map_restart_re_inits_the_level_without_a_gamestate() {
         let mut wire: [Vec<String>; 2] = Default::default();
         for _ in 0..600 {
             now += Duration::from_millis(50);
-            ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-            cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+            ca.send_frame(&crate::common::echo_weapon(
+                &ca,
+                &vcod_common::net::msg::NULL_USERCMD,
+            ));
+            cb.send_frame(&crate::common::echo_weapon(
+                &cb,
+                &vcod_common::net::msg::NULL_USERCMD,
+            ));
             let (ea, eb) = common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
             for (i, (events, join, cl)) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)]
                 .into_iter()
@@ -1534,8 +1630,8 @@ fn the_score_limit_sends_both_clients_to_intermission_and_then_rotates() {
     // Settle, then two taps: the carbine is semi-automatic, so the trigger
     // is released in between (combat doc, 1.4).
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(
             &mut sv,
             &mut ca,
@@ -1550,8 +1646,8 @@ fn the_score_limit_sends_both_clients_to_intermission_and_then_rotates() {
         seen.clear();
     }
     for round in 0..2 {
-        ca.send_frame(&fire);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &fire));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(
             &mut sv,
             &mut ca,
@@ -1563,8 +1659,8 @@ fn the_score_limit_sends_both_clients_to_intermission_and_then_rotates() {
         );
         if round == 0 {
             for _ in 0..30 {
-                ca.send_frame(&ads);
-                cb.send_frame(&facing_a);
+                ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+                cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
                 step(
                     &mut sv,
                     &mut ca,
@@ -1586,8 +1682,8 @@ fn the_score_limit_sends_both_clients_to_intermission_and_then_rotates() {
     // The intermission itself: both frozen at `pm_type` 5 within a frame or
     // two of the kill.
     for _ in 0..30 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(
             &mut sv,
             &mut ca,
@@ -1629,8 +1725,8 @@ fn the_score_limit_sends_both_clients_to_intermission_and_then_rotates() {
     // `wait 10` and then `exitLevel(false)`, whose `map_rotate` loads the
     // next map on the live netchan.
     for _ in 0..400 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(
             &mut sv,
             &mut ca,
@@ -1715,8 +1811,8 @@ fn a_round_restart_leaves_both_clients_armed_and_flips_the_teleport_bit() {
             killed = true;
         }
         let (cmd_a, cmd_b) = (common::holding(&ca), common::holding(&cb));
-        ca.send_frame(&cmd_a);
-        cb.send_frame(&cmd_b);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &cmd_a));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &cmd_b));
         let (ea, eb) = common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         for (i, (events, join, cl)) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)]
             .into_iter()
