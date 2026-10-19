@@ -213,7 +213,9 @@ pub struct BotView {
     /// move, so it is not stuck.
     pub linked: bool,
     /// The graph's nearest node to the body has no edge out
-    /// (`nav::NavGraph::dead_end`): the only way off is a fall.
+    /// (`nav::NavGraph::dead_end`): the only way off is a fall. Or, once the
+    /// graph stands over the script's brushes, it reaches no node of the
+    /// largest component (`nav::NavGraph::pit`): no way out the graph knows.
     pub stranded: bool,
     /// `ps.on_ladder`: the climb looks up, as the graph's walks did.
     pub on_ladder: bool,

@@ -1112,6 +1112,25 @@ impl NavGraph {
             .is_some_and(|n| self.edges[n as usize].is_empty())
     }
 
+    /// Whether [`Self::nearest`] to `p`, on its floor, reaches no node of
+    /// the largest component: a pit the graph knows no way out of, whose
+    /// roam pool is the pit itself. mp_foy's hollow at (4620, -2225, -14)
+    /// is dropped into from rims 38 to 58 up and left by no walk or jump
+    /// (bot-navigation.md section 3).
+    pub fn pit(&self, p: [f32; 3]) -> bool {
+        let Some(n) = self.nearest(p) else {
+            return false;
+        };
+        if (self.nodes[n as usize].z - p[2]).abs() > vcod_common::pmove::STEPSIZE {
+            return false;
+        }
+        let Some(main) = (0..self.members.len()).max_by_key(|&c| self.members[c].len()) else {
+            return false;
+        };
+        let own = self.comp[n as usize] as usize;
+        self.reach[own][main / 64] & (1 << (main % 64)) == 0
+    }
+
     /// Whether [`Self::nearest`] to `p` stands more than a step off its
     /// height: a body off the graph, whose plan starts at a node it walks
     /// to ([`Self::nearest_walkable`]).
@@ -7206,6 +7225,26 @@ mod tests {
             ));
             assert!(matches!(walk(Gait::CrouchJump), Walked::Arrived(_, true)));
         });
+    }
+
+    /// A drop from the main component into two nodes that reach only each
+    /// other: a pit on its floor, not from the rim over it.
+    #[test]
+    fn a_pair_dropped_into_with_no_way_out_is_a_pit() {
+        let g = NavGraph::from_parts(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(32.0, 0.0, 0.0),
+                Vec3::new(64.0, 0.0, 0.0),
+                Vec3::new(96.0, 0.0, -40.0),
+                Vec3::new(96.0, 32.0, -40.0),
+            ],
+            vec![vec![1], vec![0, 2], vec![1, 3], vec![4], vec![3]],
+        );
+        assert!(g.pit([96.0, 16.0, -40.0]));
+        assert!(!g.pit([32.0, 0.0, 0.0]));
+        // Over the pit, a storey up: not on its floor.
+        assert!(!g.pit([96.0, 16.0, 0.0]));
     }
 
     #[test]

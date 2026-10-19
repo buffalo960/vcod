@@ -1122,3 +1122,54 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
 /// the bases did, so the gate stops short of it.
 const BAS_ROUND_TICKS: usize = 29 * 60 * 20;
 const BAS_BREACH_TICKS: usize = 5 * 60 * 20;
+
+/// mp_foy's hollow at (4620, -2225, -14): its rims stand 38 to 58 over its
+/// floor, and the graph drops into it with no way out, so a roam from in
+/// it picks only its own nodes. Master 447d904f's UO tdm seed 51 held a bot
+/// there 751 bot-ticks, jumping at the lip of a marginal edge out that the
+/// graph no longer proves; now a bot in it types `kill`
+/// (bot-navigation.md section 3).
+#[test]
+#[ignore = "builds mp_foy's UO graph and runs a bot for 20 s of game time; run with --ignored"]
+fn a_bot_in_mp_foys_hollow_kills_itself() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_foy").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(1, false, "tdm");
+    cfg.map = "mp_foy".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let slot = (0..2000)
+        .find_map(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_slots()
+                .into_iter()
+                .find(|s| sv.bot_body(*s).is_some_and(|b| b.playing))
+        })
+        .expect("the bot plays");
+    // The graph builds on its own thread; a bot off it does not roam.
+    assert!(
+        (0..2000).any(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.test_nav_route([4612.0, -2234.0, -15.0], [4652.0, -2208.0, -13.0])
+                .is_some()
+        }),
+        "no graph"
+    );
+    sv.place_client(slot, [4635.0, -2241.0, -12.0], 0.0);
+    let died = (0..400).any(|_| {
+        run(&mut sv, &mut now, 1);
+        sv.bot_body(slot).is_some_and(|b| b.dead)
+    });
+    assert!(
+        died,
+        "still in the hollow at {:?}",
+        sv.bot_body(slot).map(|b| b.origin)
+    );
+}

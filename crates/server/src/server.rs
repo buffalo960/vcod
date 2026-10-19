@@ -4726,6 +4726,14 @@ impl Server {
         }
     }
 
+    /// Whether the graph stands over the brushes the script links now, with
+    /// no rebuild asked for or under way: a room behind a gametype's walls
+    /// reads as a pit only until the rebuild over their removal lands.
+    fn nav_settled(&self) -> bool {
+        let links = self.script.as_ref().map_or(0, |rt| rt.host.brush_links);
+        self.nav_rebuild.is_none() && self.nav_relink.is_none() && links == self.nav_links
+    }
+
     /// Rebuilds the navigation graph over the brushes the script has linked
     /// and unlinked since it was built, once they have held still for
     /// [`NAV_RELINK_MS`]: United Offensive's `bas.gsc` deletes a base's
@@ -5175,10 +5183,10 @@ impl Server {
                 })
             }),
             linked: sim.link_to.is_some(),
-            stranded: self
-                .nav
-                .as_ref()
-                .is_some_and(|g| g.dead_end(sim.ps.origin.into())),
+            stranded: self.nav.as_ref().is_some_and(|g| {
+                let at = sim.ps.origin.into();
+                g.dead_end(at) || (self.nav_settled() && g.pit(at))
+            }),
             on_ladder: sim.ps.on_ladder,
             ladder_normal: sim.ps.ladder_normal.into(),
             ladder_middle: self

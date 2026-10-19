@@ -1114,6 +1114,33 @@ peaks at 25 against the lip with no ground gained, lands back, and
 replans to the foot node and back for about 1 000 ticks (`TRACE=2`,
 ticks 1040 to 2000). Not looked into further.
 
+The hollow on master ee4c0d0b (VERIFIED, measured, ours, release, UO
+rules, `ship_stalls` `UO=1 MAP=mp_foy GAMETYPE=tdm TICKS=2400`): seed 51
+stalls 0 bot-ticks and seeds 1 to 63 odd 20 (seeds 13 and 49, elsewhere
+on the map); no run puts a bot in the hollow. The graph no longer has
+the edge out: `nav_build` (`UO=1 GAMETYPE=tdm`, digest
+2a7ea2623d0acc4a) gives the hollow five nodes, (4584, -2236, -17),
+(4608, -2214, -14), (4612, -2234, -15), (4648, -2235, -11) and (4652,
+-2208, -13), a component of their own that four rim nodes drop into
+((4608, -2158, 36), (4656, -2159, 46), (4659, -2258, 25), (4656, -2206,
+44)) and that has no edge out; the lowest rim stands 38 over the floor,
+a unit under `JUMP_HEIGHT`. A bot placed in it roams only its own five
+nodes (`NavGraph::roam_pool`: the largest component it reaches is its
+own) and paced there all 600 ticks of three seeds. So the jump from 14
+units short is no longer reachable; what is left is the pit. A bot
+whose nearest node on its floor reaches no node of the largest
+component (`NavGraph::pit`) is now `BotView::stranded`, as on a dead
+end, and types `kill` after `STRAND_TICKS` (`tests/bots.rs`
+`a_bot_in_mp_foys_hollow_kills_itself`). INFERRED: a room behind a
+gametype's walls reads as a pit until the rebuild over their removal
+lands (`nav_build` without `GAMETYPE` leaves ten of mp_foy's 391
+spawns and ten of mp_italy's 371 reaching no node of the largest
+component; with `GAMETYPE=tdm` all of mp_foy's reach it), so the rule
+waits for a graph over the script's current brush links
+(`Server::nav_settled`). mp_dawnville's spawns 38 and 74 ((-652, -17194,
+56) and (-648, -17088, 80)) reach no node of it on 1.1 and UO alike: a
+bot spawned there now types `kill` after 10 s where it paced before.
+
 ## 3. Following
 
 The brain stays pure. Each tick the server asks `Bot::goal(&BotView)` for a
