@@ -2305,6 +2305,12 @@ impl Bot {
                 self.grenade_cooldown = GRENADE_COOLDOWN_TICKS;
                 self.rifle = view.weapon;
                 self.stage = Stage::ToGrenade;
+                // The start tick aims as the stages do: a cmd left at null
+                // angles turned the view onto `delta_angles`, off the enemy,
+                // and a target never recorded left the release no lob
+                // (bot-objectives.md 6).
+                self.throw_at = Some(e.origin);
+                cmd.angles = self.lob_angles(view);
                 cmd.weapon = g;
                 return cmd;
             }
