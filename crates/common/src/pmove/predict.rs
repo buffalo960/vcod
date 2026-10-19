@@ -194,9 +194,6 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
         ps.last_cmd_angles = [cmd.angles[0], cmd.angles[1]];
         ps.last_cmd_ads = cmd.buttons & msg::BUTTON_ADS != 0;
         ps.melee_latched = cmd.buttons & msg::BUTTON_MELEE != 0;
-        if ps.weaponstate == weapon::WEAPON_DROPPING {
-            ps.pending_weapon = cmd.weapon;
-        }
     }
 
     // `pml.previous_origin`.
@@ -423,12 +420,10 @@ mod tests {
         assert_eq!(pred.ps.speed, 250.0);
     }
 
-    /// A putaway in flight raises the weapon the cmd at `commandTime` asked
-    /// for, not weapon 0.
+    /// The cmd at `commandTime` seeds the latches the wire lacks.
     #[test]
     fn the_cmd_at_command_time_seeds_what_the_wire_lacks() {
-        let mut w = standing(5000);
-        set(&mut w, "weaponstate", i32::from(weapon::WEAPON_DROPPING));
+        let w = standing(5000);
         let last = UserCmd {
             server_time: 5000,
             buttons: msg::BUTTON_ADS | msg::BUTTON_MELEE,
@@ -437,15 +432,9 @@ mod tests {
             ..Default::default()
         };
         let pred = from_wire(&PROTOCOL_V1, &w, Some(&last));
-        assert_eq!(pred.ps.pending_weapon, 6);
         assert_eq!(pred.ps.last_cmd_angles, [10, 20]);
         assert!(pred.ps.last_cmd_ads);
         assert!(pred.ps.melee_latched);
-        set(&mut w, "weaponstate", i32::from(weapon::WEAPON_READY));
-        assert_eq!(
-            from_wire(&PROTOCOL_V1, &w, Some(&last)).ps.pending_weapon,
-            0
-        );
     }
 
     #[test]
