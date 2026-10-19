@@ -2564,17 +2564,21 @@ replays on the `PROBE_IN` lines rather than the logged inputs.
 - 1.5b: every row matches, every round's direction within 2e-5. VERIFIED,
   vcod measurement.
 - 1.1d: every row matches but the rounds' directions. VERIFIED, vcod
-  measurement: all 13 leave one 65536th of yaw (0.0055 degrees) left of
-  ours, and 11 of them sit within 2e-7 of retail's once ours is turned by
-  it (`leanhit_ab::DIR_YAW_11`). INFERRED, from the constant offset on
-  every round: retail's scope froze a turn-sway yaw lag of a 65536th
-  where ours froze none (15.3). Retail's snapshots read view yaw 0 from
-  the spawn to the freeze, as ours' cmds do; which turn left the lag is
-  not found. `t_prone` (3.5e-5 low in z) and `t_right` (4.4e-5 in y, 3e-5
-  in z) stay off past that, under a 65536th of view each, so one side
-  read the hold's exact angles and the other a cmd's quantized ones,
-  though their trigger cmds sit on the frame with the cmd before 18 ms
-  ahead, as the other eleven's do (`leanhit_ab::DIR_GAPS_11`, open).
+  measurement: all 13 left one 65536th of yaw (0.0055 degrees) left of
+  ours. The shooter spawned at yaw 180 and the hold turned him to 0; the
+  spawn's own think fed retail's sway a last view of 180 that ours never
+  saw, and the turn off it decayed to -1 65536th by the cmd the scope froze
+  the sway on (15.3, "The spawn's view"). VERIFIED, vcod measurement: with
+  ours' spawn think running the block, 11 rounds leave within 2e-7 of
+  retail's direction with no offset. `t_prone` (3.5e-5 low in z) and
+  `t_right` (4.4e-5 in y, 3e-5 in z) stay off: ours read the hold's exact
+  angles and retail a cmd's quantized ones. VERIFIED, vcod measurement:
+  replayed with the shooter's cmd 18 ms before the trigger run after the
+  frame (`ProbeHold::lead_ms` 18), both match and seven others move off.
+  INFERRED: on retail that cmd reached the server after the frame's
+  threads in those two phases only; the capture logs no cmd's arrival
+  against the frames, so the replay cannot place it
+  (`leanhit_ab::DIR_GAPS_11`, open; 15.1, "The cmd that fires").
 - UO: every row matches but the shooter's `PROBE eye`, 0.166 and 0.083
   units off ours in x and y on every row (`leanhit_ab::EYE_OFF_UO`). He
   spawned standing on the sloped point (976, -792, -2.04889); VERIFIED,
@@ -7271,7 +7275,9 @@ one that pulled the trigger.
   captures tapped in the grid's frame and logged no input by cmd, and
   their `DIR_GAPS_*` lists stayed open; their 2026-10-19 rerun with
   `probe_tapwait 1` replays without them on the plain windows and the
-  `PROBE_IN` lines, but for 1.1d's frozen yaw lag and two rounds (3.6).
+  `PROBE_IN` lines, but for two 1.1d rounds whose cmd before the trigger
+  ran after the frame on retail (3.6). A fixture that logs the shooter's
+  own `commandTime` with each snapshot would place every such cmd.
 - The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
   `-press-1.5` replay with the shooter's sway state logged per cmd). The
   shooter holds the sight from his first cmd (12450, `in=10:16`), but
@@ -7409,6 +7415,29 @@ reads below, and the constants; INFERRED: the conditions.
   cgame `0x300361f0`: the client passes `1 + (swayShellShockScale - 1) *
   ease` through a shellshock and 1.0 otherwise, so the shellshock key is a
   client-side thing.
+
+**The spawn's view.** VERIFIED, 1.1d `ClientSpawn` (`0x4268c`): the
+`__bzero` of the whole `0x22c4`-byte client at `0x42804` clears the sway
+state at `client+0x2278` and the playerstate's weapon with it,
+`SetClientViewAngle` (`0x429e2`) writes the spawn's angles into
+`ps.viewangles`, and `ClientThink_real` (`0x42a82`) runs on the zeroed
+cmd. VERIFIED: the block has no weapon or `pm_type` gate (`0x3ffc4`:
+only `sessionState` 3 and 2 branch off it), and the sway reads
+`weaponDefs[ps.weapon]` straight off the table (`0x3a557`-`0x3a568`).
+INFERRED: the think's block runs on weapon 0's def, zero but its name
+(`0x35b55`), so its sway moves nothing and stores the spawn's angles as
+its last view; the loadout's first cmd then turns off them. A spawn
+point at yaw 180 is stored as 180, so the turn onto 0 reads
+`AngleSubtract(0, 180)` -180 (`0x3e968`: `while > 180` and `while <
+-180`), and the lag starts negative; vcod's quantized view reads -180
+there, which would turn it the other way. VERIFIED, vcod measurement
+(`leanhit_ab`'s 1.1d `-cmds` capture): the lag that decay leaves when the
+scope freezes it is the -1 65536th all 13 of its rounds carried (3.6).
+INFERRED: 1.5b's and UO's `ClientSpawn` make the same three calls (1.5b
+`0x3ceac`, `0x3cf1e`, `0x3cf35`; UO `0x45342`, `0x453f2`, `0x45409`) and
+their sway reads `BG_GetInfoForWeapon(ps.weapon)` (1.5b `0x32083`, UO
+`0x392d3`). VERIFIED, vcod measurement: with the spawn's block run on
+all three, every 1.5b and UO `leanhit_ab` case still passes.
 
 ### 15.4 `BG_CalculateViewAngles` (`0x3a930`)
 
