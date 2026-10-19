@@ -73,10 +73,36 @@ interpolated snapshot (0x300291d0) on four tests at
 (`PMF_FOLLOW`), and reads no `pm_type` before the mask above. INFERRED, Q3's
 order: the globals are demo playback, `cg_nopredict` and synchronous
 clients. So the cgame predicts its own spectator, under 0x800011
-(INFERRED). vcod predicts `pm_type` 0, 1 and 4
-(`predict::predictable`) and clips the spectator with `MASK_SPECTATOR`,
-the same 0x800011; it draws a dead body and the intermission off the
-snapshot.
+(INFERRED), its own corpse under 0x810011 and the intermission. vcod
+predicts `pm_type` 0, 1, 4, 5 and 6 (`predict::predictable`) and clips the
+spectator with `MASK_SPECTATOR`, the same 0x800011; it draws a linked
+corpse (7) off the snapshot.
+
+VERIFIED, 1.1d `PmoveSingle`: the dispatch's `pm_type - 1` table at
+`.rodata` 0x70ce8 sends 5 to 0x34456, the function's exit past every move,
+and `PM_UpdateViewAngles` returns on 5 at once (0x32d91); the only state
+the cmd changes is `commandTime` (0x34074). The intermission's think on the
+server runs no `Pmove` at all, so its snapshots hold `commandTime`. 7 takes
+the table's 0x34220, the linked arm 1 also takes (ground 1023, no move,
+`PM_Weapon`), not the dead move. VERIFIED, cgame 1.1 `CG_CalcViewValues`
+(0x300333f2): at `pm_type` 5 the view is `ps.origin` and `ps.viewangles`,
+no eye height, though retail's intermission snapshot carries
+`viewHeightCurrent` 60 and `viewHeightTarget` 60 (the spawn's standing
+eye, `mp_carentan-dm-slope-8ms-states-1.1.txt`).
+
+VERIFIED, retail captures through the predictor (`predict_ab`, each
+snapshot rebuilt through `from_wire` and the capture's cmds run to the
+next, origin, velocity and `viewHeightCurrent` compared bit for bit,
+2026-10-19): 1.1d's `client-probes/probe_states` spectator spell, 439 of 439
+(372 moving, flown into the roofs and walls over the street and dived onto
+it), its corpse killed running, 79 of 79 (each creeping down the street's
+grade), its intermission, 630 of 630; UO's `probe_uostates` spectator 79 of
+79 and corpse 59 of 59. The UO corpse took a fix: a 1.5 or UO corpse
+killed inside a jump penalty still drops off the ground every frame,
+because `PM_CheckLadderMove`'s timer return there wants `pm_flags` 0x300
+too (UO `FUN_0003c9a6`'s opening test, 1.5 `FUN_00037330`'s); vcod's dead
+move had kept 1.1's bare `pm_time` test and held 29 of the 59 snapshots
+still.
 
 VERIFIED: `BG_CheckProneValid` (0x2d428) traces with 0x810011 and 0x820011
 (0x2d4c2, 0x2d4d2), neither holding 0x2000000; `PM_UpdateLean` (0x32ac8)
@@ -1467,10 +1493,12 @@ The gates:
 - **A client that sends no cmds** keeps the `solid` of its last link. That
   is retail's rule too (section 4.2), not a divergence; the same holds for
   a client at intermission, whose contents go 0 without a relink.
-- **Prediction of a dead body and the intermission.** Retail's cgame
-  predicts every own `pm_type` (section 1.1); vcod predicts 0, 1 and 4 and
-  draws 5, 6 and 7 off the snapshot. The spectator's clear at `pm_type` 4
-  is `MASK_SPECTATOR`.
+- **Prediction of a linked corpse.** Retail's cgame predicts every own
+  `pm_type` (section 1.1); vcod predicts 0, 1, 4, 5 and 6 and draws 7 off
+  the snapshot. Retail runs 7 through the linked arm; vcod-server runs a
+  linked corpse's cmds through the dead move, so the two would not agree.
+  No capture holds one. The spectator's clear at `pm_type` 4 is
+  `MASK_SPECTATOR`.
 - **The packing clamp.** VERIFIED: retail clamps all three bytes to `[1,
   255]` (section 4.1). `Body::pack_solid` clamps `zd` to `[1, 255]` and `zu`
   to `[0, 255]` and passes `x` through. No player box reaches the

@@ -1403,14 +1403,10 @@ impl ClientSim {
         if self.pm_dead {
             if let Some(w) = world {
                 // A corpse's landing event; nothing in it is `ClientEvents`'.
-                for e in pmove::dead_move(&mut self.ps, &w, dt) {
-                    self.ring.add(e.event, e.parm);
-                }
+                cmd::dead_step(&mut self.ps, &mut self.ring, dt, &w, self.respawned);
                 self.dead_eye = true;
-            }
-            // `PM_Weapon`'s `pm_type > 5` arm, behind its `PMF_RESPAWNED`
-            // return (0x390ee..0x390fe).
-            if !self.respawned {
+            } else if !self.respawned {
+                // `PM_Weapon`'s `pm_type > 5` arm (`cmd::dead_step`).
                 self.ps.weapon = 0;
             }
             self.relink();
@@ -2603,6 +2599,13 @@ impl ClientSim {
         }
         if !player && self.respawned {
             set("pm_flags", PMF_RESPAWNED);
+        }
+        // The spawn's standing eye, which the intermission's think never
+        // moves: retail's 1.1d `probe_states` capture reads 60 and 60
+        // (cod11-player-clip.md 1.1).
+        if self.pm_type == PmType::Intermission {
+            set("viewHeightCurrent", self.ps.view_height().to_bits() as i32);
+            set("viewHeightTarget", self.ps.stance.view_height() as i32);
         }
         set("viewlocked", i32::from(self.viewlocked));
         set("shellshockIndex", self.shellshock[0]);

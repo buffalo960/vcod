@@ -1712,8 +1712,9 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     dead_friction(ps);
     // `PM_CheckLadderMove` past its `pm_time` return: a dead player loses the
     // ladder flag, the ground entity, `pml.groundPlane` and `pml.walking`
-    // (0x33782-0x337a5).
-    if ps.knockback_ms <= 0.0 {
+    // (0x33782-0x337a5). A 1.5 or UO corpse killed inside a jump penalty
+    // still drops.
+    if !ladder_check_skipped(ps) {
         ps.on_ladder = false;
         ps.on_ground = false;
         ps.ground_plane = None;
@@ -4094,6 +4095,20 @@ fn forward3(ps: &PlayerState) -> Vec3 {
     )
 }
 
+/// Whether `PM_CheckLadderMove` returns at its `pm_time` test, keeping last
+/// frame's ladder flag: on 1.1 any running timer (0x336f6), on 1.5 and UO
+/// only a knockback's or a stun's, not the jump penalty's (1.5
+/// 0x2734f-0x27369, UO `FUN_0003c9a6`'s opening test).
+fn ladder_check_skipped(ps: &PlayerState) -> bool {
+    match ps.rules {
+        MoveRules::V1_1 => ps.knockback_ms > 0.0,
+        MoveRules::V1_5 | MoveRules::Uo => {
+            ps.knockback_ms > 0.0
+                && ps.knockback_flags & (PMF_TIME_KNOCKBACK | PMF_TIME_DAMAGE) != 0
+        }
+    }
+}
+
 /// Retail `PM_CheckLadderMove` (game.mp.i386.so 0x336e8): a box trace
 /// 30 units along the flat view (8 while walking, which also needs the
 /// forward key), or along `-vLadderVec` while already on a ladder in the air;
@@ -4101,18 +4116,7 @@ fn forward3(ps: &PlayerState) -> Vec3 {
 /// its top. A prone body never takes a ladder. Sets `ps.on_ladder` and
 /// `ps.ladder_normal` and returns the normal.
 fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -> Option<Vec3> {
-    // A running knockback or landing-stun timer skips the check and keeps
-    // last frame's ladder flag (`pm_time` test at 0x336f6).
-    // 1.5 skips only for a knockback's or a stun's, not the jump penalty's
-    // (0x2734f-0x27369).
-    let skip = match ps.rules {
-        MoveRules::V1_1 => ps.knockback_ms > 0.0,
-        MoveRules::V1_5 | MoveRules::Uo => {
-            ps.knockback_ms > 0.0
-                && ps.knockback_flags & (PMF_TIME_KNOCKBACK | PMF_TIME_DAMAGE) != 0
-        }
-    };
-    if skip {
+    if ladder_check_skipped(ps) {
         return ps.on_ladder.then_some(ps.ladder_normal);
     }
     let was_on_ladder = ps.on_ladder;

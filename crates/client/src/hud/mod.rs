@@ -1284,6 +1284,7 @@ mod tests {
             command_time: 0,
             view_lerp_start: 0,
             ring: Default::default(),
+            respawned: false,
         };
         pred.ps.ammoclip[10] = 4;
         pred.ps.aim_spread_scale = 50.0;

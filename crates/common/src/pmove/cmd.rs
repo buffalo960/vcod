@@ -244,6 +244,27 @@ pub fn spectator_step(
     view
 }
 
+/// One `PmoveSingle` for a dead body (`pm_type` 6), on one of [`chop`]'s
+/// steps: [`super::dead_move`], its landing events into the ring, and
+/// `PM_Weapon`'s `pm_type > 5` arm, which drops the weapon behind its
+/// `PMF_RESPAWNED` return (0x390ee..0x390fe). The server's dead arm and the
+/// client's prediction of its own corpse both run it
+/// (cod11-player-clip.md 1.1).
+pub fn dead_step(
+    ps: &mut PlayerState,
+    ring: &mut EventRing,
+    dt: f32,
+    world: &MoveWorld,
+    respawned: bool,
+) {
+    for e in super::dead_move(ps, world, dt) {
+        ring.add(e.event, e.parm);
+    }
+    if !respawned {
+        ps.weapon = 0;
+    }
+}
+
 /// One `PmoveSingle` for a live player, on one of [`chop`]'s steps.
 /// `delta_angles` are the raw wire values the cmd's angles are offset by, and
 /// `ps.linked` is the caller's to set.
