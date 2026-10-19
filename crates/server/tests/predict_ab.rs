@@ -1131,15 +1131,14 @@ fn predictor_matches_the_1_1_server_step() {
 /// 1.5's).
 #[test]
 fn predictor_matches_the_1_5_server_step() {
-    let Some(fs) = vcod_common::testing::game_fs()
-        .filter(|fs| vcod_common::net::protocol::install_protocol(fs).version == 6)
-    else {
+    let Some(fs) = fs_15() else {
         return;
     };
     let failures: Vec<String> = [
         "mp_carentan-dm-slope-8ms-moves-1.5.txt",
         "mp_carentan-dm-slope-8ms-turns-1.5.txt",
         "mp_carentan-dm-slope-8ms-speedgrav-1.5.txt",
+        "mp_carentan-dm-slope-8ms-states-1.5.txt",
     ]
     .iter()
     .filter_map(|file| capture_side_by_side(&PROTOCOL_V6, &fs, file, "mp_carentan").err())
@@ -1344,6 +1343,66 @@ fn predictor_holds_retail_intermission_1_1() {
         &PROTOCOL_V1,
         &fs,
         "mp_carentan-dm-slope-8ms-states-1.1.txt",
+        vcod_common::net::flags::PM_INTERMISSION,
+        600,
+        0,
+    );
+}
+
+/// A 1.5 install's paks, or a UO one's `main/` (1.5's).
+fn fs_15() -> Option<vcod_common::pk3::Pk3Fs> {
+    vcod_common::testing::game_fs()
+        .filter(|fs| vcod_common::net::protocol::install_protocol(fs).version == 6)
+}
+
+/// The 22 s spectator spell of retail 1.5b's `probe_states` capture: 1.5's
+/// stored fly move (cod15-movement.md 5, "The fly move"). Needs `COD_DIR` at
+/// a 1.5 install, or a UO one.
+#[test]
+fn predictor_flies_retail_spectator_1_5() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V6,
+        &fs,
+        "mp_carentan-dm-slope-8ms-states-1.5.txt",
+        vcod_common::net::flags::PM_SPECTATOR,
+        400,
+        200,
+    );
+}
+
+/// The corpse of retail 1.5b's `probe_states` capture, killed 1475 ms into
+/// a stance change's `pm_time`: the ladder check skipped only on a knockback
+/// or stun timer, so it drops anyway (cod11-player-clip.md 1.1). Needs
+/// `COD_DIR` at a 1.5 install, or a UO one.
+#[test]
+fn predictor_drops_retail_corpse_1_5() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V6,
+        &fs,
+        "mp_carentan-dm-slope-8ms-states-1.5.txt",
+        vcod_common::net::flags::PM_DEAD,
+        70,
+        30,
+    );
+}
+
+/// The intermission of retail 1.5b's `probe_states` capture. Needs `COD_DIR`
+/// at a 1.5 install, or a UO one.
+#[test]
+fn predictor_holds_retail_intermission_1_5() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V6,
+        &fs,
+        "mp_carentan-dm-slope-8ms-states-1.5.txt",
         vcod_common::net::flags::PM_INTERMISSION,
         600,
         0,

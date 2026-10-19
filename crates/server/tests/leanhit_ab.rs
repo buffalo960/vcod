@@ -58,8 +58,6 @@ struct Case {
     /// offset, carried by every bone of a standing or crouched body and by
     /// none of a prone one, which rests on its own ground trace.
     stand_dz: f32,
-    /// Phases whose round's `PROBE dir` may sit past [`DIR_NEAR`].
-    dir_gaps: &'static [&'static str],
     gaps: Gaps,
     /// The capture logs each client's input changes by cmd (`CMDS ...
     /// in=`): the replay presses on those cmds, not on the `PROBE_IN`
@@ -93,6 +91,9 @@ const CMDS_JOIN_15: i64 = 8250;
 const CMDS_LATE_15: i64 = 3300;
 const CMDS_JOIN_UO: i64 = 8400;
 const CMDS_LATE_UO: i64 = 3500;
+/// The second 1.1d `-cmds` run's (`-cmds-ct`), joined the same way.
+const CT_JOIN_11: i64 = 8100;
+const CT_LATE_11: i64 = 3050;
 
 /// The first 1.5b capture's target stands 0.0402 under ours after the
 /// hold's `setOrigin` drop. Where that drop of a unit and a bit stops rides
@@ -112,16 +113,6 @@ const CELL_GAPS_15: Gaps = &[
     ("t_crouch_left", &[('s', 22, 5)]),
     ("t_crouch_right", &[('f', 22, 1)]),
 ];
-
-/// The two rounds of the 1.1d `-cmds` run past [`DIR_NEAR`]: 3.5e-5 low
-/// in z (`t_prone`), 4.4e-5 off in y and 3e-5 in z (`t_right`), ours
-/// along the hold's exact angles and retail's along a cmd's quantized
-/// ones. Replayed with the shooter's cmd 18 ms before the trigger run
-/// after the frame, as retail's must have run, both match and the other
-/// eleven move off; the capture logs no cmd's arrival against the frames,
-/// so neither side can be chosen per round (cod11-combat.md 15.1, "The
-/// cmd that fires").
-const DIR_GAPS_11: &[&str] = &["t_prone", "t_right"];
 
 /// The buttons, `wbuttons` and `up` of a `f "PROBE_IN ..."` command
 /// (`vehicle_probe::direct_input`).
@@ -181,12 +172,20 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
     let (mut ha, mut hb) = (aim(), aim());
     ha.times = common::cmds_times(c.fixture, "shooter");
     hb.times = common::cmds_times(c.fixture, "target");
+    ha.ran = common::cmds_ran(c.fixture, "shooter");
+    hb.ran = common::cmds_ran(c.fixture, "target");
     let (mut pa, mut pb) = (Vec::new(), Vec::new());
     if c.press {
         // The target's `setOrigin` drop lands on retail's height on the
         // plain frame windows, and off it under the lead (open,
         // cod11-combat.md 15.1, "The cmd that fires").
         ha.lead_ms = PRESS_LEAD_MS;
+        pa = common::cmds_inputs(c.fixture, "shooter");
+        pb = common::cmds_inputs(c.fixture, "target");
+    }
+    if !ha.ran.is_empty() {
+        // A capture that logs each snapshot's `commandTime` places every
+        // cmd on retail's side of a frame, so it presses on the cmds too.
         pa = common::cmds_inputs(c.fixture, "shooter");
         pb = common::cmds_inputs(c.fixture, "target");
     }
@@ -521,7 +520,7 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
         }
     }
     let (rd, od) = (dirs(&retail), dirs(&ours));
-    for (phase, r) in rd.iter().filter(|(p, _)| !c.dir_gaps.contains(&p.as_str())) {
+    for (phase, r) in &rd {
         let o = od.get(phase).copied();
         if o.is_none_or(|o| (0..3).any(|i| (o[i] - r[i]).abs() > DIR_NEAR)) {
             bad.push(format!("round {phase} direction: retail {r:?} ours {o:?}"));
@@ -548,7 +547,6 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             join_ms: 8550,
             late_ms: 3450,
             stand_dz: 0.0,
-            dir_gaps: &[],
             gaps: &[],
             press: false,
         },
@@ -567,7 +565,6 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             join_ms: JOIN_11,
             late_ms: LATE_11,
             stand_dz: 0.0,
-            dir_gaps: &[],
             gaps: &[],
             press: false,
         },
@@ -594,7 +591,6 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             join_ms: 8200,
             late_ms: 2800,
             stand_dz: STAND_DZ_15,
-            dir_gaps: &[],
             gaps: CELL_GAPS_15,
             press: false,
         },
@@ -613,7 +609,6 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             join_ms: JOIN_UO,
             late_ms: LATE_UO,
             stand_dz: 0.0,
-            dir_gaps: &[],
             gaps: &[],
             press: false,
         },
@@ -622,16 +617,17 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
 
 /// The `-cmds` captures: `probe_fall 1` and `probe_tapwait 1`, the
 /// shooter's origin and both clients' cmd times, which the gate replays
-/// (`ProbeHold::times`), pressing on the `PROBE_IN` lines rather than the
-/// inputs the captures also log by cmd. A second run of the `-press`
-/// recipe on each server.
+/// (`ProbeHold::times`). The 1.5b and UO ones press on the `PROBE_IN`
+/// lines rather than the inputs they also log by cmd; the 1.1d ones log
+/// each snapshot's `commandTime` too (`ct=`), and replay each cmd on the
+/// side of a frame retail ran it on and press on the logged inputs
+/// (`ProbeHold::ran`). A second run of the `-press` recipe on each server.
 fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
     Case {
         fixture,
         join_ms,
         late_ms,
         stand_dz: 0.0,
-        dir_gaps: &[],
         gaps: &[],
         press: false,
     }
@@ -643,13 +639,19 @@ fn a_dropped_body_lands_and_poses_as_on_retail_on_its_cmds() {
         return;
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-cmds.txt");
-    check(
-        fs,
-        &Case {
-            dir_gaps: DIR_GAPS_11,
-            ..cmds_case(fixture, CMDS_JOIN_11, CMDS_LATE_11)
-        },
-    );
+    check(fs, &cmds_case(fixture, CMDS_JOIN_11, CMDS_LATE_11));
+}
+
+/// The 1.1d `-cmds` recipe's second run, its `ct=` printed by the probe.
+/// Every cmd before a trigger ran ahead of the frame here; in the first
+/// run two ran after it (`t_prone`, `t_right`).
+#[test]
+fn a_dropped_body_lands_and_poses_as_on_retail_on_its_logged_frames() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-cmds-ct.txt");
+    check(fs, &cmds_case(fixture, CT_JOIN_11, CT_LATE_11));
 }
 
 #[test]

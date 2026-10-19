@@ -7,6 +7,8 @@
 //	(its runs, the held jump's climb and the crouch's dive onto the
 //	ground), a respawn, a suicide inside the diagonal runs (a corpse that
 //	slides) and the intermission. cod11-player-clip.md 1.1.
+//	+set probe_suicide_wait <s> moves the suicide (14 s after the respawn by
+//	default); 10.5 kills 1.5b's body inside the stance timer (pm_time).
 
 main()
 {
@@ -59,7 +61,10 @@ timeline()
 	wait 22;
 	logPrint("PROBE respawn " + getTime() + "\n");
 	self thread maps\mp\gametypes\dm::spawnPlayer();
-	wait 14;
+	suicide_wait = 14;
+	if (getCvar("probe_suicide_wait") != "")
+		suicide_wait = getCvarFloat("probe_suicide_wait");
+	wait suicide_wait;
 	logPrint("PROBE suicide " + getTime() + " " + self.origin + "\n");
 	self suicide();
 	wait 4;

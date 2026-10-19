@@ -532,6 +532,12 @@ takes `framed`, which lands him on retail's float after the script's
   `v15` arm), the predictor replays the 79 spectating snapshots of
   `mp_carentan-dm-slope-8ms-uostates-uo.txt` on retail's origin and
   velocity bit for bit (`coduo-movement.md`, the uostates capture).
+- VERIFIED (measured 2026-10-19, `predict_ab`'s
+  `predictor_flies_retail_spectator_1_5`): on 1.5b's own server,
+  `client-probes/probe_states` (`mp_carentan-dm-slope-8ms-states-1.5.txt`),
+  the predictor replays all 439 spectating snapshot pairs bit for bit on
+  origin, velocity and eye, 311 of them moving. Run under 1.1's unstored
+  arithmetic instead, 155 of the 439 differ.
 
 ### ps.gravity
 

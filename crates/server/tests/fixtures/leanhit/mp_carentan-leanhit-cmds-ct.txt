@@ -1,0 +1,1107 @@
+# Retail CoD 1.1d dedicated server, 2026-10-19, second run: the PROBE lines of
+# client-probes/probe_leanhit on mp_carentan with probe_bones 1 and
+# probe_fall 1 (probe_pin 1, probe_stamp 1 and probe_tapwait 1), then each client's CMDS lines (the cmd times it sent, the cmds whose input changed, the snapshot each was sent on and each of those snapshots' commandTime).
+# COD_VERSION=1.1 COD_DIR=<1.1 install> COD_LNXDED_HOME=<abs> PORT=33371 SECS=100 tools/run_probe.sh client-probes/probe_leanhit mp_carentan +set probe_bones 1 +set probe_fall 1 +set probe_pin 1 +set probe_stamp 1 +set probe_tapwait 1
+# vcod --game-dir <1.1 install> --net-probe 127.0.0.1:33371 --probe-team axis --probe-uo-weapon direct --probe-secs 85   # 8 s in
+# vcod --game-dir <1.1 install> --net-probe 127.0.0.1:33371 --probe-team allies --probe-weapon springfield_mp --probe-uo-weapon direct --probe-secs 80   # 3 s later
+# The target's first playing snapshot read serverTime 8900, the shooter's 11950.
+PROBE site 1050 (1000.00, 1216.00, -23.75) (1256.00, 1216.00, -23.75) 0
+PROBE spawnat 11950 shooter 976 -864 -3.26903 0 180 0
+PROBE spawnat 11950 target 1800 2696 -21.2536 0 225 0
+PROBE fall 12000 target 0.00959778
+PROBE fall 12050 target 0.00959778
+PROBE fall 12050 shooter -0.124775
+PROBE fall 12100 shooter -0.124775
+PROBE fall 12100 target 0.00959778
+PROBE fall 12150 target 0.00959778
+PROBE fall 12150 shooter -0.124775
+PROBE fall 12200 shooter -0.124775
+PROBE fall 12200 target 0.00959778
+PROBE fall 12250 target 0.00959778
+PROBE fall 12250 shooter -0.124775
+PROBE fall 12300 shooter -0.124775
+PROBE fall 12300 target 0.00959778
+PROBE fall 12350 target 0.00959778
+PROBE fall 12350 shooter -0.124775
+PROBE fall 12400 shooter -0.124775
+PROBE fall 12400 target 0.00959778
+PROBE fall 12450 target 0.00959778
+PROBE fall 12450 shooter -0.124775
+PROBE fall 12500 shooter -0.124775
+PROBE models 0 xmodel/basehead_axis_a_01 xmodel/gear_german_helmet_falshrm_blk xmodel/gear_german_load1_falshrm xmodel/gear_german_bandolier
+PROBE phase 20000 level
+PROBE body 21250 level 0 0 0.00959778
+PROBE eye 21250 level 0.0339966 0.135986 -0.124775
+PROBE bone 21250 level bip01 pelvis 5.21094 -2.20654 35.0426
+PROBE bone 21250 level bip01 spine2 4.61243 -2.3949 45.2341
+PROBE bone 21250 level bip01 neck 1.13379 -0.973022 57.0406
+PROBE bone 21250 level bip01 head 0.0855713 0.591919 59.3841
+PROBE bone 21250 level bip01 l upperarm -5.88342 -4.15344 52.0527
+PROBE bone 21250 level bip01 r upperarm 8.60559 2.42383 53.5385
+PROBE bone 21250 level bip01 l forearm -7.83447 -3.49756 40.1352
+PROBE bone 21250 level bip01 r forearm 11.399 12.0558 46.7793
+PROBE bone 21250 level bip01 l hand -15.9954 2.88354 45.2901
+PROBE bone 21250 level bip01 r hand 0.816528 7.46313 45.8795
+PROBE bone 21250 level tag_weapon_right -4.18152 5.36426 47.7806
+PROBE body 21300 level 0 0 0.00959778
+PROBE eye 21300 level 0.0339966 0.135986 -0.124775
+PROBE bone 21300 level bip01 pelvis 5.21277 -2.19934 35.0297
+PROBE bone 21300 level bip01 spine2 4.6156 -2.38892 45.2215
+PROBE bone 21300 level bip01 neck 1.13147 -0.972534 57.027
+PROBE bone 21300 level bip01 head 0.0827637 0.591431 59.3709
+PROBE bone 21300 level bip01 l upperarm -5.88452 -4.14685 52.0336
+PROBE bone 21300 level bip01 r upperarm 8.60535 2.43079 53.5353
+PROBE bone 21300 level bip01 l forearm -7.77466 -3.50879 40.1054
+PROBE bone 21300 level bip01 r forearm 11.3873 12.139 46.8815
+PROBE bone 21300 level bip01 l hand -15.9716 2.91296 45.1514
+PROBE bone 21300 level bip01 r hand 0.846313 7.47913 45.8497
+PROBE bone 21300 level tag_weapon_right -4.1604 5.35632 47.7007
+PROBE body 21350 level 0 0 0.00959778
+PROBE eye 21350 level 0.0339966 0.135986 -0.124775
+PROBE bone 21350 level bip01 pelvis 5.21277 -2.19934 35.0297
+PROBE bone 21350 level bip01 spine2 4.6156 -2.38892 45.2215
+PROBE bone 21350 level bip01 neck 1.13147 -0.972534 57.027
+PROBE bone 21350 level bip01 head 0.0827637 0.591431 59.3709
+PROBE bone 21350 level bip01 l upperarm -5.88452 -4.14685 52.0336
+PROBE bone 21350 level bip01 r upperarm 8.60535 2.43079 53.5353
+PROBE bone 21350 level bip01 l forearm -7.77466 -3.50879 40.1054
+PROBE bone 21350 level bip01 r forearm 11.3873 12.139 46.8815
+PROBE bone 21350 level bip01 l hand -15.9716 2.91296 45.1514
+PROBE bone 21350 level bip01 r hand 0.846313 7.47913 45.8497
+PROBE bone 21350 level tag_weapon_right -4.1604 5.35632 47.7007
+PROBE grid 21500 level f 4 - - - - 77.0068 81.441 - - - - -
+PROBE grid 21500 level f 10 - - - - 74.4635 77.8333 56.4101 58.2878 - - -
+PROBE grid 21500 level f 16 - - - - 72.1938 74.7271 55.0796 61.2092 - - -
+PROBE grid 21500 level f 22 - - - 74.2827 69.0877 54.9751 52.8128 63.1049 - - -
+PROBE grid 21500 level f 28 - - - - 66.8179 57.4229 55.2606 64.0423 70.0408 - -
+PROBE grid 21500 level f 34 - - - - 67.4639 59.8707 57.7084 63.9367 69.9353 - -
+PROBE grid 21500 level f 40 - - - - 68.2421 47.1664 53.6131 63.8311 69.8297 - -
+PROBE grid 21500 level f 46 - - - 62.6442 44.6537 46.1484 55.7417 64.5365 - - -
+PROBE grid 21500 level f 52 - - - 76.0827 65.0526 56.1572 56.2052 - - - -
+PROBE grid 21500 level f 58 - - - - 62.8458 57.5548 57.4814 - - - -
+PROBE grid 21500 level f 64 - - - - 56.0167 55.4 - - - - -
+PROBE grid 21500 level f 70 - - - - 65.6796 61.1446 - - - - -
+PROBE grid 21500 level f 76 - - - - - - - - - - -
+PROBE grid 21500 level s 4 - - - - 36.3887 36.4922 - - 46.9891 - - - - - -
+PROBE grid 21500 level s 10 - - - - 36.0865 34.2826 - 51.2642 46.1535 - - - - - -
+PROBE grid 21500 level s 16 - - - - 36.9649 35.1609 - 46.1395 48.6209 - - - - - -
+PROBE grid 21500 level s 22 - - - - 37.5349 35.7309 30.1465 35.9945 42.0002 48.0059 - - - - -
+PROBE grid 21500 level s 28 - - - - 38.4132 36.0423 30.0409 35.5883 41.594 47.5997 - - - - -
+PROBE grid 21500 level s 34 - - - - 39.2916 35.9367 29.9353 35.1821 41.1878 47.1935 - - - - -
+PROBE grid 21500 level s 40 - - - 43.2208 40.3878 35.8311 29.8296 34.7759 40.7816 46.7873 - - - - -
+PROBE grid 21500 level s 46 - - 49.6031 50.8728 40.291 36.7219 41.9626 55.5844 - - - - - - -
+PROBE grid 21500 level s 52 - - - - 40.1062 36.5615 40.6085 44.6555 - - - - - - -
+PROBE grid 21500 level s 58 - - - - 41.3022 38.4649 42.5119 - - - - - - - -
+PROBE grid 21500 level s 64 - - - - 46.0604 44.7929 - - - - - - - - -
+PROBE grid 21500 level s 70 - - - - - 46.1976 - - - - - - - - -
+PROBE grid 21500 level s 76 - - - - - - - - - - - - - - -
+PROBE grid 21500 level_re f 4 - - - - 77.0068 81.441 - - - - -
+PROBE grid 21500 level_re f 10 - - - - 74.4635 77.8333 56.4101 58.2878 - - -
+PROBE grid 21500 level_re f 16 - - - - 72.1938 74.7271 55.0796 61.2092 - - -
+PROBE grid 21500 level_re f 22 - - - 74.2827 69.0877 54.9751 52.8128 63.1049 - - -
+PROBE grid 21500 level_re f 28 - - - - 66.8179 57.4229 55.2606 64.0423 70.0408 - -
+PROBE grid 21500 level_re f 34 - - - - 67.4639 59.8707 57.7084 63.9367 69.9353 - -
+PROBE grid 21500 level_re f 40 - - - - 68.2421 47.1664 53.6131 63.8311 69.8297 - -
+PROBE grid 21500 level_re f 46 - - - 62.6442 44.6537 46.1484 55.7417 64.5365 - - -
+PROBE grid 21500 level_re f 52 - - - 76.0827 65.0526 56.1572 56.2052 - - - -
+PROBE grid 21500 level_re f 58 - - - - 62.8458 57.5548 57.4814 - - - -
+PROBE grid 21500 level_re f 64 - - - - 56.0167 55.4 - - - - -
+PROBE grid 21500 level_re f 70 - - - - 65.6796 61.1446 - - - - -
+PROBE grid 21500 level_re f 76 - - - - - - - - - - -
+PROBE grid 21500 level_re s 4 - - - - 36.3887 36.4922 - - 46.9891 - - - - - -
+PROBE grid 21500 level_re s 10 - - - - 36.0865 34.2826 - 51.2642 46.1535 - - - - - -
+PROBE grid 21500 level_re s 16 - - - - 36.9649 35.1609 - 46.1395 48.6209 - - - - - -
+PROBE grid 21500 level_re s 22 - - - - 37.5349 35.7309 30.1465 35.9945 42.0002 48.0059 - - - - -
+PROBE grid 21500 level_re s 28 - - - - 38.4132 36.0423 30.0409 35.5883 41.594 47.5997 - - - - -
+PROBE grid 21500 level_re s 34 - - - - 39.2916 35.9367 29.9353 35.1821 41.1878 47.1935 - - - - -
+PROBE grid 21500 level_re s 40 - - - 43.2208 40.3878 35.8311 29.8296 34.7759 40.7816 46.7873 - - - - -
+PROBE grid 21500 level_re s 46 - - 49.6031 50.8728 40.291 36.7219 41.9626 55.5844 - - - - - - -
+PROBE grid 21500 level_re s 52 - - - - 40.1062 36.5615 40.6085 44.6555 - - - - - - -
+PROBE grid 21500 level_re s 58 - - - - 41.3022 38.4649 42.5119 - - - - - - - -
+PROBE grid 21500 level_re s 64 - - - - 46.0604 44.7929 - - - - - - - - -
+PROBE grid 21500 level_re s 70 - - - - - 46.1976 - - - - - - - - -
+PROBE grid 21500 level_re s 76 - - - - - - - - - - - - - - -
+PROBE hit 21550 level axis dmg 107 loc torso_upper point (1253.61, 1217.16, 20.37)
+PROBE dir 21550 level 0.997846 0.00458233 -0.0654372
+PROBE phase 23100 t_left
+PROBE body 24350 t_left 0 0 0.00959778
+PROBE eye 24350 t_left 0.0339966 0.135986 -0.124775
+PROBE bone 24350 t_left bip01 pelvis 6.77112 -5.29651 34.8448
+PROBE bone 24350 t_left bip01 spine2 6.31128 -11.3053 42.7645
+PROBE bone 24350 t_left bip01 neck 2.38452 -14.9109 53.9492
+PROBE bone 24350 t_left bip01 head 1.20483 -15.1156 56.7072
+PROBE bone 24350 t_left bip01 l upperarm -4.26245 -16.1234 47.7378
+PROBE bone 24350 t_left bip01 r upperarm 9.82959 -10.5128 52.1913
+PROBE bone 24350 t_left bip01 l forearm -7.68933 -9.21252 38.4233
+PROBE bone 24350 t_left bip01 r forearm 11.8876 1.2522 50.2909
+PROBE bone 24350 t_left bip01 l hand -15.9253 -3.34778 44.0505
+PROBE bone 24350 t_left bip01 r hand 0.975342 0.106079 46.6165
+PROBE bone 24350 t_left tag_weapon_right -4.15942 -2.28601 47.5718
+PROBE body 24400 t_left 0 0 0.00959778
+PROBE eye 24400 t_left 0.0339966 0.135986 -0.124775
+PROBE bone 24400 t_left bip01 pelvis 6.77698 -5.29956 34.8446
+PROBE bone 24400 t_left bip01 spine2 6.3396 -11.3038 42.7704
+PROBE bone 24400 t_left bip01 neck 2.42358 -14.8958 53.9633
+PROBE bone 24400 t_left bip01 head 1.25049 -15.0958 56.7244
+PROBE bone 24400 t_left bip01 l upperarm -4.24792 -16.0643 47.7696
+PROBE bone 24400 t_left bip01 r upperarm 9.88989 -10.5438 52.1826
+PROBE bone 24400 t_left bip01 l forearm -7.68335 -9.1637 38.4508
+PROBE bone 24400 t_left bip01 r forearm 11.9612 1.21765 50.2749
+PROBE bone 24400 t_left bip01 l hand -15.8862 -3.29993 44.127
+PROBE bone 24400 t_left bip01 r hand 1.03235 0.110107 46.6382
+PROBE bone 24400 t_left tag_weapon_right -4.10449 -2.26843 47.616
+PROBE body 24450 t_left 0 0 0.00959778
+PROBE eye 24450 t_left 0.0339966 0.135986 -0.124775
+PROBE bone 24450 t_left bip01 pelvis 6.77698 -5.29956 34.8446
+PROBE bone 24450 t_left bip01 spine2 6.3396 -11.3038 42.7704
+PROBE bone 24450 t_left bip01 neck 2.42358 -14.8958 53.9633
+PROBE bone 24450 t_left bip01 head 1.25049 -15.0958 56.7244
+PROBE bone 24450 t_left bip01 l upperarm -4.24792 -16.0643 47.7696
+PROBE bone 24450 t_left bip01 r upperarm 9.88989 -10.5438 52.1826
+PROBE bone 24450 t_left bip01 l forearm -7.68335 -9.1637 38.4508
+PROBE bone 24450 t_left bip01 r forearm 11.9612 1.21765 50.2749
+PROBE bone 24450 t_left bip01 l hand -15.8862 -3.29993 44.127
+PROBE bone 24450 t_left bip01 r hand 1.03235 0.110107 46.6382
+PROBE bone 24450 t_left tag_weapon_right -4.10449 -2.26843 47.616
+PROBE grid 24600 t_left f 4 - - - - 79.875 80.9175 - 56.8596 - - -
+PROBE grid 24600 t_left f 10 - - - - 75.7402 77.377 57.2665 55.3868 - - -
+PROBE grid 24600 t_left f 16 - - - - 72.3648 75.2935 56.3665 56.3223 70.7124 - -
+PROBE grid 24600 t_left f 22 - - - - 69.4741 72.4027 54.6592 57.3217 69.1353 - -
+PROBE grid 24600 t_left f 28 - - - - 71.4843 70.3192 57.479 59.261 68.8285 - -
+PROBE grid 24600 t_left f 34 - - - - 70.1052 65.1225 60.1398 61.2002 68.5218 - -
+PROBE grid 24600 t_left f 40 - - - - - 67.5937 47.5826 53.5763 64.8732 - -
+PROBE grid 24600 t_left f 46 - - - - - 45.6524 46.3723 55.4026 58.8449 62.4573 -
+PROBE grid 24600 t_left f 52 - - - - - 69.199 67.5455 58.9228 58.3148 62.2378 -
+PROBE grid 24600 t_left f 58 - - - - - - 68.2084 60.2735 60.459 - -
+PROBE grid 24600 t_left f 64 - - - - - - - 59.397 56.5775 64.7812 -
+PROBE grid 24600 t_left f 70 - - - - - - - - - - -
+PROBE grid 24600 t_left f 76 - - - - - - - - - - -
+PROBE grid 24600 t_left s 4 - - - - 35.1592 36.0951 - - 45.7539 - - - - - -
+PROBE grid 24600 t_left s 10 - - - - 34.8091 32.8336 - 50.821 44.4714 46.7502 - - - - -
+PROBE grid 24600 t_left s 16 - - - - 35.4476 33.4721 29.4543 44.8987 46.3428 - - - - - -
+PROBE grid 24600 t_left s 22 - - - - 35.7767 33.8012 29.1544 32.2708 38.4559 44.641 - - - - -
+PROBE grid 24600 t_left s 28 - - - - 36.4152 34.4397 28.8544 31.2994 37.4845 43.6696 - - - - -
+PROBE grid 24600 t_left s 34 - - - - - 34.4219 28.5544 30.328 36.5131 42.6982 - - - - -
+PROBE grid 24600 t_left s 40 - - 43.5842 37.578 33.0387 31.3355 28.2544 29.3567 35.5418 41.7269 - - - - -
+PROBE grid 24600 t_left s 46 - - 41.3913 43.4333 30.8458 21.9682 26.8439 31.7604 - - - - - - -
+PROBE grid 24600 t_left s 52 - - - - 30.4815 23.5664 25.1759 31.9164 - - - - - - -
+PROBE grid 24600 t_left s 58 - - - - 32.4921 27.4102 29.3868 - - - - - - - -
+PROBE grid 24600 t_left s 64 - - - - 28.9596 24.5714 30.4818 - - - - - - - -
+PROBE grid 24600 t_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 24600 t_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 24650 t_left axis dmg 107 loc torso_upper point (1250.85, 1204.60, 19.61)
+PROBE dir 24650 t_left 0.996582 -0.0452773 -0.0690947
+PROBE phase 26200 t_right
+PROBE body 27450 t_right 0 0 0.00959778
+PROBE eye 27450 t_right 0.0339966 0.135986 -0.124775
+PROBE bone 27450 t_right bip01 pelvis 5.2085 0.854248 35.1208
+PROBE bone 27450 t_right bip01 spine2 4.61206 6.07471 43.4852
+PROBE bone 27450 t_right bip01 neck 1.13342 11.5764 54.0278
+PROBE bone 27450 t_right bip01 head 0.0830078 13.8674 55.6672
+PROBE bone 27450 t_right bip01 l upperarm -5.88123 6.83142 50.4901
+PROBE bone 27450 t_right bip01 r upperarm 8.60303 13.512 49.5567
+PROBE bone 27450 t_right bip01 l forearm -7.8418 3.27246 39.0992
+PROBE bone 27450 t_right bip01 r forearm 11.4132 20.1348 39.8353
+PROBE bone 27450 t_right bip01 l hand -16.0037 11.0531 41.695
+PROBE bone 27450 t_right bip01 r hand 0.81958 15.5435 40.6013
+PROBE bone 27450 t_right tag_weapon_right -4.18347 14.2582 43.115
+PROBE body 27500 t_right 0 0 0.00959778
+PROBE eye 27500 t_right 0.0339966 0.135986 -0.124775
+PROBE bone 27500 t_right bip01 pelvis 5.21033 0.855713 35.1164
+PROBE bone 27500 t_right bip01 spine2 4.61145 6.07544 43.4809
+PROBE bone 27500 t_right bip01 neck 1.13452 11.5782 54.0236
+PROBE bone 27500 t_right bip01 head 0.0865479 13.8705 55.6629
+PROBE bone 27500 t_right bip01 l upperarm -5.88306 6.83972 50.4832
+PROBE bone 27500 t_right bip01 r upperarm 8.60571 13.5157 49.5447
+PROBE bone 27500 t_right bip01 l forearm -7.84863 3.24585 39.1041
+PROBE bone 27500 t_right bip01 r forearm 11.3998 20.1263 39.8105
+PROBE bone 27500 t_right bip01 l hand -16.0011 11.0367 41.6986
+PROBE bone 27500 t_right bip01 r hand 0.812378 15.5253 40.6039
+PROBE bone 27500 t_right tag_weapon_right -4.18359 14.2354 43.129
+PROBE body 27550 t_right 0 0 0.00959778
+PROBE eye 27550 t_right 0.0339966 0.135986 -0.124775
+PROBE bone 27550 t_right bip01 pelvis 5.21033 0.855713 35.1164
+PROBE bone 27550 t_right bip01 spine2 4.61145 6.07544 43.4809
+PROBE bone 27550 t_right bip01 neck 1.13452 11.5782 54.0236
+PROBE bone 27550 t_right bip01 head 0.0865479 13.8705 55.6629
+PROBE bone 27550 t_right bip01 l upperarm -5.88306 6.83972 50.4832
+PROBE bone 27550 t_right bip01 r upperarm 8.60571 13.5157 49.5447
+PROBE bone 27550 t_right bip01 l forearm -7.84863 3.24585 39.1041
+PROBE bone 27550 t_right bip01 r forearm 11.3998 20.1263 39.8105
+PROBE bone 27550 t_right bip01 l hand -16.0011 11.0367 41.6986
+PROBE bone 27550 t_right bip01 r hand 0.812378 15.5253 40.6039
+PROBE bone 27550 t_right tag_weapon_right -4.18359 14.2354 43.129
+PROBE grid 27700 t_right f 4 - - - - 77.28 - 56.7776 - - - -
+PROBE grid 27700 t_right f 10 - - - 81.2107 75.2189 78.7206 56.1423 62.9489 - - -
+PROBE grid 27700 t_right f 16 - - - 74.9262 72.3215 56.2469 54.7219 - - - -
+PROBE grid 27700 t_right f 22 - - - 70.7342 70.2604 54.1648 53.5321 66.3985 - - -
+PROBE grid 27700 t_right f 28 - - - 71.5908 67.3042 56.4556 54.5145 66.6592 - - -
+PROBE grid 27700 t_right f 34 - - - 71.1941 65.145 58.7464 58.6351 66.9199 - - -
+PROBE grid 27700 t_right f 40 - 72.384 63.0847 46.1418 47.5198 56.4375 61.863 67.1806 - - -
+PROBE grid 27700 t_right f 46 - - 60.3027 56.4882 53.3559 62.4197 67.4703 - - - -
+PROBE grid 27700 t_right f 52 - - 60.4231 55.3777 56.1167 62.8166 - - - - -
+PROBE grid 27700 t_right f 58 - - 56.2954 57.8541 58.6014 - - - - - -
+PROBE grid 27700 t_right f 64 - - 58.9754 - - - - - - - -
+PROBE grid 27700 t_right f 70 - - - - - - - - - - -
+PROBE grid 27700 t_right f 76 - - - - - - - - - - -
+PROBE grid 27700 t_right s 4 - - - - 37.529 37.6343 - - 48.1644 - - - - - -
+PROBE grid 27700 t_right s 10 - - - - 37.502 35.681 - 52.6616 47.6489 - - - - - -
+PROBE grid 27700 t_right s 16 - - - - 38.7526 36.9316 - 48.0538 50.5518 - - - - - -
+PROBE grid 27700 t_right s 22 - - - - 39.6916 37.8706 32.401 38.2832 44.2854 50.2877 - - - - -
+PROBE grid 27700 t_right s 28 - - - - 40.9422 38.6575 32.6615 38.2412 44.2434 50.2457 - - - - -
+PROBE grid 27700 t_right s 34 - - - - 42.1928 38.918 32.922 38.1992 44.2014 50.2037 - - - - -
+PROBE grid 27700 t_right s 40 - - 55.2574 50.2933 47.5833 39.1785 33.1826 38.1572 44.1594 50.1617 - - - - -
+PROBE grid 27700 t_right s 46 - - - - 49.3924 46.1863 47.1009 53.8804 - - - - - - -
+PROBE grid 27700 t_right s 52 - - - - 51.4371 47.2371 52.1635 57.0898 - - - - - - -
+PROBE grid 27700 t_right s 58 - - - - 59.4177 51.9888 56.9152 - - - - - - - -
+PROBE grid 27700 t_right s 64 - - - - 63.4643 61.8309 - - - - - - - - -
+PROBE grid 27700 t_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 27700 t_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 27750 t_right axis dmg 107 loc torso_upper point (1254.04, 1226.63, 17.45)
+PROBE dir 27750 t_right 0.996186 0.041683 -0.076654
+PROBE phase 29300 t_crouch
+PROBE body 30550 t_crouch 0 0 0.00959778
+PROBE eye 30550 t_crouch 0.0339966 0.135986 -0.124775
+PROBE bone 30550 t_crouch bip01 pelvis 12.5759 -3.01709 14.9064
+PROBE bone 30550 t_crouch bip01 spine2 11.8398 -3.32227 25.115
+PROBE bone 30550 t_crouch bip01 neck 8.85657 -2.02649 37.0706
+PROBE bone 30550 t_crouch bip01 head 7.57959 -1.10168 39.6307
+PROBE bone 30550 t_crouch bip01 l upperarm 3.10156 -7.33618 32.5164
+PROBE bone 30550 t_crouch bip01 r upperarm 13.9186 3.7251 35.5661
+PROBE bone 30550 t_crouch bip01 l forearm -6.03723 -3.59375 25.5349
+PROBE bone 30550 t_crouch bip01 r forearm 9.0437 12.4745 28.7876
+PROBE bone 30550 t_crouch bip01 l hand -13.2394 0.848633 33.427
+PROBE bone 30550 t_crouch bip01 r hand 1.40247 4.9375 33.1116
+PROBE bone 30550 t_crouch tag_weapon_right -3.58105 2.69434 34.8818
+PROBE body 30600 t_crouch 0 0 0.00959778
+PROBE eye 30600 t_crouch 0.0339966 0.135986 -0.124775
+PROBE bone 30600 t_crouch bip01 pelvis 12.5759 -3.01709 14.9064
+PROBE bone 30600 t_crouch bip01 spine2 11.8398 -3.32239 25.115
+PROBE bone 30600 t_crouch bip01 neck 8.85632 -2.02698 37.0706
+PROBE bone 30600 t_crouch bip01 head 7.57971 -1.10352 39.6314
+PROBE bone 30600 t_crouch bip01 l upperarm 3.10242 -7.33813 32.5165
+PROBE bone 30600 t_crouch bip01 r upperarm 13.917 3.72571 35.5659
+PROBE bone 30600 t_crouch bip01 l forearm -6.04468 -3.59216 25.548
+PROBE bone 30600 t_crouch bip01 r forearm 9.03821 12.4758 28.7913
+PROBE bone 30600 t_crouch bip01 l hand -13.2413 0.846436 33.4473
+PROBE bone 30600 t_crouch bip01 r hand 1.39978 4.93835 33.1195
+PROBE bone 30600 t_crouch tag_weapon_right -3.58252 2.69507 34.8927
+PROBE body 30650 t_crouch 0 0 0.00959778
+PROBE eye 30650 t_crouch 0.0339966 0.135986 -0.124775
+PROBE bone 30650 t_crouch bip01 pelvis 12.5759 -3.01709 14.9064
+PROBE bone 30650 t_crouch bip01 spine2 11.8398 -3.32239 25.115
+PROBE bone 30650 t_crouch bip01 neck 8.85632 -2.02698 37.0706
+PROBE bone 30650 t_crouch bip01 head 7.57971 -1.10352 39.6314
+PROBE bone 30650 t_crouch bip01 l upperarm 3.10242 -7.33813 32.5165
+PROBE bone 30650 t_crouch bip01 r upperarm 13.917 3.72571 35.5659
+PROBE bone 30650 t_crouch bip01 l forearm -6.04468 -3.59216 25.548
+PROBE bone 30650 t_crouch bip01 r forearm 9.03821 12.4758 28.7913
+PROBE bone 30650 t_crouch bip01 l hand -13.2413 0.846436 33.4473
+PROBE bone 30650 t_crouch bip01 r hand 1.39978 4.93835 33.1195
+PROBE bone 30650 t_crouch tag_weapon_right -3.58252 2.69507 34.8927
+PROBE grid 30800 t_crouch f 4 - - - 72.2059 74.9704 78.5222 48.6311 72.6618 81.3902 - -
+PROBE grid 30800 t_crouch f 10 - - - 73.5167 73.269 70.7587 50.2341 50.6897 80.345 - -
+PROBE grid 30800 t_crouch f 16 - - - - 72.3741 70.605 51.7526 52.2081 79.2999 - -
+PROBE grid 30800 t_crouch f 22 - - - - 74.5413 70.1184 58.1448 58.6363 78.2681 - -
+PROBE grid 30800 t_crouch f 28 - - - 68.1383 73.6923 50.7019 55.2265 69.0776 - - -
+PROBE grid 30800 t_crouch f 34 - - - - 64.037 48.3269 62.6537 69.7583 - - -
+PROBE grid 30800 t_crouch f 40 - - - - 74.5592 65.6769 69.3541 70.5074 - - -
+PROBE grid 30800 t_crouch f 46 - - - - - 64.5781 74.133 - - - -
+PROBE grid 30800 t_crouch f 52 - - - - - - - - - - -
+PROBE grid 30800 t_crouch f 58 - - - - - - - - - - -
+PROBE grid 30800 t_crouch f 64 - - - - - - - - - - -
+PROBE grid 30800 t_crouch f 70 - - - - - - - - - - -
+PROBE grid 30800 t_crouch f 76 - - - - - - - - - - -
+PROBE grid 30800 t_crouch s 4 - - - 37.5283 - - - 33.7053 30.5168 39.2064 47.8961 - - - -
+PROBE grid 30800 t_crouch s 10 - - - 35.3277 35.684 35.7467 36.1029 32.9868 30.7394 39.429 48.1187 - - - -
+PROBE grid 30800 t_crouch s 16 - - - 38.7412 34.9981 35.3544 35.7107 32.2683 30.962 39.6516 48.3412 - - - -
+PROBE grid 30800 t_crouch s 22 - - - - 42.6957 34.9621 38.3008 32.405 31.1845 39.8742 48.5638 - - - -
+PROBE grid 30800 t_crouch s 28 - - - 43.6 40.6247 38.7754 35.3716 36.0471 42.5738 - - - - - -
+PROBE grid 30800 t_crouch s 34 - - - 44.2662 - 39.4416 36.0953 38.3272 44.854 - - - - - -
+PROBE grid 30800 t_crouch s 40 - - - - - - 36.4467 40.6074 47.1342 - - - - - -
+PROBE grid 30800 t_crouch s 46 - - - - - - 42.1862 41.9159 - - - - - - -
+PROBE grid 30800 t_crouch s 52 - - - - - - - - - - - - - - -
+PROBE grid 30800 t_crouch s 58 - - - - - - - - - - - - - - -
+PROBE grid 30800 t_crouch s 64 - - - - - - - - - - - - - - -
+PROBE grid 30800 t_crouch s 70 - - - - - - - - - - - - - - -
+PROBE grid 30800 t_crouch s 76 - - - - - - - - - - - - - - -
+PROBE hit 30850 t_crouch axis dmg 107 loc torso_upper point (1259.68, 1216.79, 7.75)
+PROBE dir 30850 t_crouch 0.993712 0.00303057 -0.111921
+PROBE phase 32400 t_crouch_left
+PROBE body 33650 t_crouch_left 0 0 0.00959778
+PROBE eye 33650 t_crouch_left 0.0339966 0.135986 -0.124775
+PROBE bone 33650 t_crouch_left bip01 pelvis 12.5759 -4.86951 14.7405
+PROBE bone 33650 t_crouch_left bip01 spine2 11.8474 -12.0911 21.4197
+PROBE bone 33650 t_crouch_left bip01 neck 8.979 -16.3357 32.7012
+PROBE bone 33650 t_crouch_left bip01 head 7.80579 -16.6494 35.4517
+PROBE bone 33650 t_crouch_left bip01 l upperarm 2.70728 -18.2794 26.461
+PROBE bone 33650 t_crouch_left bip01 r upperarm 14.6288 -11.0691 33.8467
+PROBE bone 33650 t_crouch_left bip01 l forearm -6.0614 -11.6324 21.442
+PROBE bone 33650 t_crouch_left bip01 r forearm 10.022 -0.0524902 31.9296
+PROBE bone 33650 t_crouch_left bip01 l hand -12.5953 -11.8817 30.9886
+PROBE bone 33650 t_crouch_left bip01 r hand 2.17029 -8.53918 32.3969
+PROBE bone 33650 t_crouch_left tag_weapon_right -2.88306 -11.2015 33.01
+PROBE body 33700 t_crouch_left 0 0 0.00959778
+PROBE eye 33700 t_crouch_left 0.0339966 0.135986 -0.124775
+PROBE bone 33700 t_crouch_left bip01 pelvis 12.5759 -4.86951 14.7405
+PROBE bone 33700 t_crouch_left bip01 spine2 11.8474 -12.0911 21.4197
+PROBE bone 33700 t_crouch_left bip01 neck 8.97852 -16.3365 32.7007
+PROBE bone 33700 t_crouch_left bip01 head 7.80371 -16.6522 35.4503
+PROBE bone 33700 t_crouch_left bip01 l upperarm 2.71069 -18.2865 26.4584
+PROBE bone 33700 t_crouch_left bip01 r upperarm 14.6233 -11.0651 33.8476
+PROBE bone 33700 t_crouch_left bip01 l forearm -6.06067 -11.6423 21.4403
+PROBE bone 33700 t_crouch_left bip01 r forearm 10.0079 -0.0531006 31.9245
+PROBE bone 33700 t_crouch_left bip01 l hand -12.6047 -11.8843 30.9801
+PROBE bone 33700 t_crouch_left bip01 r hand 2.1626 -8.54602 32.3878
+PROBE bone 33700 t_crouch_left tag_weapon_right -2.88977 -11.2107 32.998
+PROBE body 33750 t_crouch_left 0 0 0.00959778
+PROBE eye 33750 t_crouch_left 0.0339966 0.135986 -0.124775
+PROBE bone 33750 t_crouch_left bip01 pelvis 12.5759 -4.86951 14.7405
+PROBE bone 33750 t_crouch_left bip01 spine2 11.8474 -12.0911 21.4197
+PROBE bone 33750 t_crouch_left bip01 neck 8.97852 -16.3365 32.7007
+PROBE bone 33750 t_crouch_left bip01 head 7.80371 -16.6522 35.4503
+PROBE bone 33750 t_crouch_left bip01 l upperarm 2.71069 -18.2865 26.4584
+PROBE bone 33750 t_crouch_left bip01 r upperarm 14.6233 -11.0651 33.8476
+PROBE bone 33750 t_crouch_left bip01 l forearm -6.06067 -11.6423 21.4403
+PROBE bone 33750 t_crouch_left bip01 r forearm 10.0079 -0.0531006 31.9245
+PROBE bone 33750 t_crouch_left bip01 l hand -12.6047 -11.8843 30.9801
+PROBE bone 33750 t_crouch_left bip01 r hand 2.1626 -8.54602 32.3878
+PROBE bone 33750 t_crouch_left tag_weapon_right -2.88977 -11.2107 32.998
+PROBE grid 33900 t_crouch_left f 4 - - - 74.6864 74.4649 77.1161 55.7694 49.2022 78.507 - -
+PROBE grid 33900 t_crouch_left f 10 - - - 74.7649 72.7204 69.2432 50.1421 50.6091 77.1649 - -
+PROBE grid 33900 t_crouch_left f 16 - - - - 74.699 71.6576 53.2722 52.0589 72.3051 - -
+PROBE grid 33900 t_crouch_left f 22 - - - - 84.5664 74.072 57.9513 51.9129 63.5604 68.5984 -
+PROBE grid 33900 t_crouch_left f 28 - - - - - 74.315 74.01 47.9013 62.2656 68.4506 -
+PROBE grid 33900 t_crouch_left f 34 - - - - - 68.4267 62.9353 63.2112 65.5971 - -
+PROBE grid 33900 t_crouch_left f 40 - - - - - - - - 65.0387 68.8493 -
+PROBE grid 33900 t_crouch_left f 46 - - - - - - - - 68.5146 - -
+PROBE grid 33900 t_crouch_left f 52 - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left f 58 - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left f 64 - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left f 70 - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left f 76 - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left s 4 - - - 36.2172 - - - 31.9061 29.8328 37.7435 45.6542 - - - -
+PROBE grid 33900 t_crouch_left s 10 - - - 33.802 34.138 34.1798 34.5158 30.8857 29.7469 37.6576 45.5684 - - - -
+PROBE grid 33900 t_crouch_left s 16 - - - 36.7572 33.3016 33.6376 33.9735 29.8653 29.661 37.5718 45.4825 - - - -
+PROBE grid 33900 t_crouch_left s 22 - - - 35.0334 31.7948 29.7627 20.8463 25.6424 32.4611 37.4859 45.3966 - - - -
+PROBE grid 33900 t_crouch_left s 28 - - - 32.6849 36.7429 26.2657 23.164 22.8965 26.6117 - - - - - -
+PROBE grid 33900 t_crouch_left s 34 - - - 37.7638 - 31.6909 27.211 25.4454 30.5343 - - - - - -
+PROBE grid 33900 t_crouch_left s 40 - - - - - 27.0042 23.4454 25.9377 - - - - - - -
+PROBE grid 33900 t_crouch_left s 46 - - - - - - 29.4554 27.2555 - - - - - - -
+PROBE grid 33900 t_crouch_left s 52 - - - - - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left s 58 - - - - - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left s 64 - - - - - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 33900 t_crouch_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 33950 t_crouch_left axis dmg 107 loc torso_upper point (1259.02, 1204.26, 2.74)
+PROBE dir 33950 t_crouch_left 0.990367 -0.0448852 -0.130989
+PROBE phase 35500 t_crouch_right
+PROBE body 36750 t_crouch_right 0 0 0.00959778
+PROBE eye 36750 t_crouch_right 0.0339966 0.135986 -0.124775
+PROBE bone 36750 t_crouch_right bip01 pelvis 12.5759 -1.15759 15.0365
+PROBE bone 36750 t_crouch_right bip01 spine2 11.8365 4.64697 22.8141
+PROBE bone 36750 t_crouch_right bip01 neck 8.79639 10.5148 33.2947
+PROBE bone 36750 t_crouch_right bip01 head 7.40576 12.0038 35.5058
+PROBE bone 36750 t_crouch_right bip01 l upperarm 3.26855 3.60876 31.3442
+PROBE bone 36750 t_crouch_right bip01 r upperarm 13.6163 15.3685 29.5292
+PROBE bone 36750 t_crouch_right bip01 l forearm -6.00513 4.01379 23.592
+PROBE bone 36750 t_crouch_right bip01 r forearm 8.46497 20.5336 19.883
+PROBE bone 36750 t_crouch_right bip01 l hand -13.397 11.0153 29.0901
+PROBE bone 36750 t_crouch_right bip01 r hand 1.06824 15.1342 26.9559
+PROBE bone 36750 t_crouch_right tag_weapon_right -3.83093 13.62 29.5454
+PROBE body 36800 t_crouch_right 0 0 0.00959778
+PROBE eye 36800 t_crouch_right 0.0339966 0.135986 -0.124775
+PROBE bone 36800 t_crouch_right bip01 pelvis 12.5759 -1.15759 15.0365
+PROBE bone 36800 t_crouch_right bip01 spine2 11.8367 4.6488 22.8125
+PROBE bone 36800 t_crouch_right bip01 neck 8.8009 10.5251 33.2895
+PROBE bone 36800 t_crouch_right bip01 head 7.41357 12.042 35.4838
+PROBE bone 36800 t_crouch_right bip01 l upperarm 3.24731 3.6438 31.3251
+PROBE bone 36800 t_crouch_right bip01 r upperarm 13.6492 15.3597 29.5358
+PROBE bone 36800 t_crouch_right bip01 l forearm -6.00586 4.03613 23.5478
+PROBE bone 36800 t_crouch_right bip01 r forearm 8.52283 20.5348 19.8816
+PROBE bone 36800 t_crouch_right bip01 l hand -13.3859 11.0477 29.0492
+PROBE bone 36800 t_crouch_right bip01 r hand 1.10474 15.1499 26.9433
+PROBE bone 36800 t_crouch_right tag_weapon_right -3.80237 13.647 29.5243
+PROBE body 36850 t_crouch_right 0 0 0.00959778
+PROBE eye 36850 t_crouch_right 0.0339966 0.135986 -0.124775
+PROBE bone 36850 t_crouch_right bip01 pelvis 12.5759 -1.15759 15.0365
+PROBE bone 36850 t_crouch_right bip01 spine2 11.8367 4.6488 22.8125
+PROBE bone 36850 t_crouch_right bip01 neck 8.8009 10.5251 33.2895
+PROBE bone 36850 t_crouch_right bip01 head 7.41357 12.042 35.4838
+PROBE bone 36850 t_crouch_right bip01 l upperarm 3.24731 3.6438 31.3251
+PROBE bone 36850 t_crouch_right bip01 r upperarm 13.6492 15.3597 29.5358
+PROBE bone 36850 t_crouch_right bip01 l forearm -6.00586 4.03613 23.5478
+PROBE bone 36850 t_crouch_right bip01 r forearm 8.52283 20.5348 19.8816
+PROBE bone 36850 t_crouch_right bip01 l hand -13.3859 11.0477 29.0492
+PROBE bone 36850 t_crouch_right bip01 r hand 1.10474 15.1499 26.9433
+PROBE bone 36850 t_crouch_right tag_weapon_right -3.80237 13.647 29.5243
+PROBE grid 37000 t_crouch_right f 4 - - - 72.5988 75.5118 77.6597 48.7808 74.8466 - - -
+PROBE grid 37000 t_crouch_right f 10 - - - 71.8888 73.8879 71.2158 50.2623 74.2042 - - -
+PROBE grid 37000 t_crouch_right f 16 - - - 74.2649 72.264 69.1692 51.8386 73.5618 - - -
+PROBE grid 37000 t_crouch_right f 22 - - 65.1528 68.7137 53.5817 66.5892 58.2587 72.9194 - - -
+PROBE grid 37000 t_crouch_right f 28 - - 63.5029 48.8283 51.1284 64.5987 - - - - -
+PROBE grid 37000 t_crouch_right f 34 - - - 64.7995 64.6725 69.786 - - - - -
+PROBE grid 37000 t_crouch_right f 40 - - 64.7085 65.1126 73.837 - - - - - -
+PROBE grid 37000 t_crouch_right f 46 - - - 66.7366 - - - - - - -
+PROBE grid 37000 t_crouch_right f 52 - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right f 58 - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right f 64 - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right f 70 - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right f 76 - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right s 4 - - - 38.7948 - - - 35.2442 31.4569 40.5573 49.6577 - - - -
+PROBE grid 37000 t_crouch_right s 10 - - - 36.9024 37.2718 - 37.7175 34.8233 31.9827 41.0831 50.1835 - - - -
+PROBE grid 37000 t_crouch_right s 16 - - - 39.6458 36.8194 37.1888 37.5582 34.4023 32.5086 41.609 50.7094 - - - -
+PROBE grid 37000 t_crouch_right s 22 - - - - 45.6569 37.0296 37.399 33.9814 33.0344 42.1348 51.2352 - - - -
+PROBE grid 37000 t_crouch_right s 28 - - - 53.5291 51.5652 48.3235 46.8285 44.8053 53.6653 - - - - - -
+PROBE grid 37000 t_crouch_right s 34 - - - - - 51.7629 47.8256 50.7541 59.6141 - - - - - -
+PROBE grid 37000 t_crouch_right s 40 - - - - - 64.2349 51.1431 58.224 - - - - - - -
+PROBE grid 37000 t_crouch_right s 46 - - - - - - 59.7537 61.0851 - - - - - - -
+PROBE grid 37000 t_crouch_right s 52 - - - - - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right s 58 - - - - - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right s 64 - - - - - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 37000 t_crouch_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 37050 t_crouch_right axis dmg 107 loc torso_upper point (1257.13, 1227.12, 5.41)
+PROBE dir 37050 t_crouch_right 0.991624 0.0428848 -0.121834
+PROBE phase 38600 t_prone
+PROBE body 40850 t_prone 0 0 0.00959778
+PROBE eye 40850 t_prone 0.0339966 0.135986 -0.124775
+PROBE bone 40850 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40850 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40850 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40850 t_prone bip01 head -1.32727 -2.64307 7.50081
+PROBE bone 40850 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40850 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40850 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40850 t_prone bip01 r forearm 1.79004 8.52039 -0.696394
+PROBE bone 40850 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40850 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40850 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE body 40900 t_prone 0 0 0.00959778
+PROBE eye 40900 t_prone 0.0339966 0.135986 -0.124775
+PROBE bone 40900 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40900 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40900 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40900 t_prone bip01 head -1.32727 -2.64307 7.50081
+PROBE bone 40900 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40900 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40900 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40900 t_prone bip01 r forearm 1.79004 8.52039 -0.696394
+PROBE bone 40900 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40900 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40900 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE body 40950 t_prone 0 0 0.00959778
+PROBE eye 40950 t_prone 0.0339966 0.135986 -0.124775
+PROBE bone 40950 t_prone bip01 pelvis 23.5442 -5.91724 6.14864
+PROBE bone 40950 t_prone bip01 spine2 13.4955 -4.8761 5.46893
+PROBE bone 40950 t_prone bip01 neck 1.59143 -2.79785 8.20594
+PROBE bone 40950 t_prone bip01 head -1.32727 -2.64307 7.50081
+PROBE bone 40950 t_prone bip01 l upperarm 0.00964355 -9.72595 3.20497
+PROBE bone 40950 t_prone bip01 r upperarm 3.83386 3.02966 9.88368
+PROBE bone 40950 t_prone bip01 l forearm -11.937 -7.89221 2.78386
+PROBE bone 40950 t_prone bip01 r forearm 1.79004 8.52039 -0.696394
+PROBE bone 40950 t_prone bip01 l hand -21.2708 -1.87109 6.0272
+PROBE bone 40950 t_prone bip01 r hand -6.9082 4.35913 5.70027
+PROBE bone 40950 t_prone tag_weapon_right -11.7936 1.91443 7.45423
+PROBE grid 41100 t_prone f 4 - - - 95.9323 54.3284 40.4874 42.4594 59.1288 85.8493 97.6291 -
+PROBE grid 41100 t_prone f 10 - - - - 67.1717 55.9709 57.6117 66.4922 87.5 - -
+PROBE grid 41100 t_prone f 16 - - - - 78.6698 55.5115 77.0168 76.1903 98.1257 - -
+PROBE grid 41100 t_prone f 22 - - - - - 102.234 100.279 98.3248 99.7673 - -
+PROBE grid 41100 t_prone f 28 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 34 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 40 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 46 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 52 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 58 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 64 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 70 - - - - - - - - - - -
+PROBE grid 41100 t_prone f 76 - - - - - - - - - - -
+PROBE grid 41100 t_prone s 4 - 48.5113 38.5739 37.417 36.2244 35.0972 35.3841 36.4914 33.9534 28.9045 25.8485 24.6167 26.345 33.0326 35.1812
+PROBE grid 41100 t_prone s 10 - - - - 41.955 36.4686 35.3404 34.2122 32.1328 29.7453 26.6892 29.4823 51.1109 - -
+PROBE grid 41100 t_prone s 16 - - - - 44.7186 44.0234 - 33.258 32.3745 31.491 30.6075 29.724 - - -
+PROBE grid 41100 t_prone s 22 - - - - - - - - - - - 29.9657 - - -
+PROBE grid 41100 t_prone s 28 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 34 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 40 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 46 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 52 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 58 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 64 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 70 - - - - - - - - - - - - - - -
+PROBE grid 41100 t_prone s 76 - - - - - - - - - - - - - - -
+PROBE hit 41150 t_prone axis dmg 180 loc head point (1246.89, 1215.00, -8.83)
+PROBE dir 41150 t_prone 0.983195 -0.00397454 -0.182514
+PROBE phase 42700 t_prone_left
+PROBE body 43950 t_prone_left 0 0 0.00959778
+PROBE eye 43950 t_prone_left 0.0339966 0.135986 -0.124775
+PROBE bone 43950 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 43950 t_prone_left bip01 spine2 13.9933 -10.1636 5.47093
+PROBE bone 43950 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 43950 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 43950 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 43950 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 43950 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 43950 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 43950 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 43950 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 43950 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE body 44000 t_prone_left 0 0 0.00959778
+PROBE eye 44000 t_prone_left 0.0339966 0.135986 -0.124775
+PROBE bone 44000 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 44000 t_prone_left bip01 spine2 13.9933 -10.1636 5.47093
+PROBE bone 44000 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 44000 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 44000 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 44000 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 44000 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 44000 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 44000 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 44000 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 44000 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE body 44050 t_prone_left 0 0 0.00959778
+PROBE eye 44050 t_prone_left 0.0339966 0.135986 -0.124775
+PROBE bone 44050 t_prone_left bip01 pelvis 23.5442 -7.01099 6.14864
+PROBE bone 44050 t_prone_left bip01 spine2 13.9933 -10.1636 5.47093
+PROBE bone 44050 t_prone_left bip01 neck 1.97168 -10.0828 8.46945
+PROBE bone 44050 t_prone_left bip01 head -0.953369 -10.266 7.79819
+PROBE bone 44050 t_prone_left bip01 l upperarm 1.27307 -16.5935 2.75697
+PROBE bone 44050 t_prone_left bip01 r upperarm 3.4126 -4.20935 10.7564
+PROBE bone 44050 t_prone_left bip01 l forearm -10.8185 -16.4238 2.58963
+PROBE bone 44050 t_prone_left bip01 r forearm 0.416992 2.03198 0.840054
+PROBE bone 44050 t_prone_left bip01 l hand -20.8348 -12.1542 6.50563
+PROBE bone 44050 t_prone_left bip01 r hand -7.48962 -3.96692 6.78896
+PROBE bone 44050 t_prone_left tag_weapon_right -11.9515 -7.2467 8.29059
+PROBE grid 44200 t_prone_left f 4 - - - 97.4233 81.6503 55.3662 61.5304 41.6307 45.8816 95.4817 -
+PROBE grid 44200 t_prone_left f 10 - - - - 80.2354 65.8708 55.9032 41.4805 62.9447 - -
+PROBE grid 44200 t_prone_left f 16 - - - - 78.8205 77.994 57.3501 55.7081 90.6978 - -
+PROBE grid 44200 t_prone_left f 22 - - - - - 102.59 100.636 98.6811 96.7266 - -
+PROBE grid 44200 t_prone_left f 28 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 34 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 40 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 46 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 52 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 58 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 64 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 70 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left f 76 - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 4 - - 29.9031 27.8997 29.1639 28.917 25.2949 29.2863 32.023 27.8108 24.7547 23.5229 25.2512 31.9389 34.0875
+PROBE grid 44200 t_prone_left s 10 - 38.5229 34.1786 - 34.0054 28.8725 26.2797 28.1996 30.3259 28.6516 25.5955 28.3885 50.0171 - -
+PROBE grid 44200 t_prone_left s 16 - - - - 35.4573 35.6495 - 32.1642 31.2807 30.3972 29.5138 28.6303 - - -
+PROBE grid 44200 t_prone_left s 22 - - - - - - - - - - - 28.872 - - -
+PROBE grid 44200 t_prone_left s 28 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 34 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 40 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 46 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 52 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 58 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 64 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 70 - - - - - - - - - - - - - - -
+PROBE grid 44200 t_prone_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 44250 t_prone_left axis dmg 180 loc head point (1248.04, 1206.51, -12.68)
+PROBE dir 44250 t_prone_left 0.979839 -0.0374796 -0.196241
+PROBE phase 45800 t_prone_right
+PROBE body 47050 t_prone_right 0 0 0.00959778
+PROBE eye 47050 t_prone_right 0.0339966 0.135986 -0.124775
+PROBE bone 47050 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 47050 t_prone_right bip01 spine2 14.8746 0.19104 5.20976
+PROBE bone 47050 t_prone_right bip01 neck 3.43225 4.20178 7.75959
+PROBE bone 47050 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 47050 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 47050 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 47050 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 47050 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 47050 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 47050 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 47050 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE body 47100 t_prone_right 0 0 0.00959778
+PROBE eye 47100 t_prone_right 0.0339966 0.135986 -0.124775
+PROBE bone 47100 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 47100 t_prone_right bip01 spine2 14.8746 0.19104 5.20976
+PROBE bone 47100 t_prone_right bip01 neck 3.43225 4.20178 7.75959
+PROBE bone 47100 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 47100 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 47100 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 47100 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 47100 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 47100 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 47100 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 47100 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE body 47150 t_prone_right 0 0 0.00959778
+PROBE eye 47150 t_prone_right 0.0339966 0.135986 -0.124775
+PROBE bone 47150 t_prone_right bip01 pelvis 23.5442 -4.82349 6.14864
+PROBE bone 47150 t_prone_right bip01 spine2 14.8746 0.19104 5.20976
+PROBE bone 47150 t_prone_right bip01 neck 3.43225 4.20178 7.75959
+PROBE bone 47150 t_prone_right bip01 head 0.550293 4.68958 7.05493
+PROBE bone 47150 t_prone_right bip01 l upperarm 0.802979 -2.92676 3.5428
+PROBE bone 47150 t_prone_right bip01 r upperarm 6.49707 9.8009 8.78846
+PROBE bone 47150 t_prone_right bip01 l forearm -10.7776 0.51355 2.97959
+PROBE bone 47150 t_prone_right bip01 r forearm 5.03162 14.3689 -2.31324
+PROBE bone 47150 t_prone_right bip01 l hand -19.1161 8.09766 5.59571
+PROBE bone 47150 t_prone_right bip01 r hand -4.03467 12.1758 4.53401
+PROBE bone 47150 t_prone_right tag_weapon_right -9.17786 10.6428 6.56341
+PROBE grid 47300 t_prone_right f 4 - - - 42.9549 42.2017 47.2946 61.2271 81.2522 87.9967 - -
+PROBE grid 47300 t_prone_right f 10 - - - 58.5027 57.8848 62.9336 70.5586 77.4546 89.6473 - -
+PROBE grid 47300 t_prone_right f 16 - - - - 59.5198 77.6927 76.8662 76.0397 - - -
+PROBE grid 47300 t_prone_right f 22 - - - - - 101.878 99.9231 97.9685 - - -
+PROBE grid 47300 t_prone_right f 28 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 34 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 40 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 46 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 52 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 58 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 64 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 70 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right f 76 - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 4 - - 49.5251 45.4996 43.2239 42.4453 41.3712 40.7578 35.5192 29.9983 26.9422 25.7104 27.4387 34.1264 36.275
+PROBE grid 47300 t_prone_right s 10 - - 55.9082 - 51.3379 44.2221 42.1893 40.1564 33.2265 30.8391 27.783 30.576 52.2046 - -
+PROBE grid 47300 t_prone_right s 16 - - - - 54.4052 52.8055 - 34.3517 33.4682 32.5847 31.7013 30.8178 - - -
+PROBE grid 47300 t_prone_right s 22 - - - - - - - - - - - 31.0595 - - -
+PROBE grid 47300 t_prone_right s 28 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 34 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 40 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 46 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 52 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 58 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 64 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 47300 t_prone_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 47350 t_prone_right axis dmg 180 loc head point (1249.92, 1226.68, -12.06)
+PROBE dir 47350 t_prone_right 0.980407 0.0419061 -0.192471
+PROBE phase 48900 t_stand
+PROBE body 51150 t_stand 0 0 0.00959778
+PROBE eye 51150 t_stand 0.0339966 0.135986 -0.124775
+PROBE bone 51150 t_stand bip01 pelvis 5.21704 -2.12622 35.0102
+PROBE bone 51150 t_stand bip01 spine2 4.70764 -2.38635 45.2134
+PROBE bone 51150 t_stand bip01 neck 0.998047 -1.21936 56.9776
+PROBE bone 51150 t_stand bip01 head -0.0957031 0.296387 59.3325
+PROBE bone 51150 t_stand bip01 l upperarm -5.92029 -4.28662 51.785
+PROBE bone 51150 t_stand bip01 r upperarm 8.52686 2.30579 53.7437
+PROBE bone 51150 t_stand bip01 l forearm -7.60657 -3.63599 39.8269
+PROBE bone 51150 t_stand bip01 r forearm 11.1813 12.3632 47.5741
+PROBE bone 51150 t_stand bip01 l hand -15.9175 2.97839 44.4173
+PROBE bone 51150 t_stand bip01 r hand 0.918335 7.31799 45.8108
+PROBE bone 51150 t_stand tag_weapon_right -4.15332 5.151 47.4182
+PROBE body 51200 t_stand 0 0 0.00959778
+PROBE eye 51200 t_stand 0.0339966 0.135986 -0.124775
+PROBE bone 51200 t_stand bip01 pelvis 5.22034 -2.13184 35.0159
+PROBE bone 51200 t_stand bip01 spine2 4.70166 -2.3822 45.218
+PROBE bone 51200 t_stand bip01 neck 1.0199 -1.19116 56.9884
+PROBE bone 51200 t_stand bip01 head -0.0682373 0.32959 59.3428
+PROBE bone 51200 t_stand bip01 l upperarm -5.91113 -4.26794 51.8183
+PROBE bone 51200 t_stand bip01 r upperarm 8.54211 2.323 53.7283
+PROBE bone 51200 t_stand bip01 l forearm -7.61707 -3.62988 39.8623
+PROBE bone 51200 t_stand bip01 r forearm 11.2003 12.344 47.5011
+PROBE bone 51200 t_stand bip01 l hand -15.9191 2.97278 44.4854
+PROBE bone 51200 t_stand bip01 r hand 0.916748 7.31702 45.8066
+PROBE bone 51200 t_stand tag_weapon_right -4.14758 5.15039 47.4369
+PROBE body 51250 t_stand 0 0 0.00959778
+PROBE eye 51250 t_stand 0.0339966 0.135986 -0.124775
+PROBE bone 51250 t_stand bip01 pelvis 5.22034 -2.13184 35.0159
+PROBE bone 51250 t_stand bip01 spine2 4.70166 -2.3822 45.218
+PROBE bone 51250 t_stand bip01 neck 1.0199 -1.19116 56.9884
+PROBE bone 51250 t_stand bip01 head -0.0682373 0.32959 59.3428
+PROBE bone 51250 t_stand bip01 l upperarm -5.91113 -4.26794 51.8183
+PROBE bone 51250 t_stand bip01 r upperarm 8.54211 2.323 53.7283
+PROBE bone 51250 t_stand bip01 l forearm -7.61707 -3.62988 39.8623
+PROBE bone 51250 t_stand bip01 r forearm 11.2003 12.344 47.5011
+PROBE bone 51250 t_stand bip01 l hand -15.9191 2.97278 44.4854
+PROBE bone 51250 t_stand bip01 r hand 0.916748 7.31702 45.8066
+PROBE bone 51250 t_stand tag_weapon_right -4.14758 5.15039 47.4369
+PROBE grid 51400 t_stand f 4 - - - - 76.9895 81.4493 - - - - -
+PROBE grid 51400 t_stand f 10 - - - - 74.4857 77.8561 56.5108 58.6022 - - -
+PROBE grid 51400 t_stand f 16 - - - - 72.2154 74.7494 55.2401 61.4606 - - -
+PROBE grid 51400 t_stand f 22 - - - 74.2477 69.1087 55.1354 53.0015 63.2898 - - -
+PROBE grid 51400 t_stand f 28 - - - - 66.8385 57.504 55.3701 64.0732 70.0582 - -
+PROBE grid 51400 t_stand f 34 - - - - 67.4398 59.8726 57.7386 63.9676 69.9526 - -
+PROBE grid 51400 t_stand f 40 - - - - 68.2508 47.9939 53.5863 63.862 69.8469 - -
+PROBE grid 51400 t_stand f 46 - - - 62.5849 44.7743 46.1165 55.7231 64.5712 - - -
+PROBE grid 51400 t_stand f 52 - - - - 65.1569 56.2467 56.193 - - - -
+PROBE grid 51400 t_stand f 58 - - - - 62.9785 57.4183 57.4691 - - - -
+PROBE grid 51400 t_stand f 64 - - - - 56.2584 55.4345 - - - - -
+PROBE grid 51400 t_stand f 70 - - - - 66.0717 60.843 - - - - -
+PROBE grid 51400 t_stand f 76 - - - - - - - - - - -
+PROBE grid 51400 t_stand s 4 - - - - 36.4795 36.5823 - - 47.0107 - - - - - -
+PROBE grid 51400 t_stand s 10 - - - - 36.1803 34.3841 - 51.3043 46.16 - - - - - -
+PROBE grid 51400 t_stand s 16 - - - - 37.036 35.2398 - 46.1615 48.6251 - - - - - -
+PROBE grid 51400 t_stand s 22 - - - - 37.5836 35.7874 30.1643 36.0128 42.0051 47.9973 - - - - -
+PROBE grid 51400 t_stand s 28 - - - - 38.4393 36.0734 30.0584 35.6016 41.5938 47.5861 - - - - -
+PROBE grid 51400 t_stand s 34 - - - - 39.295 35.9675 29.9525 35.1904 41.1826 47.1749 - - - - -
+PROBE grid 51400 t_stand s 40 - - - 43.1987 40.8892 35.8616 29.8466 34.7792 40.7714 46.7636 - - - - -
+PROBE grid 51400 t_stand s 46 - - 48.088 49.4298 40.2793 36.7693 42.2548 55.0884 - - - - - - -
+PROBE grid 51400 t_stand s 52 - - - - 40.1205 36.5131 40.5534 44.5938 - - - - - - -
+PROBE grid 51400 t_stand s 58 - - - - 41.285 38.3943 42.4347 - - - - - - - -
+PROBE grid 51400 t_stand s 64 - - - - 46.3076 44.7866 - - - - - - - - -
+PROBE grid 51400 t_stand s 70 - - - - - 46.3059 - - - - - - - - -
+PROBE grid 51400 t_stand s 76 - - - - - - - - - - - - - - -
+PROBE hit 51450 t_stand axis dmg 107 loc torso_upper point (1249.97, 1214.04, 19.62)
+PROBE dir 51450 t_stand 0.997562 -0.00780343 -0.0693489
+PROBE phase 53000 s_left
+PROBE body 54250 s_left 0 0 0.00959778
+PROBE eye 54250 s_left 0.0339966 0.135986 -0.124775
+PROBE bone 54250 s_left bip01 pelvis 5.97241 -1.93872 35.0512
+PROBE bone 54250 s_left bip01 spine2 5.87012 -2.25281 45.2457
+PROBE bone 54250 s_left bip01 neck 1.82031 -1.97144 56.9519
+PROBE bone 54250 s_left bip01 head 0.27002 -1.41614 59.4676
+PROBE bone 54250 s_left bip01 l upperarm -3.86487 -6.98169 51.7739
+PROBE bone 54250 s_left bip01 r upperarm 8.24329 2.99048 54.1241
+PROBE bone 54250 s_left bip01 l forearm -9.28735 -2.80396 41.8037
+PROBE bone 54250 s_left bip01 r forearm 9.323 13.8802 48.9756
+PROBE bone 54250 s_left bip01 l hand -17.7173 4.21814 45.4801
+PROBE bone 54250 s_left bip01 r hand -1.05139 9.22571 46.8311
+PROBE bone 54250 s_left tag_weapon_right -6.08716 7.02454 48.5031
+PROBE body 54300 s_left 0 0 0.00959778
+PROBE eye 54300 s_left 0.0339966 0.135986 -0.124775
+PROBE bone 54300 s_left bip01 pelvis 5.89514 -1.93127 35.0512
+PROBE bone 54300 s_left bip01 spine2 5.80725 -2.255 45.246
+PROBE bone 54300 s_left bip01 neck 1.79065 -2.05261 56.9653
+PROBE bone 54300 s_left bip01 head 0.165771 -1.5614 59.447
+PROBE bone 54300 s_left bip01 l upperarm -3.80835 -7.17871 51.807
+PROBE bone 54300 s_left bip01 r upperarm 8.09583 3.04114 54.1529
+PROBE bone 54300 s_left bip01 l forearm -9.19128 -3.10242 41.7735
+PROBE bone 54300 s_left bip01 r forearm 9.01184 14.0425 49.2141
+PROBE bone 54300 s_left bip01 l hand -17.7489 3.79114 45.3982
+PROBE bone 54300 s_left bip01 r hand -1.18726 9.05835 46.9716
+PROBE bone 54300 s_left tag_weapon_right -6.20752 6.77112 48.5733
+PROBE body 54350 s_left 0 0 0.00959778
+PROBE eye 54350 s_left 0.0339966 0.135986 -0.124775
+PROBE bone 54350 s_left bip01 pelvis 5.89514 -1.93127 35.0512
+PROBE bone 54350 s_left bip01 spine2 5.80725 -2.255 45.246
+PROBE bone 54350 s_left bip01 neck 1.79065 -2.05261 56.9653
+PROBE bone 54350 s_left bip01 head 0.165771 -1.5614 59.447
+PROBE bone 54350 s_left bip01 l upperarm -3.80835 -7.17871 51.807
+PROBE bone 54350 s_left bip01 r upperarm 8.09583 3.04114 54.1529
+PROBE bone 54350 s_left bip01 l forearm -9.19128 -3.10242 41.7735
+PROBE bone 54350 s_left bip01 r forearm 9.01184 14.0425 49.2141
+PROBE bone 54350 s_left bip01 l hand -17.7489 3.79114 45.3982
+PROBE bone 54350 s_left bip01 r hand -1.18726 9.05835 46.9716
+PROBE bone 54350 s_left tag_weapon_right -6.20752 6.77112 48.5733
+PROBE grid 54500 s_left f 4 - - - - 78.1569 81.3491 - - - - -
+PROBE grid 54500 s_left f 10 - - - - 72.7885 78.1241 56.6542 56.3598 - - -
+PROBE grid 54500 s_left f 16 - - - 76.3676 69.3893 74.8151 55.9802 55.6857 - - -
+PROBE grid 54500 s_left f 22 - - - 72.3215 67.0522 68.8611 54.0983 59.9528 - - -
+PROBE grid 54500 s_left f 28 - - - 72.6125 65.5954 62.1694 56.7014 65.3282 - - -
+PROBE grid 54500 s_left f 34 - - - - 66.2341 62.8081 59.3046 65.6196 - - -
+PROBE grid 54500 s_left f 40 - - - - 66.8728 46.0844 52.2742 65.9111 - - -
+PROBE grid 54500 s_left f 46 - - - 60.8971 42.5469 44.5041 53.7295 68.1892 - - -
+PROBE grid 54500 s_left f 52 - - - 65.8831 64.3088 60.2426 56.5924 62.7746 - - -
+PROBE grid 54500 s_left f 58 - - - - 62.7853 57.6673 58.2796 64.1508 - - -
+PROBE grid 54500 s_left f 64 - - - - - 55.3177 57.3309 - - - -
+PROBE grid 54500 s_left f 70 - - - - - 62.8766 - - - - -
+PROBE grid 54500 s_left f 76 - - - - - - - - - - -
+PROBE grid 54500 s_left s 4 - - - - 36.3782 36.484 - - 47.0529 - - - - - -
+PROBE grid 54500 s_left s 10 - - - - 35.1773 34.8135 - 50.3489 45.8027 49.9134 - - - - -
+PROBE grid 54500 s_left s 16 - - - - 35.7951 35.4313 53.3247 46.6897 49.4026 - - - - - -
+PROBE grid 54500 s_left s 22 - - - - 36.1184 35.7546 33.1805 34.7512 45.2589 - - - - - -
+PROBE grid 54500 s_left s 28 - - - - 36.7362 36.3724 33.3461 33.6326 44.1403 - - - - - -
+PROBE grid 54500 s_left s 34 - - - - - 36.9201 33.5116 32.514 43.0218 - - - - - -
+PROBE grid 54500 s_left s 40 - - 46.5978 42.2009 41.9589 39.4309 33.6772 31.3955 41.9032 52.4109 - - - - -
+PROBE grid 54500 s_left s 46 - - 46.4194 49.8137 38.8706 38.5604 34.8932 - - - - - - - -
+PROBE grid 54500 s_left s 52 - - - - 38.6922 35.8255 37.6488 46.5024 - - - - - - -
+PROBE grid 54500 s_left s 58 - - - - 44.7862 36.0922 40.5106 - - - - - - - -
+PROBE grid 54500 s_left s 64 - - - - 40.7383 42.0598 - - - - - - - - -
+PROBE grid 54500 s_left s 70 - - - - - 43.686 - - - - - - - - -
+PROBE grid 54500 s_left s 76 - - - - - - - - - - - - - - -
+PROBE hit 54550 s_left axis dmg 107 loc torso_upper point (1254.64, 1216.89, 22.51)
+PROBE dir 54550 s_left 0.996904 -0.0711869 -0.0333871
+PROBE phase 56100 s_right
+PROBE body 57350 s_right 0 0 0.00959778
+PROBE eye 57350 s_right 0.0339966 0.135986 -0.124775
+PROBE bone 57350 s_right bip01 pelvis 5.21277 -2.11877 35.0025
+PROBE bone 57350 s_right bip01 spine2 4.72314 -2.39807 45.2073
+PROBE bone 57350 s_right bip01 neck 1.01392 -1.24915 56.9733
+PROBE bone 57350 s_right bip01 head -0.0797119 0.263062 59.3307
+PROBE bone 57350 s_right bip01 l upperarm -5.90466 -4.30811 51.7762
+PROBE bone 57350 s_right bip01 r upperarm 8.54321 2.28027 53.7387
+PROBE bone 57350 s_right bip01 l forearm -7.60583 -3.63794 39.8213
+PROBE bone 57350 s_right bip01 r forearm 11.175 12.3767 47.6233
+PROBE bone 57350 s_right bip01 l hand -15.9105 2.99353 44.3981
+PROBE bone 57350 s_right bip01 r hand 0.927368 7.31519 45.8182
+PROBE bone 57350 s_right tag_weapon_right -4.14807 5.15088 47.417
+PROBE body 57400 s_right 0 0 0.00959778
+PROBE eye 57400 s_right 0.0339966 0.135986 -0.124775
+PROBE bone 57400 s_right bip01 pelvis 5.21594 -2.12439 35.0083
+PROBE bone 57400 s_right bip01 spine2 4.71228 -2.39001 45.212
+PROBE bone 57400 s_right bip01 neck 0.99646 -1.23438 56.9753
+PROBE bone 57400 s_right bip01 head -0.098877 0.279053 59.3311
+PROBE bone 57400 s_right bip01 l upperarm -5.9187 -4.29822 51.7764
+PROBE bone 57400 s_right bip01 r upperarm 8.52637 2.29504 53.747
+PROBE bone 57400 s_right bip01 l forearm -7.60181 -3.64087 39.8182
+PROBE bone 57400 s_right bip01 r forearm 11.1763 12.366 47.5975
+PROBE bone 57400 s_right bip01 l hand -15.9153 2.97498 44.4015
+PROBE bone 57400 s_right bip01 r hand 0.919067 7.31543 45.8158
+PROBE bone 57400 s_right tag_weapon_right -4.15393 5.14734 47.4173
+PROBE body 57450 s_right 0 0 0.00959778
+PROBE eye 57450 s_right 0.0339966 0.135986 -0.124775
+PROBE bone 57450 s_right bip01 pelvis 5.21594 -2.12439 35.0083
+PROBE bone 57450 s_right bip01 spine2 4.71228 -2.39001 45.212
+PROBE bone 57450 s_right bip01 neck 0.99646 -1.23438 56.9753
+PROBE bone 57450 s_right bip01 head -0.098877 0.279053 59.3311
+PROBE bone 57450 s_right bip01 l upperarm -5.9187 -4.29822 51.7764
+PROBE bone 57450 s_right bip01 r upperarm 8.52637 2.29504 53.747
+PROBE bone 57450 s_right bip01 l forearm -7.60181 -3.64087 39.8182
+PROBE bone 57450 s_right bip01 r forearm 11.1763 12.366 47.5975
+PROBE bone 57450 s_right bip01 l hand -15.9153 2.97498 44.4015
+PROBE bone 57450 s_right bip01 r hand 0.919067 7.31543 45.8158
+PROBE bone 57450 s_right tag_weapon_right -4.15393 5.14734 47.4173
+PROBE grid 57600 s_right f 4 - - - - 76.9879 81.4568 - - - - -
+PROBE grid 57600 s_right f 10 - - - - 74.4933 77.8637 56.4928 58.6061 - - -
+PROBE grid 57600 s_right f 16 - - - - 72.2233 74.7573 55.2232 61.4721 - - -
+PROBE grid 57600 s_right f 22 - - - 74.2412 69.1169 55.1208 52.9839 63.3093 - - -
+PROBE grid 57600 s_right f 28 - - - - 66.8469 57.4962 55.3593 64.0817 70.0543 - -
+PROBE grid 57600 s_right f 34 - - - - 67.4256 59.8716 57.7348 63.9754 69.948 - -
+PROBE grid 57600 s_right f 40 - - - - 68.2501 47.7879 53.565 63.8691 69.8417 - -
+PROBE grid 57600 s_right f 46 - - - 62.6083 44.7277 46.1111 55.6888 64.5695 - - -
+PROBE grid 57600 s_right f 52 - - - - 65.2009 56.2729 56.1492 63.2086 - - -
+PROBE grid 57600 s_right f 58 - - - - 63.0362 57.5017 57.3915 - - - -
+PROBE grid 57600 s_right f 64 - - - - 56.2486 55.44 - - - - -
+PROBE grid 57600 s_right f 70 - - - - 66.0617 60.9413 - - - - -
+PROBE grid 57600 s_right f 76 - - - - - - - - - - -
+PROBE grid 57600 s_right s 4 - - - - 36.4848 36.5865 - - 47.0102 - - - - - -
+PROBE grid 57600 s_right s 10 - - - - 36.1815 34.3845 - 51.3178 46.1612 - - - - - -
+PROBE grid 57600 s_right s 16 - - - - 37.0399 35.2429 - 46.1647 48.6282 - - - - - -
+PROBE grid 57600 s_right s 22 - - - - 37.5901 35.7931 30.1613 36.0238 42.0037 47.9836 - - - - -
+PROBE grid 57600 s_right s 28 - - - - 38.4485 36.082 30.0545 35.6131 41.593 47.5729 - - - - -
+PROBE grid 57600 s_right s 34 - - - - 39.3069 35.9753 29.9477 35.2024 41.1823 47.1622 - - - - -
+PROBE grid 57600 s_right s 40 - - - 43.1865 40.8305 35.8685 29.841 34.7917 40.7716 46.7515 - - - - -
+PROBE grid 57600 s_right s 46 - - 48.0842 49.757 40.2478 36.7669 42.1158 55.2302 - - - - - - -
+PROBE grid 57600 s_right s 52 - - - - 40.0679 36.5018 40.5341 44.5664 - - - - - - -
+PROBE grid 57600 s_right s 58 - - - - 41.1807 38.3705 42.4028 - - - - - - - -
+PROBE grid 57600 s_right s 64 - - - - 46.1767 44.6914 - - - - - - - - -
+PROBE grid 57600 s_right s 70 - - - - - 46.1767 - - - - - - - - -
+PROBE grid 57600 s_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 57650 s_right axis dmg 107 loc torso_upper point (1252.24, 1215.80, 19.01)
+PROBE dir 57650 s_right 0.995784 0.0784577 -0.0475256
+PROBE phase 59200 s_left_t_right
+PROBE body 60450 s_left_t_right 0 0 0.00959778
+PROBE eye 60450 s_left_t_right 0.0339966 0.135986 -0.124775
+PROBE bone 60450 s_left_t_right bip01 pelvis 6.07544 1.11597 35.1049
+PROBE bone 60450 s_left_t_right bip01 spine2 5.95618 6.28528 43.5752
+PROBE bone 60450 s_left_t_right bip01 neck 1.87952 10.7887 54.3741
+PROBE bone 60450 s_left_t_right bip01 head 0.435181 12.2885 56.5432
+PROBE bone 60450 s_left_t_right bip01 l upperarm -3.94104 4.43445 51.2152
+PROBE bone 60450 s_left_t_right bip01 r upperarm 8.47656 14.2139 49.9842
+PROBE bone 60450 s_left_t_right bip01 l forearm -9.2948 4.9043 40.381
+PROBE bone 60450 s_left_t_right bip01 r forearm 9.78711 22.3566 41.1387
+PROBE bone 60450 s_left_t_right bip01 l hand -17.572 12.9436 41.2462
+PROBE bone 60450 s_left_t_right bip01 r hand -0.789917 17.6925 40.6236
+PROBE bone 60450 s_left_t_right tag_weapon_right -5.85535 16.3755 42.9914
+PROBE body 60500 s_left_t_right 0 0 0.00959778
+PROBE eye 60500 s_left_t_right 0.0339966 0.135986 -0.124775
+PROBE bone 60500 s_left_t_right bip01 pelvis 5.99817 1.12329 35.1044
+PROBE bone 60500 s_left_t_right bip01 spine2 5.8916 6.28638 43.5842
+PROBE bone 60500 s_left_t_right bip01 neck 1.83484 10.7112 54.423
+PROBE bone 60500 s_left_t_right bip01 head 0.311401 12.1434 56.5835
+PROBE bone 60500 s_left_t_right bip01 l upperarm -3.88477 4.23486 51.3279
+PROBE bone 60500 s_left_t_right bip01 r upperarm 8.30151 14.3013 50.0286
+PROBE bone 60500 s_left_t_right bip01 l forearm -9.30408 4.66711 40.5248
+PROBE bone 60500 s_left_t_right bip01 r forearm 9.44885 22.6143 41.32
+PROBE bone 60500 s_left_t_right bip01 l hand -17.6825 12.5914 41.4725
+PROBE bone 60500 s_left_t_right bip01 r hand -0.984131 17.6245 40.9348
+PROBE bone 60500 s_left_t_right tag_weapon_right -6.02698 16.1987 43.2877
+PROBE body 60550 s_left_t_right 0 0 0.00959778
+PROBE eye 60550 s_left_t_right 0.0339966 0.135986 -0.124775
+PROBE bone 60550 s_left_t_right bip01 pelvis 5.99817 1.12329 35.1044
+PROBE bone 60550 s_left_t_right bip01 spine2 5.8916 6.28638 43.5842
+PROBE bone 60550 s_left_t_right bip01 neck 1.83484 10.7112 54.423
+PROBE bone 60550 s_left_t_right bip01 head 0.311401 12.1434 56.5835
+PROBE bone 60550 s_left_t_right bip01 l upperarm -3.88477 4.23486 51.3279
+PROBE bone 60550 s_left_t_right bip01 r upperarm 8.30151 14.3013 50.0286
+PROBE bone 60550 s_left_t_right bip01 l forearm -9.30408 4.66711 40.5248
+PROBE bone 60550 s_left_t_right bip01 r forearm 9.44885 22.6143 41.32
+PROBE bone 60550 s_left_t_right bip01 l hand -17.6825 12.5914 41.4725
+PROBE bone 60550 s_left_t_right bip01 r hand -0.984131 17.6245 40.9348
+PROBE bone 60550 s_left_t_right tag_weapon_right -6.02698 16.1987 43.2877
+PROBE grid 60700 s_left_t_right f 4 - - - - 76.1788 - 56.8279 - - - -
+PROBE grid 60700 s_left_t_right f 10 - - - 79.0632 74.2045 79.4471 56.6488 66.1602 - - -
+PROBE grid 60700 s_left_t_right f 16 - - - 74.8031 71.2828 76.5253 55.9148 - - - -
+PROBE grid 60700 s_left_t_right f 22 - - - 70.0547 69.3085 54.5738 55.4486 68.714 - - -
+PROBE grid 60700 s_left_t_right f 28 - - - 70.0684 65.9925 57.1028 56.1243 69.6024 - - -
+PROBE grid 60700 s_left_t_right f 34 - - - 69.0889 65.0319 59.6317 58.6532 70.4908 - - -
+PROBE grid 60700 s_left_t_right f 40 - 66.3463 61.7744 44.0221 46.3075 55.3412 65.2129 71.3792 - - -
+PROBE grid 60700 s_left_t_right f 46 - 70.4514 61.9637 60.4743 54.8216 57.9749 - - - - -
+PROBE grid 60700 s_left_t_right f 52 - - 62.9504 56.0029 56.3761 61.7531 - - - - -
+PROBE grid 60700 s_left_t_right f 58 - - 62.7594 56.5823 60.1938 - - - - - -
+PROBE grid 60700 s_left_t_right f 64 - - 59.368 56.4538 - - - - - - -
+PROBE grid 60700 s_left_t_right f 70 - - - - - - - - - - -
+PROBE grid 60700 s_left_t_right f 76 - - - - - - - - - - -
+PROBE grid 60700 s_left_t_right s 4 - - - - 37.5154 37.6216 - - 48.2274 - - - - - -
+PROBE grid 60700 s_left_t_right s 10 - - - - 36.738 36.1954 - 51.9451 47.3621 51.3163 - - - - -
+PROBE grid 60700 s_left_t_right s 16 - - - - 37.772 37.2294 55.4681 48.6012 51.2773 - - - - - -
+PROBE grid 60700 s_left_t_right s 22 - - - - 38.5081 37.9655 35.2188 37.2701 47.0456 - - - - - -
+PROBE grid 60700 s_left_t_right s 28 - - - - 39.5422 38.9995 35.7585 36.5886 46.3641 - - - - - -
+PROBE grid 60700 s_left_t_right s 34 - - - - - 39.9432 36.2982 35.9071 45.6826 - - - - - -
+PROBE grid 60700 s_left_t_right s 40 - - 54.25 49.3734 49.4124 43.8576 36.8379 35.2256 45.001 54.7765 - - - - -
+PROBE grid 60700 s_left_t_right s 46 - - - - 47.9796 47.7797 42.8059 53.9721 - - - - - - -
+PROBE grid 60700 s_left_t_right s 52 - - - - 50.1202 46.5164 48.5084 59.4602 - - - - - - -
+PROBE grid 60700 s_left_t_right s 58 - - - - 57.7535 49.6179 54.6731 - - - - - - - -
+PROBE grid 60700 s_left_t_right s 64 - - - - 56.3804 58.663 - - - - - - - - -
+PROBE grid 60700 s_left_t_right s 70 - - - - - - - - - - - - - - -
+PROBE grid 60700 s_left_t_right s 76 - - - - - - - - - - - - - - -
+PROBE hit 60750 s_left_t_right axis dmg 107 loc torso_upper point (1253.30, 1223.51, 19.71)
+PROBE dir 60750 s_left_t_right 0.997983 -0.0452814 -0.0444957
+PROBE done 62300
+target CMDS st=388 d=20,16,8376,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16 in=0:0:0:0 snap=3:8800,6:8850,9:8900,12:8950,15:9000,19:9050,22:9100,25:9150,28:9200,31:9250,34:9300,37:9350,40:9400,43:9450,46:9500,49:9550,52:9600,56:9650,58:9700 ct=8800:8800,8850:8832,8900:8900,8950:8932,9000:8982,9050:9048,9100:9082,9150:9132,9200:9182,9250:9232,9300:9282,9350:9332,9400:9382,9450:9432,9500:9482,9550:9532,9600:9582,9650:9648,9700:9666
+target CMDS st=9732 d=16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:9750,5:9800,8:9850,11:9900,14:9950,17:10000,20:10050,23:10100,26:10150,29:10200,32:10250,36:10300,39:10350,42:10400,45:10450,48:10500,51:10550,54:10600,57:10650 ct=9750:9748,9800:9782,9850:9832,9900:9882,9950:9932,10000:9982,10050:10032,10100:10082,10150:10132,10200:10182,10250:10232,10300:10298,10350:10332,10400:10382,10450:10432,10500:10482,10550:10532,10600:10582,10650:10632
+target CMDS st=10700 d=16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18 snap=0:10700,3:10750,6:10800,9:10850,13:10900,16:10950,19:11000,22:11050,25:11100,28:11150,31:11200,34:11250,37:11300,40:11350,43:11400,46:11450,50:11500,53:11550,56:11600,59:11650 ct=10700:10682,10750:10732,10800:10782,10850:10832,10900:10898,10950:10932,11000:10982,11050:11032,11100:11082,11150:11132,11200:11182,11250:11232,11300:11282,11350:11332,11400:11382,11450:11432,11500:11498,11550:11532,11600:11582,11650:11632
+target CMDS st=11666 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 in=17:0:64:-127 snap=2:11700,5:11750,8:11800,11:11850,14:11900,17:11950,20:12000,23:12050,27:12100,30:12150,33:12200,36:12250,39:12300,42:12350,45:12400,48:12450,51:12500,54:12550,57:12600 ct=11700:11682,11750:11732,11800:11782,11850:11832,11900:11882,11950:11932,12000:11982,12050:12032,12100:12098,12150:12132,12200:12166,12250:12232,12300:12282,12350:12332,12400:12382,12450:12432,12500:12482,12550:12532,12600:12582
+target CMDS st=12648 d=2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:12650,3:12700,7:12750,10:12800,13:12850,16:12900,19:12950,22:13000,25:13050,28:13100,31:13150,34:13200,37:13250,41:13300,44:13350,47:13400,50:13450,53:13500,56:13550,59:13600 ct=12650:12648,12700:12666,12750:12748,12800:12782,12850:12832,12900:12882,12950:12932,13000:12982,13050:13032,13100:13082,13150:13132,13200:13182,13250:13232,13300:13298,13350:13332,13400:13382,13450:13432,13500:13482,13550:13532,13600:13582
+target CMDS st=13616 d=16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16 in=52:0:0:0 snap=2:13650,5:13700,8:13750,11:13800,15:13850,18:13900,21:13950,24:14000,27:14050,30:14100,33:14150,36:14200,39:14250,42:14300,45:14350,49:14400,52:14450,55:14500,58:14550 ct=13650:13632,13700:13682,13750:13732,13800:13782,13850:13848,13900:13882,13950:13932,14000:13982,14050:14032,14100:14082,14150:14132,14200:14182,14250:14232,14300:14282,14350:14332,14400:14398,14450:14432,14500:14482,14550:14532
+target CMDS st=14582 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:14600,4:14650,7:14700,10:14750,13:14800,16:14850,19:14900,22:14950,25:15000,28:15050,31:15100,35:15150,38:15200,41:15250,44:15300,47:15350,50:15400,53:15450,56:15500,59:15550 ct=14600:14582,14650:14632,14700:14682,14750:14732,14800:14782,14850:14832,14900:14882,14950:14932,15000:14982,15050:15032,15100:15082,15150:15148,15200:15182,15250:15232,15300:15282,15350:15332,15400:15382,15450:15432,15500:15482,15550:15532
+target CMDS st=15566 d=16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16 snap=2:15600,5:15650,8:15700,12:15750,14:15800,18:15850,21:15900,24:15950,27:16000,30:16050,33:16100,36:16150,39:16200,42:16250,45:16300,48:16350,51:16400,55:16450,57:16500 ct=15600:15582,15650:15632,15700:15682,15750:15748,15800:15766,15850:15848,15900:15882,15950:15932,16000:15982,16050:16032,16100:16082,16150:16132,16200:16182,16250:16232,16300:16282,16350:16332,16400:16382,16450:16448,16500:16466
+target CMDS st=16548 d=2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:16550,4:16600,7:16650,10:16700,13:16750,16:16800,19:16850,22:16900,25:16950,28:17000,31:17050,35:17100,38:17150,41:17200,44:17250,47:17300,50:17350,53:17400,56:17450,59:17500 ct=16550:16548,16600:16582,16650:16632,16700:16682,16750:16732,16800:16782,16850:16832,16900:16882,16950:16932,17000:16982,17050:17032,17100:17098,17150:17132,17200:17182,17250:17232,17300:17282,17350:17332,17400:17382,17450:17432,17500:17482
+target CMDS st=17516 d=16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16 snap=2:17550,5:17600,9:17650,11:17700,15:17750,18:17800,21:17850,24:17900,27:17950,30:18000,33:18050,36:18100,39:18150,43:18200,45:18250,49:18300,52:18350,55:18400,58:18450 ct=17550:17532,17600:17582,17650:17648,17700:17666,17750:17732,17800:17782,17850:17832,17900:17882,17950:17932,18000:17982,18050:18032,18100:18082,18150:18132,18200:18198,18250:18216,18300:18298,18350:18332,18400:18382,18450:18432
+target CMDS st=18482 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:18500,4:18550,7:18600,10:18650,13:18700,16:18750,19:18800,23:18850,25:18900,29:18950,32:19000,35:19050,38:19100,41:19150,44:19200,47:19250,50:19300,53:19350,56:19400,59:19450 ct=18500:18482,18550:18532,18600:18582,18650:18632,18700:18682,18750:18732,18800:18782,18850:18848,18900:18866,18950:18948,19000:18982,19050:19032,19100:19082,19150:19132,19200:19182,19250:19232,19300:19282,19350:19332,19400:19382,19450:19432
+target CMDS st=19466 d=16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=3:19500,6:19550,9:19600,12:19650,15:19700,18:19750,21:19800,24:19850,27:19900,30:19950,33:20000,37:20050,40:20100,43:20150,46:20200,49:20250,52:20300,55:20350,58:20400 ct=19500:19498,19550:19532,19600:19582,19650:19632,19700:19682,19750:19732,19800:19782,19850:19832,19900:19882,19950:19932,20000:19982,20050:20048,20100:20082,20150:20132,20200:20182,20250:20232,20300:20282,20350:20332,20400:20382
+target CMDS st=20432 d=18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,16,16,2,16,16,18,16,16 snap=1:20450,4:20500,7:20550,11:20600,14:20650,17:20700,20:20750,23:20800,26:20850,29:20900,32:20950,35:21000,38:21050,41:21100,45:21150,47:21200,50:21250,54:21300,57:21350 ct=20450:20432,20500:20482,20550:20532,20600:20598,20650:20632,20700:20682,20750:20732,20800:20782,20850:20832,20900:20882,20950:20932,21000:20982,21050:21032,21100:21082,21150:21132,21200:21166,21250:21232,21300:21298,21350:21332
+target CMDS st=21400 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=0:21400,3:21450,6:21500,9:21550,12:21600,15:21650,18:21700,21:21750,24:21800,27:21850,31:21900,34:21950,37:22000,40:22050,43:22100,46:22150,49:22200,52:22250,55:22300,58:22350 ct=21400:21382,21450:21432,21500:21482,21550:21532,21600:21582,21650:21632,21700:21682,21750:21732,21800:21782,21850:21832,21900:21898,21950:21932,22000:21982,22050:22032,22100:22082,22150:22132,22200:22182,22250:22232,22300:22282,22350:22332
+target CMDS st=22382 d=16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16 in=45:0:16:0 snap=2:22400,5:22450,8:22500,11:22550,14:22600,17:22650,20:22700,23:22750,26:22800,29:22850,32:22900,36:22950,39:23000,41:23050,45:23100,48:23150,51:23200,54:23250,57:23300 ct=22400:22398,22450:22432,22500:22482,22550:22532,22600:22582,22650:22632,22700:22682,22750:22732,22800:22782,22850:22832,22900:22882,22950:22932,23000:22982,23050:23016,23100:23098,23150:23132,23200:23182,23250:23232,23300:23282
+target CMDS st=23350 d=16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18 snap=0:23350,3:23400,6:23450,9:23500,13:23550,15:23600,18:23650,22:23700,25:23750,28:23800,31:23850,34:23900,37:23950,40:24000,43:24050,46:24100,49:24150,52:24200,56:24250,59:24300 ct=23350:23332,23400:23382,23450:23432,23500:23482,23550:23548,23600:23566,23650:23632,23700:23698,23750:23732,23800:23782,23850:23832,23900:23882,23950:23932,24000:23982,24050:24032,24100:24082,24150:24132,24200:24182,24250:24248,24300:24282
+target CMDS st=24316 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:24350,5:24400,8:24450,11:24500,14:24550,17:24600,20:24650,23:24700,27:24750,30:24800,33:24850,36:24900,39:24950,42:25000,45:25050,48:25100,51:25150,54:25200,57:25250 ct=24350:24332,24400:24382,24450:24432,24500:24482,24550:24532,24600:24582,24650:24632,24700:24682,24750:24748,24800:24782,24850:24832,24900:24882,24950:24932,25000:24982,25050:25032,25100:25082,25150:25132,25200:25182,25250:25232
+target CMDS st=25298 d=2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18 in=56:0:32:0 snap=1:25300,3:25350,7:25400,10:25450,13:25500,16:25550,19:25600,22:25650,25:25700,28:25750,31:25800,34:25850,37:25900,40:25950,43:26000,47:26050,50:26100,53:26150,56:26200,59:26250 ct=25300:25298,25350:25316,25400:25398,25450:25432,25500:25482,25550:25532,25600:25582,25650:25632,25700:25682,25750:25732,25800:25782,25850:25832,25900:25882,25950:25932,26000:25982,26050:26048,26100:26082,26150:26132,26200:26182,26250:26232
+target CMDS st=26266 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16 snap=2:26300,5:26350,8:26400,11:26450,14:26500,17:26550,21:26600,24:26650,27:26700,30:26750,33:26800,36:26850,39:26900,42:26950,45:27000,48:27050,51:27100,54:27150,58:27200 ct=26300:26282,26350:26332,26400:26382,26450:26432,26500:26482,26550:26532,26600:26598,26650:26632,26700:26682,26750:26732,26800:26782,26850:26832,26900:26882,26950:26932,27000:26982,27050:27032,27100:27082,27150:27132,27200:27198
+target CMDS st=27250 d=16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=0:27250,4:27300,7:27350,10:27400,13:27450,16:27500,19:27550,22:27600,25:27650,29:27700,31:27750,35:27800,38:27850,40:27900,44:27950,47:28000,50:28050,53:28100,56:28150,59:28200 ct=27250:27216,27300:27298,27350:27332,27400:27382,27450:27432,27500:27482,27550:27532,27600:27582,27650:27632,27700:27682,27750:27716,27800:27782,27850:27832,27900:27866,27950:27948,28000:27982,28050:28032,28100:28082,28150:28132,28200:28182
+target CMDS st=28216 d=16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16 snap=2:28250,5:28300,8:28350,12:28400,14:28450,18:28500,21:28550,24:28600,27:28650,30:28700,33:28750,36:28800,39:28850,42:28900,45:28950,48:29000,51:29050,55:29100,57:29150 ct=28250:28232,28300:28282,28350:28332,28400:28398,28450:28416,28500:28498,28550:28532,28600:28582,28650:28632,28700:28682,28750:28732,28800:28782,28850:28832,28900:28882,28950:28932,29000:28982,29050:29032,29100:29098,29150:29116
+target CMDS st=29198 d=2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 in=7:0:128:-127 snap=1:29200,4:29250,7:29300,10:29350,13:29400,16:29450,19:29500,22:29550,25:29600,28:29650,31:29700,35:29750,38:29800,41:29850,44:29900,47:29950,50:30000,53:30050,56:30100,59:30150 ct=29200:29198,29250:29232,29300:29282,29350:29332,29400:29382,29450:29432,29500:29482,29550:29532,29600:29582,29650:29632,29700:29682,29750:29748,29800:29782,29850:29832,29900:29882,29950:29932,30000:29982,30050:30032,30100:30082,30150:30132
+target CMDS st=30166 d=16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:30200,5:30250,8:30300,12:30350,14:30400,18:30450,21:30500,24:30550,27:30600,30:30650,33:30700,36:30750,39:30800,42:30850,45:30900,48:30950,51:31000,54:31050,57:31100 ct=30200:30182,30250:30232,30300:30282,30350:30348,30400:30366,30450:30448,30500:30482,30550:30532,30600:30582,30650:30632,30700:30682,30750:30732,30800:30782,30850:30832,30900:30882,30950:30932,31000:30982,31050:31032,31100:31082
+target CMDS st=31149 d=1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,16,18 snap=1:31150,4:31200,7:31250,10:31300,13:31350,16:31400,19:31450,22:31500,25:31550,28:31600,31:31650,34:31700,37:31750,40:31800,43:31850,46:31900,50:31950,52:32000,56:32050,59:32100 ct=31150:31149,31200:31182,31250:31232,31300:31282,31350:31332,31400:31382,31450:31432,31500:31482,31550:31533,31600:31582,31650:31632,31700:31682,31750:31733,31800:31782,31850:31832,31900:31882,31950:31949,32000:31966,32050:32048,32100:32082
+target CMDS st=32116 d=16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,18,16,16,16,18,16,16,18,16,18,16,17,16,17,16,17,17 in=17:0:144:-127 snap=2:32150,5:32200,8:32250,11:32300,14:32350,17:32400,20:32450,23:32500,26:32550,29:32600,32:32650,35:32700,38:32750,41:32800,44:32850,47:32900,50:32950,53:33000,56:33050,59:33100 ct=32150:32132,32200:32182,32250:32232,32300:32282,32350:32333,32400:32382,32450:32432,32500:32482,32550:32534,32600:32582,32650:32632,32700:32682,32750:32733,32800:32783,32850:32834,32900:32882,32950:32932,33000:32984,33050:33033,33100:33083
+target CMDS st=33117 d=17,16,17,16,17,17,17,16,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,18,16,16,16,16,18,16,17,17,17,16,17,16,16,18,17,16,17,17,16,16,1,17,33,16,17,17,16,17,17,16,16,18 snap=2:33150,5:33200,8:33250,11:33300,14:33350,17:33400,20:33450,23:33500,26:33550,29:33600,32:33650,35:33700,38:33750,41:33800,44:33850,48:33900,50:33950,53:34000,56:34050,59:34100 ct=33150:33134,33200:33183,33250:33234,33300:33282,33350:33332,33400:33382,33450:33434,33500:33482,33550:33533,33600:33584,33650:33632,33700:33683,33750:33733,33800:33782,33850:33833,33900:33883,33950:33917,34000:33983,34050:34033,34100:34082
+target CMDS st=34116 d=16,18,16,17,17,18,16,16,17,16,17,16,17,17,16,18,16,16,17,17,16,17,17,17,16,17,18,16,16,16,16,18,16,16,18,16,17,17,17,16,17,17,17,16,16,16,18,16,17,17,16,17,17,17,16,17,18,16,16 snap=2:34150,5:34200,8:34250,11:34300,14:34350,17:34400,20:34450,23:34500,26:34550,29:34600,32:34650,35:34700,38:34750,41:34800,44:34850,47:34900,50:34950,53:35000,56:35050,59:35100 ct=34150:34132,34200:34183,34250:34234,34300:34283,34350:34333,34400:34384,34450:34433,34500:34483,34550:34533,34600:34584,34650:34632,34700:34682,34750:34733,34800:34783,34850:34834,34900:34882,34950:34933,35000:34983,35050:35033,35100:35084
+target CMDS st=35118 d=18,14,16,16,18,16,18,16,16,18,16,16,34,16,16,18,18,16,16,16,16,18,17,16,17,18,16,16,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,17,16,1,16,34,16 in=22:0:160:-127 snap=2:35150,5:35200,8:35250,11:35300,13:35350,16:35400,19:35450,22:35500,25:35550,28:35600,31:35650,34:35700,37:35750,40:35800,43:35850,46:35900,49:35950,52:36000,56:36050,58:36100 ct=35150:35136,35200:35182,35250:35216,35300:35284,35350:35316,35400:35382,35450:35434,35500:35482,35550:35533,35600:35584,35650:35632,35700:35684,35750:35732,35800:35782,35850:35832,35900:35883,35950:35933,36000:35982,36050:36049,36100:36066
+target CMDS st=36132 d=18,16,16,17,1,16,34,17,16,16,1,16,16,18,16,18,16,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18 snap=1:36150,5:36200,7:36250,11:36300,14:36350,17:36400,20:36450,23:36500,26:36550,29:36600,32:36650,35:36700,38:36750,41:36800,44:36850,47:36900,50:36950,53:37000,56:37050,59:37100 ct=36150:36132,36200:36182,36250:36216,36300:36299,36350:36332,36400:36366,36450:36432,36500:36466,36550:36533,36600:36582,36650:36632,36700:36682,36750:36732,36800:36783,36850:36832,36900:36883,36950:36933,37000:36982,37050:37032,37100:37082
+target CMDS st=37118 d=16,16,17,17,16,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,18,16,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18 snap=2:37150,5:37200,8:37250,11:37300,14:37350,17:37400,20:37450,23:37500,26:37550,29:37600,32:37650,35:37700,38:37750,41:37800,44:37850,47:37900,50:37950,53:38000,56:38050,59:38100 ct=37150:37134,37200:37184,37250:37233,37300:37283,37350:37332,37400:37383,37450:37432,37500:37482,37550:37532,37600:37582,37650:37633,37700:37682,37750:37732,37800:37784,37850:37834,37900:37882,37950:37933,38000:37983,38050:38032,38100:38082
+target CMDS st=38116 d=16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,17,1,16,34,17,17,16,17,17,16,16,16,18,16,16,18,16,16,17,1,16,34,16,17,16,1,16,34,16,17,17,0,16,34,16,16,16,2,16,16 in=29:0:64:-127 snap=2:38150,5:38200,8:38250,11:38300,14:38350,17:38400,21:38450,23:38500,26:38550,29:38600,32:38650,35:38700,39:38750,41:38800,45:38850,47:38900,51:38950,53:39000,57:39050 ct=38150:38132,38200:38182,38250:38233,38300:38283,38350:38332,38400:38382,38450:38449,38500:38466,38550:38534,38600:38584,38650:38632,38700:38682,38750:38749,38800:38766,38850:38849,38900:38866,38950:38950,39000:38966,39050:39032
+target CMDS st=39100 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,25,16,9,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=0:39100,3:39150,6:39200,9:39250,12:39300,15:39350,18:39400,21:39450,24:39500,27:39550,30:39600,33:39650,36:39700,39:39750,42:39800,45:39850,48:39900,51:39950,54:40000,57:40050 ct=39100:39082,39150:39132,39200:39182,39250:39232,39300:39282,39350:39332,39400:39382,39450:39432,39500:39491,39550:39532,39600:39582,39650:39632,39700:39682,39750:39732,39800:39782,39850:39832,39900:39882,39950:39932,40000:39982,40050:40032
+target CMDS st=40098 d=2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18 snap=1:40100,3:40150,7:40200,10:40250,13:40300,16:40350,19:40400,22:40450,25:40500,28:40550,31:40600,34:40650,37:40700,40:40750,43:40800,46:40850,50:40900,53:40950,56:41000,59:41050 ct=40100:40098,40150:40116,40200:40182,40250:40232,40300:40282,40350:40332,40400:40382,40450:40432,40500:40482,40550:40532,40600:40582,40650:40632,40700:40682,40750:40732,40800:40782,40850:40832,40900:40898,40950:40932,41000:40982,41050:41032
+target CMDS st=41066 d=16,18,16,16,18,16,16,18,26,17,7,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,18,18,14,16,19,15,19,16,15,16,34,18,16,17,-1,18,32,16 snap=2:41100,5:41150,8:41200,11:41250,14:41300,17:41350,20:41400,23:41450,26:41500,29:41550,32:41600,35:41650,38:41700,41:41750,44:41800,47:41850,50:41900,52:41950,56:42000,58:42050 ct=41100:41082,41150:41132,41200:41182,41250:41226,41300:41282,41350:41332,41400:41382,41450:41432,41500:41482,41550:41532,41600:41582,41650:41633,41700:41682,41750:41732,41800:41786,41850:41835,41900:41869,41950:41916,42000:42001,42050:42018
+target CMDS st=42084 d=16,16,17,17,21,16,13,16,16,18,16,16,18,16,17,17,22,18,10,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,16,18,16,16,17,17,16,17,17,17,16,17,50,16,16,18,16,16,18 in=37:0:80:-127 snap=1:42100,4:42150,7:42200,10:42250,13:42300,16:42350,19:42400,22:42450,25:42500,28:42550,31:42600,34:42650,37:42700,40:42750,43:42800,46:42850,49:42900,52:42950,53:43000,56:43050,59:43100 ct=42100:42084,42150:42133,42200:42187,42250:42232,42300:42282,42350:42333,42400:42390,42450:42433,42500:42482,42550:42533,42600:42582,42650:42633,42700:42682,42750:42732,42800:42784,42850:42833,42900:42883,42950:42933,43000:42950,43050:43032,43100:43082
+target CMDS st=43116 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:43150,5:43200,8:43250,11:43300,14:43350,17:43400,20:43450,23:43500,26:43550,29:43600,33:43650,35:43700,39:43750,42:43800,45:43850,48:43900,51:43950,54:44000,57:44050 ct=43150:43132,43200:43182,43250:43232,43300:43282,43350:43332,43400:43382,43450:43432,43500:43482,43550:43532,43600:43582,43650:43649,43700:43666,43750:43749,43800:43782,43850:43832,43900:43882,43950:43932,44000:43982,44050:44032
+target CMDS st=44100 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16 snap=0:44100,3:44150,6:44200,9:44250,12:44300,15:44350,18:44400,21:44450,24:44500,27:44550,30:44600,33:44650,37:44700,40:44750,43:44800,46:44850,49:44900,52:44950,55:45000,58:45050 ct=44100:44082,44150:44132,44200:44182,44250:44232,44300:44282,44350:44332,44400:44382,44450:44432,44500:44482,44550:44532,44600:44582,44650:44632,44700:44699,44750:44732,44800:44782,44850:44832,44900:44882,44950:44932,45000:44982,45050:45033
+target CMDS st=45082 d=18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,17,17,17,16,17,17,16,17,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,16 in=43:0:96:-127 snap=1:45100,4:45150,7:45200,10:45250,13:45300,16:45350,19:45400,22:45450,25:45500,28:45550,31:45600,34:45650,37:45700,40:45750,43:45800,46:45850,49:45900,52:45950,55:46000,58:46050 ct=45100:45082,45150:45132,45200:45182,45250:45233,45300:45282,45350:45333,45400:45383,45450:45433,45500:45483,45550:45532,45600:45582,45650:45634,45700:45682,45750:45732,45800:45784,45850:45832,45900:45882,45950:45933,46000:45983,46050:46032
+target CMDS st=46082 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,17,1,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,16,17,17,16,17,17,17,16,17 snap=1:46100,4:46150,7:46200,10:46250,13:46300,16:46350,19:46400,22:46450,25:46500,28:46550,31:46600,35:46650,38:46700,41:46750,44:46800,47:46850,50:46900,53:46950,56:47000,59:47050 ct=46100:46082,46150:46132,46200:46182,46250:46232,46300:46282,46350:46332,46400:46382,46450:46433,46500:46482,46550:46532,46600:46582,46650:46649,46700:46682,46750:46732,46800:46782,46850:46833,46900:46883,46950:46933,47000:46983,47050:47033
+target CMDS st=47066 d=17,17,16,17,17,16,16,18,16,16,18,18,17,15,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16,17,17,17,16,17,17,16,17,17,16,17 snap=2:47100,5:47150,8:47200,11:47250,14:47300,17:47350,20:47400,23:47450,26:47500,29:47550,32:47600,35:47650,38:47700,41:47750,44:47800,47:47850,50:47900,53:47950,56:48000,59:48050 ct=47100:47083,47150:47133,47200:47182,47250:47232,47300:47285,47350:47332,47400:47382,47450:47433,47500:47482,47550:47532,47600:47583,47650:47632,47700:47683,47750:47732,47800:47783,47850:47832,47900:47883,47950:47933,48000:47983,48050:48033
+target CMDS st=48067 d=16,17,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,17,16,17,16,16,18,17,16,17,17,16,17,16,17,17,16,16,17,1,19,31,16,18,16,16,17,17,16,17,17,16,17,17,17,16,17,16,16,18 in=50:0:0:0 snap=2:48100,5:48150,8:48200,11:48250,14:48300,17:48350,20:48400,23:48450,26:48500,29:48550,32:48600,35:48650,39:48700,41:48750,44:48800,47:48850,50:48900,53:48950,56:49000,59:49050 ct=48100:48083,48150:48133,48200:48182,48250:48232,48300:48282,48350:48333,48400:48383,48450:48433,48500:48482,48550:48533,48600:48583,48650:48633,48700:48682,48750:48719,48800:48784,48850:48833,48900:48883,48950:48933,49000:48983,49050:49032
+target CMDS st=49072 d=16,12,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,17,1,16,34,16,16,16 snap=2:49100,5:49150,8:49200,11:49250,14:49300,17:49350,20:49400,23:49450,26:49500,29:49550,32:49600,35:49650,38:49700,41:49750,44:49800,47:49850,50:49900,54:49950,56:50000 ct=49100:49088,49150:49132,49200:49182,49250:49233,49300:49282,49350:49333,49400:49383,49450:49432,49500:49482,49550:49533,49600:49583,49650:49632,49700:49682,49750:49732,49800:49782,49850:49832,49900:49883,49950:49949,50000:49966
+target CMDS st=50050 d=16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,18,16,16,18,16,16,18,16,16,18,16,16,17,17,18,32,16,17,16,1,17,16,17,16,17,17,17,16 snap=0:50050,3:50100,6:50150,9:50200,12:50250,15:50300,18:50350,21:50400,24:50450,27:50500,30:50550,33:50600,36:50650,39:50700,42:50750,45:50800,47:50850,51:50900,54:50950,57:51000 ct=50050:50048,50100:50082,50150:50132,50200:50182,50250:50233,50300:50282,50350:50332,50400:50383,50450:50432,50500:50483,50550:50532,50600:50584,50650:50634,50700:50684,50750:50734,50800:50783,50850:50818,50900:50899,50950:50933,51000:50983
+target CMDS st=51050 d=16,17,17,22,28,16,16,18,16,16,18,16,17,17,16,16,18,16,18,16,0,16,17,17,16,34,16,17,17,16,18,16,16,17,17,19,16,15,18,17,15,16,18,16,16,16,18,17,16,17,18,16,16,17,17,16,16,16,18 snap=0:51050,3:51100,5:51150,8:51200,11:51250,14:51300,17:51350,21:51400,24:51450,26:51500,29:51550,32:51600,35:51650,38:51700,41:51750,44:51800,47:51850,50:51900,53:51950,56:52000,59:52050 ct=51050:51017,51100:51083,51150:51122,51200:51182,51250:51232,51300:51283,51350:51332,51400:51384,51450:51433,51500:51466,51550:51533,51600:51584,51650:51633,51700:51685,51750:51735,51800:51784,51850:51832,51900:51883,51950:51934,52000:51984,52050:52032
+target CMDS st=52067 d=18,15,16,17,17,19,16,15,17,17,16,33,17,16,16,18,16,16,18,16,16,18,17,16,17,16,19,15,16,34,16,21,13,19,18,13,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,18,16,16,16,18,16,17,16 snap=2:52100,5:52150,8:52200,11:52250,13:52300,16:52350,19:52400,22:52450,25:52500,28:52550,30:52600,33:52650,36:52700,39:52750,42:52800,45:52850,48:52900,51:52950,54:53000,57:53050 ct=52100:52085,52150:52133,52200:52185,52250:52234,52300:52250,52350:52332,52400:52382,52450:52432,52500:52483,52550:52535,52600:52566,52650:52637,52700:52687,52750:52732,52800:52783,52850:52832,52900:52882,52950:52933,53000:52984,53050:53034
+target CMDS st=53100 d=16,16,18,16,18,16,16,17,17,16,17,17,16,17,17,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,19,15,17,18,15,16,16,18,16,16,18,17,17 snap=0:53100,3:53150,6:53200,9:53250,12:53300,15:53350,18:53400,21:53450,24:53500,27:53550,30:53600,33:53650,36:53700,39:53750,42:53800,45:53850,48:53900,51:53950,54:54000,57:54050 ct=53100:53083,53150:53132,53200:53184,53250:53233,53300:53283,53350:53333,53400:53382,53450:53433,53500:53483,53550:53532,53600:53582,53650:53633,53700:53682,53750:53734,53800:53782,53850:53832,53900:53885,53950:53935,54000:53982,54050:54032
+target CMDS st=54100 d=20,30,19,17,14,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,19,15,16,17,17,16,34,16,19,15,16,19,15,19,17,14,17,17,16,16,18,16,17,18,15,16,17,17,17,17,16,16,16,18,16,18,16,18 snap=0:54100,2:54150,5:54200,8:54250,11:54300,14:54350,17:54400,20:54450,23:54500,26:54550,28:54600,31:54650,34:54700,37:54750,40:54800,43:54850,46:54900,49:54950,52:55000,55:55050,58:55100 ct=54100:54084,54150:54120,54200:54186,54250:54232,54300:54283,54350:54332,54400:54382,54450:54433,54500:54485,54550:54533,54600:54566,54650:54635,54700:54685,54750:54736,54800:54784,54850:54834,54900:54885,54950:54933,55000:54984,55050:55032,55100:55066
+target CMDS st=55134 d=16,16,34,16,17,17,16,16,17,1,16,34,16,17,16,1,16,16,18,16,16,18,19,16,15,16,17,17,17,16,17,16,34,18,18,14,17,16,17,16,18,16,18,16,16,16,19,15,16,17,17,16,17,17,16,17,17,17,16 snap=1:55150,3:55200,6:55250,10:55300,12:55350,16:55400,19:55450,22:55500,25:55550,28:55600,31:55650,33:55700,36:55750,39:55800,42:55850,45:55900,48:55950,51:56000,54:56050,57:56100 ct=55150:55134,55200:55166,55250:55233,55300:55299,55350:55316,55400:55383,55450:55432,55500:55482,55550:55535,55600:55583,55650:55633,55700:55666,55750:55736,55800:55783,55850:55834,55900:55884,55950:55935,56000:55983,56050:56033,56100:56083
+target CMDS st=56150 d=16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,18,16,16,16,18,16,16,18,17,33,17,18,15,16,20,14,16,16,18,16,16,18,16,16,18,16,17,17,16,19,15,17,18,15,19,31,17,17,16,16 snap=0:56150,3:56200,6:56250,9:56300,12:56350,15:56400,18:56450,21:56500,24:56550,27:56600,29:56650,32:56700,35:56750,38:56800,41:56850,44:56900,47:56950,50:57000,53:57050,55:57100,58:57150 ct=56150:56133,56200:56183,56250:56232,56300:56282,56350:56332,56400:56383,56450:56433,56500:56484,56550:56532,56600:56582,56650:56617,56700:56685,56750:56736,56800:56782,56850:56832,56900:56882,56950:56933,57000:56985,57050:57035,57100:57069,57150:57134
+target CMDS st=57182 d=18,100,16,34,16,16,18,16,17,17,16,17,17,16,17,17,16,17,17,19,16,15,16,16,18,16,34,17,17,16,16,18,16,17,16,17,16,16,18,17,16,17,16,17,17,16,17,17,17,16,17,16,17,17,16,17,17,16,18 snap=1:57200,2:57300,4:57350,7:57400,10:57450,13:57500,16:57550,19:57600,22:57650,25:57700,27:57750,30:57800,33:57850,36:57900,39:57950,42:58000,45:58050,48:58100,51:58150,54:58200,57:58250 ct=57200:57182,57300:57182,57350:57316,57400:57382,57450:57433,57500:57483,57550:57533,57600:57583,57650:57635,57700:57682,57750:57716,57800:57784,57850:57834,57900:57883,57950:57932,58000:57983,58050:58033,58100:58083,58150:58133,58200:58183,58250:58233
+target CMDS st=58300 d=17,17,16,17,17,16,20,17,13,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,18,16,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,20,16,14,16,34 in=54:0:32:0 snap=0:58300,3:58350,6:58400,9:58450,12:58500,15:58550,18:58600,21:58650,24:58700,27:58750,30:58800,33:58850,36:58900,39:58950,42:59000,45:59050,48:59100,51:59150,54:59200,57:59250,59:59300 ct=58300:58284,58350:58334,58400:58384,58450:58437,58500:58482,58550:58533,58600:58582,58650:58632,58700:58682,58750:58732,58800:58783,58850:58833,58900:58884,58950:58933,59000:58982,59050:59032,59100:59082,59150:59133,59200:59182,59250:59236,59300:59266
+target CMDS st=59316 d=17,16,1,17,33,16,17,17,20,17,13,17,17,16,16,17,17,20,17,13,16,23,11,16,16,18,16,34,17,17,16,17,17,16,16,16,18,17,17,16,17,16,17,16,17,17,16,16,18,17,16,17,16,18,16,19,16,15,17 snap=3:59350,5:59400,8:59450,11:59500,14:59550,17:59600,20:59650,23:59700,26:59750,28:59800,31:59850,34:59900,37:59950,40:60000,43:60050,46:60100,49:60150,52:60200,55:60250,58:60300 ct=59350:59349,59400:59367,59450:59433,59500:59487,59550:59534,59600:59583,59650:59637,59700:59689,59750:59732,59800:59766,59850:59834,59900:59884,59950:59932,60000:59984,60050:60033,60100:60083,60150:60132,60200:60183,60250:60234,60300:60285
+target CMDS st=60335 d=15,17,17,16,17,16,17,19,17,14,18,16,16,17,33,16,16,18,16,16,19,-1,16,34,17,16,16,1,16,34,17,17,16,16,19,15,17,16,17,16,17,17,16,17,17,17,18,15,16,16,18,16,16,18,16,19,15,18,32 snap=1:60350,4:60400,7:60450,10:60500,13:60550,15:60600,18:60650,22:60700,24:60750,28:60800,30:60850,33:60900,36:60950,39:61000,42:61050,45:61100,48:61150,51:61200,54:61250,57:61300,59:61350 ct=60350:60335,60400:60384,60450:60433,60500:60486,60550:60534,60600:60567,60650:60632,60700:60682,60750:60716,60800:60799,60850:60816,60900:60884,60950:60935,61000:60983,61050:61033,61100:61083,61150:61135,61200:61182,61250:61232,61300:61285,61350:61318
+target CMDS st=61367 d=17,16,16,17,17,16,16,18,16,17,17,16,16,18,19,16,15,19,18,13,19,17,14,16,19,15,17,17,16,16,34,16,17,18,-1,17,33,17,17,16,16,17,17,16,16,17,1,16,16,18,16,17,17,17,33,16,17,17,16 snap=2:61400,5:61450,8:61500,11:61550,14:61600,17:61650,20:61700,23:61750,26:61800,29:61850,31:61900,35:61950,37:62000,40:62050,43:62100,47:62150,50:62200,53:62250,55:62300,58:62350 ct=61400:61384,61450:61433,61500:61482,61550:61533,61600:61582,61650:61635,61700:61687,61750:61736,61800:61785,61850:61834,61900:61866,61950:61933,62000:61967,62050:62034,62100:62083,62150:62149,62200:62182,62250:62233,62300:62267,62350:62333
+target CMDS st=62382 d=18,21,16,13,16,22,12,16,34,16,17,17,0,16,34,16,17,16,1,16,34,17,16,17,0,17,16,17,16,34,17,17,16,17,16,17,16,19,15,16,16,18,16,17,17,16,17,17,17,16,17,16,17,17,16,17,17,16,16 snap=1:62400,4:62450,7:62500,9:62550,13:62600,15:62650,19:62700,21:62750,25:62800,28:62850,30:62900,33:62950,36:63000,39:63050,42:63100,45:63150,48:63200,51:63250,54:63300,57:63350 ct=62400:62382,62450:62437,62500:62488,62550:62516,62600:62600,62650:62616,62700:62699,62750:62716,62800:62800,62850:62833,62900:62866,62950:62934,63000:62983,63050:63035,63100:63082,63150:63133,63200:63183,63250:63233,63300:63283,63350:63333
+target CMDS st=63400 d=16,17,17,16,17,17,17,16,17,16,18,16,16,16,18,16,16,18,17,16,17,21,16,13,16,16,18,17,16,17,18,16,16,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,19,17,14,17,17 snap=0:63400,3:63450,6:63500,9:63550,12:63600,15:63650,18:63700,21:63750,24:63800,27:63850,30:63900,33:63950,36:64000,39:64050,42:64100,45:64150,48:64200,51:64250,54:64300,57:64350 ct=63400:63382,63450:63433,63500:63483,63550:63533,63600:63584,63650:63632,63700:63682,63750:63733,63800:63787,63850:63832,63900:63883,63950:63934,64000:63983,64050:64033,64100:64082,64150:64132,64200:64182,64250:64233,64300:64283,64350:64336
+target CMDS st=64400 d=17,16,17,16,17,17,16,16,18,16,17,17,16,17,17,16,18,16,16,17,17,16,17,17,17,16,17,16,34,18,16,16,17,16,17,17,16,16,1,16,34,16,16,18,0,16,16,18,17,33,16,16,17,1,17,33,16,16,17 snap=0:64400,3:64450,6:64500,9:64550,12:64600,15:64650,18:64700,21:64750,24:64800,27:64850,29:64900,32:64950,35:65000,39:65050,41:65100,45:65150,48:65200,50:65250,54:65300,56:65350 ct=64400:64384,64450:64433,64500:64483,64550:64532,64600:64583,64650:64633,64700:64684,64750:64733,64800:64783,64850:64817,64900:64866,64950:64934,65000:64983,65050:65049,65100:65066,65150:65150,65200:65166,65250:65217,65300:65299,65350:65317
+target CMDS st=65400 d=16,16,18,16,34,16,16,17,1,18,32,16,16,17,1,16,34,16,16,18,21,16,13,16,16,18,16,16,18,17,16,17,16,17,17,17,16,17,17,17,16,16,17,17,16,16,18,18,16,16,16,16,18,17,16,17,18,16,16 snap=0:65400,3:65450,5:65500,9:65550,11:65600,15:65650,17:65700,20:65750,23:65800,26:65850,29:65900,32:65950,35:66000,38:66050,41:66100,44:66150,47:66200,50:66250,53:66300,56:66350,59:66400 ct=65400:65399,65450:65432,65500:65466,65550:65549,65600:65568,65650:65649,65700:65666,65750:65732,65800:65787,65850:65832,65900:65882,65950:65933,66000:65983,66050:66033,66100:66084,66150:66133,66200:66182,66250:66234,66300:66282,66350:66333,66400:66384
+target CMDS st=66416 d=17,17,16,34,16,16,17,1,23,27,16,16,18,16,16,18,16,17,17,16,19,15,16,17,17,16,16,18,16,16,18,16,17,17,34,16,50,16,19,15,17,16,17,16,16,18,16,16,17,1,17,33,16,17,17,17,16,17,0 snap=2:66450,4:66500,8:66550,10:66600,13:66650,16:66700,19:66750,22:66800,25:66850,28:66900,31:66950,34:67000,36:67050,37:67100,40:67150,43:67200,46:67250,50:67300,52:67350,55:67400,59:67450 ct=66450:66433,66500:66466,66550:66549,66600:66573,66650:66632,66700:66682,66750:66733,66800:66785,66850:66833,66900:66882,66950:66932,67000:66983,67050:67034,67100:67050,67150:67135,67200:67183,67250:67232,67300:67282,67350:67317,67400:67383,67450:67433
+target CMDS st=67467 d=33,17,16,17,21,16,13,16,17,17,16,17,17,16,16,18,16,22,12,16,34,16,18,16,16,16,18,23,16,11,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,17,18,15,19,17,14,16,34,16,18,16,16,17,17 snap=1:67500,4:67550,7:67600,10:67650,13:67700,16:67750,19:67800,21:67850,24:67900,27:67950,30:68000,33:68050,36:68100,39:68150,42:68200,45:68250,48:68300,51:68350,53:68400,56:68450,59:68500 ct=67500:67467,67550:67533,67600:67587,67650:67633,67700:67683,67750:67732,67800:67766,67850:67816,67900:67884,67950:67932,68000:67989,68050:68033,68100:68082,68150:68133,68200:68182,68250:68233,68300:68285,68350:68319,68400:68366,68450:68434,68500:68483
+target CMDS st=68516 d=16,18,16,16,18,18,16,16,17,21,12,50,50,16,16,18,0,16,16,18,18,32,16,16,18,18,17,15,16,16,18,16,17,17,19,16,15,16,16,18,16,16,18,16,17,17,16,17,17,16,17,17,16,17,17,17,16,17,16 snap=2:68550,5:68600,8:68650,11:68700,12:68750,13:68800,17:68850,20:68900,22:68950,25:69000,28:69050,31:69100,34:69150,37:69200,40:69250,43:69300,46:69350,49:69400,52:69450,55:69500,58:69550 ct=68550:68532,68600:68582,68650:68634,68700:68688,68750:68688,68800:68750,68850:68850,68900:68866,68950:68918,69000:68982,69050:69035,69100:69082,69150:69133,69200:69185,69250:69232,69300:69282,69350:69333,69400:69383,69450:69433,69500:69483,69550:69533
+target CMDS st=69583 d=17,17,17,16,16,17,17,16,18,16,16,16,18,17,17,16,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,17,16,17,16,17,17,17,16,17,16,18,16,18,17,15,16 snap=1:69600,4:69650,7:69700,10:69750,13:69800,16:69850,19:69900,22:69950,25:70000,28:70050,31:70100,34:70150,37:70200,40:70250,43:70300,46:70350,49:70400,52:70450,55:70500,58:70550 ct=69600:69583,69650:69634,69700:69683,69750:69734,69800:69782,69850:69834,69900:69882,69950:69932,70000:69983,70050:70033,70100:70082,70150:70132,70200:70183,70250:70232,70300:70283,70350:70333,70400:70383,70450:70433,70500:70484,70550:70535
+target CMDS st=70583 d=17,17,17,16,16,16,18,18,32,16,17,17,16,16,18,16,17,17,23,27,20,18,12,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,17,17,17,16,17,16,17,17,16,16,18 snap=1:70600,4:70650,7:70700,9:70750,12:70800,15:70850,18:70900,20:70950,23:71000,26:71050,29:71100,32:71150,35:71200,38:71250,41:71300,44:71350,47:71400,50:71450,53:71500,56:71550,59:71600 ct=70600:70583,70650:70634,70700:70682,70750:70718,70800:70783,70850:70832,70900:70883,70950:70923,71000:70988,71050:71032,71100:71082,71150:71133,71200:71182,71250:71233,71300:71283,71350:71332,71400:71382,71450:71433,71500:71483,71550:71533,71600:71582
+target CMDS st=71618 d=17,15,17,16,17,16,17,17,44,6,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=2:71650,5:71700,8:71750,10:71800,12:71850,16:71900,19:71950,22:72000,25:72050,28:72100,31:72150,34:72200,37:72250,40:72300,44:72350,47:72400,50:72450,53:72500,56:72550,59:72600 ct=71650:71635,71700:71683,71750:71733,71800:71794,71850:71816,71900:71898,71950:71932,72000:71982,72050:72032,72100:72082,72150:72132,72200:72182,72250:72232,72300:72282,72350:72348,72400:72382,72450:72432,72500:72482,72550:72532,72600:72582
+target CMDS st=72616 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16 snap=2:72650,5:72700,8:72750,11:72800,14:72850,18:72900,20:72950,24:73000,27:73050,30:73100,33:73150,36:73200,39:73250,42:73300,45:73350,48:73400,51:73450,54:73500,57:73550 ct=72650:72632,72700:72682,72750:72732,72800:72782,72850:72832,72900:72898,72950:72916,73000:72998,73050:73032,73100:73082,73150:73132,73200:73182,73250:73232,73300:73282,73350:73332,73400:73383,73450:73432,73500:73482,73550:73532
+target CMDS st=73600 d=16,16,18,16,16,16,2,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18 snap=0:73600,3:73650,7:73700,10:73750,13:73800,16:73850,19:73900,22:73950,25:74000,28:74050,31:74100,34:74150,37:74200,40:74250,43:74300,47:74350,49:74400,53:74450,56:74500,59:74550 ct=73600:73582,73650:73632,73700:73698,73750:73732,73800:73782,73850:73833,73900:73882,73950:73932,74000:73982,74050:74032,74100:74082,74150:74132,74200:74182,74250:74232,74300:74282,74350:74348,74400:74366,74450:74448,74500:74482,74550:74532
+target CMDS st=74566 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:74600,5:74650,8:74700,11:74750,14:74800,17:74850,20:74900,23:74950,26:75000,29:75050,32:75100,36:75150,39:75200,42:75250,45:75300,48:75350,51:75400,54:75450,57:75500 ct=74600:74582,74650:74632,74700:74682,74750:74732,74800:74782,74850:74832,74900:74882,74950:74932,75000:74982,75050:75032,75100:75082,75150:75148,75200:75182,75250:75232,75300:75282,75350:75332,75400:75382,75450:75432,75500:75482
+target CMDS st=75550 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,17,1 snap=0:75550,3:75600,6:75650,9:75700,12:75750,16:75800,19:75850,22:75900,25:75950,28:76000,31:76050,34:76100,37:76150,40:76200,43:76250,46:76300,49:76350,53:76400,55:76450,59:76500 ct=75550:75532,75600:75582,75650:75632,75700:75682,75750:75732,75800:75798,75850:75832,75900:75882,75950:75932,76000:75982,76050:76032,76100:76082,76150:76132,76200:76182,76250:76232,76300:76282,76350:76332,76400:76399,76450:76416,76500:76499
+target CMDS st=76516 d=34,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34 snap=1:76550,5:76600,8:76650,11:76700,14:76750,17:76800,20:76850,23:76900,26:76950,29:77000,32:77050,35:77100,38:77150,41:77200,44:77250,47:77300,50:77350,53:77400,57:77450,59:77500 ct=76550:76516,76600:76599,76650:76632,76700:76682,76750:76732,76800:76782,76850:76832,76900:76882,76950:76932,77000:76982,77050:77032,77100:77082,77150:77132,77200:77182,77250:77232,77300:77282,77350:77332,77400:77382,77450:77448,77500:77466
+target CMDS st=77516 d=16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,0,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=3:77550,6:77600,9:77650,12:77700,15:77750,18:77800,21:77850,24:77900,27:77950,30:78000,33:78050,36:78100,39:78150,42:78200,46:78250,49:78300,52:78350,55:78400,58:78450 ct=77550:77549,77600:77582,77650:77632,77700:77682,77750:77732,77800:77782,77850:77832,77900:77882,77950:77933,78000:77982,78050:78032,78100:78082,78150:78132,78200:78182,78250:78250,78300:78282,78350:78332,78400:78382,78450:78432
+target CMDS st=78482 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:78500,4:78550,7:78600,10:78650,13:78700,16:78750,19:78800,22:78850,25:78900,29:78950,31:79000,35:79050,38:79100,41:79150,44:79200,47:79250,50:79300,53:79350,56:79400,59:79450 ct=78500:78482,78550:78532,78600:78582,78650:78632,78700:78682,78750:78732,78800:78782,78850:78832,78900:78882,78950:78932,79000:78966,79050:79048,79100:79082,79150:79132,79200:79182,79250:79232,79300:79282,79350:79332,79400:79382,79450:79432
+target CMDS st=79466 d=16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16 snap=2:79500,5:79550,9:79600,11:79650,15:79700,18:79750,21:79800,24:79850,27:79900,30:79950,33:80000,36:80050,39:80100,42:80150,46:80200,48:80250,52:80300,55:80350,58:80400 ct=79500:79482,79550:79532,79600:79598,79650:79616,79700:79698,79750:79732,79800:79782,79850:79832,79900:79882,79950:79932,80000:79982,80050:80032,80100:80082,80150:80132,80200:80198,80250:80216,80300:80298,80350:80332,80400:80382
+target CMDS st=80432 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:80450,4:80500,7:80550,10:80600,13:80650,16:80700,19:80750,22:80800,25:80850,29:80900,32:80950,35:81000,38:81050,41:81100,44:81150,47:81200,50:81250,53:81300,56:81350,59:81400 ct=80450:80432,80500:80482,80550:80532,80600:80582,80650:80632,80700:80682,80750:80732,80800:80782,80850:80832,80900:80898,80950:80932,81000:80983,81050:81032,81100:81082,81150:81132,81200:81182,81250:81232,81300:81282,81350:81332,81400:81382
+target CMDS st=81416 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:81450,5:81500,8:81550,11:81600,14:81650,17:81700,21:81750,23:81800,27:81850,30:81900,33:81950,36:82000,39:82050,42:82100,45:82150,48:82200,51:82250,54:82300,57:82350 ct=81450:81432,81500:81482,81550:81532,81600:81582,81650:81632,81700:81682,81750:81748,81800:81766,81850:81848,81900:81882,81950:81932,82000:81982,82050:82032,82100:82082,82150:82132,82200:82182,82250:82232,82300:82282,82350:82332
+target CMDS st=82400 d=16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=0:82400,4:82450,6:82500,10:82550,13:82600,16:82650,19:82700,22:82750,25:82800,28:82850,31:82900,34:82950,37:83000,40:83050,44:83100,47:83150,50:83200,53:83250,56:83300,59:83350 ct=82400:82382,82450:82448,82500:82466,82550:82548,82600:82582,82650:82632,82700:82682,82750:82732,82800:82782,82850:82832,82900:82882,82950:82932,83000:82982,83050:83032,83100:83098,83150:83132,83200:83182,83250:83232,83300:83282,83350:83332
+target CMDS st=83366 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:83400,5:83450,8:83500,11:83550,14:83600,17:83650,20:83700,24:83750,27:83800,30:83850,33:83900,36:83950,39:84000,42:84050,45:84100,48:84150,51:84200,54:84250,57:84300 ct=83400:83382,83450:83432,83500:83482,83550:83532,83600:83582,83650:83632,83700:83682,83750:83748,83800:83782,83850:83832,83900:83882,83950:83932,84000:83982,84050:84032,84100:84082,84150:84132,84200:84182,84250:84232,84300:84282
+target CMDS st=84350 d=16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,16,18 snap=0:84350,3:84400,7:84450,10:84500,13:84550,16:84600,19:84650,22:84700,25:84750,28:84800,31:84850,34:84900,37:84950,40:85000,43:85050,46:85100,50:85150,52:85200,56:85250,59:85300 ct=84350:84332,84400:84382,84450:84448,84500:84482,84550:84532,84600:84582,84650:84632,84700:84682,84750:84732,84800:84782,84850:84832,84900:84882,84950:84932,85000:84982,85050:85032,85100:85082,85150:85149,85200:85166,85250:85248,85300:85282
+target CMDS st=85316 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16 snap=2:85350,5:85400,8:85450,11:85500,14:85550,17:85600,20:85650,23:85700,26:85750,30:85800,33:85850,36:85900,39:85950,42:86000,45:86050,48:86100,51:86150,54:86200,57:86250 ct=85350:85332,85400:85382,85450:85432,85500:85482,85550:85532,85600:85582,85650:85632,85700:85682,85750:85732,85800:85798,85850:85832,85900:85882,85950:85932,86000:85982,86050:86032,86100:86082,86150:86132,86200:86183,86250:86232
+target CMDS st=86300 d=16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18 snap=0:86300,3:86350,6:86400,9:86450,13:86500,16:86550,19:86600,22:86650,25:86700,28:86750,31:86800,34:86850,37:86900,40:86950,43:87000,47:87050,49:87100,53:87150,56:87200,59:87250 ct=86300:86282,86350:86332,86400:86382,86450:86432,86500:86498,86550:86532,86600:86582,86650:86632,86700:86682,86750:86732,86800:86782,86850:86832,86900:86882,86950:86932,87000:86982,87050:87048,87100:87066,87150:87148,87200:87182,87250:87232
+target CMDS st=87266 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:87300,5:87350,8:87400,11:87450,14:87500,17:87550,20:87600,23:87650,27:87700,30:87750,33:87800,36:87850,39:87900,42:87950,45:88000,48:88050,51:88100,54:88150,57:88200 ct=87300:87282,87350:87332,87400:87382,87450:87432,87500:87482,87550:87532,87600:87582,87650:87632,87700:87698,87750:87732,87800:87782,87850:87832,87900:87882,87950:87932,88000:87982,88050:88032,88100:88082,88150:88132,88200:88182
+target CMDS st=88248 d=2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:88250,4:88300,7:88350,10:88400,13:88450,16:88500,19:88550,22:88600,25:88650,28:88700,31:88750,35:88800,37:88850,40:88900,44:88950,47:89000,50:89050,53:89100,56:89150,59:89200 ct=88250:88248,88300:88282,88350:88332,88400:88382,88450:88432,88500:88482,88550:88532,88600:88582,88650:88632,88700:88682,88750:88732,88800:88782,88850:88816,88900:88882,88950:88948,89000:88982,89050:89032,89100:89082,89150:89132,89200:89182
+target CMDS st=89216 d=16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16 snap=2:89250,5:89300,8:89350,11:89400,15:89450,18:89500,21:89550,24:89600,27:89650,30:89700,33:89750,36:89800,39:89850,42:89900,45:89950,49:90000,51:90050,55:90100,58:90150 ct=89250:89232,89300:89282,89350:89332,89400:89382,89450:89448,89500:89482,89550:89532,89600:89582,89650:89632,89700:89682,89750:89732,89800:89782,89850:89832,89900:89882,89950:89932,90000:89998,90050:90016,90100:90098,90150:90132
+target CMDS st=90182 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18 snap=1:90200,4:90250,7:90300,10:90350,13:90400,16:90450,19:90500,22:90550,25:90600,29:90650,32:90700,35:90750,38:90800,41:90850,44:90900,47:90950,50:91000,53:91050,56:91100,59:91150 ct=90200:90182,90250:90232,90300:90282,90350:90332,90400:90382,90450:90432,90500:90482,90550:90532,90600:90582,90650:90648,90700:90682,90750:90732,90800:90782,90850:90832,90900:90882,90950:90932,91000:90984,91050:91032,91100:91082,91150:91132
+target CMDS st=91166 d=16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16 snap=2:91200,5:91250,8:91300,12:91350,15:91400,18:91450,21:91500,24:91550,27:91600,30:91650,33:91700,36:91750,39:91800,42:91850,45:91900,48:91950,52:92000,54:92050,58:92100 ct=91200:91182,91250:91232,91300:91282,91350:91348,91400:91382,91450:91432,91500:91482,91550:91532,91600:91582,91650:91632,91700:91682,91750:91732,91800:91782,91850:91832,91900:91882,91950:91932,92000:91998,92050:92016,92100:92098
+target CMDS st=92132 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18 snap=1:92150,4:92200,7:92250,10:92300,13:92350,16:92400,19:92450,22:92500,25:92550,28:92600,31:92650,35:92700,38:92750,41:92800,44:92850,47:92900,50:92950,53:93000,56:93050,59:93100 ct=92150:92132,92200:92182,92250:92232,92300:92282,92350:92332,92400:92382,92450:92432,92500:92482,92550:92532,92600:92582,92650:92632,92700:92698,92750:92732,92800:92782,92850:92832,92900:92882,92950:92933,93000:92982,93050:93032,93100:93082
+shooter CMDS st=424 d=20,16,11390,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2 in=0:0:0:0,9:16:0:0 snap=3:11850,6:11900,9:11950,12:12000,15:12050,18:12100,22:12150,24:12200,28:12250,31:12300,34:12350,37:12400,40:12450,43:12500,46:12550,49:12600,53:12650,55:12700,59:12750 ct=11850:11850,11900:11882,11950:11950,12000:11982,12050:12032,12100:12082,12150:12148,12200:12166,12250:12248,12300:12282,12350:12332,12400:12382,12450:12432,12500:12482,12550:12532,12600:12582,12650:12648,12700:12666,12750:12748
+shooter CMDS st=12766 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:12800,5:12850,8:12900,11:12950,14:13000,17:13050,20:13100,23:13150,26:13200,29:13250,33:13300,36:13350,39:13400,42:13450,45:13500,48:13550,51:13600,54:13650,57:13700 ct=12800:12782,12850:12832,12900:12882,12950:12932,13000:12982,13050:13032,13100:13082,13150:13132,13200:13182,13250:13232,13300:13298,13350:13332,13400:13382,13450:13432,13500:13482,13550:13532,13600:13582,13650:13632,13700:13682
+shooter CMDS st=13750 d=16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=0:13750,4:13800,7:13850,10:13900,13:13950,16:14000,19:14050,22:14100,25:14150,28:14200,31:14250,34:14300,38:14350,41:14400,44:14450,47:14500,50:14550,53:14600,56:14650,59:14700 ct=13750:13732,13800:13798,13850:13832,13900:13882,13950:13932,14000:13982,14050:14032,14100:14082,14150:14132,14200:14182,14250:14232,14300:14282,14350:14348,14400:14382,14450:14432,14500:14482,14550:14532,14600:14582,14650:14632,14700:14682
+shooter CMDS st=14716 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16 snap=2:14750,5:14800,8:14850,11:14900,14:14950,18:15000,20:15050,24:15100,27:15150,30:15200,33:15250,36:15300,39:15350,42:15400,45:15450,48:15500,52:15550,54:15600,58:15650 ct=14750:14732,14800:14782,14850:14832,14900:14882,14950:14932,15000:14998,15050:15016,15100:15098,15150:15132,15200:15182,15250:15232,15300:15282,15350:15332,15400:15382,15450:15432,15500:15482,15550:15548,15600:15566,15650:15648
+shooter CMDS st=15682 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:15700,4:15750,7:15800,10:15850,13:15900,16:15950,19:16000,22:16050,25:16100,28:16150,32:16200,35:16250,38:16300,41:16350,44:16400,47:16450,50:16500,53:16550,56:16600,59:16650 ct=15700:15682,15750:15732,15800:15782,15850:15832,15900:15882,15950:15932,16000:15982,16050:16032,16100:16082,16150:16132,16200:16198,16250:16232,16300:16282,16350:16332,16400:16382,16450:16432,16500:16482,16550:16532,16600:16582,16650:16632
+shooter CMDS st=16666 d=16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=3:16700,5:16750,9:16800,12:16850,15:16900,18:16950,21:17000,24:17050,27:17100,30:17150,33:17200,36:17250,39:17300,43:17350,46:17400,49:17450,52:17500,55:17550,58:17600 ct=16700:16698,16750:16716,16800:16798,16850:16832,16900:16882,16950:16932,17000:16982,17050:17032,17100:17082,17150:17132,17200:17182,17250:17232,17300:17282,17350:17348,17400:17382,17450:17432,17500:17482,17550:17532,17600:17582
+shooter CMDS st=17632 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16 snap=1:17650,4:17700,7:17750,10:17800,13:17850,17:17900,20:17950,23:18000,26:18050,29:18100,32:18150,35:18200,38:18250,41:18300,44:18350,47:18400,51:18450,53:18500,57:18550 ct=17650:17632,17700:17682,17750:17732,17800:17782,17850:17832,17900:17898,17950:17932,18000:17982,18050:18032,18100:18082,18150:18132,18200:18182,18250:18232,18300:18282,18350:18332,18400:18382,18450:18448,18500:18466,18550:18548
+shooter CMDS st=18600 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=0:18600,3:18650,6:18700,9:18750,12:18800,15:18850,18:18900,21:18950,24:19000,27:19050,30:19100,33:19150,37:19200,40:19250,43:19300,46:19350,49:19400,52:19450,55:19500,58:19550 ct=18600:18582,18650:18632,18700:18682,18750:18732,18800:18782,18850:18832,18900:18882,18950:18932,19000:18982,19050:19032,19100:19082,19150:19132,19200:19198,19250:19232,19300:19282,19350:19332,19400:19382,19450:19432,19500:19482,19550:19532
+shooter CMDS st=19582 d=18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=1:19600,4:19650,7:19700,11:19750,14:19800,17:19850,20:19900,23:19950,26:20000,29:20050,32:20100,35:20150,38:20200,41:20250,45:20300,48:20350,51:20400,54:20450,57:20500 ct=19600:19582,19650:19632,19700:19682,19750:19748,19800:19782,19850:19832,19900:19882,19950:19932,20000:19982,20050:20032,20100:20082,20150:20132,20200:20182,20250:20232,20300:20298,20350:20332,20400:20382,20450:20432,20500:20482
+shooter CMDS st=20550 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18 snap=0:20550,3:20600,6:20650,9:20700,12:20750,16:20800,19:20850,22:20900,25:20950,28:21000,31:21050,34:21100,37:21150,40:21200,43:21250,46:21300,50:21350,53:21400,56:21450,59:21500 ct=20550:20532,20600:20582,20650:20632,20700:20682,20750:20732,20800:20798,20850:20832,20900:20882,20950:20932,21000:20982,21050:21032,21100:21082,21150:21132,21200:21182,21250:21232,21300:21282,21350:21348,21400:21382,21450:21432,21500:21482
+shooter CMDS st=21516 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16 in=2:17:0:0,5:16:0:0 snap=2:21550,5:21600,8:21650,11:21700,14:21750,17:21800,20:21850,23:21900,27:21950,30:22000,33:22050,36:22100,39:22150,42:22200,45:22250,48:22300,51:22350,54:22400,58:22450 ct=21550:21532,21600:21582,21650:21632,21700:21682,21750:21732,21800:21782,21850:21832,21900:21882,21950:21948,22000:21982,22050:22032,22100:22082,22150:22132,22200:22182,22250:22232,22300:22282,22350:22332,22400:22382,22450:22448
+shooter CMDS st=22500 d=16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=0:22500,4:22550,7:22600,10:22650,13:22700,16:22750,19:22800,22:22850,25:22900,29:22950,32:23000,35:23050,38:23100,41:23150,44:23200,47:23250,50:23300,53:23350,56:23400,59:23450 ct=22500:22466,22550:22548,22600:22582,22650:22632,22700:22682,22750:22732,22800:22782,22850:22832,22900:22882,22950:22948,23000:22982,23050:23016,23100:23082,23150:23132,23200:23182,23250:23232,23300:23282,23350:23332,23400:23382,23450:23432
+shooter CMDS st=23466 d=16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=3:23500,6:23550,9:23600,12:23650,15:23700,18:23750,21:23800,24:23850,27:23900,30:23950,33:24000,37:24050,40:24100,42:24150,46:24200,49:24250,52:24300,55:24350,58:24400 ct=23500:23498,23550:23532,23600:23582,23650:23632,23700:23682,23750:23732,23800:23782,23850:23832,23900:23882,23950:23932,24000:23982,24050:24048,24100:24082,24150:24116,24200:24198,24250:24232,24300:24282,24350:24332,24400:24382
+shooter CMDS st=24432 d=18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16 in=13:17:0:0,17:16:0:0 snap=1:24450,4:24500,7:24550,11:24600,13:24650,17:24700,20:24750,23:24800,26:24850,29:24900,32:24950,35:25000,38:25050,41:25100,44:25150,47:25200,50:25250,54:25300,56:25350 ct=24450:24432,24500:24482,24550:24532,24600:24582,24650:24616,24700:24682,24750:24732,24800:24782,24850:24832,24900:24882,24950:24932,25000:24982,25050:25032,25100:25082,25150:25132,25200:25182,25250:25232,25300:25298,25350:25316
+shooter CMDS st=25400 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=0:25400,3:25450,6:25500,9:25550,12:25600,15:25650,18:25700,21:25750,24:25800,27:25850,30:25900,33:25950,36:26000,40:26050,43:26100,46:26150,49:26200,52:26250,55:26300,58:26350 ct=25400:25398,25450:25432,25500:25482,25550:25532,25600:25582,25650:25632,25700:25682,25750:25732,25800:25782,25850:25832,25900:25882,25950:25932,26000:25982,26050:26048,26100:26082,26150:26132,26200:26182,26250:26232,26300:26282,26350:26332
+shooter CMDS st=26382 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16 snap=1:26400,4:26450,7:26500,10:26550,13:26600,17:26650,19:26700,23:26750,26:26800,29:26850,32:26900,35:26950,38:27000,41:27050,44:27100,47:27150,51:27200,53:27250,57:27300 ct=26400:26382,26450:26432,26500:26482,26550:26532,26600:26582,26650:26648,26700:26666,26750:26748,26800:26782,26850:26832,26900:26882,26950:26932,27000:26982,27050:27032,27100:27082,27150:27132,27200:27198,27250:27216,27300:27298
+shooter CMDS st=27350 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 in=24:17:0:0,28:16:0:0 snap=0:27350,3:27400,6:27450,9:27500,12:27550,15:27600,18:27650,22:27700,24:27750,28:27800,31:27850,33:27900,37:27950,40:28000,43:28050,46:28100,49:28150,52:28200,55:28250,58:28300 ct=27350:27332,27400:27382,27450:27432,27500:27482,27550:27532,27600:27582,27650:27632,27700:27682,27750:27716,27800:27798,27850:27832,27900:27866,27950:27948,28000:27982,28050:28032,28100:28082,28150:28132,28200:28182,28250:28232,28300:28282
+shooter CMDS st=28332 d=16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:28350,5:28400,7:28450,11:28500,14:28550,17:28600,20:28650,23:28700,26:28750,29:28800,32:28850,35:28900,38:28950,42:29000,45:29050,48:29100,51:29150,54:29200,57:29250 ct=28350:28332,28400:28382,28450:28416,28500:28498,28550:28532,28600:28582,28650:28632,28700:28682,28750:28732,28800:28782,28850:28832,28900:28882,28950:28932,29000:28998,29050:29032,29100:29082,29150:29132,29200:29182,29250:29232
+shooter CMDS st=29300 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18 snap=0:29300,3:29350,6:29400,9:29450,12:29500,16:29550,19:29600,22:29650,25:29700,28:29750,31:29800,34:29850,37:29900,40:29950,43:30000,47:30050,49:30100,53:30150,56:30200,59:30250 ct=29300:29282,29350:29332,29400:29382,29450:29432,29500:29482,29550:29548,29600:29582,29650:29632,29700:29682,29750:29732,29800:29782,29850:29832,29900:29882,29950:29932,30000:29982,30050:30048,30100:30066,30150:30148,30200:30182,30250:30232
+shooter CMDS st=30266 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 in=36:17:0:0,39:16:0:0 snap=2:30300,5:30350,8:30400,11:30450,14:30500,17:30550,21:30600,23:30650,26:30700,30:30750,33:30800,36:30850,39:30900,42:30950,45:31000,48:31050,51:31100,54:31150,57:31200 ct=30300:30282,30350:30332,30400:30382,30450:30432,30500:30482,30550:30532,30600:30582,30650:30616,30700:30682,30750:30748,30800:30782,30850:30832,30900:30882,30950:30932,31000:30982,31050:31032,31100:31082,31150:31132,31200:31182
+shooter CMDS st=31248 d=2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18 snap=1:31250,3:31300,7:31350,10:31400,13:31450,16:31500,19:31550,22:31600,25:31650,28:31700,31:31750,34:31800,37:31850,40:31900,44:31950,46:32000,50:32050,53:32100,56:32150,59:32200 ct=31250:31248,31300:31266,31350:31348,31400:31382,31450:31432,31500:31482,31550:31532,31600:31582,31650:31632,31700:31682,31750:31732,31800:31782,31850:31834,31900:31882,31950:31948,32000:31966,32050:32048,32100:32082,32150:32132,32200:32182
+shooter CMDS st=32216 d=16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18,18,16,16,16,16,18,16,17,17,17,16,17,16,17,17,16,17,17,18,16,16,16,16,18,16,16,18,16,17,17,17,16,17 snap=2:32250,5:32300,8:32350,11:32400,14:32450,17:32500,20:32550,23:32600,26:32650,29:32700,32:32750,35:32800,38:32850,41:32900,44:32950,47:33000,50:33050,53:33100,56:33150,59:33200 ct=32250:32232,32300:32282,32350:32333,32400:32383,32450:32432,32500:32482,32550:32533,32600:32583,32650:32632,32700:32684,32750:32732,32800:32783,32850:32833,32900:32883,32950:32933,33000:32984,33050:33032,33100:33082,33150:33133,33200:33183
+shooter CMDS st=33216 d=17,17,16,17,17,16,18,16,16,17,17,16,17,17,16,16,18,16,18,16,18,16,16,16,16,18,17,16,17,16,17,17,17,16,17,16,17,17,17,16,16,1,16,17,17,17,33,18,16,16,16,18,16,17,16,17,17,17,16 in=45:17:0:0,47:16:0:0 snap=2:33250,5:33300,8:33350,11:33400,14:33450,17:33500,20:33550,23:33600,26:33650,29:33700,32:33750,35:33800,38:33850,42:33900,45:33950,47:34000,50:34050,53:34100,56:34150,59:34200 ct=33250:33233,33300:33283,33350:33334,33400:33383,33450:33433,33500:33482,33550:33534,33600:33584,33650:33632,33700:33683,33750:33733,33800:33783,33850:33833,33900:33883,33950:33933,34000:33967,34050:34034,34100:34084,34150:34133,34200:34184
+shooter CMDS st=34216 d=17,17,17,16,17,16,16,18,16,17,17,16,17,17,0,16,34,16,17,17,17,16,17,17,16,17,17,16,17,16,17,17,17,16,17,17,17,16,16,17,17,17,17,16,17,17,16,16,16,18,16,16,18,16,18,16,16,16,18 snap=2:34250,5:34300,8:34350,11:34400,15:34450,17:34500,20:34550,23:34600,26:34650,29:34700,32:34750,35:34800,38:34850,41:34900,44:34950,47:35000,50:35050,53:35100,56:35150,59:35200 ct=34250:34233,34300:34283,34350:34332,34400:34383,34450:34433,34500:34466,34550:34533,34600:34583,34650:34633,34700:34683,34750:34733,34800:34783,34850:34834,34900:34883,34950:34934,35000:34984,35050:35032,35100:35082,35150:35134,35200:35182
+shooter CMDS st=35220 d=16,14,16,16,18,19,17,14,16,16,18,16,17,17,16,17,17,16,17,17,16,17,17,16,17,17,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,17,1,16,34,16,17,17,16,17,16 snap=2:35250,5:35300,8:35350,11:35400,14:35450,17:35500,20:35550,23:35600,26:35650,29:35700,32:35750,35:35800,38:35850,41:35900,44:35950,47:36000,51:36050,53:36100,56:36150 ct=35250:35236,35300:35282,35350:35336,35400:35382,35450:35433,35500:35483,35550:35533,35600:35583,35650:35633,35700:35683,35750:35733,35800:35782,35850:35832,35900:35883,35950:35933,36000:35982,36050:36049,36100:36066,36150:36133
+shooter CMDS st=36200 d=16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16 in=51:17:0:0,54:16:0:0 snap=0:36200,3:36250,6:36300,9:36350,12:36400,15:36450,18:36500,21:36550,24:36600,27:36650,30:36700,33:36750,36:36800,39:36850,42:36900,45:36950,48:37000,51:37050,54:37100,57:37150 ct=36200:36199,36250:36232,36300:36283,36350:36332,36400:36382,36450:36433,36500:36483,36550:36533,36600:36583,36650:36632,36700:36682,36750:36732,36800:36782,36850:36832,36900:36882,36950:36932,37000:36983,37050:37032,37100:37082,37150:37132
+shooter CMDS st=37200 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,17,33,16,16,16,2,16,16,18,16,16,18,16,16,18,16 snap=0:37200,3:37250,6:37300,9:37350,12:37400,15:37450,19:37500,21:37550,25:37600,28:37650,31:37700,34:37750,37:37800,40:37850,43:37900,45:37950,49:38000,52:38050,55:38100,58:38150 ct=37200:37182,37250:37232,37300:37282,37350:37332,37400:37382,37450:37432,37500:37499,37550:37516,37600:37598,37650:37633,37700:37683,37750:37732,37800:37783,37850:37832,37900:37882,37950:37917,38000:37998,38050:38016,38100:38082,38150:38132
+shooter CMDS st=38183 d=17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,17,16,1,16,34,16,16,16,2,16,16,18,16,16,18 snap=1:38200,4:38250,7:38300,10:38350,13:38400,16:38450,19:38500,22:38550,25:38600,28:38650,31:38700,34:38750,37:38800,40:38850,43:38900,47:38950,49:39000,53:39050,56:39100,59:39150 ct=38200:38183,38250:38232,38300:38282,38350:38332,38400:38382,38450:38433,38500:38482,38550:38532,38600:38582,38650:38632,38700:38682,38750:38732,38800:38783,38850:38833,38900:38882,38950:38933,39000:38966,39050:39048,39100:39082,39150:39132
+shooter CMDS st=39166 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,25,16,9,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34 snap=2:39200,5:39250,8:39300,11:39350,14:39400,17:39450,20:39500,23:39550,26:39600,29:39650,32:39700,35:39750,38:39800,41:39850,44:39900,47:39950,50:40000,53:40050,57:40100,59:40150 ct=39200:39182,39250:39232,39300:39282,39350:39332,39400:39382,39450:39432,39500:39491,39550:39532,39600:39582,39650:39632,39700:39682,39750:39732,39800:39782,39850:39832,39900:39882,39950:39932,40000:39982,40050:40032,40100:40098,40150:40116
+shooter CMDS st=40166 d=16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=3:40200,6:40250,9:40300,12:40350,15:40400,18:40450,21:40500,24:40550,27:40600,30:40650,33:40700,36:40750,39:40800,42:40850,46:40900,49:40950,52:41000,55:41050,58:41100 ct=40200:40198,40250:40232,40300:40282,40350:40332,40400:40382,40450:40432,40500:40482,40550:40532,40600:40582,40650:40632,40700:40682,40750:40732,40800:40782,40850:40832,40900:40898,40950:40932,41000:40982,41050:41032,41100:41082
+shooter CMDS st=41132 d=18,16,16,18,21,16,13,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,17,17,16,16,18,17,18,15,16,17,17,17,17,16,16,18,16,16 in=1:17:0:0,4:16:0:0 snap=1:41150,4:41200,7:41250,10:41300,13:41350,16:41400,19:41450,22:41500,25:41550,28:41600,31:41650,35:41700,37:41750,40:41800,43:41850,46:41900,49:41950,52:42000,55:42050,58:42100 ct=41150:41132,41200:41182,41250:41237,41300:41282,41350:41332,41400:41382,41450:41432,41500:41482,41550:41532,41600:41582,41650:41632,41700:41698,41750:41716,41800:41782,41850:41833,41900:41882,41950:41935,42000:41983,42050:42034,42100:42084
+shooter CMDS st=42132 d=18,17,16,17,16,17,17,16,16,18,16,17,17,24,17,9,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,18,20,12,16,17,17,17,16,17,17,16,17,20,30,16,16,18,16,16,18,16,16,16,2,16,34,16,16 snap=1:42150,4:42200,7:42250,10:42300,13:42350,16:42400,19:42450,22:42500,25:42550,28:42600,31:42650,34:42700,37:42750,40:42800,43:42850,45:42900,48:42950,51:43000,55:43050,57:43100 ct=42150:42132,42200:42183,42250:42233,42300:42282,42350:42333,42400:42391,42450:42432,42500:42483,42550:42532,42600:42582,42650:42632,42700:42688,42750:42716,42800:42783,42850:42833,42900:42870,42950:42932,43000:42982,43050:43048,43100:43066
+shooter CMDS st=43148 d=2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:43150,4:43200,7:43250,10:43300,13:43350,16:43400,19:43450,22:43500,25:43550,28:43600,32:43650,34:43700,38:43750,41:43800,44:43850,47:43900,50:43950,53:44000,56:44050,59:44100 ct=43150:43148,43200:43182,43250:43232,43300:43282,43350:43332,43400:43382,43450:43432,43500:43482,43550:43532,43600:43582,43650:43632,43700:43666,43750:43748,43800:43783,43850:43832,43900:43882,43950:43932,44000:43982,44050:44032,44100:44082
+shooter CMDS st=44116 d=16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,23,16,11,16,17 in=8:17:0:0,11:16:0:0 snap=2:44150,5:44200,8:44250,11:44300,15:44350,17:44400,20:44450,24:44500,27:44550,30:44600,33:44650,36:44700,39:44750,42:44800,45:44850,48:44900,51:44950,54:45000,57:45050 ct=44150:44132,44200:44182,44250:44232,44300:44282,44350:44349,44400:44366,44450:44432,44500:44498,44550:44532,44600:44582,44650:44632,44700:44682,44750:44732,44800:44782,44850:44832,44900:44882,44950:44932,45000:44982,45050:45039
+shooter CMDS st=45100 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,16,18,16 snap=0:45100,3:45150,6:45200,9:45250,12:45300,15:45350,18:45400,21:45450,24:45500,27:45550,30:45600,33:45650,37:45700,40:45750,43:45800,46:45850,49:45900,52:45950,55:46000,58:46050 ct=45100:45083,45150:45132,45200:45182,45250:45232,45300:45282,45350:45332,45400:45382,45450:45432,45500:45482,45550:45533,45600:45583,45650:45632,45700:45698,45750:45732,45800:45782,45850:45832,45900:45883,45950:45932,46000:45983,46050:46032
+shooter CMDS st=46082 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,16,16,18 snap=1:46100,4:46150,7:46200,10:46250,13:46300,16:46350,19:46400,22:46450,25:46500,28:46550,31:46600,35:46650,38:46700,41:46750,44:46800,47:46850,50:46900,53:46950,56:47000,59:47050 ct=46100:46082,46150:46132,46200:46182,46250:46232,46300:46282,46350:46332,46400:46382,46450:46432,46500:46482,46550:46532,46600:46582,46650:46649,46700:46682,46750:46732,46800:46782,46850:46834,46900:46882,46950:46933,47000:46982,47050:47032
+shooter CMDS st=47067 d=16,17,16,17,17,16,16,18,16,16,18,17,16,17,17,16,17,16,17,17,16,17,17,16,18,16,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,17,16,17,16,17,17,50,17,16,17,16,17,17,17,16 in=17:17:0:0,20:16:0:0 snap=2:47100,5:47150,8:47200,11:47250,14:47300,17:47350,20:47400,23:47450,26:47500,29:47550,32:47600,35:47650,38:47700,41:47750,44:47800,47:47850,50:47900,51:47950,54:48000,57:48050 ct=47100:47083,47150:47133,47200:47182,47250:47232,47300:47283,47350:47333,47400:47383,47450:47433,47500:47484,47550:47532,47600:47582,47650:47632,47700:47683,47750:47733,47800:47782,47850:47833,47900:47883,47950:47900,48000:47983,48050:48033
+shooter CMDS st=48100 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,18,16,16,16,18,16,16,18,16,20,14,16,18,16,16,17,17,16,17,17,16,17,17,16,17,17,16,17,17,16,17,17,16,16,18,16,16 snap=0:48100,3:48150,6:48200,9:48250,12:48300,15:48350,18:48400,21:48450,24:48500,27:48550,30:48600,33:48650,36:48700,39:48750,42:48800,45:48850,48:48900,51:48950,54:49000,57:49050 ct=48100:48083,48150:48132,48200:48182,48250:48232,48300:48282,48350:48332,48400:48383,48450:48432,48500:48484,48550:48532,48600:48582,48650:48636,48700:48684,48750:48733,48800:48783,48850:48833,48900:48883,48950:48933,49000:48983,49050:49032
+shooter CMDS st=49100 d=16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,18,16,16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,17,16,17,16 snap=0:49100,3:49150,6:49200,9:49250,12:49300,15:49350,18:49400,21:49450,24:49500,27:49550,31:49600,33:49650,37:49700,40:49750,42:49800,46:49850,49:49900,52:49950,55:50000,58:50050 ct=49100:49082,49150:49132,49200:49182,49250:49233,49300:49282,49350:49332,49400:49382,49450:49432,49500:49482,49550:49532,49600:49598,49650:49616,49700:49698,49750:49734,49800:49766,49850:49849,49900:49882,49950:49932,50000:49982,50050:50033
+shooter CMDS st=50082 d=18,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,18,17,15,17,17,16,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,17,16,17,16,18,16,16,17,17,16,17,17,18,17,15,19 snap=1:50100,4:50150,7:50200,10:50250,13:50300,16:50350,19:50400,22:50450,25:50500,28:50550,31:50600,34:50650,37:50700,40:50750,43:50800,46:50850,49:50900,52:50950,55:51000,58:51050 ct=50100:50082,50150:50132,50200:50182,50250:50232,50300:50283,50350:50333,50400:50382,50450:50432,50500:50485,50550:50534,50600:50582,50650:50633,50700:50683,50750:50732,50800:50782,50850:50833,50900:50884,50950:50933,51000:50983,51050:51035
+shooter CMDS st=51086 d=14,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,17,17,17,33,16,17,17,16,16,18,16,21,13,16,16,18,17,18,15,17,16,17,16,17,17,17,17,16,17,16,17,16,16,18,16,16,18,16 in=23:17:0:0,25:16:0:0 snap=1:51100,4:51150,7:51200,10:51250,13:51300,16:51350,20:51400,23:51450,25:51500,28:51550,31:51600,34:51650,37:51700,40:51750,43:51800,46:51850,49:51900,52:51950,55:52000,58:52050 ct=51100:51086,51150:51132,51200:51182,51250:51232,51300:51282,51350:51332,51400:51382,51450:51433,51500:51467,51550:51533,51600:51582,51650:51637,51700:51682,51750:51735,51800:51783,51850:51833,51900:51884,51950:51933,52000:51982,52050:52032
+shooter CMDS st=52082 d=18,16,16,18,16,16,18,16,18,16,39,11,16,17,17,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,34,23,16,11,16,16,18,16,16,18,16,16,18,16,17,17,16,18,16,17,17,16,18,21,11,16,16,18 in=53:16:16:0 snap=1:52100,4:52150,7:52200,10:52250,12:52300,15:52350,18:52400,21:52450,24:52500,27:52550,30:52600,32:52650,35:52700,38:52750,41:52800,44:52850,47:52900,50:52950,53:53000,56:53050,59:53100 ct=52100:52082,52150:52132,52200:52182,52250:52234,52300:52250,52350:52333,52400:52382,52450:52416,52500:52482,52550:52534,52600:52566,52650:52616,52700:52689,52750:52732,52800:52782,52850:52832,52900:52883,52950:52934,53000:52984,53050:53039,53100:53082
+shooter CMDS st=53118 d=17,15,16,17,17,18,32,17,16,17,0,16,16,18,16,16,18,16,16,18,16,16,18,20,30,16,16,16,2,16,19,15,16,34,17,16,16,1,16,16,18,16,34,16,16,18,18,16,16,16,18,16,16,16,18,17,20,13,16 snap=2:53150,5:53200,7:53250,11:53300,14:53350,17:53400,20:53450,23:53500,25:53550,29:53600,32:53650,34:53700,38:53750,41:53800,43:53850,46:53900,49:53950,52:54000,55:54050,58:54100 ct=53150:53135,53200:53183,53250:53218,53300:53300,53350:53332,53400:53382,53450:53432,53500:53482,53550:53520,53600:53598,53650:53635,53700:53666,53750:53749,53800:53782,53850:53816,53900:53882,53950:53934,54000:53984,54050:54032,54100:54087
+shooter CMDS st=54132 d=18,18,16,16,16,18,16,16,17,17,16,17,17,16,16,18,17,17,16,19,17,14,16,34,16,17,17,16,17,17,16,19,15,17,18,15,16,16,18,16,20,14,16,17,17,16,18,16,17,18,15,16,17,17,16,16,18,17,18 in=24:17:16:0,27:16:16:0 snap=1:54150,4:54200,7:54250,10:54300,13:54350,16:54400,19:54450,22:54500,24:54550,27:54600,30:54650,33:54700,36:54750,39:54800,42:54850,45:54900,48:54950,51:55000,54:55050,57:55100 ct=54150:54132,54200:54184,54250:54234,54300:54283,54350:54333,54400:54382,54450:54434,54500:54469,54550:54516,54600:54583,54650:54633,54700:54685,54750:54735,54800:54782,54850:54836,54900:54883,54950:54934,55000:54985,55050:55033,55100:55082
+shooter CMDS st=55150 d=16,34,16,16,18,16,16,16,2,16,16,18,16,17,17,16,16,18,17,16,17,18,17,15,16,16,18,16,16,18,16,16,18,16,34,16,19,15,17,18,15,16,16,18,16,20,14,17,16,17,16,16,18,18,17,15,17,17,16 in=56:16:32:0 snap=0:55150,2:55200,5:55250,9:55300,12:55350,15:55400,18:55450,21:55500,24:55550,27:55600,30:55650,33:55700,35:55750,38:55800,41:55850,44:55900,47:55950,50:56000,53:56050,56:56100,59:56150 ct=55150:55135,55200:55166,55250:55232,55300:55298,55350:55332,55400:55383,55450:55432,55500:55483,55550:55535,55600:55582,55650:55632,55700:55666,55750:55716,55800:55785,55850:55835,55900:55882,55950:55936,56000:55983,56050:56032,56100:56085,56150:56134
+shooter CMDS st=56166 d=17,17,16,17,17,16,16,18,16,16,18,17,17,16,16,17,17,16,19,15,16,16,18,16,16,18,17,17,16,17,17,16,16,34,18,17,15,16,16,18,17,16,17,16,16,17,1,16,16,18,16,16,18,17,18,15,16,34,16 snap=2:56200,5:56250,8:56300,11:56350,14:56400,17:56450,20:56500,23:56550,26:56600,29:56650,32:56700,34:56750,37:56800,40:56850,43:56900,47:56950,50:57000,53:57050,56:57100,58:57150 ct=56200:56183,56250:56233,56300:56282,56350:56332,56400:56384,56450:56433,56500:56485,56550:56532,56600:56582,56650:56634,56700:56684,56750:56716,56800:56785,56850:56832,56900:56883,56950:56932,57000:56966,57050:57032,57100:57067,57150:57116
+shooter CMDS st=57189 d=11,100,16,34,17,16,17,16,17,17,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,16,17,17,16,17,17,17,17,16,16,16,18,16,18,16,17,17,16,16,17,17,16,17,17,17,16,17,16,34,17,17 in=22:17:32:0,25:16:32:0 snap=1:57200,2:57300,4:57350,7:57400,10:57450,13:57500,16:57550,19:57600,22:57650,25:57700,28:57750,31:57800,34:57850,37:57900,40:57950,43:58000,46:58050,49:58100,52:58150,55:58200,57:58250 ct=57200:57189,57300:57189,57350:57316,57400:57383,57450:57433,57500:57483,57550:57533,57600:57582,57650:57633,57700:57682,57750:57733,57800:57783,57850:57833,57900:57884,57950:57932,58000:57984,58050:58034,58100:58083,58150:58133,58200:58183,58250:58216
+shooter CMDS st=58300 d=16,16,18,16,16,18,16,17,17,16,17,17,16,16,17,1,17,33,16,16,18,16,16,16,2,16,34,17,16,16,1,16,34,16,17,18,-1,16,34,16,18,16,50,16,34,17,16,17,16,17,17,16,17,17,16,17,17,18,16 in=51:16:16:0 snap=0:58300,3:58350,6:58400,9:58450,12:58500,16:58550,18:58600,21:58650,25:58700,27:58750,31:58800,33:58850,37:58900,39:58950,42:59000,43:59050,45:59100,48:59150,51:59200,54:59250,57:59300 ct=58300:58284,58350:58332,58400:58382,58450:58433,58500:58483,58550:58549,58600:58567,58650:58632,58700:58698,58750:58716,58800:58799,58850:58816,58900:58901,58950:58916,59000:58984,59050:58984,59100:59066,59150:59133,59200:59183,59250:59233,59300:59283
+shooter CMDS st=59350 d=16,16,18,16,17,17,16,16,18,18,16,16,16,16,18,16,17,17,17,19,14,16,17,17,16,34,16,17,16,1,17,17,16,16,34,21,16,13,16,16,18,16,17,17,17,16,17,18,16,16,16,34,18,16,16,16,17,17,18 snap=0:59350,3:59400,6:59450,9:59500,12:59550,15:59600,18:59650,21:59700,24:59750,26:59800,30:59850,33:59900,35:59950,38:60000,41:60050,44:60100,47:60150,50:60200,52:60250,55:60300,58:60350 ct=59350:59334,59400:59382,59450:59433,59500:59482,59550:59534,59600:59582,59650:59633,59700:59686,59750:59733,59800:59766,59850:59849,59900:59884,59950:59916,60000:59987,60050:60032,60100:60083,60150:60133,60200:60184,60250:60216,60300:60284,60350:60333
+shooter CMDS st=60384 d=16,16,17,17,17,17,16,17,16,17,16,16,18,16,16,18,16,17,17,16,17,17,16,18,16,16,16,18,16,17,17,16,17,17,16,17,17,16,16,18,16,18,16,16,18,16,16,18,16,16,16,18,16,17,17,0,16,34,16 in=22:17:16:0,25:16:16:0 snap=1:60400,4:60450,7:60500,10:60550,13:60600,16:60650,19:60700,22:60750,25:60800,28:60850,31:60900,34:60950,37:61000,40:61050,43:61100,46:61150,49:61200,52:61250,56:61300,58:61350 ct=60400:60384,60450:60433,60500:60484,60550:60533,60600:60582,60650:60632,60700:60683,60750:60733,60800:60784,60850:60832,60900:60883,60950:60933,61000:60983,61050:61032,61100:61084,61150:61134,61200:61184,61250:61232,61300:61300,61350:61316
+shooter CMDS st=61384 d=16,16,16,18,16,16,18,17,17,16,18,17,15,17,18,15,50,17,17,16,16,16,18,16,17,17,18,17,15,16,16,18,16,16,18,17,16,17,16,17,17,16,16,16,2,17,33,16,18,16,0,17,33,16,17,17,16,16,18 snap=1:61400,4:61450,7:61500,10:61550,13:61600,16:61650,17:61700,20:61750,23:61800,26:61850,29:61900,32:61950,35:62000,38:62050,41:62100,45:62150,47:62200,51:62250,53:62300,56:62350,59:62400 ct=61400:61384,61450:61432,61500:61482,61550:61534,61600:61585,61650:61635,61700:61650,61750:61734,61800:61782,61850:61833,61900:61885,61950:61932,62000:61982,62050:62033,62100:62083,62150:62148,62200:62167,62250:62250,62300:62267,62350:62333,62400:62382
+shooter CMDS st=62416 d=16,18,17,16,17,17,18,15,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,17,16,17,16,17,17,16,17,17,18,16,16,16,19,15,16,16,18,20,16,14,16,17,17,17,17,16,16,16,18,16,17,17 snap=2:62450,5:62500,8:62550,11:62600,14:62650,17:62700,20:62750,23:62800,26:62850,29:62900,32:62950,35:63000,38:63050,41:63100,44:63150,47:63200,50:63250,53:63300,56:63350,59:63400 ct=62450:62432,62500:62483,62550:62535,62600:62582,62650:62632,62700:62682,62750:62732,62800:62783,62850:62833,62900:62883,62950:62933,63000:62983,63050:63034,63100:63085,63150:63132,63200:63186,63250:63233,63300:63284,63350:63332,63400:63383
+shooter CMDS st=63416 d=17,17,16,17,17,16,17,17,16,17,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,16,2,16,34,17,16,16,1,16,17,17,16,34,16,16,18,18,17,15,16,16,18 snap=2:63450,5:63500,8:63550,11:63600,14:63650,17:63700,20:63750,23:63800,26:63850,29:63900,32:63950,35:64000,39:64050,41:64100,45:64150,48:64200,50:64250,53:64300,56:64350,59:64400 ct=63450:63433,63500:63483,63550:63533,63600:63583,63650:63632,63700:63682,63750:63733,63800:63783,63850:63832,63900:63882,63950:63932,64000:63983,64050:64048,64100:64066,64150:64149,64200:64183,64250:64216,64300:64282,64350:64335,64400:64382
+shooter CMDS st=64416 d=17,17,17,17,16,16,16,18,16,17,17,17,16,17,18,18,14,16,17,17,16,20,14,17,17,16,17,16,17,19,31,17,16,17,16,17,16,1,16,34,16,16,17,1,16,16,18,18,32,16,17,16,1,16,34,16,16,16,2 snap=2:64450,5:64500,8:64550,11:64600,14:64650,17:64700,20:64750,23:64800,26:64850,29:64900,31:64950,34:65000,38:65050,40:65100,44:65150,47:65200,49:65250,53:65300,55:65350,59:65400 ct=64450:64433,64500:64484,64550:64532,64600:64583,64650:64633,64700:64686,64750:64733,64800:64786,64850:64834,64900:64883,64950:64919,65000:64983,65050:65049,65100:65066,65150:65149,65200:65182,65250:65218,65300:65299,65350:65316,65400:65398
+shooter CMDS st=65416 d=17,17,16,16,18,16,16,18,16,17,17,19,16,15,17,33,16,16,17,1,16,16,18,17,16,17,16,17,17,16,18,16,16,17,17,16,16,18,16,17,17,16,17,17,16,17,17,16,17,17,17,16,17,20,16,14,19,31,16 snap=2:65450,5:65500,8:65550,11:65600,14:65650,16:65700,20:65750,23:65800,26:65850,29:65900,32:65950,35:66000,38:66050,41:66100,44:66150,47:66200,50:66250,53:66300,56:66350,58:66400 ct=65450:65433,65500:65482,65550:65532,65600:65583,65650:65635,65700:65667,65750:65749,65800:65766,65850:65833,65900:65883,65950:65934,66000:65983,66050:66032,66100:66083,66150:66133,66200:66183,66250:66233,66300:66283,66350:66336,66400:66369
+shooter CMDS st=66432 d=18,16,16,18,16,17,16,1,17,33,16,16,18,16,16,18,16,16,18,16,19,15,16,16,16,2,16,34,17,18,15,16,17,17,35,15,16,17,17,17,16,17,16,16,18,16,16,18,18,16,16,16,18,16,16,16,18,17,18 snap=1:66450,4:66500,8:66550,10:66600,13:66650,16:66700,19:66750,22:66800,26:66850,28:66900,31:66950,34:67000,36:67050,39:67100,42:67150,45:67200,48:67250,51:67300,54:67350,57:67400 ct=66450:66432,66500:66482,66550:66533,66600:66567,66650:66632,66700:66682,66750:66732,66800:66785,66850:66832,66900:66866,66950:66935,67000:66983,67050:67035,67100:67083,67150:67133,67200:67182,67250:67232,67300:67284,67350:67334,67400:67382
+shooter CMDS st=67450 d=16,16,18,17,16,17,16,18,16,16,34,16,17,18,-1,18,17,15,16,34,17,16,16,1,17,33,17,16,17,16,16,18,16,17,17,0,16,34,17,16,17,16,16,18,16,17,17,18,16,16,16,16,18,17,16,17,18,16,16 snap=0:67450,3:67500,6:67550,9:67600,11:67650,15:67700,18:67750,20:67800,24:67850,26:67900,29:67950,32:68000,36:68050,38:68100,41:68150,44:68200,47:68250,50:68300,53:68350,56:68400,59:68450 ct=67450:67435,67500:67482,67550:67533,67600:67584,67650:67616,67700:67701,67750:67735,67800:67766,67850:67849,67900:67867,67950:67933,68000:67982,68050:68050,68100:68066,68150:68133,68200:68182,68250:68233,68300:68284,68350:68332,68400:68383,68450:68434
+shooter CMDS st=68467 d=16,17,16,17,17,16,17,17,16,16,18,21,16,13,22,17,11,16,34,16,16,18,0,16,17,17,17,17,16,16,34,16,18,16,16,17,17,16,17,17,17,16,17,16,16,18,16,16,17,1,16,16,18,18,32,16,16,18,16 snap=2:68500,5:68550,8:68600,11:68650,14:68700,17:68750,19:68800,23:68850,26:68900,29:68950,31:69000,34:69050,37:69100,40:69150,43:69200,46:69250,50:69300,53:69350,55:69400,58:69450 ct=68500:68483,68550:68533,68600:68583,68650:68632,68700:68687,68750:68739,68800:68766,68850:68850,68900:68866,68950:68934,69000:68966,69050:69034,69100:69083,69150:69133,69200:69183,69250:69232,69300:69299,69350:69332,69400:69368,69450:69432
+shooter CMDS st=69484 d=16,16,21,13,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16,16,2,16,34,16,16,18,17,17,16,0,16,34,16,17,16,1,16,34,16,20,14,16,18,16,16 snap=1:69500,4:69550,7:69600,10:69650,13:69700,16:69750,19:69800,22:69850,25:69900,28:69950,31:70000,35:70050,37:70100,40:70150,44:70200,46:70250,50:70300,52:70350,55:70400,58:70450 ct=69500:69484,69550:69537,69600:69582,69650:69632,69700:69682,69750:69734,69800:69782,69850:69832,69900:69883,69950:69933,70000:69982,70050:70048,70100:70066,70150:70132,70200:70200,70250:70216,70300:70299,70350:70316,70400:70386,70450:70434
+shooter CMDS st=70483 d=17,17,16,17,16,17,17,16,17,17,16,16,18,20,30,16,18,16,18,16,16,16,16,18,22,28,16,16,18,16,17,16,1,16,34,16,17,17,16,16,16,2,16,16,18,16,16,18,28,22,16,16,18,16,16,18,16,17,17 snap=1:70500,4:70550,7:70600,10:70650,13:70700,15:70750,18:70800,21:70850,24:70900,26:70950,29:71000,33:71050,35:71100,38:71150,42:71200,45:71250,48:71300,50:71350,53:71400,56:71450,59:71500 ct=70500:70483,70550:70533,70600:70583,70650:70633,70700:70682,70750:70720,70800:70784,70850:70834,70900:70882,70950:70922,71000:70982,71050:71049,71100:71066,71150:71133,71200:71198,71250:71232,71300:71266,71350:71328,71400:71382,71450:71432,71500:71483
+shooter CMDS st=71516 d=17,17,16,16,18,16,17,17,16,17,17,16,16,18,43,7,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18 snap=2:71550,5:71600,8:71650,11:71700,14:71750,16:71800,19:71850,22:71900,25:71950,28:72000,31:72050,34:72100,37:72150,40:72200,43:72250,47:72300,50:72350,53:72400,56:72450,59:72500 ct=71550:71533,71600:71582,71650:71633,71700:71683,71750:71732,71800:71793,71850:71832,71900:71882,71950:71932,72000:71982,72050:72032,72100:72082,72150:72132,72200:72182,72250:72232,72300:72298,72350:72332,72400:72382,72450:72432,72500:72482
+shooter CMDS st=72516 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16 snap=2:72550,5:72600,8:72650,11:72700,14:72750,17:72800,21:72850,24:72900,26:72950,30:73000,33:73050,36:73100,39:73150,42:73200,45:73250,48:73300,51:73350,54:73400,57:73450 ct=72550:72532,72600:72582,72650:72632,72700:72682,72750:72732,72800:72782,72850:72832,72900:72882,72950:72916,73000:72998,73050:73032,73100:73082,73150:73132,73200:73182,73250:73232,73300:73282,73350:73332,73400:73382,73450:73433
+shooter CMDS st=73500 d=16,16,16,2,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18 snap=0:73500,4:73550,6:73600,9:73650,13:73700,16:73750,19:73800,22:73850,25:73900,28:73950,31:74000,34:74050,37:74100,40:74150,43:74200,46:74250,50:74300,53:74350,56:74400,59:74450 ct=73500:73482,73550:73532,73600:73566,73650:73632,73700:73698,73750:73732,73800:73782,73850:73832,73900:73882,73950:73932,74000:73982,74050:74032,74100:74082,74150:74132,74200:74182,74250:74232,74300:74298,74350:74332,74400:74382,74450:74432
+shooter CMDS st=74466 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:74500,5:74550,8:74600,11:74650,14:74700,17:74750,20:74800,23:74850,26:74900,30:74950,32:75000,36:75050,39:75100,42:75150,45:75200,48:75250,51:75300,54:75350,57:75400 ct=74500:74482,74550:74532,74600:74582,74650:74632,74700:74682,74750:74732,74800:74782,74850:74832,74900:74882,74950:74948,75000:74966,75050:75048,75100:75082,75150:75132,75200:75182,75250:75232,75300:75282,75350:75332,75400:75382
+shooter CMDS st=75450 d=16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,0 snap=0:75450,3:75500,6:75550,9:75600,13:75650,15:75700,19:75750,22:75800,25:75850,28:75900,31:75950,34:76000,37:76050,40:76100,43:76150,46:76200,49:76250,52:76300,55:76350,59:76400 ct=75450:75432,75500:75482,75550:75532,75600:75582,75650:75648,75700:75666,75750:75748,75800:75782,75850:75832,75900:75882,75950:75932,76000:75982,76050:76032,76100:76082,76150:76133,76200:76182,76250:76232,76300:76282,76350:76333,76400:76382
+shooter CMDS st=76416 d=34,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18 snap=1:76450,5:76500,7:76550,11:76600,14:76650,17:76700,20:76750,23:76800,26:76850,29:76900,32:76950,35:77000,38:77050,41:77100,44:77150,47:77200,50:77250,54:77300,56:77350,59:77400 ct=76450:76416,76500:76498,76550:76516,76600:76598,76650:76632,76700:76682,76750:76732,76800:76782,76850:76832,76900:76882,76950:76932,77000:76982,77050:77032,77100:77082,77150:77132,77200:77182,77250:77232,77300:77282,77350:77316,77400:77382
+shooter CMDS st=77416 d=16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16 snap=3:77450,6:77500,9:77550,12:77600,15:77650,18:77700,21:77750,24:77800,27:77850,30:77900,33:77950,36:78000,39:78050,42:78100,45:78150,49:78200,52:78250,55:78300,58:78350 ct=77450:77449,77500:77466,77550:77532,77600:77582,77650:77632,77700:77682,77750:77732,77800:77782,77850:77832,77900:77882,77950:77932,78000:77982,78050:78032,78100:78082,78150:78132,78200:78198,78250:78232,78300:78282,78350:78332
+shooter CMDS st=78382 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:78400,4:78450,7:78500,10:78550,13:78600,16:78650,19:78700,23:78750,25:78800,29:78850,32:78900,35:78950,38:79000,41:79050,44:79100,47:79150,50:79200,53:79250,56:79300,59:79350 ct=78400:78382,78450:78432,78500:78482,78550:78532,78600:78582,78650:78632,78700:78682,78750:78748,78800:78766,78850:78848,78900:78882,78950:78932,79000:78982,79050:79032,79100:79082,79150:79132,79200:79182,79250:79232,79300:79282,79350:79332
+shooter CMDS st=79366 d=16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17 snap=3:79400,5:79450,9:79500,12:79550,15:79600,18:79650,21:79700,24:79750,27:79800,30:79850,33:79900,36:79950,40:80000,43:80050,46:80100,49:80150,52:80200,55:80250,58:80300 ct=79400:79398,79450:79416,79500:79498,79550:79532,79600:79582,79650:79632,79700:79682,79750:79732,79800:79782,79850:79832,79900:79882,79950:79932,80000:79998,80050:80032,80100:80082,80150:80132,80200:80182,80250:80232,80300:80282
+shooter CMDS st=80334 d=16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:80350,4:80400,7:80450,10:80500,13:80550,16:80600,19:80650,23:80700,25:80750,29:80800,32:80850,35:80900,38:80950,41:81000,44:81050,47:81100,50:81150,53:81200,56:81250,59:81300 ct=80350:80334,80400:80382,80450:80432,80500:80482,80550:80532,80600:80582,80650:80632,80700:80699,80750:80716,80800:80798,80850:80832,80900:80882,80950:80932,81000:80982,81050:81032,81100:81082,81150:81132,81200:81182,81250:81232,81300:81282
+shooter CMDS st=81316 d=16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,18,16,16,16,2,16,16,18,16,16,18,16 snap=2:81350,5:81400,9:81450,12:81500,15:81550,18:81600,21:81650,24:81700,27:81750,30:81800,33:81850,36:81900,39:81950,43:82000,45:82050,48:82100,52:82150,55:82200,58:82250 ct=81350:81332,81400:81382,81450:81448,81500:81482,81550:81532,81600:81582,81650:81632,81700:81682,81750:81732,81800:81782,81850:81832,81900:81882,81950:81932,82000:81998,82050:82016,82100:82082,82150:82148,82200:82182,82250:82232
+shooter CMDS st=82282 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,17,33,16,17,17,0,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18 snap=1:82300,4:82350,7:82400,10:82450,13:82500,16:82550,20:82600,22:82650,26:82700,28:82750,32:82800,35:82850,38:82900,41:82950,44:83000,47:83050,50:83100,53:83150,56:83200,59:83250 ct=82300:82282,82350:82332,82400:82382,82450:82432,82500:82482,82550:82532,82600:82599,82650:82617,82700:82683,82750:82716,82800:82798,82850:82832,82900:82882,82950:82932,83000:82982,83050:83032,83100:83082,83150:83132,83200:83182,83250:83232
+shooter CMDS st=83266 d=16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=2:83300,6:83350,9:83400,12:83450,15:83500,18:83550,21:83600,24:83650,27:83700,30:83750,33:83800,36:83850,39:83900,42:83950,46:84000,49:84050,52:84100,55:84150,58:84200 ct=83300:83282,83350:83348,83400:83382,83450:83432,83500:83482,83550:83532,83600:83583,83650:83632,83700:83682,83750:83732,83800:83782,83850:83832,83900:83882,83950:83932,84000:83998,84050:84032,84100:84082,84150:84132,84200:84182
+shooter CMDS st=84232 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34 snap=1:84250,4:84300,7:84350,10:84400,13:84450,16:84500,19:84550,22:84600,26:84650,29:84700,32:84750,35:84800,38:84850,41:84900,44:84950,47:85000,50:85050,53:85100,57:85150,59:85200 ct=84250:84232,84300:84282,84350:84332,84400:84382,84450:84432,84500:84482,84550:84532,84600:84582,84650:84648,84700:84682,84750:84732,84800:84782,84850:84832,84900:84882,84950:84932,85000:84982,85050:85032,85100:85082,85150:85148,85200:85166
+shooter CMDS st=85216 d=16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16 snap=3:85250,6:85300,9:85350,12:85400,15:85450,18:85500,21:85550,24:85600,27:85650,30:85700,33:85750,37:85800,40:85850,43:85900,46:85950,49:86000,52:86050,55:86100,58:86150 ct=85250:85248,85300:85282,85350:85332,85400:85382,85450:85432,85500:85482,85550:85532,85600:85582,85650:85632,85700:85682,85750:85732,85800:85798,85850:85832,85900:85882,85950:85932,86000:85982,86050:86032,86100:86082,86150:86133
+shooter CMDS st=86182 d=18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16 snap=1:86200,4:86250,7:86300,10:86350,13:86400,17:86450,20:86500,23:86550,26:86600,29:86650,32:86700,35:86750,38:86800,41:86850,44:86900,47:86950,51:87000,54:87050,57:87100 ct=86200:86182,86250:86232,86300:86282,86350:86332,86400:86382,86450:86448,86500:86482,86550:86532,86600:86582,86650:86632,86700:86682,86750:86732,86800:86782,86850:86832,86900:86882,86950:86932,87000:86998,87050:87032,87100:87082
+shooter CMDS st=87150 d=16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16 snap=0:87150,3:87200,6:87250,9:87300,12:87350,15:87400,18:87450,21:87500,24:87550,27:87600,31:87650,34:87700,37:87750,40:87800,43:87850,46:87900,49:87950,52:88000,55:88050,58:88100 ct=87150:87132,87200:87182,87250:87232,87300:87282,87350:87332,87400:87382,87450:87432,87500:87482,87550:87532,87600:87582,87650:87648,87700:87683,87750:87732,87800:87782,87850:87832,87900:87882,87950:87932,88000:87982,88050:88032,88100:88082
+shooter CMDS st=88132 d=18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16 snap=1:88150,5:88200,8:88250,11:88300,14:88350,17:88400,20:88450,23:88500,26:88550,29:88600,32:88650,35:88700,39:88750,42:88800,45:88850,48:88900,51:88950,54:89000,57:89050 ct=88150:88132,88200:88198,88250:88232,88300:88282,88350:88332,88400:88382,88450:88432,88500:88482,88550:88532,88600:88582,88650:88632,88700:88682,88750:88748,88800:88782,88850:88832,88900:88882,88950:88932,89000:88982,89050:89033
+shooter CMDS st=89100 d=16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16 snap=0:89100,3:89150,6:89200,9:89250,13:89300,15:89350,19:89400,22:89450,25:89500,28:89550,31:89600,34:89650,37:89700,40:89750,43:89800,46:89850,49:89900,52:89950,56:90000,58:90050 ct=89100:89082,89150:89132,89200:89182,89250:89232,89300:89298,89350:89316,89400:89398,89450:89432,89500:89482,89550:89532,89600:89582,89650:89632,89700:89682,89750:89732,89800:89782,89850:89832,89900:89882,89950:89932,90000:89998,90050:90016
+shooter CMDS st=90082 d=16,2,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,16,2,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16 snap=2:90100,5:90150,8:90200,11:90250,14:90300,17:90350,20:90400,23:90450,26:90500,29:90550,32:90600,36:90650,39:90700,42:90750,45:90800,48:90850,51:90900,54:90950,57:91000 ct=90100:90098,90150:90132,90200:90182,90250:90232,90300:90282,90350:90332,90400:90382,90450:90432,90500:90482,90550:90532,90600:90582,90650:90648,90700:90683,90750:90732,90800:90782,90850:90833,90900:90882,90950:90932,91000:90982
