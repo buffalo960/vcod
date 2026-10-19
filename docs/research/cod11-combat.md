@@ -5338,8 +5338,68 @@ vcod: `Trajectory::evaluate_kept`, `missile::delta_at` and
 `TR_LINEAR` arm (0x2c640) keeps `dt` and each `base + delta * dt` on the
 stack the same way, so `evaluate_kept` covers a line too (a rocket's
 `pos`, a grenade's `apos`). They run under 1.1's rules
-only (`Missile::kept`). 1.5b and UO keep the `f32` arithmetic they had,
-which no capture has measured against their -O0 stores.
+only (`Missile::kept`).
+
+**The arithmetic on 1.5 and UO.** Read in the disassembly of 1.5b's
+`game.mp.i386.so` and UO's `game.mp.uo.i386.so` with
+`tools/re/annotate_func.py`. The two builds are the same -O0 code at
+different addresses: `BG_EvaluateTrajectory`, `G_BounceMissile` and
+`G_RunMissile`'s snap have the same length and the same instruction
+sequence (UO's `G_BounceMissile` 0x5d6e5 is 0x478 bytes, like 1.5b's
+0x53d71). 1.5b addresses below, UO's beside them
+where read. Each named store rounds to a float; the rest stays on the
+stack.
+
+- VERIFIED: `BG_EvaluateTrajectory` (1.5b 0x1b877, UO 0x1fe63) stores
+  `dt`, the ms times 0.001 (`.rodata 0x74e8c`), as a float (0x1ba87). The
+  gravity arm (0x1ba6c, UO 0x20058) stores each `base + delta * dt`, then
+  takes `z - dt * 400 * dt` (400 at `.rodata 0x74e9c`) off the stored `z`
+  and stores it again (0x1bade-0x1baf0). The line arm (0x1b8da) is the
+  first half alone.
+- VERIFIED: `BG_EvaluateTrajectoryDelta`'s gravity arm (0x1c002) stores
+  `dt` the same way (0x1c01d), then `delta.z - dt * 800`, rounded once
+  (0x1c053-0x1c062).
+- VERIFIED: `G_BounceMissile`'s impact time is 1.1d's: the frame length
+  times `tr.fraction` on the stack, truncated (0x53dc8-0x53de6).
+- VERIFIED: the dot is summed on the stack and stored (0x53e33, UO
+  0x5d7a7). Each `trDelta` component is `dot * -2.0 * n + v`, rounded once
+  (0x53e3c-0x53e87). The 0.125/0.5 (UO 0.1/0.4) scale is a float times a
+  float, stored.
+- VERIFIED: the rest test (0x53fbc) and the event gate (0x54180) are
+  1.1d's: the change's components stored, the sum of squares on the stack,
+  passed to `sqrt` as a double, the root stored.
+- VERIFIED: the nudge stores each `0.1 * n` component, then each
+  `currentOrigin + d` (0x54057-0x540de).
+- VERIFIED: `G_RunMissile`'s 0.001 move test reads the stored-length
+  `VectorNormalize` (0x54c61; `x87::normalize_stored`).
+- VERIFIED: the ground snap (0x5501f-0x55073, UO 0x5f477) is 1.1d's:
+  `trBase.z` takes `((endpos.z + 1.5) - currentOrigin.z) + trBase.z`,
+  rounded once, and `currentOrigin.z` takes `endpos.z + 1.5`.
+- VERIFIED: UO's sky push (0x5f24e-0x5f284) is `n * -2.0 + endpos`, each
+  component rounded once, which a float add of the exact `2 n` gives.
+
+VERIFIED, live (retail 1.5b, mp_brecourt, 2026-10-19,
+`mp_brecourt-scriptmodel-roll-1.5.txt`, `probe_scriptmodel`'s prone
+part): both frags miss the target and bounce up the field's terrain over
+four contacts to rest. With the `f32` arithmetic vcod ran before, every
+base from the second contact sat one float step off retail's in `y`; with
+the stores above every base is retail's to the bit. VERIFIED, live
+(retail 1.5b, `mp_carentan-scriptmodel-throw-1.5.txt`): the second frag's
+wall bounce at x 1583.775 sat 4 steps off in `z` before and is exact
+after. VERIFIED, live (retail UO, mp_brecourt, 2026-10-19,
+`mp_brecourt-scriptmodel-roll-uo.txt`): the second frag's four terrain
+contacts are retail's to the bit, but they were before the port too; no
+UO capture taken so far (that one, mp_foy, mp_dawnville, the carentan
+throws, the harbor water frag) separates the two arithmetics, so UO's
+side rests on the disassembly. A frag striking a body (the first frag in
+the UO brecourt capture, the carentan prone captures) still lands a few
+float steps off in `z`: the bone trace's own stores, which vcod does not
+port (`cod11-turrets.md` 13.5).
+
+vcod: `Trajectory::evaluate_stored`, `missile::delta_at` and
+`Missile::bounce` port these under 1.5's and UO's rules (`!Missile::kept`).
+`scriptmodel_ab`'s `a_frag_rolls_up_terrain_like_retail_on_15` and
+`_on_uo` compare the bits.
 
 ### 12.6 1.5's and UO's fall test
 
