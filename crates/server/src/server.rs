@@ -4684,22 +4684,23 @@ impl Server {
             }
             self.send_gamestate(slot);
         }
+        // Every bot's cmds are one packet, after every real one, in slot
+        // order: `SV_Frame` bumps the DObj stamp once ahead of its bot pass
+        // (movers doc 15), so `replay_moves` poses them under one build.
+        self.packet_seq += 1;
         for (slot, cmd, on_ladder) in moves {
             // Stamped here, not in the brain: the cmd rides the server's own
             // clock, one 50 ms step per tick, five on a ladder.
             let cmds = crate::nav::tick_times(self.sv_time_ms.wrapping_sub(FRAME_MS), on_ladder)
                 .map(|server_time| UserCmd { server_time, ..cmd })
                 .collect();
-            // Enters the world on the Primed pass, queues on Active. Each
-            // bot's cmds are a packet of their own, after every real one.
-            self.packet_seq += 1;
+            // Enters the world on the Primed pass, queues on Active.
             self.user_move(slot, cmds);
         }
         for slot in entering {
             // The entering cmd carries the tick's clock: entry sets the
             // client's cmd base to it, so the first simulated cmd steps a
             // sane 50 ms.
-            self.packet_seq += 1;
             self.user_move(
                 slot,
                 vec![UserCmd {
@@ -8118,8 +8119,8 @@ impl Server {
             );
             mirror_vitals(&mut self.clients, rt);
             // `G_RunClient`'s `pm_type` step down for a rider who left a
-            // seat ahead of the entity pass; one the vehicle think below puts
-            // out runs the next frame's cmds linked.
+            // seat ahead of the entity pass; for one the vehicle think below
+            // puts out, `ClientEndFrame`'s write does it.
             for sim in self
                 .clients
                 .iter_mut()
@@ -10845,6 +10846,40 @@ mod tests {
             Some("16")
         );
         assert!(sv.configstring(7).contains("kar98k_mp"));
+    }
+
+    /// Every bot's cmds of a tick go in as one packet, so `replay_moves`
+    /// poses the bodies their rounds meet under one DObj stamp, as retail's
+    /// single bump ahead of `SV_Frame`'s bot pass does (movers doc 15).
+    #[test]
+    fn every_bots_cmds_of_a_tick_share_one_packet() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let bsp_path = fs.resolve_map("mp_carentan").expect("map in the paks");
+        let bsp = crate::world::World::from_bsp(
+            &vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap(),
+            Some(&fs),
+        );
+        let mut now = Instant::now();
+        let mut sv = Server::new(ServerConfig { bots: 3, ..cfg() }, now);
+        sv.load_world(bsp);
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        for _ in 0..100 {
+            now += std::time::Duration::from_millis(FRAME_MS as u64);
+            sv.tick(now);
+        }
+        let before = sv.packet_seq;
+        crate::nav::with_rules(sv.move_rules(), || sv.step_bots());
+        let packets: Vec<u64> = sv
+            .clients
+            .iter()
+            .flatten()
+            .filter(|c| c.is_bot)
+            .flat_map(|c| c.pending.iter().map(|q| q.packet))
+            .collect();
+        assert!(packets.len() >= 3, "every bot queued a cmd: {packets:?}");
+        assert!(packets.iter().all(|&p| p == before + 1), "{packets:?}");
     }
 
     /// The `weaponClass` table the animation machine reads every frame, and

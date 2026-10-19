@@ -205,7 +205,9 @@ decompile). The stock mg30cal reads `adsTransInTime 1.8`,
 file), and the capture's first deploy snapshot reads `weaponTime` 1774,
 25 ms in, the breakdown's 1875 24 ms in (VERIFIED, ct 48091 and 58582):
 both start a millisecond short, 1799 and 1899. That the def stores the
-float's thousandfold truncated is INFERRED from those two.
+float's thousandfold truncated is INFERRED from those two. Both raise a torso
+anim event too, and the breakdown raises it again across a stance change
+(player-model-anim-system.md, "The takeoff and the landing").
 
 While deployed (VERIFIED decompile): the moves are zeroed (section 1),
 `PM_CheckDuck` (0x27e16) takes no stance key, `PM_UpdateLean` (0x2ac45)

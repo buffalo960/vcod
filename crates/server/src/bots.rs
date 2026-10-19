@@ -2315,6 +2315,12 @@ impl Bot {
                 self.grenade_cooldown = GRENADE_COOLDOWN_TICKS;
                 self.rifle = view.weapon;
                 self.stage = Stage::ToGrenade;
+                // The start tick aims as the stages do: a cmd left at null
+                // angles turned the view onto `delta_angles`, off the enemy,
+                // and a target never recorded left the release no lob
+                // (bot-objectives.md 6).
+                self.throw_at = Some(e.origin);
+                cmd.angles = self.lob_angles(view);
                 cmd.weapon = g;
                 return cmd;
             }
@@ -5917,6 +5923,37 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "never thrown on the lob");
         assert_eq!(bot.throw_target(&v), None);
+    }
+
+    /// mp_cassino on UO, seed 1: the tick a throw started sent null angles,
+    /// which turned the view onto `delta_angles` (45 degrees off the
+    /// enemy), and the enemy left sight before any target was recorded.
+    /// The cook ran out with no target and the frag went flat along that
+    /// heading into the wall beside the thrower.
+    #[test]
+    fn the_tick_a_throw_starts_aims_and_records_the_enemy() {
+        let mut v = view();
+        v.view = [0.0, 10.0, 0.0];
+        v.delta_angles = [0, 8192, 0];
+        v.grenade = Some(6);
+        v.lob = Some([-10.0, 0.0]);
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [400.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        let mut bot = Bot::new("allies", true, 1);
+        let cmd = (0..400)
+            .find_map(|_| {
+                let cmd = bot.think(&v);
+                matches!(bot.stage, Stage::ToGrenade).then_some(cmd)
+            })
+            .expect("a throw starts");
+        assert_eq!(cmd.weapon, 6);
+        let yaw = (cmd.angles[1] + v.delta_angles[1]) as f32 / ANGLE2SHORT;
+        assert!(yaw.abs() < 10.0, "the view turns onto the enemy: {yaw}");
+        v.enemy = None;
+        assert_eq!(bot.throw_target(&v), Some([400.0, 0.0, 40.0]));
     }
 
     /// A live frag near, anyone's: the goal is away from it and the keys

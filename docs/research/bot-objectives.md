@@ -501,6 +501,19 @@ files):
   and 1 of 2 after. The one left (seed 73) is a throw at 269 units by a
   bot already hurt: the blast at that range is about 30, which the
   250-unit minimum accepts.
+- The tick a throw started still went out with zero angles and no target
+  recorded: only the stage ticks after it aimed and remembered the enemy.
+  VERIFIED (measured, ours, 2026-10-19, release, `tests/bots.rs`
+  `uo_bots_fight_and_sprint_in_tdm`, seed 1, each start, hold and
+  release logged): bot 5's start tick turned its view from yaw 155 onto
+  `delta_angles`' 45, the enemy left sight on the next tick, and with no
+  target the hold neither turned nor waited: the cooked frag went flat
+  along 45 and killed the thrower. VERIFIED (bisected, ours): the gate
+  passed until master ace5f143 (the pickup reads the cmd byte). INFERRED
+  (read off `Bot::think_grenade` and `think_cook`, whose byte names the
+  frag from the start tick on): that merge changed the game's course,
+  not the throw. The start tick now aims and records its target
+  like the stages (`bots::tests::the_tick_a_throw_starts_aims_and_records_the_enemy`).
 
 VERIFIED (measured, ours, 2026-10-14, `mp_cassino` `tdm`, 6 shooting
 bots, seed 1, 90 s, `tests/bots.rs` `uo_bots_fight_and_sprint_in_tdm`):

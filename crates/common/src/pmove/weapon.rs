@@ -660,6 +660,14 @@ fn deploy_driver(ps: &mut PlayerState, def: &WeaponDef, events: &mut Vec<PmEvent
     if ps.rules != MoveRules::Uo || !def.deploys() {
         return;
     }
+    // State 13's arm (0x35bed) raises `LMG_BREAKDOWN` again, forced and as
+    // a continue, while `viewHeightLerpTarget` reads non-zero: the same
+    // clause's anim is left alone, a stance change's clause restarts the
+    // torso on its own timer (player-model-anim-system.md, "The takeoff
+    // and the landing").
+    if ps.weaponstate == WEAPON_BREAKDOWN && ps.view_lerp_target != 0.0 {
+        ps.breakdown_continue = true;
+    }
     match ps.weaponstate {
         WEAPON_RAISING | WEAPON_DROPPING | WEAPON_MELEE_WINDUP | WEAPON_MELEE_RELAX => return,
         WEAPON_RELOADING..=WEAPON_RELOAD_END if ps.ads_active => return,

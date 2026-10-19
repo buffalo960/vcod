@@ -8786,7 +8786,7 @@ impl TriggerProbe {
             return (bearing + self.detour_deg * 65536 / 360) & 0xffff;
         };
         let mins = [-15.0, -15.0, TRIGGER_STEP_HEIGHT];
-        let maxs = [15.0, 15.0, 72.0];
+        let maxs = [15.0, 15.0, vcod_common::pmove::HEIGHT_STAND];
         let ahead = |yaw: i32| {
             let rad = yaw as f32 * std::f32::consts::TAU / 65536.0;
             let end = [

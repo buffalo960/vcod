@@ -1071,7 +1071,48 @@ test, and most of the last-bit residuals. The capsule's centre and sphere
 offset (35 and 20 against 36 and 21) round differently, and a slope
 contact reads that rounding. What that left, 17 last-bit residuals on 1.1d
 (mp_brecourt, mp_dawnville, mp_hurtgen, mp_rocket; 64 to 256 2^-24ths),
-16.3 closes. 1.5b's mp_neuville 90 (128) is still open.
+16.3 closes. 1.5b's mp_neuville 90 (128) is still open. It drops from
+(-14688, 5072, 8) onto terrain tri 4736's face, (-14752, 5032, 8),
+(-14739.33, 5120.77, 0), (-14648, 5032, 0), and the 128 2^-24ths are one
+float step of the drop's fraction, ours 3.323574e-4 (bits 967721025)
+and retail's a step under. VERIFIED, `cod_lnxded` 1.5b 0x8055bea..
+0x8056059: the face clip stores the end's and start's distances, their
+difference and the fraction (`fstps` to -0x20, -0x1c, -0x88 and -0x24),
+as vcod's stored arm does, so the step is not that clip's arithmetic.
+INFERRED, a recomputation with exact rationals: a plane whose normal z
+reads a bit lower gives retail's height; no variant of the plane build
+tried (cross product order, which vertex the distance reads, a stored or
+kept square, length and reciprocal) does. The 1.5b plane build itself is
+the next thing to read.
+
+Every reader of the two globals in 1.1d, from the `R_386_32` relocations
+onto 0x7dce8 and 0x7dcf4 (`readelf -r`, `annotate_func.py`):
+
+- VERIFIED: `ClientSpawn` copies both into `r.mins`/`r.maxs`
+  (0x42775-0x427b7), then copies `r.mins`/`r.maxs` into the playerstate's
+  own box at `ps+0x324..0x338` (0x428b2-0x428f4).
+- VERIFIED: `G_RunFrame` (0x50711-0x50843) keeps the last
+  `g_bounds_width` and `g_bounds_height_standing` it saw at `level+0x29fc`
+  and `+0x2a00`. INFERRED, off the compare at 0x50720 and 0x5073a: when
+  either cvar changed it calls `G_SetPlayerSize` (0x5075c) and writes the
+  new box into `r.mins`/`r.maxs` and `ps+0x324..0x338` of each of the 64
+  client entities in use, relinking each (`trap_LinkEntity` 0x5082f).
+- VERIFIED: `positionWouldTelefrag` (0x5a834) builds its
+  `trap_EntitiesInBox` box (mask 0x2000000) from them around its argument.
+- VERIFIED: `placeSpawnpoint`'s three traces (0x5bf61-0x5bfeb), above.
+- VERIFIED, the `Pmove` side: `PM_CheckDuck` (0x316f4) loads `pm.mins` and
+  `pm.maxs` from `ps+0x324..0x338` (Ghidra's `FUN_000416f4`, whose image
+  sits 0x10000 above the module's addresses). INFERRED: the standing top is `ps+0x338`, the crouched and prone
+  ones its constants 50 and 30.
+
+VERIFIED, `tools/re/dump_cvars.py`: `g_bounds_width` and
+`g_bounds_height_standing` carry flags 0x200 (`CVAR_CHEAT`) in 1.1d, 1.5b
+and UO, so they hold "30" and "70" unless `sv_cheats` is on. vcod reads
+neither: the box is the constants `pmove::HALF_WIDTH` and
+`pmove::HEIGHT_STAND`, `game::trigger::PLAYER_MINS`/`PLAYER_MAXS` on the
+server. That matches retail everywhere but a `devmap` whose rcon changes
+one of the two cvars, which retail turns into a resize of every player and
+vcod ignores.
 
 ### 16.3 The spawnpoint takes the third trace's endpoint
 

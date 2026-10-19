@@ -33,9 +33,14 @@ const BITS_FIXTURE: &str = "tests/fixtures/spawnpoints/placebits-retail.txt";
 /// moves at all, closed or not. cod11-gsc-object-model.md 16.1 has what
 /// each group rests on.
 const BITS_GAPS: &[(&str, &str, u32, &str)] = &[
-    // 128 2^-24ths off retail; 16.3 does not reach it, since
-    // 1.5b's zero-length trace leaves the drop's endpoint as it is. Not
-    // pinned.
+    // 128 2^-24ths low, one float step of the drop's fraction: ours stops
+    // on terrain tri 4736's face at 3.323574e-4 (bits 967721025), retail
+    // a step under. 16.3 does not reach it (1.5b's zero-length trace keeps
+    // the endpoint), and 1.5b's face clip stores its two distances, their
+    // difference and the fraction as ours does (`cod_lnxded` 1.5b
+    // 0x8055bea..0x8056059), so the step is not that clip's. The plane
+    // would give it with its normal's z a bit lower; no build variant of
+    // cross, normalize or base vertex tried does. Not pinned.
     ("1.5b", "mp_neuville", 90, "+ 2 12574592"),
 ];
 
