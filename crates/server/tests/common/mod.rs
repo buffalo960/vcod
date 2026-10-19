@@ -519,6 +519,14 @@ pub struct CmdLog {
     /// against the step's `weapon`; `None` on a capture whose line carries
     /// no `w=`, which replays the step's switch on its own clock instead.
     pub weapons: Option<BTreeMap<usize, u8>>,
+    /// The absolute pitch and yaw shorts from each cmd on which they
+    /// change, the first always; `None` on a capture whose line carries no
+    /// `a=`, whose walks infer the view off the traces ([`walk_yaw`]).
+    pub views: Option<BTreeMap<usize, [i32; 2]>>,
+    /// `forward`, `right` and `up` from each cmd on which they change, the
+    /// first always; `None` on a capture whose line carries no `m=`, whose
+    /// cmds hold the step's base.
+    pub moves: Option<BTreeMap<usize, [i8; 3]>>,
 }
 
 impl CmdLog {
@@ -526,6 +534,26 @@ impl CmdLog {
     fn weapon(&self, i: usize, step: &Step) -> Option<u8> {
         let w = self.weapons.as_ref()?;
         Some(w.range(..=i).next_back().map_or(step.weapon, |(_, b)| *b))
+    }
+
+    /// The absolute pitch and yaw retail's cmd `i` carried, if the log has
+    /// the column.
+    fn view(&self, i: usize) -> Option<[i32; 2]> {
+        Some(*self.views.as_ref()?.range(..=i).next_back()?.1)
+    }
+
+    /// Sets cmd `i`'s view and movement: the logged ones where the log has
+    /// them, else the walk's inferred yaw and the step's base.
+    fn aim(&self, i: usize, step: &Step, cmd: &mut UserCmd) {
+        if let Some([pitch, yaw]) = self.view(i) {
+            cmd.angles[0] = pitch;
+            cmd.angles[1] = yaw;
+        } else if let Some(yaw) = walk_yaw(step, self.stamps[i]) {
+            cmd.angles[1] = yaw;
+        }
+        if let Some((_, &[f, r, u])) = self.moves.as_ref().and_then(|m| m.range(..=i).next_back()) {
+            (cmd.forward, cmd.right, cmd.up) = (f, r, u);
+        }
     }
 }
 
@@ -685,11 +713,34 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
                     })
                     .collect()
             });
+            let views = m.get("a").map(|v| {
+                v.split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(|c| {
+                        let (i, a) = c.split_once(':').unwrap();
+                        let (p, y) = a.split_once('/').unwrap();
+                        (i.parse().unwrap(), [p.parse().unwrap(), y.parse().unwrap()])
+                    })
+                    .collect()
+            });
+            let moves = m.get("m").map(|v| {
+                v.split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(|c| {
+                        let (i, a) = c.split_once(':').unwrap();
+                        let mut it = a.split('/').map(|x| x.parse::<i8>().unwrap());
+                        let mv = [0; 3].map(|_| it.next().unwrap());
+                        (i.parse().unwrap(), mv)
+                    })
+                    .collect()
+            });
             step.cmds = Some(CmdLog {
                 start: m["start"].parse().unwrap(),
                 stamps,
                 bits,
                 weapons,
+                views,
+                moves,
             });
         } else if let Some(rest) = line.strip_prefix("!trace ") {
             let m = kv(rest);
@@ -790,8 +841,9 @@ pub struct Sample {
 /// The absolute yaw short retail's walk cmd stamped `st` carried, read off
 /// the view of the first trace whose `commandTime` reached it (the last
 /// trace's past them all). The probe's stall response turns a walk 45
-/// degrees and its `!cmds` line does not log angles, so the view is the only
-/// record of the turn; a still step sends its base yaw. `None` off a walk.
+/// degrees and a capture whose `!cmds` line has no `a=` does not log angles,
+/// so the view is the only record of the turn; a still step sends its base
+/// yaw. `None` off a walk.
 fn walk_yaw(step: &Step, st: i32) -> Option<i32> {
     if !step.walks {
         return None;
@@ -973,6 +1025,13 @@ pub fn replay_as(
                     .collect();
                 for ct in early {
                     let mut cmd = base;
+                    // A walk stands still until its clock runs
+                    // (`CombatProbe::cmd`): the probe sends the null cmd at
+                    // the held view.
+                    if step.walks {
+                        (cmd.buttons, cmd.wbuttons) = (0, 0);
+                        (cmd.forward, cmd.right, cmd.up) = (0, 0, 0);
+                    }
                     cmd.weapon = weapon_byte(step, 0, held(&cl));
                     carry.push((ct, cmd));
                 }
@@ -1009,9 +1068,7 @@ pub fn replay_as(
                         .get(&next)
                         .copied()
                         .unwrap_or((base.buttons, base.wbuttons));
-                    if let Some(yaw) = walk_yaw(step, st) {
-                        cmd.angles[1] = yaw;
-                    }
+                    log.aim(next, step, &mut cmd);
                     batch.push((st, cmd));
                     next += 1;
                 }
@@ -1046,9 +1103,7 @@ pub fn replay_as(
                     .get(&k)
                     .copied()
                     .unwrap_or((base.buttons, base.wbuttons));
-                if let Some(yaw) = walk_yaw(step, st) {
-                    cmd.angles[1] = yaw;
-                }
+                log.aim(k, step, &mut cmd);
                 carry.push((st, cmd));
             }
             shift_carried = hands_on.then_some(shift);

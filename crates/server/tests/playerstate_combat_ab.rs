@@ -11,14 +11,15 @@
 //! (`common::CmdLog`), so ours samples the same frames retail did and every
 //! channel is compared sample for sample, with no slack.
 //!
-//! The 1.1 captures need `COD_DIR` at a 1.1 install, the UO one at a UO
-//! install; without the paks each returns early.
+//! The 1.1 captures need `COD_DIR` at a 1.1 install, the 1.5 one at a 1.5
+//! install (a UO one's `main/` is 1.5's), the UO ones at a UO install;
+//! without the paks each returns early.
 
 mod common;
 
 use common::{Sample, Trace, parse_fixture};
 use std::collections::BTreeSet;
-use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V22, Protocol};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 
 const EV_FIRE_WEAPON: i32 = 159;
 const EV_FIRE_WEAPON_LASTSHOT: i32 = 161;
@@ -379,10 +380,11 @@ fn check_on(
     }
     let mut bad = Vec::new();
     for ((step, ours), samples) in steps.iter().zip(&mine).zip(&replayed) {
-        // A walk is the capture's own exclusion: the replay follows its stall
-        // turns (`common::walk_yaw`), but which cmd turned is not logged, so
-        // where it ends up is not reproducible.
-        if step.walks {
+        // A walk whose cmds log no view is the capture's own exclusion: the
+        // replay follows its stall turns (`common::walk_yaw`), but which cmd
+        // turned is not logged, so where it ends up is not reproducible. One
+        // whose `!cmds` carries `a=` replays every turn on retail's cmd.
+        if step.walks && step.cmds.as_ref().is_none_or(|c| c.views.is_none()) {
             continue;
         }
         assert!(
@@ -603,6 +605,20 @@ fn the_scoped_sight_and_view_match_retail_on_mp_carentan() {
 #[test]
 fn the_grenade_and_melee_channels_match_retail_on_mp_carentan() {
     check("mp_carentan", "tdm", "grenade");
+}
+
+/// 1.5b's carbine under the same combat script (`--save-combat
+/// --capture-tag 15` beside `COD_VERSION=1.5 tools/run_server.sh
+/// mp_carentan`, cod15-protocol-diff.md), replayed on a protocol 6 server.
+/// Needs `COD_DIR` at a 1.5 install (a UO one's `main/` is 1.5's).
+#[test]
+fn the_weapon_channel_matches_retail_on_15_mp_carentan() {
+    let Some(fs) = vcod_common::testing::game_fs()
+        .filter(|fs| vcod_server::server::install_protocol(fs).version == PROTOCOL_V6.version)
+    else {
+        return;
+    };
+    check_on(&PROTOCOL_V6, fs, "mp_carentan", "dm", "combat-15");
 }
 
 /// United Offensive 1.51b's kar98k under the same combat script

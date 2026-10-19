@@ -1248,7 +1248,7 @@ pub fn probe(
                 shock.record(now, c);
             }
             if save_combat {
-                combat.record(&c);
+                combat.record(&c, cmd.angles);
             }
         }
         if save_slope && let Some(c) = sent {
@@ -3908,9 +3908,13 @@ struct CombatProbe {
     /// their whole-unit origins. `None` holds the spawn view.
     aim_yaw: Option<i32>,
     /// Every cmd sent while a step was current, its wait for the weapon
-    /// included: the step, `serverTime`, `buttons`, `wbuttons` and the
-    /// weapon byte, so a replay can run retail's cmds frame for frame.
-    sent: Vec<(&'static str, i32, u8, u8, u8)>,
+    /// included, so a replay can run retail's cmds frame for frame, a
+    /// stall turn's included. The first step's also holds the cmds sent
+    /// before it started that its first snapshot's `commandTime` had not
+    /// reached.
+    sent: Vec<(&'static str, SentCmd)>,
+    /// The last cmds sent before the first step started.
+    before: Vec<SentCmd>,
     /// The newest snapshot's `serverTime` when each step became current.
     start_times: Vec<(&'static str, i32)>,
 }
@@ -3940,6 +3944,7 @@ impl Default for CombatProbe {
             spawn_pose: None,
             aim_yaw: None,
             sent: Vec::new(),
+            before: Vec::new(),
             start_times: Vec::new(),
         }
     }
@@ -4072,11 +4077,26 @@ impl CombatProbe {
         !self.done
     }
 
-    /// Logs a cmd as it went on the wire, once the script has begun.
-    fn record(&mut self, c: &net::msg::UserCmd) {
-        if let (Some(step), false) = (self.steps.get(self.idx), self.start_times.is_empty()) {
-            self.sent
-                .push((step.label, c.server_time, c.buttons, c.wbuttons, c.weapon));
+    /// Logs a cmd as it went on the wire, with the absolute view `angles`
+    /// it was built from: under its step once the script has begun, else
+    /// in [`Self::before`].
+    fn record(&mut self, c: &net::msg::UserCmd, angles: [i32; 3]) {
+        let sent = SentCmd {
+            server_time: c.server_time,
+            buttons: c.buttons,
+            wbuttons: c.wbuttons,
+            weapon: c.weapon,
+            view: [angles[0] & 0xffff, angles[1] & 0xffff],
+            moves: [c.forward, c.right, c.up],
+        };
+        match self.steps.get(self.idx) {
+            Some(step) if !self.start_times.is_empty() => self.sent.push((step.label, sent)),
+            Some(_) => {
+                self.before.push(sent);
+                let excess = self.before.len().saturating_sub(16);
+                self.before.drain(..excess);
+            }
+            None => {}
         }
     }
 
@@ -4152,6 +4172,16 @@ impl CombatProbe {
             (step.label, step.dur, step.wait_ready, step_fires(step));
         if self.start_times.is_empty() {
             self.start_times.push((label, snap.server_time));
+            // The cmds already in flight when the script began run in its
+            // first frames: a walk's first logged cmd otherwise reads as
+            // walking from the last `commandTime` traced.
+            let ran = snap.ps.field_i32(wire(), "commandTime");
+            self.sent.extend(
+                self.before
+                    .drain(..)
+                    .filter(|c| c.server_time > ran)
+                    .map(|c| (label, c)),
+            );
         }
         let p = wire();
         let weaponstate = snap.ps.field_i32(p, "weaponstate");
@@ -4472,6 +4502,19 @@ impl StallTurn {
     }
 }
 
+/// One cmd [`CombatProbe::record`] logged, as the `!cmds` line writes it.
+#[derive(Clone, Copy)]
+struct SentCmd {
+    server_time: i32,
+    buttons: u8,
+    wbuttons: u8,
+    weapon: u8,
+    /// Absolute pitch and yaw shorts, before `delta_angles` comes off.
+    view: [i32; 2],
+    /// `forward`, `right`, `up`.
+    moves: [i8; 3],
+}
+
 /// Writes one section per step to `<map>-<gametype>-combat.txt`. Each carries
 /// the input that produced it on an `!input` line, so the gate replays the
 /// capture's own script rather than a copy of it, one `!trace` line per
@@ -4523,7 +4566,13 @@ fn write_combat_fixture(
     out.push_str("# to each next one, in= <index>:<buttons>/<wbuttons> for each cmd whose bits\n");
     out.push_str("# differ from the !input base (the taps and presses), w= <index>:<byte> for\n");
     out.push_str("# each cmd whose weapon byte differs from the cmd before it (the first from\n");
-    out.push_str("# the step's weapon=). A trace's commandTime\n");
+    out.push_str("# the step's weapon=), a= <index>:<pitch>/<yaw> for each cmd whose absolute\n");
+    out.push_str("# view shorts (before delta_angles) differ from the cmd before it (the\n");
+    out.push_str(
+        "# first always), which carries a stall turn, and m= <index>:<forward>/<right>/<up>\n",
+    );
+    out.push_str("# where the movement changes (the first always). The first step's cmds start\n");
+    out.push_str("# past its first snapshot's commandTime. A trace's commandTime\n");
     out.push_str("# is the last cmd its frame ran.\n");
     out.push_str("# Values are the raw i32 wire words, floats as their bit patterns.\n");
     // Where the script stood and looked at its first step. A replay that
@@ -4660,31 +4709,48 @@ hold_ms={} walks={} wait_ready={} weapon={}\n",
         ) {
             let d: Vec<String> = sent
                 .windows(2)
-                .map(|w| (w[1].1 - w[0].1).to_string())
+                .map(|w| (w[1].1.server_time - w[0].1.server_time).to_string())
                 .collect();
             let held: Vec<String> = sent
                 .iter()
                 .enumerate()
-                .filter(|(_, c)| (c.2, c.3) != (step.base.buttons, step.base.wbuttons))
-                .map(|(i, c)| format!("{i}:{}/{}", c.2, c.3))
+                .filter(|(_, (_, c))| {
+                    (c.buttons, c.wbuttons) != (step.base.buttons, step.base.wbuttons)
+                })
+                .map(|(i, (_, c))| format!("{i}:{}/{}", c.buttons, c.wbuttons))
                 .collect();
             // Where the byte changes, the first cmd against the step's
             // `weapon=`: a switch is held on the wire until `ps.weapon`
             // reads it (`WeaponSwitch`).
             let mut byte = mine.first().map_or(0, |s| s.weapon);
             let mut bytes: Vec<String> = Vec::new();
-            for (i, c) in sent.iter().enumerate() {
-                if i32::from(c.4) != byte {
-                    byte = i32::from(c.4);
+            for (i, (_, c)) in sent.iter().enumerate() {
+                if i32::from(c.weapon) != byte {
+                    byte = i32::from(c.weapon);
                     bytes.push(format!("{i}:{byte}"));
                 }
             }
+            let (mut view, mut moves) = (None, None);
+            let (mut views, mut walks) = (Vec::new(), Vec::new());
+            for (i, (_, c)) in sent.iter().enumerate() {
+                if view != Some(c.view) {
+                    view = Some(c.view);
+                    views.push(format!("{i}:{}/{}", c.view[0], c.view[1]));
+                }
+                if moves != Some(c.moves) {
+                    moves = Some(c.moves);
+                    let [f, r, u] = c.moves;
+                    walks.push(format!("{i}:{f}/{r}/{u}"));
+                }
+            }
             out.push_str(&format!(
-                "!cmds start={start} st={} d={} in={} w={}\n",
-                first.1,
+                "!cmds start={start} st={} d={} in={} w={} a={} m={}\n",
+                first.1.server_time,
                 d.join(","),
                 held.join(","),
-                bytes.join(",")
+                bytes.join(","),
+                views.join(","),
+                walks.join(",")
             ));
         }
         out.push_str(&format!(
