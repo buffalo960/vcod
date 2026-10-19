@@ -321,10 +321,11 @@ pub fn abs_bounds(origin: [f32; 3], t: &Trigger) -> ([f32; 3], [f32; 3]) {
 /// The player's own clip box, which is what a touch's exact
 /// `trap_EntityContact` test measures against and not what the broad phase
 /// queries (docs/research/cod11-gsc-object-model.md section 22). Half-width 15
-/// and 0..72 standing, from the movement constants table in
-/// docs/research/cod11-mantle.md.
+/// and 0..70 standing: `playerMins`/`playerMaxs` as `G_SetPlayerSize` writes
+/// them off `g_bounds_width` and `g_bounds_height_standing` before any script
+/// runs (cod11-gsc-object-model.md 16.2), what `placeSpawnpoint` traces too.
 pub const PLAYER_MINS: [f32; 3] = [-15.0, -15.0, 0.0];
-pub const PLAYER_MAXS: [f32; 3] = [15.0, 15.0, 72.0];
+pub const PLAYER_MAXS: [f32; 3] = [15.0, 15.0, vcod_common::pmove::HEIGHT_STAND];
 
 /// `origin` is taken as an already-interned atom rather than folded here:
 /// the touch pass calls this once per client plus once per trigger row per
@@ -1054,7 +1055,7 @@ mod tests {
         // Two stations sampled over the model's own box at its floor: one
         // whose clip box meets a brush and one whose clip box meets only the
         // box. The second existing at all is the bug.
-        let half = Vec3::new(15.0, 15.0, 36.0);
+        let half = Vec3::new(15.0, 15.0, 35.0);
         let mut inside = None;
         let mut bulge = None;
         for ix in 0..=32 {
@@ -1064,7 +1065,7 @@ mod tests {
                     mins[1] + (maxs[1] - mins[1]) * iy as f32 / 32.0,
                     mins[2],
                 ];
-                let centre = Vec3::new(p[0], p[1], p[2] + 36.0);
+                let centre = Vec3::new(p[0], p[1], p[2] + 35.0);
                 let clip = offset_bounds(p, PLAYER_MINS, PLAYER_MAXS);
                 if !boxes_overlap(clip, (mins, maxs)) {
                     continue;
