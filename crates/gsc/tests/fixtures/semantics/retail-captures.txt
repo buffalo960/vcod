@@ -245,6 +245,12 @@ PROBE game_persist_after_wait russian
 # probe_game_dotwrite
 PROBE_ERROR script compile error
 
+# probe_hostname
+PROBE pass 1 mp_pavlov found 0 now 1
+PROBE pass 2 mp_pavlov found 1 now 2
+PROBE pass 3 mp_brecourt found 2 now 3
+PROBE after_pass 3
+
 # probe_late_attach
 PROBE at late_attach
 PROBE_FATAL model 'xmodel/probe_never' not precached

@@ -530,6 +530,21 @@ fn probe_persist_exit_matches_retail() {
     assert_eq!(ours, retail_probe_lines("probe_persist_exit"));
 }
 
+/// A script's `setCvar("sv_hostname")` outlives `map_restart(false)` and a
+/// map change: nothing re-stamps the startup value at a load (map-cycle doc
+/// 4.5).
+#[test]
+fn probe_hostname_matches_retail() {
+    if vcod_common::testing::game_fs_11().is_none() {
+        return;
+    }
+    let ours = run_persist_probe(
+        "probe_hostname",
+        Some("gametype probe_hostname map mp_brecourt"),
+    );
+    assert_eq!(ours, retail_probe_lines("probe_hostname"));
+}
+
 /// `exitLevel(true)`: the same end of level, keeping `game[]`.
 #[test]
 fn probe_persist_exit_save_matches_retail() {

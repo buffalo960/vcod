@@ -687,7 +687,18 @@ sets after the load the same way, as `run_server.sh` placed them.
 and `a_set_after_the_map_outranks_the_scripts_load_time_write` pin both.
 `sv_hostname` follows the same rule: the config's (`--hostname`) goes
 into the first level's table only, so a script's or an rcon `set` of it
-survives later loads (`a_scripts_hostname_outlives_later_loads`). A map
+survives later loads (`a_scripts_hostname_outlives_later_loads`).
+VERIFIED live on 1.1d, 2026-10-19 (`probe_hostname`, its section in
+`retail-captures.txt`, recipe in the probe's header; `semantics_ents.rs`
+`probe_hostname_matches_retail` replays it on ours): each load's `main()`
+appends an `x` to `sv_hostname` and reads every earlier one back, across
+`map_restart(false)` and an `exitLevel(false)` rotation from mp_pavlov to
+mp_brecourt, with the hostname from the homepath's config, and with `+set
+sv_hostname probehost` ahead of `+map`. A `getstatus` after the map change
+read `sv_hostname` `probehostxxx`, all three writes. With the `+set` after
+`+map`, as `run_probe.sh` passes it, the second pass read none: the `set`
+ran once more after the first load and overwrote the first pass's write,
+the `Com_AddStartupCommands` rule above, not a load re-stamping it. A map
 change writes configstring 0 again after the scripts and the settle
 frames (step 24), so a serverinfo cvar the level's init set is in the
 gamestate.

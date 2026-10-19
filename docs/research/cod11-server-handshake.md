@@ -1104,7 +1104,17 @@ the game and a socket on 127.0.0.1:20510 standing in for the master.
   event, packets included, and handles each at once through
   `SV_PacketEvent`, until at least 1 ms has passed (`com_maxfps` is read
   only when `dedicated` is 0), then calls `SV_Frame` (0x808cdf8) with the
-  elapsed msec. INFERRED.
+  elapsed msec. VERIFIED, `cod_lnxded` decompile, 2026-10-19:
+  `Com_EventLoop` loops until an event of type 0, taking the pushed ring
+  first and then `Sys_GetEvent` (0x806bdb0, whose `0x80c61e4` queues the
+  console line and then each `Sys_GetPacket` (0x80c71f0, `recvfrom` at
+  0x80c723f) datagram as type 6); a type 6 event goes to `SV_PacketEvent`
+  (0x808c870, the call at 0x806c1b8) while `sv_running` is set; then it
+  drains the loopback queues (`0x8080fc0`, the server's at 0x806bfec) and
+  returns the type-0 event's time. `Com_Frame` calls it in the
+  `do ... while (msec < min)` loop at 0x806cfe0..0x806d001 (`min` 1, or
+  `1000 / com_maxfps` when that is positive and `dedicated` 0), then
+  `Cbuf_Execute` (0x805aa7c), then `SV_Frame` at 0x806d0e4.
 - `SV_Frame` adds the msec to `sv.timeResidual` and runs a game frame only
   once the residual reaches `1000 / sv_fps`, sending the snapshots at the
   end. INFERRED.
@@ -1672,10 +1682,13 @@ userinfo values one after another, and `rcon status` for the slots.
 - vcod, 2026-10-19: a packet the loop finds queued at a tick's start (it
   came in while the last tick overran its slot) is answered there, before
   the tick runs, rather than with the tick's output; the between-ticks
-  path already sent at once. INFERRED: retail's `Com_EventLoop` runs
-  every queued packet's handler, and the handler's `NET_SendPacket`
-  writes the socket, ahead of `SV_Frame` (RTCW-MP `common.c` order; no
-  1.1d address read for it).
+  path already sent at once. VERIFIED, `cod_lnxded` decompile: retail's
+  `Com_EventLoop` runs every queued packet's handler ahead of `SV_Frame`
+  (the read schedule above), and `NET_SendPacket` (0x8080d28) writes the
+  socket inside the handler: a loopback address goes to the loopback ring,
+  any other but the bot and bad types to `Sys_SendPacket` (0x80c7914,
+  `sendto` at 0x80c79ba), which the out-of-band senders 0x8080920 and
+  0x8080a8c call the same way.
 
 ### The gamestate goes out fragmented (`SV_SendClientGameState` 0x8085eec)
 

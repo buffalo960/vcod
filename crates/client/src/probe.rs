@@ -1217,7 +1217,10 @@ pub fn probe(
                     c.server_time,
                     fall_walk.map(|_| c.angles[1]),
                     (c.buttons, c.wbuttons, c.up),
-                    client.snapshots().newest().map(|s| s.server_time),
+                    client
+                        .snapshots()
+                        .newest()
+                        .map(|s| (s.server_time, s.ps.field_i32(wire(), "commandTime"))),
                 );
             }
             if save_plant || save_defuse {
@@ -11341,7 +11344,10 @@ const KILLCAM_TAIL: Duration = Duration::from_secs(3);
 /// Each line also names, by index into it, the cmds whose buttons,
 /// `wbuttons` or `up` differ from the cmd before (`in=<k>:<buttons>:
 /// <wbuttons>:<up>`) and the cmds sent on a newer snapshot than the cmd
-/// before (`snap=<k>:<serverTime>`), so a replay presses on retail's cmd.
+/// before (`snap=<k>:<serverTime>`), so a replay presses on retail's cmd,
+/// and each of those snapshots' `commandTime` (`ct=<serverTime>:
+/// <commandTime>`), the last cmd the server ran before that frame, so a
+/// replay runs each cmd on retail's side of a frame.
 /// `client-probes/probe_fall` drops the player from a height. Writes no
 /// fixture.
 #[derive(Default)]
@@ -11350,6 +11356,7 @@ struct FallProbe {
     cmds: Vec<(i32, Option<i32>)>,
     inputs: Vec<String>,
     snaps: Vec<String>,
+    ran: Vec<String>,
     last_input: Option<(u8, u8, i8)>,
     last_snap: Option<i32>,
 }
@@ -11362,7 +11369,7 @@ impl FallProbe {
         server_time: i32,
         yaw: Option<i32>,
         input: (u8, u8, i8),
-        snap: Option<i32>,
+        snap: Option<(i32, i32)>,
     ) {
         let k = self.cmds.len();
         if self.last_input != Some(input) {
@@ -11370,8 +11377,9 @@ impl FallProbe {
                 .push(format!("{k}:{}:{}:{}", input.0, input.1, input.2));
             self.last_input = Some(input);
         }
-        if let Some(t) = snap.filter(|&t| self.last_snap != Some(t)) {
+        if let Some((t, ct)) = snap.filter(|&(t, _)| self.last_snap != Some(t)) {
             self.snaps.push(format!("{k}:{t}"));
+            self.ran.push(format!("{t}:{ct}"));
             self.last_snap = Some(t);
         }
         self.cmds.push((server_time, yaw));
@@ -11392,7 +11400,11 @@ impl FallProbe {
                 format!(" yaw={}", yaws.join(","))
             };
             let mut tail = String::new();
-            for (key, list) in [("in", &mut self.inputs), ("snap", &mut self.snaps)] {
+            for (key, list) in [
+                ("in", &mut self.inputs),
+                ("snap", &mut self.snaps),
+                ("ct", &mut self.ran),
+            ] {
                 if !list.is_empty() {
                     tail += &format!(" {key}={}", list.join(","));
                     list.clear();
