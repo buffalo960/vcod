@@ -2575,10 +2575,21 @@ replays on the `PROBE_IN` lines rather than the logged inputs.
   angles and retail a cmd's quantized ones. VERIFIED, vcod measurement:
   replayed with the shooter's cmd 18 ms before the trigger run after the
   frame (`ProbeHold::lead_ms` 18), both match and seven others move off.
-  INFERRED: on retail that cmd reached the server after the frame's
-  threads in those two phases only; the capture logs no cmd's arrival
-  against the frames, so the replay cannot place it
-  (`leanhit_ab::DIR_GAPS_11`, open; 15.1, "The cmd that fires").
+  VERIFIED, live (the same run's `VEH ... ps` lines, which log each
+  snapshot's `commandTime`): snapshot 27750 read `commandTime` 27716 and
+  41150 read 41116, so the shooter's cmds 27732 and 41132 ran after those
+  frames, and in the other eleven phases the cmd before the trigger ran
+  ahead of the frame (24650 read 24632, its last cmd). VERIFIED, vcod
+  measurement: the fixture's `CMDS` lines now carry those times (`ct=`);
+  `leanhit_ab` runs each cmd between the `commandTime`s of the snapshots
+  either side of it (`ProbeHold::ran`) and presses on the logged inputs,
+  and all 13 rounds leave within 2e-5 of retail's direction
+  (`DIR_GAPS_11` gone). Each piece alone leaves the two rounds off: the
+  `PROBE_IN` press holds the trigger on the whole batch, so cmd 27732
+  fires, and the plain windows run it before the frame. A second 1.1d run
+  (2026-10-19, port 33371, `-cmds-ct`, `ct=` printed by the probe) has
+  every cmd before a trigger ahead of the frame and replays the same way;
+  its `ct=` matched its `VEH` lines on all 3269 snapshots.
 - UO: every row matches, the shooter's `PROBE eye` included. He spawned
   standing on the sloped point (976, -792, -2.04889); VERIFIED, live: the
   target probe read his `trDelta` (6, 3, -1) on the spawn frame. Ours'
@@ -7335,8 +7346,9 @@ one that pulled the trigger.
   their `DIR_GAPS_*` lists stayed open; their 2026-10-19 rerun with
   `probe_tapwait 1` replays without them on the plain windows and the
   `PROBE_IN` lines, but for two 1.1d rounds whose cmd before the trigger
-  ran after the frame on retail (3.6). A fixture that logs the shooter's
-  own `commandTime` with each snapshot would place every such cmd.
+  ran after the frame on retail (3.6). The 1.1d `-cmds` fixtures now log
+  each snapshot's `commandTime` (`ct=`), and the replay places every cmd
+  on those (`ProbeHold::ran`); both rounds match (3.6).
 - The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
   `-press-1.5` replay with the shooter's sway state logged per cmd). The
   shooter holds the sight from his first cmd (12450, `in=10:16`), but
