@@ -351,19 +351,49 @@ three `a_spawn_lies_down_on_its_own_yaw_*` gates hold the heading, the
 prone body and every bone to retail's; `specspawn_ab` holds the spectator's
 spawn frame.
 
-The think on a slope, standing (open). VERIFIED, live (retail UO 1.51b,
+The think on a slope, standing. VERIFIED, live (retail UO 1.51b,
 2026-10-19, `client-probes/probe_leanhit`, fixture
 `crates/server/tests/fixtures/leanhit/mp_carentan-leanhit-cmds-uo.txt`
 and the target probe's raw log): the shooter spawned standing on the tdm
 point (976, -792, -2.04889) facing 180, his last cmd a spectator's with
 no keys and no buttons, and the spawn frame's snapshot carried his
-`trDelta` as (6, 3, -1). VERIFIED, vcod measurement (`leanhit_ab`'s UO
-`-cmds` replay): ours' think leaves (10, 5, -1) there, and the hold's
-drop carries the difference into his rest spot, 0.166 and 0.083 units
-off retail's (`leanhit_ab::EYE_OFF_UO`). 1.1d's think on its zeroed cmd
-off (976, -864) gives (1, 4, 0) on both servers. The 1.5b `-cmds` run's
-target spawned on the same UO point but lay down in the think, so no
-capture yet shows a standing 1.5b think on a slope.
+`trDelta` as (6, 3, -1).
+
+VERIFIED, `client-probes/probe_placebits` on all three Linux servers
+(2026-10-19, `crates/server/tests/fixtures/spawnpoints/placebits-retail.txt`):
+`placeSpawnpoint` leaves that point (entity 92) at -(2 + 820224 / 2^24)
+on 1.5b and UO and -(2 + 819968 / 2^24) on 1.1d; every other mp_carentan
+tdm point is the same float on all three. The drop ends on a terrain edge
+(triangle 1526's first edge, normal about (0.207, 0.186, 0.961)), and
+1.5b and UO sweep it on their own build's edge frame: VERIFIED,
+`coduo_lnxded` 0x805403e's edge loop normalizes the edge with
+`VectorNormalize` (0x8066755) and takes its `u` from
+`PerpendicularVector` (0x80676b4), whose `ProjectPointOnPlane`
+(0x806aa4e) stores the squared length (0x806aa82), its reciprocal
+(0x806aa8a), the scaled dot (0x806aabe) and each scaled normal component
+(0x806aac9..0x806aae5); `v` is `CrossProduct` (0x80666b1, one store per
+component). 1.1d's keeps those on the stack (section 7).
+
+The spawn think's first 66 ms step falls from rest, and a fall from rest
+moves exactly half its end velocity: the tail's clamp (section 7) is a
+tie that the start height's last bits settle. VERIFIED, vcod measurement:
+from the placed float the clamp takes the move and leaves -26, the second
+step lands on triangle 1526's neighbour (normal about (0.120, 0.063,
+0.991)) at -53.2 and the clip leaves (6, 3, -1), as retail; from
+`f32(-2.04889)`, the fixture's `%g` print, the clamp does not take it, the
+landing is at -80.2 and the clip leaves (10, 5, -1). VERIFIED, vcod
+measurement (the tail's stores emulated over the 42 floats that print as
+-2.04889): 20 take the clamp.
+
+vcod: `Terrain` keeps a second set of edge records built 1.5b's and UO's
+way (`edges_v22`), which the stored edge sweep reads, and a test's spawn
+pin takes the origin of the one entity its `%g` print rounds from
+(`client_spawn`'s `pinned_spot`). `placespawn_ab`'s three
+`placespawnpoint_*_to_the_bit` gates hold every mp_carentan tdm point to
+retail's float, and `leanhit_ab`'s UO `-cmds` replay holds the shooter's
+eye with no offset. The 1.5b `-cmds` run's target spawned on the same
+point but lay down in the think, so no capture shows a standing 1.5b
+think on a slope.
 
 The framed cadence elsewhere. VERIFIED, vcod measurement (2026-10-16,
 `ProbeHold::framed` forced on for every `ProbeHold` user): `scriptmodel_ab`,
@@ -685,6 +715,12 @@ and `cod_lnxded`, UO `game.mp.uo.i386.so` and `coduo_lnxded`.
   computed on the stack (0x28993-0x289e3). 1.1d keeps x on the stack and
   never stores the rate or the speed (`cod11-mantle.md`, "The tail of the
   default arm"). VERIFIED.
+- A terrain edge's frame (UO 0x805403e's edge loop): the edge's
+  direction is normalized by the stored `VectorNormalize` and its `u`
+  comes from a `PerpendicularVector` whose projection stores each step;
+  1.1d's keeps them on the stack. A capsule swept onto an edge reads the
+  frame, so a long drop onto one ends a few fraction units off 1.1d's
+  (section 4, "The think on a slope, standing"). VERIFIED.
 - `CM_BoxTrace`'s end point (1.5b 0x805aba1, UO 0x805a9d5): the shifted
   end is stored (0x805acdd, UO 0x805ab11) before the delta is taken from
   it, where 1.1d's 0x8056310 keeps it on the stack; the end point is still

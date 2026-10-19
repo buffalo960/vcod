@@ -2568,15 +2568,14 @@ replays on the `PROBE_IN` lines rather than the logged inputs.
   read the hold's exact angles and the other a cmd's quantized ones,
   though their trigger cmds sit on the frame with the cmd before 18 ms
   ahead, as the other eleven's do (`leanhit_ab::DIR_GAPS_11`, open).
-- UO: every row matches but the shooter's `PROBE eye`, 0.166 and 0.083
-  units off ours in x and y on every row (`leanhit_ab::EYE_OFF_UO`). He
-  spawned standing on the sloped point (976, -792, -2.04889); VERIFIED,
-  live: the target probe read his `trDelta` (6, 3, -1) on the spawn
-  frame. VERIFIED, vcod measurement: ours' spawn think leaves (10, 5, -1)
-  on the same last cmd (no keys, no buttons), and the drop carries the
-  difference into his rest spot. 1.1d's think off (976, -864) gives (1, 4,
-  0) on both. No earlier capture spawned a standing 1.5b or UO body on a
-  slope (cod15-movement.md 4, "The spawn's lie-down"; open).
+- UO: every row matches, the shooter's `PROBE eye` included. He spawned
+  standing on the sloped point (976, -792, -2.04889); VERIFIED, live: the
+  target probe read his `trDelta` (6, 3, -1) on the spawn frame. Ours'
+  think left (10, 5, -1) until the spawn pin took the placed spawnpoint's
+  own float and ours placed it as retail does; VERIFIED, vcod
+  measurement: ours now leaves (6, 3, -1) and the eye rows match
+  without an offset (cod15-movement.md 4, "The think on a slope,
+  standing").
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
