@@ -783,11 +783,15 @@ pub fn gun_angles(ps: &PlayerState, st: &mut AimState, input: &AimInput) -> Opti
 /// and yaw `FireWeapon` and `FireWeaponMelee` read off `client+0x220c` and
 /// `+0x2210`: the view plus its kick, and down the sight of an
 /// `aimDownSight` weapon that rotated by the gun's own angles, degrees in
-/// the wire convention. A weapon index with no file behind it aims the raw
-/// view and leaves the state alone.
+/// the wire convention. A weapon index with no file behind it runs on
+/// weapon 0's def, which is all zeros but its name: the block still runs
+/// and the sway still records the view it saw (combat doc 15.3).
 pub fn aim_angles(ps: &PlayerState, st: &mut AimState, input: &AimInput) -> [f32; 2] {
-    let Some(def) = input.def else {
-        return [input.view[0], input.view[1]];
+    static NONE: std::sync::LazyLock<WeaponDef> = std::sync::LazyLock::new(WeaponDef::default);
+    let def = input.def.unwrap_or(&NONE);
+    let input = &AimInput {
+        def: Some(def),
+        ..*input
     };
     let vk = view_angles(ps, Some(def), &input.kick, input.now_ms);
     let mut aim = input.view;
@@ -1077,22 +1081,29 @@ mod tests {
         assert!((yaw - 90.0).abs() < 1e-3, "{yaw}");
     }
 
-    /// A weapon the table has no file for aims the raw view.
+    /// A weapon the table has no file for runs on weapon 0's zeroed def:
+    /// it aims the raw view and the sway records that view, so the next
+    /// weapon's first cmd turns off it. Off a spawn's 180 onto 0 the turn
+    /// reads -180, not +180 (combat doc 15.3, "The spawn's view").
     #[test]
-    fn no_file_means_the_raw_view() {
-        let ps = still(1.0);
+    fn no_file_aims_the_raw_view_and_records_it() {
+        let ps = still(0.0);
         let mut st = AimState::default();
-        let input = AimInput {
+        let none = AimInput {
             def: None,
-            view: [5.0, 6.0, 0.0],
-            msec: 50,
+            view: [0.0, 180.0, 0.0],
+            msec: 100,
             now_ms: 1000,
             kick: DamageKick::default(),
             gun_kick: [0.0; 2],
             sway_scale: 1.0,
         };
-        assert_eq!(aim_angles(&ps, &mut st, &input), [5.0, 6.0]);
-        assert_eq!(st, AimState::default());
+        assert_eq!(aim_angles(&ps, &mut st, &none), [0.0, 180.0]);
+        assert_eq!(st.last_view, [0.0, 180.0, 0.0]);
+        assert_eq!(st.sway_angles, [0.0; 3]);
+        let def = sniper();
+        aim_angles(&ps, &mut st, &input(&def, [0.0, 0.0, 0.0], 1016));
+        assert!(st.sway_angles[1] < 0.0, "{:?}", st.sway_angles);
     }
 
     /// The view kick eases up over 100 ms and down over 400, in full at the

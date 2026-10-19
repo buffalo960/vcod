@@ -166,7 +166,8 @@ check.
   `configstrings_15_ab`, `timeout_15_ab` and `turret_ab`'s 1.5 replay
   run only with `COD_DIR` at a 1.5 install (a UO one's `main/` is 1.5's);
   `moves_ab`'s UO replays (sprint, mounts and cook),
-  `configstrings_uo_ab`, `playerstate_uo_ab`, `combat_uo_ab`,
+  `configstrings_uo_ab`, `playerstate_uo_ab`, `playerstate_combat_ab`'s
+  UO capture,
   `mount_uo_ab`, `uo_weapons_ab` and `turret_ab`'s UO replay only with it
   at a UO install (its `uo/` beside `main/`,
   `testing::uo_fs`).
