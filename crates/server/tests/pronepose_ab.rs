@@ -18,7 +18,8 @@
 //! 1.5's and UO's spawn think lies the held prone down along it
 //! (cod15-movement.md 4, "The spawn's lie-down").
 //!
-//! `PB_REPORT=1` prints both logs, `PB_TRACE=1` our snapshots. The tests need `COD_DIR` at the install
+//! `PB_REPORT=1` prints both logs, `PB_TRACE=1` our snapshots,
+//! `PB_FIXTURE=<path>` runs a `probe_rays` gate against another capture. The tests need `COD_DIR` at the install
 //! each names and return early without.
 
 mod common;
@@ -47,12 +48,16 @@ const BODY_NEAR: f32 = 0.01;
 /// Our run of the probe on `map` with one client holding prone at world
 /// `yaw`, until the script's `done` line: the log, and the last snapshot's
 /// prone body and `proneDirection`. `spawn_yaw` is `probe_spawn_yaw`.
+/// `rays` sets `probe_rays` and replays that fixture's cmds (its `CMDS`
+/// lines, `ProbeHold::times`) on its clock: the client joins so the first
+/// placement lands on the fixture's.
 fn ours(
     fs: vcod_common::pk3::Pk3Fs,
     map: &str,
     spot: &str,
     yaw: f32,
     spawn_yaw: Option<f32>,
+    rays: Option<&str>,
 ) -> (Vec<String>, [f32; 3], f32) {
     let proto = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
@@ -65,9 +70,19 @@ fn ours(
     if let Some(y) = spawn_yaw {
         sv.set_cvar("probe_spawn_yaw", &y.to_string());
     }
+    if rays.is_some() {
+        sv.set_cvar("probe_rays", "1");
+    }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
+    let join_ms = rays.map_or(common::PROBE_JOIN_MS, |f| {
+        first_place(f)
+            - match proto.version == PROTOCOL_V6.version {
+                true => PLACE_AFTER_JOIN_MS_15,
+                false => PLACE_AFTER_JOIN_MS,
+            }
+    });
+    common::run_alone(&mut sv, &mut now, join_ms);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("axis", "kar98k_mp");
@@ -76,6 +91,10 @@ fn ours(
         framed: true,
         ..Default::default()
     };
+    if let Some(f) = rays {
+        hold.times = common::cmds_times(f, "");
+        hold.ran = common::cmds_ran(f, "");
+    }
     let mut body = [0.0; 3];
     let mut dir = 0.0;
     let frame = Duration::from_millis(common::FRAME_MS as u64);
@@ -216,7 +235,7 @@ fn check_spawn(
         .filter(|l| l.starts_with("PROBE"))
         .map(str::to_string)
         .collect();
-    let (ours, body, dir) = ours(fs, map, spot, yaw, spawn_yaw);
+    let (ours, body, dir) = ours(fs, map, spot, yaw, spawn_yaw, None);
     if let Some(rd) = retail_dir(fixture) {
         assert!(
             ((rd - dir + 180.0).rem_euclid(360.0) - 180.0).abs() <= BODY_NEAR,
@@ -435,5 +454,183 @@ fn a_spawn_lies_down_on_its_own_yaw_like_uo() {
         Some(315.0),
         include_str!("fixtures/pronebones/mp_brecourt-spawn315-uo.txt"),
         true,
+    );
+}
+
+/// How long after the client's join ours' first placement lands: 1.5's
+/// join answers its `serverinfo_<gametype>` menu first.
+const PLACE_AFTER_JOIN_MS: i64 = 1100;
+const PLACE_AFTER_JOIN_MS_15: i64 = 950;
+
+/// The time of `fixture`'s first `PROBE place` line.
+fn first_place(fixture: &str) -> i64 {
+    fixture
+        .lines()
+        .find_map(|l| l.strip_prefix("PROBE place "))
+        .and_then(|l| l.split(' ').next()?.parse().ok())
+        .expect("a PROBE place line")
+}
+
+/// A float `probe_rays` printed as its integer part and remainder.
+fn exact(int: &str, frac: &str) -> f32 {
+    (int.parse::<f64>().unwrap() + frac.parse::<f64>().unwrap()) as f32
+}
+
+/// One `probe_rays` frame: the origin, each bone mark and each ray that
+/// stopped on the body, keyed by its offset off the spot.
+#[derive(Debug, Default)]
+struct RayFrame {
+    origin: [f32; 3],
+    bones: Vec<(String, [f32; 3])>,
+    rays: Vec<((i32, i32), f32)>,
+}
+
+fn ray_frames(lines: &[String]) -> Vec<RayFrame> {
+    let mut out: Vec<RayFrame> = Vec::new();
+    let v3 = |t: &[&str]| [0, 1, 2].map(|i| exact(t[2 * i], t[2 * i + 1]));
+    for l in lines.iter().map(|l| l.trim()) {
+        if let Some(rest) = l.strip_prefix("PROBE xbody ") {
+            let t: Vec<&str> = rest.split(' ').collect();
+            out.push(RayFrame {
+                origin: v3(&t[2..]),
+                ..Default::default()
+            });
+        } else if let Some(rest) = l.strip_prefix("PROBE xbone ") {
+            // `<time> <client> <tag with spaces> <x> <xf> <y> <yf> <z> <zf>`
+            let t: Vec<&str> = rest.split(' ').collect();
+            let n = t.len();
+            let tag = t[2..n - 6].join(" ");
+            out.last_mut().unwrap().bones.push((tag, v3(&t[n - 6..])));
+        } else if let Some(rest) = l.strip_prefix("PROBE ray ") {
+            let t: Vec<&str> = rest.split(' ').collect();
+            let key = (t[1].parse().unwrap(), t[2].parse().unwrap());
+            out.last_mut().unwrap().rays.push((key, exact(t[3], t[4])));
+        }
+    }
+    out
+}
+
+/// Float steps between two floats of one sign.
+fn steps(a: f32, b: f32) -> i64 {
+    (a.to_bits() as i64 - b.to_bits() as i64).abs()
+}
+
+/// `probe_rays` against `fixture`: the settled origin, every bone mark and
+/// every ray's stop on the body to retail's float, each ray within
+/// `ray_steps` float steps.
+fn check_rays(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    spot: &str,
+    yaw: f32,
+    spawn_yaw: Option<f32>,
+    fixture: &str,
+    ray_steps: i64,
+) {
+    let read = std::env::var("PB_FIXTURE")
+        .ok()
+        .map(|p| std::fs::read_to_string(p).unwrap());
+    let fixture = read.as_deref().unwrap_or(fixture);
+    let retail: Vec<String> = fixture
+        .lines()
+        .filter(|l| l.starts_with("PROBE"))
+        .map(str::to_string)
+        .collect();
+    let (ours, _, _) = ours(fs, map, spot, yaw, spawn_yaw, Some(fixture));
+    let (rf, of) = (ray_frames(&retail), ray_frames(&ours));
+    assert_eq!(rf.len(), 2, "{retail:?}");
+    assert_eq!(of.len(), rf.len(), "{ours:?}");
+    let report = std::env::var_os("PB_REPORT").is_some();
+    let mut off = Vec::new();
+    for (f, (r, o)) in rf.iter().zip(&of).enumerate() {
+        if r.origin != o.origin {
+            off.push(format!(
+                "frame {f} origin: retail {:?}, ours {:?}",
+                r.origin, o.origin
+            ));
+        }
+        for ((tag, a), (_, b)) in r.bones.iter().zip(&o.bones) {
+            if a != b {
+                off.push(format!(
+                    "frame {f} {tag}: retail {a:?}, ours {b:?}, steps {:?}",
+                    [0, 1, 2].map(|i| steps(a[i], b[i]))
+                ));
+            }
+        }
+        let (rk, ok): (Vec<_>, Vec<_>) = (
+            r.rays.iter().map(|x| x.0).collect(),
+            o.rays.iter().map(|x| x.0).collect(),
+        );
+        for k in rk.iter().filter(|k| !ok.contains(k)) {
+            off.push(format!("frame {f} ray {k:?}: retail only"));
+        }
+        for k in ok.iter().filter(|k| !rk.contains(k)) {
+            off.push(format!("frame {f} ray {k:?}: ours only"));
+        }
+        for (k, a) in &r.rays {
+            if let Some((_, b)) = o.rays.iter().find(|x| x.0 == *k)
+                && steps(*a, *b) > ray_steps
+            {
+                off.push(format!(
+                    "frame {f} ray {k:?}: retail {a}, ours {b}, {} steps",
+                    steps(*a, *b)
+                ));
+            }
+        }
+    }
+    if report {
+        ours.iter().for_each(|l| eprintln!("ours {l}"));
+        off.iter().for_each(|l| eprintln!("{l}"));
+    }
+    assert!(
+        off.is_empty(),
+        "{} rows off retail's:\n{}",
+        off.len(),
+        off.join("\n")
+    );
+}
+
+/// probe_scriptmodel's prone target on mp_brecourt's grade, on 1.5b,
+/// spawned on the spot: his origin and the eight bone marks to retail's
+/// float, and every downward `bulletTrace` that stops on him within
+/// [`RAY_STEPS_15`].
+#[test]
+fn a_prone_body_on_the_mp_brecourt_field_traces_like_15() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    check_rays(
+        fs,
+        "mp_brecourt",
+        "brecourt",
+        270.0,
+        Some(270.0),
+        include_str!("fixtures/pronebones/mp_brecourt-brecourt-rays-1.5.txt"),
+        RAY_STEPS_15,
+    );
+}
+
+/// How many float steps a 1.5b ray may stop off retail's: 1.5b's prone
+/// idle moves, and the clip's time fraction, which the engine steps in
+/// floats every frame, is vcod's seconds, so a key lerped between frames
+/// lands a few steps off (cod11-combat.md 3.1, "The pose on 1.5 and UO").
+const RAY_STEPS_15: i64 = 3;
+
+/// [`a_prone_body_on_the_mp_brecourt_field_traces_like_15`] on United
+/// Offensive 1.51b, whose prone idle stands on its keys: every ray to
+/// retail's float.
+#[test]
+fn a_prone_body_on_the_mp_brecourt_field_traces_like_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_rays(
+        fs,
+        "mp_brecourt",
+        "brecourt",
+        270.0,
+        None,
+        include_str!("fixtures/pronebones/mp_brecourt-brecourt-rays-uo.txt"),
+        0,
     );
 }

@@ -28,6 +28,18 @@
 //	spawn think runs the client's last cmd, so a client holding prone lies
 //	down along the spawn's yaw before the turn (cod15-movement.md 4, "The
 //	spawn's lie-down").
+//
+//	`probe_rays 1` adds, after the bones, two frames of the body's origin
+//	and each bone mark printed to the float (each component as its integer
+//	part and the exact remainder), and a grid of downward `bulletTrace`s
+//	with `hitCharacters` over the body, 2 units apart, each that stops on
+//	him logged with where it stopped in z, likewise:
+//
+//	PROBE xbody <time> <entity number> <x> <y> <z>
+//	PROBE xbone <time> <entity number> <tag> <x> <y> <z>
+//	PROBE ray <time> <dx> <dy> <z>
+//
+//	(<dx> <dy> the ray's offset off the spot.)
 
 main()
 {
@@ -159,5 +171,47 @@ log_bones()
 			logPrint("PROBE bone " + getTime() + " " + n + " " + tags[j] + " " + marks[j].origin + "\n");
 		wait 0.05;
 	}
+	if (getcvarint("probe_rays"))
+		log_rays(n, tags, marks);
 	logPrint("PROBE done " + getTime() + "\n");
+}
+
+//	A float as its integer part and the remainder, which the subtraction
+//	keeps exact and `%g` prints to below the float's step. gsc has no
+//	`int`: the cvar's atoi of the printed float truncates it.
+exact(f)
+{
+	setcvar("probe_int", "" + f);
+	i = getcvarint("probe_int");
+	return i + " " + (f - i);
+}
+
+exact3(v)
+{
+	return exact(v[0]) + " " + exact(v[1]) + " " + exact(v[2]);
+}
+
+log_rays(n, tags, marks)
+{
+	spot = spot_of(getcvar("probe_spot"));
+	for (k = 0; k < 2; k++)
+	{
+		wait 0.05;
+		logPrint("PROBE xbody " + getTime() + " " + n + " " + exact3(self.origin) + "\n");
+		for (j = 0; j < tags.size; j++)
+			logPrint("PROBE xbone " + getTime() + " " + n + " " + tags[j] + " " + exact3(marks[j].origin) + "\n");
+		top = self.origin[2] + 40;
+		bottom = self.origin[2] - 30;
+		for (dx = -16; dx <= 16; dx += 2)
+		{
+			for (dy = -40; dy <= 70; dy += 2)
+			{
+				x = spot.origin[0] + dx;
+				y = spot.origin[1] + dy;
+				tr = bulletTrace((x, y, top), (x, y, bottom), true, undefined);
+				if (isdefined(tr["entity"]) && tr["entity"] == self)
+					logPrint("PROBE ray " + getTime() + " " + dx + " " + dy + " " + exact(tr["position"][2]) + "\n");
+			}
+		}
+	}
 }
