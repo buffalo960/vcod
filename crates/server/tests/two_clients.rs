@@ -876,7 +876,7 @@ fn a_client_out_of_grenades_gets_its_rifle_back() {
                frames: usize| {
         for _ in 0..frames {
             *now += Duration::from_millis(50);
-            cl.send_frame(&crate::common::echo_weapon(&cl, cmd));
+            cl.send_frame(&crate::common::echo_weapon(cl, cmd));
             common::step(sv, &q, cl, *now);
         }
     };

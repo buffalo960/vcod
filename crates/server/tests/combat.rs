@@ -1227,8 +1227,8 @@ fn raise_frag(
     let p = &PROTOCOL_V1;
     let mut switched = false;
     for _ in 0..80 {
-        a.send_frame(&crate::common::echo_weapon(&a, aimed));
-        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
+        a.send_frame(&crate::common::echo_weapon(a, aimed));
+        b.send_frame(&crate::common::echo_weapon(b, b_cmd));
         step(sv, a, b);
         if a.snapshots()
             .newest()
@@ -1241,8 +1241,8 @@ fn raise_frag(
     assert!(switched, "the frag never reached the thrower's hands");
     let mut ready = false;
     for _ in 0..60 {
-        a.send_frame(&crate::common::echo_weapon(&a, aimed));
-        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
+        a.send_frame(&crate::common::echo_weapon(a, aimed));
+        b.send_frame(&crate::common::echo_weapon(b, b_cmd));
         step(sv, a, b);
         if a.snapshots()
             .newest()
@@ -1280,20 +1280,20 @@ fn cook_and_throw_down(
         ..aimed
     };
     for _ in 0..20 {
-        a.send_frame(&crate::common::echo_weapon(&a, &cook));
-        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
+        a.send_frame(&crate::common::echo_weapon(a, &cook));
+        b.send_frame(&crate::common::echo_weapon(b, b_cmd));
         step(sv, a, b);
     }
     for _ in 0..200 {
-        a.send_frame(&crate::common::echo_weapon(&a, &aimed));
-        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
+        a.send_frame(&crate::common::echo_weapon(a, &aimed));
+        b.send_frame(&crate::common::echo_weapon(b, b_cmd));
         step(sv, a, b);
         if let Some(x) = sv.pending_explosions().first() {
             let at = x.at.into();
             // One more frame so both clients have been sent the damage the
             // blast did on the frame it went off.
-            a.send_frame(&crate::common::echo_weapon(&a, &aimed));
-            b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
+            a.send_frame(&crate::common::echo_weapon(a, &aimed));
+            b.send_frame(&crate::common::echo_weapon(b, b_cmd));
             step(sv, a, b);
             return at;
         }
@@ -2474,10 +2474,10 @@ fn fire_panzerfaust(
     let mut seen: Option<RocketSeen> = None;
     for i in 0..60 {
         a.send_frame(&crate::common::echo_weapon(
-            &a,
+            a,
             if i == 0 { &fire } else { &aimed },
         ));
-        b.send_frame(&crate::common::echo_weapon(&b, b_cmd));
+        b.send_frame(&crate::common::echo_weapon(b, b_cmd));
         step(sv, a, b);
         let snap = a.snapshots().newest().unwrap();
         let rocket = snap.entities.values().find(|e| {
