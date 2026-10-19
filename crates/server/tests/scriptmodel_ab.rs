@@ -781,6 +781,109 @@ fn a_frag_rolls_down_terrain_like_retail() {
     assert_eq!(bits(&oc), bits(&rc), "retail {rc:?}\nours   {oc:?}");
 }
 
+/// mp_brecourt on 1.5b: both frags miss the prone target and bounce up
+/// the field's terrain to rest on it, every contact on retail's snapshot
+/// with retail's ground and every base retail's to the bit: the arc, the
+/// bounce and the ground snap take 1.5b's float stores (12.5, "The
+/// arithmetic on 1.5 and UO"). The thrower spawns on the spawn point under
+/// retail's first `PROBE thrower` line. Runs only with `COD_DIR` at a 1.5
+/// install.
+#[test]
+fn a_frag_rolls_up_terrain_like_retail_on_15() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    compare_rolls(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_brecourt-scriptmodel-roll-1.5.txt"),
+        None,
+    );
+}
+
+/// [`a_frag_rolls_up_terrain_like_retail_on_15`] on United Offensive
+/// 1.51b, whose bounce keeps 0.4 of the reflection: the second frag rolls
+/// up the grade over four contacts to retail's bit. The first strikes the
+/// target's prone body on the grade before the terrain, and that strike
+/// lands 0.007 off retail's (his pose on a grade, not the missile's
+/// arithmetic), so its states are held to retail's type and ground and to
+/// 0.01. Runs only with `COD_DIR` at a UO install.
+#[test]
+fn a_frag_rolls_up_terrain_like_retail_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    compare_rolls(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_brecourt-scriptmodel-roll-uo.txt"),
+        Some(0),
+    );
+}
+
+/// The prone part on mp_brecourt against `fixture`: each frag's distinct
+/// snapshot states up to its explode (`trType`, base bits, ground)
+/// retail's, in order; `struck`'s states only within 0.01.
+fn compare_rolls(fs: vcod_common::pk3::Pk3Fs, fixture: &str, struck: Option<usize>) {
+    // Ours logs a missile until its explode.
+    let retail: Vec<String> = fixture
+        .lines()
+        .filter(|l| !l.contains(" etype 0 "))
+        .map(str::to_string)
+        .collect();
+    let landed = thrower_lines(&retail)
+        .first()
+        .expect("a PROBE thrower line")
+        .0;
+    // The site's yaw (90) turned round.
+    let ours = ours_pair_in(
+        fs,
+        "mp_brecourt",
+        "prone",
+        true,
+        12_000,
+        Some(270.0),
+        Some(landed),
+    );
+    report(&retail, &ours);
+    let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
+    assert_eq!(r.len(), 2);
+    assert_eq!(o.len(), r.len(), "{o:?}");
+    let changes = |v: &[MissileRow]| {
+        let mut out: Vec<(i32, [u32; 3], i32)> = Vec::new();
+        for g in v {
+            let row = (g.0, g.1.map(f32::to_bits), g.2);
+            if out.last() != Some(&row) {
+                out.push(row);
+            }
+        }
+        out
+    };
+    for g in 0..2 {
+        let (rc, oc) = (changes(&r[g]), changes(&o[g]));
+        if struck != Some(g) {
+            assert_eq!(oc, rc, "grenade {g}: retail {:?}\nours   {:?}", r[g], o[g]);
+            continue;
+        }
+        assert_eq!(
+            oc.len(),
+            rc.len(),
+            "grenade {g}: retail {rc:?}\nours   {oc:?}"
+        );
+        for (a, b) in rc.iter().zip(&oc) {
+            let near =
+                (0..3).all(|i| (f32::from_bits(a.1[i]) - f32::from_bits(b.1[i])).abs() <= 0.01);
+            assert!(
+                (a.0, a.2) == (b.0, b.2) && near,
+                "grenade {g}: retail {:?}\nours   {:?}",
+                r[g],
+                o[g]
+            );
+        }
+    }
+}
+
 /// Each `PROBE shooter` line's thrower origin, in order.
 fn shooter_origins(lines: &[String]) -> Vec<[f32; 3]> {
     lines
