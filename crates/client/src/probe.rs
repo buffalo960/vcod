@@ -1629,6 +1629,7 @@ pub fn probe(
             } else if save_combat {
                 // The join names the weapon; the reload step is sized
                 // off its `reloadTime` rather than one rifle's number.
+                let fresh = !combat.weapon_read && !join.weapon.is_empty();
                 combat.use_weapon(fs, &join.weapon, client.configstrings());
                 if (probe_sway || save_lean)
                     && combat.aim_yaw.is_none()
@@ -1643,11 +1644,12 @@ pub fn probe(
                         longest_sightline(w, eye)
                     });
                 }
-                // The clock after the reads above: the weapon file and the
-                // sight line take 100-200 ms on the first settled snapshot,
-                // and a first step timed from before them opened with a
-                // snapshot gap and that much of its hold already spent.
-                if combat.step(Instant::now(), s) {
+                // The first step starts an iteration after the reads above:
+                // the weapon file and the sight line take 100-200 ms on the
+                // first settled snapshot, and a step begun on it opened with
+                // a snapshot gap and a first cmd whose msec spanned it, so
+                // `melee_tap`'s whole swing ran inside one chopped cmd.
+                if !fresh && combat.step(Instant::now(), s) {
                     // The sway run is a measurement: its impact lines
                     // went to stdout and there is no fixture for it.
                     if !probe_sway {
@@ -3903,9 +3905,9 @@ struct CombatProbe {
     /// their whole-unit origins. `None` holds the spawn view.
     aim_yaw: Option<i32>,
     /// Every cmd sent while a step was current, its wait for the weapon
-    /// included: the step, `serverTime`, `buttons` and `wbuttons`, so a
-    /// replay can run retail's cmds frame for frame.
-    sent: Vec<(&'static str, i32, u8, u8)>,
+    /// included: the step, `serverTime`, `buttons`, `wbuttons` and the
+    /// weapon byte, so a replay can run retail's cmds frame for frame.
+    sent: Vec<(&'static str, i32, u8, u8, u8)>,
     /// The newest snapshot's `serverTime` when each step became current.
     start_times: Vec<(&'static str, i32)>,
 }
@@ -4071,7 +4073,7 @@ impl CombatProbe {
     fn record(&mut self, c: &net::msg::UserCmd) {
         if let (Some(step), false) = (self.steps.get(self.idx), self.start_times.is_empty()) {
             self.sent
-                .push((step.label, c.server_time, c.buttons, c.wbuttons));
+                .push((step.label, c.server_time, c.buttons, c.wbuttons, c.weapon));
         }
     }
 
@@ -4516,7 +4518,9 @@ fn write_combat_fixture(
     out.push_str("# for a ready rifle: start= the newest snapshot's serverTime when it became\n");
     out.push_str("# current, st= the first cmd's serverTime and d= the steps\n");
     out.push_str("# to each next one, in= <index>:<buttons>/<wbuttons> for each cmd whose bits\n");
-    out.push_str("# differ from the !input base (the taps and presses). A trace's commandTime\n");
+    out.push_str("# differ from the !input base (the taps and presses), w= <index>:<byte> for\n");
+    out.push_str("# each cmd whose weapon byte differs from the cmd before it (the first from\n");
+    out.push_str("# the step's weapon=). A trace's commandTime\n");
     out.push_str("# is the last cmd its frame ran.\n");
     out.push_str("# Values are the raw i32 wire words, floats as their bit patterns.\n");
     // Where the script stood and looked at its first step. A replay that
@@ -4661,11 +4665,23 @@ hold_ms={} walks={} wait_ready={} weapon={}\n",
                 .filter(|(_, c)| (c.2, c.3) != (step.base.buttons, step.base.wbuttons))
                 .map(|(i, c)| format!("{i}:{}/{}", c.2, c.3))
                 .collect();
+            // Where the byte changes, the first cmd against the step's
+            // `weapon=`: a switch is held on the wire until `ps.weapon`
+            // reads it (`WeaponSwitch`).
+            let mut byte = mine.first().map_or(0, |s| s.weapon);
+            let mut bytes: Vec<String> = Vec::new();
+            for (i, c) in sent.iter().enumerate() {
+                if i32::from(c.4) != byte {
+                    byte = i32::from(c.4);
+                    bytes.push(format!("{i}:{byte}"));
+                }
+            }
             out.push_str(&format!(
-                "!cmds start={start} st={} d={} in={}\n",
+                "!cmds start={start} st={} d={} in={} w={}\n",
                 first.1,
                 d.join(","),
-                held.join(",")
+                held.join(","),
+                bytes.join(",")
             ));
         }
         out.push_str(&format!(

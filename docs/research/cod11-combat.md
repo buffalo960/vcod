@@ -376,8 +376,9 @@ between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
 `mp_carentan-tdm-ads-sniper.txt` `hip_shot`, `mp_cassino-dm-combat-uo.txt`
 `crouch_fire`: five of fourteen on the 2026-10-18 recapture of the 1.1
 files, four on the 2026-10-17 one); whether a snapshot lands on it is the cmd grid's business, so
-`playerstate_combat_ab` and `combat_uo_ab` leave that lone sample out of the
-`weapAnim` sets they compare, unless the capture logs its cmds (1.13). UO's jeep passenger
+`combat_uo_ab` leaves that lone sample out of the `weapAnim` sets it
+compares; `playerstate_combat_ab`, whose 1.1 captures all log their cmds
+(1.13), keeps it. UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
@@ -688,8 +689,20 @@ conditions.
   and both swaps in `mp_carentan-dm-pickup.txt` read `weapon` 0 to the new
   weapon at 34800 and 36300 with `eventSequence` unmoved.
 - dll `0x30010a30`, inlined in the `.so` at `0x392b4`: `weaponstate` 1 is
-  cleared to 0 and `weapAnim` set to `WEAP_IDLE` with the toggle flipped,
-  unconditionally, on the frame after.
+  cleared to 0 on the frame after, unconditionally. VERIFIED decompile
+  (`PM_Weapon`, the same block): the `WEAP_IDLE` write beside it, toggle
+  flipped, is guarded by `pm_type < 6` and `pm->cmd.weapon != 0`, the
+  guard of 1.2's setter, and so is the trigger-release idle of 1.6 in the
+  arm after it. VERIFIED, capture (`mp_carentan-tdm-grenade.txt`, 2026-10-19
+  recapture): the last frag's `throw_down` raises empty hands (`weaponstate`
+  1, `weapAnim` 10) on the frame its last cmd ran the throw's end, the probe
+  sends `cmd.weapon` 0 for the weapon it no longer holds, and the state goes
+  0 a frame later with `weapAnim` still 10 through `idle_after`. VERIFIED,
+  the 2026-10-17 capture: it went 3 to 0 on one frame and read 512.
+  INFERRED: that frame's cmds still carried 8, the probe echoing a
+  snapshot from before the take. vcod: `pm_weapon` puts `weapAnim` back after a
+  step whose cmd byte is 0 (UO's setters, 0x43f9c and 0x44024, carry the
+  same guard).
 
 VERIFIED, off the grenade capture, whose `to_frag` step is the first
 uncorrupted putaway anyone has measured: the putaway stores `WEAP_DROP` and
@@ -918,26 +931,26 @@ reload and not at the key.
 (`crates/server/tests/fixtures/playerstate/<map>-dm-ads.txt`, `!trace` per
 snapshot with `fWeaponPosFrac` and `aimSpreadScale` as decimals), the probe
 standing still and holding each input in turn; the numbers below are
-re-measured on the 2026-10-17 recapture, the mosin's on the 2026-10-18
-one. VERIFIED, every number;
+re-measured on the carbine's 2026-10-19 recapture, the mosin's on its
+2026-10-18 one. VERIFIED, every number;
 INFERRED, that they are the file's fields, which is arithmetic.
 
 - The ramp is linear and the rates are the reciprocal times: up, both
-  weapons step about 0.1667 a snapshot, the carbine reading 0.1067 at 32 ms and
-  1.0 at 328, the mosin 0.0533 at 16 and 1.0 at 308, which is
+  weapons step about 0.1667 a snapshot, the carbine reading 0.0533 at 17 ms and
+  1.0 at 315, the mosin 0.0533 at 16 and 1.0 at 308, which is
   `adsTransInTime` 0.3 s; down, the carbine steps about 0.125 a snapshot and
-  reaches 0 at 408 ms (`adsTransOutTime` 0.4) and the mosin about 0.0833
+  reaches 0 at 402 ms (`adsTransOutTime` 0.4) and the mosin about 0.0833
   a snapshot, 0 at 632 (0.6).
 - Through a reload with the sight held: the fraction ramps *down* from the
-  reload's first frame at the out rate (carbine 1.0 to 0 over 445 ms, mosin
+  reload's first frame at the out rate (carbine 1.0 to 0 over 430 ms, mosin
   over 670), sits at 0, and ramps back up at the in rate from about 2080 ms
   on the carbine (`reloadTime` 2650 less 600) and 1840 on the mosin (2400
   less 600), reaching 1.0 some 300 ms before `weaponstate` leaves 5. A
   reload asked for on a full clip does nothing at all, which the first
   capture found by having nothing to show for its reload step.
 - The sight released mid-ramp turns straight round: carentan's
-  `ads_release_2` reads 0.8775 at 48 ms off a fraction that read 1.0 on the
-  step's first sample, and `idle_after` 0.96 at 16 ms the same way.
+  `ads_release_2` reads 0.8750 at 48 ms off a fraction that read 1.0 on the
+  step's first sample, and `idle_after` 0.8775 at 48 ms the same way.
 
 The trace fields in a snapshot are the state after the last of that
 frame's pmove steps, and the probe sends a cmd every 16 ms, so a 48 ms gap
@@ -965,6 +978,27 @@ older captures' first sample after a tap read anywhere from 0 to 50 ms of
 decay, where the replay's 25 ms cmd grid always read 25-35, which is what
 their six tap phase rows were.
 
+Since 2026-10-19 the line also carries each cmd's weapon byte where it
+changes (`w=`), and `mp_carentan-dm-ads` and `mp_carentan-tdm-grenade` were
+recaptured with it on 1.1d, so every 1.1 capture `playerstate_combat_ab`
+replays is logged and the gate compares every channel sample for sample,
+with no slack (VERIFIED, 2 of 397 and 5 of 665 snapshots behind their
+stamps). VERIFIED, the grenade recapture: the replay needed two inputs the
+earlier log left out. The switch's byte: `to_frag`'s first cmd carried the
+rifle's 12 and the frag's 8 only from the second on, where a replay that
+asked for the switch on the step's clock put the putaway a frame early
+(14 samples of `weaponstate` 2 against 13). And the cmds a first step
+opens on, which the probe sent before the step's clock ran and only the
+traces' `commandTime`s name: left out, `melee_tap`'s `weaponDelay` read
+100 against retail's 134 a cmd after the press. INFERRED: the first logged
+cmd's msec then spans them and pmove chops it, the press landing in the
+first chop. VERIFIED, the first takes of both
+files: the probe stalled 100 to 200 ms between a script's first snapshot
+and its first cmd while it read the weapon file, so a first step's first
+cmd covered the stall; on the grenade script that put the whole swing
+inside one chopped cmd (`weaponDelay` 15 on its first sample). The probe
+now starts the first step an iteration after the read.
+
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for
 the wire, `advance_ads` the ramp, and `fire` the `adsFire` `weaponDelay`
@@ -986,16 +1020,20 @@ the grenade and the timers, as 0x39143 does, so the reload window and the
 to the frag, a cooked throw, a cook held past the fuse, a cook cancelled by
 switching back, and a throw at the ground. The step names below are the
 fixture's own. VERIFIED: the fixture was recaptured on 2026-10-17 with the
-probe holding the spawn point's yaw (-180 at (976, -792, -4.5)); the first
-capture (in git at `c52e9606`) held yaw 90 at (1200, 1760, 144), and the
-first `!missile` line of each of its throws already carries a bounce (177).
+probe holding the spawn point's yaw (-180 at (976, -792, -4.5)), and again
+on 2026-10-19 from the same spawn with every cmd logged (1.13), which is the
+file the numbers below are read off; the first capture (in git at
+`c52e9606`) held yaw 90 at (1200, 1760, 144), and the first `!missile` line
+of each of its throws already carries a bounce (177). VERIFIED: the three
+throws fly the same arcs on both recaptures, every bounce's `pos` equal to
+the print.
 
 **The fuse does not run down.** VERIFIED: `grenadeTimeLeft` reads a flat 4000
 (`fuseTime` 4) from the pullback frame to the throw frame and 0 on every other
 sample, under a 200 ms, a 1000 ms and a 5000 ms hold alike. VERIFIED:
 `pin_out` holds the trigger 5000 ms and the throw's event 159 lands on the
-release, at +5038 ms (+5032 on the first capture), with the explode 3950 ms
-of server time after the release snapshot. INFERRED: 1.11's
+release, at +5048 ms (+5038 on the 2026-10-17 capture, +5032 on the
+first), with the explode 3950 ms of server time after the release snapshot. INFERRED: 1.11's
 decrement is unreachable on this build, so there is no pin at 50, no
 auto-throw and no shortening of the fuse by cooking.
 
@@ -1029,17 +1067,21 @@ index and the pickup's two arms are exclusive, one write each; the superseded
 combat captures read no write at all because they sent `cmd.weapon` 0 every
 frame, which is the one input 1.2's setter refuses to write on.
 
-**The raise ends when `raiseTime` does.** VERIFIED: `weaponstate` 1 lasts
-258 ms on `to_frag` and 245 ms on `to_frag_2` (295 and 263 on the first
-capture), against the frag's `raiseTime` of 250 and inside a sample's 50 ms, and 2.7 s on `cancel`, whose trigger is held through the raise.
+**The raise ends when `raiseTime` does.** VERIFIED: `weaponstate` 1 holds
+6 snapshots (300 ms of server time) on `to_frag` and 5 (250) on
+`to_frag_2`, 306 and 241 ms on the probe's clock (258 and 245 on the
+2026-10-17 capture, 295 and 263 on the first), against the frag's
+`raiseTime` of 250 and inside a snapshot's 50 ms, and 2.7 s on `cancel`,
+whose trigger is held through the raise.
 INFERRED: the state ends on `weaponTime` reaching 0 and the semi-automatic
 latch of 1.4 pins it at 1 for as long as the bit is down, so a held trigger
 keeps a weapon coming up.
 
 **The swing.** VERIFIED: `melee_tap` reads `weaponstate` 10 with event 164 and
 `weapAnim` 520, then 11 with event 165 once `meleeDelay` (0.15 on the carbine)
-runs out, then 0 with `weapAnim` 0 at `meleeTime` (0.65), and `torsoAnim` 729
-across both states (732 on the first capture). VERIFIED: the standing
+runs out, 150 ms of server time later, then 0 with `weapAnim` 0 at
+`meleeTime` (0.65), 500 ms after that, and `torsoAnim` 729 across both
+states (732 on the first capture). VERIFIED: the standing
 `meleeattack` clause of `mp/playeranim.script` lists five torso swings.
 INFERRED: 729 and 732 (indices 217 and 220) are two picks from that list. VERIFIED: `aimSpreadScale` reads 255.00 at every sample of
 states 10 and 11 and starts decaying on the first sample of state 0.
@@ -1064,8 +1106,9 @@ select is `weaponclass pistol AND grenade`, whose body is
 `both pb_standjump_land_pistol duration 5`. INFERRED: the land
 event puts its anim on the legs and leaves the torso alone, so the rule above
 is the throw's and not every `both` clause's; the single sample is the
-`duration 5`. VERIFIED: the 2026-10-17 recapture's thrower takes no damage (no 187
-`EV_PAIN`, `damageEvent` 0 to the end) and the step holds no land sample.
+`duration 5`. VERIFIED: the 2026-10-17 and 2026-10-19 recaptures' thrower
+takes no damage (no 187 `EV_PAIN`, `damageEvent` 0 to the end) and the step
+holds no land sample.
 
 INFERRED, and unmeasured: vcod applies the throw's rule to the rest of the
 event clauses, so it also reaches `fireweapon`'s pistol-ADS clause and
@@ -1421,20 +1464,20 @@ both fixture weapons spell `hipSpreadTurnAdd 0`. Both retail motion captures
 agree -- 255.0 at every pose with a movement axis, standing, crouched or
 prone, and 0.0 at every pose without one.
 
-The `--save-ads` captures (1.13) put numbers on the rest, re-measured on
-the 2026-10-17 recapture. VERIFIED: a hip shot from the carbine reads 128.52
-on the first snapshot after it, 49 ms into a decay from `hipSpreadFireAdd`
-0.7 times 255, and then 94.86, 40.80, 5.10, 0, two or three 16 ms cmds a
-snapshot at the decay of 4 times 255 a second; the mosin's reads 241.74,
+The `--save-ads` captures (1.13) put numbers on the rest, the carbine's
+re-measured on its 2026-10-19 recapture. VERIFIED: a hip shot from the
+carbine reads 162.18 on the first snapshot after it, 16 ms into a decay from
+`hipSpreadFireAdd` 0.7 times 255, and then 78.54, 60.18, 0, at the decay of
+4 times 255 a second; the mosin's reads 241.74,
 one 16 ms cmd of decay off 255 (255 on the 2026-10-17 capture), and comes
 down 41.44 a full step. A walk climbs 51 a full step on the carbine
 (the add of 8 less the decay of 4, times 255, times the frame) to 255 in
-276 ms, and stopping brings it down 51 a step to 0 in 247. A shot down the
+278 ms, and stopping brings it down 51 a step to 0 in 244. A shot down the
 settled sight adds nothing, and a walk begun with the sight coming up adds
 until the snapshot the fraction reads 1.0 and decays from the next step on:
-`ads_walk` on carentan reaches 255 at 237 ms with the fraction at 0.83,
-still reads 255 at 272 with it at 0.89, and reads 206.04 at 336 with it at
-1.0, 48 ms of decay. INFERRED, that the
+`ads_walk` on carentan reaches 255 at 279 ms with the fraction at 0.94,
+still reads 255 at 312 on the snapshot whose last cmd brought it to 1.0,
+and reads 187.68 at 362, 66 ms of decay. INFERRED, that the
 skip keys on the previous step's fraction, as 2.1's call order says: the
 step that reaches 1.0 still adds, and the one after it does not. The BAR
 is the one stock weapon with a turn term (`hipSpreadTurnAdd` 0.8) and it
@@ -4103,8 +4146,8 @@ and `eFlags 0xC000` arms the fraction shares with the rest of `PM_Weapon`.
 
 The ramp rates, the reload window, the fire add and the decay are pinned by
 the `--save-ads` captures (1.13 and 2.1), and
-`crates/server/tests/playerstate_combat_ab.rs` replays both against ours to
-half a frame's tolerance and passes. The turn term is not: both fixture
+`crates/server/tests/playerstate_combat_ab.rs` replays both against ours on
+retail's own cmds and matches every sample to the capture's print. The turn term is not: both fixture
 weapons spell `hipSpreadTurnAdd 0`, and the BAR, the one stock weapon with
 one, needs a probe that can answer the weapon menu with it.
 
@@ -4155,19 +4198,22 @@ the same `fuseTime` 4.
 
 VERIFIED: the weapon switch to the frag, frame for frame against the lone
 capture's `to_frag` step: putaway 14 frames against retail's 13, raise 5
-against 6, then ready (the 2026-10-17 recapture reads 14 and 5). The cook holds `weaponstate` 3 for 41 frames against
+against 6, then ready (the 2026-10-17 recapture reads 14 and 5, the
+2026-10-19 one 13 and 6, which the cmd-logged replay matches sample for
+sample). The cook holds `weaponstate` 3 for 41 frames against
 retail's 40.
 
 **What differs.**
 
 VERIFIED: **every vcod grenade launches with the same tumble.** Retail's
 `apos` `trDelta` is drawn per throw. Across the committed throws the roll rate
-holds one value for a throw's whole life and takes 323.0, 335.9, 354.4,
-367.4, 368.4 and 387.1 deg/s, all inside `360 +/- 45`; the launch pitch rate
-reads 684.9, 692.7, 703.5, 704.1, 726.9 and 729.5, all inside `720 +/- 45`
-(the lone capture's three re-measured on its 2026-10-17 recapture; the first
-one's rolls were 316.3, 318.0 and 344.8, and its throws had bounced before
-their first sample), and is redrawn at each bounce
+holds one value for a throw's whole life and takes 354.4, 358.7, 367.4,
+367.9, 387.1 and 402.6 deg/s, all inside `360 +/- 45`; the launch pitch rate
+reads 687.7, 692.7, 704.1, 726.9, 762.1 and 763.5, all inside `720 +/- 45`
+(the lone capture's three re-measured on its 2026-10-19 recapture; the
+2026-10-17 one's rolls were 323.0, 335.9 and 368.4 and its pitch rates
+684.9, 703.5 and 729.5, the first one's rolls 316.3, 318.0 and 344.8, and
+its throws had bounced before their first sample), and is redrawn at each bounce
 (12.7's `G_MissileLandAngles`). Every vcod throw in the four runs
 reads exactly `675.0, 0.0, 315.0`, the low end of both bands.
 `Missiles` carries its own `flrand` state and `#[derive(Default)]` left it
@@ -4245,8 +4291,8 @@ VERIFIED: **the lone `--save-grenade` script cannot finish against vcod.** Its
 `throw_down` and `pin_out` steps blew up their own thrower on both attempts, at
 57 s and at 23 s, and the lone capture mode has no respawn, so the run stalls
 on the step it died in. Retail's thrower survived the same script from a spawn
-144 units up (the first capture; the 2026-10-17 recapture's, at z -4.5,
-takes no damage at all). INFERRED: the spawn geometry, not the damage, since the falloff
+144 units up (the first capture; the 2026-10-17 and 2026-10-19
+recaptures', at z -4.5, take no damage at all). INFERRED: the spawn geometry, not the damage, since the falloff
 at the ranges involved is 14.1's on both sides. The step-by-step comparison
 above is off the traces the log carries up to the death.
 
@@ -5387,9 +5433,11 @@ constants but one (below).
   (6694/65536 of a turn) on the fourth. INFERRED: that one struck at a
   pitch of 49.03, between 45 and 80 off the flat floor, and was eased to
   0.75 of it.
-- VERIFIED, `mp_carentan-tdm-grenade.txt`: the three throws rest at pitch
-  177.9, 177.9 and 173.3 (`flat + 180` on mp_carentan's sloped floor), with
-  the roll unwrapped (499.9).
+- VERIFIED, `mp_carentan-tdm-grenade.txt`: the 2026-10-19 take's three
+  throws rest at pitch 357.9, 357.9 and 353.3, `flat` on mp_carentan's
+  sloped floor, and the 2026-10-17 take's at 177.9, 357.9 and 173.3, the
+  first and last `flat + 180`, with the roll unwrapped (533.7, 599.0 and
+  298.0; 499.9, 480.6 and 298.4 before).
 
 vcod: `Missile::land_angles` (`crates/server/src/game/missile.rs`), its
 draws off the pool's own state (`Draws`). Retail's `rand()` sequence is
@@ -5565,9 +5613,10 @@ because a reader of 11 to 13 alone would guess otherwise.
 
 VERIFIED, off `mp_carentan-tdm-grenade.txt`: a throw's `trTime` is the
 *previous* frame's `level.time`, not the frame the release lands on. Its
-2026-10-17 recapture reads it on all three throws' first `!missile` line:
-484950, 494950 and 503650 against release snapshots at 485000, 495000 and
-503700 (the first capture's throws had already bounced there). The
+2026-10-19 recapture reads it on all three throws' first `!missile` line:
+17700, 27750 and 36400 against release snapshots at 17750, 27800 and 36450
+(484950, 494950 and 503650 against 485000, 495000 and 503700 on the
+2026-10-17 one; the first capture's throws had already bounced there). The
 death-drop capture pins it twice over, `trTime` 1405500 against a death frame
 at `serverTime` 1405550. vcod stamps both the thrown and the dropped grenade
 that way.
@@ -5576,22 +5625,20 @@ VERIFIED, off the same capture's `!trace` lines: from the first snapshot
 whose `grenadeTimeLeft` reads the pullback to the first that carries the
 missile is 1000 ms on `cook_release`, 5000 on `pin_out` and 600 on
 `throw_down`. VERIFIED, `missile_ab.rs`: the replay reads the same three.
-Measured from each step's first snapshot instead, `pin_out` reads 50 ms
-longer on ours, which is the capture's step clock and not the throw.
-VERIFIED: `pin_out`'s first trace (`serverTime` 490000 on the 2026-10-17
-recapture, 226200 before) already reads
-`grenadeTimeLeft` 4000 and `weaponDelay` 600, where `cook_release` and
-`throw_down` open on a `weaponstate` 0 sample from before their first pressed
-cmd; the replay opens every step on such a sample. VERIFIED:
-`cook_release`'s last trace is `serverTime` 489950 (226150) at `weaponstate` 0, so no
-snapshot is missing between the two steps. INFERRED, off `CombatProbe::step`
-in `crates/client/src/probe.rs`: a step's clock starts on the probe's first
-iteration after the step before it ended, and a snapshot already traced is
-not traced again, so a step's first trace is whichever snapshot arrives next,
-before or after its first cmd reached the server. `missile_ab.rs` therefore
-times both flights from the pullback frame, and `playerstate_combat_ab.rs`
-drops our opening sample for a step whose first retail trace is a cmd or more
-in, for the same reason.
+VERIFIED: on the 2026-10-19 recapture the first traces of `cook_release`
+(`serverTime` 16750), `cancel` and `throw_down` already read
+`grenadeTimeLeft` 4000 and `weaponDelay` 600, where `pin_out` opens on a
+`weaponstate` 0 sample from before its first pressed cmd (the 2026-10-17
+one had it the other way round, `pin_out` alone opening on the pullback).
+VERIFIED: `to_frag`'s last trace is `serverTime` 16700 at `weaponstate` 0,
+so no snapshot is missing between the two steps. INFERRED, off
+`CombatProbe::step` in `crates/client/src/probe.rs`: a step's clock starts
+on the probe's first iteration after the step before it ended, and a
+snapshot already traced is not traced again, so a step's first trace is
+whichever snapshot arrives next, before or after its first cmd reached the
+server. `missile_ab.rs` therefore times both flights from the pullback
+frame; `playerstate_combat_ab.rs` runs retail's cmds on retail's frames
+(1.13) and pairs the samples by `serverTime`.
 
 VERIFIED, off the same capture's `!missile` lines: a bounce's `trTime` is a
 whole millisecond, so vcod truncates the impact time rather than carrying the
@@ -5599,21 +5646,25 @@ trace fraction into it, and the fraction it snaps the origin back with is the
 1.5-unit trace's, not the move trace's. Reproducing the committed arcs to
 within 0.1 units needed both.
 
-VERIFIED, `missile_ab.rs` on 2026-10-18: on every one of the three throws'
+VERIFIED, `missile_ab.rs` on 2026-10-18 and again on the 2026-10-19
+recapture: on every one of the three throws'
 `!missile` samples (all 1.1d, through the bounces, the rest and the explode
 frames) our `pos` matches retail's field for field at the probe's one
 decimal (`traj_str`), `trTime` counted from the pullback (a resting one's
 is 0 on both). The gate compares those strings, with no distance
 tolerance. VERIFIED, same run: `apos` does not match past `trType`. Its
-`trDelta` is the throw's random spin (703.5, 0, 335.9 on retail's
-`cook_release`, 679.8, 0, 344.8 on ours), a different draw on ours, and
-retail's pitch rate changes at every bounce (593.7, -474.7, 323.1 on
-`cook_release`'s first three) where ours kept the throw's. Since
+`trDelta` is the throw's random spin (763.5, 0, 358.7 on retail's
+`cook_release` on the 2026-10-19 recapture, 703.5, 0, 335.9 on the
+2026-10-17 one, 679.8, 0, 344.8 on ours), a different draw on ours, and
+retail's pitch rate changes at every bounce (486.7, -411.7, 279.9 on
+`cook_release`'s first three, 593.7, -474.7, 323.1 before) where ours kept
+the throw's. Since
 2026-10-19 ours runs `G_MissileLandAngles` (12.7) and the gate compares
 the part of `apos` no draw moves: `trType`, `trTime`, the yaw and its
 rate, and a resting pitch modulo 180. VERIFIED, `missile_ab.rs` on
 2026-10-19: every sample of the three throws matches; the resting
-pitches read 177.9, 177.9 and 173.3 on retail, which ours laid at 0
+pitches read 357.9, 357.9 and 353.3 on retail's 2026-10-19 take (177.9,
+357.9 and 173.3 on the 2026-10-17 one, the same modulo 180), which ours laid at 0
 before the port. The draws themselves are gated off the full-precision
 sky frag capture (12.7).
 
@@ -5995,7 +6046,7 @@ number a third time. VERIFIED: its `throw_down` pain frame reads
 `aimSpreadScale` 94.00 off a counter that was 0. INFERRED: section 6's step
 5 adds `damage * 100 / maxHealth` there, so retail charged 94, which is what
 the falloff gives at the 78 units the replay measured between the blast and
-the thrower. VERIFIED: the 2026-10-17 recapture's thrower takes no damage,
+the thrower. VERIFIED: the 2026-10-17 and 2026-10-19 recaptures' thrower takes no damage,
 so it no longer carries that frame.
 
 ### 14.4 What stops a blast, measured
