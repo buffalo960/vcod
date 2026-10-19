@@ -1018,6 +1018,43 @@ measured, same setup, all five maps 1 to 11 odd, mp_foy to 23): 27 of
 parted, not traced). Mean 12452 to 12176, mp_foy's 13749 to 13026 with
 its slowest 19819 to 17519; the slowest run is still mp_kursk 5.
 
+The four slower runs on master ee4c0d0b (VERIFIED, measured, ours,
+release, UO install, same gate, `BAS_TRACE=1 BAS_TRACE_EVERY=20`, the
+pitch rule on and, through a temporary toggle, with its clamp at 90
+degrees, i.e. off): mp_foy seed 5 13939 on, 14879 off; seed 7 11339
+both; seed 15 15619 on, 11559 off; mp_italy seed 1 10539 both. Seeds 7
+and italy 1 no longer meet the rule at all, and seed 5 is faster with
+it. Seed 15's two runs agree to tick 2640 and part by 2660: the allied
+bot at (3018, 2933, 39), firing its LMG (clip 64 at tick 2600, 49 at
+2640), had an axis bot at (2859 to 2920, 2816 to 2865, 214), 40 to 54
+degrees up. With the rule the MG stops at 46 rounds left and the
+pistol is out by 2700; without it 11 more rounds go at the clamp. Neither run
+draws a `D;` line from that fight (the next is a frag at 2775). By tick
+2697 the off run's axis breacher, 11 000 units away at (-3348, -6626,
+172), has breached the allied base at (-2020, -7256, 185) and the on
+run's has not. INFERRED (code: `ClientSim::fire_recoil` takes
+`rand_from(&mut self.rng)` per round in `Server::replay_moves`, and the
+bot pass draws `rand_from` on the same generator): every round fired
+moves every later draw of every bot, so the runs part at the first
+round one fires and the other does not, and the gap after that is the
+seed's luck, not the rule's. Nothing to fix; a per-bot generator would
+keep one bot's change from reshuffling the others' runs.
+
+The bas sweep on the pit rule (bot-navigation.md section 3; VERIFIED,
+measured, ours, release, UO install, the same gate over all five maps 1
+to 11 odd and mp_foy to 23, 36 runs): all end on their bases. mp_foy
+10119 to 16639 (1 11819, 3 10119, 5 13939, 7 11339, 9 10559, 11 11099,
+13 13879, 15 15619, 17 13719, 19 10939, 21 16639, 23 10579); mp_italy
+9139 to 14759 (1 10539, 3 10019, 5 12959, 7 10439, 9 9139, 11 14759);
+mp_kursk 9679 to 15379 (1 9919, 3 10799, 5 9679, 7 15379, 9 13439, 11
+10679); mp_ponyri 10679 to 13099 (1 13099, 3 11039, 5 11539, 7 12579,
+9 10679, 11 11259); mp_rhinevalley 7899 to 11779 (1 9819, 3 10199, 5
+7899, 7 11779, 9 9479, 11 9859). The pit rule fired on none of them
+(an env-gated log line on every pit tick); a first form without the
+spawn test fired on mp_italy seed 5 only, at the allied bunker. Mean
+11590; the slowest run is mp_foy 21 (16639), and mp_kursk 5 now ends at
+9679.
+
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
 changes, four bots with shoot off on mp_foy, seeds 3 and 7, planted 97
