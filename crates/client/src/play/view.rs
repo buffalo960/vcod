@@ -41,6 +41,17 @@ pub struct ViewPs {
 /// `pm_type` at intermission.
 use vcod_common::net::flags::PM_INTERMISSION;
 
+/// The eye's height over the drawn origin. `CG_CalcViewValues`' intermission
+/// arm (cgame 0x300333f2) puts the view at `ps.origin` itself, where retail
+/// sends the spawn's standing `viewHeightCurrent`.
+pub fn eye_height(pm_type: i32, view_height: f32) -> f32 {
+    if pm_type == PM_INTERMISSION {
+        0.0
+    } else {
+        view_height
+    }
+}
+
 impl ViewPs {
     /// `viewmodel_index` comes from the snapshot: prediction does not carry it.
     pub fn from_predicted(pred: &Predicted, viewmodel_index: i32) -> ViewPs {
@@ -622,6 +633,13 @@ fn view_to_world(
 mod tests {
     use super::*;
     use vcod_common::weapon::CG_FOV;
+
+    #[test]
+    fn the_intermission_view_sits_at_the_origin() {
+        assert_eq!(eye_height(PM_INTERMISSION, 60.0), 0.0);
+        assert_eq!(eye_height(4, 0.0), 0.0);
+        assert_eq!(eye_height(6, 8.0), 8.0);
+    }
 
     fn configstrings() -> Vec<String> {
         let mut cs = vec![String::new(); CS_MODELS_V1 + 90];

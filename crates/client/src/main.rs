@@ -4961,7 +4961,8 @@ impl ApplicationHandler for App {
                                         // viewHeightCurrent: eye offset above the feet origin.
                                         let vh = a.ps.field_f32(p, "viewHeightCurrent") * (1.0 - f)
                                             + b.ps.field_f32(p, "viewHeightCurrent") * f;
-                                        cam.pos = pos + Vec3::Z * vh;
+                                        cam.pos =
+                                            pos + Vec3::Z * play::view::eye_height(pm_type, vh);
                                         feet_z = Some(pos.z);
                                         // `CG_InterpolatePlayerState` lerps `leanf`
                                         // too (cgame 0x3002936a).
@@ -5014,7 +5015,9 @@ impl ApplicationHandler for App {
                                     drawn_pos.clone_from(&entity_pos);
                                     drawn_vehicle_angles.clone_from(&vehicle_angles);
                                     if let Some(v) = &predicted {
-                                        cam.pos = v.origin + Vec3::Z * v.view_height;
+                                        cam.pos = v.origin
+                                            + Vec3::Z
+                                                * play::view::eye_height(pm_type, v.view_height);
                                         feet_z = Some(v.origin.z);
                                         view_lean = v.pred.ps.lean;
                                     }

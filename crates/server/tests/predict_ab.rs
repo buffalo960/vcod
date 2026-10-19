@@ -147,8 +147,7 @@ impl Run<'_> {
         };
         self.server_step(&cmd);
         self.prone_corrections += usize::from(self.sim.delta_angles() != da);
-        // The client predicts a playing, linked or spectating body; a dead
-        // one's view is the snapshot's.
+        // The client predicts every state but a linked dead body's.
         if !predict::predictable(self.sim.wire_pm_type()) {
             self.last_cmd = cmd;
             self.cmds += 1;
@@ -354,8 +353,10 @@ impl Run<'_> {
             s.jump_penalty.to_string(),
             p.jump_penalty.to_string(),
         );
-        // Unread under 1.1's rules.
-        if s.rules.v15() {
+        // Unread under 1.1's rules, and by a dead body's step: a corpse's
+        // goes out as `deadViewHeight` from its second snapshot on, as
+        // retail's does.
+        if s.rules.v15() && self.sim.wire_pm_type() != vcod_common::net::flags::PM_DEAD {
             check("view_target", fbits(s.view_target), fbits(p.view_target));
         }
         check(
@@ -915,14 +916,15 @@ fn follow_turret(sim: &mut ClientSim, p: &Protocol, w: &msg::PlayerState) -> boo
 }
 
 /// Retail's `pm_type` at a capture's snapshot, put on the sim the way the
-/// script put it there (`client-probes/probe_uostates`): a death, a
-/// `spawnPlayer` or `spawnSpectator` reseeded from retail's playerstate,
+/// script put it there (`client-probes/probe_uostates`, `probe_states`): a
+/// death, a `spawnPlayer`, `spawnSpectator` or `spawnIntermission` reseeded
+/// from retail's playerstate,
 /// a `linkTo` held at retail's origin, the mover being the script's. The
 /// seat captures' links are `follow_seat`'s. Whether the snapshot's body
 /// was dead, spectating or linked off a seat.
 fn follow_state(run: &mut Run<'_>, w: &msg::PlayerState) -> bool {
     use vcod_common::net::flags::{
-        EF_IN_VEHICLE_V22, PM_DEAD, PM_NORMAL, PM_NORMAL_LINKED, PM_SPECTATOR,
+        EF_IN_VEHICLE_V22, PM_DEAD, PM_INTERMISSION, PM_NORMAL, PM_NORMAL_LINKED, PM_SPECTATOR,
     };
     let p = run.p;
     let pm = w.field_i32(p, "pm_type");
@@ -940,6 +942,10 @@ fn follow_state(run: &mut Run<'_>, w: &msg::PlayerState) -> bool {
         }
         PM_SPECTATOR if ours != PM_SPECTATOR => {
             run.sim.become_spectator(origin, yaw, angles);
+            reseed(run);
+        }
+        PM_INTERMISSION if ours != PM_INTERMISSION => {
+            run.sim.become_intermission(origin, yaw, angles, run.st);
             reseed(run);
         }
         PM_NORMAL if matches!(ours, PM_DEAD | PM_SPECTATOR) => {
@@ -961,6 +967,7 @@ fn follow_state(run: &mut Run<'_>, w: &msg::PlayerState) -> bool {
     }
     pm == PM_DEAD
         || pm == PM_SPECTATOR
+        || pm == PM_INTERMISSION
         || (pm == PM_NORMAL_LINKED && w.field_i32(p, "eFlags") & EF_IN_VEHICLE_V22 == 0)
 }
 
@@ -1105,6 +1112,20 @@ fn predictor_matches_the_uo_server_step() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// 1.1d's spectator spell, corpse and intermission (`probe_states`) through
+/// the protocol 1 round trip. Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn predictor_matches_the_1_1_server_step() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let failures: Vec<String> = ["mp_carentan-dm-slope-8ms-states-1.1.txt"]
+        .iter()
+        .filter_map(|file| capture_side_by_side(&PROTOCOL_V1, &fs, file, "mp_carentan").err())
+        .collect();
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 /// 1.5's jump penalty, stepped eye and prone turns through the protocol 6
 /// round trip. Needs `COD_DIR` at a 1.5 install, or a UO one (its `main/` is
 /// 1.5's).
@@ -1126,30 +1147,33 @@ fn predictor_matches_the_1_5_server_step() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// The spectator spell of retail UO's `probe_uostates` capture through the
-/// predictor: each spectating snapshot rebuilt through `from_wire`, the
-/// capture's cmds up to the next one's `commandTime` run as a predicting
-/// client runs them, and the origin and velocity compared with retail's,
-/// bit for bit. Retail's cgame predicts a free-flying spectator under 0x800011
-/// (cod11-player-clip.md 1.1). Needs `COD_DIR` at a United Offensive install.
-#[test]
-fn predictor_flies_retail_spectator() {
-    use vcod_common::net::flags::PM_SPECTATOR;
-    let Some(fs) = vcod_common::testing::uo_fs() else {
-        return;
-    };
-    let p = &PROTOCOL_V22;
-    let text = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-uostates-uo.txt"
+/// One state's snapshots of a retail capture through the predictor: each
+/// snapshot whose `pm_type` is `pm_type`, followed by another in it, rebuilt
+/// through `from_wire`, the capture's cmds up to the next one's
+/// `commandTime` run as a predicting client runs them, and the origin,
+/// velocity and eye compared with retail's, bit for bit. Retail's cgame
+/// predicts every own `pm_type` (cod11-player-clip.md 1.1). Panics on a
+/// difference, and when fewer than `min_compared` pairs, or `min_moved`
+/// that moved, were compared.
+fn retail_state_rows(
+    p: &Protocol,
+    fs: &vcod_common::pk3::Pk3Fs,
+    file: &str,
+    pm_type: i32,
+    min_compared: usize,
+    min_moved: usize,
+) {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/playerstate/{file}",
+        env!("CARGO_MANIFEST_DIR")
     ))
     .unwrap();
     let cs7 = text
         .lines()
         .find_map(|l| l.strip_prefix("# cs7 "))
-        .expect("a cs7 header");
-    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
-    let (world, entities) = load_world(&fs, "mp_carentan");
+        .unwrap_or(retail_cs7());
+    let weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
+    let (world, entities) = load_world(fs, "mp_carentan");
     world.unlink_script_brushes(&entities, "dm");
     world.set_arith(vcod_common::patch::Arith::for_protocol(p));
     let mw = MoveWorld::bare(&world);
@@ -1161,29 +1185,42 @@ fn predictor_flies_retail_spectator() {
             CaptureLine::Snap(..) => None,
         })
         .collect();
-    let snaps: Vec<&msg::PlayerState> = lines
-        .iter()
-        .filter_map(|l| match l {
-            CaptureLine::Snap(w, _) => Some(&**w),
-            CaptureLine::Cmd(_) => None,
-        })
-        .collect();
+    // Each snapshot with the cmds sent after it arrived, up to the next.
+    let mut snaps: Vec<(&msg::PlayerState, Vec<UserCmd>)> = Vec::new();
+    for l in &lines {
+        match l {
+            CaptureLine::Snap(w, _) => snaps.push((&**w, Vec::new())),
+            CaptureLine::Cmd(c) => {
+                if let Some((_, after)) = snaps.last_mut() {
+                    after.push(*c);
+                }
+            }
+        }
+    }
     let ct = |w: &msg::PlayerState| w.field_i32(p, "commandTime");
+    // The intermission's think runs no cmd, so its `commandTime` holds.
+    let frozen = pm_type == vcod_common::net::flags::PM_INTERMISSION;
     let (mut compared, mut moved) = (0, 0);
     let mut bad = Vec::new();
     for pair in snaps.windows(2) {
-        let (s, n) = (pair[0], pair[1]);
-        if s.field_i32(p, "pm_type") != PM_SPECTATOR
-            || n.field_i32(p, "pm_type") != PM_SPECTATOR
-            || ct(n) <= ct(s)
+        let ((s, after), (n, _)) = (&pair[0], &pair[1]);
+        let (s, n) = (*s, *n);
+        if s.field_i32(p, "pm_type") != pm_type
+            || n.field_i32(p, "pm_type") != pm_type
+            || (ct(n) <= ct(s) && !frozen)
         {
             continue;
         }
         // Of two cmds stamped alike the server runs the first.
         let last = cmds.iter().find(|c| c.server_time == ct(s));
         let mut pred = predict::from_wire(p, s, last);
+        if frozen {
+            for c in after {
+                predict::run_cmd(&mut pred, c, &mw, &weapons);
+            }
+        }
         let mut st = ct(s);
-        for c in &cmds {
+        for c in cmds.iter().filter(|_| !frozen) {
             if c.server_time > st && c.server_time <= ct(n) {
                 predict::run_cmd(&mut pred, c, &mw, &weapons);
                 st = c.server_time;
@@ -1192,32 +1229,124 @@ fn predictor_flies_retail_spectator() {
         let bits = |v: [f32; 3]| v.map(f32::to_bits);
         let vel =
             |w: &msg::PlayerState| [0, 1, 2].map(|i| w.field_f32(p, &format!("velocity[{i}]")));
+        let eye = |w: &msg::PlayerState| w.field_f32(p, "viewHeightCurrent");
         compared += 1;
         moved += usize::from(n.origin(p) != s.origin(p));
         if bits(pred.ps.origin.to_array()) != bits(n.origin(p))
             || bits(pred.ps.velocity.to_array()) != bits(vel(n))
+            || pred.ps.view_height().to_bits() != eye(n).to_bits()
         {
             bad.push(format!(
-                "ct {}: predicted {} {} retail {:?} {:?}",
+                "ct {}: predicted {} {} eye {} retail {:?} {:?} eye {}",
                 ct(n),
                 pred.ps.origin,
                 pred.ps.velocity,
+                pred.ps.view_height(),
                 n.origin(p),
-                vel(n)
+                vel(n),
+                eye(n)
             ));
         }
     }
     println!(
-        "{compared} spectating snapshots, {moved} moved, {} differ",
+        "{file} pm_type {pm_type}: {compared} snapshots, {moved} moved, {} differ",
         bad.len()
     );
-    assert!(compared > 60, "only {compared} spectating snapshots");
-    assert!(moved > 30, "only {moved} moved");
+    assert!(compared >= min_compared, "only {compared} snapshots");
+    assert!(moved >= min_moved, "only {moved} moved");
     assert!(
         bad.is_empty(),
         "{} of {compared} differ:\n{}",
         bad.len(),
         bad.join("\n")
+    );
+}
+
+/// The spectator spell of retail UO's `probe_uostates` capture: 1.5's and
+/// UO's stored fly move (cod15-movement.md 5, "The fly move"). Needs
+/// `COD_DIR` at a United Offensive install.
+#[test]
+fn predictor_flies_retail_spectator() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V22,
+        &fs,
+        "mp_carentan-dm-slope-8ms-uostates-uo.txt",
+        vcod_common::net::flags::PM_SPECTATOR,
+        60,
+        30,
+    );
+}
+
+/// The 22 s spectator spell of retail 1.1d's `probe_states` capture: 1.1's
+/// unstored fly move, its lean unconditional, flown into roofs and walls and
+/// dived onto the street. Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn predictor_flies_retail_spectator_1_1() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V1,
+        &fs,
+        "mp_carentan-dm-slope-8ms-states-1.1.txt",
+        vcod_common::net::flags::PM_SPECTATOR,
+        400,
+        200,
+    );
+}
+
+/// The corpse of retail 1.1d's `probe_states` capture, killed running: its
+/// slide, the drop the ladder check gives it every frame and the eye sinking
+/// to `deadViewHeight`. Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn predictor_drops_retail_corpse_1_1() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V1,
+        &fs,
+        "mp_carentan-dm-slope-8ms-states-1.1.txt",
+        vcod_common::net::flags::PM_DEAD,
+        70,
+        30,
+    );
+}
+
+/// The corpse of retail UO's `probe_uostates` capture. Needs `COD_DIR` at a
+/// United Offensive install.
+#[test]
+fn predictor_drops_retail_corpse_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V22,
+        &fs,
+        "mp_carentan-dm-slope-8ms-uostates-uo.txt",
+        vcod_common::net::flags::PM_DEAD,
+        40,
+        0,
+    );
+}
+
+/// The intermission of retail 1.1d's `probe_states` capture: its cmds move
+/// nothing. Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn predictor_holds_retail_intermission_1_1() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V1,
+        &fs,
+        "mp_carentan-dm-slope-8ms-states-1.1.txt",
+        vcod_common::net::flags::PM_INTERMISSION,
+        600,
+        0,
     );
 }
 
