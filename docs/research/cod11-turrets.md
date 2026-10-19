@@ -1913,8 +1913,13 @@ whole part by halving steps (`whole`), each subtraction exact.
 - vcod measurement: the `-spawn-uo` kill replayed through that slab form
   enters at x 1513.000610 with every store rounded to f32 and 1513.000637
   with none. `bonetrace.rs` gives 1513.000610. The stores move the entry
-  by 3e-5, against the 0.003 to 0.05 the pose is off. So the trace's
-  arithmetic is not ported; it cannot close the row.
+  by 3e-5, against the 0.003 to 0.05 the pose is off, so the trace's
+  arithmetic cannot close the row. vcod has since ported it
+  (cod11-combat.md 3.1, "The arithmetic on 1.5 and UO"). VERIFIED, vcod
+  measurement (`TURRET_REPORT=1`, 2026-10-19): the `-spawnlog` wound at
+  30250 went from (0, -0.000122, -0.0000019) off retail's to its bits;
+  every other hit row reads as before, the knockback-frame kills 0.001 to
+  0.009 off.
 - vcod measurement: on the kill frame ours poses legs 157 starting that
   frame at weight 0 over 1-2 idle clips (the knockback's first frame).
   Moving our pose clock 1 to 40 ms either way moves the kill's entry
