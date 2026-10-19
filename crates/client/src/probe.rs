@@ -656,10 +656,10 @@ pub fn probe(
     let mut ladder = LadderProbe {
         weapsel: probe_weapsel,
         capture: save_ladder.is_some().then(Vec::new),
-        script: if save_ladder.as_deref() == Some("climb") {
-            LADDER_CLIMB_SCRIPT
-        } else {
-            LADDER_SCRIPT
+        script: match save_ladder.as_deref() {
+            Some("climb") => LADDER_CLIMB_SCRIPT,
+            Some("turn") => LADDER_TURN_SCRIPT,
+            _ => LADDER_SCRIPT,
         },
         ..Default::default()
     };
@@ -11493,6 +11493,9 @@ struct LadderProbe {
     placed: Option<Instant>,
     /// Where the body first held the rungs.
     foot: [f32; 3],
+    /// `delta_angles[1]` at the placement: the turn script's yaw goes on the
+    /// wire rebased on it, as a mouse's would.
+    placed_delta: i32,
     /// `--save-ladder`'s phases.
     script: &'static [LadderPhase],
     /// The weapon-select fixture's `!cmd`, `!server` and `!trace` rows, each
@@ -11507,29 +11510,53 @@ struct LadderProbe {
 const LADDER_CLIMB: Duration = Duration::from_secs(14);
 
 /// `--save-ladder`'s script: (phase, ms, forwardmove, rightmove, view pitch
-/// in degrees, positive down). Run once the player has stood at the foot
+/// in degrees, positive down, view yaw offset in degrees). Run once the player has stood at the foot
 /// for [`LADDER_SETTLE`]. Pitches straddle the climb rate's clamps (fz
 /// -0.25 and 0.15) and its zero (fz = -0.25 is pitch 14.5).
 const LADDER_SCRIPT: &[LadderPhase] = &[
-    ("up-level", 2500, 127, 0, 0.0),
-    ("hang", 1000, 0, 0, 0.0),
-    ("up-look-up", 1200, 127, 0, -45.0),
-    ("down-back", 1500, -127, 0, 0.0),
-    ("strafe-right", 400, 0, 127, 0.0),
-    ("drift", 600, 0, 0, 0.0),
-    ("up-strafe-left", 600, 127, -127, -20.0),
-    ("release", 600, 0, 0, -20.0),
-    ("down-look-down", 1000, 127, 0, 60.0),
-    ("up-slight-down", 1000, 127, 0, 10.0),
-    ("up-top", 11000, 127, 0, 0.0),
-    ("off", 1000, 0, 0, 0.0),
+    ("up-level", 2500, 127, 0, 0.0, 0.0),
+    ("hang", 1000, 0, 0, 0.0, 0.0),
+    ("up-look-up", 1200, 127, 0, -45.0, 0.0),
+    ("down-back", 1500, -127, 0, 0.0, 0.0),
+    ("strafe-right", 400, 0, 127, 0.0, 0.0),
+    ("drift", 600, 0, 0, 0.0, 0.0),
+    ("up-strafe-left", 600, 127, -127, -20.0, 0.0),
+    ("release", 600, 0, 0, -20.0, 0.0),
+    ("down-look-down", 1000, 127, 0, 60.0, 0.0),
+    ("up-slight-down", 1000, 127, 0, 10.0, 0.0),
+    ("up-top", 11000, 127, 0, 0.0, 0.0),
+    ("off", 1000, 0, 0, 0.0, 0.0),
 ];
 /// `--save-ladder climb`: straight up looking up, and off the top.
 const LADDER_CLIMB_SCRIPT: &[LadderPhase] = &[
-    ("up-look-up", 9000, 127, 0, -45.0),
-    ("off", 1500, 0, 0, -45.0),
+    ("up-look-up", 9000, 127, 0, -45.0, 0.0),
+    ("off", 1500, 0, 0, -45.0, 0.0),
 ];
-type LadderPhase = (&'static str, u64, i8, i8, f32);
+/// `--save-ladder turn`: up off the ground, then the view swept away from
+/// the rungs past `bg_ladder_yawcap` (100) both ways while hanging, a climb
+/// and a flick while turned, and the same sweep back at the foot on the
+/// ground. The yaw column is the offset off the climb yaw each phase ends
+/// at, swept linearly from the last phase's, and goes on the wire as a
+/// mouse would send it: rebased on the `delta_angles` the script started
+/// with, not on each snapshot's.
+const LADDER_TURN_SCRIPT: &[LadderPhase] = &[
+    ("up", 1500, 127, 0, 0.0, 0.0),
+    ("hang", 500, 0, 0, 0.0, 0.0),
+    ("turn-left", 1500, 0, 0, 0.0, 160.0),
+    ("hold-left", 800, 0, 0, 0.0, 160.0),
+    ("back-left", 1000, 0, 0, 0.0, 0.0),
+    ("turn-right", 1500, 0, 0, 0.0, -170.0),
+    ("hold-right", 800, 0, 0, 0.0, -170.0),
+    ("back-right", 1000, 0, 0, 0.0, 0.0),
+    ("up-turning", 1500, 127, 0, -20.0, 130.0),
+    ("flick", 150, 0, 0, 0.0, -140.0),
+    ("hold-flick", 800, 0, 0, 0.0, -140.0),
+    ("back-flick", 500, 0, 0, 0.0, 0.0),
+    ("down", 4000, -127, 0, 0.0, 0.0),
+    ("foot-turn", 1500, 0, 0, 0.0, 160.0),
+    ("foot-hold", 800, 0, 0, 0.0, 160.0),
+];
+type LadderPhase = (&'static str, u64, i8, i8, f32, f32);
 const LADDER_SETTLE: Duration = Duration::from_millis(1500);
 
 /// When the weapon-select script pulls the trigger, from the settled join:
@@ -11662,6 +11689,7 @@ impl LadderProbe {
         {
             self.placed = Some(now);
             self.foot = s.ps.origin(p);
+            self.placed_delta = s.ps.field_i32(p, "delta_angles[1]");
         }
         let held = snap.map_or_else(Held::default, |s| Held::from_ps(&s.ps, p, &self.weapons));
         let mut cmd = self.input.build(0, &held);
@@ -11683,7 +11711,17 @@ impl LadderProbe {
             self.phase = Some(self.script.len());
             return cmd;
         };
-        let (name, _, forward, right, pitch) = self.script[i];
+        let (name, ms, forward, right, pitch, to) = self.script[i];
+        let from = i.checked_sub(1).map_or(0.0, |j| self.script[j].5);
+        if from != 0.0 || to != 0.0 {
+            // `send_frame` takes the newest snapshot's `delta_angles` off;
+            // put back what retail pushed since the placement.
+            let into = t.as_millis() as f32 - (end - ms) as f32;
+            let off = from + (to - from) * (into / ms as f32).min(1.0);
+            let pushed =
+                snap.map_or(0, |s| s.ps.field_i32(p, "delta_angles[1]")) - self.placed_delta;
+            cmd.angles[1] = (deg_to_short(yaw.unwrap_or(0.0) + off) + pushed) & 0xffff;
+        }
         if self.phase != Some(i) {
             self.phase = Some(i);
             println!("LADDER phase {name}");
@@ -11837,11 +11875,12 @@ weapons={} slots={},{} clip={} ammo={} eventSequence={} events={} eventParms={}"
             self.row(now, "trace", rest);
         }
         let o = snap.ps.origin(p);
+        let view = snap.ps.viewangles(p);
         if self.phase.is_some()
             && let Some(lines) = &mut self.capture
         {
             lines.push(format!(
-                "!snap msg={} t={} ct={} origin={},{},{} vel={},{},{} ground={} pm_type={} pm_flags={} pm_time={} da={},{},{} weapon={}",
+                "!snap msg={} t={} ct={} origin={},{},{} vel={},{},{} ground={} pm_type={} pm_flags={} pm_time={} da={},{},{} weapon={} view={},{},{} lv={},{},{}",
                 snap.message_num,
                 snap.server_time,
                 i("commandTime"),
@@ -11859,6 +11898,12 @@ weapons={} slots={},{} clip={} ammo={} eventSequence={} events={} eventParms={}"
                 i("delta_angles[1]"),
                 i("delta_angles[2]"),
                 i("weapon"),
+                view[0],
+                view[1],
+                view[2],
+                f("vLadderVec[0]"),
+                f("vLadderVec[1]"),
+                f("vLadderVec[2]"),
             ));
         }
         // Every 64 units of height too, which times the climb.
@@ -11909,6 +11954,8 @@ fn write_ladder_fixture(
     let mut out = String::new();
     let script = if std::ptr::eq(lp.script, LADDER_CLIMB_SCRIPT) {
         "climb"
+    } else if std::ptr::eq(lp.script, LADDER_TURN_SCRIPT) {
+        "turn"
     } else {
         "full"
     };
@@ -11922,18 +11969,21 @@ fn write_ladder_fixture(
 # crates/gsc/tests/fixtures/semantics/client-probes/README.md, probe_ladder).\n\
 # The gsc puts the player at a ladder's foot facing the rungs (mp_ship's hold\n\
 # ladder, or probe_spot's); the script starts {} ms after the first snapshot\n\
-# on the rungs. Phases: (name, ms, forward, right, pitch):\n",
+# on the rungs. Phases: (name, ms, forward, right, pitch, yaw offset):\n",
         LADDER_SETTLE.as_millis()
     ));
     out.push_str(&format!(
         "# ladder foot={},{},{} yaw={yaw}\n",
         lp.foot[0], lp.foot[1], lp.foot[2]
     ));
-    for (name, ms, f, r, pitch) in lp.script {
-        out.push_str(&format!("#   {name} {ms} {f} {r} {pitch}\n"));
+    for (name, ms, f, r, pitch, yaw) in lp.script {
+        out.push_str(&format!("#   {name} {ms} {f} {r} {pitch} {yaw}\n"));
     }
     out.push_str("# !cmd is a usercmd as it went on the wire (angles rebased on delta_angles);\n");
-    out.push_str("# !snap the playerstate per snapshot, da= its delta_angles. Floats exact.\n");
+    out.push_str(
+        "# !snap the playerstate per snapshot, da= its delta_angles, view= its viewangles,\n\
+# lv= its vLadderVec. Floats exact.\n",
+    );
     for n in &lp.notes {
         out.push_str(n);
         out.push('\n');
