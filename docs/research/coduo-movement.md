@@ -645,10 +645,18 @@ second respawn, and a `linkTo` to a script_origin that moves 96 units.
 At each snapshot the harness puts retail's `pm_type` on the sim
 (`follow_state`): the death; the respawn or spectator spawn, reseeded from
 retail's playerstate; the link, held at retail's origin. The client
-predicts neither a dead body nor a spectator (`predict::predictable`), so
-those cmds step the sim alone. Every read agrees on the rest, the linked
-stretch included (VERIFIED, 6855 cmds, 220 dead, spectating or linked
-snapshots, 770 cmds unpredicted, 0 mismatches). A `to_wire` that sends
+predicts no dead body (`predict::predictable`), so those cmds step the
+sim alone; it predicts a free-flying spectator, as retail's cgame does
+(`cod11-player-clip.md` 1.1). Every read agrees, the linked and the
+spectating stretches included (VERIFIED, 6855 cmds, 220 dead, spectating
+or linked snapshots, 328 cmds unpredicted, 0 mismatches; 770 unpredicted
+before the spectator was predicted). `predictor_flies_retail_spectator`
+rebuilds the predictor from each of the spell's spectating snapshots and
+runs the capture's cmds to the next: 79 of 79 land on retail's origin and
+velocity bit for bit, 65 of them moving (VERIFIED, 2026-10-19), once the
+fly move takes 1.5's and UO's stored friction and accelerate
+(`cod15-movement.md` 5, "The fly move"); with 1.1's it was 41 of 79 off
+in the velocity's last bits and one stop's z. A `to_wire` that sends
 the linked `pm_type` 1 as 0 puts 1285 misreads on the gate (VERIFIED,
 the gate on that mutation).
 

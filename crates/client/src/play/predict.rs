@@ -495,7 +495,7 @@ mod tests {
     use vcod_common::collision::test_world;
     use vcod_common::movetrace::{Body, CONTENTS_BODY};
     use vcod_common::net::msg::UserCmd;
-    use vcod_common::net::protocol::{ENTITYNUM_WORLD, PROTOCOL_V1};
+    use vcod_common::net::protocol::{ENTITYNUM_NONE, ENTITYNUM_WORLD, PROTOCOL_V1};
 
     const P: &Protocol = &PROTOCOL_V1;
 
@@ -833,6 +833,32 @@ mod tests {
             .unwrap();
         assert_eq!(same.delta_angles, next.delta_angles);
         assert_eq!(pr.cmds_run, runs);
+    }
+
+    /// A free-flying spectator is predicted as retail's cgame predicts one:
+    /// it flies off its cmds with no gravity and through a player's body.
+    #[test]
+    fn spectator_flies_through_bodies() {
+        let world = test_world(&[]);
+        let mut snap = msg::PlayerState::null(P);
+        set(&mut snap, "pm_type", 4);
+        set(&mut snap, "origin[2]", 100.0f32.to_bits() as i32);
+        set(&mut snap, "commandTime", 5000);
+        set(&mut snap, "speed", 400);
+        set(&mut snap, "groundEntityNum", ENTITYNUM_NONE as i32);
+        let body = Body {
+            entity: 1,
+            origin: Vec3::new(40.0, 0.0, 70.0),
+            mins: Vec3::new(-15.0, -15.0, -1.0),
+            maxs: Vec3::new(15.0, 15.0, 70.0),
+            contents: CONTENTS_BODY,
+        };
+        let r = ring((5008..=5400).step_by(8), true);
+        let v = Predictor::default()
+            .predict(P, &snap, &r, &world, &[body], &still(), &[], 0.0)
+            .expect("a spectator is predicted");
+        assert!(v.pred.ps.origin.x > 60.0, "{}", v.pred.ps.origin);
+        assert_eq!(v.pred.ps.origin.z, 100.0);
     }
 
     #[test]

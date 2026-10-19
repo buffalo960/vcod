@@ -215,6 +215,35 @@ pub struct PlayerStep {
     pub view_lerp_start: i32,
 }
 
+/// One `PmoveSingle` for a free-flying spectator (`pm_type` 4), on one of
+/// [`chop`]'s steps; returns the view. `PM_CheckDuck`'s `pm_type` 4 arm
+/// (0x31749-0x31767) takes a prone key off the cmd and raises
+/// `EV_STANCE_FORCE_STAND`. `world` `None` flies unclipped (a host with no
+/// map); `spectator` false skips the prone arm, for a player flying there.
+pub fn spectator_step(
+    ps: &mut PlayerState,
+    delta_angles: [i32; 3],
+    ring: &mut EventRing,
+    cmd: &UserCmd,
+    dt: f32,
+    world: Option<&MoveWorld>,
+    spectator: bool,
+) -> [f32; 3] {
+    let view = apply_view(ps, cmd.angles, delta_angles);
+    if spectator && cmd.wbuttons & msg::WBUTTON_PRONE != 0 {
+        ring.add(crate::net::event_ids::EV_STANCE_FORCE_STAND, 0);
+    }
+    let (f, r, u) = (
+        f32::from(cmd.forward),
+        f32::from(cmd.right),
+        f32::from(cmd.up),
+    );
+    for e in super::spectator_move(ps, world, f, r, u, cmd.wbuttons, dt) {
+        ring.add(e.event, e.parm);
+    }
+    view
+}
+
 /// One `PmoveSingle` for a live player, on one of [`chop`]'s steps.
 /// `delta_angles` are the raw wire values the cmd's angles are offset by, and
 /// `ps.linked` is the caller's to set.

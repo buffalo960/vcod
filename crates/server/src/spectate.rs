@@ -34,7 +34,6 @@ const SPAWN_THINK_MS: f32 = 100.0;
 /// `docs/research/cod11-events-and-fx.md`.
 use vcod_common::net::event_ids::EV_PLAYER_TELEPORT_IN;
 use vcod_common::net::event_ids::EV_PLAYER_TELEPORT_OUT;
-use vcod_common::net::event_ids::EV_STANCE_FORCE_STAND;
 use vcod_common::net::flags::EF_FIRING;
 /// `pingPlayer`'s bit (docs/research/cod11-hud-protocol.md, "Compass
 /// friendlies").
@@ -1424,24 +1423,17 @@ impl ClientSim {
                 if let Some(r) = &mut self.residue {
                     r.moved = true;
                 }
-                self.view_angles = cmd::apply_view(&mut self.ps, cmd.angles, self.delta_angles);
-                // `PM_CheckDuck`'s `pm_type` 4 arm (0x31749-0x31767) takes a
-                // prone key off a spectator's cmd and tells it to stand.
-                if self.pm_type == PmType::Spectator && cmd.wbuttons & msg::WBUTTON_PRONE != 0 {
-                    self.ring.add(EV_STANCE_FORCE_STAND, 0);
-                }
-                let w = world.filter(|_| self.pm_type == PmType::Spectator);
-                for e in pmove::spectator_move(
+                let spectator = self.pm_type == PmType::Spectator;
+                let w = world.filter(|_| spectator);
+                self.view_angles = cmd::spectator_step(
                     &mut self.ps,
-                    w.as_ref(),
-                    f32::from(cmd.forward),
-                    f32::from(cmd.right),
-                    f32::from(cmd.up),
-                    cmd.wbuttons,
+                    self.delta_angles,
+                    &mut self.ring,
+                    cmd,
                     dt,
-                ) {
-                    self.ring.add(e.event, e.parm);
-                }
+                    w.as_ref(),
+                    spectator,
+                );
             }
             (PmType::Normal, Some(w)) => {
                 self.dead_eye = false;
