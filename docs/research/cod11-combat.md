@@ -2694,9 +2694,9 @@ Against ours (`leanhit_ab`, cmds as above, each capture's join times):
   crouched body carries the same offset and none else (to 0.0006), and a
   prone body's bones match without it. The hold's `setOrigin` raises him
   a unit and he drops to the ground over the next cmds. The `-cmds`
-  captures below settle it as the split: `leanhit_ab::STAND_DZ_15` and the
-  five grazing cells of `CELL_GAPS_15` stay, as that capture logged no cmd
-  times to replay.
+  captures below settle it as the split. That capture logged no cmd
+  times to replay, so the gate carried the offset and five grazing cells
+  as gaps until the 2026-10-20 rerun below replaced it.
 - The head and the gear are random draws (`PROBE models`).
 
 VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-18, `probe_leanhit`
@@ -2819,6 +2819,17 @@ beside it).
   ahead (63 bone rows off); the first puts the round on retail's, the
   second the bones. With both, every row of all five new captures and
   of the earlier 1.1d ones matches, and `ProbeHold::lead_ms` is gone.
+
+VERIFIED, live (retail 1.5b, 2026-10-20, port 33621, the 2026-10-17
+recipe, `probe_bones 1` alone, both net probes logging `CMDS` with
+`ct=`): the rerun that replaced `mp_carentan-leanhit-1.5.txt`. The target
+stood 0.1132 over his spot after the drop (0.0096 in the cmd-time-free
+replay), the third height this recipe has given on 1.5b. VERIFIED, vcod
+measurement: replayed on `ProbeHold::ran` and the logged inputs, every
+bone, the origin, every cell and every round match with no offset and no
+cell gap; on the plain 50 ms windows every standing and crouched origin
+row reads 0.1036 under retail's. So the 2026-10-17 run's 0.0402 was that
+run's split of the drop, and `STAND_DZ_15` and `CELL_GAPS_15` are gone.
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
