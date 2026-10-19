@@ -2069,6 +2069,24 @@ mod tests {
         );
     }
 
+    /// A `setPlayerAngles` pitch of 30 up reaches the throw exact only on
+    /// the first cmd after it; every later cmd's pmove has put the view on
+    /// the short grid (-5461 shorts, 29.998169), and the frag leaves at
+    /// `trDelta.z` 599, not 600. Retail UO does the same (combat doc 12.5).
+    #[test]
+    fn a_held_pitch_of_30_throws_600_on_the_first_cmd_and_599_after() {
+        let ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.125), 45.0);
+        let delta = |aim| {
+            let (_, v) = throw_velocity(&ps, aim, &frag());
+            Missiles::default().carry(v, Vec3::ZERO)
+        };
+        assert_eq!(delta([-30.0, 45.0]), Vec3::new(587.0, 587.0, 600.0));
+        let short = vcod_common::pmove::angle_shorts(-30.0) as i16;
+        let quantized = f32::from(short) * (360.0 / 65536.0);
+        assert_eq!(quantized, -29.998169);
+        assert_eq!(delta([quantized, 45.0]), Vec3::new(587.0, 587.0, 599.0));
+    }
+
     /// The thrower's own motion along the throw is added after the truncation
     /// (11.3), so a runner's grenade goes further than a stander's; the
     /// direction it is measured along is the unrounded throw's.

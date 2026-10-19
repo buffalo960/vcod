@@ -5745,9 +5745,29 @@ vcod: `Trajectory::evaluate_stored`, `missile::delta_at` and
 flights above. The replay starts at the launch's wire state, not at a
 thrower: the spot part's thrower lands where his cmds' timing puts him,
 so retail's muzzle point moves by up to a unit and a half between runs on
-a grade, and a held pitch of exactly 30 puts the throw's `trDelta.z` on a
-whole unit, where retail and ours truncate to 599 and 600 (INFERRED from
-the first frames' heights; not chased).
+a grade.
+
+A held pitch of exactly 30 puts the throw's `trDelta.z` on a whole unit,
+and which side of it the throw lands on rides the cmd that releases.
+VERIFIED, retail UO 1.51b and vcod-server measurement (2026-10-19,
+mp_brecourt, `probe_skyshot` spot part at (1659, 685, -102.76), yaw 45,
+`probe_pitch -30`, `--probe-uo-weapon throw`): a release on the cmd sent
+with a snapshot, the first to run after that frame's `setPlayerAngles`,
+left at `trDelta` (587, 587, 600) on retail three runs out of three and
+on vcod once; a release one cmd later (retail with the probe's step clock
+pushed 8 and 12 ms, vcod six runs on its own spawn timing and one pushed
+38 ms) left at (587, 587, 599) on both. VERIFIED, game.mp.uo:
+`SetClientViewAngle` (0x54301) writes the script's angles into
+`ps.viewangles` (`ps+0xe8`) unrounded and only `delta_angles` on the
+short grid; `PM_UpdateViewAngles` (0x3b15c) rewrites the view as
+`(360 / 65536) * short`; `ClientThink_real` (0x50c91) copies
+`ps.viewangles` plus `BG_CalculateViewAngles`' kick (zero here) into
+`client+0x4650`, which `CalcMuzzlePoints` (0x8bc58) turns through
+`AngleVectors`. INFERRED: only the first cmd after the script reads 30;
+every later one reads -5461 shorts, 29.998169, whose `sin` puts z at
+599.97. The 599 against 600 noted here before was the thrower's release
+landing on a different cmd of the frame, not arithmetic (`game::missile`'s
+`a_held_pitch_of_30_throws_600_on_the_first_cmd_and_599_after`).
 
 ### 12.6 1.5's and UO's fall test
 
