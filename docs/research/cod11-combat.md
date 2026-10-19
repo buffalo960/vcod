@@ -2506,7 +2506,8 @@ Against ours (`leanhit_ab`, cmds as above, each capture's join times):
 VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-18, `probe_leanhit`
 with `probe_bones`, `probe_fall`, `probe_pin` and `probe_stamp` set,
 fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
-`-cmds-uo.txt`, each with both net probe clients' `CMDS` lines):
+`-cmds-uo.txt`, each with both net probe clients' `CMDS` lines; since
+2026-10-19 those fixtures hold a rerun with `probe_tapwait 1`, below):
 
 - The drop. `probe_fall` logs each player's height off his spot for ten
   frames after each `setOrigin` (`PROBE fall`). He settles in one frame,
@@ -2541,13 +2542,41 @@ fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
 - The rounds. The damage callback logs each round's direction
   (`PROBE dir`). VERIFIED, vcod measurement: with the aim block on the
   last frame's clock (15.1) and the hit-box clip (3.1), every round's part
-  and point match on all three servers. The directions match to 2e-5 but
+  and point match on all three servers. The directions matched to 2e-5 but
   for up to 8e-5 (0.02 units at the target) on the shooter's left lean
   against the target's right on all three, every phase in which the target
-  leans or lies on 1.5b and UO, and two more on UO
-  (`leanhit_ab::DIR_GAPS_*`). Each is which view the round read, the
-  hold's exact angles or a cmd's quantized ones (15.1, "The cmd that
-  fires").
+  leans or lies on 1.5b and UO, and two more on UO. Each is which view the
+  round read, the hold's exact angles or a cmd's quantized ones (15.1,
+  "The cmd that fires"), and these runs tapped in the grid's frame.
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-19, the same
+recipe with `probe_tapwait 1`, ports 33251-33253, now the `-cmds`
+fixtures): a second run of the `-press` recipe, which `leanhit_ab`
+replays on the `PROBE_IN` lines rather than the logged inputs.
+
+- 1.5b: every row matches, every round's direction within 2e-5. VERIFIED,
+  vcod measurement.
+- 1.1d: every row matches but the rounds' directions. VERIFIED, vcod
+  measurement: all 13 leave one 65536th of yaw (0.0055 degrees) left of
+  ours, and 11 of them sit within 2e-7 of retail's once ours is turned by
+  it (`leanhit_ab::DIR_YAW_11`). INFERRED, from the constant offset on
+  every round: retail's scope froze a turn-sway yaw lag of a 65536th
+  where ours froze none (15.3). Retail's snapshots read view yaw 0 from
+  the spawn to the freeze, as ours' cmds do; which turn left the lag is
+  not found. `t_prone` (3.5e-5 low in z) and `t_right` (4.4e-5 in y, 3e-5
+  in z) stay off past that, under a 65536th of view each, so one side
+  read the hold's exact angles and the other a cmd's quantized ones,
+  though their trigger cmds sit on the frame with the cmd before 18 ms
+  ahead, as the other eleven's do (`leanhit_ab::DIR_GAPS_11`, open).
+- UO: every row matches but the shooter's `PROBE eye`, 0.166 and 0.083
+  units off ours in x and y on every row (`leanhit_ab::EYE_OFF_UO`). He
+  spawned standing on the sloped point (976, -792, -2.04889); VERIFIED,
+  live: the target probe read his `trDelta` (6, 3, -1) on the spawn
+  frame. VERIFIED, vcod measurement: ours' spawn think leaves (10, 5, -1)
+  on the same last cmd (no keys, no buttons), and the drop carries the
+  difference into his rest spot. 1.1d's think off (976, -864) gives (1, 4,
+  0) on both. No earlier capture spawned a standing 1.5b or UO body on a
+  slope (cod15-movement.md 4, "The spawn's lie-down"; open).
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
@@ -2898,10 +2927,26 @@ list below. INFERRED: the numbering and every condition in it.
 11. `client->ps.stats[1]` (`ps+0xF8`) takes `(int)vectoyaw(attacker->origin -
     self->origin)`, or `(int)vectoyaw(inflictor->origin - self->origin)` when
     there is no usable attacker, or `(int)self->angles[1]` when there is
-    neither. VERIFIED: the three stores. INFERRED: which arm runs, and
-    reading `stats[1]` as the dead yaw, which is the label
-    `docs/protocol-1.1.md` carries for it; the store is the strongest
-    evidence there is for that reading and is still a reading.
+    neither. VERIFIED: the three stores. VERIFIED, 0x49c2c..0x49ca3: an
+    attacker is usable when it is non-null and not `self`, an inflictor the
+    same; `origin` is `r.currentOrigin` (`+0x134`) and `angles[1]`
+    `r.currentAngles[1]` (`+0x144`), each truncated by a `fistp` under `|
+    0xc00`. VERIFIED: the function called is `vectoyaw` (0x3dccc), not
+    `vectoangles`: 0 for a vector with no horizontal part, else the
+    `fpatan` stored as a double, times 180 and over pi in double (`.rodata
+    0x72a88`, 0x72a90), stored as a float, and 360 (0x72a98) added on the
+    stack when it is below 0. INFERRED: reading `stats[1]` as the dead
+    yaw, which is the label `docs/protocol-1.1.md` carries for it; the
+    store is the strongest evidence there is for that reading and is still
+    a reading. INFERRED, with 4.4's inflictor rule: a grenade's own thrower
+    (attacker and entity inflictor both `self`) reads his own yaw, a death
+    whose attacker is the world faces the world's `r.currentOrigin`, which
+    no spawn writes, so the map's origin, and `Cmd_Kill_f`, which passes
+    `self` three times (0x49608..0x4960a), reads his own yaw.
+    vcod: `builtins::combat::dead_yaw` on the entities, through
+    `builtins::math::vectoyaw`; until 2026-10-19 it faced the attacker
+    even when that was the victim (a zero vector, so 0) and read the view
+    yaw for a world death (`a_death_faces_what_player_die_reads`).
 12. `client->ps.viewangles` takes `self->angles`.
 13. `self->s.loopSound = 0`, `trap_UnlinkEntity`, `self+0x114 = 30.0`
     (`.rodata 0x743f0`), `trap_LinkEntity`. INFERRED: `self+0x114` is the
@@ -3650,8 +3695,10 @@ death-specific path, since the step per 50 ms snapshot is the same ~9 units the
 stance lerp uses.
 
 VERIFIED: `stats[1]` reads 0 on every death by `kill`. INFERRED: that is 5.1
-item 11's `vectoyaw(attacker->origin - self->origin)` on a zero vector, since
-the attacker is the victim; 8.4 has the case where it is not.
+item 11's third arm, `(int)self->angles[1]`: `Cmd_Kill_f` names the victim
+as both inflictor and attacker, so neither is usable, and this probe's
+`angles` yaw read 0 at each of those deaths. 8.4 has the case where the
+attacker is usable.
 
 VERIFIED: the four damage fields stay 0 across every death by `kill`.
 
@@ -4080,8 +4127,7 @@ in-process test and the headless run cover that path). PENDING.
 Named here so a reader of sections 1 to 7 does not assume the code follows
 them: the view kick of 6's step 6; `EV_CROUCH_PAIN` (188); the direct-hit
 `MOD_GRENADE` arm (13.1), which a stock frag cannot reach because its file
-spells `damage` 0; the pitch rate `G_MissileLandAngles` redraws at a bounce
-(11.2); and the splash event 173 and the water mask of 12.1. Item pickup is modelled; `docs/research/cod11-items.md` is its own
+spells `damage` 0; and the splash event 173 and the water mask of 12.1. Item pickup is modelled; `docs/research/cod11-items.md` is its own
 research doc.
 
 Melee (1.10, 2.5) and grenades (1.11, 11 to 14) were absent from the run 9.1
@@ -4168,13 +4214,14 @@ reads 687.7, 692.7, 704.1, 726.9, 762.1 and 763.5, all inside `720 +/- 45`
 2026-10-17 one's rolls were 323.0, 335.9 and 368.4 and its pitch rates
 684.9, 703.5 and 729.5, the first one's rolls 316.3, 318.0 and 344.8, and
 its throws had bounced before their first sample), and is redrawn at each bounce
-(11.2's `G_MissileLandAngles`, unmodelled). Every vcod throw in the four runs
+(12.7's `G_MissileLandAngles`). Every vcod throw in the four runs
 reads exactly `675.0, 0.0, 315.0`, the low end of both bands.
 `Missiles` carries its own `flrand` state and `#[derive(Default)]` left it
 zero, which is `xorshift`'s fixed point, so the draw was always 0.0. vcod was
 wrong; retail is right. Fixed: the pool seeds its state off the host's
 `RNG_SEED` (`crates/server/src/game/missile.rs`), and two throws now draw
-different tumbles. Still unmodelled is the redraw at each bounce.
+different tumbles. The redraw at each bounce is modelled since 2026-10-19
+(12.7).
 
 VERIFIED: **a held trigger latches a grenade's raise on vcod and not on
 retail.** `mp_carentan-tdm-grenade-death-shooter.txt` has retail raise the
@@ -5287,7 +5334,10 @@ named stores round to a float.
   stack.
 
 vcod: `Trajectory::evaluate_kept`, `missile::delta_at` and
-`missile::bounce_kept` port these in `f64`. They run under 1.1's rules
+`missile::bounce_kept` port these in `f64`. VERIFIED: `BG_EvaluateTrajectory`'s
+`TR_LINEAR` arm (0x2c640) keeps `dt` and each `base + delta * dt` on the
+stack the same way, so `evaluate_kept` covers a line too (a rocket's
+`pos`, a grenade's `apos`). They run under 1.1's rules
 only (`Missile::kept`). 1.5b and UO keep the `f32` arithmetic they had,
 which no capture has measured against their -O0 stores.
 
@@ -5338,6 +5388,65 @@ vcod's within 0.12 of each (`a_frag_rests_on_a_prone_players_back_on_15`).
 Before 2026-10-16 vcod's struck him 1.5 higher and dropped to the floor:
 its ground snap lifted the frag onto his bones (12.2), and its target
 kept another airborne prone body than retail's (cod15-movement.md 4).
+
+### 12.7 `G_MissileLandAngles`: the angles a contact leaves
+
+VERIFIED, `game.mp.i386.so` 1.1d, read with `tools/re/annotate_func.py`:
+`G_MissileLandAngles(ent, tr, angles, rest)` (0x535d0) has two callers,
+both in `G_BounceMissile` (0x537c0): the rest arm with `rest` 1 before
+`G_SetAngle` (0x5399c), and the bounce with 0 (0x53a37), whose `angles`
+`G_BounceMissile` then copies into `s.apos.trBase` with `s.apos.trTime`
+`level.time` (12.4). 1.5b's (0x53ad0, called at 0x54034 and 0x5413f) and
+UO's (0x5d444, at 0x5d9a8 and 0x5dab3) have the same branches and
+constants but one (below).
+
+- VERIFIED: the impact time is `level.previousTime + (int)((level.time -
+  level.previousTime) * tr.fraction)`, the product on the stack and
+  truncated (`fldcw` `| 0xc00`, 0x5360a). `BG_EvaluateTrajectory(&s.apos,
+  that time, angles)` (0x53621) gives the tumble there. Yaw and roll leave
+  the function as evaluated: no wrap. VERIFIED, `net/snapshots-skyfrag.bin`:
+  the sky frag's roll reads 893.8452, 1158.6882 and 1250.0592 on its bounces.
+- VERIFIED: a contact with `tr.normal[2]` not above 0.1 (`.rodata 0x75af8`,
+  0x53640) is a wall. `rest` 0 adds `(rand() & 0x7f) - 63` to
+  `s.apos.trDelta[0]` and stores it through `AngleNormalize360` (0x53793);
+  the angles are left as evaluated.
+- VERIFIED: otherwise `flat = PitchForYawOnNormal(yaw, tr.normal)` (0x5365e)
+  and `diff = AngleSubtract(flat, pitch)` (0x53674). With `rest` 0 the
+  pitch rate is scaled by a draw, `0.85 - 0.3 * rand() / 2^31` on 1.1d
+  (`.rodata 0x75afc` is -2^-31, 0x75b00 0.3, 0x75b04 0.85, so 0.55 to
+  0.85), and negated when `|diff|` is under 80 (0x536a4, 0x536d4).
+  VERIFIED, 1.5b and UO: their factor is `rand() / 2^31 * 0.3 + 0.85` (1.5b
+  `.rodata 0x7b174` 2^31, 0x7b178 0.3, 0x7b17c 0.85, 0x7b180 -1.0 for the
+  negation; UO 0xa1774..0xa1780 the same), 0.85 to 1.15, so a floor
+  contact can spin the frag up there.
+- VERIFIED: then `a = AngleNormalize180(pitch)` (0x53706) and the pitch
+  becomes `AngleNormalize360` of: `flat`, or `flat + 180` when `|a|` is
+  above 90 (`.rodata 0x75b08`, 0x75b10), when `rest` is 1 or `|diff|` is
+  under 45 (0x53719); `a + diff * 0.25` (0x75b14) when `|diff|` is under 80;
+  `a` otherwise. INFERRED: a frag lands flat on the floor, the right way up
+  or upside down, eases a quarter of the way there when it struck within
+  80 of flat, and the pitch rate reverses on the near-flat strikes.
+- VERIFIED, `net/snapshots-skyfrag.bin` (1.1d): the five bounces' pitch rates
+  read 731.9147 (the throw), -403.78943, 245.17664, -138.76308, 116.83154,
+  -66.59565: each floor contact's factor (0.552, 0.607, 0.566, 0.842, 0.570)
+  inside 1.1d's band, and its pitch 0 on four bounces and 36.77124
+  (6694/65536 of a turn) on the fourth. INFERRED: that one struck at a
+  pitch of 49.03, between 45 and 80 off the flat floor, and was eased to
+  0.75 of it.
+- VERIFIED, `mp_carentan-tdm-grenade.txt`: the 2026-10-19 take's three
+  throws rest at pitch 357.9, 357.9 and 353.3, `flat` on mp_carentan's
+  sloped floor, and the 2026-10-17 take's at 177.9, 357.9 and 173.3, the
+  first and last `flat + 180`, with the roll unwrapped (533.7, 599.0 and
+  298.0; 499.9, 480.6 and 298.4 before).
+
+vcod: `Missile::land_angles` (`crates/server/src/game/missile.rs`), its
+draws off the pool's own state (`Draws`). Retail's `rand()` sequence is
+not reproducible, so a gate pins the draws a capture shows
+(`Server::pin_missile_draws`): `missile_edge_ab`'s
+`bounce_angles_match_retail_on_1_1` replays the sky frag with its tumble
+and five factors pinned, and every `apos` ours sends matches retail's bit
+for bit. Before the port ours wrapped all three angles with `rem_euclid`,
+kept the throw's pitch rate and rested every frag at pitch 0.
 
 ---
 
@@ -5548,9 +5657,16 @@ tolerance. VERIFIED, same run: `apos` does not match past `trType`. Its
 `cook_release` on the 2026-10-19 recapture, 703.5, 0, 335.9 on the
 2026-10-17 one, 679.8, 0, 344.8 on ours), a different draw on ours, and
 retail's pitch rate changes at every bounce (486.7, -411.7, 279.9 on
-`cook_release`'s first three, 593.7, -474.7, 323.1 before) where ours keeps the throw's
-(`G_MissileLandAngles` is not read, `missile.rs`), so the gate still
-compares only the `apos` `trType`.
+`cook_release`'s first three, 593.7, -474.7, 323.1 before) where ours kept
+the throw's. Since
+2026-10-19 ours runs `G_MissileLandAngles` (12.7) and the gate compares
+the part of `apos` no draw moves: `trType`, `trTime`, the yaw and its
+rate, and a resting pitch modulo 180. VERIFIED, `missile_ab.rs` on
+2026-10-19: every sample of the three throws matches; the resting
+pitches read 357.9, 357.9 and 353.3 on retail's 2026-10-19 take (177.9,
+357.9 and 173.3 on the 2026-10-17 one, the same modulo 180), which ours laid at 0
+before the port. The draws themselves are gated off the full-precision
+sky frag capture (12.7).
 
 VERIFIED, off the same lines: the exploded entity stays on the wire for about
 300 ms after the event frame, which is `EVENT_VALID_MS` in the file. Retail's
@@ -7078,7 +7194,7 @@ order and every gate, which are control flow.
 
 The `level.time` the block reads is the one a cmd runs on, the last
 frame's: cmds run ahead of `G_RunFrame` (player-clip doc 8.12). VERIFIED,
-vcod measurement (`leanhit_ab`'s `-cmds` captures, 1.1d, 1.5b and UO, each
+vcod measurement (`leanhit_ab`'s first `-cmds` captures, 2026-10-18, 1.1d, 1.5b and UO, each
 round's direction logged by the damage callback): fed the frame's own
 time, ours' scoped rounds left 0.01 to 0.02 degrees off retail's in pitch
 and yaw. Read as a shift of the idle's sines, the pitch residual of 12
@@ -7144,8 +7260,11 @@ one that pulled the trigger.
   and UO runs leaves within 2e-5 of retail's direction, and so does
   every 1.5b round since its sight test was ported (below). The target's
   `setOrigin` drop under the same lead lands 0.21 off retail's first
-  fall row, so its cmds keep the plain windows (open). The `-cmds` captures' `DIR_GAPS_*` stay: they tap in
-  the grid's frame and log no input by cmd.
+  fall row, so its cmds keep the plain windows (open). The first `-cmds`
+  captures tapped in the grid's frame and logged no input by cmd, and
+  their `DIR_GAPS_*` lists stayed open; their 2026-10-19 rerun with
+  `probe_tapwait 1` replays without them on the plain windows and the
+  `PROBE_IN` lines, but for 1.1d's frozen yaw lag and two rounds (3.6).
 - The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
   `-press-1.5` replay with the shooter's sway state logged per cmd). The
   shooter holds the sight from his first cmd (12450, `in=10:16`), but

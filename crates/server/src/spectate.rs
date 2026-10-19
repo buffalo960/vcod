@@ -1847,7 +1847,7 @@ impl ClientSim {
             damage,
             dir,
             knockback,
-            attacker_origin,
+            dead_yaw,
             fatal,
             ..
         } = *op
@@ -1895,12 +1895,8 @@ impl ClientSim {
         // 0 (combat doc, 11.1 and 5.1 step 5).
         self.ps.grenade_time_left_ms = 0;
         self.add_event(EV_DEATH, 0);
-        // `vectoyaw(attacker->origin - self->origin)` truncated, the body's
-        // own yaw when there is no attacker (5.1, item 11).
-        self.dead_yaw = match attacker_origin {
-            Some(a) => vec_to_yaw(Vec3::from(a) - self.ps.origin) as i32,
-            None => self.ps.yaw.to_degrees() as i32,
-        };
+        // 5.1 item 11, which the host worked out off the entities.
+        self.dead_yaw = dead_yaw;
         // The death anim on the legs, and the torso restarted on 0: both
         // retail deaths read `torsoAnim` 512 beside the death `legsAnim`
         // (combat doc, 8.1 and 8.4). Nothing selects for this sim again --
@@ -2742,16 +2738,6 @@ impl Residue {
             | (own.fields[ef] & EF_TELEPORT_BIT);
         w
     }
-}
-
-/// Q3's `vectoyaw` in degrees, 0..360, and 0 for a vector with no
-/// horizontal part.
-fn vec_to_yaw(v: Vec3) -> f32 {
-    if v.x == 0.0 && v.y == 0.0 {
-        return 0.0;
-    }
-    let yaw = v.y.atan2(v.x).to_degrees();
-    if yaw < 0.0 { yaw + 360.0 } else { yaw }
 }
 
 /// `PmoveSingle`'s `eFlags` 0x400 (game.mp.i386.so 0x33fa0..0x33fdf): the
@@ -3726,7 +3712,8 @@ mod tests {
             dir: dir.into(),
             knockback: true,
             attacker: Some(1),
-            attacker_origin: Some([1810.0, 2109.5, -23.9]),
+            // The shooter at (1810, 2109.5) from the target at (1800, 2696).
+            dead_yaw: 270,
             fatal,
         }
     }
@@ -3855,7 +3842,7 @@ mod tests {
             dir: Vec3::new(-86.9, -0.6, 14.0).normalize().into(),
             knockback: true,
             attacker: Some(1),
-            attacker_origin: None,
+            dead_yaw: 0,
             fatal: false,
         };
         sim.take_damage(&op, None, &mut 1, 1000);
@@ -3950,17 +3937,7 @@ mod tests {
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.health = 100;
         sim.max_health = 100;
-        let op = |fatal: bool| {
-            let mut op = hit_op(67, fatal);
-            let SimOp::Damaged {
-                attacker_origin, ..
-            } = &mut op
-            else {
-                unreachable!("hit_op builds a Damaged op");
-            };
-            *attacker_origin = Some([10.0, -586.5, 8.0]);
-            op
-        };
+        let op = |fatal: bool| hit_op(67, fatal);
         for _ in 0..20 {
             sim.step(&NULL_USERCMD, 0.05, Some(MoveWorld::bare(&w_test)), &[]);
         }
@@ -4057,7 +4034,7 @@ mod tests {
             dir: [0.0; 3],
             knockback: false,
             attacker: None,
-            attacker_origin: None,
+            dead_yaw: 0,
             fatal: false,
         };
         sim.take_damage(&op, None, &mut 1, 500);

@@ -232,8 +232,9 @@ pub enum SimOp {
         dir: [f32; 3],
         knockback: bool,
         attacker: Option<usize>,
-        /// Where the attacker's entity stood, for the dead yaw.
-        attacker_origin: Option<[f32; 3]>,
+        /// `player_die`'s dead yaw for `stats[1]`, read on a fatal one
+        /// (`builtins::combat::dead_yaw`).
+        dead_yaw: i32,
         fatal: bool,
     },
     /// One event for the client's own playerstate ring, which the sim owns:

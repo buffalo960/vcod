@@ -106,16 +106,17 @@ pub fn finish_player_damage(
             host.add_temp_entity(cx, te);
         }
     }
-    let attacker_origin = match attacker {
-        Value::Entity(a) => {
-            let origin = cx.intern_folded("origin");
-            match host.get_field(cx, *a, origin) {
-                Value::Vector(v) => Some(v),
-                _ => None,
-            }
-        }
+    let attacker_ent = match attacker {
+        Value::Entity(a) => Some(*a),
         _ => None,
     };
+    // `finishPlayerDamage` hands `player_die` the attacker as the inflictor
+    // for an entity inflictor and the world otherwise (4.4).
+    let inflictor_ent = match inflictor {
+        Value::Entity(_) => attacker_ent,
+        _ => None,
+    };
+    let dead_yaw = dead_yaw(host, cx, slot, inflictor_ent, attacker_ent);
     let v = &mut host.client_vitals[slot];
     // A client `player_die` already ran on (a blast that reaches it before
     // its end frame, 14.5) loses health as any other, clamped at -999
@@ -133,7 +134,7 @@ pub fn finish_player_damage(
             dir,
             knockback: dflags & DFLAG_NO_KNOCKBACK == 0,
             attacker: attacker_slot,
-            attacker_origin,
+            dead_yaw,
             fatal,
         },
     ));
@@ -347,6 +348,40 @@ pub fn obituary(
     Ok(Value::Undefined)
 }
 
+/// `player_die`'s `stats[1]` (combat doc 5.1 item 11, 1.1d 0x49c2c..
+/// 0x49d01): `vectoyaw` toward the attacker unless he is the victim, else
+/// toward the inflictor unless that is the victim, else the victim's own
+/// `angles` yaw, truncated. `None` is the world, which stands at the
+/// origin.
+pub(crate) fn dead_yaw(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    slot: usize,
+    inflictor: Option<EntId>,
+    attacker: Option<EntId>,
+) -> i32 {
+    let me = host.ents.handle(slot as u32);
+    let mut vector = |id: Option<EntId>, name: &str| {
+        let Some(id) = id else {
+            return [0.0; 3];
+        };
+        let atom = cx.intern_folded(name);
+        match host.get_field(cx, id, atom) {
+            Value::Vector(v) => v,
+            _ => [0.0; 3],
+        }
+    };
+    let Some(toward) = [attacker, inflictor]
+        .into_iter()
+        .find(|e| *e != me || e.is_none())
+    else {
+        return vector(me, "angles")[1] as i32;
+    };
+    let (to, from) = (vector(toward, "origin"), vector(me, "origin"));
+    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    super::math::vectoyaw(d) as i32
+}
+
 /// The three effects a suicide has, for the two callers that need them: the
 /// `suicide` builtin and `Cmd_Kill_f`. Writes the vitals, queues the sim's
 /// `Damaged` op and returns the `CodeCallback_PlayerKilled` argument vector,
@@ -355,16 +390,17 @@ pub fn obituary(
 /// nothing waiting on it and starts one.
 ///
 /// `None` for a client that is already dead. The sim's damage is zero and the
-/// knockback off, so the sim raises `EV_DEATH` and nothing else: the dead yaw
-/// stays 0, which is what the retail hit capture's own suicides read
-/// (`docs/research/cod11-combat.md` section 8.4, `stats[1]` 0). The callback
-/// gets what both retail callers hand `player_die`: damage 100000, weapon 0
-/// (`"none"`), no direction and hit location 0 (5.1).
+/// knockback off, so the sim raises `EV_DEATH` and nothing else. The
+/// callback gets what both retail callers hand `player_die`: the victim as
+/// inflictor and attacker, damage 100000, weapon 0 (`"none"`), no direction
+/// and hit location 0 (5.1), so the dead yaw is his own `angles` yaw.
 pub fn suicide_effects(host: &mut GameHost, cx: &mut Cx, slot: usize) -> Option<Vec<Value>> {
     if host.client_vitals.get(slot)?.dead {
         return None;
     }
     host.die(slot);
+    let me = host.ents.handle(slot as u32);
+    let dead_yaw = dead_yaw(host, cx, slot, me, me);
     host.client_sim_ops.push((
         slot,
         SimOp::Damaged {
@@ -373,7 +409,7 @@ pub fn suicide_effects(host: &mut GameHost, cx: &mut Cx, slot: usize) -> Option<
             dir: [0.0; 3],
             knockback: false,
             attacker: Some(slot),
-            attacker_origin: None,
+            dead_yaw,
             fatal: true,
         },
     ));
@@ -1004,6 +1040,69 @@ mod tests {
             "the callback has to run past the isPlayer call, not abort on it"
         );
         assert!(rt.client_vitals(0).dead, "2000 damage at zero range kills");
+    }
+
+    const DEAD_YAW: &str = r#"
+        main() {}
+        CodeCallback_PlayerDamage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc) {
+            self finishPlayerDamage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
+        }
+        CodeCallback_PlayerKilled(eInflictor, eAttacker, iDamage, sMeansOfDeath, sWeapon, vDir, sHitLoc) {}
+        own_frag() { self finishPlayerDamage(self, self, 500, 0, "MOD_GRENADE_SPLASH", "none", self.origin, (0, 0, 1), "none"); }
+        own_touch() { self finishPlayerDamage(undefined, self, 500, 0, "MOD_GRENADE_SPLASH", "none", self.origin, (0, 0, 1), "none"); }
+        world_blast() { radiusDamage(self.origin, 300, 2000, 50); }
+        by_him() { self finishPlayerDamage(level.him, level.him, 500, 0, "MOD_RIFLE_BULLET", "none", self.origin, (1, 0, 0), "none"); }
+    "#;
+
+    /// `player_die`'s three arms for `stats[1]` (combat doc 5.1 item 11):
+    /// toward the attacker unless he is the victim, then toward the
+    /// inflictor `finishPlayerDamage` handed over (the attacker again for
+    /// an entity inflictor, the world otherwise), then the victim's own
+    /// `angles` yaw. The world stands at the origin.
+    #[test]
+    fn a_death_faces_what_player_die_reads() {
+        let yaw_after = |thread: &str| {
+            let mut rt = ScriptRuntime::for_test_at(CALLBACK_SETUP, DEAD_YAW);
+            for (slot, name) in [(0, "victim"), (1, "killer")] {
+                rt.push_client_event(ClientEvent::Connect {
+                    slot,
+                    name: name.into(),
+                });
+            }
+            rt.run_frame(0);
+            rt.host.client_vitals[0] = Vitals {
+                health: 100,
+                max_health: 100,
+                dead: false,
+                takedamage: true,
+            };
+            rt.place_client(0, [100.0, 100.0, 0.0]);
+            rt.place_client(1, [100.0, 300.0, 0.0]);
+            rt.set_client_yaw(0, 37.9);
+            let victim = rt.client_entity(0).unwrap();
+            let him = Value::Entity(rt.client_entity(1).unwrap());
+            rt.set_level_field_for_test("him", him);
+            rt.start_thread_for_test(victim, thread);
+            rt.run_frame(0);
+            assert!(rt.aborts().is_empty(), "{thread}: {:?}", rt.aborts());
+            rt.host
+                .client_sim_ops
+                .iter()
+                .find_map(|(slot, op)| match op {
+                    SimOp::Damaged {
+                        dead_yaw,
+                        fatal: true,
+                        ..
+                    } if *slot == 0 => Some(*dead_yaw),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{thread}: no death"))
+        };
+        assert_eq!(yaw_after("by_him"), 90, "the attacker due north");
+        assert_eq!(yaw_after("own_frag"), 37, "his own yaw, truncated");
+        // (-100, -100) from the victim to the world's origin.
+        assert_eq!(yaw_after("own_touch"), 225);
+        assert_eq!(yaw_after("world_blast"), 225);
     }
 
     const WEAPON_CALLBACKS: &str = r#"

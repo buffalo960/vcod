@@ -2896,7 +2896,7 @@ fn enter_prone(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) {
 
 /// The pitch, wire convention (positive down), of the yaw's direction laid
 /// on a plane: `PitchForYawOnNormal` (0x3d274), in 0..360.
-fn pitch_for_yaw_on_normal(yaw_deg: f32, normal: Vec3) -> f32 {
+pub fn pitch_for_yaw_on_normal(yaw_deg: f32, normal: Vec3) -> f32 {
     let (sin, cos) = yaw_deg.to_radians().sin_cos();
     let fwd = Vec3::new(cos, sin, 0.0);
     let inv = 1.0 / normal.length_squared();

@@ -68,6 +68,22 @@ fn ours(
     run: Script,
     ms: i64,
 ) -> Vec<String> {
+    ours_pinned(fs, map, name, script, cvars, run, ms, Vec::new())
+}
+
+/// [`ours`] with the missile pool's first draws pinned
+/// (`Server::pin_missile_draws`).
+#[allow(clippy::too_many_arguments)]
+fn ours_pinned(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    name: &str,
+    script: &str,
+    cvars: &[(&str, &str)],
+    run: Script,
+    ms: i64,
+    draws: Vec<f64>,
+) -> Vec<String> {
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
@@ -79,6 +95,7 @@ fn ours(
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    sv.pin_missile_draws(draws);
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
@@ -170,7 +187,7 @@ fn ours(
                 let slot = (i("eventSequence") - 1) & 3;
                 lines.push(format!(
                     "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} apos {} {} {} \
-                     etype {} ev {} parm {}",
+                     atraj {} {} {} {} {} etype {} ev {} parm {}",
                     snap.server_time,
                     i("pos.trType"),
                     f("pos.trBase[0]"),
@@ -179,6 +196,11 @@ fn ours(
                     f("apos.trBase[0]"),
                     f("apos.trBase[1]"),
                     f("apos.trBase[2]"),
+                    i("apos.trType"),
+                    i("apos.trTime"),
+                    f("apos.trDelta[0]"),
+                    f("apos.trDelta[1]"),
+                    f("apos.trDelta[2]"),
                     i("eType"),
                     i(&format!("events[{slot}]")),
                     i(&format!("eventParms[{slot}]")),
@@ -812,4 +834,127 @@ fn launch_angles_match_retail_on_1_1() {
             "{tag}: retail {r:?}, ours {o:?}, {off} degrees apart"
         );
     }
+}
+
+/// One `apos` as the wire carried it: type, `trTime` from the launch's,
+/// base, delta.
+type Apos = (i32, i32, [f32; 3], [f32; 3]);
+
+/// The first missile's distinct `apos` values in a committed net capture,
+/// in wire order.
+fn retail_apos(tag: &str) -> Vec<Apos> {
+    let p = &vcod_common::net::protocol::PROTOCOL_V1;
+    let frames = vcod_common::testing::fixture_frames(
+        p,
+        &format!("net/gamestate-{tag}.bin"),
+        &format!("net/snapshots-{tag}.bin"),
+    );
+    let mut num = None;
+    let mut out: Vec<Apos> = Vec::new();
+    for f in &frames {
+        for (n, e) in &f.snapshot.entities {
+            if num.is_none() && e.field_i32(p, "eType") == 4 {
+                num = Some(*n);
+            }
+            if num != Some(*n) {
+                continue;
+            }
+            let v = |k: &str| [0, 1, 2].map(|i| e.field_f32(p, &format!("apos.{k}[{i}]")));
+            let a = (
+                e.field_i32(p, "apos.trType"),
+                e.field_i32(p, "apos.trTime"),
+                v("trBase"),
+                v("trDelta"),
+            );
+            if out.last() != Some(&a) {
+                out.push(a);
+            }
+        }
+    }
+    rebase(out)
+}
+
+/// The same off our first missile's lines.
+fn our_apos(log: &[String]) -> Vec<Apos> {
+    let mut num = None;
+    let mut out: Vec<Apos> = Vec::new();
+    for l in log.iter().filter(|l| l.contains(" missile ")) {
+        let t: Vec<&str> = l.split(' ').collect();
+        let n = t[3];
+        if *num.get_or_insert(n) != n {
+            continue;
+        }
+        let at = |k: &str| t.iter().position(|w| *w == k).unwrap() + 1;
+        let f = |i: usize| t[i].parse::<f32>().unwrap();
+        let (b, d) = (at("apos"), at("atraj"));
+        let a = (
+            t[d].parse().unwrap(),
+            t[d + 1].parse().unwrap(),
+            [f(b), f(b + 1), f(b + 2)],
+            [f(d + 2), f(d + 3), f(d + 4)],
+        );
+        if out.last() != Some(&a) {
+            out.push(a);
+        }
+    }
+    rebase(out)
+}
+
+/// `trTime` counted from the launch's; a resting one's 0 stays 0.
+fn rebase(mut v: Vec<Apos>) -> Vec<Apos> {
+    let launch = v.first().map_or(0, |a| a.1);
+    for a in v.iter_mut().filter(|a| a.0 != 0) {
+        a.1 -= launch;
+    }
+    v
+}
+
+/// What retail drew for one flight: the tumble's pitch and roll rates,
+/// then each contact's factor on the pitch rate (a floor's, whose size is
+/// the ratio of the rates) or whole-degree step (a wall's).
+fn retail_draws(apos: &[Apos]) -> Vec<f64> {
+    let mut out = vec![f64::from(apos[0].3[0]), f64::from(apos[0].3[2])];
+    for w in apos.windows(2).filter(|w| w[1].0 == w[0].0) {
+        let (old, new) = (f64::from(w[0].3[0]), f64::from(w[1].3[0]));
+        let ratio = (new / old).abs();
+        if (0.55..=0.85).contains(&ratio) {
+            out.push(ratio);
+        } else {
+            out.push(((new - old).rem_euclid(360.0).round() + 63.0).rem_euclid(360.0) - 63.0);
+        }
+    }
+    out
+}
+
+/// `G_MissileLandAngles` (combat doc 12.7) against the sky frag's five
+/// bounces in `net/snapshots-skyfrag.bin`: with retail's draws pinned (the
+/// tumble and each floor contact's factor, which only the wire shows),
+/// every `apos` our wire sends matches retail's bit for bit. That holds
+/// the base laid onto the floor in whole 65536ths (0, and the 36.77124 a
+/// pitch 49 off the floor eases to), the yaw and roll left unwrapped (a
+/// roll of 1250), and the pitch rate's sign flip.
+#[test]
+fn bounce_angles_match_retail_on_1_1() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let retail = retail_apos("skyfrag");
+    let draws = retail_draws(&retail);
+    let log = ours_pinned(
+        fs,
+        "mp_carentan",
+        "probe_skyshot",
+        SKYSHOT,
+        &[("probe_part", "sky"), ("probe_weapon", "fraggrenade_mp")],
+        Script::Throw,
+        15_000,
+        draws.clone(),
+    );
+    report(&[], &log);
+    let ours = our_apos(&log);
+    assert!(retail.len() >= 6, "five bounces on retail: {retail:?}");
+    assert_eq!(
+        ours, retail,
+        "pinned draws {draws:?}\nours   {ours:?}\nretail {retail:?}"
+    );
 }
