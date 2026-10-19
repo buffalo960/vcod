@@ -67,6 +67,17 @@ at 0x3002959c. INFERRED: the first for `pm_type < 6`, the second above, and
 the clear when `cg.snap`'s `pm_type` is 4, the spectator, so a predicting
 spectator passes through players and playerclip.
 
+VERIFIED: `CG_PredictPlayerState` (cgame 0x300294f0) falls back to the
+interpolated snapshot (0x300291d0) on four tests at
+0x3002950f-0x30029544, three globals and `cg.snap`'s `pm_flags` 0x10000
+(`PMF_FOLLOW`), and reads no `pm_type` before the mask above. INFERRED, Q3's
+order: the globals are demo playback, `cg_nopredict` and synchronous
+clients. So the cgame predicts its own spectator, under 0x800011
+(INFERRED). vcod predicts `pm_type` 0, 1 and 4
+(`predict::predictable`) and clips the spectator with `MASK_SPECTATOR`,
+the same 0x800011; it draws a dead body and the intermission off the
+snapshot.
+
 VERIFIED: `BG_CheckProneValid` (0x2d428) traces with 0x810011 and 0x820011
 (0x2d4c2, 0x2d4d2), neither holding 0x2000000; `PM_UpdateLean` (0x32ac8)
 traces with 0x2810011 (0x32d07). INFERRED: the prone fit ignores players and
@@ -1456,8 +1467,10 @@ The gates:
 - **A client that sends no cmds** keeps the `solid` of its last link. That
   is retail's rule too (section 4.2), not a divergence; the same holds for
   a client at intermission, whose contents go 0 without a relink.
-- **The cgame's clear at `pm_type` 4** (section 1.1) is not coded. It is
-  moot here: a vcod client never predicts a spectator.
+- **Prediction of a dead body and the intermission.** Retail's cgame
+  predicts every own `pm_type` (section 1.1); vcod predicts 0, 1 and 4 and
+  draws 5, 6 and 7 off the snapshot. The spectator's clear at `pm_type` 4
+  is `MASK_SPECTATOR`.
 - **The packing clamp.** VERIFIED: retail clamps all three bytes to `[1,
   255]` (section 4.1). `Body::pack_solid` clamps `zd` to `[1, 255]` and `zu`
   to `[0, 255]` and passes `x` through. No player box reaches the

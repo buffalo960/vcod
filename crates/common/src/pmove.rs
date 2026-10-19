@@ -2073,6 +2073,11 @@ pub fn spectator_move(
 ) -> Vec<PmEvent> {
     let dt = dt.min(MAX_FRAME_MS / 1000.0);
     ps.on_ground = false;
+    if ps.rules.v15() {
+        spectator_friction_stored(ps, dt);
+        fly_accelerate_stored(ps, forward, right, up, wbuttons, dt);
+        return spectator_slide(ps, world, dt);
+    }
     // `PM_Friction` (0x2e460): a spectator is never walking, so only its
     // `pm_type` 4 arm (0x2e56d) drops speed, by the speed itself times 5
     // (0x70874), with no stop-speed floor.
@@ -2087,6 +2092,11 @@ pub fn spectator_move(
         ps.velocity = (ps.velocity.as_dvec3() * scale).as_vec3();
     }
     fly_accelerate(ps, forward, right, up, wbuttons, dt);
+    spectator_slide(ps, world, dt)
+}
+
+/// The fly move's `PM_StepSlideMove` in the spectator's hull, gravity off.
+fn spectator_slide(ps: &mut PlayerState, world: Option<&MoveWorld>, dt: f32) -> Vec<PmEvent> {
     let mut events = Vec::new();
     match world {
         Some(world) => {
@@ -2143,6 +2153,59 @@ fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt
     }
     let accel = (8.0 * f64::from(wishspeed.max(100.0)) * f64::from(dt)).min(add);
     ps.velocity = (ps.velocity.as_dvec3() + wishdir.as_dvec3() * accel).as_vec3();
+}
+
+/// 1.5b's and UO's `PM_Friction` for a spectator (1.5 0x1eab3, UO
+/// 0x234ef): the speed sums `(vz^2 + vy^2) + vx^2` and is stored, under one
+/// unit x, y and z stop, and otherwise the `pm_type` 4 term `speed *
+/// pm_spectatorfriction (5) * frametime` joins the stored drop of
+/// [`friction_stored`].
+fn spectator_friction_stored(ps: &mut PlayerState, dt: f32) {
+    let v = ps.velocity.as_dvec3();
+    let speed = ((v.z * v.z + v.y * v.y) + v.x * v.x).sqrt() as f32;
+    if speed < 1.0 {
+        ps.velocity = Vec3::ZERO;
+        return;
+    }
+    friction_stored(ps, speed, dt, true);
+}
+
+/// 1.5b's and UO's `PM_FlyMove` past the friction (1.5 0x1fcf9, UO
+/// 0x24838): `PM_CmdScale` (UO 0x23905) stored, the wish
+/// `right * scale * pml.right + forward * scale * pml.forward` plus `up *
+/// scale` on z, each component stored; the lean's 512 down and 256 up only
+/// while `ps.speed` is not 0 (UO 0x2492e, `ps+0x48`); then the stored
+/// `VectorNormalize` and `PM_Accelerate` (UO 0x2379e) at
+/// `pm_flyaccelerate` 8. The run scale `PM_CmdScale` multiplies in is 1 on
+/// a spectator.
+fn fly_accelerate_stored(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt: f32) {
+    let max = f.abs().max(r.abs()).max(u.abs());
+    let mut wishvel = Vec3::ZERO;
+    if max != 0.0 && ps.speed != 0.0 {
+        let (fd, rd, ud) = (f64::from(f), f64::from(r), f64::from(u));
+        let total = (ud * ud + fd * fd + rd * rd).sqrt();
+        let scale = f64::from(((f64::from(max) * f64::from(ps.speed)) / (127.0 * total)) as f32);
+        let (fwd, right) = view_vectors(ps);
+        let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());
+        wishvel = (right * (rd * scale) + fwd * (fd * scale)).as_vec3();
+        wishvel.z = (f64::from(wishvel.z) + ud * scale) as f32;
+    }
+    if ps.speed != 0.0 {
+        let down = if wbuttons & crate::net::msg::WBUTTON_LEAN_RIGHT != 0 {
+            512.0
+        } else {
+            0.0
+        };
+        let up = if wbuttons & crate::net::msg::WBUTTON_LEAN_LEFT != 0 {
+            256.0
+        } else {
+            0.0
+        };
+        wishvel.z = ((f64::from(wishvel.z) - down) + up) as f32;
+    }
+    let wishspeed = f64::from(x87::dot(wishvel, wishvel) as f32).sqrt() as f32;
+    let wishdir = x87::normalize_stored(wishvel);
+    accelerate_stored(ps, wishdir, wishspeed, 8.0, dt);
 }
 
 /// `PM_CheckDuck`'s stance arms (0x31840-0x31b80): a prone press the body
@@ -3484,7 +3547,7 @@ fn friction(ps: &mut PlayerState, world: &MoveWorld, dt: f32) {
         return;
     }
     if ps.rules.v15() {
-        return friction_stored(ps, speed, dt);
+        return friction_stored(ps, speed, dt, false);
     }
     let (s, dt) = (f64::from(speed), f64::from(dt));
     let mut drop = 0.0;
@@ -3566,8 +3629,9 @@ fn friction_msvc(ps: &mut PlayerState, dt: f32) {
 
 /// 1.5b's `PM_Friction` past the stop (0x1ebba-0x1ed59), which UO shares:
 /// the control, the drop, the new speed and its ratio to the speed are each
-/// stored, and each component is the float times the stored ratio.
-fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32) {
+/// stored, and each component is the float times the stored ratio. A
+/// `spectator`'s `pm_type` 4 term comes last.
+fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32, spectator: bool) {
     let r = |x: f64| f64::from(x as f32);
     let s = f64::from(speed);
     let dt = f64::from(dt);
@@ -3587,6 +3651,9 @@ fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32) {
     }
     if ps.water_level > 0 {
         drop = r(s * f64::from(WATER_FRICTION) * f64::from(ps.water_level) * dt + drop);
+    }
+    if spectator {
+        drop = r(s * f64::from(PM_SPECTATOR_FRICTION) * dt + drop);
     }
     let mut new = r(s - drop);
     if new < 0.0 {
