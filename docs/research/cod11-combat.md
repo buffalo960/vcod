@@ -4422,7 +4422,11 @@ raises the rifle again; that is retail's. Fixed: `PlayInput` keeps the
 selection 9.8 describes and sends it whatever `ps.weapon` reads, pinned by
 `empty_hands_keep_asking_for_the_weapon_held_before`. vcod-server's
 `leave_ladder` rearmed a climber whatever byte it sent, so the defect only
-showed against retail; it stays for callers that send no byte.
+showed against retail. It is gone (2026-10-19): every vcod sender now
+carries the byte (the play client, bots' `armed`, the A/B replays' logged
+bytes, the net probe's echo), pmove reads a 0 as retail does (1.8), and a
+climber is re-armed off the rungs only by the byte, through the putaway's
+short branch and the pickup on the same frame.
 
 VERIFIED, the same capture: retail holds `weapAnim` 0x200 for the whole
 climb with the byte 5. **vcod's pmove flipped the idle toggle every frame

@@ -4452,6 +4452,7 @@ pub fn lip_ahead(
         server_time: FRAME_MS,
         forward: paced_key_for(127, &ps, weapons),
         angles: [0, (to.y.atan2(to.x).to_degrees() * ANGLE2SHORT) as i32, 0],
+        weapon: ps.weapon,
         ..NULL_USERCMD
     };
     let dt = FRAME_MS as f32 / 1000.0;
@@ -4522,6 +4523,7 @@ pub fn unpin_yaw(
                 server_time: FRAME_MS * (i as i32 + 1),
                 forward: key,
                 angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+                weapon: ps.weapon,
                 ..NULL_USERCMD
             };
             player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);
@@ -4594,6 +4596,7 @@ pub fn push_off(
             forward: if i == 0 { 0 } else { 127 },
             up: if i == 0 { 127 } else { 0 },
             angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
+            weapon: ps.weapon,
             ..NULL_USERCMD
         };
         player_step(&mut ps, &mut delta, &mut ring, &cmd, dt, &mw, weapons);

@@ -870,7 +870,19 @@ The rest of the walk, read 2026-10-17 in 1.5b's `game.mp.i386.so`:
   term, the new speed and its ratio to the old. VERIFIED (0x1ebde, 0x1ec02,
   0x1ec3a, 0x1ec88, 0x1ecce, 0x1ecfa, 0x1ed03, 0x1ed25), and each
   component is the float times that ratio, rounded once (0x1ed2e-0x1ed59).
-  VERIFIED. vcod: `pmove::friction_stored` under `MoveRules::v15()`.
+  VERIFIED. The water term multiplies in the order
+  `((speed * pm_waterfriction) * waterlevel) * frametime`: the stored speed
+  times the cvar (0x1eca2-0x1eca5, GOT slot 0xcfc, `R_386_GLOB_DAT`
+  `pm_waterfriction` at 0x89a94), the `fild` of the byte at `ps+0xd9`
+  times that (0x1ecb7-0x1ecbe), then `pml.frametime` (0x1ecc6). VERIFIED,
+  disassembly; UO's is the same sequence at 0x236d8-0x2370a (GOT slot
+  0xeb4, `pm_waterfriction` at 0xb46cc, the byte at `ps+0xf1`).
+  VERIFIED. Ghidra prints both as `level * speed * W * dt`, which is not
+  the instruction order. 1.1d keeps the speed on the stack and folds
+  `pm_waterfriction` out: `(speed * waterlevel) * frametime`
+  (0x2e554-0x2e565). VERIFIED. vcod: `pmove::friction_stored` under
+  `MoveRules::v15()`, whose water term already ran in that order; no capture
+  wades, so none measures it.
 - `PM_StepSlideMove` (0x29942) forms the step-up's end on the stack
   (`stepSize + 1` plus the start's z, 0x29ccf-0x29ce2) and stores what
   the up trace left, `(stepSize + 1) * fraction - 1` (0x29d46-0x29d5f);

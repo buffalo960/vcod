@@ -627,9 +627,6 @@ pub struct PlayerState {
     pub weapon_rechamber: u64,
     /// The weapon a putaway in flight will raise; 0 means none is.
     pub pending_weapon: u8,
-    /// The weapon the ladder holstered, to be given back at the top. Retail
-    /// re-reads `cmd.weapon` there instead (`pmove::weapon::leave_ladder`).
-    pub stowed_weapon: u8,
     /// `ps.fWeaponPosFrac`, 0 at the hip and 1 at the sight. A netfield the
     /// client predicts from, so a constant here restarts its ADS lerp every
     /// snapshot (`pmove::weapon::advance_ads`).
@@ -887,7 +884,6 @@ impl PlayerState {
             ammoclip: [0; weapon::NUM_AMMO],
             weapon_rechamber: 0,
             pending_weapon: 0,
-            stowed_weapon: 0,
             weapon_pos_frac: 0.0,
             ads_active: false,
             aim_spread_scale: 0.0,
@@ -3718,6 +3714,7 @@ fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32, spectator: bool) {
         drop = r(control * f64::from(PM_FRICTION) * dt + drop);
     }
     if ps.water_level > 0 {
+        // Retail's instruction order, not Ghidra's print (cod15-movement.md 8).
         drop = r(s * f64::from(WATER_FRICTION) * f64::from(ps.water_level) * dt + drop);
     }
     if spectator {

@@ -64,7 +64,7 @@ fn the_round_clock_reaches_a_fresh_client() {
     let mut cl = common::connect(&mut sv, &q, &mut now);
     for _ in 0..10 {
         now += Duration::from_millis(50);
-        cl.send_frame(&NULL_USERCMD);
+        cl.send_frame(&crate::common::echo_weapon(&cl, &NULL_USERCMD));
         common::step(&mut sv, &q, &mut cl, now);
     }
     let snap = cl.snapshots().newest().expect("a snapshot");
@@ -149,8 +149,8 @@ fn only_the_killed_client_is_sent_the_respawn_text() {
         common::step_pair(sv, (&qa, ca), (&qb, cb), now)
     };
     for _ in 0..40 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
     }
     // Neither client has a HUD element of its own before the kill.
@@ -180,13 +180,13 @@ fn only_the_killed_client_is_sent_the_respawn_text() {
     // The wait between the taps lets the knockback decay and the semi-auto
     // latch release.
     for shot in 0..2 {
-        ca.send_frame(&fire);
-        cb.send_frame(&facing_a);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &fire));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
         step(&mut sv, &mut ca, &mut cb);
         if shot == 0 {
             for _ in 0..30 {
-                ca.send_frame(&ads);
-                cb.send_frame(&facing_a);
+                ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+                cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
                 step(&mut sv, &mut ca, &mut cb);
             }
         }
@@ -198,8 +198,8 @@ fn only_the_killed_client_is_sent_the_respawn_text() {
     // `waitRespawnButton` opens with a `wait 0` of its own before the text.
     let mut killcam_seen = false;
     for _ in 0..260 {
-        ca.send_frame(&ads);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cb);
         let sb = cb.snapshots().newest().unwrap();
         if sb.ps.field_i32(p, "pm_flags") & 0x10000 != 0 {
@@ -219,8 +219,8 @@ fn only_the_killed_client_is_sent_the_respawn_text() {
     }
     assert!(killcam_seen, "B was sent no killcam elements");
     for _ in 0..5 {
-        ca.send_frame(&ads);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cb);
     }
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
@@ -264,8 +264,8 @@ fn only_the_killed_client_is_sent_the_respawn_text() {
         ..NULL_USERCMD
     };
     for _ in 0..20 {
-        ca.send_frame(&ads);
-        cb.send_frame(&use_key);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &ads));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &use_key));
         step(&mut sv, &mut ca, &mut cb);
     }
     let sb = cb.snapshots().newest().unwrap();
@@ -318,8 +318,8 @@ fn a_disconnect_frees_the_clients_own_elements() {
     cb.send_reliable("kill");
     let mut texted = false;
     for _ in 0..100 {
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cb);
         let hud = &cb.snapshots().newest().unwrap().ps.arrays.hud_current;
         if hud.first().is_some_and(|e| e.get(f::TYPE) == TYPE_TEXT) {
@@ -333,7 +333,7 @@ fn a_disconnect_frees_the_clients_own_elements() {
     // Past `sv_zombietime`, which holds B's slot after the drop.
     let mut at = None;
     for _ in 0..50 {
-        ca.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
         at = Some(step(&mut sv, &mut ca, &mut cb));
     }
 
@@ -343,8 +343,8 @@ fn a_disconnect_frees_the_clients_own_elements() {
     let mut cc = NetClient::start_with_qport(common::ClientEnd(qb.clone()), at.unwrap(), 0x2003);
     let mut snaps = 0;
     for _ in 0..200 {
-        ca.send_frame(&NULL_USERCMD);
-        cc.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cc.send_frame(&crate::common::echo_weapon(&cc, &NULL_USERCMD));
         step(&mut sv, &mut ca, &mut cc);
         if cc.snapshots().newest().is_some() {
             snaps += 1;
@@ -389,8 +389,8 @@ fn two_sd_clients_are_sent_both_bombzone_objectives() {
     let id_before = sv.server_id();
     for _ in 0..200 {
         now += Duration::from_millis(50);
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     assert_eq!(sv.script_aborts(), Vec::<String>::new());

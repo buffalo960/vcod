@@ -222,23 +222,17 @@ pub fn join_pair_stamped(
         match ca.snapshots().newest().filter(|_| !stamps_a.is_empty()) {
             Some(snap) if ca.state() == NetState::Active => {
                 let end = snap.server_time + FRAME_MS as i32;
-                let cmds = stamped(
-                    &ca,
-                    &vcod_common::net::msg::NULL_USERCMD,
-                    stamps_a,
-                    last_a,
-                    end,
-                );
+                let cmds = stamped(&ca, &holding(&ca), stamps_a, last_a, end);
                 if let Some(c) = cmds.last() {
                     last_a = c.server_time;
                 }
                 ca.send_cmds(&cmds);
             }
             _ => {
-                ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+                ca.send_frame(&holding(&ca));
             }
         }
-        cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        cb.send_frame(&holding(&cb));
         let (ea, eb) = step_pair(sv, (qa, &mut ca), (qb, &mut cb), *now);
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
             for e in events {
@@ -300,7 +294,7 @@ pub fn join_trio(
     for _ in 0..600 {
         *now += Duration::from_millis(50);
         for c in cl.iter_mut() {
-            c.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+            c.send_frame(&holding(c));
         }
         let [a, b, c] = &mut cl;
         let events = step_trio(
@@ -884,7 +878,7 @@ pub fn replay_as(
         // three seconds of that; a few frames is enough to converge.
         let settle = UserCmd {
             angles: [0, short_of(yaw), 0],
-            ..NULL_USERCMD
+            ..holding(cl)
         };
         for _ in 0..4 {
             *now += Duration::from_millis(FRAME_MS as u64);
@@ -1381,7 +1375,7 @@ pub fn join(
     let mut j = Join::new(team, weapon);
     for _ in 0..400 {
         *now += Duration::from_millis(50);
-        cl.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        cl.send_frame(&holding(&cl));
         for e in step(sv, q, &mut cl, *now) {
             match e {
                 NetEvent::ServerCommand(tokens) => j.on_server_command(&tokens, &mut cl, *now),
@@ -1602,6 +1596,20 @@ pub fn holding(cl: &NetClient<ClientEnd>) -> UserCmd {
             .newest()
             .map_or(0, |s| s.ps.field_i32(p, "weapon") as u8),
         ..NULL_USERCMD
+    }
+}
+
+/// `cmd` with a weapon byte of 0 filled with the weapon the newest snapshot
+/// says `cl` holds, as a client echoing `ps.weapon` sends it ([`holding`]).
+/// For the hand-written cmds that predate pmove reading a 0 as retail does;
+/// a test that means a 0 sends its cmd directly.
+pub fn echo_weapon(cl: &NetClient<ClientEnd>, cmd: &UserCmd) -> UserCmd {
+    if cmd.weapon != 0 {
+        return *cmd;
+    }
+    UserCmd {
+        weapon: holding(cl).weapon,
+        ..*cmd
     }
 }
 

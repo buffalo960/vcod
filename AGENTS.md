@@ -497,7 +497,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - The cmd's weapon byte is the client's own selection (`cg_weaponSelect`,
   `play::input::PlayInput::selected`), never an echo of `ps.weapon`;
   `switchToWeapon` and a weapon pickup only send the client `a <weapon>`
-  (combat doc 9.8).
+  (combat doc 9.8). pmove reads a byte of 0 as retail does, a switch to
+  empty hands (1.8), so every caller that steps a player (bots, nav walks
+  on a bot's playerstate, test cmds: `common::holding`, `echo_weapon`)
+  sends the weapon it holds.
 - The first usercmd of a message decodes against a base built from the
   playerstate (sight bit = `fWeaponPosFrac != 0`, stance from `eFlags`), not
   the last cmd sent. vcod's writer sends the full branch every cmd for that
