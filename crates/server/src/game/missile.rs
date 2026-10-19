@@ -340,6 +340,7 @@ pub enum Turn {
     Freed,
 }
 
+#[derive(Default)]
 pub struct Missiles {
     live: Vec<Missile>,
     /// The server speaks United Offensive's protocol: every missile takes
@@ -353,18 +354,6 @@ pub struct Missiles {
     /// Water entry splashes raised since the caller last took them
     /// ([`Missiles::take_splashes`]).
     splashes: Vec<crate::game::temp_entity::TempEntity>,
-}
-
-impl Default for Missiles {
-    fn default() -> Missiles {
-        Missiles {
-            live: Vec::new(),
-            uo: false,
-            falls: false,
-            draws: Draws::default(),
-            splashes: Vec::new(),
-        }
-    }
 }
 
 /// Section 11.3: where a throw starts and how fast it leaves, from the
@@ -800,6 +789,7 @@ impl Missile {
 
     /// `G_BounceMissile` (12.4). Returns whether the contact was loud enough
     /// for the caller to raise 177.
+    #[allow(clippy::too_many_arguments)]
     fn bounce(
         &mut self,
         prev_ms: i32,

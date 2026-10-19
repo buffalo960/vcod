@@ -15194,7 +15194,7 @@ mod tests {
                 dir: [1.0, 0.0, 0.0],
                 knockback: false,
                 attacker: Some(2),
-                attacker_origin: Some(FOLLOW_P2),
+                dead_yaw: 0,
                 fatal: false,
             },
         ));

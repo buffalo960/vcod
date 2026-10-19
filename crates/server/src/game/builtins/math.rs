@@ -121,6 +121,21 @@ pub(crate) fn vectoangles(v: [f32; 3]) -> [f32; 3] {
     [pitch, yaw, 0.0]
 }
 
+/// `vectoyaw` (1.1d 0x3dccc): the atan in double, stored as a float, and
+/// 360 added on the stack when it is negative, so a caller that truncates
+/// it reads the sum unrounded. 0 for a vector with no horizontal part.
+pub(crate) fn vectoyaw(v: [f32; 3]) -> f64 {
+    if v[1] == 0.0 && v[0] == 0.0 {
+        return 0.0;
+    }
+    let yaw = (f64::from(v[1]).atan2(f64::from(v[0])) * 180.0 / std::f64::consts::PI) as f32;
+    if yaw < 0.0 {
+        f64::from(yaw) + 360.0
+    } else {
+        f64::from(yaw)
+    }
+}
+
 /// `anglesToForward(angles)`: `AngleVectors`'s forward half, same lineage as
 /// `vectorToAngles` above and its inverse on a unit vector.
 pub fn angles_to_forward(
