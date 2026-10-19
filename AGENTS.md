@@ -616,7 +616,7 @@ dropped, so test such a builtin through `ScriptRuntime`.
   with cracks along other facet seams, which a round slips through, and
   the brush clip stores its distances (`bsp-ibsp59-format.md`, "Patch
   collision on 1.5 and UO"), and so does the patch capsule arm and the terrain capsule clip, which
-  reads the UO-built planes; pmove's fall stores its gravity,
+  reads the UO-built planes and edge frames; pmove's fall stores its gravity,
   its tail and the trace's end point, and `PM_ClipVelocity`,
   `VectorNormalize` and `PM_Friction` store theirs (`cod15-movement.md` 7). A 1.5 or
   UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
