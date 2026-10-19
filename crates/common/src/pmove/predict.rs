@@ -7,9 +7,9 @@ use super::{PlayerState, Stance, weapon};
 use crate::movetrace::MoveWorld;
 use crate::net::flags::{
     EF_CROUCH, EF_IN_VEHICLE_V22, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND,
-    EF_PRONE, PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED,
-    PMF_JUMP_HELD, PMF_JUMP_PENALTY, PMF_LADDER, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE,
-    PMF_SPRINT_V22, PMF_WINDED_V22,
+    EF_PRONE, PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PM_SPECTATOR, PMF_BACKWARDS_RUN,
+    PMF_DUCKED, PMF_JUMP_HELD, PMF_JUMP_PENALTY, PMF_LADDER, PMF_PRONE, PMF_PRONE_BLOCKED,
+    PMF_PRONE_DIVE, PMF_SPRINT_V22, PMF_WINDED_V22,
 };
 use crate::net::msg::{self, UserCmd};
 use crate::net::protocol::{ENTITYNUM_NONE, Protocol};
@@ -30,8 +30,17 @@ pub struct Predicted {
     pub ring: EventRing,
 }
 
-/// Whether a `pm_type` is one the client predicts: normal and linked.
+/// Whether a `pm_type` is one the client predicts: normal, linked and a
+/// free-flying spectator. Retail's `CG_PredictPlayerState` (cgame 0x300294f0)
+/// predicts every own `pm_type`; vcod draws dead and intermission states off
+/// the snapshot (docs/research/cod11-player-clip.md 1.1).
 pub fn predictable(pm_type: i32) -> bool {
+    matches!(pm_type, PM_NORMAL | PM_NORMAL_LINKED | PM_SPECTATOR)
+}
+
+/// Whether a predictable `pm_type` is a body on foot, which has a view
+/// weapon, a damage kick and a gun to step: not a spectator.
+pub fn on_foot(pm_type: i32) -> bool {
     matches!(pm_type, PM_NORMAL | PM_NORMAL_LINKED)
 }
 
@@ -223,8 +232,23 @@ pub fn run_cmd(
     if cmd.server_time.wrapping_sub(pred.command_time) <= 0 {
         return;
     }
-    // Dead, spectator and intermission states are drawn from the snapshot.
-    if predictable(pred.pm_type) {
+    // Dead and intermission states are drawn from the snapshot.
+    if pred.pm_type == PM_SPECTATOR {
+        // Retail's mask for one is 0x810011 less 0x10000 (cgame 0x3002959c):
+        // the spectator's own, which neither bodies nor playerclip stop.
+        cmd::chop(pred.command_time, cmd, |step, dt| {
+            cmd::spectator_step(
+                &mut pred.ps,
+                pred.delta_angles,
+                &mut pred.ring,
+                step,
+                dt,
+                Some(world),
+                true,
+            );
+            pred.ps.jump_latched
+        });
+    } else if predictable(pred.pm_type) {
         pred.ps.linked = pred.pm_type == PM_NORMAL_LINKED;
         cmd::chop(pred.command_time, cmd, |step, dt| {
             let out = cmd::player_step(

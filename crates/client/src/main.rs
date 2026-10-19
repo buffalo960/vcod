@@ -5038,7 +5038,7 @@ impl ApplicationHandler for App {
                                     // A followed player's view weapon, zoom and scope
                                     // come off the snapshot, as retail draws them.
                                     let view_ps = net.snapshots().newest().and_then(|s| {
-                                        pmove::predict::predictable(pm_type).then(|| {
+                                        pmove::predict::on_foot(pm_type).then(|| {
                                             let mut v = match &predicted {
                                                 Some(v) => play::view::ViewPs::from_predicted(
                                                     &v.pred,
@@ -5063,7 +5063,7 @@ impl ApplicationHandler for App {
                                     if let (Some(hud), Some(s)) =
                                         (&mut self.hud, net.snapshots().newest())
                                     {
-                                        let own = pmove::predict::predictable(pm_type);
+                                        let own = pmove::predict::on_foot(pm_type);
                                         hud.feed_damage(
                                             p,
                                             &s.ps,
@@ -5150,7 +5150,7 @@ impl ApplicationHandler for App {
                                         && let (Some(hud), Some(s)) =
                                             (&mut self.hud, net.snapshots().newest())
                                     {
-                                        let own = pmove::predict::predictable(pm_type);
+                                        let own = pmove::predict::on_foot(pm_type);
                                         let [kp, ky, kr] = hud.view_kick(
                                             p,
                                             &s.ps,
@@ -5456,8 +5456,8 @@ impl ApplicationHandler for App {
                                     // `0x300371f0` poses the view weapon off the
                                     // finished view, the gun's aim stepped once for
                                     // it and the scope (combat doc 17.4).
-                                    let local_player = ps_client == client_num
-                                        && pmove::predict::predictable(pm_type);
+                                    let local_player =
+                                        ps_client == client_num && pmove::predict::on_foot(pm_type);
                                     if let Some(hud) = &mut self.hud {
                                         hud.set_shock_left(shock.left_ms);
                                     }
