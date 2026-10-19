@@ -4,14 +4,18 @@
 //! snapshot and the comparison is over those, never over a settled sample.
 //!
 //! The `--save-ads` captures ride the same replay: the sight fraction and
-//! the spread counter are transients too, and every retail sample of them
-//! has to be met by one of ours within a snapshot's worth of time.
+//! the spread counter are transients too.
+//!
+//! Every capture logs each cmd the probe sent and each snapshot's
+//! `commandTime`, and the replay runs retail's cmds frame for frame
+//! (`common::CmdLog`), so ours samples the same frames retail did and every
+//! channel is compared sample for sample, with no slack.
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
 mod common;
 
-use common::{CMD_MS, FRAME_MS, Sample, Trace, parse_fixture, replay};
+use common::{Sample, Trace, parse_fixture, replay};
 use std::collections::BTreeSet;
 use vcod_common::net::protocol::PROTOCOL_V1;
 
@@ -113,9 +117,8 @@ fn ring_events(trace: &[Trace], want: impl Fn(i32) -> bool) -> usize {
 /// rides `PmEvent.parm` inside vcod only: `eventParms[i]` is an 8-bit
 /// netfield, so a 4000 ms fuse would reach a client as 160. Retail writes 0
 /// on every throw frame it recorded (`mp_carentan-tdm-grenade-shooter.txt`
-/// reads `eventParms=0,0,0,0` there, and so does every settled block of the
-/// capture this gate replays); those `!trace` lines carry no `eventParms`
-/// column of their own, so retail's side of the comparison is that constant.
+/// reads `eventParms=0,0,0,0` there, and so does this gate's own capture,
+/// whose `!trace` lines carry the column).
 fn fire_parms(trace: &[Trace]) -> BTreeSet<i32> {
     let mut out = BTreeSet::new();
     for w in trace.windows(2) {
@@ -133,20 +136,13 @@ fn fire_parms(trace: &[Trace]) -> BTreeSet<i32> {
     out
 }
 
-/// The `grenadeTimeLeft` values a trace took, bucketed to the frame: the fuse
-/// is armed and cleared inside a frame, so the exact ms a sample catches it at
-/// is the sampling grid's and not the machine's.
+/// The `grenadeTimeLeft` values a trace took.
 fn fuses(trace: &[Trace]) -> BTreeSet<i32> {
-    trace
-        .iter()
-        .filter_map(|t| t.grenade_time_left)
-        .map(|v| (v + 25) / 50 * 50)
-        .collect()
+    trace.iter().filter_map(|t| t.grenade_time_left).collect()
 }
 
-/// The longest `weaponDelay` a trace sampled: `holdFireTime` on a pullback,
-/// `meleeDelay` on a swing, 0 anywhere else. Compared to one frame, since
-/// where the first sample after the write falls is the grid's.
+/// The longest `weaponDelay` a trace sampled: what is left of
+/// `holdFireTime` on a pullback, of `meleeDelay` on a swing, 0 anywhere else.
 fn peak_delay(trace: &[Trace]) -> i32 {
     trace
         .iter()
@@ -156,19 +152,8 @@ fn peak_delay(trace: &[Trace]) -> i32 {
 }
 
 /// How many samples a trace spent in `state`, and how many separate runs
-/// they fell into.
-///
-/// Both are compared: the total with one sample of slack per run, the run
-/// count to one run. A run bounds the state's length to `((N-1)*50, (N+1)*50)` ms and no
-/// tighter (player-model-anim-system.md, "The weapon channel"), so a single
-/// run's length is the state's duration plus where its edges happened to
-/// fall in the sample grid. Retail's snapshots arrive 33 to 66 ms apart and
-/// the replay's exactly 50, so that placement is not a fact about the
-/// weapon: on the first carentan capture's `sustained_fire` two of retail's
-/// six shots shared a sample with the shot before them and read as one run
-/// of 6, and which of ours do is a coincidence of the tap grid. The totals
-/// are the durations, and they compare. A capture with a cmd log replays
-/// retail's frames, so its totals and runs compare exactly.
+/// they fell into. Both are compared exactly: the replay samples retail's
+/// frames, so a run's length is the state's duration on both sides.
 fn state_samples(trace: &[Trace], state: i32) -> (usize, usize) {
     let (mut total, mut runs, mut inside) = (0, 0, false);
     for t in trace {
@@ -183,21 +168,11 @@ fn state_samples(trace: &[Trace], state: i32) -> (usize, usize) {
 
 /// The `weapAnim` indices a trace took, without the 512 restart toggle: every
 /// write flips it, so the raw word is not comparable (combat doc, section 1.2).
-///
-/// A lone state-0 sample between a shot's 3 and its rechamber's 4 is left
-/// out: that idle stands for the one cmd between the release check and the
-/// rechamber (cod11-combat.md 1.4), and whether a snapshot lands on it is the
-/// cmd grid's business. Retail's 16 ms probe caught it on three of fourteen
-/// rechambers; the replay's 25 ms cmds catch it on others. A capture with a
-/// cmd log keeps it: its replay runs retail's cmds.
-fn anims(trace: &[Trace], exact: bool) -> BTreeSet<i32> {
-    let states: Vec<i32> = trace.iter().map(|t| t.weaponstate).collect();
-    trace
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| exact || !common::rechamber_bridge(&states, *i))
-        .map(|(_, t)| t.weap_anim & 511)
-        .collect()
+/// The lone state-0 sample between a shot's 3 and its rechamber's 4 is kept:
+/// it is the one cmd between the release check and the rechamber
+/// (cod11-combat.md 1.4), and the replay runs retail's cmds.
+fn anims(trace: &[Trace]) -> BTreeSet<i32> {
+    trace.iter().map(|t| t.weap_anim & 511).collect()
 }
 
 /// The `torsoAnim` indices a trace took, toggle masked off. The weapon channel
@@ -251,35 +226,13 @@ fn trace_of(s: &Sample, ms: i64) -> Trace {
     }
 }
 
-/// A snapshot's worth of slack when a retail sample is looked for among
-/// ours: retail's arrive 33 to 66 ms apart, ours every 50.
-const SAMPLE_SLACK_MS: i64 = 60;
-/// How far a matched sample may sit from retail's: half a frame of the
-/// fastest slope either transient has. The ramp covers a sixth of the way
-/// per frame at its fastest (300 ms up), the counter 51 of 255 (the
-/// carbine's decay), and the probe steps pmove every 16 ms where the replay
-/// steps it every 25, so the two grids sit up to half a frame apart on a
-/// slope. Carentan's `ads_walk` decay reads 25.5 off at every sample for
-/// exactly that reason.
-const FRAC_TOL: f32 = 0.09;
-const SPREAD_TOL: f32 = 26.0;
-
-/// Every retail sample of the sight fraction and the spread counter has one
-/// of ours within [`SAMPLE_SLACK_MS`] that reads the same to tolerance.
-/// Returns the misses, worst first.
-///
-/// [`FRAC_TOL`] buys slack for a point on a ramp, where the two sample grids
-/// sit half a frame apart. It buys none at the ends: 0.0 and 1.0 are where
-/// the ramp clamps, so a sample retail reads saturated at is one ours has to
-/// read saturated at too, exactly. That end is what the client's zoom sits
-/// at while a sight is held, and a fraction that leaves it for a frame is
-/// the twitch a scoped rifle shows -- `kar98k_sniper_mp` turns the same
-/// error into a four times larger swing than `m1carbine_mp`, `adsZoomFov`
-/// 16 against 65.
-/// [`transient_misses`] for a step replayed off its cmd log, whose samples
-/// carry retail's `ms` frame for frame: every retail sample has ours, and
-/// the two read the same to the capture's print (4 and 2 decimals).
-fn exact_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
+/// Every retail sample's sight fraction and spread counter against ours of
+/// the same frame, to the capture's print (4 and 2 decimals). That end of
+/// the ramp is what the client's zoom sits at while a sight is held, and a
+/// fraction that leaves it for a frame is the twitch a scoped rifle shows:
+/// `kar98k_sniper_mp` turns the same error into a four times larger swing
+/// than `m1carbine_mp`, `adsZoomFov` 16 against 65.
+fn transient_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
     let mut bad = Vec::new();
     for r in retail {
         let (Some(rf), Some(rs)) = (r.pos_frac, r.spread) else {
@@ -292,73 +245,21 @@ fn exact_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
         let (of, os) = (o.pos_frac.unwrap_or(f32::NAN), o.spread.unwrap_or(f32::NAN));
         if !((rf - of).abs() <= 0.00005 && (rs - os).abs() <= 0.005) {
             bad.push(format!(
-                "at {}ms retail fWeaponPosFrac {rf:.4} aimSpreadScale {rs:.2}, ours {of:.4} {os:.2}",
-                r.ms
-            ));
-        }
-    }
-    bad
-}
-
-fn transient_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
-    let mut bad = Vec::new();
-    for r in retail {
-        let (Some(rf), Some(rs)) = (r.pos_frac, r.spread) else {
-            continue;
-        };
-        let near: Vec<&Trace> = ours
-            .iter()
-            .filter(|o| (o.ms - r.ms).abs() <= SAMPLE_SLACK_MS)
-            .collect();
-        if near.is_empty() {
-            continue;
-        }
-        let saturated = rf == 0.0 || rf == 1.0;
-        let fracs: Vec<f32> = near.iter().filter_map(|o| o.pos_frac).collect();
-        let frac_ok = if saturated {
-            fracs.contains(&rf)
-        } else {
-            // On the slope, retail's sample can fall between two of ours,
-            // which is a ramp passing through its value rather than a miss:
-            // the two grids are 33-66 ms and 50 ms apart and the sniper's
-            // `ads_walk` puts retail's 0.573 between our 0.500 and 0.667.
-            // Bracketing says that directly; the tolerance is the fallback
-            // for an end of the window with nothing on the far side.
-            fracs.iter().any(|f| (f - rf).abs() <= FRAC_TOL)
-                || fracs.windows(2).any(|w| (w[0] - rf) * (w[1] - rf) <= 0.0)
-        };
-        let spread_ok = near
-            .iter()
-            .any(|o| o.spread.is_some_and(|s| (s - rs).abs() <= SPREAD_TOL));
-        if !frac_ok || !spread_ok {
-            let ours_at: Vec<String> = near
-                .iter()
-                .map(|o| {
-                    format!(
-                        "{}ms {:.3}/{:.1} pm=0x{:x} ground={}",
-                        o.ms,
-                        o.pos_frac.unwrap_or(f32::NAN),
-                        o.spread.unwrap_or(f32::NAN),
-                        o.pm_flags.unwrap_or(-1),
-                        o.ground_entity.unwrap_or(-1),
-                    )
-                })
-                .collect();
-            bad.push(format!(
-                "at {}ms retail fWeaponPosFrac {rf:.3} aimSpreadScale {rs:.1} \
-                 pm=0x{:x} ground={}, ours {}",
+                "at {}ms retail fWeaponPosFrac {rf:.4} aimSpreadScale {rs:.2} pm=0x{:x} \
+                 ground={}, ours {of:.4} {os:.2} pm=0x{:x} ground={}",
                 r.ms,
                 r.pm_flags.unwrap_or(-1),
                 r.ground_entity.unwrap_or(-1),
-                ours_at.join(", ")
+                o.pm_flags.unwrap_or(-1),
+                o.ground_entity.unwrap_or(-1),
             ));
         }
     }
     bad
 }
 
-/// Every retail sample's `viewangles` against the nearest of ours, with no
-/// tolerance. The view is not a transient: retail writes it as
+/// Every retail sample's `viewangles` against ours of the same frame, with
+/// no tolerance. The view is not a transient: retail writes it as
 /// `SHORT2ANGLE(cmd.angles + delta_angles)` and the replay sends the
 /// capture's own cmd angles, so every axis has to read the same float.
 ///
@@ -367,17 +268,16 @@ fn transient_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
 /// one, and the self-clean assert -- which only knows that *something* still
 /// differs -- would keep passing while it did.
 ///
-/// Empty for a capture taken before the trace carried the three columns,
-/// which is every one but the scoped rifle's.
 fn view_misses(retail: &[Trace], ours: &[Trace]) -> Vec<String> {
     let mut bad = Vec::new();
     for r in retail {
         let Some(rv) = r.viewangles else { continue };
         let Some(ov) = ours
             .iter()
-            .filter(|o| (o.ms - r.ms).abs() <= SAMPLE_SLACK_MS)
-            .find_map(|o| o.viewangles)
+            .find(|o| o.ms == r.ms)
+            .and_then(|o| o.viewangles)
         else {
+            bad.push(format!("at {}ms ours has no sample", r.ms));
             continue;
         };
         if ov != rv {
@@ -444,14 +344,17 @@ fn check(map: &str, gametype: &str, kind: &str) {
             for (side, trace) in [("retail", &step.trace), ("ours", ours)] {
                 for t in trace {
                     println!(
-                        "{side} {kind} {label} {}ms state={} anim={} torso={} seq={} frac={:?} spread={:?} view={:?}",
+                        "{side} {kind} {label} {}ms st={:?} ct={:?} state={} anim={} torso={} seq={} frac={:?} spread={:?} delay={:?} view={:?}",
                         t.ms,
+                        t.server_time,
+                        t.command_time,
                         t.weaponstate,
                         t.weap_anim,
                         t.torso_anim,
                         t.event_sequence,
                         t.pos_frac,
                         t.spread,
+                        t.weapon_delay,
                         t.viewangles,
                     );
                 }
@@ -459,14 +362,17 @@ fn check(map: &str, gametype: &str, kind: &str) {
         }
     }
     let mut bad = Vec::new();
-    for (i, ((step, ours), samples)) in steps.iter().zip(&mine).zip(&replayed).enumerate() {
+    for ((step, ours), samples) in steps.iter().zip(&mine).zip(&replayed) {
         // A walk is the capture's own exclusion: the stall response steers
         // it, so where it ends up is not reproducible.
         if step.walks {
             continue;
         }
-        // A step replayed off retail's cmd log is compared exactly.
-        let exact = step.cmds.is_some();
+        assert!(
+            step.cmds.is_some(),
+            "{path}: step {} has no !cmds line; recapture it",
+            step.label
+        );
         let (rs, os) = (shots(&step.trace), shots(ours));
         if rs != os {
             bad.push(format!("{}: retail {rs} shots, ours {os}", step.label));
@@ -495,8 +401,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
             ));
         }
         let (rd, od) = (peak_delay(&step.trace), peak_delay(ours));
-        let delay_same = !step.trace.iter().any(|t| t.weapon_delay.is_some())
-            || (rd - od).abs() <= FRAME_MS as i32;
+        let delay_same = rd == od;
         match gapped(map, kind, &step.label, "weaponDelay") {
             Some(why) => assert!(
                 !delay_same,
@@ -519,20 +424,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
             if r == 0 && o == 0 {
                 continue;
             }
-            // How often the state was entered is a fact about the machine
-            // and not about the sampling, so it is compared on its own, to
-            // one run: a state ours flickers into once per shot where retail
-            // enters it once would otherwise buy itself a sample of slack per
-            // flicker and pass. The first carentan capture's `crouch_fire`
-            // entered `weaponstate` 3 three times where ours entered it
-            // twice, two shots having shared a sample, which is where the
-            // one comes from. A step replayed off its cmd log has neither.
-            let slack = r_runs.max(o_runs).max(1);
-            let differs = if exact {
-                r != o || r_runs != o_runs
-            } else {
-                r.abs_diff(o) > slack || r_runs.abs_diff(o_runs) > 1
-            };
+            let differs = r != o || r_runs != o_runs;
             if differs {
                 state_bad.push(format!(
                     "{}: weaponstate {state} holds {r} samples over {r_runs} runs on \
@@ -550,7 +442,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
             ),
             None => bad.append(&mut state_bad),
         }
-        let same_anims = anims(&step.trace, exact) == anims(ours, exact);
+        let same_anims = anims(&step.trace) == anims(ours);
         match gapped(map, kind, &step.label, "weapAnim") {
             Some(why) => assert!(
                 !same_anims,
@@ -561,8 +453,8 @@ fn check(map: &str, gametype: &str, kind: &str) {
             None if !same_anims => bad.push(format!(
                 "{}: weapAnim indices retail {:?} ours {:?}",
                 step.label,
-                anims(&step.trace, exact),
-                anims(ours, exact)
+                anims(&step.trace),
+                anims(ours)
             )),
             None => {}
         }
@@ -578,17 +470,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
         } else {
             torsos(&step.trace) == torsos(ours)
         };
-        // Ours opens every step with the snapshot the step before it ended
-        // on; retail's own first sample is whenever its next snapshot
-        // happened to arrive. Where that is more than a cmd in, retail missed
-        // the write on the step boundary and ours has to drop the sample that
-        // holds it or it counts a flip retail could not have seen.
-        // A step replayed off its cmd log already pairs sample for sample.
-        let aligned = usize::from(!exact && step.trace.first().is_some_and(|t| t.ms >= CMD_MS));
-        let (r_flips, o_flips) = (
-            torso_flips(&step.trace),
-            torso_flips(&ours[aligned.min(ours.len())..]),
-        );
+        let (r_flips, o_flips) = (torso_flips(&step.trace), torso_flips(ours));
         match gapped(map, kind, &step.label, "torsoAnim") {
             Some(why) => assert!(
                 !same_torsos,
@@ -628,21 +510,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
                 }
             }
         }
-        // The view after the step's first cmd: retail's samples taken after
-        // the step began follow it (the probe sends one every 16 ms from the
-        // start), and ours' opening one, which precedes it, has no
-        // counterpart among them. Retail's opening sample after a walk holds
-        // where the walk's stall turns left the view, which no replay
-        // reproduces (the walk is the capture's own exclusion above).
-        let opens_after_walk = i > 0 && steps[i - 1].walks;
-        let r_view: Vec<Trace> = step
-            .trace
-            .iter()
-            .filter(|t| !(opens_after_walk && t.ms == 0))
-            .cloned()
-            .collect();
-        let skip = usize::from(!exact && r_view.first().is_none_or(|t| t.ms > 0));
-        let view_bad = view_misses(&r_view, &ours[skip.min(ours.len())..]);
+        let view_bad = view_misses(&step.trace, ours);
         match gapped(map, kind, &step.label, "viewangles") {
             Some(why) => assert!(
                 !view_bad.is_empty(),
@@ -659,11 +527,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
             )),
             None => {}
         }
-        let misses = if exact {
-            exact_misses(&step.trace, ours)
-        } else {
-            transient_misses(&step.trace, ours)
-        };
+        let misses = transient_misses(&step.trace, ours);
         match gapped(map, kind, &step.label, "transients") {
             Some(why) => assert!(
                 !misses.is_empty(),
