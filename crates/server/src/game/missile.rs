@@ -534,13 +534,12 @@ impl Missile {
             bones,
         ) {
             hit.tr.fraction = h.fraction;
-            hit.tr.endpos = if self.kept() {
-                from + travel * h.fraction
+            let arith = if self.kept() {
+                vcod_common::patch::Arith::Kept
             } else {
-                // The locational trace's last step (UO 0x809b457): the
-                // move stored, each `start + move * fraction` rounded once.
-                (from.as_dvec3() + travel.as_dvec3() * f64::from(h.fraction)).as_vec3()
+                vcod_common::patch::Arith::Stored
             };
+            hit.tr.endpos = crate::game::combat::trace_point(from, to, h.fraction, arith);
             hit.tr.normal = h.normal;
             hit.tr.surface_flags = 0;
             hit.player = Some(h.slot);

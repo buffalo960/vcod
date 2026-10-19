@@ -845,10 +845,10 @@ fn fire_round(
         match traced {
             Traced::Player {
                 slot,
-                fraction,
                 hitloc,
+                point,
+                ..
             } => {
-                let point = start + (end - start) * fraction;
                 if let Some(u) = tracing {
                     out.effects.push(tracer(point, u.weapon));
                 }
@@ -1023,9 +1023,10 @@ pub fn flesh_impacts(
 enum Traced {
     Player {
         slot: usize,
-        /// Along `muzzle..end`.
-        fraction: f32,
         hitloc: &'static str,
+        /// Where along `muzzle..end`, as the server build rounds it
+        /// ([`trace_point`]).
+        point: Vec3,
     },
     /// An entity's xmodel collision (a script model, a UO vehicle's hull):
     /// `G_Damage`'s target when it takes damage, else a wall.
@@ -1050,9 +1051,10 @@ impl Traced {
     /// Where the trace from `start` to `end` stopped.
     fn endpos(&self, start: Vec3, end: Vec3) -> Vec3 {
         match self {
-            Traced::Player { fraction, .. }
-            | Traced::Model { fraction, .. }
-            | Traced::Entity { fraction, .. } => start + (end - start) * *fraction,
+            Traced::Player { point, .. } => *point,
+            Traced::Model { fraction, .. } | Traced::Entity { fraction, .. } => {
+                start + (end - start) * *fraction
+            }
             Traced::World(t) => t.endpos,
             Traced::Nothing => end,
         }
@@ -1217,13 +1219,14 @@ fn trace_attack(
         .filter(|(s, sim)| !pass.skips(*s as u32, sim.seat.map(|seat| seat.vehicle)))
         .filter_map(|(s, sim)| sim.hit_body(*s))
         .collect();
+    let arith = bones.as_ref().map_or(Arith::Kept, |b| b.arith);
     if let Some((slot, fraction, hitloc)) =
         trace_bodies(muzzle, end, usize::MAX, &bodies, limit, priority, bones)
     {
         return Traced::Player {
             slot,
-            fraction,
             hitloc,
+            point: trace_point(muzzle, end, fraction, arith),
         };
     }
     if let Some((t, fraction)) = target {
@@ -1245,6 +1248,18 @@ fn trace_attack(
     match trace {
         Some(t) if t.fraction < 1.0 => Traced::World(t),
         _ => Traced::Nothing,
+    }
+}
+
+/// A locational trace's end point at `fraction` of `start..end`. 1.5b's
+/// and UO's last step stores the move and rounds each `start + move *
+/// fraction` once (UO 0x809b457, 1.5b 0x809a45f).
+pub fn trace_point(start: Vec3, end: Vec3, fraction: f32, arith: Arith) -> Vec3 {
+    match arith {
+        Arith::Stored => {
+            (start.as_dvec3() + (end - start).as_dvec3() * f64::from(fraction)).as_vec3()
+        }
+        Arith::Kept | Arith::Msvc => start + (end - start) * fraction,
     }
 }
 
@@ -1293,9 +1308,10 @@ pub fn strike_point(
         &BULLET_PRIORITY,
         bones,
     ) {
-        Traced::Player { fraction, .. }
-        | Traced::Entity { fraction, .. }
-        | Traced::Model { fraction, .. } => Some((muzzle + (end - muzzle) * fraction, false)),
+        Traced::Player { point, .. } => Some((point, false)),
+        Traced::Entity { fraction, .. } | Traced::Model { fraction, .. } => {
+            Some((muzzle + (end - muzzle) * fraction, false))
+        }
         Traced::World(t) => Some((t.endpos, t.surface_flags & SURF_SKY != 0)),
         Traced::Nothing => None,
     }
@@ -1555,11 +1571,11 @@ pub fn melee_fire(
         let weapon = weapon_index as i32;
         if let Traced::Player {
             slot,
-            fraction,
             hitloc,
+            point,
+            ..
         } = traced
         {
-            let point = muzzle + (end - muzzle) * fraction;
             let damage = def.melee_damage + (vcod_common::rng::xorshift(rng) % 5) as i32;
             let damage = located_damage(damage, hitlocs.multiplier(hitloc));
             return ShotResult {
