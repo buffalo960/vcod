@@ -2337,10 +2337,13 @@ impl ClientSim {
         set("pos.trTime", command_time);
         set("pos.trDuration", PLAYER_TR_DURATION);
         set("apos.trType", trajectory::TR_INTERPOLATE);
+        // The origin truncated to whole units: both writers snap `trBase`
+        // under a 0xc00 control word on all three servers
+        // (docs/research/coduo-vehicles.md 15.2, "The player's trBase").
         for axis in 0..3 {
             set(
                 &format!("pos.trBase[{axis}]"),
-                self.ps.origin[axis].to_bits() as i32,
+                (self.ps.origin[axis] as i32 as f32).to_bits() as i32,
             );
             set(
                 &format!("pos.trDelta[{axis}]"),
@@ -2349,16 +2352,10 @@ impl ClientSim {
         }
         // A rider: `G_PlayerVehiclePositionAndBlend` ends on the plain
         // `BG_PlayerStateToEntityState` (game.mp.uo 0x20a35), `pos.trType`
-        // 1 at the origin truncated, over the extrapolated write's time,
-        // duration and delta (docs/research/coduo-vehicles.md 11.4).
+        // 1 over the extrapolated write's time, duration and delta
+        // (docs/research/coduo-vehicles.md 11.4).
         if self.seat.is_some() {
             set("pos.trType", trajectory::TR_INTERPOLATE);
-            for axis in 0..3 {
-                set(
-                    &format!("pos.trBase[{axis}]"),
-                    (self.ps.origin[axis] as i32 as f32).to_bits() as i32,
-                );
-            }
         }
         // `ps.viewangles` whole, truncated to degrees the way
         // `BG_PlayerStateToEntityState` snaps it (0x2ccb4..0x2cd41): the
@@ -4174,6 +4171,19 @@ mod tests {
         sim.seat = None;
         let e = sim.to_entity(p, 3, 0);
         assert_eq!(e.field_i32(p, "pos.trType"), trajectory::TR_LINEAR_STOP);
+    }
+
+    /// A player on foot goes out at his origin truncated toward zero, as
+    /// every retail capture has it (docs/protocol-1.1.md, "A player's
+    /// `pos.trBase` is whole units").
+    #[test]
+    fn a_player_entity_carries_whole_units() {
+        let p = &PROTOCOL_V1;
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.become_player([-4156.97, 118.48, -80.32], 0.0, [0; 3]);
+        let e = sim.to_entity(p, 3, 0);
+        let base = [0, 1, 2].map(|i| e.field_f32(p, &format!("pos.trBase[{i}]")));
+        assert_eq!(base, [-4156.0, 118.0, -80.0]);
     }
 
     /// A refused prone press reaches the wire as `pm_flags` 0x8000, which

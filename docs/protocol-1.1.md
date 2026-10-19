@@ -437,6 +437,23 @@ carries the motion between snapshots instead of stepping to each one.
 `apos.trType` is 1 and `apos.trBase[1]` is the body yaw; a player entity
 carries no pitch.
 
+**A player's `pos.trBase` is whole units, truncated.**
+`BG_PlayerStateToEntityStateExtrapolate`, called with its snap argument 1
+from `ClientThink_real` and `ClientEndFrame`, stores each axis through
+`fistp` under the control word or'd with 0xc00 (round toward zero):
+VERIFIED, 1.1d `game.mp.i386.so` 0x2d1e5..0x2d217, 1.5b 0x1cca9, UO
+1.51b `game.mp.uo.i386.so` 0x212f5..0x2133d. VERIFIED, captures: every
+`eType` 1 entity in the committed 1.1 (`*-turret-hit.bin`,
+`*-panzer.bin`), 1.5 (`*-1.5.bin`, `*-15-turret.bin`) and UO (`*-uo.bin`,
+`*-uo-tank.bin`, `*-uo-turret.bin`) snapshot pairs carries whole
+`trBase` values, 3313 entity states, none fractional; a UO
+`client-probes/probe_minefield` victim falling from z 64 reads 63, 60, 55,
+50 where its playerstate held 63.97 and below. vcod-server sent the
+unsnapped origin until 2026-10-20. The corpse `cloneplayer` builds and a
+`script_model` spawned at the player's `origin` keep the fraction
+(`r.currentOrigin` is `ps.origin` again once the cmd's link is done, UO
+0x50c91 `ClientThink_real`), and so does vcod.
+
 `solid` is packed by `SV_LinkEntity` (cod_lnxded `0x80908b0`) as
 `(maxs.z + 32) << 16 | -mins.z << 8 | maxs.x`, each byte truncated and
 clamped to `[1, 255]`, and 0 unless `r.contents` holds 0x2000000 or 0x1.
