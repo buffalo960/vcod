@@ -32,15 +32,13 @@ pub struct Predicted {
     pub respawned: bool,
 }
 
-/// Whether a `pm_type` is one the client predicts: normal, linked, a
-/// free-flying spectator, the intermission and a dead body. Retail's
-/// `CG_PredictPlayerState` (cgame 0x300294f0) predicts every own `pm_type`;
-/// vcod draws a dead body that is linked (7) off the snapshot
+/// Whether a `pm_type` is one the client predicts: all of them, as
+/// retail's `CG_PredictPlayerState` (cgame 0x300294f0) does
 /// (docs/research/cod11-player-clip.md 1.1).
 pub fn predictable(pm_type: i32) -> bool {
     matches!(
         pm_type,
-        PM_NORMAL | PM_NORMAL_LINKED | PM_SPECTATOR | PM_INTERMISSION | PM_DEAD
+        PM_NORMAL | PM_NORMAL_LINKED | PM_SPECTATOR | PM_INTERMISSION | PM_DEAD | PM_DEAD_LINKED
     )
 }
 
@@ -240,7 +238,8 @@ pub fn run_cmd(
         // `PmoveSingle`'s dispatch sends 5 past every move (1.1 0x34456) and
         // `PM_UpdateViewAngles` returns on it (0x32d91): the cmd moves
         // nothing.
-    } else if pred.pm_type == PM_DEAD {
+    } else if matches!(pred.pm_type, PM_DEAD | PM_DEAD_LINKED) {
+        pred.ps.linked = pred.pm_type == PM_DEAD_LINKED;
         cmd::chop(pred.command_time, cmd, |_, dt| {
             cmd::dead_step(&mut pred.ps, &mut pred.ring, dt, world, pred.respawned);
             pred.ps.jump_latched

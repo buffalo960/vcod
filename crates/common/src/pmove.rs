@@ -1731,15 +1731,41 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     if !grounded && ps.on_ground {
         crash_land(ps, start_vz, true, &mut events);
     }
-    // A target no stance has drops any leg and moves at a flat rate (0x30a84).
-    ps.view_lerp_ms = None;
-    let step = DEAD_VIEW_LERP_SPEED * dt;
-    let gap = VIEW_DEAD - ps.view_height_cur;
-    ps.view_height_cur += gap.clamp(-step, step);
+    dead_eye(ps, dt);
     // `pm_type` 6 takes the default arm, tail and snap included.
     clamp_velocity_to_move(ps, world, dt);
     snap_velocity(ps);
     events
+}
+
+/// `PM_CheckDuck`'s dead arm (0x316f4, `pm_type > 5`): a target no stance
+/// has drops any leg and moves at a flat rate (0x30a84).
+fn dead_eye(ps: &mut PlayerState, dt: f32) {
+    ps.view_lerp_ms = None;
+    let step = DEAD_VIEW_LERP_SPEED * dt;
+    let gap = VIEW_DEAD - ps.view_height_cur;
+    ps.view_height_cur += gap.clamp(-step, step);
+}
+
+/// A linked corpse, `pm_type` 7: `PmoveSingle`'s table sends it to the arm
+/// a linked live player takes (1.1 0x34220, 1.5 0x286f1, UO 0x2de0a), not
+/// to the dead move. No ground trace and no move: `groundEntityNum` 1023,
+/// the velocity left as it was and not snapped. What runs is the dead
+/// lean, `PM_CheckDuck`'s dead eye and the timers; the weapon drop is
+/// `cmd::dead_step`'s (cod11-player-clip.md 1.1).
+pub fn dead_linked_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) {
+    let dt = dt.min(MAX_FRAME_MS / 1000.0);
+    ps.jumped = false;
+    ps.move_start = ps.origin;
+    ps.ads_active = false;
+    update_lean(ps, &PmInput::default(), false, world, dt);
+    ps.on_ground = false;
+    ps.ground_plane = None;
+    ps.ground_normal = Vec3::Z;
+    ps.ground_surface_flags = 0;
+    ps.walking = false;
+    dead_eye(ps, dt);
+    drop_knockback(ps, dt);
 }
 
 /// What a dead player on the ground loses every pmove frame on top of the
@@ -3375,7 +3401,8 @@ fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveW
         }
     };
     // 1.5 traces a linked player's lean too.
-    if ps.lean == 0.0 || ps.linked && ps.rules == MoveRules::V1_1 {
+    // 1.1's skip is `pm_type == 1` alone (0x32c63): a linked corpse clamps.
+    if ps.lean == 0.0 || alive && ps.linked && ps.rules == MoveRules::V1_1 {
         return;
     }
     // A sphere from the eye to where a full lean would put it; the lean
