@@ -1586,10 +1586,9 @@ the frame's start and past the entity loop; `link::client_bone` and
 the same stamp and poses every bone of the body, `tag_weapon_right`
 included; marks linked to the body read the trace's last-frame pose in
 that frame's entity pass on 1.1d, 1.5b and UO. `bulletTrace` and the
-script `radiusDamage` walk now take and stamp each bone through
-`dobj_posed`; the engine's own traces (shots in a cmd, turret rounds,
-missiles, the use and lookat traces) still pose at their own clock
-without it.
+script `radiusDamage` walk take and stamp each bone through
+`dobj_posed`, and since 2026-10-19 so do the engine's own traces
+(below).
 
 VERIFIED, `cod_lnxded`: 0x0808c870 bumps the same stamp (0x0833df04) on
 every packet that is not out-of-band (`cursize < 4` or a first word other
@@ -1597,10 +1596,18 @@ than -1) before it matches the packet to a client by address and qport and
 runs that client's message. INFERRED, off the matching: it is
 `SV_PacketEvent`, so each client packet's cmds, and the rounds they fire,
 pose under a stamp of their own, and on 1.5 and UO each such build runs
-the controller hook again (`coduo-vehicles.md` 13, "The glide back"). vcod
-does not stamp engine traces; no gate yet shows the difference, since a
-round's build differs from the end frame's pose only while the controls
-are still easing.
+the controller hook again (`coduo-vehicles.md` 13, "The glide back").
+VERIFIED, `cod_lnxded`: `SV_Frame` bumps the stamp once ahead of its bot
+pass (0x0808cccc, one call per client whose `+0x10a40` flag is set: its
+random buttons off `rand()`, then `SV_ClientThink` at 0x0808789c), so
+every bot's cmds run under that one stamp. vcod: every engine trace
+(rounds in a cmd, turret rounds, missiles, blasts, the lookat trace)
+stamps its bodies through `GameHost::dobj_posed`, `replay_moves` starts
+a stamp at each new packet, and the end frames' traces stay under
+`G_RunFrame`'s. The end frame no longer eases the controls: the build
+does. VERIFIED, vcod measurement (cod11-combat.md 3.7): a round that is
+the first build after a turn lands where retail's does only so. vcod
+gives each bot's cmds a packet, so a stamp, of its own (not measured).
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 

@@ -840,6 +840,14 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5). A 1.5 or
   cells read 0.1 off. Where a `setOrigin` drop lands rides the exact cmd
   times, which `--probe-uo-weapon` and `--probe-vehicle` log as `CMDS`
   lines and `ProbeHold::times` replays.
+- Every trace that poses a player, script or engine, builds his DObj
+  through `GameHost::dobj_posed` (`combat::DobjStamps`): each client
+  packet (on retail the bots' pass as one) and `G_RunFrame` start a
+  stamp; on 1.5 and UO each build eases the controls a step from the
+  last build's, so a body nothing traces keeps its controls. `setPlayerAngles` tilts the
+  traced body by its pitch and roll until his next cmd (cod11-combat.md
+  3.7). A new trace that skips the stamps poses a body retail never
+  built.
 
 ### Assets, rendering, sound
 

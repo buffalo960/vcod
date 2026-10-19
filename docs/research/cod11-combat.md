@@ -2619,6 +2619,72 @@ lean, the left one stops at 5.3 units, and the cluster boundary runs
 between. So `SV_BuildClientSnapshot`'s eye takes the lean as clipped by
 pmove (`ClientSim::eye_origin`, `spectate.rs`), on retail as on ours.
 
+### 3.7 The angles a body stands in, and the build each trace makes
+
+The evidence is `client-probes/probe_leanhit` under `probe_turn 1`: the
+target stands unleaned 256 units from a sighted springfield, the hold
+turns his view at each phase's start (pitch 0, 60, -85, 60, 0, then yaw
+50 off facing the shooter, then pitch 45 with yaw -40, then back), and
+1.5 s later the shooter's round is the first thing to pose him; the
+grid of section 3.6 runs 0.3 s after the round and again a frame later.
+Six captures, 2026-10-19, `crates/server/tests/fixtures/leanhit/`:
+`mp_carentan-leanhit-turn{,-1.5,-uo}.txt` (the hold sets the turn every
+frame) and `-turnonce{,-1.5,-uo}.txt` (`probe_turnonce 1`: for the
+phase's first 0.2 s only), gated by `leanhit_ab`.
+
+**The tilt.** VERIFIED, `game.mp.i386.so` (cod11-gametypes-re-bel.md
+8.6): `SetClientViewAngle` stores the angles it is given, pitch and roll
+included, into `r.currentAngles` (`ent+0x140..0x148`), and
+`ClientThink_real`'s tail writes `(0, ps.viewangles[1], 0)` there after
+every cmd. VERIFIED, UO `coduo_lnxded`: the locational clip against an
+entity (0x0809a72a) calls game export 0xf, `G_DObjCalcPose` (`vmMain`'s
+case 0xf, game.mp.uo 0x88f4f), only once the ray has met the entity's
+box (the test at 0x0805e387 returns first), then traces the posed
+bones. VERIFIED, the `-turn` captures, all three servers: every pitched
+phase's grid reads a body tipped whole by the view's pitch about its
+feet (forward under pitch 60, the head 47 units behind the feet and 41
+up under -85), and the grid a frame later the upright body; the yaw
+phases read the same either frame. INFERRED, off the two: the trace
+places the DObj by `r.currentAngles`, so between a `setPlayerAngles` and
+the client's next cmd every trace meets the body turned by the angles
+the script gave. The hold's thread runs ahead of the grid's in that
+frame's thread pass, so the grid reads the tilt; a frame later the
+target's cmds ran first.
+
+VERIFIED, the `-turn` captures' `CMDS` lines: every round's cmd carries
+the time of one of the target's cmds (both answer the same snapshot), so
+which packet the server ran first, and so whether the round met the tilt,
+is not in the capture. Retail's rounds met the upright body in `t_down2`
+(all three) and `t_up` (1.1d) and `t_yaw_down` (1.5b), the tilted one
+elsewhere (UO's `t_up` struck the head 47 units behind the feet, 17 up).
+
+vcod: `setPlayerAngles` hands the angles to the client's
+`combat::DobjStamps` (`set_angles`), the cmd's `set_client_yaw` clears
+them, and every trace poses the body in `DobjStamps::frame`. VERIFIED,
+vcod measurement: every grid cell of the six captures sits within 0.0001
+median of retail's; the replay sends both clients' cmds one a packet in
+cmd time order, the shooter's first on a tie, so the rounds named above
+meet the tilt on ours (`TURN_ROUND_GAPS_*`).
+
+**One ease a build.** VERIFIED, game.mp.uo (coduo-vehicles.md 13, "The
+glide back"): each skeleton build that finds a bone unbuilt under the
+current stamp runs the controller hook, which steps every control 18
+degrees toward its target from where the last build left it, and
+`ClientEndFrame` only installs the hook. VERIFIED, `cod_lnxded`
+(cod11-movers.md 15): the stamp is bumped ahead of each client packet,
+ahead of the bots' cmds and ahead of `G_RunFrame`. INFERRED, off the
+two: a body nothing traces keeps its controls where its last build left
+them, however long, and a round in a packet is a build of its own.
+VERIFIED, vcod measurement against the `-turnonce` captures (1.5b and
+UO; the round now meets the upright body): with the ease on every build
+and the packet's stamp, every round and every grid cell matches; eased
+once an end frame and the round posed without a build (vcod before
+2026-10-19), the `t_down2` round lands on the head 12.2 units nearer the
+shooter than retail's (UO: 1235.94 against 1248.12 in x) and the `t_up`
+round 2.2 units off; with the round's build posing but not easing, every
+round misses retail's by 2 to 20 units. 1.1d's controls are set
+outright (its rounds read the settled turn, `-turnonce`, all rows).
+
 ---
 
 ## 4. `G_Damage`, `G_DamageClient` and the script callback
