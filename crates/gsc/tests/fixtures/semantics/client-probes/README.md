@@ -2336,6 +2336,29 @@ The fixtures `crates/server/tests/fixtures/dyingpose/mp_carentan-dm.txt`
 and `crates/common/tests/fixtures/net/{gamestate,snapshots}-dyingpose.bin`,
 gated by `crates/server/tests/dyingpose_ab.rs`. The death clip is a
 `rand()` draw: the gate seeds ours to draw retail's `legsAnim` 20.
+`COD_VERSION=1.5` and `COD_VERSION=uo` ran it too (the client with
+`--game-dir`, plus `--mod-dir uo` on UO, and `--capture-tag
+dyingpose-1.5` / `dyingpose-uo`): `mp_carentan-dm-1.5.txt` and `-uo.txt`,
+`legsAnim` 16 and 18.
+
+## probe_corpseblast
+
+A corpse born in the entity pass, `docs/research/cod11-combat.md` 5.2. dm
+with its killed callback wrapped to log its `getTime()`: the first player to
+spawn is put on mp_carentan's flat prone spot looking down at 70, handed a
+frag and left on 1 health, and a `--probe-uo-weapon throw` client drops it
+at his feet. Any patch:
+
+```
+COD_LNXDED_HOME=<abs> PORT=<p> SECS=35 tools/run_probe.sh client-probes/probe_corpseblast mp_carentan
+# second shell, about 7 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team axis --probe-uo-weapon throw \
+  --save-snapshots --capture-tag corpseblast --probe-secs 22
+```
+
+The fixtures `crates/server/tests/fixtures/dyingpose/mp_carentan-dm-corpseblast*.txt`
+and `net/{gamestate,snapshots}-corpseblast*.bin`, gated by
+`dyingpose_ab::a_blast_corpse_keeps_its_fresh_flag_like_*`.
 
 ## probe_dmgtrig, probe_dmgshot, probe_dmgtouch, probe_belltower, probe_dmgspawn
 
