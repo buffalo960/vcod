@@ -1,5 +1,5 @@
 //! A dying body's bones and its corpse's event ring, ours against retail
-//! 1.1d's. `client-probes/probe_dyingpose` stands one client on mp_carentan's
+//! 1.1d's, 1.5b's and United Offensive 1.51b's. `client-probes/probe_dyingpose` stands one client on mp_carentan's
 //! flat prone spot facing 90, links a script_origin to each of eight bones,
 //! logs them every frame for 0.5 s, then `suicide()`s him into the dead
 //! session and logs them 2.5 s more. The killed callback clones the corpse
@@ -7,8 +7,10 @@
 //! "The dying body").
 //!
 //! `DP_REPORT=1` prints our log, `DP_TRACE=1` our snapshots, `DP_SEED=<n>`
-//! runs another server seed (another death clip). Needs `COD_DIR` at a 1.1
-//! install.
+//! runs another server seed (another death clip), `DP_RETAIL=1` prints the
+//! retail capture's death frames. The 1.1 gates need `COD_DIR` at a 1.1
+//! install, the 1.5 ones at a 1.5 or UO install (its `main/`), the UO ones
+//! at a UO install.
 
 mod common;
 
@@ -18,28 +20,36 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::NetEvent;
 use vcod_common::net::msg::EntityState;
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, Protocol};
 
 const SCRIPT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_dyingpose.gsc");
 const FIXTURE: &str = include_str!("fixtures/dyingpose/mp_carentan-dm.txt");
+const FIXTURE_15: &str = include_str!("fixtures/dyingpose/mp_carentan-dm-1.5.txt");
+const FIXTURE_UO: &str = include_str!("fixtures/dyingpose/mp_carentan-dm-uo.txt");
 
-/// How far a bone's offset off the origin may sit from retail's: the logged
-/// origins are rounded to the hundredth.
-const POSE_NEAR: f32 = 0.05;
+/// How far a bone's offset off the origin may sit from retail's: the bone
+/// and the origin are each logged rounded to the hundredth, so their
+/// difference carries up to 0.01, plus f32 noise at map coordinates.
+const POSE_NEAR: f32 = 0.015;
 
 /// The server seed whose death draw is retail's, `legsAnim` 20: the pick is
 /// `rand()` on retail and ours draws its own sequence.
 const SEED: u64 = 2;
+/// 1.5b's and UO's, drawing their captures' death clips.
+const SEED_15: u64 = 6;
+const SEED_UO: u64 = 68;
 
 /// Our run of the probe until its `done` line: the log and the corpse as
 /// the client's first snapshot holding it carried it.
 fn ours(fs: vcod_common::pk3::Pk3Fs, seed: u64) -> (Vec<String>, Option<EntityState>) {
     let map = "mp_carentan";
+    let proto = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::with_seed(common::cfg(map, "probe_dyingpose"), now, seed);
+    sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_dyingpose", SCRIPT);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -136,24 +146,25 @@ fn pose(lines: &[String]) -> Vec<(String, Vec<(String, [f32; 3])>)> {
     frames
 }
 
-fn retail() -> Vec<String> {
-    FIXTURE
+fn retail(fixture: &str) -> Vec<String> {
+    fixture
         .lines()
         .filter(|l| l.starts_with("PROBE"))
         .map(str::to_string)
         .collect()
 }
 
-/// The dead session's bones: retail's controller hook still runs on a body
-/// with `EF_DEAD` and sets `tag_origin`'s yaw to the legs' world yaw
-/// (combat doc 16.4, "The dying body").
-#[test]
-fn a_dying_body_poses_like_retail() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        return;
-    };
-    let retail = retail();
-    let seed = std::env::var("DP_SEED").map_or(SEED, |v| v.parse().unwrap());
+/// The 1.5b install's paks, `None` elsewhere (a UO install's `main/` is
+/// 1.5's, so these run there too).
+fn fs_15() -> Option<vcod_common::pk3::Pk3Fs> {
+    let fs = vcod_common::testing::game_fs()?;
+    (vcod_server::server::install_protocol(&fs).version == PROTOCOL_V6.version).then_some(fs)
+}
+
+/// Every frame's bones within [`POSE_NEAR`] of retail's `fixture`.
+fn check_pose(fs: vcod_common::pk3::Pk3Fs, fixture: &str, seed: u64) {
+    let retail = retail(fixture);
+    let seed = std::env::var("DP_SEED").map_or(seed, |v| v.parse().unwrap());
     let (ours, _) = ours(fs, seed);
     if std::env::var_os("DP_REPORT").is_some() {
         ours.iter().for_each(|l| eprintln!("ours {l}"));
@@ -173,25 +184,38 @@ fn a_dying_body_poses_like_retail() {
     assert!(misses.is_empty(), "{}", misses.join("\n"));
 }
 
-/// `cloneplayer` hands the corpse back as an entity, and an alias played on
-/// it rides the corpse's own ring: retail's first snapshot of entity 64
-/// (`net/snapshots-dyingpose.bin`) sent `eventSequence` 1, event 172
-/// (`EV_SOUND_ALIAS`), parm 4, `eFlags` 0x818 and the body's yaw 90.
-#[test]
-fn a_sound_played_on_a_corpse_rides_its_ring() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        return;
-    };
-    let p = &PROTOCOL_V1;
-    let retail = vcod_common::testing::fixture_frames(
+/// Retail's corpse as the capture pair first sent entity 64.
+fn retail_corpse(p: &Protocol, tag: &str) -> EntityState {
+    let frames = vcod_common::testing::fixture_frames(
         p,
-        "net/gamestate-dyingpose.bin",
-        "net/snapshots-dyingpose.bin",
-    )
-    .into_iter()
-    .find_map(|f| f.snapshot.entities.get(&64).cloned())
-    .expect("retail's corpse");
-    let (log, corpse) = ours(fs, SEED);
+        &format!("net/gamestate-{tag}.bin"),
+        &format!("net/snapshots-{tag}.bin"),
+    );
+    if std::env::var_os("DP_RETAIL").is_some() {
+        let mut last = None;
+        for f in &frames {
+            let s = &f.snapshot;
+            let i = |n: &str| s.ps.field_i32(p, n);
+            let now = (i("pm_type"), i("legsAnim"), i("torsoAnim"), i("eFlags"));
+            if last != Some(now) {
+                eprintln!(
+                    "RETAIL t={} pm_type={} legs={} torso={} eflags={:#x}",
+                    s.server_time, now.0, now.1, now.2, now.3
+                );
+                last = Some(now);
+            }
+        }
+    }
+    frames
+        .into_iter()
+        .find_map(|f| f.snapshot.entities.get(&64).cloned())
+        .expect("retail's corpse")
+}
+
+/// Our corpse's ring, flags and yaw against retail's first one.
+fn check_corpse(fs: vcod_common::pk3::Pk3Fs, p: &Protocol, tag: &str, seed: u64) {
+    let retail = retail_corpse(p, tag);
+    let (log, corpse) = ours(fs, seed);
     assert!(
         log.iter()
             .any(|l| l.starts_with("PROBE killed") && l.ends_with(" body 64")),
@@ -204,11 +228,79 @@ fn a_sound_played_on_a_corpse_rides_its_ring() {
         .collect();
     fields.extend(ring.iter().map(String::as_str));
     for name in fields {
+        if std::env::var_os("DP_REPORT").is_some() {
+            eprintln!(
+                "{name}: retail {} ours {}",
+                retail.field_i32(p, name),
+                corpse.field_i32(p, name)
+            );
+        }
         assert_eq!(
             corpse.field_i32(p, name),
             retail.field_i32(p, name),
             "{name}: ours {corpse:?}, retail {retail:?}"
         );
     }
-    assert_eq!(retail.field_i32(p, "events[0]"), 172);
+}
+
+/// The dead session's bones: retail's controller hook still runs on a body
+/// with `EF_DEAD` and sets `tag_origin`'s yaw to the legs' world yaw
+/// (combat doc 16.4, "The dying body").
+#[test]
+fn a_dying_body_poses_like_retail() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check_pose(fs, FIXTURE, SEED);
+}
+
+/// 1.5b's: the same hook and an ease with no dead test (16.4).
+#[test]
+fn a_dying_body_poses_like_15() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    check_pose(fs, FIXTURE_15, SEED_15);
+}
+
+/// UO's: the same, its ease (0x1f107) read for a dead test too (16.4).
+#[test]
+fn a_dying_body_poses_like_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_pose(fs, FIXTURE_UO, SEED_UO);
+}
+
+/// `cloneplayer` hands the corpse back as an entity, and an alias played on
+/// it rides the corpse's own ring: retail's first snapshot of entity 64
+/// (`net/snapshots-dyingpose.bin`) sent `eventSequence` 1, event 172
+/// (`EV_SOUND_ALIAS`), parm 4, `eFlags` 0x818 and the body's yaw 90.
+#[test]
+fn a_sound_played_on_a_corpse_rides_its_ring() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check_corpse(fs, &PROTOCOL_V1, "dyingpose", SEED);
+    assert_eq!(
+        retail_corpse(&PROTOCOL_V1, "dyingpose").field_i32(&PROTOCOL_V1, "events[0]"),
+        172
+    );
+}
+
+#[test]
+fn a_sound_played_on_a_corpse_rides_its_ring_15() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    check_corpse(fs, &PROTOCOL_V6, "dyingpose-1.5", SEED_15);
+}
+
+#[test]
+fn a_sound_played_on_a_corpse_rides_its_ring_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let p = vcod_server::server::install_protocol(&fs);
+    check_corpse(fs, p, "dyingpose-uo", SEED_UO);
 }
