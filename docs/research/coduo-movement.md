@@ -645,12 +645,15 @@ second respawn, and a `linkTo` to a script_origin that moves 96 units.
 At each snapshot the harness puts retail's `pm_type` on the sim
 (`follow_state`): the death; the respawn or spectator spawn, reseeded from
 retail's playerstate; the link, held at retail's origin. The client
-predicts no dead body (`predict::predictable`), so those cmds step the
-sim alone; it predicts a free-flying spectator, as retail's cgame does
-(`cod11-player-clip.md` 1.1). Every read agrees, the linked and the
+predicts the corpse and the free-flying spectator, as retail's cgame does
+(`cod11-player-clip.md` 1.1). Every read agrees, the dead, linked and
 spectating stretches included (VERIFIED, 6855 cmds, 220 dead, spectating
-or linked snapshots, 328 cmds unpredicted, 0 mismatches; 770 unpredicted
-before the spectator was predicted). `predictor_flies_retail_spectator`
+or linked snapshots, 0 cmds unpredicted, 0 mismatches, 2026-10-19; 328
+unpredicted before the corpse was predicted, 770 before the spectator
+was), the dead body's `view_target` aside, which its step never reads.
+`predictor_drops_retail_corpse_uo` runs the corpse's 59 snapshots the
+same way, 59 of 59 bit for bit, once the dead move takes 1.5's and UO's
+ladder-check timer test. `predictor_flies_retail_spectator`
 rebuilds the predictor from each of the spell's spectating snapshots and
 runs the capture's cmds to the next: 79 of 79 land on retail's origin and
 velocity bit for bit, 65 of them moving (VERIFIED, 2026-10-19), once the
