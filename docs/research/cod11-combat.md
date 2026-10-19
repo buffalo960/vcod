@@ -2602,6 +2602,38 @@ replays on the `PROBE_IN` lines rather than the logged inputs.
   without an offset (cod15-movement.md 4, "The think on a slope,
   standing").
 
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-19, the same
+recipe, ports 33471-33476, both net probes logging `ct=`): the rerun that
+replaced the 1.1d `-press` fixture and the 1.5b and UO `-cmds` and
+`-press` ones. The box was loaded, and four runs lost the clients'
+snapshots for 100-250 ms at a time (1.1d at 24650-24850, 26450-26650,
+30900-31100 and 89050-89250, the same instants on the servers running
+beside it).
+
+- A stall. VERIFIED, live (1.1d `-press`, the shooter's lines): the
+  trigger cmd 24650 went out on snapshot 24650; no snapshot reached him
+  until 24850, which read `commandTime` 24617, and 24900 read 24866. So
+  retail ran the cmds 24650 to 24866 after frame 24850, and the round's
+  `PROBE hit` reads 24850, the frame's clock, 200 ms past the press, and
+  points 0.08 degrees lower, the sway of that later clock (15.1).
+- A cmd under the last. VERIFIED, live (the same run's `CMDS` steps,
+  `d=...,1,-1` and `d=...,0`): the net probe stamps a cmd off its own
+  clock and the next off a snapshot's time as it arrives, which can read
+  a ms under the first or the same; the target's 29301 went out before
+  his 29300, which carried the crouch. Snapshot 29300 read `commandTime`
+  29301 and no `PMF_DUCKED`, 29350 had it: the server skipped 29300, as
+  Q3's `SV_UserMove` skips a cmd no newer than the last it ran
+  (INFERRED: 1.1d's skip is not read out of the binary here).
+- VERIFIED, vcod measurement: `ProbeHold::ran` takes a frame's
+  `commandTime` off the newest snapshot logged at or before it, so the
+  stalled frames send nothing and the frame after sends the held cmds,
+  and `cmds_times` / `cmds_inputs` keep the send order and drop each cmd
+  no newer than one before it. Before those two, the 1.1d `-press`
+  replay fired at 24650 and put the three crouch phases' bones a frame
+  ahead (63 bone rows off); the first puts the round on retail's, the
+  second the bones. With both, every row of all five new captures and
+  of the earlier 1.1d ones matches, and `ProbeHold::lead_ms` is gone.
+
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
 `crates/server/tests/fixtures/leanpvs/mp_carentan-leanpvs.txt`): an allies
@@ -7342,13 +7374,15 @@ one that pulled the trigger.
   ahead of the frame: a long frame takes in the cmds sent while it runs.
   `probe_tapwait 1` taps a frame later; in that run every round on all
   three servers reads the exact angles.
-- vcod: `leanhit_ab`'s `-press` gates replay each cmd's logged input and
-  run a shooter's cmd stamped up to 6 ms before a frame after it, built
-  on the snapshot before (`ProbeHold::lead_ms`). Every round of the 1.1d
-  and UO runs leaves within 2e-5 of retail's direction, and so does
-  every 1.5b round since its sight test was ported (below). The target's
-  `setOrigin` drop under the same lead lands 0.21 off retail's first
-  fall row, so its cmds keep the plain windows (open). The first `-cmds`
+- vcod: `leanhit_ab`'s `-press` gates replayed each cmd's logged input
+  and ran a shooter's cmd stamped up to 6 ms before a frame after it,
+  built on the snapshot before (`ProbeHold::lead_ms`, retired 2026-10-19
+  for the `ct=` reruns, 3.6). Every round of the 1.1d and UO runs left
+  within 2e-5 of retail's direction, and so did every 1.5b round once its
+  sight test was ported (below). The target's `setOrigin` drop under the
+  same lead landed 0.21 off retail's first fall row, so its cmds kept the
+  plain windows; under `ct=` both clients replay on retail's frames and
+  every fall row matches. The first `-cmds`
   captures tapped in the grid's frame and logged no input by cmd, and
   their `DIR_GAPS_*` lists stayed open; their 2026-10-19 rerun with
   `probe_tapwait 1` replays without them on the plain windows and the
