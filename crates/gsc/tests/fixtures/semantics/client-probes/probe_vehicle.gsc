@@ -16,6 +16,13 @@
 //	PROBE seat <time> <entity number> <origin> <angles>
 //	PROBE seatnext <time> <entity number> <origin> <angles>
 //
+//	With `probe_suicide S`: S seconds after a seat first takes a player, the
+//	script kills him with `suicide()` where he sits and logs, every frame
+//	for 3 s, his session, `isInVehicle` and origin:
+//
+//	PROBE suicide <time> <entity number> <origin>
+//	PROBE dead <time> <entity number> <sessionstate> <isInVehicle> <origin>
+//
 //	With `probe_bones` set, every frame each seated player's bones:
 //
 //	PROBE bone <time> <client> <seat> <tag> <origin>
@@ -64,6 +71,11 @@ log_seats()
 		activator.probe_seat = vehpos;
 		if (getcvarint("probe_respawn") > 0)
 			activator thread respawn(self, getcvarint("probe_respawn"));
+		if (getcvarfloat("probe_suicide") > 0 && !isdefined(activator.probe_suicided))
+		{
+			activator.probe_suicided = 1;
+			activator thread suicide_seated(getcvarfloat("probe_suicide"));
+		}
 		logPrint("PROBE activated " + gettime() + " " + self getEntityNumber() + " seat " + vehpos + " by " + activator getEntityNumber() + "\n");
 	}
 }
@@ -194,4 +206,17 @@ respawn(veh, secs)
 	logPrint("PROBE seat " + getTime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
 	wait 0.05;
 	logPrint("PROBE seatnext " + getTime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
+}
+
+suicide_seated(secs)
+{
+	self endon("disconnect");
+	wait secs;
+	logPrint("PROBE suicide " + getTime() + " " + self getEntityNumber() + " " + self.origin + "\n");
+	self suicide();
+	for (i = 0; i < 60; i++)
+	{
+		logPrint("PROBE dead " + getTime() + " " + self getEntityNumber() + " " + self.sessionstate + " " + self isInVehicle() + " " + self.origin + "\n");
+		wait 0.05;
+	}
 }

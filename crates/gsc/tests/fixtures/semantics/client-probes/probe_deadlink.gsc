@@ -1,4 +1,4 @@
-//	A linked corpse (pm_type 7) on 1.1d, for predict_ab (tools/run_probe.sh,
+//	A linked corpse (pm_type 7) on 1.1d, 1.5b and UO, for predict_ab (tools/run_probe.sh,
 //	mp_carentan, a --save-slope --slope-every-state --probe-moves client).
 //	It puts every allied player on mp_carentan's street at (900 1930) facing
 //	world yaw 90, once per spawn, as probe_states does, then times one
