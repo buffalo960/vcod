@@ -1472,17 +1472,13 @@ const FIXTURE_VICTIM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
 );
-const LATE_VICTIM: &[i32] = &[];
-/// Where in its 0.1 print (1737.9, 1857.8) retail's gunner stood on the
-/// `-victim` capture: retail's placement there landed 2.4 short of the
-/// spot ours lands on, so the rebase puts ours inside the print. The 1.1d
-/// step at 36900 (parm 142) lands on a velocity snap's edge: from y
-/// 1857.8 the step scale leaves vx -13.52, snapped -14, and the fall down
-/// the 52-degree face ends 0.25 further along -x than retail's by 37350;
-/// from y 1857.79 down (1857.795 at x 1737.94) the step lands 0.04 higher,
-/// vx snaps -13 and every row matches. This is the middle of that band
-/// (cod11-turrets.md 13.3).
-const START_VICTIM: [f32; 2] = [1737.9, 1857.77];
+const FIXTURE_VICTIM_SCRIPT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-script.txt"
+);
+/// The first of two cmds stamped 16450 (sent at probe ms 1571), whose yaw
+/// -157 the snapshot at 16450 already reads (turrets doc 13.3).
+const EARLY_VICTIM: &[i32] = &[1571];
 /// The cmds, by the probe's send `ms`, that reached the server a frame
 /// early on the `-spawn` capture (turrets doc 13.3, 13.4): cmd 21551 (sent at probe
 /// ms 2089), whose yaw -101 the snapshot at 21550 reads; the 21550 sent
@@ -1581,9 +1577,9 @@ struct Capture {
     /// Where retail's spawn put the target (`PROBE spawnat`), which ours
     /// pins: a spawn's think on a sloped point leaves him a drift.
     target_spawn: Option<([f32; 3], [f32; 3])>,
-    /// The gunner's x and y inside the first snapshot's 0.1 print, where
-    /// the rebase puts ours; the printed value itself when `None`.
-    start: Option<[f32; 2]>,
+    /// The gunner's first origin at full precision (`exact=`), where the
+    /// rebase puts ours; the 0.1 print when the capture predates it.
+    start: Option<[f32; 3]>,
 }
 
 fn parse(text: &str) -> Capture {
@@ -1604,6 +1600,7 @@ fn parse(text: &str) -> Capture {
     // The gun's fields as of the last `!turret`: the line is written only
     // when one moved.
     let mut turret = Sample::default();
+    let mut start = None;
     for line in text.lines() {
         if let Some(name) = line
             .strip_prefix("[phase ")
@@ -1629,6 +1626,9 @@ fn parse(text: &str) -> Capture {
             });
         } else if let Some(rest) = line.strip_prefix("!trace ") {
             let m = kv(rest);
+            if traces.is_empty() {
+                start = m.get("exact").map(|v| floats(v));
+            }
             let i = |k: &str| m[k].parse::<i32>().unwrap();
             let [hint, hint_val, hint_string] = {
                 let h: Vec<i32> = m["hint"].split(':').map(|v| v.parse().unwrap()).collect();
@@ -1706,7 +1706,7 @@ fn parse(text: &str) -> Capture {
         target_cmds: Vec::new(),
         cvars: &[],
         target_spawn: None,
-        start: None,
+        start,
         weapon,
         gun,
         cmds,
@@ -1754,13 +1754,13 @@ fn rig_after(
         }
     }
     if let Some(start) = cap.start {
-        for i in 0..2 {
+        for i in 0..3 {
             assert!(
                 (start[i] - at[i]).abs() <= PRINT_EPS,
                 "{start:?} outside {at:?}'s print"
             );
-            ours[i] = start[i];
         }
+        ours = start;
     }
     rig.sv.test_set_client_origin(1, ours);
     rig.hold(1);
@@ -2148,18 +2148,27 @@ fn finish(rows: Vec<String>, gaps: &[(&str, &str)]) {
 /// target's entity logged (`!victim`) on
 /// each fire and target snapshot: its `pos.trTime` drives the target's cmd
 /// clock and its trajectory, anims and `solid` are diffed, with every
-/// other phase (`docs/research/cod11-turrets.md` 13.1, 13.3).
+/// other phase. Ours starts at the gunner's `exact=` origin and runs on
+/// retail's level clock off the `-script` half's `PROBE place`, so the
+/// target's run clip meets the kill round at retail's phase
+/// (`docs/research/cod11-turrets.md` 13.1, 13.3).
 #[test]
 fn the_victim_capture_matches_retail_on_mp_carentan() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
+    if vcod_common::testing::game_fs_11().is_none() {
         return;
-    };
+    }
     let cap = Capture {
-        late: LATE_VICTIM,
-        start: Some(START_VICTIM),
+        early: EARLY_VICTIM,
         ..parse(&read(FIXTURE_VICTIM))
     };
-    let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V1, REBASE_MAX_VICTIM) else {
+    let place = place_ms(read(FIXTURE_VICTIM_SCRIPT).lines(), 0).expect("retail's PROBE place");
+    let Some(mut rig) = rig_aligned(
+        &cap,
+        &vcod_common::testing::game_fs_11,
+        &PROTOCOL_V1,
+        REBASE_MAX_VICTIM,
+        place,
+    ) else {
         return;
     };
     let ours = replay(&mut rig, &cap);

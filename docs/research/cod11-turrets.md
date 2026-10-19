@@ -1548,8 +1548,10 @@ What it lets through, each a `GAPS` line in the gate:
   1611) again once that think's move picked the idle on the spawn frame
   (`cod11-spectator-follow.md` 13). INFERRED: the pose the round meets is
   the idle's phase, which runs from each side's own join. VERIFIED,
-  `mp_carentan-dm-turret-victim.txt` line 1080: a second retail run of the
-  same recipe put that round at (1517, 1611), ours. The gate's legs toggle
+  `mp_carentan-dm-turret-victim.txt` line 1080 as committed in 102ecab0
+  (the 2026-10-17 run): a second retail run of the same recipe put that
+  round at (1517, 1611), ours; VERIFIED, the 2026-10-19 run now under that
+  name, line 1083: a third, the same. The gate's legs toggle
   is compared as its change from the first sample for the same reason.
 - The killing round's impact at 34950: ours (1515, 1610), VERIFIED retail
   (1514, 1609) at fixture line 1068. The target the round before knocked
@@ -1718,12 +1720,14 @@ regression from it.
 `--save-turret` writes a `!victim` line per fire and target snapshot: the
 other player's `pos.trTime`, `pos.trBase`, `pos.trDelta`, legs and torso
 anims, `eFlags`, `solid` and `eventSequence`. Three runs of the 13.1
-recipe on 2026-10-17 carry it: `mp_carentan-dm-turret-victim.txt` (1.1d),
-`-victim-15.txt` (1.5b) and `-victim-uo.txt` (UO 1.51b), each a
-`--capture-tag` run beside the `--probe-team axis` client.
+recipe on 2026-10-17 carry it: `mp_carentan-dm-turret-victim.txt` (1.1d,
+replaced on 2026-10-19 by a run that also prints the start at full
+precision; the old one is in git at 102ecab0), `-victim-15.txt` (1.5b) and
+`-victim-uo.txt` (UO 1.51b), each a `--capture-tag` run beside the
+`--probe-team axis` client.
 
-- VERIFIED, `-victim.txt` lines 1078 and 1089: the target's `pos.trTime`
-  reads 31932 on the wounding snapshot (31950) and 31998 on the kill
+- VERIFIED, the 2026-10-17 `-victim.txt` (102ecab0) lines 1078 and 1089:
+  the target's `pos.trTime` reads 31932 on the wounding snapshot (31950) and 31998 on the kill
   snapshot (32000), so retail's kill frame ran 66 ms of the target's cmds,
   not 50; every earlier target snapshot reads its time less 18. Line 1089:
   `trBase` (1512, 1600, -31), three units back along the ray from the
@@ -1834,6 +1838,25 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
     (`START_VICTIM`), and lists no gap. The constraint comes from this
     one row: no other snapshot of the capture tells the cell's points
     apart.
+  - VERIFIED, live (retail 1.1d, 2026-10-19, the recipe rerun with
+    `exact=` on every `!trace`; it replaced `-victim.txt`, server log
+    `-victim-script.txt`): retail's placement landed at (1737.9427,
+    1857.7877, -23.870617), line 46, inside the band the fit named. The
+    gate now starts ours at the first `!trace`'s `exact=`
+    (`Capture::start`, read by `parse`; `-full.txt` takes it too and still
+    matches to the bit) and `START_VICTIM` is gone.
+  - VERIFIED, ours: on this run the 0.1 print start passes too, though
+    its strafe steps 142 again (parm 142 on its `strafe` event).
+  - VERIFIED, the same run: the kill (25600, line 1095) hits the knocked
+    back target at (1515, 1610). Ours from a clock of its own put it at
+    y 1611.043, a truncation step on along the ray; on retail's level
+    clock (`rig_aligned` off the log's `PROBE place 0 ... 8950`) it lands
+    at 1610.89 and the row matches. INFERRED: the target's run clip
+    (`legsAnim` 94 on line 1092) starts at a phase off the level time
+    (`animclock`), so the pose the round meets needs retail's clock, as
+    the `-spawn` gates (13.4) already replay. The sweep's 16450 (line
+    194) reads yaw -157, the first of two cmds stamped 16450 (sent at
+    probe ms 1571); listed as `EARLY_VICTIM`, every row matches.
 
 ### 13.4 The target's spawn and cmds
 
@@ -1878,9 +1901,10 @@ snapshots that carry its entity.
   `-spawn` capture, so since 2026-10-18 `turret_ab` no longer replays
   `-turret.txt`, `-turret-15.txt`, `-turret-uo.txt`, `-victim-15.txt` or
   `-victim-uo.txt`; they stay committed as the evidence 12, 13.1 and 13.3
-  cite. `-victim.txt` keeps its gate for the 1.1d fall of 13.3, the one
-  row on it. Before the target's stamps were replayed the 1.1d kill was
-  (1516, 1612) against retail's (1516, 1611); our entry point was 1612.054
+  cite. `-victim.txt` keeps its gate for the 1.1d fall of 13.3; since
+  2026-10-19 it is a third run, with its server log, replayed on retail's
+  level clock from its exact start with no gap. Before the target's
+  stamps were replayed the 1.1d kill was (1516, 1612) against retail's (1516, 1611); our entry point was 1612.054
   in y.
 - vcod measurement: on UO the wound matches and the kill enters at x
   1513.0006 against retail's 1512 after truncation, with the target's
