@@ -9,11 +9,9 @@
 //! three stops of 1.12, whose `pm_flags`/`pm_type`/`eFlags` this
 //! `PlayerState` does not carry.
 //!
-//! One deliberate divergence from a VERIFIED retail reading: retail's
-//! weapon-change check treats a `cmd.weapon` of 0 as a request to holster
-//! (1.8), and [`requested_weapon`] reads it as "the cmd asks for nothing" and
-//! keeps the current weapon, so a caller that does not thread the byte yet
-//! is not disarmed every frame.
+//! `cmd.weapon` is read as retail reads it: a 0 under a held weapon is a
+//! request to holster (1.8), so every caller sends the weapon it holds or
+//! selects, never a neutral 0.
 
 use super::{MoveRules, PlayerState, PmEvent, PmInput, Stance};
 use crate::net::event_ids::{
@@ -141,18 +139,6 @@ fn hold_anim(ps: &mut PlayerState, index: i32) {
 
 fn push(events: &mut Vec<PmEvent>, event: i32) {
     events.push(PmEvent { event, parm: 0 });
-}
-
-/// The usercmd's weapon byte, with 0 read as "the cmd asks for nothing". A
-/// retail cmd always carries the client's current weapon and treats a real 0
-/// as a switch to no weapon; a vcod caller that does not thread the byte yet
-/// sends 0 and must not be read as asking to be disarmed.
-fn requested_weapon(ps: &PlayerState, input: &PmInput) -> u8 {
-    if input.weapon == 0 {
-        ps.weapon
-    } else {
-        input.weapon
-    }
 }
 
 fn rechamber_pending(ps: &PlayerState) -> bool {
@@ -488,9 +474,6 @@ fn pm_weapon_step(
         ps.weaponstate = WEAPON_READY;
         set_anim(ps, WEAP_IDLE);
     }
-    if leave_ladder(ps, input, weapons, events) {
-        return;
-    }
     let Some(def) = weapon_def(weapons, ps.weapon) else {
         // Any index the table cannot resolve, which with the stock table is
         // only weapon 0: nothing to read a melee, a reload or a shot from.
@@ -745,7 +728,7 @@ fn advance_timers(
     let latched = def.is_some_and(|def| {
         def.semi_auto
             && input.attack
-            && requested_weapon(ps, input) == ps.weapon
+            && input.weapon == ps.weapon
             && ps.ammoclip[def.clip_index] != 0
     });
     ps.weapon_time_ms = i32::from(latched);
@@ -875,20 +858,18 @@ fn begin_change(
         if ps.weapon == 0 {
             return false;
         }
-        // Only the ladder gives its weapon back on its own. After
-        // `enableWeapon` the pickup takes `cmd.weapon` and nothing else, so
-        // a cmd that echoes the holstered 0 stays empty-handed (retail UO,
-        // `gametypes/mp_foy-basend-*-uo.txt`: weapon 0 from the plant on).
-        if ps.on_ladder {
-            ps.stowed_weapon = ps.weapon;
-        }
+        // Off the ladder or after `enableWeapon` only the cmd byte brings a
+        // weapon back, so a cmd that echoes the holstered 0 stays
+        // empty-handed (retail UO, `gametypes/mp_foy-basend-*-uo.txt`:
+        // weapon 0 from the plant on; 1.1 ladder, section 9.7).
         return putaway(ps, weapons, 0, events);
     }
     if ps.weapon != 0 && !holds(ps, ps.weapon) {
         return putaway(ps, weapons, 0, events);
     }
-    let wanted = requested_weapon(ps, input);
-    if wanted != ps.weapon && holds(ps, wanted) {
+    // A byte of 0 needs no held bit: it is a switch to empty hands.
+    let wanted = input.weapon;
+    if wanted != ps.weapon && (wanted == 0 || holds(ps, wanted)) {
         return putaway(ps, weapons, wanted, events);
     }
     false
@@ -1024,9 +1005,9 @@ fn alt_slot_swap(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], target: u8
 }
 
 /// The pickup half of section 1.8 (`.so` 0x37d84). Retail re-reads
-/// `cmd.weapon` here; vcod raises the weapon the putaway latched, so the
-/// putaway a jump forces comes back to the same weapon even when the caller
-/// threads no weapon byte. The ladder forces 0 the same way retail's
+/// `cmd.weapon` here; vcod raises the weapon the putaway latched, which a
+/// bot's `switchToWeapon` stand-in ([`begin_switch`]) needs, its cmds still
+/// naming the old weapon until `ps.weapon` changes. The ladder forces 0 the same way retail's
 /// `pm_flags & 0x10` does (1.5's `disableWeapon` too, 0x2e4bc): without it
 /// this raises a weapon the next frame's ladder clause holsters again.
 fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<PmEvent>) {
@@ -1065,34 +1046,6 @@ fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<
     if old != 0 {
         push(events, EV_RAISE_WEAPON);
     }
-}
-
-/// The other half of the ladder rule. Retail's pickup takes `cmd.weapon`, so a
-/// client that keeps sending the byte re-arms itself off the ladder; a vcod
-/// caller that sends no byte would stay disarmed, so the weapon the ladder
-/// holstered comes back instead.
-fn leave_ladder(
-    ps: &mut PlayerState,
-    input: &PmInput,
-    weapons: &[Option<WeaponDef>],
-    events: &mut Vec<PmEvent>,
-) -> bool {
-    if hands_forced_empty(ps)
-        || ps.weapon != 0
-        || ps.stowed_weapon == 0
-        || ps.weaponstate != WEAPON_READY
-        || ps.weapon_time_ms != 0
-    {
-        return false;
-    }
-    ps.pending_weapon = if input.weapon != 0 {
-        input.weapon
-    } else {
-        ps.stowed_weapon
-    };
-    ps.stowed_weapon = 0;
-    pickup(ps, weapons, events);
-    true
 }
 
 /// "Can this weapon reload" (section 1.7).
@@ -1677,6 +1630,7 @@ mod tests {
     fn a_held_grenade_does_not_throw_itself() {
         let (mut ps, w) = armed(&frag());
         let held = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
@@ -1699,6 +1653,7 @@ mod tests {
         let (mut ps, w) = armed(&d);
         ps.rules = MoveRules::Uo;
         let pull = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
@@ -1741,6 +1696,7 @@ mod tests {
         ps.ammoclip[1] = 0;
         ps.ammo[1] = 0;
         let held = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
@@ -1760,6 +1716,7 @@ mod tests {
         w.push(Some(carbine()));
         give(&mut ps, 2, 2);
         let held = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
@@ -1804,6 +1761,7 @@ mod tests {
         ps.ammoclip[2] = rifle.clip_size as i16;
         ps.ammo[2] = 30;
         let held = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
@@ -1812,8 +1770,12 @@ mod tests {
         assert!(step(&mut ps, &w, &held, 13).is_empty());
         // Section 1.5, step 9: the spent `clipOnly` weapon raises `EV_NOAMMO`
         // beside the shot, and it is that pair the host takes the weapon on.
+        let released = PmInput {
+            weapon: 1,
+            ..Default::default()
+        };
         assert_eq!(
-            step(&mut ps, &w, &PmInput::default(), 1),
+            step(&mut ps, &w, &released, 1),
             vec![EV_FIRE_WEAPON_LASTSHOT, EV_NOAMMO]
         );
         assert_eq!(ps.ammoclip[1], 0);
@@ -1930,6 +1892,7 @@ mod tests {
             &mut ps,
             &w,
             &PmInput {
+                weapon: 1,
                 melee: true,
                 ..Default::default()
             },
@@ -2040,6 +2003,7 @@ mod tests {
         let (mut ps, w) = armed(&carbine());
         ps.ammoclip[1] = 10;
         let input = PmInput {
+            weapon: 1,
             reload: true,
             ..Default::default()
         };
@@ -2060,6 +2024,7 @@ mod tests {
         let (mut ps, w) = armed(&d);
         ps.ammoclip[1] = 10;
         let input = PmInput {
+            weapon: 1,
             reload: true,
             ..Default::default()
         };
@@ -2226,6 +2191,7 @@ mod tests {
         let (mut ps, w) = armed(&carbine_ads());
         ps.ammoclip[1] = 10;
         let reload = PmInput {
+            weapon: 1,
             reload: true,
             ..Default::default()
         };
@@ -2294,6 +2260,7 @@ mod tests {
         let (mut ps, w) = armed(&carbine_ads());
         ps.stance = Stance::Prone;
         let crawl = PmInput {
+            weapon: 1,
             ads: true,
             forward: 1.0,
             ..Default::default()
@@ -2335,6 +2302,7 @@ mod tests {
     fn the_move_term_saturates_the_spread_and_standing_still_empties_it() {
         let (mut ps, w) = armed(&carbine_ads());
         let walk = PmInput {
+            weapon: 1,
             forward: 1.0,
             ..Default::default()
         };
@@ -2424,6 +2392,7 @@ mod tests {
     fn a_settled_sight_skips_the_additions_but_not_the_decay() {
         let (mut ps, w) = armed(&carbine_ads());
         let walk_ads = PmInput {
+            weapon: 1,
             forward: 1.0,
             ads: true,
             ..Default::default()
@@ -2497,6 +2466,7 @@ mod tests {
     fn a_cmd_weapon_byte_of_zero_writes_no_weapon_anim() {
         for (byte, anim) in [(0, WEAP_RAISE | ANIM_TOGGLEBIT), (1, WEAP_IDLE)] {
             let (mut ps, w) = armed(&carbine());
+            ps.weapon = byte;
             ps.weaponstate = WEAPON_RAISING;
             ps.weap_anim = WEAP_RAISE | ANIM_TOGGLEBIT;
             let input = PmInput {
@@ -2526,25 +2496,64 @@ mod tests {
         assert_eq!(ps.weap_anim, WEAP_ATTACK | ANIM_TOGGLEBIT);
     }
 
-    /// A ladder forces weapon 0 through the putaway, and the weapon comes back
-    /// through a raise at the top (section 1.8).
+    /// A ladder forces weapon 0 through the putaway, and the client's byte,
+    /// still the weapon it climbed with, raises it at the top (sections 1.8,
+    /// 9.7).
     #[test]
     fn the_ladder_holsters_the_weapon_and_gives_it_back() {
         let (mut ps, w) = armed(&carbine());
+        let climb = held(false);
         ps.on_ladder = true;
-        assert_eq!(run(&mut ps, &w, false, 1), vec![EV_PUTAWAY_WEAPON]);
+        assert_eq!(step(&mut ps, &w, &climb, 1), vec![EV_PUTAWAY_WEAPON]);
         assert_eq!(ps.weaponstate, WEAPON_DROPPING);
-        assert_eq!(run(&mut ps, &w, false, 14), vec![EV_RAISE_WEAPON]);
+        assert_eq!(step(&mut ps, &w, &climb, 14), vec![EV_RAISE_WEAPON]);
         assert_eq!(ps.weapon, 0, "0.67 s of dropTime and the hands are empty");
-        run(&mut ps, &w, false, 1);
+        step(&mut ps, &w, &climb, 1);
         assert_eq!(ps.weaponstate, WEAPON_READY);
         // Nothing happens for as long as the climb lasts.
-        assert!(run(&mut ps, &w, false, 20).is_empty());
+        assert!(step(&mut ps, &w, &climb, 20).is_empty());
         ps.on_ladder = false;
         // Out of empty hands: no event.
-        assert!(run(&mut ps, &w, false, 1).is_empty());
+        assert!(step(&mut ps, &w, &climb, 1).is_empty());
         assert_eq!(ps.weapon, 1);
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
+    }
+
+    /// Off the ladder a byte of 0 raises nothing: retail's pickup half reads
+    /// only the cmd (section 9.7), so the old play client's echoed 0 kept a
+    /// climber empty-handed on a retail server.
+    #[test]
+    fn a_climber_whose_byte_reads_zero_stays_empty_handed() {
+        let (mut ps, w) = armed(&carbine());
+        ps.on_ladder = true;
+        step(&mut ps, &w, &held(false), 16);
+        assert_eq!(ps.weapon, 0);
+        ps.on_ladder = false;
+        assert!(step(&mut ps, &w, &PmInput::default(), 20).is_empty());
+        assert_eq!((ps.weapon, ps.weaponstate), (0, WEAPON_READY));
+    }
+
+    /// A cmd byte of 0 under a held weapon is a switch to empty hands, as
+    /// retail's change check reads it (section 1.8: a change to `cmd.weapon`
+    /// when it is 0 or held): the putaway, then weapon 0 raised with the
+    /// event keyed off the weapon that went down.
+    #[test]
+    fn a_cmd_weapon_byte_of_zero_holsters_the_held_weapon() {
+        let (mut ps, w) = armed(&carbine());
+        assert_eq!(
+            step(&mut ps, &w, &PmInput::default(), 1),
+            vec![EV_PUTAWAY_WEAPON]
+        );
+        assert_eq!(ps.weaponstate, WEAPON_DROPPING);
+        assert_eq!(
+            step(&mut ps, &w, &PmInput::default(), 14),
+            vec![EV_RAISE_WEAPON]
+        );
+        assert_eq!(ps.weapon, 0);
+        // And the byte brings it back.
+        step(&mut ps, &w, &PmInput::default(), 1);
+        step(&mut ps, &w, &held(false), 1);
+        assert_eq!((ps.weapon, ps.weaponstate), (1, WEAPON_RAISING));
     }
 
     /// 1.5's `disableWeapon` holsters as the ladder does, and after
@@ -2764,13 +2773,14 @@ mod tests {
         let (mut ps, w) = armed(&d);
         ps.ammoclip[1] = 2;
         let input = PmInput {
+            weapon: 1,
             reload: true,
             ..Default::default()
         };
         let events = step(&mut ps, &w, &input, 1);
         assert_eq!(events, vec![EV_RELOAD_START]);
         assert_eq!(ps.weaponstate, WEAPON_RELOAD_START);
-        let events = step(&mut ps, &w, &PmInput::default(), 120);
+        let events = step(&mut ps, &w, &held(false), 120);
         assert_eq!(
             events.iter().filter(|e| **e == EV_RELOAD).count(),
             2,
@@ -2801,6 +2811,7 @@ mod tests {
         let (mut ps, w) = armed(&d);
         ps.ammoclip[1] = 4;
         let input = PmInput {
+            weapon: 1,
             reload: true,
             ..Default::default()
         };
@@ -2809,7 +2820,7 @@ mod tests {
         let mut states = Vec::new();
         let mut events = Vec::new();
         for _ in 0..60 {
-            events.extend(step(&mut ps, &w, &PmInput::default(), 50));
+            events.extend(step(&mut ps, &w, &held(false), 50));
             states.push(ps.weaponstate);
         }
         assert_eq!(events, vec![EV_RELOAD_END]);
@@ -2829,15 +2840,16 @@ mod tests {
         d.reload_end_time = 0.77;
         let (mut ps, w) = armed(&d);
         ps.ammoclip[1] = 0;
-        step(&mut ps, &w, &PmInput::default(), 1);
+        step(&mut ps, &w, &held(false), 1);
         assert_eq!(ps.weaponstate, WEAPON_RELOADING);
         let input = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
         step(&mut ps, &w, &input, 1);
         assert_eq!(ps.weaponstate, WEAPON_RELOADING_INTERUPT);
-        step(&mut ps, &w, &PmInput::default(), 40);
+        step(&mut ps, &w, &held(false), 40);
         assert_eq!(ps.weaponstate, WEAPON_READY);
         assert_eq!(ps.ammoclip[1], 1, "the segment in flight still landed");
     }
@@ -2960,10 +2972,12 @@ mod tests {
         });
         ps.stance = Stance::Prone;
         let crawl = PmInput {
+            weapon: 1,
             forward: 1.0,
             ..Default::default()
         };
         let fire = PmInput {
+            weapon: 1,
             attack: true,
             ..crawl
         };
