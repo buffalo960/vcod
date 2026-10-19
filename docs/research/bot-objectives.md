@@ -761,6 +761,18 @@ first everywhere.
   the allied spawn into the Sherman (`script_vehicle` at (-3043, -2347,
   -40), 190 units on and 1290 from the base, outside the 1200 the
   models were taken within then) and died of the second.
+  Those checks hold only while the cone is at its sighted floor, so the
+  round also waits for `aimSpreadScale` to come back to 0
+  (`BotView::spread_scale`): a turn during the sights' raise adds to it
+  (`adjust_aim_spread_scale` adds nothing once `fWeaponPosFrac` is 1, and
+  the decay takes a few frames). VERIFIED (measured, ours, release, UO
+  install, the four-bot shooting gate, mp_kursk seed 11 on 85b67024):
+  the axis bot at the stand (778, -10551, 392) turned about 7 degrees
+  with its sights half up, fired 3 ticks after they were up, and the
+  rocket left along (-0.916, -0.420, -0.010) against the aim's (-0.953,
+  -0.303, 0.011), 7 degrees off where `spread_clear` clears 4, and its
+  splash killed it (72, `MOD_PROJECTILE_SPLASH`, tick 15068).
+  (`bots::tests::a_bas_attacker_with_a_rocket_walks_to_a_stand_and_fires`.)
   A bot with both its weapons spent draws the gun it still has; one
   with no round anywhere first fetches the nearest weapon lying within
   1500 units, a drop with a round in its clip or a launcher
@@ -1058,6 +1070,22 @@ mp_kursk 9679 to 15379 (1 9919, 3 10799, 5 9679, 7 15379, 9 13439, 11
 spawn test fired on mp_italy seed 5 only, at the allied bunker. Mean
 11590; the slowest run is mp_foy 21 (16639), and mp_kursk 5 now ends at
 9679.
+
+The same sweep on one generator per bot (section 8), the submodel
+ladders (bot-navigation.md section 2) and the breach's closed cone
+(VERIFIED, measured, ours, release, UO install, branch
+fix/bots-per-bot-rng on c05581d6, 36 runs): all end on their bases, none
+with an own-rocket kill. mp_foy 8219 to 19039 (1 13039, 3 11259, 5
+13419, 7 12599, 9 10359, 11 11259, 13 12159, 15 19039, 17 12519, 19
+10299, 21 8219, 23 12879); mp_italy 10659 to 15059 (1 12779, 3 15059, 5
+10659, 7 13279, 9 11559, 11 13099); mp_kursk 10779 to 13619 (1 11839, 3
+13619, 5 10919, 7 13599, 9 10879, 11 10779); mp_ponyri 11059 to 13919 (1
+11519, 3 11059, 5 11259, 7 11919, 9 13919, 11 11619); mp_rhinevalley
+10039 to 14019 (1 14019, 3 10039, 5 11799, 7 11739, 9 11499, 11 11659).
+Mean 12143. Every seed draws anew, so a run's ticks against the table
+above are the reshuffle, not a speed change. Before the cone fix the
+same branch's sweep had mp_kursk 11 end at 19799 with the own-rocket
+kill of section 7.2 and the other 35 pass (mean 12541 over the 35).
 
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
