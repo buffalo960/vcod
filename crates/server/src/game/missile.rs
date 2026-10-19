@@ -378,19 +378,20 @@ pub fn throw_velocity(ps: &PlayerState, aim: [f32; 2], def: &WeaponDef) -> (Vec3
     )
 }
 
-/// `BG_EvaluateTrajectoryDelta` for the two types a missile ever carries.
-/// `kept` is 1.1d's build (`.so` 0x2c964): `delta.z - ms * 0.001 * 800` on
-/// the x87 stack, rounded once.
+/// `BG_EvaluateTrajectoryDelta` for the two types a missile ever carries:
+/// `delta.z - dt * 800` on the x87 stack, rounded once. `kept` is 1.1d's
+/// build (`.so` 0x2c964), whose `ms * 0.001` stays on the stack; 1.5b and
+/// UO store it as a float first (1.5b 0x1c01d, UO alike).
 fn delta_at(traj: &Trajectory, at_ms: i32, kept: bool) -> Vec3 {
     match traj.tr_type {
-        TR_GRAVITY if kept => {
-            let dt = f64::from(at_ms - traj.tr_time) * f64::from(0.001f32);
+        TR_GRAVITY => {
+            let dt = if kept {
+                f64::from(at_ms - traj.tr_time) * f64::from(0.001f32)
+            } else {
+                f64::from((at_ms - traj.tr_time) as f32 * 0.001)
+            };
             let z = f64::from(traj.delta.z) - dt * f64::from(DEFAULT_GRAVITY);
             traj.delta.with_z(z as f32)
-        }
-        TR_GRAVITY => {
-            let dt = (at_ms - traj.tr_time) as f32 * 0.001;
-            traj.delta - Vec3::Z * (DEFAULT_GRAVITY * dt)
         }
         TR_LINEAR => traj.delta,
         _ => Vec3::ZERO,
@@ -635,16 +636,17 @@ impl Missile {
         let to = if kept {
             self.traj.evaluate_kept(now_ms)
         } else {
-            self.traj.evaluate(now_ms)
+            self.traj.evaluate_stored(now_ms)
         };
         let travel = to - self.origin;
         // 12.1: a move shorter than this is not traced at all, which is what
         // makes a resting missile free. 1.1d's `VectorNormalize` leaves the
-        // length on the stack (0x54034).
+        // length on the stack (0x54034); 1.5b's and UO's store it (1.5b
+        // 0x54c61, `x87::normalize_stored`).
         let moved = if kept {
             x87::dot(travel, travel).sqrt()
         } else {
-            f64::from(travel.length())
+            f64::from(f64::from(x87::dot(travel, travel) as f32).sqrt() as f32)
         };
         if moved < f64::from(0.001f32) {
             return Stepped::Flew;
@@ -702,18 +704,12 @@ impl Missile {
                     && down.model.is_none()
                     && world.entity_num(&down.tr) == ENTITYNUM_WORLD);
             if down.tr.fraction < 1.0 && onto {
-                if kept {
-                    // 0x542bd: the snapped height stays on the stack into
-                    // both stores.
-                    let z = f64::from(down.tr.endpos.z) + f64::from(GROUND_SNAP);
-                    let base = (z - f64::from(self.origin.z)) + f64::from(self.traj.base.z);
-                    self.traj.base.z = base as f32;
-                    self.origin.z = z as f32;
-                } else {
-                    let dz = down.tr.endpos.z + GROUND_SNAP - self.origin.z;
-                    self.origin.z += dz;
-                    self.traj.base.z += dz;
-                }
+                // The snapped height stays on the stack into both stores on
+                // all three builds (1.1d 0x542bd, 1.5b 0x5501f, UO 0x5f477).
+                let z = f64::from(down.tr.endpos.z) + f64::from(GROUND_SNAP);
+                let base = (z - f64::from(self.origin.z)) + f64::from(self.traj.base.z);
+                self.traj.base.z = base as f32;
+                self.origin.z = z as f32;
                 MissileHit {
                     tr,
                     player,
@@ -804,14 +800,10 @@ impl Missile {
         // fraction is whichever trace 12.3 read -- the downward one on a
         // ground snap, where it is a fraction of 1.5 units and not of the
         // frame. That is retail's arithmetic, and the capture's bounce
-        // deltas only come out on it. 1.1d keeps the product on the x87
-        // stack and truncates it (0x537f4).
+        // deltas only come out on it. All three builds keep the product on
+        // the x87 stack and truncate it (1.1d 0x537f4, 1.5b 0x53de6).
         let kept = self.kept();
-        let at = if kept {
-            prev_ms + (f64::from(now_ms - prev_ms) * f64::from(tr.fraction)) as i32
-        } else {
-            prev_ms + ((now_ms - prev_ms) as f32 * tr.fraction) as i32
-        };
+        let at = prev_ms + (f64::from(now_ms - prev_ms) * f64::from(tr.fraction)) as i32;
         let v = delta_at(&self.traj, at, kept);
         let n = tr.normal;
         if n.z > GROUND_NORMAL_Z {
@@ -820,8 +812,10 @@ impl Missile {
         let damped = if kept {
             bounce_kept(v, n, soft)
         } else {
-            let dot = v.dot(n);
-            let reflected = v - n * (2.0 * dot);
+            // 1.5b and UO store the dot, then round each component of
+            // `dot * -2 * n + v` once (1.5b 0x53e33-0x53e87, UO 0x5d7a7).
+            let dot = f64::from(x87::dot(v, n) as f32);
+            let reflected = (v.as_dvec3() + n.as_dvec3() * (dot * -2.0)).as_vec3();
             if self.uo {
                 reflected * if soft { UO_BOUNCE_WATER } else { UO_BOUNCE }
             } else if soft {
@@ -832,12 +826,9 @@ impl Missile {
             }
         };
         self.traj.delta = damped;
-        // 1.1d sums the squares on the stack and stores the root (0x5396e).
-        let speed = if kept {
-            x87::dot(damped, damped).sqrt() as f32
-        } else {
-            damped.length()
-        };
+        // The squares summed on the stack, the root stored (1.1d 0x5396e,
+        // 1.5b 0x53fec).
+        let speed = x87::dot(damped, damped).sqrt() as f32;
         if n.z > GROUND_NORMAL_Z && speed < REST_SPEED {
             // `G_SetOrigin` and `G_SetAngle`: trType 0, trTime 0, no delta.
             self.traj = Trajectory {
@@ -864,14 +855,10 @@ impl Missile {
         self.traj.tr_time = now_ms;
         self.apos.base = self.land_angles(prev_ms, now_ms, tr, false, draws);
         self.apos.tr_time = now_ms;
-        // 1.1d stores each component of the change, sums their squares on
-        // the stack and stores the root (0x53a5e).
-        let change = if kept {
-            let d = damped - v;
-            x87::dot(d, d).sqrt() as f32
-        } else {
-            (damped - v).length()
-        };
+        // Each component of the change stored, their squares summed on the
+        // stack and the root stored (1.1d 0x53a5e, 1.5b 0x541c2).
+        let d = damped - v;
+        let change = x87::dot(d, d).sqrt() as f32;
         !silent && change > BOUNCE_EVENT_SPEED
     }
 
@@ -897,7 +884,7 @@ impl Missile {
         let mut out = if self.kept() {
             self.apos.evaluate_kept(at)
         } else {
-            self.apos.evaluate(at)
+            self.apos.evaluate_stored(at)
         };
         if tr.normal.z <= LAND_FLOOR_Z {
             if !rest {
@@ -930,7 +917,8 @@ impl Missile {
     }
 
     /// 1.1d's arithmetic: its server build keeps the bounce and the arc on
-    /// the x87 stack where 1.5b and UO store them.
+    /// the x87 stack where 1.5b's and UO's -O0 builds store every float
+    /// variable (cod11-combat.md 12.5).
     fn kept(&self) -> bool {
         !self.falls && !self.uo
     }
