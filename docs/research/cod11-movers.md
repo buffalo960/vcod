@@ -1607,7 +1607,18 @@ a stamp at each new packet, and the end frames' traces stay under
 `G_RunFrame`'s. The end frame no longer eases the controls: the build
 does. VERIFIED, vcod measurement (cod11-combat.md 3.7): a round that is
 the first build after a turn lands where retail's does only so. vcod
-gives each bot's cmds a packet, so a stamp, of its own (not measured).
+queues every bot's cmds of a tick as one packet after every real one
+(`Server::step_bots`), so they run in slot order under one stamp, as
+retail's bot pass does.
+
+The use key needs no stamp. VERIFIED, items doc 2.1: `G_GetActivateEnt`'s
+candidates come off an area walk under contents 0x200000 and its
+visibility test is a `trap_Trace` under mask 0x11 with the player as the
+pass entity. INFERRED: neither meets a body's contents (0x2000000), and
+`trap_Trace` clips entities by their link boxes, so the pick poses no
+DObj and builds no skeleton; vcod's `item::activate_ent` and UO's
+`vehicle::seat::aimed_vehicle` (the vehicle's bounds) trace no bones
+either.
 
 ## 16. `enableLinkTo`, turrets, model changes and unlinked items
 
