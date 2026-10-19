@@ -1005,6 +1005,9 @@ server (2026-10-19), and `playerstate_combat_ab` replays it on a protocol 22
 server through the same exact comparison, with no gap (VERIFIED, gate;
 `coduo-diff.md` 20). The tolerant `combat_uo_ab`, which compared value sets
 per step and dropped the rechamber's lone idle sample, is gone with it.
+A second UO take whose `advance` walk stalled (`-combat-uo-stall`)
+passes too: the replay steers a walk's cmds by retail's traced view
+(`coduo-diff.md` 20).
 
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for

@@ -2119,11 +2119,18 @@ captures and the gates.
   (`cod11-combat.md` 1.13): the same five shots and, sample for sample,
   the same `weaponstate` runs, `weapAnim` and `torsoAnim` indices, torso
   toggle flips, `weaponDelay` peak, sight fraction, spread counter and
-  view, with no tolerance and no gap (VERIFIED, gate). A take whose
-  `advance` walk stalled fails it: the probe's stall turn leaves the walk
-  at another yaw, `idle`'s first cmd turns back, and `hipSpreadTurnAdd`
-  holds the spread at 255 one cmd longer than an unturned walk does.
-  The capture is the run that walked with no stall.
+  view, with no tolerance and no gap (VERIFIED, gate). A second take,
+  `mp_cassino-dm-combat-uo-stall.txt`, is the run whose `advance` walk
+  stalled: the probe's stall turn leaves the walk at -45, `idle`'s first
+  cmd turns back to -90, and `hipSpreadTurnAdd` holds the spread at 255
+  one cmd longer than an unturned walk does (idle's spread 13.26 above
+  an unturned replay's over its first 6 samples; VERIFIED, gate). The
+  `!cmds` line logs no angles, so the replay steers a walk's cmds by the
+  view of the first trace whose `commandTime` reached each one
+  (`common::walk_yaw`): 60 retail samples at -45, 60 of ours, and the
+  take passes whole (VERIFIED, gate). Which cmd between two traces made
+  the turn is not in the log; the replay turns on the first after the
+  last unturned trace's `commandTime` (INFERRED).
 - The server command stream of a join (team menu, weapon menu, the
   objective text and `cg_hudcompassMaxRange`) is retail's verbatim
   (VERIFIED, live, both probes' logs).

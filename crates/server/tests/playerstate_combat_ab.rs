@@ -379,8 +379,9 @@ fn check_on(
     }
     let mut bad = Vec::new();
     for ((step, ours), samples) in steps.iter().zip(&mine).zip(&replayed) {
-        // A walk is the capture's own exclusion: the stall response steers
-        // it, so where it ends up is not reproducible.
+        // A walk is the capture's own exclusion: the replay follows its stall
+        // turns (`common::walk_yaw`), but which cmd turned is not logged, so
+        // where it ends up is not reproducible.
         if step.walks {
             continue;
         }
@@ -614,4 +615,14 @@ fn the_weapon_channel_matches_retail_on_uo_mp_cassino() {
         return;
     };
     check_on(&PROTOCOL_V22, fs, "mp_cassino", "dm", "combat-uo");
+}
+
+/// A second UO take whose `advance` walk stalled: the probe turned the walk
+/// 45 degrees, so `idle` opens turned and its first cmd turns back.
+#[test]
+fn the_weapon_channel_matches_retail_on_uo_mp_cassino_after_a_stall_turn() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_on(&PROTOCOL_V22, fs, "mp_cassino", "dm", "combat-uo-stall");
 }

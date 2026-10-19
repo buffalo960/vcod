@@ -793,6 +793,27 @@ pub struct Sample {
     pub explosions: usize,
 }
 
+/// The absolute yaw short retail's walk cmd stamped `st` carried, read off
+/// the view of the first trace whose `commandTime` reached it (the last
+/// trace's past them all). The probe's stall response turns a walk 45
+/// degrees and its `!cmds` line does not log angles, so the view is the only
+/// record of the turn; a still step sends its base yaw. `None` off a walk.
+fn walk_yaw(step: &Step, st: i32) -> Option<i32> {
+    if !step.walks {
+        return None;
+    }
+    let views = || {
+        step.trace
+            .iter()
+            .filter_map(|t| Some((t.command_time?, t.viewangles?[1])))
+    };
+    let yaw = views()
+        .find(|&(ct, _)| ct >= st)
+        .or_else(|| views().next_back())?
+        .1;
+    Some((yaw * 65536.0 / 360.0).round() as i32 & 0xffff)
+}
+
 /// Replays a capture's steps against our server, one sample per snapshot per
 /// step, the way the probe traced retail's. `place` puts the client where the
 /// capture's header says it stood before the first step: a gate about where a
@@ -994,6 +1015,9 @@ pub fn replay_as(
                         .get(&next)
                         .copied()
                         .unwrap_or((base.buttons, base.wbuttons));
+                    if let Some(yaw) = walk_yaw(step, st) {
+                        cmd.angles[1] = yaw;
+                    }
                     batch.push((st, cmd));
                     next += 1;
                 }
@@ -1028,6 +1052,9 @@ pub fn replay_as(
                     .get(&k)
                     .copied()
                     .unwrap_or((base.buttons, base.wbuttons));
+                if let Some(yaw) = walk_yaw(step, st) {
+                    cmd.angles[1] = yaw;
+                }
                 carry.push((st, cmd));
             }
             shift_carried = hands_on.then_some(shift);
