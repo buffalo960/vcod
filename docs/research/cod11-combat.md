@@ -1016,8 +1016,7 @@ server through the same exact comparison, with no gap (VERIFIED, gate;
 `coduo-diff.md` 20). The tolerant `combat_uo_ab`, which compared value sets
 per step and dropped the rechamber's lone idle sample, is gone with it.
 A second UO take whose `advance` walk stalled (`-combat-uo-stall`)
-passes too: the replay steers a walk's cmds by retail's traced view
-(`coduo-diff.md` 20).
+passes too (`coduo-diff.md` 20).
 
 Since 2026-10-19 (later that day) the line also logs each cmd's absolute
 view shorts (`a=`, pitch/yaw before `delta_angles` comes off) and its
@@ -1035,6 +1034,23 @@ that ran in the same frame. The committed 1.5b take,
 `mp_carentan-dm-combat-15`, logs both columns and passes whole on a
 protocol 6 server, `advance` included, with no gap (VERIFIED, gate;
 `cod15-protocol-diff.md`).
+
+The 1.1d captures (`mp_carentan-dm-combat`, `mp_pavlov-dm-combat`, both
+`-dm-ads` and `mp_carentan-tdm-ads-sniper`) and both UO combat takes were
+retaken with the two columns on 2026-10-19 (local 1.1d and 1.51b, the
+same recipes), and every walk is compared: both 1.1d `advance` walks
+stalled and turned twice (+45, then +90 off the spawn's facing), and the
+replay matches them sample for sample with no gap (VERIFIED, gate). The
+trace-steered `walk_yaw` fallback is gone: a walk whose log carries no
+`a=` fails the gate. Teeth: a +22.5 degree turn injected at carentan
+`advance`'s cmd 187 fails 30 of its 121 samples, a turn at cmd 40 of the
+ads `walk` 17 of 30 (VERIFIED, gate). A gate that puts the body at the
+header's spawn (`common::replay_as`) sends the raw cmd angle
+`place_client`'s delta assumes, 0, from the first settle frame: rebased
+off the stale snapshot's `delta_angles`, the first two cmds turned the
+view out and back, UO's `hipSpreadTurnAdd` opened the cone, and the
+first sample of the new UO `advance` read 172.12 where retail's read
+0.00 (VERIFIED, gate).
 
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for

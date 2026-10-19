@@ -380,16 +380,16 @@ fn check_on(
     }
     let mut bad = Vec::new();
     for ((step, ours), samples) in steps.iter().zip(&mine).zip(&replayed) {
-        // A walk whose cmds log no view is the capture's own exclusion: the
-        // replay follows its stall turns (`common::walk_yaw`), but which cmd
-        // turned is not logged, so where it ends up is not reproducible. One
-        // whose `!cmds` carries `a=` replays every turn on retail's cmd.
-        if step.walks && step.cmds.as_ref().is_none_or(|c| c.views.is_none()) {
-            continue;
-        }
         assert!(
             step.cmds.is_some(),
             "{path}: step {} has no !cmds line; recapture it",
+            step.label
+        );
+        // The probe's stall turns are only in the log, so a walk that logs
+        // no view cannot be replayed.
+        assert!(
+            !step.walks || step.cmds.as_ref().is_some_and(|c| c.views.is_some()),
+            "{path}: walk {} logs no a= view; recapture it",
             step.label
         );
         let (rs, os) = (shots(&step.trace), shots(ours));
