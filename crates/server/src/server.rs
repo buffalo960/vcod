@@ -2152,8 +2152,11 @@ impl Server {
             bans: Default::default(),
             temp_bans: Vec::new(),
         };
-        // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer 0x808a3e0.
-        sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ (now.elapsed().as_millis() as i32);
+        // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer
+        // 0x808a3e0. The server clock stands in for the uptime, as at a map
+        // change: the seed carries the binary's randomness, and a seeded
+        // test gets the same feed every run.
+        sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ sv.sv_time_ms;
         if sv.cfg.test_entities > 0 {
             let te = TestEntities::new(sv.cfg.test_entities, [0.0, 0.0, 64.0]);
             sv.baselines = te.baselines(sv.proto);
@@ -10381,6 +10384,19 @@ mod tests {
             }
         }
         out
+    }
+
+    /// The checksum feed rides the seed, not how long the caller took to
+    /// build the server: two servers off one seed key their pure checks
+    /// and cmds alike.
+    #[test]
+    fn a_seeded_server_draws_the_same_checksum_feed() {
+        let now = Instant::now();
+        let a = Server::new(cfg(), now);
+        let b = Server::new(cfg(), now - Duration::from_secs(5));
+        assert_eq!(a.checksum_feed, b.checksum_feed);
+        let c = Server::with_seed(cfg(), now, 7);
+        assert_ne!(a.checksum_feed, c.checksum_feed);
     }
 
     #[test]
