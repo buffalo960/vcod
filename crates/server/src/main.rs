@@ -190,8 +190,9 @@ fn main() -> Result<()> {
         .with_context(|| format!("binding udp/{}", args.port))?;
     // A thread reads the socket as packets arrive so each carries its arrival
     // time (`Server::handle_packet_read`); the loop handles them while it
-    // waits for the next frame, and those that came in during a tick at the
-    // next tick's start.
+    // waits for the next frame, and those that came in during a tick that
+    // overran its slot at the next tick's start. Either way each is
+    // answered before the loop moves on (`handle_queued`).
     let (packet_tx, packets) = std::sync::mpsc::sync_channel(PACKET_QUEUE);
     {
         let sock = sock.try_clone().context("cloning the socket")?;
@@ -303,20 +304,19 @@ fn main() -> Result<()> {
     // end of the last one handled. Its frame runs in well under a
     // millisecond, so a tick does not hold it; an rcon `map_restart` does.
     let mut free_at = next;
+    let mut send = |to: std::net::SocketAddr, pkt: &[u8]| {
+        if let Err(e) = sock.send_to(pkt, to) {
+            log::debug!("send to {to}: {e}");
+        }
+    };
     loop {
         let now = Instant::now();
         let late = now.saturating_duration_since(next);
         for _ in 0..MAX_PACKETS_PER_FRAME {
-            let Ok((arrived, from, pkt)) = packets.try_recv() else {
+            let Ok(queued) = packets.try_recv() else {
                 break;
             };
-            // Retail handles a packet within 5 ms of its arrival unless an
-            // earlier packet still holds the loop; vcod reads them at the
-            // tick, so the handling moment is rebuilt here.
-            let read = arrived.max(free_at);
-            let started = Instant::now();
-            server.handle_packet_read(from, &pkt, now, arrived, read);
-            free_at = read + started.elapsed();
+            handle_queued(&mut server, queued, now, &mut free_at, &mut send);
         }
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) && !quit_queued {
             quit_queued = true;
@@ -347,9 +347,7 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
         for (to, pkt) in server.take_outgoing() {
-            if let Err(e) = sock.send_to(&pkt, to) {
-                log::debug!("send to {to}: {e}");
-            }
+            send(to, &pkt);
         }
         server.frame_sent(Instant::now());
         if server.quit_requested() {
@@ -366,19 +364,38 @@ fn main() -> Result<()> {
         // only at the tick, a joining client's first message was a frame's
         // bare one rather than its gamestate.
         while let Some(left) = next.checked_duration_since(Instant::now()) {
-            let Ok((arrived, from, pkt)) = packets.recv_timeout(left) else {
+            let Ok(queued) = packets.recv_timeout(left) else {
                 break;
             };
-            let read = arrived.max(free_at);
-            let started = Instant::now();
-            server.handle_packet_read(from, &pkt, started, arrived, read);
-            free_at = read + started.elapsed();
-            for (to, pkt) in server.take_outgoing() {
-                if let Err(e) = sock.send_to(&pkt, to) {
-                    log::debug!("send to {to}: {e}");
-                }
-            }
+            handle_queued(&mut server, queued, Instant::now(), &mut free_at, &mut send);
         }
+    }
+}
+
+/// A packet off the reader thread: its arrival time, sender and bytes.
+type Queued = (Instant, std::net::SocketAddr, Vec<u8>);
+
+/// One queued packet, handled as `Com_EventLoop` handles it: at the moment
+/// retail's loop would be free for it (`free_at`, moved past it), and
+/// answered at once through `send`, as `NET_SendPacket` writes the socket
+/// inside the handler. A reply held for the tick that follows went out a
+/// whole tick late when the last one overran its slot.
+fn handle_queued(
+    server: &mut Server,
+    (arrived, from, pkt): Queued,
+    now: Instant,
+    free_at: &mut Instant,
+    send: &mut impl FnMut(std::net::SocketAddr, &[u8]),
+) {
+    // Retail handles a packet within 5 ms of its arrival unless an earlier
+    // packet still holds the loop; vcod reads them between ticks, so the
+    // handling moment is rebuilt here.
+    let read = arrived.max(*free_at);
+    let started = Instant::now();
+    server.handle_packet_read(from, &pkt, now, arrived, read);
+    *free_at = read + started.elapsed();
+    for (to, pkt) in server.take_outgoing() {
+        send(to, &pkt);
     }
 }
 
@@ -438,5 +455,49 @@ impl TickStats {
             self.late.as_secs_f64() * 1000.0
         );
         *self = TickStats::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    /// A packet handled at a tick's start is answered there, not after the
+    /// tick that follows: an rcon or `getinfo` reply goes out with no frame
+    /// between it and its request.
+    #[test]
+    fn a_queued_packet_is_answered_before_the_tick() {
+        let now = Instant::now();
+        let mut server = Server::new(
+            ServerConfig {
+                map: "mp_carentan".into(),
+                hostname: "vcod test".into(),
+                max_clients: 4,
+                gametype: "dm".into(),
+                test_entities: 0,
+                trace: false,
+                bots: 0,
+                bots_shoot: false,
+            },
+            now,
+        );
+        let from = SocketAddr::from(([127, 0, 0, 1], 5));
+        let mut pkt = vec![0xff; 4];
+        pkt.extend_from_slice(b"getinfo 4242");
+        let mut sent = Vec::new();
+        let mut free_at = now;
+        handle_queued(
+            &mut server,
+            (now, from, pkt),
+            now,
+            &mut free_at,
+            &mut |to, p| sent.push((to, p.to_vec())),
+        );
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].0, from);
+        assert!(sent[0].1.windows(12).any(|w| w == b"infoResponse"));
+        assert!(server.take_outgoing().is_empty());
+        assert!(free_at >= now);
     }
 }

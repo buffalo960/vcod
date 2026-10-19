@@ -1328,6 +1328,7 @@ struct Touched {
     view: [f32; 3],
     /// The stance a mount saves for the release.
     stance: vcod_common::pmove::Stance,
+    prone_cone: Option<vcod_common::pmove::ProneCone>,
 }
 
 /// One client's cmds since its animation was last picked: the events they
@@ -2151,8 +2152,11 @@ impl Server {
             bans: Default::default(),
             temp_bans: Vec::new(),
         };
-        // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer 0x808a3e0.
-        sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ (now.elapsed().as_millis() as i32);
+        // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer
+        // 0x808a3e0. The server clock stands in for the uptime, as at a map
+        // change: the seed carries the binary's randomness, and a seeded
+        // test gets the same feed every run.
+        sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ sv.sv_time_ms;
         if sv.cfg.test_entities > 0 {
             let te = TestEntities::new(sv.cfg.test_entities, [0.0, 0.0, 64.0]);
             sv.baselines = te.baselines(sv.proto);
@@ -8311,6 +8315,7 @@ impl Server {
                 // taken again after it.
                 rt.set_client_on_ground(slot, sim.on_ground());
                 rt.set_client_stance(slot, sim.ps.stance);
+                rt.set_client_prone_cone(slot, vcod_common::pmove::ProneCone::of(&sim.ps));
                 let rifle = self
                     .weapon_table
                     .get(sim.ps.weapon as usize)
@@ -8917,6 +8922,7 @@ impl Server {
                 eye: sim.ps.view().eye.into(),
                 view: sim.view_angles(),
                 stance: sim.ps.stance,
+                prone_cone: vcod_common::pmove::ProneCone::of(&sim.ps),
             };
             round.last_cmd = Some(cmd);
             sim.pers_cmd = cmd;
@@ -8953,6 +8959,7 @@ impl Server {
                 rt.set_client_pm_type(t.slot, t.pm_type);
                 rt.set_client_on_ground(t.slot, t.on_ground);
                 rt.set_client_stance(t.slot, t.stance);
+                rt.set_client_prone_cone(t.slot, t.prone_cone);
                 // Ahead of `weapon_changes`, which lands after the script
                 // frame: a grab tests `ps.weapon` as this cmd left it.
                 if let Some(w) = t.weapon {
@@ -10385,6 +10392,19 @@ mod tests {
             }
         }
         out
+    }
+
+    /// The checksum feed rides the seed, not how long the caller took to
+    /// build the server: two servers off one seed key their pure checks
+    /// and cmds alike.
+    #[test]
+    fn a_seeded_server_draws_the_same_checksum_feed() {
+        let now = Instant::now();
+        let a = Server::new(cfg(), now);
+        let b = Server::new(cfg(), now - Duration::from_secs(5));
+        assert_eq!(a.checksum_feed, b.checksum_feed);
+        let c = Server::with_seed(cfg(), now, 7);
+        assert_ne!(a.checksum_feed, c.checksum_feed);
     }
 
     #[test]

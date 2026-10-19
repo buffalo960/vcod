@@ -387,6 +387,9 @@ pub struct GameHost {
     /// Each client's stance (`pm_flags` prone and ducked), mirrored beside
     /// `client_on_ground`, for UO's `getStance`.
     pub client_stance: Vec<vcod_common::pmove::Stance>,
+    /// Each client's prone cone, mirrored beside `client_stance` and set by
+    /// `spawn`: what `setPlayerAngles` holds the entity's `angles` in.
+    pub client_prone_cone: Vec<Option<vcod_common::pmove::ProneCone>>,
     /// Each client's eye, `[pitch, yaw]` aim and `rifleBullet` weapon flag
     /// as the tick left them, for the aim trace `Server::tick` runs after the
     /// script frame.
@@ -1386,6 +1389,7 @@ impl GameHost {
             client_pm_type: vec![0; MAX_CLIENTS],
             client_on_ground: vec![false; MAX_CLIENTS],
             client_stance: vec![vcod_common::pmove::Stance::Stand; MAX_CLIENTS],
+            client_prone_cone: vec![None; MAX_CLIENTS],
             client_no_spectate: vec![0; MAX_CLIENTS],
             client_aim: vec![([0.0; 3], [0.0; 2], false); MAX_CLIENTS],
             client_lookat: vec![None; MAX_CLIENTS],

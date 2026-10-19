@@ -157,7 +157,7 @@ impl<'a> Client<'a> {
             ps_client,
         );
         // `view_ps` is drawn, and so kicked, only while predictable.
-        if predict::predictable(pm_type) {
+        if predict::on_foot(pm_type) {
             self.tally.kicks += events::view_kicks(&evs, ps_client);
         }
         // Every body has a muzzle: the model pass poses them all.

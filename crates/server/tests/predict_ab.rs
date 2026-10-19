@@ -147,8 +147,8 @@ impl Run<'_> {
         };
         self.server_step(&cmd);
         self.prone_corrections += usize::from(self.sim.delta_angles() != da);
-        // The client predicts a playing or linked body only; a dead one's
-        // and a spectator's view is the snapshot's.
+        // The client predicts a playing, linked or spectating body; a dead
+        // one's view is the snapshot's.
         if !predict::predictable(self.sim.wire_pm_type()) {
             self.last_cmd = cmd;
             self.cmds += 1;
@@ -1124,6 +1124,101 @@ fn predictor_matches_the_1_5_server_step() {
     .filter_map(|file| capture_side_by_side(&PROTOCOL_V6, &fs, file, "mp_carentan").err())
     .collect();
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The spectator spell of retail UO's `probe_uostates` capture through the
+/// predictor: each spectating snapshot rebuilt through `from_wire`, the
+/// capture's cmds up to the next one's `commandTime` run as a predicting
+/// client runs them, and the origin and velocity compared with retail's,
+/// bit for bit. Retail's cgame predicts a free-flying spectator under 0x800011
+/// (cod11-player-clip.md 1.1). Needs `COD_DIR` at a United Offensive install.
+#[test]
+fn predictor_flies_retail_spectator() {
+    use vcod_common::net::flags::PM_SPECTATOR;
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let p = &PROTOCOL_V22;
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-uostates-uo.txt"
+    ))
+    .unwrap();
+    let cs7 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("# cs7 "))
+        .expect("a cs7 header");
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, cs7);
+    let (world, entities) = load_world(&fs, "mp_carentan");
+    world.unlink_script_brushes(&entities, "dm");
+    world.set_arith(vcod_common::patch::Arith::for_protocol(p));
+    let mw = MoveWorld::bare(&world);
+    let lines = parse_capture(p, &text);
+    let cmds: Vec<UserCmd> = lines
+        .iter()
+        .filter_map(|l| match l {
+            CaptureLine::Cmd(c) => Some(*c),
+            CaptureLine::Snap(..) => None,
+        })
+        .collect();
+    let snaps: Vec<&msg::PlayerState> = lines
+        .iter()
+        .filter_map(|l| match l {
+            CaptureLine::Snap(w, _) => Some(&**w),
+            CaptureLine::Cmd(_) => None,
+        })
+        .collect();
+    let ct = |w: &msg::PlayerState| w.field_i32(p, "commandTime");
+    let (mut compared, mut moved) = (0, 0);
+    let mut bad = Vec::new();
+    for pair in snaps.windows(2) {
+        let (s, n) = (pair[0], pair[1]);
+        if s.field_i32(p, "pm_type") != PM_SPECTATOR
+            || n.field_i32(p, "pm_type") != PM_SPECTATOR
+            || ct(n) <= ct(s)
+        {
+            continue;
+        }
+        // Of two cmds stamped alike the server runs the first.
+        let last = cmds.iter().find(|c| c.server_time == ct(s));
+        let mut pred = predict::from_wire(p, s, last);
+        let mut st = ct(s);
+        for c in &cmds {
+            if c.server_time > st && c.server_time <= ct(n) {
+                predict::run_cmd(&mut pred, c, &mw, &weapons);
+                st = c.server_time;
+            }
+        }
+        let bits = |v: [f32; 3]| v.map(f32::to_bits);
+        let vel =
+            |w: &msg::PlayerState| [0, 1, 2].map(|i| w.field_f32(p, &format!("velocity[{i}]")));
+        compared += 1;
+        moved += usize::from(n.origin(p) != s.origin(p));
+        if bits(pred.ps.origin.to_array()) != bits(n.origin(p))
+            || bits(pred.ps.velocity.to_array()) != bits(vel(n))
+        {
+            bad.push(format!(
+                "ct {}: predicted {} {} retail {:?} {:?}",
+                ct(n),
+                pred.ps.origin,
+                pred.ps.velocity,
+                n.origin(p),
+                vel(n)
+            ));
+        }
+    }
+    println!(
+        "{compared} spectating snapshots, {moved} moved, {} differ",
+        bad.len()
+    );
+    assert!(compared > 60, "only {compared} spectating snapshots");
+    assert!(moved > 30, "only {moved} moved");
+    assert!(
+        bad.is_empty(),
+        "{} of {compared} differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 // ---------------------------------------------------------------------------

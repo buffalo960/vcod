@@ -1424,6 +1424,18 @@ impl ScriptRuntime {
         }
     }
 
+    /// A client's prone cone as the tick's moves left it, for
+    /// `setPlayerAngles`.
+    pub fn set_client_prone_cone(
+        &mut self,
+        slot: usize,
+        cone: Option<vcod_common::pmove::ProneCone>,
+    ) {
+        if let Some(c) = self.host.client_prone_cone.get_mut(slot) {
+            *c = cone;
+        }
+    }
+
     /// A client's eye (lean included) and `[pitch, yaw]` aim as the tick left
     /// them, for `aim_lookat`, and whether the held weapon is a `rifleBullet`
     /// one, which picks the priority map the trace ranks bones with.

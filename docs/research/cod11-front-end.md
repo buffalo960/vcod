@@ -2887,9 +2887,11 @@ A server has two motds and a retail client draws one of them. 1.1 is
     `cvar "ui_motd"`, `UI_FONT_NORMAL`, `textscale .24`, `textalignx 8`,
     `textaligny 16`, white, `decoration`, below `ui_hostname`. VERIFIED
     (the files, the captures).
-  - The mirror is set by the cgame's `0x3002bc60`, which stops at the
-    first empty name. VERIFIED (decompile). An empty `scr_motd` still has
-    its name, so it mirrors as an empty value and the item prints nothing.
+  - The mirror is set by the cgame's `0x3002bc60` (UO `0x30038430`),
+    which stops at the first empty name. VERIFIED (decompile). An empty
+    `scr_motd` still has its name, so it mirrors as an empty value and the
+    item prints nothing. vcod: `ClientCvars::get` and `::all` stop there
+    too.
 - The connect screen (`UI_DrawConnectScreen`, 1.1 `0x4000e4e0`) prints
   `Info_ValueForKey(updateInfoString, "motd")` (key `0x4002e148`, the
   `uiClientState_t` field at +0x40c, `0x4000e75b`) centred at x 320, y

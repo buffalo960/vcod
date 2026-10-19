@@ -1669,6 +1669,13 @@ userinfo values one after another, and `rcon status` for the slots.
   3. `vcod-server`'s loop now handles a packet that arrives between ticks
   at once and sends what it answers; the same probe against it reads
   gamestate 1, first snapshot 2. VERIFIED (capture, 2026-10-18).
+- vcod, 2026-10-19: a packet the loop finds queued at a tick's start (it
+  came in while the last tick overran its slot) is answered there, before
+  the tick runs, rather than with the tick's output; the between-ticks
+  path already sent at once. INFERRED: retail's `Com_EventLoop` runs
+  every queued packet's handler, and the handler's `NET_SendPacket`
+  writes the socket, ahead of `SV_Frame` (RTCW-MP `common.c` order; no
+  1.1d address read for it).
 
 ### The gamestate goes out fragmented (`SV_SendClientGameState` 0x8085eec)
 
