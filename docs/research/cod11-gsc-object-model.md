@@ -973,7 +973,7 @@ running retail server, in 16.1.
 
 | builtin | table | address | retail | ours |
 |---|---|---|---|---|
-| `placeSpawnpoint` | entity methods 37 | 0x5bedc | VERIFIED: three calls to `trap_TraceCapsule` (0x5bf72, 0x5bfb8, 0x5bff4, `R_386_PC32` relocations), each passing `playerMins` and `playerMaxs` (`R_386_32` relocations onto 0x7dce8 and 0x7dcf4, whose `.data` reads (-15, -15, 0) and (15, 15, 72)), contents mask 0x2810011 and the entity's own number; the constants 128 (0x5bf45) and 262144 (0x5bf91). INFERRED: the first sweeps that player capsule from the origin up 128, the second from the first's endpoint down 262144, the entity moves to the third's endpoint (16.3), the second trace's result word at results+0x28 goes into `gentity_t+0x7c` (which field that is, is a further inference: the ground entity), and the third, zero-length at that endpoint, prints `WARNING: Spawn point entity %i is in solid at (%i, %i, %i)` when it starts solid | all three traces as the same capsule under the same mask (`CollisionWorld::box_trace`), and the move; nothing stored for `gentity_t+0x7c`, since our trace carries no entity identity. 16.1 is the measurement |
+| `placeSpawnpoint` | entity methods 37 | 0x5bedc | VERIFIED: three calls to `trap_TraceCapsule` (0x5bf72, 0x5bfb8, 0x5bff4, `R_386_PC32` relocations), each passing `playerMins` and `playerMaxs` (`R_386_32` relocations onto 0x7dce8 and 0x7dcf4, whose `.data` reads (-15, -15, 0) and (15, 15, 72) before `G_SetPlayerSize` writes the 70 height over it, 16.2), contents mask 0x2810011 and the entity's own number; the constants 128 (0x5bf45) and 262144 (0x5bf91). INFERRED: the first sweeps that player capsule from the origin up 128, the second from the first's endpoint down 262144, the entity moves to the second's endpoint, the second trace's result word at results+0x28 goes into `gentity_t+0x7c` (which field that is, is a further inference: the ground entity), and the third, zero-length at that endpoint, prints `WARNING: Spawn point entity %i is in solid at (%i, %i, %i)` when it starts solid | all three traces as the same capsule under the same mask (`CollisionWorld::box_trace`), and the move; nothing stored for `gentity_t+0x7c`, since our trace carries no entity identity. 16.1 is the measurement |
 | `setClientNameMode` | functions 89 | 0x5f208 | INFERRED: matches the argument against `auto_change` and `manual_change`, stores 0 or 1 in `level+0x210`, `Scr_Error("Unknown mode")` otherwise. The two constants are `scr_const+0xfc`/`+0xfe`, named by `GScr_LoadConsts` 0x58550, both VERIFIED data reads. So is the claim that the only two readers of `level+0x210` in the module are `ClientUserinfoChanged` (0x421eb) and the name-change path at 0x5ba99: the relocation table has exactly four `level+0x210` sites, these two and this function's own pair | recorded on the host, both errors faithful; nothing reads it until clients exist |
 | `newHudElem` | functions 77 | 0x4b184 | INFERRED: first free `g_hudelems` record, zeroed but for `fontscale` 1.0 (0x4b19b), a packed white `color` (0x4b1d9), `archived` 1 (0x4b1fc) and owner `0x3ff` (0x4b249); `Scr_Error("out of hudelems")` when full | the allocation, the pool size, the failure and all four defaults |
 | `<hudelem> setTimer` | hudelem methods 2 | 0x4b8e4 | INFERRED: exactly one parameter, seconds to milliseconds with the x87 rounding mode set to round-up (0x4b942), rejects a result not above zero, zeroes +0x30..+0x48 and +0x60/+0x64/+0x68, then writes the element type 4 at +0x0 and the absolute end time `level.time + ms` at +0x5c | faithful, the clear included |
@@ -1043,93 +1043,42 @@ against 1.1d's (cod15-movement.md 4 and 7). UO's mp_cassino ends in a
 script error from `_tankdrive_gmi.gsc` after the last line.
 
 VERIFIED, `placespawn_ab`'s three `placespawnpoint_*_to_the_bit` gates on
-that fixture (2026-10-19): ours places all but 141 to the bit, 25 on 1.1d,
+that fixture (2026-10-19, before the box height below): ours places all but 141 to the bit, 25 on 1.1d,
 34 on 1.5b and 82 on UO, each pinned in `BITS_GAPS`. The 1.1d
 two-decimal capture in 16.1 is a subset (its dm points), and its 65 rows
 off by up to 2.63 units are gone: the 2.62 of them is the terrain clip's
 1e-5 back-off over the 262144-unit drop, and the last near tie of that kind
 went with `TraceInput::reach` (bsp-ibsp59-format.md, "The leaf walk").
-What is left:
+Those counts are from the 72-high box.
 
-- 131 last-bit residuals, 1 to 160 ulps, on sloped terrain and brush
-  contacts (115 after 16.3, mp_rocket 164 among them). INFERRED, vcod measurement: the 1.1d terrain face and edge
-  clips recomputed with an 80-bit `long double` land where ours does on
-  mp_rocket's 80 and 149, and so does every rounding variant of the face
-  clip's stores, so the difference is upstream of the clip (the record
-  build) or in a step not yet transcribed. VERIFIED, vcod measurement: the
-  1.1d plane build recomputed in 80 bits gives ours' planes on all of
-  mp_rocket's triangles (18 of 13,272 differ in `u` only).
-- UO's mp_sicily 181..186: the capsule's top touches the underside of roof
-  brushes 1259 and 3508 (z 1136) at the start. Ours sweeps up through them
-  (start solid, not all solid) and lands on 3508's top at 1152.125; retail
-  lands on the floors below (1050.125, 944.125, 968.125, 1008.125), which
-  ours' own drop from the spawnpoint gives, so retail's up trace stopped at
-  once. INFERRED, vcod measurement: reading the touch (`d1 == 0`) as outside
-  in the capsule brush arm closes these six and breaks 1.1d's mp_powcamp
-  287 and 288, where the capsule's side touches a clip brush at the start,
-  on all three servers; the UO brush clip (0x8058f0a) reads `0.0 < d1` as
-  outside, as 1.1d's does. Not pinned. Nor is mp_uo_stanjel 557, which
-  starts inside playerclip brush 317 and lands at 441.125 on retail, 408.125
-  on ours.
-- UO's mp_uo_powcamp 288, 332 and 334: a floor at z 0 under a sloped
-  ceiling. Retail lands 2^-14 or so short of ours' 0.125 (0.12499). Not
-  pinned.
-
-### 16.3 The spawnpoint takes the third trace's endpoint
-
-VERIFIED, `game.mp.i386.so` 0x5bedc (`annotate_func.py`): all three
-`trap_TraceCapsule` calls write the one result buffer at `ebp-0x30`
-(0x5bf6b, `[ebp-0x54]` pushed at 0x5bfb4 and 0x5bff0); the third's start
-and end are both `ebp-0x3c`, copied from the second's endpoint at
-0x5bfc4-0x5bfd3; `G_SetOrigin` (0x5c086) is handed `ebp-0x2c`, the buffer's
-endpoint, after the third call. So the spawnpoint lands where the zero-length
-test ends, not where the drop ended. The warning reads the buffer's byte
-+0x2e (0x5bffc), which the position test sets with +0x2f (`cod_lnxded`
-0x805472a: `tw+0xf2`, `tw+0xf3`).
-
-VERIFIED, `cod_lnxded` 1.1d `CM_BoxTrace` (0x80563d1-0x8056420, 0x8056887):
-the delta is the shifted end left on the x87 stack minus the shifted start
-stored as a float, and the endpoint is `start + fraction * delta` off the
-unshifted start. For a zero-length trace at a height `z` whose `z + 36`
-(the capsule centre) needs one bit more than a float holds, the delta is
-that rounding error, a half step either way, and the endpoint moves by it:
-`cm_endpos` already models this. INFERRED, from the same reading of 1.5b's
-store of the shifted end (`collision::cm_endpos` under `Arith::Stored`): on
-1.5b and United Offensive the delta is 0 and the endpoint stays.
-
-VERIFIED, `placespawn_ab` on `placebits-retail.txt` (2026-10-19): taking the
-third trace's endpoint closes 17 of the 25 1.1d rows (mp_brecourt 231 and
-245, mp_dawnville 125, mp_hurtgen 146 and 147, twelve mp_rocket rows, every
-one of them a drop whose `z + 36` crosses a power of two), and moves no 1.5b
-or UO row. It opens mp_rocket 164: ours placed it to the bit before by
-leaving its drop's endpoint alone. INFERRED, vcod arithmetic: retail's 164
-(476.72915649, odd in its last bit, `z + 36` past 512) is no shift of any
-float, since a shifted endpoint `s + e` has `s + e + 36 = R + 2e` on the
-coarser grid; so retail's third trace there did not report fraction 1. It
-printed no in-solid warning (console log of the same run), so it did not
-report all-solid either. Not pinned. Its drop and that of the other
-1.1d grid point that misses, (12116, 3860), rest on terrain triangle 7530's
-edge 0 in ours.
-
-VERIFIED, retail 1.1d, `probe_placebits` rewritten as a grid of
-`script_origin` drops (13x13, 2 units apart, around mp_dawnville's entity
-168 at (112, -15672, 64), and again from z 99.875, 99 and 30), each run's
-lines compared with ours: 44 of 169 differ by 1 to 16 ulps, the same 44 from
-every start height. In ours 108 of those drops end on a terrain face and 61
-on an edge sweep; 106 of the faces and 19 of the edges match retail. The
-mp_rocket grid around entity 164 (13x13, 4 units apart, from z 512) differs
-at the two edge points above only. INFERRED, vcod arithmetic: the edge
-residual is in the sweep's inputs or its record, not the sweep: a C
-transcription of 0x8052e7d-0x8053235 in 80-bit `long double` (every store
-read off the disassembly: `a`, `du`, `b` and `c` stored, `b`, `dv`, the
-discriminant and the root kept, `t` stored) gives ours' fraction on all 61,
-and rounding any one of `q`, `b`, the separation, `dv`, `bq`, `aa`, the
-discriminant or the root to a float matches fewer. The edge record build
-(0x80527c0-0x805285b: `VectorNormalize` 0x8065a38, `PerpendicularVector`
-0x80661fc through `ProjectPointOnPlane` 0x806717c, `CrossProduct`
-0x80659cc) and the edge list's dedup (the coplanarity test after the `CrossProduct` call at 0x8051e3a) read as
-`terrain.rs` builds them, and running the records the other way along
-matches 3 more and breaks others. Not pinned.
+The box is 70 high, not the 72 `playerMaxs` holds in `.data`. VERIFIED,
+`tools/re/annotate_func.py` on each `G_InitGame`: it calls
+`G_SetPlayerSize` after registering the cvars and before
+`Scr_LoadGameType` (1.1d 0x4fc1f and 0x4fe6f, 1.5b 0x4f195 and 0x4f542, UO
+0x5875a and 0x58b48). VERIFIED, `G_SetPlayerSize` (1.1d 0x42fd4, 1.5b
+0x3d193, UO 0x45692) writes `playerMaxs.z` from `g_bounds_height_standing`
+and the x and y extents from `g_bounds_width` times 0.5 and -0.5.
+VERIFIED, `tools/re/dump_cvars.py`: their defaults are "70" and "30" on all
+three. So every `placeSpawnpoint` traces a (-15, -15, 0)..(15, 15, 70)
+capsule. VERIFIED, `placespawn_ab` (2026-10-19): with the 70-high box UO
+places all 5,781 of its spawnpoints to the bit and 1.5b all but one. Under
+the 72-high box ours missed 82 and 34. That closed UO's mp_sicily 181..186,
+whose capsule top touched the 1136 underside of roof brushes 1259 and 3508
+and swept up through them, mp_uo_stanjel 557 (in playerclip brush 317) and
+mp_uo_powcamp 288, 332 and 334, which sit under a sloped ceiling. It also
+closed 1.1d's mp_powcamp 287 and 288 against the brush clip's real `d1 > 0`
+test, and most of the last-bit residuals. The capsule's centre and sphere
+offset (35 and 20 against 36 and 21) round differently, and a slope
+contact reads that rounding. What is left: 17 last-bit residuals on 1.1d
+(mp_brecourt, mp_dawnville, mp_hurtgen, mp_rocket; 64 to 256 2^-24ths) and
+1.5b's mp_neuville 90 (128). mp_dawnville's 166 matched under the 72-high
+box by its rounding and is 64 off under 70. INFERRED, vcod measurement:
+the 1.1d terrain face and edge clips recomputed with an 80-bit `long
+double` land where ours does on mp_rocket's 80 and 149, and so does every
+rounding variant of the face clip's stores, so the difference is upstream
+of the clip (the record build) or in a step not yet transcribed. VERIFIED,
+vcod measurement: the 1.1d plane build recomputed in 80 bits gives ours'
+planes on all of mp_rocket's triangles (18 of 13,272 differ in `u` only).
 
 ## 17. Placed weapons register their item at spawn, before any script runs
 
