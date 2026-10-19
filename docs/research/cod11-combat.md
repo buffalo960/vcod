@@ -3284,6 +3284,20 @@ The same probe against vcod-server: the clone appeared at 19200 and lost
 `0x800` at 19400, the same 200 ms. Before 2026-10-11 it read `0x819`, the
 dying entity's `EF_DEAD` copied in. VERIFIED (capture).
 
+A death in the entity pass, 2026-10-19, `client-probes/probe_corpseblast` on
+mp_carentan dm, one client on 1 health dropping a frag at his own feet
+(`--probe-uo-weapon throw`; fixtures
+`crates/server/tests/fixtures/dyingpose/mp_carentan-dm-corpseblast*.txt`
+and the `net/*-corpseblast*.bin` pairs). VERIFIED (capture), on all three
+retail servers: the killed callback (`MOD_GRENADE_SPLASH`) logged
+`getTime()` 16250 on 1.1d, 16100 on 1.5b and 17200 on UO 1.51b, the corpse
+at 64 first rode the snapshot of that same serverTime as `0x818`, and lost
+`0x800` 250 ms later (16500, 16350, 17450). INFERRED: the blast runs in
+`G_RunFrame`'s entity pass on this frame's `level.time`, so the think comes
+due 250 ms after the first snapshot that carries the clone, where a
+cmd-path death's comes due after 200. Ours matches on all three
+(`dyingpose_ab::a_blast_corpse_keeps_its_fresh_flag_like_{retail,15,uo}`).
+
 INFERRED: nothing frees a clone on a timer. It lives until the eighth
 subsequent death reuses its slot, which is the eight-body behaviour the
 project already observed live (`AGENTS.md`, "Netcode debugging").
@@ -3329,7 +3343,12 @@ line named entity 64, and the client's first snapshot holding it
 ring from 0 (`cod11-events-and-fx.md` 1, "An entity enters the snapshot"),
 so such a sound plays for a spectator who walks into view within the
 250 ms. VERIFIED (capture): the stock 1.1 and UO captures' corpses all carry
-`eventSequence` 0, and no stock gametype touches the body it clones.
+`eventSequence` 0, and no stock gametype touches the body it clones. VERIFIED
+(capture), 2026-10-19, the same probe on 1.5b and UO 1.51b
+(`net/snapshots-dyingpose-1.5.bin`, `-uo.bin`): the first snapshot of 64
+carried `eventSequence` 1, `eFlags` 0x818 and yaw 90 on both, its ring
+`[172, 0, 0, 0]` parm 4 on 1.5b and `[177, 0, 0, 0]` parm 70 on UO, in
+the wire's own numbering.
 
 Ours: `cloneplayer` returns `ObjectTable::spawn_body`'s entity at the body's
 number; the snapshot build writes that entity's ring into the queue's state
@@ -8535,7 +8554,9 @@ that pose, since a dead body's contents are 0 or CORPSE (5.1), so a tag
 lookup is what reads it. VERIFIED, 1.5b's (0x1a389, the
 `eFlags & 1` test beside the subtract) and UO's (0x1e761, with the rider's
 0x100000 beside it) hooks skip the same subtract. VERIFIED, 1.5b's ease
-(0x1ad71) steps toward that target with no dead test; UO's was not read.
+(0x1ad71) steps toward that target with no dead test; so does UO's
+(0x1f107, called from `BG_Player_DoControllers` at 0x1f2fe for each
+control bone and the `tag_origin` angles).
 
 VERIFIED (capture), retail 1.1d mp_carentan, 2026-10-17,
 `client-probes/probe_dyingpose` (fixture
@@ -8554,10 +8575,34 @@ player (cod11-movers.md 15) and the hook call at 0x3001d460 is for `eType`
 1 only, so the client never poses a dying body; a corpse (`eType` 2) runs no
 controllers.
 
+VERIFIED (capture), 2026-10-19, the same probe on retail 1.5b and UO
+1.51b (`mp_carentan-dm-1.5.txt`, `-uo.txt` beside the 1.1d fixture): the
+deaths drew `legsAnim` 16 and 18, and every bone of the 60 frames, live and
+dead, sits within the logs' rounding of ours.
+
+VERIFIED (capture), all three servers: the death frame's playerstate
+carries `legsTimer` and `torsoTimer` both at the clip's length + 50 (3116 on
+1.1d, 2050 on 1.5b, 1983 on UO), and every later snapshot reads them run
+down by the cmds since: `commandTime + timer` holds one value (14600 on
+1.1d) until they reach 0. The suicide ran in a script thread, outside any
+cmd, so the timer counts from the last processed cmd's serverTime, not the
+frame's time. INFERRED: `BG_AnimScriptEvent`'s `both` line sets the two
+timers to `duration + 50` (`BG_PlayAnim`, 1.1d 0x3c338) and each cmd's
+pmove runs them down by its msec. The clip's length is the engine's
+`XAnimGetLength` (syscall 0x5d, `cod_lnxded` 0x08088b3d..0x08088b5b,
+VERIFIED disassembly): the part's frame count over its float framerate,
+times 1000.0 (0x080d4ea8), stored under a 0xc00 control word, so
+truncated: 1.1d's 92 frames at 30 read 3066, where a rounded 3067 was
+vcod's before 2026-10-19. INFERRED: 1.5b and UO store it the same way
+(their clips here are exact or round down either way).
+
 Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
-and UO like any other; `dyingpose_ab::a_dying_body_poses_like_retail`
-holds every bone of all 60 frames within 0.05 of retail's. Not captured on
-1.5b or UO.
+and UO like any other; `dyingpose_ab::a_dying_body_poses_like_{retail,15,uo}`
+hold every bone of all 60 frames within 0.015 of retail's (the logs'
+rounding). `AnimState::timers` writes `legsTimer` and `torsoTimer` off each
+event's hold, `take_damage` stamps the death's on the client's last cmd
+(`dyingpose_ab::a_death_runs_its_timers_down_like_*`), and
+`xanim::duration_ms` truncates in extended precision.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 

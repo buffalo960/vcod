@@ -739,7 +739,15 @@ each event stamped with its cmd's `serverTime` and the release read at the
 round's last cmd, and releases under 50; it had released 50 ms late on the
 frame clock and another 50 late on `>= duration + 50`, two snapshots in
 all (`vehicle_ab::the_jeep_seats_replay_on_ours`). The length comes from
-the xanim header (`PlayerAnims::length_ms`). The hold is not the weapon state's length: VERIFIED,
+the xanim header (`PlayerAnims::length_ms`), truncated as the engine's
+`XAnimGetLength` stores it (VERIFIED disassembly, `cod_lnxded`
+0x08088b3d..0x08088b5b; `cod11-combat.md` 16.4, "The dying body"). Both
+timers ride the playerstate: vcod-server writes each as the event's
+expiry less `commandTime`, floored at 0 (`AnimState::timers`), which the
+death frames of all three servers match. `playerstate_motion_ab`'s
+`jump_takeoff` and pavlov `land` samples read retail `legsTimer` 5, 39 and
+102 against ours 55, 55 and 150 (2026-10-19, measured, not gated): the
+landing hold matches on carentan, the jump's does not. The hold is not the weapon state's length: VERIFIED,
 carentan's reload holds the torso for 950-1050 ms of a `weaponstate` 5 that
 runs 2650, and pavlov's for 2050-2150 ms of one that runs 2400, which are the
 31-frame `pt_reload_stand_auto` and the 64-frame `pt_reload_stand_rifle` at 30

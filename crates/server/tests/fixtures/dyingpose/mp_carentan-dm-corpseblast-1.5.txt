@@ -1,0 +1,11 @@
+# Retail CoD 1.5b dedicated server, 2026-10-19: client-probes/probe_corpseblast
+# on mp_carentan. One client on the flat prone spot looking down at 70, on 1
+# health, drops a frag at his feet and its blast kills him in the entity
+# pass. The corpse at 64 and its eFlags 0x800 ride the client's snapshots
+# (gamestate-corpseblast-1.5.bin / snapshots-corpseblast-1.5.bin in
+# crates/common/tests/fixtures/net).
+# COD_VERSION=1.5 COD_DIR=<install> COD_LNXDED_HOME=<abs> PORT=<p> SECS=35 tools/run_probe.sh client-probes/probe_corpseblast mp_carentan
+# vcod --game-dir <1.5 install> --net-probe 127.0.0.1:<p> --probe-team axis --probe-uo-weapon throw --save-snapshots --capture-tag corpseblast-1.5 --probe-secs 22   # 7 s in
+PROBE place 8100 0 (1435.88, 2675.88, -23.75)
+PROBE killed 16100 0 MOD_GRENADE_SPLASH
+PROBE done 19150
