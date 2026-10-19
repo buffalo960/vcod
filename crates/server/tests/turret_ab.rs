@@ -1473,6 +1473,16 @@ const FIXTURE_VICTIM: &str = concat!(
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
 );
 const LATE_VICTIM: &[i32] = &[];
+/// Where in its 0.1 print (1737.9, 1857.8) retail's gunner stood on the
+/// `-victim` capture: retail's placement there landed 2.4 short of the
+/// spot ours lands on, so the rebase puts ours inside the print. The 1.1d
+/// step at 36900 (parm 142) lands on a velocity snap's edge: from y
+/// 1857.8 the step scale leaves vx -13.52, snapped -14, and the fall down
+/// the 52-degree face ends 0.25 further along -x than retail's by 37350;
+/// from y 1857.79 down (1857.795 at x 1737.94) the step lands 0.04 higher,
+/// vx snaps -13 and every row matches. This is the middle of that band
+/// (cod11-turrets.md 13.3).
+const START_VICTIM: [f32; 2] = [1737.9, 1857.77];
 /// The cmds, by the probe's send `ms`, that reached the server a frame
 /// early on the `-spawn` capture (turrets doc 13.3, 13.4): cmd 21551 (sent at probe
 /// ms 2089), whose yaw -101 the snapshot at 21550 reads; the 21550 sent
@@ -1491,20 +1501,6 @@ const EARLY_SPAWN_UO: &[i32] = &[1536, 1987, 15238];
 /// The strafe's 36284, which the landing at 36300 does not show: retail's
 /// body moved one cmd's way that frame and two the next.
 const LATE_SPAWN_UO: &[i32] = &[36284];
-/// The rows [`finish`] lets through on the `-victim` capture: where the
-/// fall off the sandbags comes to rest.
-const GAPS_VICTIM: &[(&str, &str)] = &[(
-    "[refused] origin t=37350: retail [1684.3, 1948.5",
-    SLOPE_FALL_11,
-)];
-const SLOPE_FALL_11: &str = "after 1.1d's 142 step the fall down the 52-degree face drifts \
-    ours at least 0.16 further along -x than retail by the landing (37050): one velocity snap, \
-    the step scale taking vx to -13.516 (snapped -14) where retail's fall reads -13. 1.1d's \
-    air move is ours (0x2f03c read), and the full-precision run of the same strafe falls down \
-    the face on retail's bits (`the_fall_off_the_sandbags_matches_retail_to_the_bit`); this \
-    capture prints origins to 0.1, which cannot tell a landing 0.0102 higher from a walk 0.12% \
-    slower, so the 0.256 at 37350 is that drift where the print rounds it past 0.25 \
-    (cod11-turrets.md 13.3)";
 /// When in a frame the target's cmds go out: the net probe sends one every
 /// 16 ms of its own clock, three a frame.
 const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
@@ -1585,6 +1581,9 @@ struct Capture {
     /// Where retail's spawn put the target (`PROBE spawnat`), which ours
     /// pins: a spawn's think on a sloped point leaves him a drift.
     target_spawn: Option<([f32; 3], [f32; 3])>,
+    /// The gunner's x and y inside the first snapshot's 0.1 print, where
+    /// the rebase puts ours; the printed value itself when `None`.
+    start: Option<[f32; 2]>,
 }
 
 fn parse(text: &str) -> Capture {
@@ -1707,6 +1706,7 @@ fn parse(text: &str) -> Capture {
         target_cmds: Vec::new(),
         cvars: &[],
         target_spawn: None,
+        start: None,
         weapon,
         gun,
         cmds,
@@ -1751,6 +1751,15 @@ fn rig_after(
         );
         if off.abs() > PRINT_EPS {
             ours[i] = at[i];
+        }
+    }
+    if let Some(start) = cap.start {
+        for i in 0..2 {
+            assert!(
+                (start[i] - at[i]).abs() <= PRINT_EPS,
+                "{start:?} outside {at:?}'s print"
+            );
+            ours[i] = start[i];
         }
     }
     rig.sv.test_set_client_origin(1, ours);
@@ -2147,6 +2156,7 @@ fn the_victim_capture_matches_retail_on_mp_carentan() {
     };
     let cap = Capture {
         late: LATE_VICTIM,
+        start: Some(START_VICTIM),
         ..parse(&read(FIXTURE_VICTIM))
     };
     let Some(mut rig) = rig_on(&cap, fs, &PROTOCOL_V1, REBASE_MAX_VICTIM) else {
@@ -2154,7 +2164,7 @@ fn the_victim_capture_matches_retail_on_mp_carentan() {
     };
     let ours = replay(&mut rig, &cap);
     let fs = vcod_common::testing::game_fs_11().unwrap();
-    finish(diff(&cap, &ours, &fs), GAPS_VICTIM);
+    finish(diff(&cap, &ours, &fs), &[]);
 }
 
 /// The recipe rerun once more with the gsc logging each placement's level

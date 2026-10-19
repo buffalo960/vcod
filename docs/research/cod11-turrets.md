@@ -1784,13 +1784,14 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
   shape with 34016 behind 34032; of the cmds near it only that drop leaves
   no row (34000's leaves 0.17 units and a legs anim). These two rest on
   the fit alone: no capture logs what order the server received cmds in.
-- 1.1d, the refused phase: open. After the step at 36900 (parm 142, ours
-  the same) the fall down the face drifts ours along -x, at least 0.05 off
-  by 37000 and 0.16 by the landing at 37050, while y stays within print.
-  No cmd early or late reproduces it (each of 36866..37084 tried), and
-  the 1.5b and UO falls down the same face match. The fixture prints
-  origins to 0.1, so the 0.256 at 37350 is that drift where the print
-  rounds it past the gate's 0.25; `GAPS_VICTIM` names that row.
+- 1.1d, the refused phase: closed, the gate's start was off. After the
+  step at 36900 (parm 142, ours the same) the fall down the face drifted
+  ours along -x, at least 0.05 off by 37000 and 0.16 by the landing at
+  37050, while y stayed within print; the 0.256 at 37350 was that drift
+  where the print rounds it past the gate's 0.25. No cmd early, late or
+  dropped reproduces it (each of 36866..37084 shifted, each of
+  36383..36900 dropped), and the 1.5b and UO falls down the same face
+  match. The cause is the rebase (see the last item).
   - VERIFIED, 1.1d disassembly: the air move is not the difference.
     `PM_AirMove` (0x2f03c) runs `PM_Friction`, then `PM_CmdScale`
     (0x2e5bc: `ps.speed * max / (127 * total)`, times
@@ -1818,9 +1819,21 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
     steps 7 onto the face (parm 135) and falls down it, and ours lands
     on retail's origin to the bit on every snapshot from the strafe on
     (`the_fall_off_the_sandbags_matches_retail_to_the_bit`). So the step
-    scale, the air move and the slide down the face are retail's. What
-    remains is whatever put the old run's 142 step at a rounding edge,
-    which only a full-precision run through that same corner can show.
+    scale, the air move and the slide down the face are retail's.
+  - VERIFIED, ours, 2026-10-19: the 142 step's rounding edge is the
+    gunner's start. Retail's placement on `-victim.txt` landed at
+    (1737.9, 1857.8) printed, 2.4 short of the spot ours lands on, so
+    the gate moves ours to the print, and the dismount puts the gunner
+    back on that spot before the strafe. The print hides up to 0.05 per
+    axis. Over that cell, from y 1857.8 ours steps to z -11.4273 and the
+    step scale leaves vx at -13.52, which snaps to -14: the drift. From y
+    1857.79 down (1857.795 at x 1737.94; x matters little) the step
+    lands at -11.3887, 0.04 higher, vx snaps to -13 and every row of the
+    capture matches, the 37350 landing included. Retail's gunner stood
+    in that band. The gate starts ours in its middle, (1737.9, 1857.77)
+    (`START_VICTIM`), and lists no gap. The constraint comes from this
+    one row: no other snapshot of the capture tells the cell's points
+    apart.
 
 ### 13.4 The target's spawn and cmds
 

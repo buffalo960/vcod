@@ -2826,4 +2826,230 @@ mod tests {
             SHELL_EFLAGS_V22
         );
     }
+
+    /// One snapshot of a missile as a net probe's `VEH missile` line logs
+    /// it: the snapshot's time, `pos` (type, `trTime`, base and delta
+    /// bits), `groundEntityNum`, `eType`, then `apos` (type, `trTime`, base
+    /// and delta bits).
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct WireRow {
+        time: i32,
+        pos: (i32, i32, [u32; 3], [u32; 3]),
+        ground: i32,
+        e_type: i32,
+        apos: (i32, i32, [u32; 3], [u32; 3]),
+    }
+
+    /// The first missile's snapshots in a capture's `VEH missile` lines.
+    fn wire_rows(text: &str) -> Vec<WireRow> {
+        let mut num = None;
+        let mut out = Vec::new();
+        for l in text
+            .lines()
+            .filter(|l| l.starts_with("VEH ") && l.contains(" missile "))
+        {
+            let t: Vec<&str> = l.split(' ').collect();
+            if *num.get_or_insert(t[3]) != t[3] {
+                continue;
+            }
+            let at = |k: &str| t.iter().position(|w| *w == k).unwrap() + 1;
+            let int = |i: usize| t[i].parse::<i32>().unwrap();
+            let fb = |i: usize| t[i].parse::<f32>().unwrap().to_bits();
+            let hex = |i: usize| u32::from_str_radix(t[i].trim_start_matches("0x"), 16).unwrap();
+            let (b, a, d, p) = (at("bits"), at("apos"), at("atraj"), at("traj"));
+            out.push(WireRow {
+                time: int(1),
+                pos: (
+                    int(at("type")),
+                    int(p),
+                    [hex(b), hex(b + 1), hex(b + 2)],
+                    [fb(p + 1), fb(p + 2), fb(p + 3)],
+                ),
+                ground: int(at("ground")),
+                e_type: int(at("etype")),
+                apos: (
+                    int(d),
+                    int(d + 1),
+                    [fb(a), fb(a + 1), fb(a + 2)],
+                    [fb(d + 2), fb(d + 3), fb(d + 4)],
+                ),
+            });
+        }
+        out
+    }
+
+    /// What retail drew at each bounce of a flight, off its `apos` deltas:
+    /// a wall's whole-degree step when `AngleNormalize360(rate + step)`
+    /// gives the new rate, otherwise a floor's factor, the ratio of the
+    /// rates, with whether it reversed the rate (12.7).
+    fn contact_draws(rows: &[WireRow]) -> Vec<Bounce> {
+        use vcod_common::pmove::aim::angle_normalize_360;
+        let mut out = Vec::new();
+        for w in rows.windows(2) {
+            let (a, b) = (w[0].apos, w[1].apos);
+            if a == b || b.0 != TR_LINEAR {
+                continue;
+            }
+            let (old, new) = (f32::from_bits(a.3[0]), f32::from_bits(b.3[0]));
+            let wall = (-63..=64)
+                .find(|k| angle_normalize_360((f64::from(*k) + f64::from(old)) as f32) == new);
+            out.push(match wall {
+                Some(k) => Bounce::Wall(k),
+                None => Bounce::Floor(f64::from(new) / f64::from(old)),
+            });
+        }
+        out
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum Bounce {
+        Wall(i32),
+        /// The signed factor: negative where the pitch lay within 80 of
+        /// the surface's.
+        Floor(f64),
+    }
+
+    /// A United Offensive frag's flight in `fixture` (a net probe's lines
+    /// off retail 1.51b) replayed from its launch on wire: each frame
+    /// ours steps it on the map's collision under UO's stores, with each
+    /// contact's draw pinned to what retail's `apos` shows, and every
+    /// snapshot until the explode carries retail's `pos`, ground and
+    /// `apos` to the bit. Returns how many snapshots it compared.
+    fn replay_uo_flight(fixture: &str, map: &str) -> Option<usize> {
+        let fs = vcod_common::testing::uo_fs()?;
+        let bsp_path = fs.resolve_map(map).expect("map in the paks");
+        let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        world
+            .collision
+            .set_arith(vcod_common::patch::Arith::for_protocol(
+                &vcod_common::net::protocol::PROTOCOL_V22,
+            ));
+        let rows: Vec<WireRow> = wire_rows(fixture)
+            .into_iter()
+            .filter(|r| r.e_type == 4)
+            .collect();
+        let launch = rows[0];
+        let (vm, host) = &mut crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Default::default()
+        };
+        let base = Vec3::from_array(launch.pos.2.map(f32::from_bits));
+        armed(&mut ms, host, vm, base, Vec3::ZERO, launch.pos.1);
+        let m = ms.missiles_mut().next().unwrap();
+        m.traj.delta = Vec3::from_array(launch.pos.3.map(f32::from_bits));
+        m.apos = Trajectory {
+            tr_type: launch.apos.0,
+            tr_time: launch.apos.1,
+            tr_duration: 0,
+            base: Vec3::from_array(launch.apos.2.map(f32::from_bits)),
+            delta: Vec3::from_array(launch.apos.3.map(f32::from_bits)),
+        };
+        m.explode_at_ms = i32::MAX;
+        let contacts = contact_draws(&rows);
+        // 1.5b's and UO's floor factor, `rand() / 2^31 * 0.3 + 0.85`
+        // (12.7): 1.1d's 0.55 to 0.85 could not draw these.
+        for c in &contacts {
+            if let Bounce::Floor(f) = c {
+                assert!((0.85..=1.15).contains(&f.abs()), "{map}: {contacts:?}");
+            }
+        }
+        let mut draws = Draws {
+            pinned: contacts
+                .iter()
+                .map(|c| match *c {
+                    Bounce::Wall(k) => f64::from(k),
+                    Bounce::Floor(f) => f.abs(),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let mut ours = Vec::new();
+        let mut now = launch.pos.1;
+        while now < rows.last().unwrap().time {
+            now += 50;
+            m.step(Some(&world.collision), &[], &[], None, &mut draws, now);
+            let bits = |v: Vec3| v.to_array().map(f32::to_bits);
+            // UO sends `apos.trBase` as 16-bit angles (`bits -100`,
+            // coduo-diff.md 3): the 65536ths `MSG_WriteDeltaEntity` keeps.
+            let wire = |v: Vec3| {
+                v.to_array().map(|a| {
+                    let units = (f64::from(a) * f64::from(65536.0f32 / 360.0)) as i64;
+                    (f32::from(units as u16 as i16) * (360.0 / 65536.0)).to_bits()
+                })
+            };
+            ours.push(WireRow {
+                time: now,
+                pos: (
+                    m.traj.tr_type,
+                    m.traj.tr_time,
+                    bits(m.traj.base),
+                    bits(m.traj.delta),
+                ),
+                ground: m.ground,
+                e_type: 4,
+                apos: (
+                    m.apos.tr_type,
+                    m.apos.tr_time,
+                    wire(m.apos.base),
+                    bits(m.apos.delta),
+                ),
+            });
+        }
+        let mut compared = 0;
+        for r in &rows {
+            let o = ours.iter().find(|o| o.time == r.time);
+            assert_eq!(
+                o,
+                Some(r),
+                "{map}: the snapshot at {} differs (left ours, right retail); {contacts:?}",
+                r.time
+            );
+            compared += 1;
+        }
+        Some(compared)
+    }
+
+    /// A probe's flights on mp_brecourt's field, thrown from the same spot
+    /// up and to the north-east (yaw 45, pitch 45 up) and to the
+    /// north-west (yaw 135, 20 up): each lands on the terrain and rolls to
+    /// rest over four floor contacts (12.5, 12.7).
+    #[test]
+    fn uo_frags_roll_on_brecourts_terrain_like_retail() {
+        for fixture in [
+            include_str!("../../tests/fixtures/missiles/mp_brecourt-frag-roll-uo-45.txt"),
+            include_str!("../../tests/fixtures/missiles/mp_brecourt-frag-roll-uo-135.txt"),
+        ] {
+            let Some(n) = replay_uo_flight(fixture, "mp_brecourt") else {
+                return;
+            };
+            assert!(n > 60, "{n} snapshots");
+        }
+    }
+
+    /// mp_uo_hurtgen: a frag thrown west off the spot lands on a terrain
+    /// face too steep to rest on (normal z 0.59) and slides down it,
+    /// struck every frame, over 21 floor contacts before it rests on the
+    /// gentler grade below (12.5, 12.7).
+    #[test]
+    fn a_uo_frag_slides_down_hurtgens_terrain_like_retail() {
+        let fixture = include_str!("../../tests/fixtures/missiles/mp_uo_hurtgen-frag-slide-uo.txt");
+        let Some(n) = replay_uo_flight(fixture, "mp_uo_hurtgen") else {
+            return;
+        };
+        assert!(n > 60, "{n} snapshots");
+        let contacts = contact_draws(&wire_rows(fixture));
+        let floors: Vec<f64> = contacts
+            .iter()
+            .filter_map(|c| match c {
+                Bounce::Floor(f) => Some(*f),
+                Bounce::Wall(_) => None,
+            })
+            .collect();
+        assert_eq!(floors.len(), 21, "{contacts:?}");
+        // Some struck within 80 of the face's pitch and reversed, some not.
+        assert!(floors.iter().any(|f| *f < 0.0) && floors.iter().any(|f| *f > 0.0));
+    }
 }
