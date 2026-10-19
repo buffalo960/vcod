@@ -1570,8 +1570,7 @@ fn stamped_pose(
             None => pose = Some(then),
             Some(p) => {
                 for (b, _) in marks.iter().enumerate().filter(|(_, m)| **m == k) {
-                    let (lp, lr) = then.local(b);
-                    p.set_local(b, lp, lr);
+                    p.copy_bone(&then, b);
                 }
             }
         }

@@ -28,6 +28,9 @@ pub struct Track {
     pub bone: String,
     pub rot_keys: Vec<(u16, Quat)>, // (frame, local rot), ascending; empty = hold current
     pub trans_keys: Vec<(u16, Vec3)>, // (frame, offset from the bind local pos)
+    /// `rot_keys` as the engine keeps them: the four shorts, `w` rebuilt and
+    /// the sign the loader gave each key. Empty for a hand-built track.
+    pub rot_raw: Vec<[i16; 4]>,
 }
 
 /// A key as `cod_lnxded`'s loader rebuilds it (0x080c2598, 0x080c264c): `w`
@@ -35,14 +38,20 @@ pub struct Track {
 /// units, or 0 when that is not positive. A near-half-turn key, `w` a few
 /// units, turns up to a degree off a float rebuild (xanim-v14-format.md).
 fn dequant(x: i16, y: i16, z: i16) -> Quat {
-    let (x, y, z) = (x as i64, y as i64, z as i64);
-    let r = 32767 * 32767 - (x * x + y * y + z * z);
+    let [x, y, z, w] = raw_key(x, y, z).map(f32::from);
+    Quat::from_xyzw(x, y, z, w).normalize()
+}
+
+/// A key's four shorts with `w` rebuilt as [`dequant`] rebuilds it.
+pub fn raw_key(x: i16, y: i16, z: i16) -> [i16; 4] {
+    let (xi, yi, zi) = (x as i64, y as i64, z as i64);
+    let r = 32767 * 32767 - (xi * xi + yi * yi + zi * zi);
     let w = if r < 1 {
-        0.0
+        0
     } else {
-        ((r as f64).sqrt() + 0.5).floor()
+        ((r as f64).sqrt() + 0.5).floor() as i16
     };
-    Quat::from_xyzw(x as f32, y as f32, z as f32, w as f32).normalize()
+    [x, y, z, w]
 }
 
 /// What the fixed-size header carries. `frame_count` already counts a looping
@@ -170,6 +179,7 @@ fn read_root(name: &str, r: &mut Reader, frame_count: u32) -> Result<Track> {
         bone: String::new(),
         rot_keys,
         trans_keys,
+        rot_raw: Vec::new(),
     })
 }
 
@@ -247,27 +257,32 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
         );
         let rframes = frames_of(name, &mut r, rc, frame_count)?;
         let mut rot_keys = Vec::with_capacity(rc as usize);
+        let mut rot_raw = Vec::with_capacity(rc as usize);
         for f in rframes {
-            let q = if is_simple(i) {
-                dequant(0, 0, r.i16()?)
+            let raw = if is_simple(i) {
+                raw_key(0, 0, r.i16()?)
             } else {
                 let (x, y, z) = (r.i16()?, r.i16()?, r.i16()?);
-                dequant(x, y, z)
+                raw_key(x, y, z)
             };
-            rot_keys.push((f, q));
+            rot_keys.push((f, dequant(raw[0], raw[1], raw[2])));
+            rot_raw.push(raw);
         }
         // The loader's sign: the flagged first key negated, then each key
         // put on its predecessor's hemisphere, so the track's keys run
         // continuously from a sign the file chose. The sampler sums them
         // raw, so the sign shows wherever two tracks blend.
+        let negate = |k: [i16; 4]| k.map(|c| c.wrapping_neg());
         if is_flipped(i)
             && let Some((_, q)) = rot_keys.first_mut()
         {
             *q = -*q;
+            rot_raw[0] = negate(rot_raw[0]);
         }
         for k in 1..rot_keys.len() {
             if rot_keys[k].1.dot(rot_keys[k - 1].1) < 0.0 {
                 rot_keys[k].1 = -rot_keys[k].1;
+                rot_raw[k] = negate(rot_raw[k]);
             }
         }
         let tc = r.u16()? as u32;
@@ -284,6 +299,7 @@ pub fn parse(name: &str, data: &[u8]) -> Result<XAnim> {
             bone,
             rot_keys,
             trans_keys,
+            rot_raw,
         });
     }
     let note_count = r.u8()?;
