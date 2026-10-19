@@ -853,10 +853,12 @@ pub fn two_cell_world() -> Bsp {
         leafs: vec![
             Leaf {
                 cluster: 0,
+                area: 0,
                 cell: 0,
             },
             Leaf {
                 cluster: 1,
+                area: 0,
                 cell: 1,
             },
         ],
@@ -1310,14 +1312,17 @@ mod tests {
             leafs: vec![
                 Leaf {
                     cluster: 0,
+                    area: 0,
                     cell: 0,
                 },
                 Leaf {
                     cluster: 1,
+                    area: 0,
                     cell: 1,
                 },
                 Leaf {
                     cluster: 2,
+                    area: 0,
                     cell: 2,
                 },
             ],
@@ -1516,10 +1521,12 @@ mod tests {
             leafs: vec![
                 bsp::Leaf {
                     cluster: 0,
+                    area: 0,
                     cell: -1,
                 },
                 bsp::Leaf {
                     cluster: 1,
+                    area: 0,
                     cell: 1,
                 },
             ],
@@ -1676,10 +1683,12 @@ mod tests {
             leafs: vec![
                 bsp::Leaf {
                     cluster: 0,
+                    area: 0,
                     cell: -1,
                 },
                 bsp::Leaf {
                     cluster: 1,
+                    area: 0,
                     cell: 1,
                 },
             ],

@@ -523,6 +523,28 @@ entity's area to connect to the client's and at least one of its `+0x118`
 clusters to be set in the client's PVS row, with a scan up to `+0x15c` when the
 cluster list did not settle it. The list stops at `0x400` entries.
 
+VERIFIED decompile, the same function and its 1.5b (`0x8095c30`) and UO
+(`coduo_lnxded` `0x8096b97`) twins: all of the above runs only when the
+eye's leaf has an area of 0 or more, so an eye in a solid leaf (area -1)
+is sent no entity at all, broadcast and temp entities included. VERIFIED
+live on 1.1d and UO 1.51b (`client-probes/probe_snapcull`, mp_carentan,
+2026-10-20): a player held 1000 units under the map got empty entity lists
+for as long as he was there. `CM_AreasConnected` (`0x8053f44`) is false for
+area -1 and otherwise compares the two areas' flood numbers. VERIFIED
+decompile, UO (`0x805793e`, `0x80579a3`): the floods follow area portals
+whose counts start at 0 and change only through
+`trap_AdjustAreaPortalState`, which the game calls from its binary movers
+(`Reached_BinaryMover`, game.mp.uo `0x721ae`). VERIFIED, every stock map's
+entity lump on 1.1, 1.5 and UO: no MP map has a `func_door` or any other
+`func_` class, so each area is its own flood. The entity's two areas are
+the first area its link's leafs carry and the last other one (UO
+`SV_LinkEntity` `0x8099dee`). Every stock 1.1 MP map's leafs carry area -1
+or 0, but UO's mp_berlin, mp_ponyri, mp_rhinevalley and mp_uo_stanjel and
+1.5's mp_bocage have small leaf groups in areas 1 to 7 (VERIFIED, lump 21),
+and an entity only in one of those reaches only an eye in the same area
+(INFERRED; no stock spot measured). vcod-server ports both tests
+(`world::Viewer`, `bsp::LinkClusters::areas`).
+
 #### What links an entity, out of the game module
 
 `game.mp.i386.so` keeps its symbols, so the callers are countable rather than

@@ -44,10 +44,8 @@ const LINK_EPSILON: f32 = 1.0;
 /// the box its spawn function links it with, and this does the same. A point
 /// lookup is not enough: a turret's origin sits inside the geometry it stands
 /// on and reads as a solid leaf, so it would be visible from everywhere.
-///
-/// Retail also checks that the two areas connect. Every stock map's leafs
-/// carry area -1 or 0 (`docs/research/bsp-ibsp59-format.md`), so there is
-/// nothing to disconnect and no area test here.
+/// The two areas must connect too, and an eye in a solid leaf is sent
+/// nothing ([`Viewer::sees_nothing`]).
 pub fn visible_entities(
     vis: &bsp::Visibility,
     eye: [f32; 3],
@@ -55,16 +53,46 @@ pub fn visible_entities(
     time: i32,
     p: &Protocol,
 ) -> BTreeMap<u32, EntityState> {
-    let from = vis.cluster_at(eye);
+    let v = Viewer::at(vis, eye);
+    if v.sees_nothing() {
+        return BTreeMap::new();
+    }
     entities
         .iter()
-        .filter(|(_, e)| entity_visible(vis, from, e, time, p))
+        .filter(|(_, e)| entity_seen(vis, &v, e, time, p, None))
         .map(|(n, e)| (*n, e.clone()))
         .collect()
 }
 
-/// [`visible_entities`]' test for one entity, from the cluster `from`, in
-/// the frame whose level time is `time`.
+/// Where a snapshot is built from: the eye, and the cluster and area of
+/// its leaf.
+#[derive(Clone, Copy, Debug)]
+pub struct Viewer {
+    pub eye: [f32; 3],
+    pub cluster: i32,
+    pub area: i32,
+}
+
+impl Viewer {
+    pub fn at(vis: &bsp::Visibility, eye: [f32; 3]) -> Self {
+        Viewer {
+            eye,
+            cluster: vis.cluster_at(eye),
+            area: vis.area_at(eye),
+        }
+    }
+
+    /// `SV_AddEntitiesVisibleFromPoint` returns before its loop when the
+    /// eye's leaf has area -1 (cod_lnxded 0x808e298, 1.5b 0x8095c30,
+    /// coduo_lnxded 0x8096b97): an eye in a solid leaf is sent no entity,
+    /// broadcast and temp entities included.
+    pub fn sees_nothing(&self) -> bool {
+        self.area < 0
+    }
+}
+
+/// [`visible_entities`]' cluster test for one entity, from the cluster
+/// `from`, in the frame whose level time is `time`.
 pub fn entity_visible(
     vis: &bsp::Visibility,
     from: i32,
@@ -75,20 +103,21 @@ pub fn entity_visible(
     vis.link_visible(from, &entity_link(vis, e, time, p).0)
 }
 
-/// The snapshot builder's whole test for an entity the viewer at `eye` (in
-/// cluster `from`) is not sent unconditionally: the clusters, then on 1.5
-/// and UO the fog. `fog` is [`fog_cull`]'s squared distance.
+/// The snapshot builder's whole test for an entity the viewer is not sent
+/// unconditionally: the areas, the clusters, then on 1.5 and UO the fog.
+/// `fog` is [`fog_cull`]'s squared distance.
 pub fn entity_seen(
     vis: &bsp::Visibility,
-    from: i32,
-    eye: [f32; 3],
+    v: &Viewer,
     e: &EntityState,
     time: i32,
     p: &Protocol,
     fog: Option<f32>,
 ) -> bool {
     let (link, lo, hi) = entity_link(vis, e, time, p);
-    vis.link_visible(from, &link) && fog.is_none_or(|d| box_dist_sq(lo, hi, eye) <= d)
+    link.in_area(v.area)
+        && vis.link_visible(v.cluster, &link)
+        && fog.is_none_or(|d| box_dist_sq(lo, hi, v.eye) <= d)
 }
 
 /// What 1.5's and United Offensive's snapshot builders cull past
@@ -122,24 +151,35 @@ fn box_dist_sq(lo: [f32; 3], hi: [f32; 3], p: [f32; 3]) -> f32 {
         .sum()
 }
 
-/// `SV_inSnapshot` (cod_lnxded 0x8087b90), what the game's
-/// `trap_InSnapshot` asks of an entity from a point: the cull's cluster
-/// test, except that an entity touching no cluster counts as seen
-/// (docs/research/cod11-hud-protocol.md, section 9, "Compass friendlies"),
-/// and on 1.5 and UO the fog (`coduo_lnxded` 0x808e3a9).
+/// `SV_inSnapshot`, what the game's `trap_InSnapshot` asks of an entity
+/// from a point (cod_lnxded 0x8087b90, 1.5b 0x808d5d2, coduo_lnxded
+/// 0x808e3a9; docs/research/cod11-hud-protocol.md 9, "Compass
+/// friendlies"). `broadcast` is the entity's `SVF_BROADCAST` (1.1) or a
+/// `r.broadcastTime` no snapshot has cleared yet (1.5, UO), either of which
+/// reads as seen. 1.1 then counts an entity touching no cluster as seen;
+/// 1.5 and UO test the areas first and count it as not seen, and add the
+/// fog.
 pub fn in_snapshot(
     vis: &bsp::Visibility,
     eye: [f32; 3],
     e: &EntityState,
+    broadcast: bool,
     time: i32,
     p: &Protocol,
     fog: Option<f32>,
 ) -> bool {
-    let (link, lo, hi) = entity_link(vis, e, time, p);
-    if link.clusters.is_empty() {
+    if broadcast {
         return true;
     }
-    vis.link_visible(vis.cluster_at(eye), &link)
+    let (link, lo, hi) = entity_link(vis, e, time, p);
+    let v1 = p.version == vcod_common::net::protocol::PROTOCOL_V1.version;
+    if v1 && link.clusters.is_empty() {
+        return true;
+    }
+    let v = Viewer::at(vis, eye);
+    link.in_area(v.area)
+        && !link.clusters.is_empty()
+        && vis.link_visible(v.cluster, &link)
         && fog.is_none_or(|d| box_dist_sq(lo, hi, eye) <= d)
 }
 
