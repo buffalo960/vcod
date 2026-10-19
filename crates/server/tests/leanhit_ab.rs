@@ -58,8 +58,6 @@ struct Case {
     /// offset, carried by every bone of a standing or crouched body and by
     /// none of a prone one, which rests on its own ground trace.
     stand_dz: f32,
-    /// Retail's round yaw less ours, 65536ths of a degree, on every round.
-    dir_yaw: i32,
     /// Retail's `PROBE eye` less ours, on every row.
     eye_off: [f32; 3],
     /// Phases whose round's `PROBE dir` may sit past [`DIR_NEAR`].
@@ -117,19 +115,14 @@ const CELL_GAPS_15: Gaps = &[
     ("t_crouch_right", &[('f', 22, 1)]),
 ];
 
-/// The 1.1d `-cmds` run's rounds all leave one 65536th of yaw left of
-/// ours (0.0055 degrees; pitch and every other row match): retail's scope
-/// froze a turn-sway yaw lag of a 65536th where ours froze none. Ours'
-/// shooter reads view yaw 0 on every cmd from his spawn to the freeze, as
-/// retail's snapshots show; which turn left retail's lag is not found
-/// (cod11-combat.md 15.1, "The cmd that fires").
-const DIR_YAW_11: i32 = 1;
-/// The two rounds of that run still past [`DIR_NEAR`] once ours is turned
-/// by [`DIR_YAW_11`]: 3.5e-5 low in z (`t_prone`), 4.4e-5 off in y and
-/// 3e-5 in z (`t_right`), under a 65536th of view each, so one side read
-/// the hold's exact angles and the other a cmd's quantized ones. Their
-/// trigger cmds sit on the frame and the cmd before 18 ms ahead, as the
-/// other eleven's do; the cause is not found (same section).
+/// The two rounds of the 1.1d `-cmds` run past [`DIR_NEAR`]: 3.5e-5 low
+/// in z (`t_prone`), 4.4e-5 off in y and 3e-5 in z (`t_right`), ours
+/// along the hold's exact angles and retail's along a cmd's quantized
+/// ones. Replayed with the shooter's cmd 18 ms before the trigger run
+/// after the frame, as retail's must have run, both match and the other
+/// eleven move off; the capture logs no cmd's arrival against the frames,
+/// so neither side can be chosen per round (cod11-combat.md 15.1, "The
+/// cmd that fires").
 const DIR_GAPS_11: &[&str] = &["t_prone", "t_right"];
 /// The UO `-cmds` run's shooter spawned standing on the sloped point
 /// (976, -792, -2.05), and retail's spawn think left him (6, 3, -1)
@@ -540,11 +533,8 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
         }
     }
     let (rd, od) = (dirs(&retail), dirs(&ours));
-    let (sy, cy) = (c.dir_yaw as f32 * 360.0 / 65536.0).to_radians().sin_cos();
     for (phase, r) in rd.iter().filter(|(p, _)| !c.dir_gaps.contains(&p.as_str())) {
-        let o = od
-            .get(phase)
-            .map(|o| [o[0] * cy - o[1] * sy, o[0] * sy + o[1] * cy, o[2]]);
+        let o = od.get(phase).copied();
         if o.is_none_or(|o| (0..3).any(|i| (o[i] - r[i]).abs() > DIR_NEAR)) {
             bad.push(format!("round {phase} direction: retail {r:?} ours {o:?}"));
         }
@@ -570,7 +560,6 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             join_ms: 8550,
             late_ms: 3450,
             stand_dz: 0.0,
-            dir_yaw: 0,
             eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: &[],
@@ -591,7 +580,6 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             join_ms: JOIN_11,
             late_ms: LATE_11,
             stand_dz: 0.0,
-            dir_yaw: 0,
             eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: &[],
@@ -620,7 +608,6 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             join_ms: 8200,
             late_ms: 2800,
             stand_dz: STAND_DZ_15,
-            dir_yaw: 0,
             eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: CELL_GAPS_15,
@@ -641,7 +628,6 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             join_ms: JOIN_UO,
             late_ms: LATE_UO,
             stand_dz: 0.0,
-            dir_yaw: 0,
             eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: &[],
@@ -661,7 +647,6 @@ fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
         join_ms,
         late_ms,
         stand_dz: 0.0,
-        dir_yaw: 0,
         eye_off: [0.0; 3],
         dir_gaps: &[],
         gaps: &[],
@@ -678,7 +663,6 @@ fn a_dropped_body_lands_and_poses_as_on_retail_on_its_cmds() {
     check(
         fs,
         &Case {
-            dir_yaw: DIR_YAW_11,
             dir_gaps: DIR_GAPS_11,
             ..cmds_case(fixture, CMDS_JOIN_11, CMDS_LATE_11)
         },

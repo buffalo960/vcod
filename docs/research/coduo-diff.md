@@ -2086,7 +2086,7 @@ loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
 - **Anims.** UO's player anim indices follow two rules 1.1's tree never
   exercised (`player-model-anim-system.md`, "United Offensive's array").
   The server's torso anims under the kar98k match retail's
-  (`combat_uo_ab`, VERIFIED).
+  (`playerstate_combat_ab`'s UO capture, VERIFIED).
 
 ### Vehicles
 
@@ -2111,10 +2111,19 @@ captures and the gates.
   the spawn runs before the restart can start its level, and the table
   then matches whole. VERIFIED (gate).
 - `playerstate_uo_ab`: above.
-- `combat_uo_ab`: retail's `--save-combat` capture (kar98k: single shot,
-  sustained fire, reload, crouched and prone shots) replayed on a protocol
-  22 server: the same five shots and the same `weaponstate`, `weapAnim` and
-  `torsoAnim` values per step (VERIFIED).
+- `playerstate_combat_ab`'s UO capture, `mp_cassino-dm-combat-uo.txt`:
+  retail's `--save-combat --capture-tag uo --probe-team axis` capture
+  (kar98k: single shot, sustained fire, reload, crouched and prone shots;
+  retaken cmd-logged 2026-10-19, local 1.51b) replayed on a protocol 22
+  server with retail's cmds frame for frame, as the 1.1 captures are
+  (`cod11-combat.md` 1.13): the same five shots and, sample for sample,
+  the same `weaponstate` runs, `weapAnim` and `torsoAnim` indices, torso
+  toggle flips, `weaponDelay` peak, sight fraction, spread counter and
+  view, with no tolerance and no gap (VERIFIED, gate). A take whose
+  `advance` walk stalled fails it: the probe's stall turn leaves the walk
+  at another yaw, `idle`'s first cmd turns back, and `hipSpreadTurnAdd`
+  holds the spread at 255 one cmd longer than an unturned walk does.
+  The capture is the run that walked with no stall.
 - The server command stream of a join (team menu, weapon menu, the
   objective text and `cg_hudcompassMaxRange`) is retail's verbatim
   (VERIFIED, live, both probes' logs).
