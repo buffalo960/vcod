@@ -146,10 +146,6 @@ pub enum WeaponOp {
     /// ready, which is what a spawn hands a player (object model doc,
     /// section 20).
     SetCurrent(u8),
-    /// `switchToWeapon`: the same change a usercmd's weapon byte asks for, so
-    /// it goes through the putaway and the raise rather than teleporting the
-    /// weapon into the player's hands (combat doc, section 1.8).
-    SwitchTo(u8),
 }
 
 /// A client's `ps.ammo` and `ps.ammoclip` as the host last knew them: copied
@@ -185,7 +181,7 @@ impl AmmoArrays {
                 }
             }
             WeaponOp::TakeAll => *self = AmmoArrays::default(),
-            WeaponOp::SetCurrent(_) | WeaponOp::SwitchTo(_) => {}
+            WeaponOp::SetCurrent(_) => {}
         }
     }
 }

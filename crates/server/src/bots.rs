@@ -1126,6 +1126,14 @@ impl Bot {
                 // reopens the menus under the indices the last level used
                 // (the `n` is what the probes forget them on too).
                 ["n"] => self.rearm(),
+                // `switchToWeapon` and a use pickup's `a <n>`: a cgame
+                // selects `n` and its cmds ask for it (combat doc 9.8), so the
+                // bot's byte does too; the pickup half reads only the byte.
+                ["a", w] => {
+                    if let Ok(w) = w.parse::<u8>() {
+                        self.switch_to = Some(w);
+                    }
+                }
                 ["t", idx] => {
                     let Ok(idx) = idx.parse::<i32>() else {
                         continue;
@@ -5670,6 +5678,22 @@ mod tests {
         v.weapons_held &= !(1 << 2);
         v.loaded &= !(1 << 2);
         assert_eq!(bot.think(&v).weapon, 10);
+    }
+
+    /// `switchToWeapon`'s `a <n>` moves the bot's byte, as a cgame's
+    /// selection, until `ps.weapon` reads it: the pickup reads only the cmd.
+    #[test]
+    fn an_a_command_selects_the_weapon_the_cmds_ask_for() {
+        let (mut bot, mut v) = engaged(21);
+        v.pistol = Some(2);
+        v.weapons_held |= 1 << 2;
+        v.loaded |= 1 << 2;
+        assert_eq!(bot.think(&v).weapon, 10);
+        assert!(bot.observe(1, &[(5, "a 2")], &|_| true).is_empty());
+        assert_eq!(bot.think(&v).weapon, 2, "mid-drop");
+        assert_eq!(bot.think(&v).weapon, 2, "still mid-drop");
+        v.weapon = 2;
+        assert_eq!(bot.think(&v).weapon, 2, "landed");
     }
 
     #[test]
