@@ -2607,7 +2607,7 @@ mod tests {
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
 
         // The raise runs for `raiseTime` and not for a frame: the capture's
-        // `to_frag` holds `weaponstate` 1 for 295 ms of the frag's 250.
+        // `to_frag` holds `weaponstate` 1 for 6 snapshots of the frag's 250.
         step(&mut ps, &w, &input, 9);
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
         step(&mut ps, &w, &input, 1);

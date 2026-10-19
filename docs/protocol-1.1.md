@@ -346,8 +346,8 @@ and it goes stationary with the yaw and roll the tumble reached and a pitch of
 4: the explode event rides the missile's own ring, on the frame its `eType` has
 already become 0. `entityState.index` is 0, unlike `ET_ITEM`'s, because a
 missile's model rides `s.eFlags 0x03000000`, which is above the 24-bit
-netfield and never travels. VERIFIED: the 2026-10-17 recapture of
-`mp_carentan-tdm-grenade.txt` prints `eFlags` 16777216 on every in-flight
+netfield and never travels. VERIFIED: the 2026-10-17 and 2026-10-19
+recaptures of `mp_carentan-tdm-grenade.txt` print `eFlags` 16777216 on every in-flight
 and resting frame: the field arrives non-zero with 24 zero bits, and vcod's
 reader marks that with a bit above the width (`msg::above_width`, "PlayerState
 delta"); the first capture's reader printed 0. INFERRED: the model bits are
