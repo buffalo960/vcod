@@ -201,7 +201,7 @@ struct SnapRun {
 impl SnapRun {
     /// Every change from the `quiet` step to `done`, as (ms past `quiet`,
     /// value), the value in force at `quiet` first.
-    fn from_quiet<T: Clone + PartialEq>(&self, changes: &[(i32, T)]) -> Vec<(i32, T)> {
+    fn past_quiet<T: Clone + PartialEq>(&self, changes: &[(i32, T)]) -> Vec<(i32, T)> {
         let at = |name: &str| self.steps.iter().find(|(n, _)| n == name).unwrap().1;
         let (quiet, done) = (at("quiet"), at("done"));
         let mut out: Vec<(i32, T)> = Vec::new();
@@ -279,7 +279,8 @@ fn snapcull_ours(fs: vcod_common::pk3::Pk3Fs, p: &'static Protocol) -> SnapRun {
     );
     let mut viewer = NetClient::start_with_qport(ClientEnd(qa.clone()), now, 0x2001);
     let mut subject = NetClient::start_with_qport(ClientEnd(qb.clone()), now, 0x2002);
-    let (mut compass, mut ents): (Vec<(i32, i32)>, Vec<(i32, Ents)>) = (Vec::new(), Vec::new());
+    let mut compass: Vec<(i32, i32)> = Vec::new();
+    let mut ents: Vec<(i32, Ents)> = Vec::new();
     let (mut seen_v, mut seen_s) = (i32::MIN, i32::MIN);
     for _ in 0..(40_000 / common::FRAME_MS) {
         now += Duration::from_millis(common::FRAME_MS as u64);
@@ -341,11 +342,11 @@ fn snapcull_matches(fixture: &str, fs: vcod_common::pk3::Pk3Fs, p: &'static Prot
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        fmt(o.from_quiet(&o.compass)),
-        fmt(r.from_quiet(&r.compass)),
+        fmt(o.past_quiet(&o.compass)),
+        fmt(r.past_quiet(&r.compass)),
         "the viewer's iCompassFriendInfo past quiet, (ms, word)"
     );
-    let (rs, os) = (r.from_quiet(&r.subject), o.from_quiet(&o.subject));
+    let (rs, os) = (r.past_quiet(&r.subject), o.past_quiet(&o.subject));
     assert_eq!(
         os.iter().map(|(t, e)| (*t, e.len())).collect::<Vec<_>>(),
         rs.iter().map(|(t, e)| (*t, e.len())).collect::<Vec<_>>(),
