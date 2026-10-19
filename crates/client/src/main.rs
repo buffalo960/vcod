@@ -464,7 +464,9 @@ struct Args {
     /// top) and write every cmd and snapshot to
     /// `crates/server/tests/fixtures/playerstate/<map>-dm-ladder.txt`, which
     /// `tests/ladder_ab.rs` replays. `--save-ladder climb` runs the short
-    /// script instead: straight up looking 45 up and off the top. Retail
+    /// script instead: straight up looking 45 up and off the top.
+    /// `--save-ladder turn` sweeps the view past `bg_ladder_yawcap` on the
+    /// rungs and at the foot (`tests/ladder_yawcap_ab.rs`). Retail
     /// evidence when taken against tools/run_probe.sh; a run against
     /// vcod-server overwrites it.
     #[arg(long, requires = "probe_ladder", num_args = 0..=1, default_missing_value = "full", value_name = "SCRIPT")]

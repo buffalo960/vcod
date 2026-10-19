@@ -2551,6 +2551,11 @@ impl ClientSim {
                 "proneTorsoPitch",
                 self.ps.prone_torso_pitch.to_bits() as i32,
             );
+            // The last ladder's normal, kept off the rungs as retail keeps
+            // it: the client's ladder probe and yaw cap read it.
+            for (i, n) in self.ps.ladder_normal.to_array().into_iter().enumerate() {
+                set(&format!("vLadderVec[{i}]"), n.to_bits() as i32);
+            }
             let body = self.ps.prone_body;
             set("fTorsoHeight", body.torso_height.to_bits() as i32);
             set("fTorsoPitch", body.torso_pitch.to_bits() as i32);

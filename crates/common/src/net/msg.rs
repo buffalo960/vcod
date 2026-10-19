@@ -519,8 +519,10 @@ fn read_angle_field(r: &mut MsgReader, from_val: i32) -> i32 {
     }
 }
 
-/// Inverse of [`read_angle_field`]: `round(deg * 65536 / 360)` as x87's
-/// `fistp` rounds, the constant the f32 at coduo_lnxded 0x80e292c.
+/// Inverse of [`read_angle_field`]: `deg * 65536 / 360` truncated toward
+/// zero, the constant the f32 at coduo_lnxded 0x80e292c, stored under
+/// control word 0xc00 (0x8080815). A short the reader decoded comes back
+/// as itself: the f32 constant is a hair over 65536 / 360.
 fn write_angle_field(w: &mut MsgWriter, raw: i32) {
     let f = f32::from_bits(raw as u32);
     if f == 0.0 {
@@ -528,7 +530,7 @@ fn write_angle_field(w: &mut MsgWriter, raw: i32) {
         return;
     }
     w.write_bits(1, 1);
-    let units = (f64::from(f) * f64::from(65536.0f32 / 360.0)).round_ties_even() as i64;
+    let units = (f64::from(f) * f64::from(65536.0f32 / 360.0)) as i64;
     w.write_short(units as u16 as i16);
 }
 
@@ -1729,6 +1731,27 @@ mod tests {
         let mut r = MsgReader::new(&data, &h);
         g(&mut r);
         assert!(!r.is_overflowed());
+    }
+
+    /// UO's angle field truncates toward zero (coduo_lnxded 0x8080815): a
+    /// climber capped at 350 degrees reaches the client as -1821 shorts,
+    /// -10.003052 (mp_ship-dm-ladder-turn-uo.txt), not -1820.
+    #[test]
+    fn v22_angle_field_truncates() {
+        for (deg, short) in [
+            (350.0f32, -1821i16),
+            (-10.004, -1821),
+            (0.9, 163),
+            (-0.9, -163),
+        ] {
+            rt(
+                |w| write_angle_field(w, deg.to_bits() as i32),
+                |r| {
+                    assert_eq!(r.read_bits(1), 1);
+                    assert_eq!(r.read_short(), short, "{deg}");
+                },
+            );
+        }
     }
 
     #[test]

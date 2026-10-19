@@ -126,8 +126,13 @@ What changed is inside the struct delta (`MSG_WriteDeltaStruct`,
 `CoDUOMP.exe` 0x44b280 and its callers):
 
 - **Field type -100, an angle.** A field with `bits` -100 carries the zero
-  flag and then a raw short of `round(angle * 65536 / 360)` (0x8080815, the
-  constant 182.044 at 0x80e292c, VERIFIED decompile). 1.1 sends the same
+  flag and then a raw short of `angle * 65536 / 360` truncated toward zero
+  (0x8080815, the constant 182.044 at 0x80e292c, stored by `fistp` under
+  control word 0xc00, VERIFIED disassembly; an earlier read of the
+  decompile's `ROUND` had it rounded, and vcod-server rounded until
+  2026-10-19). VERIFIED live: a ladder-capped view of 350 reaches the
+  client as -1821 shorts, -10.003052 (`mp_ship-dm-ladder-turn-uo.txt`,
+  cod11-mantle.md, "The ladder yaw cap"). 1.1 sends the same
   fields as floats (bits 0 in its tables, VERIFIED). It applies to `apos.trBase[0..2]` in the main entity table, ten
   fields of the alternate table and `viewangles[0..2]` in the playerState.
 - **A table-select bit.** After the 10-bit entity number the writer puts

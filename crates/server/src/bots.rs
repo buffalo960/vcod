@@ -755,8 +755,9 @@ pub struct Bot {
     /// Cmds in a row the body read pinned against a key held at its
     /// waypoint.
     pinned_ticks: u32,
-    /// The yaw of a push-off still in the air: the back key brakes the
-    /// flight until the body lands (`nav::push_off`).
+    /// The yaw of a push-off still in the air: the forward key, facing the
+    /// rungs left behind, brakes the flight until the body lands
+    /// (`nav::push_off`).
     pushed_off: Option<f32>,
     /// An unpinning heading (`BotView::unpin`) and the ticks it is still
     /// held for.
@@ -2493,9 +2494,9 @@ impl Bot {
             cmd.up = -127;
         }
         self.crouch_air |= view.crouch_jump && cmd.up > 0;
-        // Off the rungs backwards onto a floor behind: jump facing out,
-        // then brake facing the same way until the body lands, as
-        // `nav::push_off` proved it.
+        // Off the rungs backwards onto a floor behind: jump facing the
+        // rungs, which reflects the jump out, then brake facing the same
+        // way until the body lands, as `nav::push_off` proved it.
         if view.on_ground || (view.on_ladder && view.push_off.is_none()) {
             self.pushed_off = None;
         }
@@ -2505,7 +2506,7 @@ impl Bot {
             cmd.up = if self.jump_held { 0 } else { 127 };
             self.pushed_off = Some(y);
         } else if let Some(y) = self.pushed_off {
-            (pitch, yaw, forward) = (0.0, y, -127);
+            (pitch, yaw, forward) = (0.0, y, 127);
             cmd.right = 0;
         }
         // Pinned in a crease: run aside for a few ticks, then at the
@@ -5018,8 +5019,8 @@ mod tests {
     /// still ends on time and the waypoint gets its turn. Chained spells
     /// held one on mp_ship's hold ladder head for the rest of the run
     /// while its waypoint lay a walk away.
-    /// A push-off jumps facing out from the rungs, then brakes facing the
-    /// same way until the body lands (`nav::push_off`).
+    /// A push-off jumps facing the rungs, then brakes facing the same way
+    /// until the body lands (`nav::push_off`).
     #[test]
     fn a_push_off_jumps_then_brakes_until_it_lands() {
         let mut bot = Bot::new("allies", false, 1);
@@ -5029,8 +5030,8 @@ mod tests {
         v.ladder_normal = [0.0, -1.0, 0.0];
         v.origin = [2146.5, -214.1, 103.0];
         v.waypoint = Some([2144.7, -229.9, 104.1]);
-        v.push_off = Some(270.0);
-        let out = cmd_angles(&v, [0.0, 270.0]);
+        v.push_off = Some(90.0);
+        let out = cmd_angles(&v, [0.0, 90.0]);
         let cmd = bot.think(&v);
         assert_eq!((cmd.up, cmd.forward, cmd.angles), (127, 0, out));
         v.on_ladder = false;
@@ -5038,7 +5039,7 @@ mod tests {
         v.origin = [2146.5, -230.0, 120.0];
         for _ in 0..5 {
             let cmd = bot.think(&v);
-            assert_eq!((cmd.up, cmd.forward, cmd.angles), (0, -127, out));
+            assert_eq!((cmd.up, cmd.forward, cmd.angles), (0, 127, out));
         }
         v.on_ground = true;
         assert_eq!(bot.think(&v).forward, 127);
