@@ -602,6 +602,12 @@ pub struct PlayerState {
     /// raises it only below [`LAND_ANIM_SPEED`] (docs/research/cod11-sound-system.md,
     /// "Landing"). Cleared at the top of every move, like `jumped`.
     pub land_anim: bool,
+    /// The `jump`/`jumpbk` anim event this move raised, if any. Cleared at
+    /// the top of every move, like `jumped`.
+    pub takeoff: Option<Takeoff>,
+    /// UO: this move's `PM_Weapon` raised `LMG_BREAKDOWN` again as a
+    /// continue (`weapon::deploy_driver`). Cleared at the top of every move.
+    pub breakdown_continue: bool,
     /// `ps.weapon`, a 1-based index into configstring 7; 0 is no weapon.
     pub weapon: u8,
     /// `ps.weapons`, bit N for weapon N.
@@ -871,6 +877,8 @@ impl PlayerState {
             backwards_run: false,
             jumped: false,
             land_anim: false,
+            takeoff: None,
+            breakdown_continue: false,
             weapon: 0,
             weapons_held: 0,
             weapon_slots: [0; weapon::NUM_SLOTS],
@@ -1162,6 +1170,8 @@ pub fn pmove(
     let mut events = Vec::new();
     ps.jumped = false;
     ps.land_anim = false;
+    ps.takeoff = None;
+    ps.breakdown_continue = false;
     let was_on_ground = ps.on_ground;
     // retail's `pml.previous_origin` and `previous_velocity`, taken at the
     // top of PmoveSingle
@@ -1212,7 +1222,12 @@ pub fn pmove(
     update_lean(ps, input, true, world, dt);
     update_stance(ps, input, world, dt, &mut events);
     set_water_level(ps, world);
-    ground_trace(ps, world, MASK_PLAYERSOLID);
+    ground_trace(ps, world, MASK_PLAYERSOLID, input);
+    // A takeoff the first ground trace raised is run down by this move's
+    // `PM_DropTimers` (1.1 0x342ce, then 0x342f9).
+    if let Some(t) = &mut ps.takeoff {
+        t.before_timers = true;
+    }
     // Retail updates the ADS flag once per `pm_type` arm, after the ground
     // trace and before the arm's move (`PM_UpdateAimDownSightFlag`, combat
     // doc 1.13), so it reads the ground state the move starts from.
@@ -1257,7 +1272,7 @@ pub fn pmove(
             ps.since_jump_ms = 0.0;
         }
     }
-    ground_trace(ps, world, MASK_PLAYERSOLID);
+    ground_trace(ps, world, MASK_PLAYERSOLID, input);
     // `PM_CrashLand` runs inside the ground trace (0x30721), so it reads the
     // water level the frame began with and the footsteps read its damping.
     if !was_on_ground && ps.on_ground {
@@ -1701,7 +1716,7 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     // for a dead player (combat doc, 1.12 and 1.13).
     ps.ads_active = false;
     update_lean(ps, &idle, false, world, dt);
-    ground_trace(ps, world, MASK_DEADSOLID);
+    ground_trace(ps, world, MASK_DEADSOLID, &idle);
     dead_friction(ps);
     // `PM_CheckLadderMove` past its `pm_time` return: a dead player loses the
     // ladder flag, the ground entity, `pml.groundPlane` and `pml.walking`
@@ -1727,7 +1742,7 @@ pub fn dead_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32) -> Vec<PmEven
     }
     // The closing ground trace (0x34327) calls `PM_CrashLand` when it finds
     // ground under a `groundEntityNum` of `ENTITYNUM_NONE`.
-    ground_trace(ps, world, MASK_DEADSOLID);
+    ground_trace(ps, world, MASK_DEADSOLID, &idle);
     if !grounded && ps.on_ground {
         crash_land(ps, start_vz, true, &mut events);
     }
@@ -3449,6 +3464,32 @@ fn lean_scale(ps: &PlayerState) -> f32 {
     }
 }
 
+/// A `jump` (`jumpbk` on a backward cmd) anim event raised inside a move:
+/// by `PM_CheckJump`, forced, by `PM_GroundTrace`'s kickoff, unforced (it
+/// takes the legs only once their timer reads under 50), or by
+/// `PM_GroundTraceMissed` over a drop of more than 64, forced. The event's
+/// timer is the clause's duration + 50; one raised by the move's first
+/// ground trace is run down by the same move's `PM_DropTimers`
+/// (player-model-anim-system.md, "The takeoff and the landing").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Takeoff {
+    pub forced: bool,
+    /// `cmd.forwardmove < 0`, which picks `jumpbk`.
+    pub back: bool,
+    /// Raised ahead of the move's `PM_DropTimers`.
+    pub before_timers: bool,
+}
+
+impl Takeoff {
+    fn raised(forced: bool, input: &PmInput) -> Self {
+        Takeoff {
+            forced,
+            back: input.forward < 0.0,
+            before_timers: false,
+        }
+    }
+}
+
 /// Q3 `bg_pmove.c` `PM_GroundTrace`'s kickoff test: the player's own velocity
 /// is carrying it off the plane it is standing on. A plain `velocity.z <= 0.0`
 /// test fails in its place: OVERCLIP leaves a hair of positive z after a floor
@@ -3532,7 +3573,7 @@ fn near_ground_missed(ps: &PlayerState, world: &MoveWorld, mask: u32) -> bool {
 }
 
 /// Q3 `bg_pmove.c` `PM_GroundTrace`.
-fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
+fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmInput) {
     // From a quarter unit above the origin to a quarter below (0x304c0..
     // 0x304d3, `.rodata 0x70ba8`): a box resting on a face starts clear.
     let mut t = world.box_trace(
@@ -3568,6 +3609,24 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32) {
     if ps.rules.v15() && t.fraction < 1.0 && !thrown_off && t.normal.z < MIN_WALK_NORMAL {
         ps.jump_penalty = false;
         ps.jump_origin_z = 0.0;
+    }
+    // The kickoff raises the takeoff anim unforced, a step off a drop of
+    // more than 64 forced (`PM_GroundTrace` 1.1 0x30474, 1.5 0x31ccd's
+    // caller, UO alike; `PM_GroundTraceMissed` 1.1 0x3037c, 1.5 0x31a17).
+    // Not on the rungs: retail's kickoff test opens with `pm_flags` 0x10.
+    if t.fraction < 1.0 && thrown_off && !ps.on_ladder {
+        ps.takeoff.get_or_insert(Takeoff::raised(false, input));
+    } else if t.fraction >= 1.0 && ps.on_ground && !ps.on_ladder {
+        let drop = world.box_trace(
+            ps.origin,
+            ps.origin - Vec3::Z * 64.0,
+            ps.mins(),
+            ps.maxs(),
+            mask,
+        );
+        if drop.fraction >= 1.0 {
+            ps.takeoff.get_or_insert(Takeoff::raised(true, input));
+        }
     }
     ps.ground_plane = (t.fraction < 1.0 && !thrown_off).then_some(t.normal);
     ps.near_ground = if t.fraction < 1.0 {
@@ -4273,6 +4332,11 @@ fn check_jump(
     }
     ps.aim_spread_scale = (ps.aim_spread_scale + JUMP_SPREAD_ADD).min(JUMP_SPREAD_MAX);
     ps.jumped = true;
+    // The ground jump's anim, forced; a ladder push-off raises none
+    // (1.1 0x2eb98: the event sits in the `pm_flags & 0x10 == 0` arm).
+    if ladder.is_none() {
+        ps.takeoff = Some(Takeoff::raised(true, input));
+    }
     true
 }
 
@@ -6661,6 +6725,78 @@ mod tests {
             "correction {}",
             ps.view_pitch_correction
         );
+    }
+
+    /// The takeoff anim each arm raises (`Takeoff`): the jump forced and
+    /// after the move's timers drop, the dive's kickoff unforced and ahead
+    /// of them, a step off a drop past 64 forced, a shorter drop none.
+    #[test]
+    fn each_takeoff_raises_its_own_anim_event() {
+        let w = flat();
+        let w = MoveWorld::bare(&w);
+        let run = PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        tick(&mut ps, &run, &w, 30);
+        pmove(&mut ps, &PmInput { jump: true, ..run }, &w, 0.008, &[]);
+        assert_eq!(
+            ps.takeoff,
+            Some(Takeoff {
+                forced: true,
+                back: false,
+                before_timers: false
+            })
+        );
+        pmove(&mut ps, &run, &w, 0.008, &[]);
+        assert_eq!(ps.takeoff, None, "cleared by the next move");
+
+        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        let back = PmInput {
+            forward: -1.0,
+            ..Default::default()
+        };
+        tick(&mut ps, &back, &w, 30);
+        pmove(
+            &mut ps,
+            &PmInput {
+                prone: true,
+                ..back
+            },
+            &w,
+            0.008,
+            &[],
+        );
+        assert_eq!(
+            ps.takeoff,
+            Some(Takeoff {
+                forced: false,
+                back: true,
+                before_timers: true
+            })
+        );
+
+        for (height, lift) in [(100.0, true), (40.0, false)] {
+            let shelf = test_world(&[(
+                Vec3::new(-1024.0, -1024.0, 0.0),
+                Vec3::new(0.0, 1024.0, height),
+            )]);
+            let shelf = MoveWorld::bare(&shelf);
+            let mut ps = PlayerState::spawn(Vec3::new(-40.0, 0.0, height + 0.125), 0.0);
+            let mut raised = None;
+            for _ in 0..60 {
+                pmove(&mut ps, &run, &shelf, 0.008, &[]);
+                raised = raised.or(ps.takeoff);
+            }
+            assert!(ps.origin.x > 30.0 && !ps.on_ground, "{:?}", ps.origin);
+            let want = lift.then_some(Takeoff {
+                forced: true,
+                back: false,
+                before_timers: false,
+            });
+            assert_eq!(raised, want, "a {height} unit drop");
+        }
     }
 
     /// A prone press on a player moving forward throws it into the air at the

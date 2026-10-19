@@ -259,17 +259,26 @@ pub struct ClientSim {
     /// The turret placement's leaf blend for the gun this client mans,
     /// which its legs pose by while mounted.
     pub gunner_leaves: Option<Vec<(usize, f32)>>,
-    /// A jump impulse taken since the last `update_anims`, so a tick that ran
-    /// several moves still raises the event. Leaving the ground is not enough:
-    /// a ledge and a ladder do that without a jump.
-    jumped: bool,
+    /// The takeoff anim a move raised since the last `update_anims`, and the
+    /// hold-clock time its timer was set on: the cmd's serverTime, or its
+    /// start when the move's `PM_DropTimers` ran it down
+    /// ([`pmove::Takeoff`]), and the `movetype` the last pmove's
+    /// `PM_Footsteps` left, which every arm that raises one runs ahead of.
+    /// A tick that ran several moves keeps the last.
+    jumped: Option<(pmove::Takeoff, i32, vcod_common::animscript::Movetype)>,
+    /// Each cmd since the last `update_anims` whose move raised UO's
+    /// `LMG_BREAKDOWN` continue ([`pmove::PlayerState`]'s
+    /// `breakdown_continue`): its serverTime and the `movetype` its
+    /// `PM_Footsteps` left, which UO runs ahead of `PM_Weapon`.
+    breakdown_continue: Vec<(i32, vcod_common::animscript::Movetype)>,
     /// `ps.jumpTime`: the serverTime of the step the last jump took, 0 since
     /// the spawn. The client's own prediction refuses a jump inside 500 ms
     /// of it (docs/research/cod11-mantle.md, "Jumps").
     jump_time: i32,
-    /// A landing since the last `update_anims` fast enough for the land
-    /// anim (`PlayerState::land_anim`).
-    land_anim: bool,
+    /// The serverTime of the cmd whose landing since the last
+    /// `update_anims` was fast enough for the land anim
+    /// (`PlayerState::land_anim`).
+    land_anim: Option<i32>,
     /// `ps.stats[0]` and `stats[2]`, mirrored from the host's vitals every
     /// frame; the host is where the script's `self.health` lands.
     pub health: i32,
@@ -525,6 +534,7 @@ impl AnimInputs<'_> {
 /// enters the state (docs/research/cod11-combat.md, sections 1.5, 1.7, 1.8
 /// and 1.10); the block's clauses are what pick the anim.
 fn weapon_anim_event(event: i32) -> Option<&'static str> {
+    use vcod_common::net::event_ids::{EV_UO_BREAKDOWN_WEAPON, EV_UO_DEPLOY_WEAPON};
     use vcod_common::pmove::weapon::{
         EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_MELEE_SWIPE, EV_PUTAWAY_WEAPON,
         EV_RAISE_WEAPON, EV_RELOAD, EV_RELOAD_FROM_EMPTY, EV_RELOAD_START,
@@ -537,6 +547,10 @@ fn weapon_anim_event(event: i32) -> Option<&'static str> {
         // The swing carries the anim; `EV_FIRE_MELEE`, the damage frame
         // 150 ms later, maps to nothing (combat doc, 1.10).
         EV_MELEE_SWIPE => "meleeattack",
+        // UO's deploy and breakdown raise their own blocks beside the
+        // event, forced (0x447aa, 0x4484c in the Ghidra project).
+        EV_UO_DEPLOY_WEAPON => "lmg_deploy",
+        EV_UO_BREAKDOWN_WEAPON => "lmg_breakdown",
         _ => return None,
     })
 }
@@ -591,9 +605,10 @@ impl ClientSim {
             movetype: Default::default(),
             footsteps_movetype: Default::default(),
             gunner_leaves: None,
-            jumped: false,
+            jumped: None,
+            breakdown_continue: Vec::new(),
             jump_time: 0,
-            land_anim: false,
+            land_anim: None,
             link_to: None,
             seat: None,
             seat_angles: None,
@@ -832,9 +847,10 @@ impl ClientSim {
         self.anim = Default::default();
         self.was_airborne = false;
         self.strafing = None;
-        self.jumped = false;
+        self.jumped = None;
+        self.breakdown_continue.clear();
         self.jump_time = 0;
-        self.land_anim = false;
+        self.land_anim = None;
         // `ClientSpawn`'s memset: the damage fields read 0 again after a
         // respawn (combat doc, 8.4), and so does the dead yaw.
         self.dead = false;
@@ -1467,11 +1483,17 @@ impl ClientSim {
                 );
                 self.view_angles = out.view;
                 self.view_lerp_start = (out.view_lerp_start != 0).then_some(out.view_lerp_start);
-                self.jumped |= self.ps.jumped;
                 if self.ps.jumped {
                     self.jump_time = cmd.server_time;
                 }
-                self.land_anim |= self.ps.land_anim;
+                if let Some(t) = self.ps.takeoff {
+                    let msec = (dt * 1000.0).round() as i32;
+                    let at = cmd.server_time - if t.before_timers { msec } else { 0 };
+                    self.jumped = Some((t, at, self.footsteps_movetype));
+                }
+                if self.ps.land_anim {
+                    self.land_anim = Some(cmd.server_time);
+                }
                 self.relink();
                 return out.events;
             }
@@ -1608,6 +1630,10 @@ impl ClientSim {
         if self.pm_type == PmType::Normal && !self.dead && self.footsteps_select() {
             self.footsteps_movetype = self.footsteps_movetype_of(cmd);
         }
+        if self.ps.breakdown_continue {
+            self.breakdown_continue
+                .push((cmd.server_time, self.footsteps_movetype));
+        }
         match self.ps.rules {
             pmove::MoveRules::V1_1 => before,
             _ => self.footsteps_movetype,
@@ -1696,10 +1722,11 @@ impl ClientSim {
         // holds the channel, so raising it first is what keeps the restart
         // toggle flipping once per landing rather than twice.
         //
-        // The takeoff is raised by the jump impulse and not by becoming
-        // airborne: retail's own mp_pavlov capture backs off a ledge at
-        // `run_back` and reads the run loop while airborne, so a fall and a
-        // mounted ladder animate whatever they were doing.
+        // The takeoff is raised by pmove ([`pmove::Takeoff`]: the jump, the
+        // kickoff off the ground, a step off a drop past 64) and not by
+        // becoming airborne: retail's own mp_pavlov capture backs off a
+        // ledge at `run_back` and reads the run loop while airborne, so a
+        // short fall and a mounted ladder animate whatever they were doing.
         let jumped = std::mem::take(&mut self.jumped);
         let land_anim = std::mem::take(&mut self.land_anim);
         let script = &inputs.anims.script;
@@ -1708,23 +1735,43 @@ impl ClientSim {
             // `PM_CrashLand` raises the land anim only on a fast landing and
             // only with `legsTimer` 0 (cod11-sound-system.md, "Landing"): the
             // one-unit drop off a turret release plays none.
-            (true, true) if land_anim && !self.anim.legs_held(hold_ms) => {
+            (true, true)
+                if let Some(at) = land_anim
+                    && !self.anim.legs_held(at) =>
+            {
                 // The landing writes the legs alone, `both` clause or not
                 // (combat doc, 1.14).
                 let mut sel = script.select_event("land", &conditions);
                 sel.torso = None;
-                Self::play_event(&mut self.anim, &sel, (now_ms, hold_ms), resolve, length);
+                Self::play_event(&mut self.anim, &sel, (now_ms, at), resolve, length);
             }
-            (false, false) if jumped && !self.ps.on_ladder => {
-                let event = if self.ps.backwards_run {
-                    "jumpbk"
-                } else {
-                    "jump"
+            (_, _)
+                if let Some((t, at, movetype)) = jumped
+                    && (t.forced || !self.anim.legs_held(at)) =>
+            {
+                let event = if t.back { "jumpbk" } else { "jump" };
+                let conditions = Conditions {
+                    movetype,
+                    ..conditions.clone()
                 };
                 let sel = script.select_event(event, &conditions);
-                Self::play_event(&mut self.anim, &sel, (now_ms, hold_ms), resolve, length);
+                Self::play_event(&mut self.anim, &sel, (now_ms, at), resolve, length);
             }
             _ => {}
+        }
+        // UO's breakdown continue: the clause's anim restarts the torso
+        // only where it differs from the one playing.
+        for (at, movetype) in std::mem::take(&mut self.breakdown_continue) {
+            let conditions = Conditions {
+                movetype,
+                ..conditions.clone()
+            };
+            let sel = script.select_event("lmg_breakdown", &conditions);
+            if sel.torso.as_ref().and_then(|a| resolve(&a.name))
+                != Some(self.anim.torso() & !vcod_common::net::flags::ANIM_TOGGLEBIT)
+            {
+                Self::play_event(&mut self.anim, &sel, (now_ms, at), resolve, length);
+            }
         }
         // The weapon channel: retail's `PM_Weapon` raises a script event on
         // entering a state, and the `EVENTS` block's own clauses pick the
@@ -3138,7 +3185,15 @@ mod tests {
 
         // The impulse pmove reports, not merely leaving the ground.
         sim.ps.on_ground = false;
-        sim.jumped = true;
+        sim.jumped = Some((
+            pmove::Takeoff {
+                forced: true,
+                back: false,
+                before_timers: false,
+            },
+            1050,
+            vcod_common::animscript::Movetype::Idle,
+        ));
         sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_standjump_takeoff"));
         // Well past the takeoff clause's `duration 5`.
@@ -3152,7 +3207,7 @@ mod tests {
         }
         // The landing pmove reports, fast enough for the land anim.
         sim.ps.on_ground = true;
-        sim.land_anim = true;
+        sim.land_anim = Some(1300);
         sim.update_anims(&inputs, &NULL_USERCMD, (1300, 1300), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_standjump_land"));
     }
@@ -3203,7 +3258,7 @@ mod tests {
         sim.ps.on_ground = false;
         sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         sim.ps.on_ground = true;
-        sim.land_anim = true;
+        sim.land_anim = Some(1100);
         sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_standjump_land"));
         let first = sim.anim.legs();
@@ -3211,7 +3266,7 @@ mod tests {
         sim.ps.on_ground = false;
         sim.update_anims(&inputs, &NULL_USERCMD, (1120, 1120), &[], &mut 1u64);
         sim.ps.on_ground = true;
-        sim.land_anim = true;
+        sim.land_anim = Some(1150);
         sim.update_anims(&inputs, &NULL_USERCMD, (1150, 1150), &[], &mut 1u64);
         assert_eq!(
             sim.anim.legs(),
@@ -3358,7 +3413,15 @@ mod tests {
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_crouch_run_back"));
 
         sim.ps.on_ground = false;
-        sim.jumped = true;
+        sim.jumped = Some((
+            pmove::Takeoff {
+                forced: true,
+                back: true,
+                before_timers: false,
+            },
+            1050,
+            vcod_common::animscript::Movetype::RunCrBk,
+        ));
         sim.update_anims(&inputs, &back, (1050, 1050), &[], &mut 1u64);
         assert_eq!(
             anims.name(sim.anim.legs()),
