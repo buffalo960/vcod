@@ -5122,6 +5122,7 @@ impl Server {
             deployed: sim.ps.deployed(),
             deploy_yaw: sim.ps.prone_direction,
             ads_frac: sim.ps.weapon_pos_frac,
+            spread_scale: sim.ps.aim_spread_scale,
             speed: sim.ps.velocity.truncate().length(),
             velocity: sim.ps.velocity.into(),
             dead: sim.dead,

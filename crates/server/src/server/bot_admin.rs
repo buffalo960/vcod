@@ -415,7 +415,7 @@ mod tests {
         sv.test_seed_rng(5);
         let before = sv.rng;
         let s = sv.bot_settings();
-        let a = sv.add_bot(Side::Axis, s.clone()).expect("a slot");
+        let a = sv.add_bot(Side::Axis, s).expect("a slot");
         let b = sv.add_bot(Side::Allies, s).expect("a slot");
         assert_eq!(sv.rng, before);
         assert_ne!(sv.bots[&a].rng, sv.bots[&b].rng);
