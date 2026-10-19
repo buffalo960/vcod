@@ -1071,7 +1071,19 @@ test, and most of the last-bit residuals. The capsule's centre and sphere
 offset (35 and 20 against 36 and 21) round differently, and a slope
 contact reads that rounding. What that left, 17 last-bit residuals on 1.1d
 (mp_brecourt, mp_dawnville, mp_hurtgen, mp_rocket; 64 to 256 2^-24ths),
-16.3 closes. 1.5b's mp_neuville 90 (128) is still open.
+16.3 closes. 1.5b's mp_neuville 90 (128) is still open. It drops from
+(-14688, 5072, 8) onto terrain tri 4736's face, (-14752, 5032, 8),
+(-14739.33, 5120.77, 0), (-14648, 5032, 0), and the 128 2^-24ths are one
+float step of the drop's fraction, ours 3.323574e-4 (bits 967721025)
+and retail's a step under. VERIFIED, `cod_lnxded` 1.5b 0x8055bea..
+0x8056059: the face clip stores the end's and start's distances, their
+difference and the fraction (`fstps` to -0x20, -0x1c, -0x88 and -0x24),
+as vcod's stored arm does, so the step is not that clip's arithmetic.
+INFERRED, a recomputation with exact rationals: a plane whose normal z
+reads a bit lower gives retail's height; no variant of the plane build
+tried (cross product order, which vertex the distance reads, a stored or
+kept square, length and reciprocal) does. The 1.5b plane build itself is
+the next thing to read.
 
 ### 16.3 The spawnpoint takes the third trace's endpoint
 
