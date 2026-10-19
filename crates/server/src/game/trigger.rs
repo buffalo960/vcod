@@ -742,6 +742,7 @@ pub fn aim_trace(
             fs,
             anims,
             rigs: &mut host.hit_rigs,
+            arith: vcod_common::patch::Arith::for_protocol(host.defs.proto),
             now_ms,
             posed: None,
         }),

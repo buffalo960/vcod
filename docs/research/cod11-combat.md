@@ -2157,13 +2157,75 @@ branches:
   `torso_upper` where retail took `torso_lower` now match. The result gets the fraction, the bone's name id, the
   effective hit-location code, and a normal that is a signed row of the bone
   matrix.
-- A segment that starts inside a box sets the two flag bytes at `+0x18`/`+0x19`
-  of the local result, zeroes the fraction and returns at once.
+- A segment that starts inside a box sets the flag byte at `+0x18` of the
+  local result. VERIFIED, `cod_lnxded` 0x80c4bc5 and UO's `coduo_lnxded`
+  0x80c7a8a: only when its end is inside the box too does it set `+0x19`,
+  zero the fraction and return; a segment that leaves the box goes on to
+  the next bone with the flag set. INFERRED, off `SV_ClipMoveToEntity` (UO
+  0x809aa78): with no bone hit the two bytes are ORed into the trace's
+  start-solid and all-solid. vcod's `bone_trace` returns at once on either.
 
 So the engine's box record is 40 bytes, `{ vec3 mins; vec3 maxs; vec3
 sphereCentre; float radius }`. The file supplies the first 24; INFERRED that
 the engine derives the sphere from them at load, since the file carries nothing
-else.
+else. INFERRED, off the broad phase (UO 0x80c77f1): `radius` at `+0x24` is
+compared against a squared distance, so it holds the radius squared.
+
+#### The arithmetic on 1.5 and UO
+
+1.5b's and UO's engines (gcc 3.2.3, unoptimized) store every float
+assignment, where 1.1d's keeps them on the x87 stack. VERIFIED, the
+disassembly, 1.5b `cod_lnxded` and UO `coduo_lnxded`, one instruction
+sequence apart from addresses and struct offsets in each pair:
+
+- VERIFIED, the body's frame: `AnglesToAxis` (UO 0x806a46e, 1.5b
+  0x806a55e) over `AngleVectors` (UO 0x80674ad): each angle times the
+  double `pi / 180` stored as a float, its `fsincos` (UO 0x806b4de) stored,
+  every product stored. A player's `(0, yaw, 0)` gives forward `(cos,
+  sin, 0)`, left `(-sin, cos, 0)` and up `(0, 0, 1)`.
+- VERIFIED, `start` and `end` into the body's frame (UO 0x8069416, 1.5b
+  0x8069506): each `p - origin` stored, then each axis's dot product
+  rounded once.
+- VERIFIED, each bone's matrix (UO 0x80c7d82 from the skeleton build
+  0x80c5c96, 1.5b 0x80d29ee): off the bone's quaternion, `2 / |q|^2`
+  stored, `xx`, `yy`, `zz` each stored twice (the square, then times the
+  scale), `x * s` and `y * s` stored, `xy`, `xz`, `xw`, `yz`, `yw` each
+  stored, `z * w * s` rounded once, and each element (`1 - (yy + zz)`,
+  `xy + zw`, ...) rounded once. Rows 0, 1, 2 are the bone's axes, the
+  translation the bone's origin copied as built.
+- VERIFIED, each point into the bone's frame (UO 0x80c72ea, 1.5b
+  0x80d1f56): as the body's frame above, against the bone's matrix.
+- VERIFIED, the slab test (UO 0x80c788a..0x80c7a5f, 1.5b 0x80d24f6..0x80d26cb):
+  each `(p - plane) * sign` stored, each `d1 - d2` stored, each `d1 /
+  (d1 - d2)` stored; the comparisons `d1 > enter * den` and `d1 > exit *
+  den` run on the stack.
+- VERIFIED, the world normal (UO 0x8069154, 1.5b 0x8069244): the bone row
+  times its sign, turned by the body's axes, each component rounded once.
+- VERIFIED, the end point: the locational trace's last step (UO 0x809b457
+  in 0x809afc9, 1.5b 0x809a45f in 0x8099fd1), whenever the entity pass
+  lowered the fraction, stores `end - start` and rounds each `start + move
+  * fraction` once.
+
+vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
+matrix, the slab), `HitBody::axis_stored`, `combat::trace_point` for a
+round, a swing and a missile. The bone's quaternion and origin are still
+vcod's pose, composed in `f32` (`PoseBuffer::bone_worlds`); retail's
+skeleton build composes them through its own stores (UO 0x80c8056, the
+product with each component rounded once, and 0x80c7f9a, the child's
+offset through the parent's stored matrix). INFERRED, not ported: ported
+alone on the captures below it moved UO's mp_carentan slide further from
+retail's (1-3 steps where it was 1), so the local poses it composes are
+not yet retail's bits either.
+
+VERIFIED, vcod measurement (`scriptmodel_ab`, the prone captures): before
+the port a frag's first strike on a prone body on mp_carentan landed 4
+float steps off retail's z on both 1.5b captures and on UO
+(-10.666936 against -10.666932); the frame, slab and end point alone
+brought it to 1 step and left the rest on him 10 off; with the stored
+matrix the strike is retail's bit on all three and the contacts after it
+sit 1 to 3 steps off in z. The UO mp_brecourt strike on a graded prone
+body stays 118 steps off in y and 447 in z: the pose on the grade, not
+the trace.
 
 ### 3.2 The 48-byte trace result
 
