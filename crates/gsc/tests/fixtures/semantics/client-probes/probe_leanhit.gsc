@@ -72,6 +72,25 @@
 //	its frame: a grid frame runs long on retail, and a cmd the shooter sent
 //	while it ran lands after it, which moves the view the round reads
 //	(cod11-combat.md 15.1, "The cmd that fires").
+//
+//	`probe_turn 1` runs the turn phases instead: the target stands unleaned
+//	and the hold turns his view (pitch, then yaw off facing the shooter) at
+//	each phase's start; the shooter aims 56 up, at the neck. After
+//	the settle the shooter taps first, so his
+//	round is the first thing since the turn to pose the target, then the
+//	grid runs 0.25 s later and again the frame after (`<phase>_2`), with
+//	nothing posing him in between. On 1.5 and UO each pose eases his
+//	controls a step toward his view (cod11-movers.md 15, "A bone asked
+//	for before the anim update"):
+//
+//	PROBE turn <time> <phase> <pitch> <yaw offset>
+//
+//	The hold's `setPlayerAngles` tilts the target's whole body by the
+//	view's pitch until his next cmd (`r.currentAngles`, cod11-combat.md
+//	3.7), so with the turn set every frame a round in the same frame's
+//	packets meets the tilted body or the upright one by which client's
+//	cmd came first. `probe_turnonce 1` sets the turn for the phase's first
+//	0.2 s only; the target's own cmds hold his view after that.
 
 main()
 {
@@ -164,7 +183,31 @@ phase(name, twb, swb, settle)
 	p.twb = twb;
 	p.swb = swb;
 	p.settle = settle;
+	p.tp = 0;
+	p.ty = 0;
 	return p;
+}
+
+turn(name, tp, ty)
+{
+	p = phase(name, 0, 0, 1.5);
+	p.tp = tp;
+	p.ty = ty;
+	return p;
+}
+
+turn_phases()
+{
+	ps = [];
+	ps[ps.size] = turn("level", 0, 0);
+	ps[ps.size] = turn("t_down", 60, 0);
+	ps[ps.size] = turn("t_up", -85, 0);
+	ps[ps.size] = turn("t_down2", 60, 0);
+	ps[ps.size] = turn("t_level", 0, 0);
+	ps[ps.size] = turn("t_yaw", 0, 50);
+	ps[ps.size] = turn("t_yaw_down", 45, -40);
+	ps[ps.size] = turn("t_back", 0, 0);
+	return ps;
 }
 
 phases()
@@ -390,12 +433,15 @@ hold(site)
 				at = site.b + (fwd[0] * 20, fwd[1] * 20, 8);
 			else if (level.probe_twb & 128)
 				at = site.b + (0, 0, 30);
+			else if (getcvarint("probe_turn"))
+				at = site.b + (0, 0, 56);
 			else
 				at = site.b + (0, 0, 44);
 			t = lean_off(level.probe_twb, site.yaw + 180);
 			at = at + (t[0] * 0.5, t[1] * 0.5, t[2] * 0.5);
 			shooter setplayerangles(vectortoangles(at - eye));
-			target setplayerangles((0, site.yaw + 180, 0));
+			if (!getcvarint("probe_turnonce") || gettime() < level.probe_turn_until)
+				target setplayerangles((level.probe_tp, site.yaw + 180 + level.probe_ty, 0));
 		}
 		wait 0.05;
 	}
@@ -406,6 +452,9 @@ run()
 	level.probe_phase = "none";
 	level.probe_twb = 0;
 	level.probe_swb = 0;
+	level.probe_tp = 0;
+	level.probe_ty = 0;
+	level.probe_turn_until = 1000000;
 	wait 1;
 	site = pick_site();
 	if (!isdefined(site))
@@ -447,6 +496,8 @@ run()
 	}
 	team_player("axis") log_models();
 	ps = phases();
+	if (getcvarint("probe_turn"))
+		ps = turn_phases();
 	for (i = 0; i < ps.size; i++)
 	{
 		p = ps[i];
@@ -460,6 +511,23 @@ run()
 		logPrint("PROBE phase " + gettime() + " " + p.name + "\n");
 		send_in(target, 0, p.twb);
 		send_in(shooter, 16, p.swb);
+		if (getcvarint("probe_turn"))
+		{
+			level.probe_tp = p.tp;
+			level.probe_ty = p.ty;
+			level.probe_turn_until = gettime() + 200;
+			logPrint("PROBE turn " + gettime() + " " + p.name + " " + p.tp + " " + p.ty + "\n");
+			wait p.settle;
+			send_in(shooter, 17, p.swb);
+			wait 0.05;
+			send_in(shooter, 16, p.swb);
+			wait 0.25;
+			grid(p.name, site, target);
+			wait 0.05;
+			grid(p.name + "_2", site, target);
+			wait 1.5;
+			continue;
+		}
 		if (getcvarint("probe_bones"))
 			thread bones(p.name, site, target, p.settle - 0.35);
 		wait p.settle;

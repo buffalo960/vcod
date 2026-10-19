@@ -1743,16 +1743,17 @@ origin on ours (`compare_impacts`).
         frame (one script trace) it eases once, and a frame no build
         happens in eases nothing. vcod: `combat::DobjStamps` keeps, for
         each client and frame, each bone's stamp and build and the
-        controls each build eased to: the first build takes the end
-        frame's ease, each later one eases a step more toward the end
-        frame's target, and the last build's controls go back to the
-        record at the slot's next end frame (`GameHost::dobj_eased`,
-        `ClientSim::keep_eased`). With that every bone of the glide
+        controls each build eased to: each build eases a step on from
+        the last build's controls toward the end frame's target, and
+        the last build's controls go to the record at the slot's next
+        end frame (`DobjStamps::record`, `ClientSim::keep_eased`). With that every bone of the glide
         sits within 0.02 of retail's (VERIFIED, replay; `GLIDE_GAPS` is
-        gone). Not ported: the engine's own traces (rounds in a cmd,
-        turret rounds, missiles, the use and lookat traces) pose
-        without the stamps and so add no build, and vcod still eases
-        once at each end frame where retail eases at the first build.
+        gone). Since 2026-10-19 the engine's own traces (rounds in a
+        cmd, turret rounds, missiles, blasts, the lookat trace) stamp
+        their builds too, each client packet starts a stamp, the
+        record persists across stamps (`DobjStamps::record`) and the
+        end frame eases nothing (cod11-combat.md 3.7, cod11-movers.md
+        15).
     - **Two runs that part.** With `cod11-turrets.md` 13.7 ported, a
       fresh retail jeep run (seat changes at 41550 and 53550, port
       32776) seemed to meet the passenger's stint up to 1.07 off ours,

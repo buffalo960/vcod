@@ -335,7 +335,10 @@ something, the bullet links it.
 - Shared pmove with capsule players that block and push each other. Falls
   stun and hurt.
 - Bullets trace the world, players, static props and script models,
-  through the stock damage callback with per-bone hit locations. Rifle
+  through the stock damage callback with per-bone hit locations, each
+  body posed as retail builds it for that trace (on 1.5 and UO its spine
+  eases a step a build, and a body a script just turned stands in the
+  script's angles until its next cmd). Rifle
   rounds go through players, every round goes through glass. Curved
   patches, terrain and brushes clip a round or a moving player in the
   arithmetic of each patch's server build, and a patch only from the BSP leaves that list
