@@ -405,18 +405,19 @@ fn apply_sim_ops(
     now_ms: i32,
 ) {
     for (slot, op) in rt.take_sim_ops() {
-        let Some(sim) = clients
-            .get_mut(slot)
-            .and_then(Option::as_mut)
-            .and_then(|c| c.sim.as_mut())
-        else {
+        let Some(c) = clients.get_mut(slot).and_then(Option::as_mut) else {
             continue;
         };
-        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, now_ms);
+        let st = c.last_processed_st;
+        let Some(sim) = c.sim.as_mut() else {
+            continue;
+        };
+        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, (now_ms, st));
     }
 }
 
-/// One op of [`apply_sim_ops`].
+/// One op of [`apply_sim_ops`]. `cmd_ms` is the client's last processed
+/// cmd's serverTime, the clock its anim timers run on.
 #[allow(clippy::too_many_arguments)]
 fn apply_sim_op(
     sim: &mut ClientSim,
@@ -426,7 +427,7 @@ fn apply_sim_op(
     anims: Option<&vcod_common::animtree::PlayerAnims>,
     weapons: &crate::weapons::WeaponTable,
     rng: &mut u64,
-    now_ms: i32,
+    (now_ms, cmd_ms): (i32, i32),
 ) {
     use crate::game::host::SimOp;
     match op {
@@ -449,7 +450,7 @@ fn apply_sim_op(
                 weapon: crate::items::item_name(weapons.list(), index).unwrap_or_default(),
                 weapon_class: weapons.class(index),
             });
-            sim.take_damage(&op, inputs.as_ref(), rng, now_ms);
+            sim.take_damage(&op, inputs.as_ref(), rng, (now_ms, cmd_ms));
         }
     }
 }
@@ -1347,7 +1348,8 @@ fn mirror_for_callback(
 }
 
 /// What a callback queued for `slot`, applied to its sim before its next cmd:
-/// retail's script writes the playerstate there and then.
+/// retail's script writes the playerstate there and then. `at` is the frame
+/// clock and the client's last processed cmd's serverTime.
 #[allow(clippy::too_many_arguments)]
 fn apply_callback_ops(
     rt: &mut script::ScriptRuntime,
@@ -1356,14 +1358,14 @@ fn apply_callback_ops(
     anims: Option<&vcod_common::animtree::PlayerAnims>,
     weapons: &crate::weapons::WeaponTable,
     rng: &mut u64,
-    now_ms: i32,
+    at: (i32, i32),
 ) {
     let (weapon_ops, sim_ops) = rt.take_ops_of(slot);
     for op in weapon_ops {
         apply_weapon_op(sim, op);
     }
     for op in sim_ops {
-        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, now_ms);
+        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, at);
     }
     mirror_weapons_of(sim, rt, slot);
     mirror_vitals_of(sim, rt, slot);
@@ -4708,6 +4710,14 @@ impl Server {
         }
     }
 
+    /// Whether the graph stands over the brushes the script links now, with
+    /// no rebuild asked for or under way: a room behind a gametype's walls
+    /// reads as a pit only until the rebuild over their removal lands.
+    fn nav_settled(&self) -> bool {
+        let links = self.script.as_ref().map_or(0, |rt| rt.host.brush_links);
+        self.nav_rebuild.is_none() && self.nav_relink.is_none() && links == self.nav_links
+    }
+
     /// Rebuilds the navigation graph over the brushes the script has linked
     /// and unlinked since it was built, once they have held still for
     /// [`NAV_RELINK_MS`]: United Offensive's `bas.gsc` deletes a base's
@@ -5157,10 +5167,11 @@ impl Server {
                 })
             }),
             linked: sim.link_to.is_some(),
-            stranded: self
-                .nav
-                .as_ref()
-                .is_some_and(|g| g.dead_end(sim.ps.origin.into())),
+            stranded: self.nav.as_ref().is_some_and(|g| {
+                let at = sim.ps.origin.into();
+                let spawns = self.world.as_ref().map_or(&[][..], |w| &w.spawn_points);
+                g.dead_end(at) || (self.nav_settled() && g.pit(at, spawns))
+            }),
             on_ladder: sim.ps.on_ladder,
             ladder_normal: sim.ps.ladder_normal.into(),
             ladder_middle: self
@@ -9028,6 +9039,9 @@ impl Server {
             // What the passes queued for the mover reaches its sim before its
             // next cmd, as `Touch_Item` and `G_Damage` write the playerstate
             // inside this one (items doc, 13.2).
+            let st = self.clients[slot]
+                .as_ref()
+                .map_or(0, |c| c.last_processed_st);
             if let (Some(rt), Some(sim)) = (
                 self.script.as_mut(),
                 self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()),
@@ -9040,7 +9054,7 @@ impl Server {
                     self.anims.as_deref(),
                     &weapons,
                     &mut self.rng,
-                    now_ms,
+                    (now_ms, st),
                 );
             }
             if died {
@@ -9153,7 +9167,7 @@ impl Server {
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
-            now_ms,
+            (now_ms, st),
         );
     }
 
@@ -9378,7 +9392,7 @@ impl Server {
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
-            now_ms,
+            (now_ms, st),
         );
         relink(bodies, &self.clients, slot);
     }
@@ -9450,7 +9464,7 @@ impl Server {
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
-            now_ms,
+            (now_ms, st),
         );
         relink(bodies, &self.clients, slot);
     }
@@ -9643,7 +9657,7 @@ impl Server {
                 self.anims.as_deref(),
                 weapons,
                 &mut self.rng,
-                now_ms,
+                (now_ms, st),
             );
             relink(bodies, &self.clients, victim);
         }
