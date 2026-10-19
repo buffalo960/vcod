@@ -569,12 +569,13 @@ fn split_axis(r: &Bounds2) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::trigger::{PLAYER_MAXS, PLAYER_MINS};
 
     const BODY: i32 = 0x0200_0000;
     const CORPSE: i32 = 0x0400_0000;
 
     fn player(x: f32, y: f32) -> Link {
-        Link::player([x, y, 0.0], [-15.0, -15.0, 0.0], [15.0, 15.0, 72.0], BODY)
+        Link::player([x, y, 0.0], PLAYER_MINS, PLAYER_MAXS, BODY)
     }
 
     fn everything(t: &AreaTree) -> Vec<u32> {

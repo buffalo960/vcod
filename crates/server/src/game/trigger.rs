@@ -458,7 +458,7 @@ pub(crate) fn capsule_contacts_hulls(
 /// by `trap_EntityContact`, the client's own clip box against the trigger's
 /// *brushes* (docs/research/cod11-gsc-object-model.md section 22). Neither
 /// box contains the other -- the candidate reaches 52 below the feet and the
-/// clip box 72 above them -- so both have to hold.
+/// clip box 70 above them -- so both have to hold.
 ///
 /// Only an entity with a touch function is touched (0x3f9cd): a
 /// `trigger_damage` sets none, and a `trigger_lookat` or `trigger_use` has
@@ -817,6 +817,23 @@ pub fn boxes_overlap(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `G_SetPlayerSize` on the registered defaults, which are cheat
+    /// protected on all three servers (cod11-gsc-object-model.md 16.2).
+    #[test]
+    fn the_player_box_is_g_set_player_size_on_the_cvar_defaults() {
+        for proto in [1, 6, 22] {
+            let cv = crate::cvars::Cvars::for_protocol(proto);
+            let half = cv.get("g_bounds_width").parse::<f32>().unwrap() * 0.5;
+            let height = cv.get("g_bounds_height_standing").parse::<f32>().unwrap();
+            assert_eq!(PLAYER_MINS, [-half, -half, 0.0], "protocol {proto}");
+            assert_eq!(PLAYER_MAXS, [half, half, height], "protocol {proto}");
+            for name in ["g_bounds_width", "g_bounds_height_standing"] {
+                let flags = cv.flags(name).unwrap();
+                assert_ne!(flags & crate::cvars::flag::CHEAT, 0, "{name}");
+            }
+        }
+    }
 
     /// The six trigger classnames in the `spawns` table map to kinds; nothing
     /// else does (docs/research/cod11-gsc-object-model.md section 8).
