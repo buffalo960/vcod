@@ -827,10 +827,7 @@ mod tests {
     /// truncates to 179999, where an `f32` product rounds onto 180000.
     #[test]
     fn angle_normalize_360_truncates_the_unrounded_product() {
-        assert_eq!(
-            angle_normalize_360(988.769_470_214_843_8),
-            268.764_038_085_937_5
-        );
+        assert_eq!(angle_normalize_360(988.7695), 268.764_04);
         assert_eq!(angle_normalize_360(-90.0), 270.0);
     }
 

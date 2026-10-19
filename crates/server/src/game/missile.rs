@@ -2951,14 +2951,16 @@ mod tests {
                 assert!((0.85..=1.15).contains(&f.abs()), "{map}: {contacts:?}");
             }
         }
-        let mut draws = Draws::default();
-        draws.pinned = contacts
-            .iter()
-            .map(|c| match *c {
-                Bounce::Wall(k) => f64::from(k),
-                Bounce::Floor(f) => f.abs(),
-            })
-            .collect();
+        let mut draws = Draws {
+            pinned: contacts
+                .iter()
+                .map(|c| match *c {
+                    Bounce::Wall(k) => f64::from(k),
+                    Bounce::Floor(f) => f.abs(),
+                })
+                .collect(),
+            ..Default::default()
+        };
         let mut ours = Vec::new();
         let mut now = launch.pos.1;
         while now < rows.last().unwrap().time {
