@@ -202,11 +202,11 @@ fn captures() -> BTreeMap<String, (Vec<String>, Option<String>)> {
 /// cannot serve it: it needs the pak-backed source the server crate has,
 /// with the probe overlaid on the gametype path.
 ///
-/// The three `probe_persist_*` probes need a fourth thing: an engine that
-/// can end a level. Each calls `map_restart` or `exitLevel`, which queue a
-/// console line the server drains, and measures what the level that comes
-/// back still has; `crates/server`'s `Server` is the only host with that
-/// machinery.
+/// The three `probe_persist_*` probes and `probe_hostname` need a fourth
+/// thing: an engine that can end a level. Each calls `map_restart` or
+/// `exitLevel`, which queue a console line the server drains, and measures
+/// what the level that comes back still has; `crates/server`'s `Server` is
+/// the only host with that machinery.
 ///
 /// The seven `probe_stale_*` probes free an entity or a hudelem and read
 /// the handle back, which needs the object table and its deferred free.
@@ -229,6 +229,7 @@ const RUN_IN_SERVER_CRATE: &[&str] = &[
     "probe_delete",
     "probe_detach_missing",
     "probe_ents",
+    "probe_hostname",
     "probe_late_attach",
     "probe_late_index",
     "probe_late_label",

@@ -965,9 +965,10 @@ fn vehicle_player_damage(
 }
 
 /// `G_PlayerVehiclePositionAndBlend` (game.mp.uo 0x9048f) at the end of a
-/// rider's `ClientEndFrame`: the body at its seat tag of the vehicle as
-/// posed now, shifted by the seat's offset, and turned with the tag
-/// (`r.currentAngles`, the frame a trace poses the body in).
+/// rider's `ClientEndFrame`: `ps.origin` and `r.currentOrigin` at its seat
+/// tag of the vehicle as posed now, shifted by the seat's offset, and
+/// turned with the tag (`r.currentAngles`, the frame a trace poses the body
+/// in).
 fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim) {
     let Some(seat) = sim.seat else {
         return;
@@ -1418,8 +1419,8 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
 /// `G_RunClient` (game.mp.uo 0x41dfc) on a seated rider: `G_SetFixedLink`
 /// mode 2 puts `r.currentOrigin` and `ps.origin` at the seat tag of the
 /// vehicle as it stands, shifted by the link's own offset, and links him
-/// there. His end frame puts `ps.origin` back on the seat
-/// (coduo-vehicles.md 13, "The tank driver's link offset").
+/// there. His end frame puts `ps.origin` and `r.currentOrigin` back on the
+/// seat (coduo-vehicles.md 13, "The tank driver's link offset").
 fn run_rider_link(
     rt: &mut script::ScriptRuntime,
     slot: usize,

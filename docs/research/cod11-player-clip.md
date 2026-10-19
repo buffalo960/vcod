@@ -104,6 +104,17 @@ too (UO `FUN_0003c9a6`'s opening test, 1.5 `FUN_00037330`'s); vcod's dead
 move had kept 1.1's bare `pm_time` test and held 29 of the 59 snapshots
 still.
 
+VERIFIED, retail 1.5b through the predictor the same way (2026-10-19,
+`mp_carentan-dm-slope-8ms-states-1.5.txt`, `probe_states` with
+`+set probe_suicide_wait 10.5`): the spectator spell 439 of 439 (311
+moving), the corpse 79 of 79, its intermission 698 of 698. That take kills
+the body prone, 1475 ms into the stance change's `pm_time` with 0x2000
+set and neither 0x100 nor 0x200, so the corpse rests on 1.5b's ladder
+test: under 1.1's bare `pm_time` test 30 of the 79 differ.
+`predictor_matches_the_1_5_server_step` runs the same capture through
+vcod-server's step and the predictor side by side: 8637 cmds, 0
+unpredicted, 0 mismatches.
+
 VERIFIED: `BG_CheckProneValid` (0x2d428) traces with 0x810011 and 0x820011
 (0x2d4c2, 0x2d4d2), neither holding 0x2000000; `PM_UpdateLean` (0x32ac8)
 traces with 0x2810011 (0x32d07). INFERRED: the prone fit ignores players and
