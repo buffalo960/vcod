@@ -645,10 +645,12 @@ impl VehicleProbe {
             } else if i("eType") == ET_MISSILE || self.missiles.contains(&(*num as i32)) {
                 self.missiles.insert(*num as i32);
                 let slot = (i("eventSequence") - 1) & 3;
-                // The base's bits, for a rest height to the last bit.
+                // The base's bits, for a rest height to the last bit; the
+                // angles and the delta print round-trip exact.
                 println!(
                     "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} bits {:#x} {:#x} {:#x} \
-                     ground {} weapon {} etype {} evseq {} ev {} parm {}",
+                     ground {} weapon {} etype {} evseq {} ev {} parm {} \
+                     apos {} {} {} atraj {} {} {} {} {} traj {} {} {} {}",
                     s.server_time,
                     i("pos.trType"),
                     f("pos.trBase[0]"),
@@ -663,6 +665,18 @@ impl VehicleProbe {
                     i("eventSequence"),
                     i(&format!("events[{slot}]")),
                     i(&format!("eventParms[{slot}]")),
+                    f("apos.trBase[0]"),
+                    f("apos.trBase[1]"),
+                    f("apos.trBase[2]"),
+                    i("apos.trType"),
+                    i("apos.trTime"),
+                    f("apos.trDelta[0]"),
+                    f("apos.trDelta[1]"),
+                    f("apos.trDelta[2]"),
+                    i("pos.trTime"),
+                    f("pos.trDelta[0]"),
+                    f("pos.trDelta[1]"),
+                    f("pos.trDelta[2]"),
                 );
             } else if i("eFlags") & seated != 0 || i("eType") == vcod_common::net::flags::ET_PLAYER
             {

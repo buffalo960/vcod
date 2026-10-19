@@ -181,8 +181,11 @@ const PI64: f64 = std::f64::consts::PI;
 /// only because of the truncation: rounded to nearest, it stalls a few
 /// 65536ths out once a step is under half of one, which a run against
 /// ours measured as a constant 0.022 degrees of yaw (combat doc, 15.4).
+/// The product stays on the x87 stack into the `fistp` (1.1d 0x3eb30, UO
+/// alike), so an angle a hair under a 65536th truncates down where an `f32`
+/// product would round it up onto the unit (combat doc 12.7).
 pub fn angle_normalize_360(a: f32) -> f32 {
-    ((a * (65536.0 / 360.0)) as i32 & 0xffff) as f32 * (360.0 / 65536.0)
+    ((f64::from(a) * f64::from(65536.0f32 / 360.0)) as i32 & 0xffff) as f32 * (360.0 / 65536.0)
 }
 
 /// `AngleNormalize180` (`0x3eb70`).
@@ -819,6 +822,14 @@ mod tests {
     use crate::pmove::SPEED_RUN;
     use glam::Vec3;
     use std::collections::HashMap;
+
+    /// 988.76947 degrees is 179999.993 65536ths: retail's x87 product
+    /// truncates to 179999, where an `f32` product rounds onto 180000.
+    #[test]
+    fn angle_normalize_360_truncates_the_unrounded_product() {
+        assert_eq!(angle_normalize_360(988.7695), 268.764_04);
+        assert_eq!(angle_normalize_360(-90.0), 270.0);
+    }
 
     /// The kar98k sniper's aim keys as `pak0.pk3` spells them.
     fn sniper() -> WeaponDef {
