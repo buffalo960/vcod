@@ -676,7 +676,12 @@ pub struct Bot {
     answered: Vec<i32>,
     /// The tick's usercmd is stamped with the server's own clock; the driver
     /// stamps it, so the brain carries only the input state below.
-    rng: u64,
+    /// The bot's own generator: its brain's draws and its path's
+    /// (`nav::Follower::waypoint`), never the server's shared `rand()`
+    /// the spread, the recoil and the melee roll take, so one bot's
+    /// choices never move another's (bot-objectives.md, "One generator
+    /// per bot").
+    pub(crate) rng: u64,
     /// Wander heading, degrees, wire convention.
     heading: f32,
     /// Ticks left on the current heading.
@@ -1099,7 +1104,7 @@ impl Bot {
         }
     }
 
-    /// xorshift64* masked to 31 bits, the server's own generator.
+    /// xorshift64* masked to 31 bits off the bot's own state.
     fn rand(&mut self) -> i32 {
         crate::game::host::rand_int(&mut self.rng)
     }
