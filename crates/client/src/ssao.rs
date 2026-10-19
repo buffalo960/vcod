@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// Depth stays f32: at half precision a flat floor's steps would occlude it.
 const LINZ_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-/// The occlusion search radius, world units (a player is 72 tall).
+/// The occlusion search radius, world units (a player is 70 tall).
 const RADIUS: f32 = 40.0;
 /// `vc_ssao` is the exponent on the visibility (1 is GTAO's own, which
 /// lightmapped corners already darkened read as subtle); past this it only crushes.

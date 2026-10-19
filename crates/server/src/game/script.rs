@@ -4803,8 +4803,8 @@ mod tests {
             slot,
             origin: glam::Vec3::new(x, y, 0.0),
             yaw: 0.0,
-            mins: glam::Vec3::new(-15.0, -15.0, 0.0),
-            maxs: glam::Vec3::new(15.0, 15.0, 72.0),
+            mins: crate::game::trigger::PLAYER_MINS.into(),
+            maxs: crate::game::trigger::PLAYER_MAXS.into(),
             pose: Default::default(),
         };
         rt.set_client_body(0, Some(body(0, 0.0, 0.0)));

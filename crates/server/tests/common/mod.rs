@@ -521,7 +521,8 @@ pub struct CmdLog {
     pub weapons: Option<BTreeMap<usize, u8>>,
     /// The absolute pitch and yaw shorts from each cmd on which they
     /// change, the first always; `None` on a capture whose line carries no
-    /// `a=`, whose walks infer the view off the traces ([`walk_yaw`]).
+    /// `a=`, whose cmds hold the step's base view. A walk's log always
+    /// carries it: the probe's stall turns are only in the log.
     pub views: Option<BTreeMap<usize, [i32; 2]>>,
     /// `forward`, `right` and `up` from each cmd on which they change, the
     /// first always; `None` on a capture whose line carries no `m=`, whose
@@ -543,12 +544,10 @@ impl CmdLog {
     }
 
     /// Sets cmd `i`'s view and movement: the logged ones where the log has
-    /// them, else the walk's inferred yaw and the step's base.
-    fn aim(&self, i: usize, step: &Step, cmd: &mut UserCmd) {
+    /// them, else the step's base.
+    fn aim(&self, i: usize, cmd: &mut UserCmd) {
         if let Some([pitch, yaw]) = self.view(i) {
             cmd.angles[0] = pitch;
-            cmd.angles[1] = yaw;
-        } else if let Some(yaw) = walk_yaw(step, self.stamps[i]) {
             cmd.angles[1] = yaw;
         }
         if let Some((_, &[f, r, u])) = self.moves.as_ref().and_then(|m| m.range(..=i).next_back()) {
@@ -838,28 +837,6 @@ pub struct Sample {
     pub explosions: usize,
 }
 
-/// The absolute yaw short retail's walk cmd stamped `st` carried, read off
-/// the view of the first trace whose `commandTime` reached it (the last
-/// trace's past them all). The probe's stall response turns a walk 45
-/// degrees and a capture whose `!cmds` line has no `a=` does not log angles,
-/// so the view is the only record of the turn; a still step sends its base
-/// yaw. `None` off a walk.
-fn walk_yaw(step: &Step, st: i32) -> Option<i32> {
-    if !step.walks {
-        return None;
-    }
-    let views = || {
-        step.trace
-            .iter()
-            .filter_map(|t| Some((t.command_time?, t.viewangles?[1])))
-    };
-    let yaw = views()
-        .find(|&(ct, _)| ct >= st)
-        .or_else(|| views().next_back())?
-        .1;
-    Some((yaw * 65536.0 / 360.0).round() as i32 & 0xffff)
-}
-
 /// Replays a capture's steps against our server, one sample per snapshot per
 /// step, the way the probe traced retail's. `place` puts the client where the
 /// capture's header says it stood before the first step: a gate about where a
@@ -923,18 +900,20 @@ pub fn replay_as(
                (origin, yaw): ([f32; 3], f32)| {
         let short = short_of(yaw);
         sv.place_client(0, origin, (short as f32 + 0.5) * 360.0 / 65536.0);
-        let yaw = short as f32 * 360.0 / 65536.0;
-        // The client subtracts the `delta_angles` of the snapshot it last
-        // saw, so until the placed spawn's has reached it the view it asks
-        // for is built against the old one. The capture's own client had
-        // three seconds of that; a few frames is enough to converge.
-        let settle = UserCmd {
-            angles: [0, short_of(yaw), 0],
-            ..holding(cl)
-        };
+        // `place_client`'s delta puts the view at `yaw` under a raw cmd
+        // angle of 0, so the settle sends that raw 0 from the first frame,
+        // past the snapshot that still carries the old delta: rebased off
+        // that one, the first cmd and the next turn the view twice, and
+        // UO's `hipSpreadTurnAdd` opens the cone where retail's spawn,
+        // which turns no cmd, left it shut (cod11-combat.md 2.1).
         for _ in 0..4 {
             *now += Duration::from_millis(FRAME_MS as u64);
-            cl.send_frame(&settle);
+            cl.pump_at(*now);
+            let settle = UserCmd {
+                server_time: cl.server_clock_ms(),
+                ..holding(cl)
+            };
+            cl.send_cmds(&[settle]);
             self::step(sv, &q, cl, *now);
         }
     };
@@ -1068,7 +1047,7 @@ pub fn replay_as(
                         .get(&next)
                         .copied()
                         .unwrap_or((base.buttons, base.wbuttons));
-                    log.aim(next, step, &mut cmd);
+                    log.aim(next, &mut cmd);
                     batch.push((st, cmd));
                     next += 1;
                 }
@@ -1103,7 +1082,7 @@ pub fn replay_as(
                     .get(&k)
                     .copied()
                     .unwrap_or((base.buttons, base.wbuttons));
-                log.aim(k, step, &mut cmd);
+                log.aim(k, &mut cmd);
                 carry.push((st, cmd));
             }
             shift_carried = hands_on.then_some(shift);

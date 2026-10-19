@@ -49,6 +49,20 @@ impl Frame {
         }
     }
 
+    /// [`Frame::within`] as 1.5b's and UO's `MatrixMultiply43` rounds it:
+    /// each element's sum of products rounded once.
+    pub fn within_stored(&self, parent: &Frame) -> Frame {
+        let [p0, p1, p2] = parent.axis.map(|a| a.as_dvec3());
+        let to_world = |v: Vec3| {
+            let v = v.as_dvec3();
+            (p0 * v.x + p1 * v.y) + p2 * v.z
+        };
+        Frame {
+            axis: self.axis.map(|a| to_world(a).as_vec3()),
+            origin: (to_world(self.origin) + parent.origin.as_dvec3()).as_vec3(),
+        }
+    }
+
     /// `self` in `parent`'s frame, the inverse of [`Frame::within`]:
     /// `G_CalcTagAxis`' `MatrixInverseOrthogonal43` then `MatrixMultiply43`.
     pub fn relative_to(&self, parent: &Frame) -> Frame {
@@ -202,6 +216,72 @@ pub fn client_bone(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3,
     Some((frame * local, frame * rot))
 }
 
+/// [`client_bone`] in the model's own frame as 1.5b's and UO's skeleton
+/// build leaves it (`PoseBuffer::stored_worlds`): its origin and its
+/// matrix's axes, each bone of the chain from the build that first posed
+/// it. `None` where the pose kept no engine records.
+fn client_bone_stored(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Vec3, [Vec3; 3])> {
+    let body = host.client_dobjs.get(slot)?.clone()?;
+    let anims = host.anims.clone()?;
+    let fs = host.fs.clone()?;
+    let skel = host.hit_rigs.rig(&fs, &body.pose.assembly)?;
+    let bone = host.hit_rigs.bone(&fs, &body.pose.assembly, &skel, tag)?;
+    let mut chain = vec![bone];
+    while let Ok(p) = usize::try_from(skel.bones()[*chain.last()?].parent) {
+        chain.push(p);
+    }
+    let now = host.dobj_time_ms;
+    let posed = host.dobj_posed.get_mut(slot)?;
+    let times = posed.stamp(skel.bones().len(), &chain, now, &body.pose);
+    let mut merged: Option<vcod_common::skeleton::PoseBuffer> = None;
+    let mut done: Vec<(i32, usize)> = Vec::new();
+    for &t in &times {
+        if done.contains(&t) {
+            continue;
+        }
+        done.push(t);
+        let inputs = posed.inputs(&body.pose, &anims, t.0, t.1);
+        let rigs = &mut host.hit_rigs;
+        let pose = vcod_common::playerpose::pose_player(&skel, &inputs, |n| rigs.clip(&fs, n));
+        match merged.as_mut() {
+            None => merged = Some(pose),
+            Some(m) => {
+                for (&b, _) in chain.iter().zip(&times).filter(|(_, bt)| **bt == t) {
+                    m.copy_bone(&pose, b);
+                }
+            }
+        }
+    }
+    let b = merged?.stored_worlds(&skel)?[bone];
+    Some((b.origin, b.axes))
+}
+
+/// `AnglesToAxis` as 1.5b's and UO's engines run it (UO 0x806a46e over
+/// `AngleVectors` 0x80674ad): each angle's float radians, its sine and
+/// cosine stored, each component stored, the left the right negated.
+fn angles_to_axis_stored(a: [f32; 3]) -> [Vec3; 3] {
+    let st = |x: f64| x as f32;
+    let sc = |deg: f32| {
+        let r = f64::from(st(f64::from(deg) * (std::f64::consts::PI / 180.0)));
+        (f64::from(st(r.sin())), f64::from(st(r.cos())))
+    };
+    let ((sp, cp), (sy, cy), (sr, cr)) = (sc(a[0]), sc(a[1]), sc(a[2]));
+    let right = [
+        st(-sr * sp * cy + -cr * -sy),
+        st(-sr * sp * sy + -cr * cy),
+        st(-sr * cp),
+    ];
+    [
+        Vec3::new(st(cp * cy), st(cp * sy), st(-sp)),
+        Vec3::new(-right[0], -right[1], -right[2]),
+        Vec3::new(
+            st(cr * sp * cy + -sr * -sy),
+            st(cr * sp * sy + -sr * cy),
+            st(cr * cp),
+        ),
+    ]
+}
+
 /// [`client_bone`] in the model's own frame, before the body's yaw: what
 /// a link holds in the parent entity's `angles` (`G_CalcTagParentAxis`
 /// multiplies the tag's model-space matrix by the parent's axis).
@@ -312,7 +392,19 @@ fn tag_frame(
     if let Some(slot) = client_slot(host, parent) {
         // The four-argument form only looks the bone up (0x6631b); posing it
         // would fix the frame's skeleton early.
-        let found = if pose {
+        let stored = pose
+            && vcod_common::patch::Arith::for_protocol(host.defs.proto)
+                == vcod_common::patch::Arith::Stored;
+        let found = if stored && let Some((o, axis)) = client_bone_stored(host, slot, tag) {
+            // `G_CalcTagParentAxis`: the tag's matrix times the parent's
+            // stored axis, each element rounded once.
+            let angles = vector(host, cx, parent, "angles");
+            let base = Frame {
+                axis: angles_to_axis_stored(angles),
+                origin: base.origin,
+            };
+            Some(Frame { axis, origin: o }.within_stored(&base))
+        } else if pose {
             client_bone_local(host, slot, tag).map(|(o, r)| Frame::from_quat(o, r).within(&base))
         } else {
             client_has_bone(host, slot, tag).then_some(base)

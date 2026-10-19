@@ -1570,8 +1570,7 @@ fn stamped_pose(
             None => pose = Some(then),
             Some(p) => {
                 for (b, _) in marks.iter().enumerate().filter(|(_, m)| **m == k) {
-                    let (lp, lr) = then.local(b);
-                    p.set_local(b, lp, lr);
+                    p.copy_bone(&then, b);
                 }
             }
         }
@@ -2149,6 +2148,7 @@ impl Blast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::trigger::{PLAYER_MAXS, PLAYER_MINS};
     use std::collections::HashMap;
 
     fn ps_on(rules: MoveRules, origin: Vec3) -> PlayerState {
@@ -3341,8 +3341,8 @@ mod tests {
             slot,
             origin: Vec3::new(x, 0.0, 0.0),
             link_origin: Vec3::new(x.trunc(), 0.0, 0.0),
-            mins: Vec3::new(-15.0, -15.0, 0.0),
-            maxs: Vec3::new(15.0, 15.0, 72.0),
+            mins: PLAYER_MINS.into(),
+            maxs: PLAYER_MAXS.into(),
             eye: Vec3::new(x, 0.0, 60.0),
         }
     }
@@ -3450,13 +3450,13 @@ mod tests {
         assert!(blast(&far, &wall).is_empty());
 
         // The second chance's midpoint comes off the box the last link
-        // built, at the snapped origin: at x 64.5 the midpoint is 69.86 from
-        // the blast at the link's x 64 and 70.31 at the feet, so only the
+        // built, at the snapped origin: at x 64.9 the midpoint is 69.46 from
+        // the blast at the link's x 64 and 70.29 at the feet, so only the
         // link puts it inside the 70 units `radius * 0.2` reaches.
-        let edge = blast_victim(3, 64.5);
+        let edge = blast_victim(3, 64.9);
         let snapped = blast(&edge, &wall);
         assert_eq!(snapped.len(), 1);
-        // A tenth of 98.81, the falloff at the feet's own 64.5.
+        // A tenth of 98.68, the falloff at the feet's own 64.9.
         assert_eq!(snapped[0].damage, 9);
         let unsnapped = BlastVictim {
             link_origin: edge.origin,
@@ -3530,8 +3530,8 @@ mod tests {
             slot,
             origin: Vec3::new(x, 0.0, 0.0),
             yaw: 0.0,
-            mins: Vec3::new(-15.0, -15.0, 0.0),
-            maxs: Vec3::new(15.0, 15.0, 72.0),
+            mins: PLAYER_MINS.into(),
+            maxs: PLAYER_MAXS.into(),
             pose: Default::default(),
         }
     }
@@ -3634,8 +3634,8 @@ mod tests {
                 slot: 1,
                 origin: back_feet,
                 link_origin: back_feet.trunc(),
-                mins: Vec3::new(-15.0, -15.0, 0.0),
-                maxs: Vec3::new(15.0, 15.0, 72.0),
+                mins: PLAYER_MINS.into(),
+                maxs: PLAYER_MAXS.into(),
                 eye: back_feet + Vec3::Z * 60.0,
             };
             let mut ctx = BoneTraceCtx {

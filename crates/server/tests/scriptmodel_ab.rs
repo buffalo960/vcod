@@ -274,12 +274,19 @@ fn ours_pair_on(
     prone_yaw: Option<f32>,
 ) -> Vec<String> {
     let fs = vcod_common::testing::game_fs_11().expect("checked by the caller");
-    ours_pair_in(fs, map, part, throw, ms, prone_yaw, None)
+    ours_pair_in(fs, map, part, throw, ms, prone_yaw, None, None)
 }
 
 /// [`ours_pair_on`] on `fs`'s install, its server speaking the install's
 /// protocol. With `thrower_at` (where retail's spawn left him) the thrower
 /// spawns on the spawn point under it instead of the script's pick.
+///
+/// With `target_log` (a capture's `target`-prefixed `--probe-fall` lines)
+/// the target spawns on the spawn point under his first playing snapshot,
+/// both clients join on the capture's clock and the target sends the
+/// capture's cmds (`ProbeHold::times`): where his drop onto the grade
+/// settles, and the prone body it leaves, rides them.
+#[allow(clippy::too_many_arguments)]
 fn ours_pair_in(
     fs: vcod_common::pk3::Pk3Fs,
     map: &str,
@@ -288,6 +295,7 @@ fn ours_pair_in(
     ms: i64,
     prone_yaw: Option<f32>,
     thrower_at: Option<[f32; 3]>,
+    target_log: Option<&str>,
 ) -> Vec<String> {
     let prone = prone_yaw.is_some();
     let mut missiles = Vec::new();
@@ -301,14 +309,34 @@ fn ours_pair_in(
     sv.overlay_script("maps/mp/gametypes/probe_scriptmodel", SCRIPT);
     sv.set_cvar("probe_part", part);
     let world = vcod_server::world::World::from_bsp(&bsp, Some(&fs));
+    let target_play = target_log.map(first_play);
     if let Some(at) = thrower_at {
         // The target joins first, slot 0; the thrower is slot 1.
         let spot = placed_spawn_under(&world, common::spawn_points(&fs, map), at);
-        sv.pin_spawns(vec![Vec::new(), vec![Some(spot)]]);
+        let target = target_play
+            .map(|(_, at)| {
+                vec![Some(placed_spawn_under(
+                    &world,
+                    common::spawn_points(&fs, map),
+                    at,
+                ))]
+            })
+            .unwrap_or_default();
+        sv.pin_spawns(vec![target, vec![Some(spot)]]);
     }
     sv.load_world(world);
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    common::run_alone(&mut sv, &mut now, TARGET_JOIN_MS);
+    let (join_ms, late_ms) = match (target_play, target_log) {
+        (Some((t, _)), Some(log)) => {
+            let thrower = thrower_spawn(log);
+            (
+                t - TARGET_PLAYS_AFTER_JOIN_MS,
+                thrower - t + TARGET_PLAYS_AFTER_JOIN_MS - THROWER_SPAWNS_AFTER_JOIN_MS,
+            )
+        }
+        _ => (TARGET_JOIN_MS, SHOOTER_LATE_MS),
+    };
+    common::run_alone(&mut sv, &mut now, join_ms);
     let (qa, qb) = (
         Rc::new(RefCell::new(Queues::default())),
         Rc::new(RefCell::new(Queues::default())),
@@ -338,6 +366,12 @@ fn ours_pair_in(
             framed: proto.version != PROTOCOL_V1.version,
             ..Default::default()
         };
+        if let Some(log) = target_log {
+            hb.times = common::cmds_times(log, "target");
+            hb.ran = common::cmds_ran(log, "target");
+            ha.times = common::cmds_times(log, "thrower");
+            ha.ran = common::cmds_ran(log, "thrower");
+        }
     }
     let mut selected: Option<u8> = None;
     let mut spawned: Option<i64> = None;
@@ -369,7 +403,7 @@ fn ours_pair_in(
             break;
         }
         now += frame;
-        if ca.is_none() && i * common::FRAME_MS >= SHOOTER_LATE_MS {
+        if ca.is_none() && i * common::FRAME_MS >= late_ms {
             ca = Some(NetClient::start_with_qport(
                 common::ClientEnd(qa.clone()),
                 now,
@@ -464,6 +498,44 @@ fn ours_pair_in(
     let mut out = sv.script_log().to_vec();
     out.extend(missiles);
     out
+}
+
+/// How long after ours' client connects its first playing snapshot comes,
+/// the target's, and the thrower's spawn line (`PROBE thrower`).
+const TARGET_PLAYS_AFTER_JOIN_MS: i64 = 1100;
+const THROWER_SPAWNS_AFTER_JOIN_MS: i64 = 1100;
+
+/// The time and origin of the first `target FALL` line that plays.
+fn first_play(log: &str) -> (i64, [f32; 3]) {
+    log.lines()
+        .filter_map(|l| l.strip_prefix("target FALL "))
+        .filter(|l| l.contains(" pm_type=0 "))
+        .find_map(|l| {
+            let t = l.strip_prefix("t=")?.split(' ').next()?.parse().ok()?;
+            let o: Vec<f32> = l
+                .split_once(" origin=")?
+                .1
+                .split(' ')
+                .next()?
+                .split(',')
+                .map(|x| x.parse().unwrap())
+                .collect();
+            Some((t, [o[0], o[1], o[2]]))
+        })
+        .expect("a playing target FALL line")
+}
+
+/// The time of a fixture's first `PROBE thrower` line, his spawn.
+fn thrower_spawn(text: &str) -> i64 {
+    text.lines()
+        .find_map(|l| {
+            l.strip_prefix("PROBE thrower ")?
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .expect("a PROBE thrower line")
 }
 
 /// The spawn point under `at`, where a spawn's think left a body, as the
@@ -807,9 +879,12 @@ fn a_frag_rolls_up_terrain_like_retail_on_15() {
 /// 1.51b, whose bounce keeps 0.4 of the reflection: the second frag rolls
 /// up the grade over four contacts to retail's bit. The first strikes the
 /// target's prone body on the grade before the terrain, and that strike
-/// lands 0.007 off retail's (his pose on a grade, not the missile's or the
-/// bone trace's arithmetic), so its states are held to retail's type and
-/// ground and to 0.01. Runs only with `COD_DIR` at a UO install.
+/// lands 0.007 off retail's: this capture logged neither client's cmds,
+/// and his body rides where his drop onto the grade settled
+/// (cod11-combat.md 3.1, "The pose on 1.5 and UO"), so its states are held
+/// to retail's type and ground and to 0.01.
+/// [`a_frag_strikes_a_prone_body_on_a_grade_like_retail_on_uo`] replays a
+/// rerun's cmds to the bit. Runs only with `COD_DIR` at a UO install.
 #[test]
 fn a_frag_rolls_up_terrain_like_retail_on_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
@@ -819,6 +894,23 @@ fn a_frag_rolls_up_terrain_like_retail_on_uo() {
         fs,
         include_str!("fixtures/scriptmodel/mp_brecourt-scriptmodel-roll-uo.txt"),
         Some(0),
+    );
+}
+
+/// [`a_frag_rolls_up_terrain_like_retail_on_uo`] on a capture that logged
+/// the target's cmds: with his drop replayed on them, his prone body lies
+/// on retail's bits (`pronepose_ab`'s `probe_rays` gates), the first frag
+/// strikes his legs on retail's float and rests on the grade by them, and
+/// the second rolls up the grade to retail's bit, every state of both.
+#[test]
+fn a_frag_strikes_a_prone_body_on_a_grade_like_retail_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    compare_rolls(
+        fs,
+        include_str!("fixtures/scriptmodel/mp_brecourt-scriptmodel-roll-uo-cmds.txt"),
+        None,
     );
 }
 
@@ -845,6 +937,7 @@ fn compare_rolls(fs: vcod_common::pk3::Pk3Fs, fixture: &str, struck: Option<usiz
         12_000,
         Some(270.0),
         Some(landed),
+        fixture.contains("target CMDS").then_some(fixture),
     );
     report(&retail, &ours);
     let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
@@ -932,8 +1025,12 @@ const LEVEL_SPAWN_UO: [f32; 3] = [1800.0, 2696.0, -23.875];
 /// throwers spawned alike. The first strike is retail's to the bit (the
 /// bone trace's float stores, cod11-combat.md 3.1, "The arithmetic on 1.5
 /// and UO"); the contacts after it land a float step or three off in z
-/// (on 1.5b -16.471392 against -16.471394), which the pose's own
-/// arithmetic leaves (3.1).
+/// (on 1.5b the rest at -16.427534 against -16.427536, on UO the second
+/// strike 3 steps off). The pose is the engine's (3.1, "The pose on 1.5
+/// and UO"), but these captures logged no cmds, and a prone body rides
+/// where its drop settled (the brecourt `-cmds` gate replays one to the
+/// bit); 1.5b's prone idle also moves on the clip's float time, which vcod
+/// keeps in seconds (`pronepose_ab::RAY_STEPS_15`).
 const BACK_NEAR: f32 = 0.0001;
 
 /// mp_carentan on 1.5b, the target lying still with the body his drop
@@ -1006,6 +1103,7 @@ fn prone_back_gate(
         12_000,
         Some(225.0),
         Some(thrower_at),
+        None,
     );
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
     report(&retail, &ours);
@@ -1125,6 +1223,7 @@ fn compare_throw_starts(fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
         12_000,
         Some(225.0),
         Some(landed),
+        None,
     );
     report(&retail, &ours);
     let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));

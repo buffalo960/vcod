@@ -1,0 +1,537 @@
+# Retail United Offensive 1.51b dedicated server, 2026-10-20: the recipe of
+# mp_brecourt-scriptmodel-roll-uo.txt with the target's own lines kept: the
+# PROBE lines, the thrower's VEH missile lines, then the target client's FALL
+# and CMDS lines prefixed `target` (its spawn, its drop onto the grade, the
+# cmd times it sent) and the thrower client's CMDS lines prefixed `thrower`. The first frag strikes the prone target's legs and
+# rests on the grade by them; the second rolls up the grade over four
+# contacts (cod11-combat.md 3.1, "The pose on 1.5 and UO").
+# COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<abs> PORT=33554 SECS=48 tools/run_probe.sh client-probes/probe_scriptmodel mp_brecourt +set probe_part prone
+# vcod --net-probe 127.0.0.1:33554 --game-dir <UO install> --mod-dir uo --probe-team axis --probe-fall --probe-fall-prone 270 --probe-secs 36   # 8 s in
+# vcod --net-probe 127.0.0.1:33554 --game-dir <UO install> --mod-dir uo --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon throw --probe-secs 28   # 3 s later
+PROBE site 1050 (1659.00, 685.00, -102.76) (1659.00, 941.00, -102.16) 90
+PROBE thrower 11900 -2454.94 -1449.13 37.9912 -4.11394e+06 -2.13413e+06 140755
+PROBE thrower 11950 1659 685 -102.177 0 0 587.196
+PROBE thrower 12000 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12050 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12100 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12150 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12200 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12250 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12300 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12350 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12400 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12450 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12500 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12550 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12600 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12650 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12700 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12750 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12800 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE thrower 12850 1658.99 685.005 -102.88 -8.30078 4.63867 -116.241
+PROBE shooter 15950 305 1658.99 685.005 -102.88
+PROBE gren 15950 305 (1658.99, 685.00, -42.88)
+PROBE gren 16000 305 (1658.99, 728.80, -57.48)
+PROBE gren 16050 305 (1658.99, 772.60, -74.08)
+PROBE gren 16100 305 (1658.99, 816.40, -92.68)
+PROBE gren 16150 305 (1659.08, 832.25, -100.14)
+PROBE gren 16200 305 (1662.32, 835.81, -101.45)
+PROBE gren 16250 305 (1664.80, 838.53, -102.48)
+PROBE gren 16300 305 (1666.08, 839.96, -102.52)
+PROBE gren 16350 305 (1666.97, 840.95, -102.45)
+PROBE rest 16400 305 (1666.97, 840.95, -102.45)
+PROBE gren 16400 305 (1666.97, 840.95, -102.45)
+PROBE gren 16450 305 (1666.97, 840.95, -102.45)
+PROBE gren 16500 305 (1666.97, 840.95, -102.45)
+PROBE gren 16550 305 (1666.97, 840.95, -102.45)
+PROBE gren 16600 305 (1666.97, 840.95, -102.45)
+PROBE gren 16650 305 (1666.97, 840.95, -102.45)
+PROBE gren 16700 305 (1666.97, 840.95, -102.45)
+PROBE gren 16750 305 (1666.97, 840.95, -102.45)
+PROBE gren 16800 305 (1666.97, 840.95, -102.45)
+PROBE gren 16850 305 (1666.97, 840.95, -102.45)
+PROBE gren 16900 305 (1666.97, 840.95, -102.45)
+PROBE gren 16950 305 (1666.97, 840.95, -102.45)
+PROBE gren 17000 305 (1666.97, 840.95, -102.45)
+PROBE gren 17050 305 (1666.97, 840.95, -102.45)
+PROBE gren 17100 305 (1666.97, 840.95, -102.45)
+PROBE gren 17150 305 (1666.97, 840.95, -102.45)
+PROBE gren 17200 305 (1666.97, 840.95, -102.45)
+PROBE gren 17250 305 (1666.97, 840.95, -102.45)
+PROBE gren 17300 305 (1666.97, 840.95, -102.45)
+PROBE gren 17350 305 (1666.97, 840.95, -102.45)
+PROBE gren 17400 305 (1666.97, 840.95, -102.45)
+PROBE gren 17450 305 (1666.97, 840.95, -102.45)
+PROBE gren 17500 305 (1666.97, 840.95, -102.45)
+PROBE gren 17550 305 (1666.97, 840.95, -102.45)
+PROBE gren 17600 305 (1666.97, 840.95, -102.45)
+PROBE gren 17650 305 (1666.97, 840.95, -102.45)
+PROBE gren 17700 305 (1666.97, 840.95, -102.45)
+PROBE gren 17750 305 (1666.97, 840.95, -102.45)
+PROBE gren 17800 305 (1666.97, 840.95, -102.45)
+PROBE gren 17850 305 (1666.97, 840.95, -102.45)
+PROBE gren 17900 305 (1666.97, 840.95, -102.45)
+PROBE gren 17950 305 (1666.97, 840.95, -102.45)
+PROBE gren 18000 305 (1666.97, 840.95, -102.45)
+PROBE gren 18050 305 (1666.97, 840.95, -102.45)
+PROBE gren 18100 305 (1666.97, 840.95, -102.45)
+PROBE gren 18150 305 (1666.97, 840.95, -102.45)
+PROBE gren 18200 305 (1666.97, 840.95, -102.45)
+PROBE gren 18250 305 (1666.97, 840.95, -102.45)
+PROBE gren 18300 305 (1666.97, 840.95, -102.45)
+PROBE gren 18350 305 (1666.97, 840.95, -102.45)
+PROBE gren 18400 305 (1666.97, 840.95, -102.45)
+PROBE gren 18450 305 (1666.97, 840.95, -102.45)
+PROBE gren 18500 305 (1666.97, 840.95, -102.45)
+PROBE gren 18550 305 (1666.97, 840.95, -102.45)
+PROBE gren 18600 305 (1666.97, 840.95, -102.45)
+PROBE gren 18650 305 (1666.97, 840.95, -102.45)
+PROBE gren 18700 305 (1666.97, 840.95, -102.45)
+PROBE gren 18750 305 (1666.97, 840.95, -102.45)
+PROBE gren 18800 305 (1666.97, 840.95, -102.45)
+PROBE gren 18850 305 (1666.97, 840.95, -102.45)
+PROBE gren 18900 305 (1666.97, 840.95, -102.45)
+PROBE gren 18950 305 (1666.97, 840.95, -102.45)
+PROBE gren 19000 305 (1666.97, 840.95, -102.45)
+PROBE gren 19050 305 (1666.97, 840.95, -102.45)
+PROBE gren 19100 305 (1666.97, 840.95, -102.45)
+PROBE gren 19150 305 (1666.97, 840.95, -102.45)
+PROBE gren 19200 305 (1666.97, 840.95, -102.45)
+PROBE gren 19250 305 (1666.97, 840.95, -102.45)
+PROBE gren 19300 305 (1666.97, 840.95, -102.45)
+PROBE gren 19350 305 (1666.97, 840.95, -102.45)
+PROBE gren 19400 305 (1666.97, 840.95, -102.45)
+PROBE gren 19450 305 (1666.97, 840.95, -102.45)
+PROBE gren 19500 305 (1666.97, 840.95, -102.45)
+PROBE gren 19550 305 (1666.97, 840.95, -102.45)
+PROBE gren 19600 305 (1666.97, 840.95, -102.45)
+PROBE gren 19650 305 (1666.97, 840.95, -102.45)
+PROBE gren 19700 305 (1666.97, 840.95, -102.45)
+PROBE gren 19750 305 (1666.97, 840.95, -102.45)
+PROBE gren 19800 305 (1666.97, 840.95, -102.45)
+PROBE gren 19850 305 (1666.97, 840.95, -102.45)
+PROBE gren 19900 305 (1666.97, 840.95, -102.45)
+PROBE hit 19900 axis dmg 37 mod MOD_GRENADE_SPLASH loc none
+PROBE hit 19900 allies dmg 68 mod MOD_GRENADE_SPLASH loc none
+PROBE gren 19950 305 (1666.00, 840.00, -102.00)
+PROBE gren 20000 305 (1666.00, 840.00, -102.00)
+PROBE gren 20050 305 (1666.00, 840.00, -102.00)
+PROBE gren 20100 305 (1666.00, 840.00, -102.00)
+PROBE gren 20150 305 (1666.00, 840.00, -102.00)
+PROBE gren 20200 305 (1666.00, 840.00, -102.00)
+PROBE gren 20250 305 (1666.00, 840.00, -102.00)
+PROBE shooter 22950 84 1658.99 685.005 -102.88
+PROBE gren 22950 84 (1658.99, 685.00, -42.88)
+PROBE gren 23000 84 (1658.99, 728.80, -57.48)
+PROBE gren 23050 84 (1658.99, 772.60, -74.08)
+PROBE gren 23100 84 (1658.99, 816.40, -92.68)
+PROBE gren 23150 84 (1658.99, 840.42, -102.47)
+PROBE gren 23200 84 (1659.03, 857.91, -95.56)
+PROBE gren 23250 84 (1659.06, 875.39, -90.66)
+PROBE gren 23300 84 (1659.10, 892.88, -87.75)
+PROBE gren 23350 84 (1659.13, 910.37, -86.84)
+PROBE gren 23400 84 (1659.16, 927.86, -87.93)
+PROBE gren 23450 84 (1659.20, 945.35, -91.02)
+PROBE gren 23500 84 (1659.23, 962.84, -96.11)
+PROBE gren 23550 84 (1659.26, 975.09, -99.58)
+PROBE gren 23600 84 (1659.27, 981.90, -97.65)
+PROBE gren 23650 84 (1659.29, 988.70, -97.73)
+PROBE gren 23700 84 (1659.30, 995.51, -98.86)
+PROBE gren 23750 84 (1659.30, 998.17, -98.76)
+PROBE gren 23800 84 (1659.31, 999.21, -98.73)
+PROBE rest 23850 84 (1659.31, 999.21, -98.73)
+PROBE gren 23850 84 (1659.31, 999.21, -98.73)
+PROBE gren 23900 84 (1659.31, 999.21, -98.73)
+PROBE gren 23950 84 (1659.31, 999.21, -98.73)
+PROBE gren 24000 84 (1659.31, 999.21, -98.73)
+PROBE gren 24050 84 (1659.31, 999.21, -98.73)
+PROBE gren 24100 84 (1659.31, 999.21, -98.73)
+PROBE gren 24150 84 (1659.31, 999.21, -98.73)
+PROBE gren 24200 84 (1659.31, 999.21, -98.73)
+PROBE gren 24250 84 (1659.31, 999.21, -98.73)
+PROBE gren 24300 84 (1659.31, 999.21, -98.73)
+PROBE gren 24350 84 (1659.31, 999.21, -98.73)
+PROBE gren 24400 84 (1659.31, 999.21, -98.73)
+PROBE gren 24450 84 (1659.31, 999.21, -98.73)
+PROBE gren 24500 84 (1659.31, 999.21, -98.73)
+PROBE gren 24550 84 (1659.31, 999.21, -98.73)
+PROBE gren 24600 84 (1659.31, 999.21, -98.73)
+PROBE gren 24650 84 (1659.31, 999.21, -98.73)
+PROBE gren 24700 84 (1659.31, 999.21, -98.73)
+PROBE gren 24750 84 (1659.31, 999.21, -98.73)
+PROBE gren 24800 84 (1659.31, 999.21, -98.73)
+PROBE gren 24850 84 (1659.31, 999.21, -98.73)
+PROBE gren 24900 84 (1659.31, 999.21, -98.73)
+PROBE gren 24950 84 (1659.31, 999.21, -98.73)
+PROBE gren 25000 84 (1659.31, 999.21, -98.73)
+PROBE gren 25050 84 (1659.31, 999.21, -98.73)
+PROBE gren 25100 84 (1659.31, 999.21, -98.73)
+PROBE gren 25150 84 (1659.31, 999.21, -98.73)
+PROBE gren 25200 84 (1659.31, 999.21, -98.73)
+PROBE gren 25250 84 (1659.31, 999.21, -98.73)
+PROBE gren 25300 84 (1659.31, 999.21, -98.73)
+PROBE gren 25350 84 (1659.31, 999.21, -98.73)
+PROBE gren 25400 84 (1659.31, 999.21, -98.73)
+PROBE gren 25450 84 (1659.31, 999.21, -98.73)
+PROBE gren 25500 84 (1659.31, 999.21, -98.73)
+PROBE gren 25550 84 (1659.31, 999.21, -98.73)
+PROBE gren 25600 84 (1659.31, 999.21, -98.73)
+PROBE gren 25650 84 (1659.31, 999.21, -98.73)
+PROBE gren 25700 84 (1659.31, 999.21, -98.73)
+PROBE gren 25750 84 (1659.31, 999.21, -98.73)
+PROBE gren 25800 84 (1659.31, 999.21, -98.73)
+PROBE gren 25850 84 (1659.31, 999.21, -98.73)
+PROBE gren 25900 84 (1659.31, 999.21, -98.73)
+PROBE gren 25950 84 (1659.31, 999.21, -98.73)
+PROBE gren 26000 84 (1659.31, 999.21, -98.73)
+PROBE gren 26050 84 (1659.31, 999.21, -98.73)
+PROBE gren 26100 84 (1659.31, 999.21, -98.73)
+PROBE gren 26150 84 (1659.31, 999.21, -98.73)
+PROBE gren 26200 84 (1659.31, 999.21, -98.73)
+PROBE gren 26250 84 (1659.31, 999.21, -98.73)
+PROBE gren 26300 84 (1659.31, 999.21, -98.73)
+PROBE gren 26350 84 (1659.31, 999.21, -98.73)
+PROBE gren 26400 84 (1659.31, 999.21, -98.73)
+PROBE gren 26450 84 (1659.31, 999.21, -98.73)
+PROBE gren 26500 84 (1659.31, 999.21, -98.73)
+PROBE gren 26550 84 (1659.31, 999.21, -98.73)
+PROBE gren 26600 84 (1659.31, 999.21, -98.73)
+PROBE gren 26650 84 (1659.31, 999.21, -98.73)
+PROBE gren 26700 84 (1659.31, 999.21, -98.73)
+PROBE gren 26750 84 (1659.31, 999.21, -98.73)
+PROBE gren 26800 84 (1659.31, 999.21, -98.73)
+PROBE gren 26850 84 (1659.31, 999.21, -98.73)
+PROBE gren 26900 84 (1659.31, 999.21, -98.73)
+PROBE hit 26900 allies dmg 16 mod MOD_GRENADE_SPLASH loc none
+PROBE gren 26950 84 (1659.00, 999.00, -98.00)
+PROBE gren 27000 84 (1659.00, 999.00, -98.00)
+PROBE gren 27050 84 (1659.00, 999.00, -98.00)
+PROBE gren 27100 84 (1659.00, 999.00, -98.00)
+PROBE gren 27150 84 (1659.00, 999.00, -98.00)
+PROBE gren 27200 84 (1659.00, 999.00, -98.00)
+PROBE gren 27250 84 (1659.00, 999.00, -98.00)
+VEH 15950 missile 305 type 5 base 1658.992 685.005 -42.880 bits 0x44cf5fbc 0x442b404c 0xc22b8570 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -102.71118 90 0 atraj 2 15900 757.1448 0 387.1637 traj 15900 0 876 -272
+VEH 16000 missile 305 type 5 base 1658.992 685.005 -42.880 bits 0x44cf5fbc 0x442b404c 0xc22b8570 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -102.71118 90 0 atraj 2 15900 757.1448 0 387.1637 traj 15900 0 876 -272
+VEH 16050 missile 305 type 5 base 1658.992 685.005 -42.880 bits 0x44cf5fbc 0x442b404c 0xc22b8570 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -102.71118 90 0 atraj 2 15900 757.1448 0 387.1637 traj 15900 0 876 -272
+VEH 16100 missile 305 type 5 base 1659.078 832.249 -100.143 bits 0x44cf627e 0x44500ff5 0xc2c84902 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -5.8447266 90 65.03906 atraj 2 16100 -697.8882 0 387.1637 traj 16100 64.87539 71.26169 -6.1907043
+VEH 16150 missile 305 type 5 base 1659.078 832.249 -100.143 bits 0x44cf627e 0x44500ff5 0xc2c84902 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -5.8447266 90 65.03906 atraj 2 16100 -697.8882 0 387.1637 traj 16100 64.87539 71.26169 -6.1907043
+VEH 16200 missile 305 type 5 base 1664.799 838.534 -102.480 bits 0x44d0198f 0x4451a230 0xc2ccf5f4 ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 84.39697 atraj 2 16200 710.35754 0 387.1637 traj 16200 25.560596 28.430304 19.12261
+VEH 16250 missile 305 type 5 base 1664.799 838.534 -102.480 bits 0x44d0198f 0x4451a230 0xc2ccf5f4 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 84.39697 atraj 2 16200 710.35754 0 387.1637 traj 16200 25.560596 28.430304 19.12261
+VEH 16300 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16350 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16400 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16450 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16500 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16550 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16600 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16650 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16700 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16750 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16800 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16850 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16900 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 16950 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17000 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17050 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17100 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17150 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17200 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17250 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17300 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17350 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17400 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17450 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17500 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17550 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17600 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17650 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17700 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17750 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17800 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17850 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17900 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 17950 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18000 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18050 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18100 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18150 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18200 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18250 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18300 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18350 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18400 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18450 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18500 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18550 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18600 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18650 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18700 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18750 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18800 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18850 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18900 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 18950 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19000 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19050 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19100 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19150 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19200 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19250 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19300 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19350 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19400 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19450 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19500 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19550 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19600 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19650 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19700 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19750 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19800 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19850 missile 305 type 0 base 1666.970 840.949 -102.453 bits 0x44d05f0c 0x44523cc4 0xc2cce7fe ground 1022 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19900 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 19950 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 20000 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 20050 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 20100 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 20150 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 20200 missile 305 type 0 base 1666.000 840.000 -102.000 bits 0x44d04000 0x44520000 0xc2cc0000 ground 1022 weapon 18 etype 0 evseq 1 ev 185 parm 5 apos -0.115356445 90 103.75488 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 22950 missile 84 type 5 base 1658.992 685.005 -42.880 bits 0x44cf5fbc 0x442b404c 0xc22b8570 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -102.71118 90 0 atraj 2 22900 745.82336 0 339.69727 traj 22900 0 876 -272
+VEH 23000 missile 84 type 5 base 1658.992 685.005 -42.880 bits 0x44cf5fbc 0x442b404c 0xc22b8570 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -102.71118 90 0 atraj 2 22900 745.82336 0 339.69727 traj 22900 0 876 -272
+VEH 23050 missile 84 type 5 base 1658.992 685.005 -42.880 bits 0x44cf5fbc 0x442b404c 0xc22b8570 ground 1023 weapon 18 etype 4 evseq 0 ev 0 parm 0 apos -102.71118 90 0 atraj 2 22900 745.82336 0 339.69727 traj 22900 0 876 -272
+VEH 23100 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1022 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23150 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23200 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23250 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23300 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23350 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23400 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23450 missile 84 type 5 base 1658.992 840.417 -102.474 bits 0x44cf5fbe 0x44521ab3 0xc2ccf2ac ground 1023 weapon 18 etype 4 evseq 1 ev 181 parm 6 apos -0.115356445 90 50.95459 atraj 2 23100 -847.40356 0 339.69727 traj 23100 0.69065684 349.77695 158.18352
+VEH 23500 missile 84 type 5 base 1659.258 975.092 -99.579 bits 0x44cf6840 0x4473c5e2 0xc2c7287a ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 46.96106 90 169.84863 atraj 2 23500 939.4637 0 339.69727 traj 23500 0.27626273 136.12111 58.483776
+VEH 23550 missile 84 type 5 base 1659.258 975.092 -99.579 bits 0x44cf6840 0x4473c5e2 0xc2c7287a ground 1023 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 46.96106 90 169.84863 atraj 2 23500 939.4637 0 339.69727 traj 23500 0.27626273 136.12111 58.483776
+VEH 23600 missile 84 type 5 base 1659.258 975.092 -99.579 bits 0x44cf6840 0x4473c5e2 0xc2c7287a ground 1023 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 46.96106 90 169.84863 atraj 2 23500 939.4637 0 339.69727 traj 23500 0.27626273 136.12111 58.483776
+VEH 23650 missile 84 type 5 base 1659.299 995.507 -98.857 bits 0x44cf6993 0x4478e06b 0xc2c5b702 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 157.81311 90 -150.06775 atraj 2 23650 1051.6573 0 339.69727 traj 23650 0.1105051 53.298164 18.175121
+VEH 23700 missile 84 type 5 base 1659.305 998.168 -98.763 bits 0x44cf69c0 0x44798abf 0xc2c586d7 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos -156.96716 90 -135.46143 atraj 2 23700 1011.163 0 339.69727 traj 23700 0.04420204 20.807816 7.9790606
+VEH 23750 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 23800 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 23850 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 23900 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 23950 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24000 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24050 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24100 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24150 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24200 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24250 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24300 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24350 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24400 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24450 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24500 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24550 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24600 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24650 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24700 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24750 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24800 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24850 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24900 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 24950 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25000 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25050 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25100 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25150 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25200 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25250 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25300 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25350 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25400 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25450 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25500 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25550 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25600 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25650 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25700 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25750 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25800 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25850 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25900 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 25950 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26000 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26050 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26100 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26150 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26200 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26250 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26300 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26350 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26400 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26450 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26500 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26550 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26600 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26650 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26700 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26750 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26800 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26850 missile 84 type 0 base 1659.307 999.208 -98.727 bits 0x44cf69d2 0x4479cd55 0xc2c57414 ground 1022 weapon 18 etype 4 evseq 2 ev 181 parm 6 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26900 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 26950 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 27000 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 27050 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 27100 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 27150 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 27200 missile 84 type 0 base 1659.000 999.000 -98.000 bits 0x44cf6000 0x4479c000 0xc2c40000 ground 1022 weapon 18 etype 0 evseq 3 ev 185 parm 5 apos 177.97302 90 -125.95276 atraj 0 0 0 0 0 traj 0 0 0 0
+target FALL t=9350 ct=9350 origin=-2779.000,1585.000,648.402 vel=0,0,-284.096 ground=0 pm_type=4 pm_flags=0x0 pm_time=0 health=0 seq=1 events=[140,0,0,0] parms=[0,0,0,0] legs=0 torso=0
+target FALL t=9400 ct=9382 origin=-2779.000,1585.000,637.980 vel=0,0,-338.76288 ground=0 pm_type=4 pm_flags=0x0 pm_time=0 health=0 seq=3 events=[140,140,140,0] parms=[0,0,0,0] legs=0 torso=0
+target FALL t=9450 ct=9433 origin=-2779.000,1585.000,618.390 vel=0,0,-400 ground=0 pm_type=4 pm_flags=0x0 pm_time=0 health=0 seq=6 events=[140,140,140,140] parms=[0,0,0,0] legs=0 torso=0
+target FALL t=9500 ct=9500 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40000 pm_time=0 health=100 seq=1 events=[140,0,0,0] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9550 ct=9532 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=3 events=[140,140,140,0] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9600 ct=9582 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=6 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9650 ct=9632 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=9 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9700 ct=9682 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=12 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9750 ct=9732 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=16 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9800 ct=9782 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=19 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9850 ct=9833 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=22 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9900 ct=9882 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=25 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=9950 ct=9934 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=28 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10000 ct=9982 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=31 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10050 ct=10032 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=34 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10100 ct=10083 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=37 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10150 ct=10132 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=40 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10200 ct=10185 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=43 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10250 ct=10235 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=46 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target CMDS st=1026 d=8324,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,18,16,16,16,18,16,16,18,17,16,17,16,16,18,19,16,15,17,18,15,16,16,18 in=0:0:64:-127 snap=1:9350,4:9400,7:9450,10:9500,13:9550,16:9600,19:9650,23:9700,26:9750,29:9800,32:9850,35:9900,38:9950,41:10000,44:10050,47:10100,50:10150,53:10200,56:10250,59:10300 ct=9350:9350,9400:9382,9450:9433,9500:9500,9550:9532,9600:9582,9650:9632,9700:9682,9750:9732,9800:9782,9850:9833,9900:9882,9950:9934,10000:9982,10050:10032,10100:10083,10150:10132,10200:10185,10250:10235,10300:10282
+target FALL t=10300 ct=10282 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=49 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10350 ct=10334 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=52 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10400 ct=10382 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=55 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10450 ct=10434 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=58 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10500 ct=10482 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=61 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10550 ct=10532 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=64 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10600 ct=10582 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=67 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10650 ct=10632 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=70 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10700 ct=10683 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=73 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10750 ct=10732 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=76 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10800 ct=10782 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=79 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10850 ct=10833 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=82 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10900 ct=10883 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=85 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=10950 ct=10932 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=88 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11000 ct=10982 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=91 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11050 ct=11032 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=94 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11100 ct=11083 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=97 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11150 ct=11132 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=100 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11200 ct=11183 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=104 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11250 ct=11232 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=107 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target CMDS st=10316 d=18,16,16,16,18,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,16,2,16,17,17,16,16,18,16,16 snap=2:10350,5:10400,8:10450,11:10500,14:10550,17:10600,20:10650,23:10700,26:10750,29:10800,32:10850,35:10900,38:10950,41:11000,44:11050,47:11100,51:11150,54:11200,57:11250 ct=10350:10334,10400:10382,10450:10434,10500:10482,10550:10532,10600:10582,10650:10632,10700:10683,10750:10732,10800:10782,10850:10833,10900:10883,10950:10932,11000:10982,11050:11032,11100:11083,11150:11132,11200:11183,11250:11232
+target FALL t=11300 ct=11282 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=110 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11350 ct=11332 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=113 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11400 ct=11384 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=116 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11450 ct=11432 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=119 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11500 ct=11482 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=122 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11550 ct=11532 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=125 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11600 ct=11583 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=128 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11650 ct=11632 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=131 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11700 ct=11683 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=134 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11750 ct=11732 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=137 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11800 ct=11783 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=140 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11850 ct=11834 origin=3144.000,-723.000,-15.875 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=143 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11900 ct=11882 origin=1659.000,781.000,-101.764 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x48000 pm_time=0 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] legs=697 torso=0
+target FALL t=11950 ct=11932 origin=1659.000,781.000,-102.754 vel=0,0,-40 ground=1023 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-1.8709564,0.10986328,0.10986328 dir=-90 legs=174 torso=0
+target FALL t=12000 ct=11982 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=174 torso=0
+target FALL t=12150 ct=12132 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1768 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12200 ct=12184 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1716 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12250 ct=12233 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1667 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target CMDS st=11300 d=16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,17,16,17,16,18,16,16,16,18,16,16,18,16,16,18,17,16,17,16,16,16,2,16,16,18,17,17,16,17,16,17,16 snap=0:11300,3:11350,6:11400,9:11450,12:11500,15:11550,18:11600,21:11650,24:11700,27:11750,30:11800,33:11850,36:11900,39:11950,42:12000,45:12050,49:12100,52:12150,55:12200,58:12250 ct=11300:11282,11350:11332,11400:11384,11450:11432,11500:11482,11550:11532,11600:11583,11650:11632,11700:11683,11750:11732,11800:11783,11850:11834,11900:11882,11950:11932,12000:11982,12050:12033,12100:12098,12150:12132,12200:12184,12250:12233
+target FALL t=12300 ct=12283 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1617 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12350 ct=12335 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1565 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12400 ct=12382 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1518 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12450 ct=12432 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1468 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12500 ct=12482 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1418 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12550 ct=12533 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1367 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12600 ct=12582 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1318 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12650 ct=12634 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1266 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12700 ct=12682 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1218 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12750 ct=12733 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1167 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12800 ct=12782 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1118 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12850 ct=12832 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1068 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12900 ct=12882 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=1018 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=12950 ct=12933 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=967 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13000 ct=12985 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=915 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13050 ct=13032 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=868 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13100 ct=13083 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=817 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13150 ct=13132 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=768 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13200 ct=13182 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=718 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13250 ct=13232 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=668 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target CMDS st=12283 d=17,16,19,15,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,17,17,16,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,17,18,15,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17 snap=1:12300,4:12350,7:12400,10:12450,13:12500,16:12550,19:12600,22:12650,25:12700,28:12750,31:12800,34:12850,37:12900,40:12950,43:13000,46:13050,49:13100,52:13150,55:13200,58:13250 ct=12300:12283,12350:12335,12400:12382,12450:12432,12500:12482,12550:12533,12600:12582,12650:12634,12700:12682,12750:12733,12800:12782,12850:12832,12900:12882,12950:12933,13000:12985,13050:13032,13100:13083,13150:13132,13200:13182,13250:13232
+target FALL t=13300 ct=13284 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=616 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13350 ct=13332 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=568 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13400 ct=13398 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=502 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13450 ct=13432 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=468 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13500 ct=13450 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=450 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13550 ct=13532 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=368 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13600 ct=13598 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=302 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13650 ct=13632 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=268 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13700 ct=13666 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=234 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13750 ct=13748 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=152 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13800 ct=13782 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=118 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13850 ct=13832 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=68 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13900 ct=13882 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x42001 pm_time=18 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target FALL t=13950 ct=13933 origin=1659.001,780.999,-104.091 vel=0,0,0 ground=1022 pm_type=0 pm_flags=0x40001 pm_time=0 health=100 seq=146 events=[140,140,140,140] parms=[0,0,0,0] prone=-0.48695374,0.10986328,0.10986328 dir=-90 legs=620 torso=0
+target CMDS st=13284 d=16,16,16,18,16,16,16,2,16,16,18,50,16,16,18,16,16,16,2,16,16,18,16,34,16,16,16,2,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,16,20,14,16 snap=1:13300,4:13350,8:13400,11:13450,12:13500,15:13550,19:13600,22:13650,24:13700,28:13750,31:13800,34:13850,37:13900,40:13950,43:14000,46:14050,49:14100,52:14150,55:14200,58:14250 ct=13300:13284,13350:13332,13400:13398,13450:13432,13500:13450,13550:13532,13600:13598,13650:13632,13700:13666,13750:13748,13800:13782,13850:13832,13900:13882,13950:13933,14000:13983,14050:14033,14100:14082,14150:14132,14200:14182,14250:14236
+target CMDS st=14282 d=18,16,16,18,18,16,16,0,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,18,16,16,16,18,17,16,17,17,16,17,17,17,16,16,18,16,16,19,15,16,18,16 snap=1:14300,4:14350,8:14400,11:14450,14:14500,17:14550,20:14600,23:14650,26:14700,29:14750,32:14800,35:14850,38:14900,41:14950,44:15000,47:15050,50:15100,53:15150,56:15200,59:15250 ct=14300:14282,14350:14332,14400:14400,14450:14416,14500:14482,14550:14532,14600:14583,14650:14633,14700:14682,14750:14732,14800:14782,14850:14833,14900:14884,14950:14932,15000:14983,15050:15033,15100:15084,15150:15134,15200:15185,15250:15234
+target CMDS st=15266 d=16,18,16,16,18,16,18,16,16,16,18,17,18,15,16,16,18,18,16,16,17,17,16,17,17,16,16,16,18,16,17,17,16,17,17,17,16,17,16,16,18,16,18,16,16,16,18,16,16,18,16,17,17,17,16,17,16,16,18 snap=2:15300,5:15350,8:15400,11:15450,14:15500,17:15550,20:15600,23:15650,26:15700,29:15750,32:15800,35:15850,38:15900,41:15950,44:16000,47:16050,50:16100,53:16150,56:16200,59:16250 ct=15300:15282,15350:15332,15400:15384,15450:15432,15500:15485,15550:15532,15600:15584,15650:15634,15700:15684,15750:15732,15800:15783,15850:15833,15900:15883,15950:15932,16000:15984,16050:16032,16100:16082,16150:16133,16200:16183,16250:16232
+target CMDS st=16266 d=17,17,16,16,18,16,16,16,2,18,32,16,16,18,17,17,16,16,16,17,1,16,34,16,16,18,17,16,16,1,16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16 snap=2:16300,5:16350,9:16400,11:16450,14:16500,17:16550,21:16600,23:16650,26:16700,30:16750,33:16800,36:16850,39:16900,42:16950,45:17000,48:17050,51:17100,54:17150,57:17200 ct=16300:16283,16350:16332,16400:16398,16450:16418,16500:16482,16550:16534,16600:16599,16650:16616,16700:16682,16750:16749,16800:16782,16850:16832,16900:16882,16950:16935,17000:16982,17050:17032,17100:17083,17150:17132,17200:17182
+target CMDS st=17250 d=16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,0,18,32,16,16,18,16,16,17,1,16,34,19,16,15,16,16,18,17,16,17,17,16,17,16,16,18,16,18,16,16,16,18,0,17,33,16,16 snap=0:17250,3:17300,6:17350,9:17400,12:17450,15:17500,18:17550,22:17600,24:17650,27:17700,31:17750,33:17800,36:17850,39:17900,42:17950,45:18000,48:18050,51:18100,55:18150,57:18200 ct=17250:17232,17300:17282,17350:17333,17400:17382,17450:17432,17500:17482,17550:17532,17600:17600,17650:17618,17700:17682,17750:17749,17800:17766,17850:17835,17900:17882,17950:17933,18000:17983,18050:18032,18100:18084,18150:18132,18200:18167
+target CMDS st=18249 d=1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,18,16,16,16,18,18,17,15,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16 snap=1:18250,4:18300,7:18350,10:18400,13:18450,16:18500,19:18550,22:18600,25:18650,28:18700,31:18750,34:18800,37:18850,40:18900,43:18950,46:19000,49:19050,52:19100,55:19150,58:19200 ct=18250:18249,18300:18282,18350:18332,18400:18382,18450:18432,18500:18482,18550:18532,18600:18582,18650:18634,18700:18682,18750:18732,18800:18784,18850:18832,18900:18885,18950:18933,19000:18982,19050:19032,19100:19082,19150:19132,19200:19183
+target CMDS st=19232 d=18,17,16,17,16,18,16,16,18,16,16,16,18,17,21,12,16,16,18,16,16,18,17,17,16,18,16,16,17,17,16,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,16,2 snap=1:19250,4:19300,7:19350,10:19400,13:19450,16:19500,19:19550,22:19600,25:19650,28:19700,31:19750,34:19800,37:19850,40:19900,43:19950,46:20000,49:20050,52:20100,55:20150,59:20200 ct=19250:19232,19300:19283,19350:19334,19400:19384,19450:19432,19500:19488,19550:19532,19600:19582,19650:19634,19700:19684,19750:19734,19800:19782,19850:19832,19900:19883,19950:19932,20000:19982,20050:20033,20100:20082,20150:20132,20200:20198
+target CMDS st=20216 d=16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,16,17,17,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,18,16,17,17,16,16,16 snap=2:20250,5:20300,8:20350,11:20400,14:20450,17:20500,20:20550,23:20600,26:20650,29:20700,32:20750,35:20800,38:20850,41:20900,44:20950,47:21000,50:21050,53:21100,56:21150 ct=20250:20232,20300:20282,20350:20333,20400:20382,20450:20432,20500:20483,20550:20533,20600:20582,20650:20633,20700:20682,20750:20734,20800:20783,20850:20832,20900:20882,20950:20932,21000:20982,21050:21034,21100:21082,21150:21133
+target CMDS st=21200 d=16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,18,16,16,16,16,18,17,16,17,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=0:21200,3:21250,6:21300,9:21350,12:21400,15:21450,18:21500,21:21550,24:21600,27:21650,30:21700,33:21750,36:21800,39:21850,42:21900,45:21950,48:22000,51:22050,54:22100,57:22150 ct=21200:21198,21250:21216,21300:21282,21350:21333,21400:21382,21450:21432,21500:21484,21550:21532,21600:21583,21650:21632,21700:21683,21750:21733,21800:21782,21850:21832,21900:21883,21950:21932,22000:21982,22050:22032,22100:22082,22150:22132
+target CMDS st=22200 d=16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16 snap=0:22200,4:22250,7:22300,10:22350,13:22400,16:22450,19:22500,22:22550,25:22600,28:22650,31:22700,34:22750,37:22800,40:22850,43:22900,46:22950,49:23000,52:23050,55:23100,58:23150 ct=22200:22182,22250:22248,22300:22282,22350:22332,22400:22383,22450:22432,22500:22483,22550:22532,22600:22582,22650:22632,22700:22683,22750:22732,22800:22783,22850:22832,22900:22882,22950:22932,23000:22982,23050:23032,23100:23082,23150:23133
+target CMDS st=23182 d=17,1,16,34,16,16,16,2,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,50,50,16,16,18,16,17,17,16,18,16,17,16,16,1,16,16,18,17,18,15 snap=2:23200,4:23250,8:23300,11:23350,14:23400,17:23450,20:23500,23:23550,26:23600,29:23650,32:23700,35:23750,38:23800,39:23850,40:23900,43:23950,46:24000,49:24050,53:24100,56:24150,59:24200 ct=23200:23199,23250:23216,23300:23298,23350:23332,23400:23382,23450:23433,23500:23482,23550:23532,23600:23583,23650:23632,23700:23682,23750:23732,23800:23782,23850:23800,23900:23850,23950:23932,24000:23983,24050:24034,24100:24099,24150:24132,24200:24185
+target CMDS st=24216 d=16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,17,17,16,19,15,16,17,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,18,32 snap=2:24250,5:24300,8:24350,11:24400,14:24450,17:24500,20:24550,23:24600,26:24650,29:24700,32:24750,35:24800,38:24850,41:24900,44:24950,47:25000,51:25050,54:25100,57:25150,59:25200 ct=24250:24232,24300:24283,24350:24332,24400:24382,24450:24433,24500:24482,24550:24532,24600:24582,24650:24633,24700:24682,24750:24733,24800:24785,24850:24833,24900:24882,24950:24932,25000:24982,25050:25048,25100:25082,25150:25132,25200:25168
+target CMDS st=25216 d=16,16,2,17,16,17,16,18,16,16,16,18,16,16,18,16,16,18,19,17,14,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,16,16 snap=3:25250,6:25300,9:25350,12:25400,15:25450,18:25500,21:25550,24:25600,27:25650,30:25700,33:25750,36:25800,39:25850,42:25900,45:25950,48:26000,51:26050,54:26100,57:26150 ct=25250:25248,25300:25283,25350:25334,25400:25382,25450:25432,25500:25482,25550:25536,25600:25583,25650:25632,25700:25682,25750:25732,25800:25782,25850:25832,25900:25882,25950:25932,26000:25982,26050:26034,26100:26082,26150:26132
+target CMDS st=26198 d=2,17,16,17,16,34,16,16,18,17,19,14,16,16,18,17,16,17,16,16,18,16,16,16,2,16,34,16,16,18,16,16,18,16,16,16,2,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16 snap=1:26200,4:26250,6:26300,9:26350,12:26400,15:26450,18:26500,21:26550,25:26600,27:26650,30:26700,33:26750,37:26800,40:26850,43:26900,46:26950,49:27000,52:27050,55:27100,58:27150 ct=26200:26198,26250:26233,26300:26266,26350:26332,26400:26386,26450:26432,26500:26483,26550:26532,26600:26598,26650:26616,26700:26682,26750:26732,26800:26798,26850:26833,26900:26882,26950:26932,27000:26982,27050:27033,27100:27082,27150:27132
+target CMDS st=27182 d=18,16,16,18,17,16,17,19,16,15,17,16,17,16,16,18,16,17,17,29,21,16,16,18,17,16,17,16,17,17,16,16,18,17,16,17,16,16,16,2,16,17,17,16,16,18,16,34,16,16,16,2,16,16,18,16,18,16,16 snap=1:27200,4:27250,7:27300,10:27350,13:27400,16:27450,19:27500,21:27550,24:27600,27:27650,30:27700,33:27750,36:27800,40:27850,43:27900,46:27950,48:28000,52:28050,55:28100,58:28150 ct=27200:27182,27250:27232,27300:27283,27350:27335,27400:27383,27450:27432,27500:27483,27550:27529,27600:27582,27650:27633,27700:27683,27750:27732,27800:27783,27850:27848,27900:27883,27950:27932,28000:27966,28050:28048,28100:28082,28150:28134
+target CMDS st=28183 d=17,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17 snap=1:28200,4:28250,7:28300,10:28350,13:28400,16:28450,19:28500,22:28550,25:28600,28:28650,31:28700,35:28750,38:28800,41:28850,44:28900,47:28950,50:29000,53:29050,56:29100,59:29150 ct=28200:28183,28250:28233,28300:28282,28350:28332,28400:28382,28450:28432,28500:28482,28550:28533,28600:28582,28650:28632,28700:28682,28750:28748,28800:28782,28850:28833,28900:28883,28950:28932,29000:28982,29050:29033,29100:29082,29150:29133
+target CMDS st=29166 d=16,18,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,17,16,16,1,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,18,18,14,16,16,18,16,16,18,16,16,18,16,17,17,16,18,16,16,16,18,17,16 snap=2:29200,5:29250,8:29300,11:29350,14:29400,17:29450,21:29500,24:29550,27:29600,30:29650,33:29700,36:29750,39:29800,42:29850,45:29900,48:29950,51:30000,54:30050,57:30100 ct=29200:29182,29250:29233,29300:29282,29350:29333,29400:29382,29450:29432,29500:29499,29550:29532,29600:29583,29650:29632,29700:29682,29750:29732,29800:29786,29850:29832,29900:29882,29950:29932,30000:29983,30050:30034,30100:30082
+target CMDS st=30150 d=16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,17,17,16,16,18,16,16,18,16,19,15,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,17,16,17,17,16,17,16,16,17,1,16,16,18,16 snap=0:30150,3:30200,6:30250,9:30300,12:30350,15:30400,18:30450,21:30500,24:30550,27:30600,30:30650,33:30700,36:30750,39:30800,42:30850,45:30900,48:30950,51:31000,55:31050,58:31100 ct=30150:30133,30200:30182,30250:30232,30300:30282,30350:30335,30400:30382,30450:30433,30500:30482,30550:30532,30600:30585,30650:30633,30700:30682,30750:30732,30800:30783,30850:30832,30900:30882,30950:30933,31000:30983,31050:31049,31100:31082
+target CMDS st=31132 d=18,16,16,18,18,32,16,16,18,0,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,17,16,17,16,17,17,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,16,18,17 snap=1:31150,4:31200,6:31250,10:31300,13:31350,16:31400,19:31450,22:31500,25:31550,28:31600,31:31650,34:31700,37:31750,40:31800,43:31850,46:31900,49:31950,52:32000,55:32050,58:32100 ct=31150:31132,31200:31182,31250:31218,31300:31300,31350:31332,31400:31383,31450:31432,31500:31482,31550:31533,31600:31582,31650:31632,31700:31683,31750:31733,31800:31783,31850:31832,31900:31883,31950:31933,32000:31982,32050:32032,32100:32082
+target CMDS st=32133 d=17,16,16,18,16,17,17,16,16,16,2,16,34,16,16,16,2,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,18,16,16,16,16,18,18,16,16 snap=1:32150,4:32200,7:32250,11:32300,13:32350,17:32400,20:32450,23:32500,26:32550,29:32600,32:32650,35:32700,38:32750,41:32800,44:32850,47:32900,50:32950,53:33000,56:33050,59:33100 ct=32150:32133,32200:32182,32250:32233,32300:32298,32350:32316,32400:32398,32450:32433,32500:32482,32550:32532,32600:32582,32650:32632,32700:32683,32750:32732,32800:32782,32850:32832,32900:32884,32950:32932,33000:32984,33050:33032,33100:33084
+target CMDS st=33117 d=17,16,16,16,18,18,16,16,17,16,17,16,18,16,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,16,1,16,34,16,17,16,1,16,34,16,16,16,2,17,16 snap=2:33150,5:33200,8:33250,11:33300,14:33350,17:33400,20:33450,23:33500,26:33550,29:33600,32:33650,35:33700,38:33750,41:33800,45:33850,47:33900,51:33950,53:34000,57:34050 ct=33150:33134,33200:33182,33250:33234,33300:33283,33350:33334,33400:33383,33450:33432,33500:33483,33550:33532,33600:33582,33650:33632,33700:33682,33750:33733,33800:33782,33850:33849,33900:33866,33950:33949,34000:33966,34050:34048
+target CMDS st=34100 d=16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,17,16,1,16,34,16,16,18,16,16,16,2,17,16,17,17 snap=0:34100,3:34150,6:34200,9:34250,12:34300,15:34350,18:34400,21:34450,24:34500,27:34550,30:34600,33:34650,36:34700,39:34750,42:34800,46:34850,48:34900,51:34950,55:35000,58:35050 ct=34100:34083,34150:34132,34200:34184,34250:34232,34300:34282,34350:34332,34400:34382,34450:34434,34500:34483,34550:34532,34600:34583,34650:34632,34700:34682,34750:34732,34800:34782,34850:34849,34900:34866,34950:34932,35000:34998,35050:35033
+target CMDS st=35083 d=17,18,16,16,16,16,18,16,16,18,16,18,16,17,16,17,16,16,18,16,16,18,18,16,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,20,14,16,16,18,16,16,18,16,16,18,16,18,16,16 snap=1:35100,4:35150,7:35200,10:35250,13:35300,16:35350,19:35400,22:35450,25:35500,28:35550,31:35600,34:35650,37:35700,40:35750,43:35800,46:35850,49:35900,52:35950,55:36000,58:36050 ct=35100:35083,35150:35134,35200:35182,35250:35232,35300:35284,35350:35333,35400:35382,35450:35432,35500:35484,35550:35532,35600:35582,35650:35632,35700:35682,35750:35732,35800:35782,35850:35836,35900:35882,35950:35932,36000:35982,36050:36034
+target CMDS st=36082 d=18,16,16,16,2,17,33,16,18,16,16,16,18,16,16,16,2,18,16,16,16,34,16,16,16,2,16,17,17,17,17,16,17,16,17,17,16,17,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18 snap=1:36100,5:36150,7:36200,10:36250,13:36300,17:36350,20:36400,22:36450,26:36500,29:36550,32:36600,35:36650,38:36700,41:36750,44:36800,47:36850,50:36900,53:36950,56:37000,59:37050 ct=36100:36082,36150:36132,36200:36167,36250:36234,36300:36282,36350:36348,36400:36384,36450:36416,36500:36498,36550:36533,36600:36584,36650:36633,36700:36683,36750:36733,36800:36782,36850:36832,36900:36882,36950:36933,37000:36982,37050:37032
+target CMDS st=37066 d=16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,18,16,16,16,16,2,17,33,16,16,18,16,16,18,16,17,16,1,16,34,16,17,17,16,17,16 snap=2:37100,5:37150,8:37200,11:37250,14:37300,17:37350,20:37400,23:37450,26:37500,29:37550,32:37600,35:37650,39:37700,41:37750,44:37800,47:37850,51:37900,53:37950,56:38000 ct=37100:37082,37150:37132,37200:37182,37250:37232,37300:37283,37350:37332,37400:37382,37450:37432,37500:37482,37550:37532,37600:37582,37650:37634,37700:37698,37750:37717,37800:37782,37850:37832,37900:37883,37950:37916,38000:37983
+target CMDS st=38050 d=16,34,16,16,17,1,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,19,16,15,17,16,17,17,16,17,16,17,17,16,17,17,16,16,18,16,16 snap=0:38050,2:38100,6:38150,9:38200,12:38250,15:38300,18:38350,21:38400,24:38450,27:38500,30:38550,33:38600,36:38650,39:38700,42:38750,45:38800,48:38850,51:38900,54:38950,57:39000 ct=38050:38049,38100:38066,38150:38149,38200:38182,38250:38232,38300:38282,38350:38332,38400:38382,38450:38432,38500:38482,38550:38532,38600:38582,38650:38634,38700:38682,38750:38735,38800:38783,38850:38833,38900:38883,38950:38933,39000:38982
+target CMDS st=39050 d=16,17,17,19,17,14,17,16,17,16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,16,18,16,16,16,18,17,16,17,16,16,18,16,18,16,16,16,18,16,16,18,16,18,16,17,16,17,16,16,18,16,17 snap=0:39050,3:39100,6:39150,9:39200,12:39250,15:39300,18:39350,21:39400,24:39450,27:39500,30:39550,33:39600,36:39650,39:39700,42:39750,45:39800,48:39850,51:39900,54:39950,57:40000 ct=39050:39032,39100:39083,39150:39136,39200:39183,39250:39232,39300:39282,39350:39332,39400:39385,39450:39432,39500:39482,39550:39534,39600:39582,39650:39633,39700:39682,39750:39734,39800:39782,39850:39832,39900:39884,39950:39933,40000:39982
+target CMDS st=40050 d=16,16,16,2,16,34,17,16,17,16,16,16,2,17,16,17,16,34,16,16,18,16,16,17,1,16,16,18,16,17,17,16,16,18,16,17,17,16,16,18,17,16,17,17,16,17,16,17,17,17,16,17,16,16,18,16,16,18,17 snap=0:40050,4:40100,6:40150,9:40200,13:40250,16:40300,18:40350,21:40400,25:40450,28:40500,31:40550,34:40600,37:40650,40:40700,43:40750,46:40800,49:40850,52:40900,55:40950,58:41000 ct=40050:40033,40100:40098,40150:40116,40200:40183,40250:40248,40300:40283,40350:40316,40400:40382,40450:40449,40500:40482,40550:40533,40600:40582,40650:40633,40700:40682,40750:40733,40800:40783,40850:40833,40900:40883,40950:40932,41000:40982
+target CMDS st=41034 d=16,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,18,16,16,18,16,16,18,16,16,16,2,16,16,18,16,16,18,16,16,18,16,17,17,17,16,17,17,16,17,16,16,18,16,16,18,16,17,17,16,17,17 snap=1:41050,4:41100,7:41150,10:41200,14:41250,16:41300,19:41350,22:41400,25:41450,29:41500,32:41550,35:41600,38:41650,41:41700,44:41750,47:41800,50:41850,53:41900,56:41950,59:42000 ct=41050:41034,41100:41082,41150:41132,41200:41182,41250:41232,41300:41266,41350:41332,41400:41382,41450:41432,41500:41498,41550:41532,41600:41582,41650:41632,41700:41683,41750:41733,41800:41783,41850:41832,41900:41882,41950:41933,42000:41983
+target CMDS st=42016 d=16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,17,16,17,17,16,16,18,17,16,17,18,16,16,16,16,18,16,16,18,16,18,16,0,16,34,16,16,18,17,16,17,16,16,18,16,19,15,16,16,18 snap=2:42050,5:42100,8:42150,11:42200,14:42250,17:42300,20:42350,23:42400,26:42450,29:42500,32:42550,35:42600,38:42650,42:42700,44:42750,47:42800,50:42850,53:42900,56:42950,59:43000 ct=42050:42032,42100:42082,42150:42133,42200:42182,42250:42232,42300:42282,42350:42333,42400:42383,42450:42432,42500:42483,42550:42534,42600:42582,42650:42632,42700:42700,42750:42716,42800:42782,42850:42833,42900:42882,42950:42935,43000:42982
+target CMDS st=43016 d=16,16,2,16,34,17,16,16,1,17,17,16,16,16,18,16,17,17,16,17,17,16,16,18,17,33,16,16,16,2,17,17,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=3:43050,5:43100,9:43150,12:43200,15:43250,18:43300,21:43350,24:43400,26:43450,30:43500,33:43550,36:43600,39:43650,42:43700,45:43750,48:43800,51:43850,54:43900,57:43950 ct=43050:43048,43100:43066,43150:43133,43200:43184,43250:43232,43300:43283,43350:43333,43400:43382,43450:43417,43500:43498,43550:43534,43600:43582,43650:43632,43700:43682,43750:43732,43800:43782,43850:43832,43900:43882,43950:43932
+thrower CMDS st=839 d=34,10877,17,18,15,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,17,17,16,17,16,17,17,16,17,16,16,18,16,17,17,16,17,17 in=0:0:0:0 snap=2:11750,5:11800,8:11850,11:11900,14:11950,17:12000,20:12050,23:12100,26:12150,29:12200,32:12250,35:12300,38:12350,41:12400,44:12450,47:12500,50:12550,53:12600,56:12650,59:12700 ct=11750:11750,11800:11785,11850:11832,11900:11900,11950:11932,12000:11983,12050:12032,12100:12082,12150:12133,12200:12182,12250:12232,12300:12282,12350:12333,12400:12382,12450:12434,12500:12483,12550:12533,12600:12582,12650:12633,12700:12683
+thrower CMDS st=12716 d=17,17,16,16,16,2,16,34,16,16,17,1,17,16,17,16,34,16,16,18,16,16,18,0,16,16,18,16,17,17,16,16,18,17,16,17,17,16,17,17,18,15,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16 snap=2:12750,6:12800,8:12850,12:12900,15:12950,17:13000,20:13050,24:13100,27:13150,30:13200,33:13250,36:13300,39:13350,42:13400,45:13450,48:13500,51:13550,54:13600,57:13650 ct=12750:12733,12800:12798,12850:12816,12900:12899,12950:12933,13000:12966,13050:13032,13100:13100,13150:13132,13200:13183,13250:13232,13300:13283,13350:13333,13400:13385,13450:13433,13500:13482,13550:13532,13600:13582,13650:13632
+thrower CMDS st=13700 d=17,16,17,18,17,15,16,16,18,17,16,17,17,16,17,16,17,17,16,16,18,17,17,16,16,16,18,16,16,18,16,18,16,17,16,17,16,18,16,17,16,17,17,16,17,16,17,17,16,16,18,16,18,16,17,16,16,1,17 snap=0:13700,3:13750,6:13800,9:13850,12:13900,15:13950,18:14000,21:14050,24:14100,27:14150,30:14200,33:14250,36:14300,39:14350,42:14400,45:14450,48:14500,51:14550,54:14600,58:14650 ct=13700:13682,13750:13733,13800:13785,13850:13832,13900:13883,13950:13933,14000:13983,14050:14032,14100:14084,14150:14132,14200:14182,14250:14234,14300:14283,14350:14334,14400:14383,14450:14433,14500:14483,14550:14532,14600:14584,14650:14649
+thrower CMDS st=14700 d=16,16,18,16,16,18,17,16,17,16,16,18,17,16,16,1,16,16,18,16,16,18,16,17,17,16,18,16,16,17,17,16,17,17,16,16,18,17,16,17,16,16,18,16,17,17,16,17,17,16,16,18,16,16,18,16,16,18,17 in=13:1:0:0 snap=0:14700,3:14750,6:14800,9:14850,12:14900,16:14950,19:15000,22:15050,25:15100,28:15150,31:15200,34:15250,37:15300,40:15350,43:15400,46:15450,49:15500,52:15550,55:15600,58:15650 ct=14700:14667,14750:14732,14800:14782,14850:14833,14900:14882,14950:14949,15000:14982,15050:15032,15100:15083,15150:15134,15200:15183,15250:15233,15300:15282,15350:15333,15400:15382,15450:15433,15500:15483,15550:15532,15600:15582,15650:15632
+thrower CMDS st=15683 d=17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,17,17,16,18,16,16,16,18,18,16,16,17,19,14,16,16,18,17,16,17,16,16,18,17,16,17,16,17,17,16,16,17,1,16,34,16 in=14:0:0:0 snap=1:15700,4:15750,7:15800,10:15850,13:15900,16:15950,19:16000,22:16050,25:16100,28:16150,31:16200,34:16250,37:16300,40:16350,43:16400,46:16450,49:16500,52:16550,56:16600,58:16650 ct=15700:15683,15750:15732,15800:15782,15850:15832,15900:15882,15950:15932,16000:15983,16050:16032,16100:16083,16150:16134,16200:16182,16250:16234,16300:16286,16350:16332,16400:16383,16450:16432,16500:16483,16550:16533,16600:16582,16650:16616
+thrower CMDS st=16682 d=18,16,16,17,1,16,16,18,16,16,18,16,18,16,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,17,16,17,16,17,16,1,16,34 snap=1:16700,5:16750,8:16800,11:16850,14:16900,17:16950,20:17000,23:17050,26:17100,29:17150,32:17200,35:17250,38:17300,41:17350,44:17400,47:17450,50:17500,53:17550,57:17600,59:17650 ct=16700:16682,16750:16749,16800:16782,16850:16832,16900:16884,16950:16932,17000:16982,17050:17032,17100:17082,17150:17132,17200:17183,17250:17232,17300:17282,17350:17333,17400:17382,17450:17432,17500:17483,17550:17533,17600:17599,17650:17616
+thrower CMDS st=17666 d=16,17,1,16,16,18,16,16,18,17,16,17,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,17,16,17,16,17,17,16,16,18,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16 snap=3:17700,6:17750,9:17800,12:17850,15:17900,18:17950,21:18000,24:18050,27:18100,30:18150,33:18200,36:18250,39:18300,42:18350,45:18400,48:18450,51:18500,54:18550,57:18600 ct=17700:17699,17750:17732,17800:17782,17850:17833,17900:17882,17950:17933,18000:17983,18050:18032,18100:18082,18150:18133,18200:18183,18250:18232,18300:18283,18350:18332,18400:18382,18450:18433,18500:18482,18550:18532,18600:18582
+thrower CMDS st=18648 d=2,16,17,17,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,18,16,16,0,16,34,16,16,17,1,16,34,16 snap=1:18650,4:18700,7:18750,10:18800,13:18850,16:18900,19:18950,22:19000,25:19050,28:19100,31:19150,34:19200,37:19250,40:19300,43:19350,46:19400,50:19450,52:19500,56:19550,58:19600 ct=18650:18648,18700:18683,18750:18732,18800:18783,18850:18833,18900:18882,18950:18932,19000:18982,19050:19033,19100:19083,19150:19132,19200:19182,19250:19233,19300:19282,19350:19332,19400:19382,19450:19450,19500:19466,19550:19549,19600:19566
+thrower CMDS st=19634 d=16,16,16,18,16,17,17,17,17,16,16,16,16,2,16,34,16,16,16,2,16,17,17,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,18,17,15,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18 snap=1:19650,4:19700,7:19750,10:19800,14:19850,16:19900,20:19950,23:20000,26:20050,29:20100,32:20150,35:20200,38:20250,41:20300,44:20350,47:20400,50:20450,53:20500,56:20550,59:20600 ct=19650:19634,19700:19682,19750:19733,19800:19784,19850:19848,19900:19866,19950:19948,20000:19983,20050:20033,20100:20082,20150:20132,20200:20182,20250:20233,20300:20282,20350:20335,20400:20382,20450:20432,20500:20482,20550:20533,20600:20582
+thrower CMDS st=20616 d=17,17,16,16,18,17,18,15,16,16,18,17,16,17,17,16,17,16,16,18,16,16,18,17,16,17,17,16,17,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,16,2,16,34,16,16,16,2,18,16,16,16,16 snap=2:20650,5:20700,8:20750,11:20800,14:20850,17:20900,20:20950,23:21000,26:21050,29:21100,32:21150,35:21200,38:21250,41:21300,44:21350,48:21400,50:21450,54:21500,57:21550 ct=20650:20633,20700:20682,20750:20735,20800:20782,20850:20833,20900:20883,20950:20932,21000:20982,21050:21033,21100:21083,21150:21132,21200:21183,21250:21232,21300:21282,21350:21332,21400:21398,21450:21416,21500:21498,21550:21534
+thrower CMDS st=21600 d=16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,17,16,16,1,16,17,17,16,34,16,16,16,2,16,16,18,16,16,18,17,16,17,16 in=19:1:0:0 snap=0:21600,3:21650,6:21700,9:21750,12:21800,15:21850,18:21900,21:21950,24:22000,27:22050,30:22100,33:22150,36:22200,40:22250,43:22300,45:22350,49:22400,52:22450,55:22500,58:22550 ct=21600:21582,21650:21632,21700:21682,21750:21732,21800:21783,21850:21832,21900:21882,21950:21932,22000:21982,22050:22032,22100:22082,22150:22134,22200:22182,22250:22249,22300:22283,22350:22316,22400:22398,22450:22432,22500:22482,22550:22533
+thrower CMDS st=22582 d=18,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17,17,17,16,16,16,18,16,18,16,16,16,18,16,17,17,16,16,18,16,16,17,1,16,34,16,16,17,1,16,34,17,16,16,1,17,16,17,17,16,17,17,33,16 in=20:0:0:0 snap=1:22600,4:22650,7:22700,10:22750,13:22800,16:22850,19:22900,22:22950,25:23000,28:23050,31:23100,34:23150,38:23200,40:23250,44:23300,46:23350,50:23400,53:23450,56:23500,58:23550 ct=22600:22582,22650:22632,22700:22682,22750:22732,22800:22782,22850:22833,22900:22884,22950:22932,23000:22984,23050:23032,23100:23083,23150:23132,23200:23199,23250:23216,23300:23299,23350:23316,23400:23399,23450:23433,23500:23483,23550:23517
+thrower CMDS st=23582 d=16,2,16,16,18,17,18,15,16,16,18,16,16,18,16,17,17,27,23,16,16,18,16,16,18,17,16,17,16,16,16,2,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,19,15,17,16,17,16,16,18,16,16,18 snap=2:23600,5:23650,8:23700,11:23750,14:23800,17:23850,19:23900,22:23950,25:24000,28:24050,32:24100,35:24150,38:24200,41:24250,44:24300,47:24350,50:24400,53:24450,56:24500,59:24550 ct=23600:23598,23650:23632,23700:23685,23750:23732,23800:23782,23850:23833,23900:23877,23950:23932,24000:23982,24050:24033,24100:24098,24150:24132,24200:24183,24250:24232,24300:24282,24350:24332,24400:24385,24450:24433,24500:24482,24550:24532
+thrower CMDS st=24566 d=17,17,16,16,18,16,16,18,16,18,16,17,16,17,16,16,18,17,16,17,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,16,17,16 snap=2:24600,5:24650,8:24700,11:24750,14:24800,17:24850,20:24900,23:24950,26:25000,29:25050,32:25100,35:25150,38:25200,41:25250,44:25300,47:25350,50:25400,53:25450,56:25500 ct=24600:24583,24650:24632,24700:24682,24750:24734,24800:24783,24850:24832,24900:24883,24950:24933,25000:24982,25050:25032,25100:25083,25150:25132,25200:25182,25250:25232,25300:25282,25350:25332,25400:25384,25450:25432,25500:25482
+thrower CMDS st=25550 d=17,33,16,16,18,16,16,18,17,17,16,16,16,16,2,17,33,16,16,16,2,16,16,18,17,16,17,16,17,17,16,17,17,19,16,15,16,16,18,17,16,17,16,16,18,16,20,14,18,32,16,16,18,16,16,16,2,16,16 snap=0:25550,2:25600,5:25650,8:25700,11:25750,15:25800,17:25850,21:25900,24:25950,27:26000,30:26050,33:26100,36:26150,39:26200,42:26250,45:26300,48:26350,50:26400,53:26450,57:26500 ct=25550:25549,25600:25567,25650:25632,25700:25682,25750:25734,25800:25798,25850:25817,25900:25898,25950:25932,26000:25983,26050:26033,26100:26083,26150:26135,26200:26182,26250:26233,26300:26282,26350:26336,26400:26368,26450:26432,26500:26498
+thrower CMDS st=26550 d=16,16,18,16,16,18,16,16,18,17,16,17,17,17,16,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,18,17,15,16,16,18,16,16,18,16,17,17,16,16,18,16,16,16,2,17,16,17,16,16,18,18,16,16,17 snap=0:26550,3:26600,6:26650,9:26700,12:26750,15:26800,18:26850,21:26900,24:26950,27:27000,30:27050,33:27100,36:27150,39:27200,42:27250,45:27300,49:27350,52:27400,55:27450,58:27500 ct=26550:26532,26600:26582,26650:26632,26700:26682,26750:26733,26800:26784,26850:26832,26900:26883,26950:26932,27000:26982,27050:27032,27100:27085,27150:27132,27200:27182,27250:27233,27300:27282,27350:27348,27400:27367,27450:27432,27500:27484
+thrower CMDS st=27533 d=17,16,34,16,17,17,16,16,16,2,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,17,16,17,17,16,17,17,16,17,16,16,18,16,16,18,16,16,18,19,16,15,17,16,17,17,16,17,16 snap=1:27550,3:27600,6:27650,10:27700,13:27750,16:27800,19:27850,22:27900,25:27950,28:28000,31:28050,34:28100,37:28150,40:28200,43:28250,46:28300,49:28350,52:28400,55:28450,58:28500 ct=27550:27533,27600:27566,27650:27633,27700:27698,27750:27732,27800:27782,27850:27833,27900:27882,27950:27932,28000:27983,28050:28032,28100:28083,28150:28133,28200:28183,28250:28232,28300:28282,28350:28332,28400:28385,28450:28433,28500:28483
+thrower CMDS st=28532 d=18,16,16,16,2,16,16,18,19,31,16,16,17,1,16,17,17,16,34,16,16,16,2,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,17,1,16,34,16,16,18,16,16,18,16,16,16 snap=1:28550,5:28600,8:28650,10:28700,14:28750,17:28800,19:28850,23:28900,26:28950,29:29000,32:29050,35:29100,38:29150,41:29200,44:29250,48:29300,50:29350,53:29400,56:29450 ct=28550:28532,28600:28598,28650:28632,28700:28669,28750:28749,28800:28783,28850:28816,28900:28898,28950:28932,29000:28983,29050:29032,29100:29082,29150:29132,29200:29182,29250:29232,29300:29299,29350:29316,29400:29382,29450:29432
+thrower CMDS st=29500 d=16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,17,18,15,16,16,18,16,16,18,16,16,18,16,18,16,16,17,17,16,16,18,16,16,18,16,17,17,16,16,18,16,16,16,2,16,16,18,17 snap=0:29500,3:29550,6:29600,9:29650,12:29700,15:29750,18:29800,21:29850,24:29900,27:29950,30:30000,33:30050,36:30100,39:30150,42:30200,45:30250,48:30300,51:30350,55:30400,58:30450 ct=29500:29498,29550:29532,29600:29582,29650:29632,29700:29683,29750:29732,29800:29782,29850:29832,29900:29885,29950:29932,30000:29982,30050:30032,30100:30084,30150:30133,30200:30182,30250:30232,30300:30283,30350:30332,30400:30398,30450:30432
+thrower CMDS st=30483 d=17,17,16,17,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,17,17,18,17,15,17,16,17,16,16,18,16,16,18,16,16,18,17,17,16,16,16,16,2,16,34,16,16,18,0,16,16,18,16,34,16,17,16,1 snap=1:30500,4:30550,7:30600,10:30650,13:30700,16:30750,19:30800,22:30850,25:30900,28:30950,31:31000,34:31050,37:31100,40:31150,44:31200,46:31250,50:31300,53:31350,55:31400,59:31450 ct=30500:30483,30550:30533,30600:30582,30650:30633,30700:30682,30750:30732,30800:30782,30850:30833,30900:30885,30950:30933,31000:30982,31050:31032,31100:31082,31150:31134,31200:31198,31250:31216,31300:31300,31350:31332,31400:31366,31450:31449
+thrower CMDS st=31466 d=16,18,16,17,17,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,18,17,15,16,17,17,17,16,17,16,16,18,16,16,18,17,16,17,16,16,18,17,17,16,16,17,17,16,16,18,16,16,18,16,16,16 snap=2:31500,5:31550,8:31600,11:31650,14:31700,17:31750,20:31800,23:31850,26:31900,29:31950,32:32000,35:32050,38:32100,41:32150,44:32200,47:32250,50:32300,53:32350,56:32400 ct=31500:31482,31550:31533,31600:31582,31650:31632,31700:31683,31750:31732,31800:31782,31850:31832,31900:31885,31950:31933,32000:31983,32050:32032,32100:32082,32150:32133,32200:32182,32250:32234,32300:32283,32350:32332,32400:32382
+thrower CMDS st=32450 d=16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,19,15,16,17,17,16,17,17,17,16,17,18,16,16,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,17,17,17,16 snap=0:32450,3:32500,6:32550,9:32600,12:32650,15:32700,18:32750,21:32800,24:32850,27:32900,30:32950,33:33000,36:33050,39:33100,42:33150,45:33200,48:33250,51:33300,54:33350,57:33400 ct=32450:32448,32500:32482,32550:32532,32600:32583,32650:32632,32700:32682,32750:32732,32800:32782,32850:32832,32900:32885,32950:32933,33000:32983,33050:33033,33100:33084,33150:33133,33200:33182,33250:33232,33300:33282,33350:33333,33400:33383
+thrower CMDS st=33450 d=17,18,15,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,16,17,16,1,16,16,18,17,16,17,16,16,18,17,33,16,16,17,1,17,16,17,16,16,18,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16 snap=0:33450,3:33500,6:33550,9:33600,12:33650,15:33700,18:33750,22:33800,25:33850,28:33900,31:33950,33:34000,37:34050,40:34100,43:34150,46:34200,49:34250,52:34300,55:34350,58:34400 ct=33450:33433,33500:33485,33550:33532,33600:33583,33650:33632,33700:33682,33750:33732,33800:33799,33850:33832,33900:33883,33950:33932,34000:33967,34050:34049,34100:34083,34150:34132,34200:34182,34250:34232,34300:34283,34350:34332,34400:34382
+thrower CMDS st=34433 d=17,16,16,18,17,18,15,17,16,17,16,16,18,16,17,17,16,17,17,16,16,18,16,16,16,2,16,34,16,18,16,16,16,18,17,16,16,1,16,34,17,16,16,1,16,16,18,16,16,18,16,16,18,16,16,18,17,16,17 snap=1:34450,4:34500,7:34550,10:34600,13:34650,16:34700,19:34750,22:34800,26:34850,28:34900,31:34950,34:35000,38:35050,40:35100,44:35150,47:35200,50:35250,53:35300,56:35350,59:35400 ct=34450:34433,34500:34482,34550:34535,34600:34583,34650:34632,34700:34683,34750:34733,34800:34782,34850:34832,34900:34866,34950:34934,35000:34982,35050:35049,35100:35066,35150:35149,35200:35182,35250:35232,35300:35282,35350:35332,35400:35383
+thrower CMDS st=35416 d=16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,17,17,16,16,18,16,16,18,16,16,18,17,17,16,16,16,18,16,16,18,16,17,17,16,16,16,2,17,33,16,16,18,16,16,16,2,16,16 snap=2:35450,5:35500,8:35550,11:35600,14:35650,17:35700,20:35750,23:35800,26:35850,29:35900,32:35950,35:36000,38:36050,41:36100,44:36150,48:36200,50:36250,53:36300,57:36350 ct=35450:35432,35500:35482,35550:35532,35600:35582,35650:35632,35700:35682,35750:35732,35800:35783,35850:35832,35900:35882,35950:35932,36000:35984,36050:36032,36100:36082,36150:36133,36200:36198,36250:36217,36300:36282,36350:36348
+thrower CMDS st=36400 d=16,16,18,16,16,18,19,16,15,16,16,18,16,17,17,17,16,17,16,16,18,16,16,18,16,19,15,16,16,18,16,16,18,17,16,17,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,16,16,18,17,16 snap=0:36400,3:36450,6:36500,9:36550,12:36600,15:36650,18:36700,21:36750,24:36800,27:36850,30:36900,33:36950,36:37000,39:37050,42:37100,45:37150,48:37200,51:37250,54:37300,57:37350 ct=36400:36382,36450:36432,36500:36482,36550:36535,36600:36582,36650:36633,36700:36683,36750:36732,36800:36782,36850:36835,36900:36882,36950:36932,37000:36983,37050:37032,37100:37082,37150:37132,37200:37182,37250:37232,37300:37282,37350:37332
+thrower CMDS st=37400 d=16,16,18,16,17,16,1,16,34,17,18,15,16,17,17,16,16,16,2,16,16,18,17,33,16,16,18,17,17,16,0,16,16,18,17,16,17,16,18,16,16,34,16,16,16,2,16,16,18,16,17,17,17,16,17,17,16,17,16 snap=0:37400,3:37450,7:37500,9:37550,12:37600,15:37650,19:37700,22:37750,24:37800,27:37850,31:37900,34:37950,37:38000,40:38050,42:38100,46:38150,49:38200,52:38250,55:38300,58:38350 ct=37400:37383,37450:37432,37500:37483,37550:37516,37600:37585,37650:37633,37700:37698,37750:37732,37800:37767,37850:37832,37900:37900,37950:37932,38000:37983,38050:38034,38100:38066,38150:38148,38200:38182,38250:38233,38300:38283,38350:38333

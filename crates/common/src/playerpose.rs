@@ -8,7 +8,7 @@ use crate::pmove::MoveRules;
 use crate::pmove::aim::{
     angle_normalize_180, angle_normalize_360 as angle_mod, angle_subtract, lean_fraction,
 };
-use crate::skeleton::{AnimBinding, PoseBuffer, Skeleton};
+use crate::skeleton::{AnimBinding, PoseBuffer, Record, Skeleton};
 use crate::xanim::XAnim;
 use glam::{Quat, Vec3};
 use std::rc::Rc;
@@ -833,7 +833,8 @@ fn control_quat([p, y, r]: [f32; 3]) -> Quat {
 /// skipped.
 pub fn apply_controllers(pose: &mut PoseBuffer, skel: &Skeleton, c: &Controllers) {
     if let Some(bi) = skel.bone_index("tag_origin") {
-        pose.set_local(bi, c.origin_trans, control_quat(c.origin));
+        let record = Record::tag(c.origin, c.origin_trans, false);
+        pose.set_control(bi, c.origin_trans, control_quat(c.origin), record);
     }
     for (name, angles) in [
         ("pelvis", c.pelvis),
@@ -850,7 +851,9 @@ pub fn apply_controllers(pose: &mut PoseBuffer, skel: &Skeleton, c: &Controllers
             Ok(p) => pose.bone_world(skel, p).1,
             Err(_) => Quat::IDENTITY,
         };
-        pose.set_local_rot(bi, parent.inverse() * control_quat(angles) * parent);
+        let rot = parent.inverse() * control_quat(angles) * parent;
+        let record = Record::tag(angles, Vec3::ZERO, true);
+        pose.set_control(bi, pose.local(bi).0, rot, record);
     }
 }
 
