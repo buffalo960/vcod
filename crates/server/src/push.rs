@@ -9,6 +9,7 @@ use crate::spectate::ClientSim;
 use glam::Vec3;
 use vcod_common::collision::{CollisionWorld, MASK_PLAYERSOLID};
 use vcod_common::movetrace::{Body, CONTENTS_BODY, MoveWorld};
+use vcod_common::patch::Arith;
 use vcod_gsc::Cx;
 
 /// `G_TryPushingEntity`'s jitter step, and its reach is half the body's
@@ -222,16 +223,23 @@ fn listed_client(step: &Step, sim: &ClientSim, link: Option<Link>, world: &Colli
 }
 
 /// Where the mover's move and turn take a point: moved, then turned about the
-/// mover's moved origin (`G_TryPushingEntity`, 0x54956-0x54aae).
-fn carried(step: &Step, at: Vec3) -> Vec3 {
+/// mover's moved origin (`G_TryPushingEntity`, 0x54956-0x54aae). 1.1d keeps
+/// the turn on the x87 stack and rounds once, adding `org2 - org` to the
+/// stored moved point (cod11-movers.md 21, "The carry's rounding").
+fn carried(step: &Step, at: Vec3, arith: Arith) -> Vec3 {
     let moved = at + (step.to.0 - step.from.0);
     let amove = step.to.1 - step.from.1;
     if amove == Vec3::ZERO {
         return moved;
     }
     let axis = vcod_common::pmove::aim::angles_to_axis(amove.to_array()).map(Vec3::from);
-    let v = moved - step.to.0;
-    step.to.0 + axis[0] * v.x + axis[1] * v.y + axis[2] * v.z
+    if arith != Arith::Kept {
+        let v = moved - step.to.0;
+        return step.to.0 + axis[0] * v.x + axis[1] * v.y + axis[2] * v.z;
+    }
+    let org = (moved - step.to.0).as_dvec3();
+    let org2 = axis[0].as_dvec3() * org.x + axis[1].as_dvec3() * org.y + axis[2].as_dvec3() * org.z;
+    (moved.as_dvec3() + (org2 - org)).as_vec3()
 }
 
 /// An item as `G_MoverPush` sees it. Only a placed or dropped item still on
@@ -290,7 +298,7 @@ pub fn fit_item(step: &Step, item: &ItemBody, world: &CollisionWorld) -> Option<
         let sweep = world.box_trace_except(here, p, item.mins, item.maxs, item.mask, step.pusher);
         !sweep.startsolid && sweep.fraction >= 1.0
     };
-    let target = carried(step, here);
+    let target = carried(step, here, world.arith());
     if clear(target) {
         Some(ItemPush::At(target))
     } else if clear(here) {
@@ -324,7 +332,7 @@ fn try_push(
     // capture keeps `ps.origin`'s fraction through every push, so that is
     // what it reads.
     let here = sim.ps.origin;
-    let target = carried(step, here);
+    let target = carried(step, here, world.arith());
     let pusher = step.pusher;
     // Retail's test is one `trap_Trace` at the spot (game.mp 0x54b3b). Ours
     // also sweeps there from where the body stood, past the pusher it may
