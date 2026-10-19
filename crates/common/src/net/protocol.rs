@@ -15,7 +15,7 @@ pub struct NetField {
 }
 
 /// Protocol 22's angle field: a zero flag, then a short of
-/// `round(deg * 65536 / 360)` (coduo_lnxded 0x8080815). Decoded, it holds
+/// `deg * 65536 / 360` truncated toward zero (coduo_lnxded 0x8080815). Decoded, it holds
 /// the f32 bit pattern of the degrees, as a float field does.
 pub const ANGLE_BITS: i32 = -100;
 
