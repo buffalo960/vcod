@@ -1073,6 +1073,35 @@ contact reads that rounding. What that left, 17 last-bit residuals on 1.1d
 (mp_brecourt, mp_dawnville, mp_hurtgen, mp_rocket; 64 to 256 2^-24ths),
 16.3 closes. 1.5b's mp_neuville 90 (128) is still open.
 
+Every reader of the two globals in 1.1d, from the `R_386_32` relocations
+onto 0x7dce8 and 0x7dcf4 (`readelf -r`, `annotate_func.py`):
+
+- VERIFIED: `ClientSpawn` copies both into `r.mins`/`r.maxs`
+  (0x42775-0x427b7), then copies `r.mins`/`r.maxs` into the playerstate's
+  own box at `ps+0x324..0x338` (0x428b2-0x428f4).
+- VERIFIED: `G_RunFrame` (0x50711-0x50843) keeps the last
+  `g_bounds_width` and `g_bounds_height_standing` it saw at `level+0x29fc`
+  and `+0x2a00`. INFERRED, off the compare at 0x50720 and 0x5073a: when
+  either cvar changed it calls `G_SetPlayerSize` (0x5075c) and writes the
+  new box into `r.mins`/`r.maxs` and `ps+0x324..0x338` of each of the 64
+  client entities in use, relinking each (`trap_LinkEntity` 0x5082f).
+- VERIFIED: `positionWouldTelefrag` (0x5a834) builds its
+  `trap_EntitiesInBox` box (mask 0x2000000) from them around its argument.
+- VERIFIED: `placeSpawnpoint`'s three traces (0x5bf61-0x5bfeb), above.
+- VERIFIED, the `Pmove` side: `PM_CheckDuck` (0x316f4) loads `pm.mins` and
+  `pm.maxs` from `ps+0x324..0x338` (Ghidra's `FUN_000416f4`, whose image
+  sits 0x10000 above the module's addresses). INFERRED: the standing top is `ps+0x338`, the crouched and prone
+  ones its constants 50 and 30.
+
+VERIFIED, `tools/re/dump_cvars.py`: `g_bounds_width` and
+`g_bounds_height_standing` carry flags 0x200 (`CVAR_CHEAT`) in 1.1d, 1.5b
+and UO, so they hold "30" and "70" unless `sv_cheats` is on. vcod reads
+neither: the box is the constants `pmove::HALF_WIDTH` and
+`pmove::HEIGHT_STAND`, `game::trigger::PLAYER_MINS`/`PLAYER_MAXS` on the
+server. That matches retail everywhere but a `devmap` whose rcon changes
+one of the two cvars, which retail turns into a resize of every player and
+vcod ignores.
+
 ### 16.3 The spawnpoint takes the third trace's endpoint
 
 VERIFIED, `game.mp.i386.so` 1.1d 0x5bedc (`annotate_func.py`): the three

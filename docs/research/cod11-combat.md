@@ -7246,7 +7246,8 @@ The other walks and links (2026-10-18):
 
 Not routed through the tree: the
 relink `G_RunFrame` makes of every client when `g_bounds_width` or
-`g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
+`g_bounds_height_standing` changes (0x5082f, cheat cvars whose change vcod
+ignores, cod11-gsc-object-model.md 16.2);
 `func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the
 top of the next script frame in the order the walk made them and hands the
 `"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);
