@@ -7,10 +7,11 @@ use crate::game::temp_entity::{Scope, TempEntity};
 use crate::spectate::ClientSim;
 use glam::{Quat, Vec3};
 use vcod_common::animtree::PlayerAnims;
-use vcod_common::bonetrace::{PriorityMap, bone_trace};
+use vcod_common::bonetrace::{PriorityMap, bone_trace_in, into_frame_stored};
 use vcod_common::collision::{CONTENTS_GLASS, CollisionWorld, sound_material};
 use vcod_common::net::events::dir_to_byte;
 use vcod_common::net::protocol::ENTITYNUM_WORLD;
+use vcod_common::patch::Arith;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::pose_player;
 use vcod_common::pmove::weapon::{SpreadStance, hip_spread_min};
@@ -188,6 +189,9 @@ pub struct BoneTraceCtx<'a> {
     /// posed keeps that pose, and the trace stamps every other one at
     /// `now_ms` (movers doc 15, "A bone asked for before the anim update").
     pub posed: Option<&'a mut [DobjStamps]>,
+    /// The server build's float arithmetic: 1.5b's and UO's store every
+    /// step of the trace (combat doc 3.1, "The arithmetic on 1.5 and UO").
+    pub arith: Arith,
 }
 
 /// One client's skeleton under the frame's stamp (`GameHost::dobj_posed`):
@@ -1082,6 +1086,17 @@ impl HitBody {
     pub fn frame(&self) -> Quat {
         Quat::from_rotation_z(self.yaw)
     }
+
+    /// 1.5b's and UO's `AnglesToAxis` of `(0, yaw, 0)` (UO 0x806a46e over
+    /// `AngleVectors` 0x80674ad): the yaw's float radians, its `fsincos`
+    /// stored, forward, left and up.
+    pub fn axis_stored(&self) -> [Vec3; 3] {
+        let (s, c) = (
+            f64::from(self.yaw).sin() as f32,
+            f64::from(self.yaw).cos() as f32,
+        );
+        [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
+    }
 }
 
 /// What `ClientEndFrame`'s `BG_PlayerAnimation` hands the DObj: its models,
@@ -1380,7 +1395,9 @@ pub fn trace_bodies_faced(
             rigs,
             now_ms,
             posed,
+            arith,
         } = &mut **ctx;
+        let arith = *arith;
         let Some(skel) = rigs.rig(fs, &body.pose.assembly) else {
             let Some(t) = ray_box(start, end, body.origin + body.mins, body.origin + body.maxs)
                 .filter(|&t| t < limit)
@@ -1394,13 +1411,21 @@ pub fn trace_bodies_faced(
         let stamps = posed.as_deref_mut().and_then(|p| p.get_mut(body.slot));
         let pose = stamped_pose(&skel, body, anims, rigs, fs, *now_ms, stamps);
         // Into the body's own frame: its `tag_origin` sits at the feet.
-        let inv = body.frame().inverse();
-        let (ls, le) = (inv * (start - body.origin), inv * (end - body.origin));
+        let (ls, le) = if arith == Arith::Stored {
+            let axis = body.axis_stored();
+            (
+                into_frame_stored(start, &axis, body.origin),
+                into_frame_stored(end, &axis, body.origin),
+            )
+        } else {
+            let inv = body.frame().inverse();
+            (inv * (start - body.origin), inv * (end - body.origin))
+        };
         // A bone past `limit` lies behind what the trace already met: the
         // box can open in front of a hull or wall the bones stand behind
         // (docs/research/coduo-vehicles.md 13, "The silhouette").
-        let Some(hit) =
-            bone_trace(&skel, &pose, ls, le, priority, limit).filter(|h| h.fraction < limit)
+        let Some(hit) = bone_trace_in(&skel, &pose, ls, le, priority, limit, arith)
+            .filter(|h| h.fraction < limit)
         else {
             continue;
         };
@@ -1409,11 +1434,19 @@ pub fn trace_bodies_faced(
             .copied()
             .unwrap_or("none");
         limit = hit.fraction;
+        let normal = if arith == Arith::Stored {
+            // UO 0x8069154: each component of the turned normal rounded once.
+            let [f, l, u] = body.axis_stored().map(|a| a.as_dvec3());
+            let n = hit.normal.as_dvec3();
+            (f * n.x + l * n.y + u * n.z).as_vec3()
+        } else {
+            body.frame() * hit.normal
+        };
         best = Some(BodyHit {
             slot: body.slot,
             fraction: hit.fraction,
             hitloc,
-            normal: body.frame() * hit.normal,
+            normal,
         });
     }
     best
@@ -2418,6 +2451,7 @@ mod tests {
             fs: &fs,
             anims: &anims,
             rigs: &mut rigs,
+            arith: vcod_common::patch::Arith::Kept,
             now_ms: 0,
             posed: None,
         };
@@ -2479,6 +2513,7 @@ mod tests {
                 fs: &fs,
                 anims: &anims,
                 rigs: &mut rigs,
+                arith: vcod_common::patch::Arith::Kept,
                 now_ms: 50,
                 posed: None,
             };
@@ -2535,6 +2570,7 @@ mod tests {
                 fs: &fs,
                 anims: &anims,
                 rigs: &mut rigs,
+                arith: vcod_common::patch::Arith::Kept,
                 now_ms: 50,
                 posed: None,
             };
@@ -3502,6 +3538,7 @@ mod tests {
                 fs: &fs,
                 anims: &anims,
                 rigs: &mut rigs,
+                arith: vcod_common::patch::Arith::Kept,
                 now_ms: 0,
                 posed: None,
             };

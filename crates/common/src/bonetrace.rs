@@ -2,8 +2,9 @@
 //! skeleton, which is where a hit's 0..18 location index comes from.
 //! `docs/research/cod11-combat.md` section 3.
 
+use crate::patch::Arith;
 use crate::skeleton::{PoseBuffer, Skeleton};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 /// The winning bone, in the frame the ray was given in.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,11 +127,159 @@ pub fn bone_trace(
     best
 }
 
+/// [`bone_trace`] in `arith`'s build. 1.1d's keeps its floats on the
+/// stack, which [`bone_trace`] stands in for; 1.5b's and United
+/// Offensive's (`SV_LocationalTraceModel`, 1.5b `cod_lnxded` 0x80d2000, UO
+/// `coduo_lnxded` 0x80c7394) store every assignment: each point moved into
+/// a bone's frame, each slab distance, each denominator and each fraction
+/// (cod11-combat.md 3.1, "The arithmetic on 1.5 and UO").
+pub fn bone_trace_in(
+    skel: &Skeleton,
+    pose: &PoseBuffer,
+    start: Vec3,
+    end: Vec3,
+    priority: &PriorityMap,
+    limit: f32,
+    arith: Arith,
+) -> Option<BoneHit> {
+    match arith {
+        Arith::Stored => bone_trace_stored(skel, pose, start, end, priority, limit),
+        Arith::Kept | Arith::Msvc => bone_trace(skel, pose, start, end, priority, limit),
+    }
+}
+
+/// A float variable the -O0 build stores.
+fn st(x: f64) -> f32 {
+    x as f32
+}
+
+/// UO 0x80c72ea (1.5b 0x80d1f56): `p` into the frame whose axes are
+/// `rows`, at `origin`: each difference stored, each dot product rounded
+/// once.
+pub fn into_frame_stored(p: Vec3, rows: &[Vec3; 3], origin: Vec3) -> Vec3 {
+    let d = (p - origin).as_dvec3();
+    let dot = |r: Vec3| st(d.x * f64::from(r.x) + d.y * f64::from(r.y) + d.z * f64::from(r.z));
+    Vec3::new(dot(rows[0]), dot(rows[1]), dot(rows[2]))
+}
+
+/// A bone's axes off its quaternion, as UO's skeleton build writes its
+/// matrix (0x80c7d82 from 0x80c6289): `2 / |q|^2` and every product
+/// stored, each element rounded once.
+fn axes_stored(q: Quat) -> [Vec3; 3] {
+    let f = f64::from;
+    let (x, y, z, w) = (q.x, q.y, q.z, q.w);
+    let n = st(f(st(f(x) * f(x))) + f(st(f(y) * f(y))) + f(st(f(z) * f(z))) + f(w) * f(w));
+    if n == 0.0 {
+        return [Vec3::X, Vec3::Y, Vec3::Z];
+    }
+    let s = f(st(2.0 / f(n)));
+    let xx = f(st(f(st(f(x) * f(x))) * s));
+    let yy = f(st(f(st(f(y) * f(y))) * s));
+    let zz = f(st(f(st(f(z) * f(z))) * s));
+    let xs = f(st(f(x) * s));
+    let (xy, xz, xw) = (f(st(xs * f(y))), f(st(xs * f(z))), f(st(xs * f(w))));
+    let ys = f(st(f(y) * s));
+    let (yz, yw) = (f(st(ys * f(z))), f(st(ys * f(w))));
+    let zw = f(st(f(z) * f(w) * s));
+    [
+        Vec3::new(st(1.0 - (yy + zz)), st(xy + zw), st(xz - yw)),
+        Vec3::new(st(xy - zw), st(1.0 - (xx + zz)), st(yz + xw)),
+        Vec3::new(st(xz + yw), st(yz - xw), st(1.0 - (xx + yy))),
+    ]
+}
+
+/// 1.5b's and UO's slab test, store for store (UO 0x80c788a..0x80c7a8a).
+fn bone_trace_stored(
+    skel: &Skeleton,
+    pose: &PoseBuffer,
+    start: Vec3,
+    end: Vec3,
+    priority: &PriorityMap,
+    limit: f32,
+) -> Option<BoneHit> {
+    let worlds = pose.bone_worlds(skel);
+    let mut best: Option<BoneHit> = None;
+    let mut fraction = limit;
+    let mut best_priority = MIN_PRIORITY;
+    'bones: for (bi, b) in skel.bones().iter().enumerate() {
+        if !b.has_hit_box() {
+            continue;
+        }
+        let prio = priority.get(b.hit_location as usize).copied().unwrap_or(0);
+        if prio < best_priority {
+            continue;
+        }
+        let (bp, br) = worlds[bi];
+        let rows = axes_stored(br);
+        let (ls, le) = (
+            into_frame_stored(start, &rows, bp),
+            into_frame_stored(end, &rows, bp),
+        );
+        let (mut enter, mut exit) = (0.0f32, fraction);
+        let mut starts_in = true;
+        let mut face: Option<(usize, f32)> = None;
+        for (sign, planes) in [(-1.0f32, b.hit_mins), (1.0, b.hit_maxs)] {
+            for axis in 0..3 {
+                let d1 = st((f64::from(ls[axis]) - f64::from(planes[axis])) * f64::from(sign));
+                let d2 = st((f64::from(le[axis]) - f64::from(planes[axis])) * f64::from(sign));
+                if d1 > 0.0 {
+                    if d2 > 0.0 {
+                        continue 'bones;
+                    }
+                    starts_in = false;
+                    let den = st(f64::from(d1) - f64::from(d2));
+                    if f64::from(d1) > f64::from(enter) * f64::from(den) {
+                        enter = st(f64::from(d1) / f64::from(den));
+                        if enter >= exit {
+                            continue 'bones;
+                        }
+                        face = Some((axis, sign));
+                    }
+                } else if d2 > 0.0 {
+                    let den = st(f64::from(d1) - f64::from(d2));
+                    if f64::from(d1) > f64::from(exit) * f64::from(den) {
+                        exit = st(f64::from(d1) / f64::from(den));
+                        if enter >= exit {
+                            continue 'bones;
+                        }
+                    }
+                }
+            }
+        }
+        if starts_in {
+            // Retail returns only on a segment inside the box end to end;
+            // one that leaves it flags the trace start-solid and the walk
+            // goes on (UO 0x80c7a8a, 1.1d 0x80c4bc5). Both return here, as
+            // [`bone_trace`] does (combat doc 3.1).
+            return Some(BoneHit {
+                fraction: 0.0,
+                hit_location: b.hit_location,
+                bone: bi,
+                start_solid: true,
+                normal: Vec3::ZERO,
+            });
+        }
+        if prio == best_priority && best.is_some() && enter >= fraction {
+            continue;
+        }
+        best_priority = prio;
+        fraction = enter;
+        let normal = face.map_or(Vec3::ZERO, |(axis, sign)| rows[axis] * sign);
+        best = Some(BoneHit {
+            fraction: enter,
+            hit_location: b.hit_location,
+            bone: bi,
+            start_solid: false,
+            normal,
+        });
+    }
+    best
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::xmodel::{Bone, XModel};
-    use glam::Quat;
 
     /// `riflePriorityMap` (combat doc, 2.3).
     const RIFLE: PriorityMap = [1, 9, 9, 9, 8, 7, 6, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 0];
@@ -185,6 +334,35 @@ mod tests {
         let hit = shoot(&skel, &pose, Vec3::ZERO).unwrap();
         assert_eq!(hit.hit_location, 6);
         assert!((hit.fraction - 0.18).abs() < 1e-3, "{}", hit.fraction);
+    }
+
+    /// The stored build ranks bones as the kept one does; its fractions sit
+    /// within float steps of the kept ones.
+    #[test]
+    fn the_stored_build_ranks_alike() {
+        let arm = bone("arm", Vec3::new(20.0, 0.0, 0.0), Vec3::splat(2.0), 6);
+        let head = bone("head", Vec3::new(50.0, 0.0, 0.0), Vec3::splat(2.0), 2);
+        for listed in [vec![head.clone(), arm.clone()], vec![arm, head]] {
+            let (skel, pose) = rig(listed);
+            let to = Vec3::X * 100.0;
+            let kept = bone_trace_in(&skel, &pose, Vec3::ZERO, to, &RIFLE, 1.0, Arith::Kept);
+            let stored = bone_trace_in(&skel, &pose, Vec3::ZERO, to, &RIFLE, 1.0, Arith::Stored);
+            let (kept, stored) = (kept.unwrap(), stored.unwrap());
+            assert_eq!(stored.hit_location, kept.hit_location);
+            assert_eq!(stored.normal, kept.normal);
+            assert!((stored.fraction - kept.fraction).abs() < 1e-6);
+        }
+    }
+
+    /// UO's matrix off a quarter turn about z: its axes to the float step.
+    #[test]
+    fn stored_axes_follow_the_quaternion() {
+        let q = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let [x, y, z] = axes_stored(q);
+        assert!((x - Vec3::Y).abs().max_element() < 1e-6, "{x}");
+        assert!((y + Vec3::X).abs().max_element() < 1e-6, "{y}");
+        assert_eq!(z, Vec3::Z);
+        assert_eq!(axes_stored(Quat::IDENTITY), [Vec3::X, Vec3::Y, Vec3::Z]);
     }
 
     #[test]
