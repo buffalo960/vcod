@@ -638,7 +638,9 @@ pub fn get_entity_number(
 /// traces are `trap_TraceCapsule` with `playerMins`/`playerMaxs` and mask
 /// 0x2810011 (docs/research/cod11-gsc-object-model.md, section 16): up 128
 /// from the origin, down 262144 from there, and a zero-length test at the
-/// endpoint, which only feeds the "in solid" warning. A point drop put
+/// endpoint, which feeds the "in solid" warning and whose own endpoint is
+/// where the spawnpoint goes (16.3: on 1.1d that end is the drop's moved
+/// by `cm_endpos`'s rounding, up to a float step). A point drop put
 /// mp_harbor's entity 241 below the world (`tests/placespawn_ab.rs`).
 ///
 /// The one thing not carried is the `gentity_t+0x7c` word retail keeps off
@@ -673,12 +675,12 @@ pub fn place_spawnpoint(
         mins,
         maxs,
     );
-    // The third trace tests where the spawnpoint ended up, not the drop.
-    let placed_in_solid = world
+    // The third trace tests where the spawnpoint ended up, and it shares
+    // the drop's result buffer: `G_SetOrigin` (0x5c086) reads its endpoint.
+    let test = world
         .collision
-        .box_trace(down.endpos, down.endpos, mins, maxs)
-        .startsolid;
-    if placed_in_solid {
+        .box_trace(down.endpos, down.endpos, mins, maxs);
+    if test.startsolid {
         log::warn!(
             "gsc: spawn point entity {} is in solid at ({}, {}, {})",
             id.0,
@@ -687,7 +689,7 @@ pub fn place_spawnpoint(
             down.endpos.z as i32
         );
     }
-    let placed = Value::Vector(down.endpos.into());
+    let placed = Value::Vector(test.endpos.into());
     host.set_field(cx, id, origin_field, placed)?;
     Ok(Value::Undefined)
 }

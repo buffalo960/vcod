@@ -53,35 +53,26 @@ const BITS_GAPS: &[(&str, &str, u32, &str)] = &[
     ("uo", "mp_uo_powcamp", 332, "+ 0 2097152"),
     ("uo", "mp_uo_powcamp", 334, "+ 0 2097152"),
     ("uo", "mp_uo_powcamp", 288, "+ 0 2097152"),
+    // 1.1d mp_rocket 164 rests on a terrain edge and retail's last trace
+    // left its drop's endpoint as it was, where `cm_endpos` moves an odd
+    // one by a float step: no drop endpoint reaches retail's through that
+    // rounding, so that trace stopped short. Not pinned (16.3).
+    ("1.1d", "mp_rocket", 164, "+ 476 12233728"),
     // Last-bit residuals on sloped terrain and brush contacts, 1 to 160
-    // ulps: the terrain face and edge clips recomputed in 80-bit precision
-    // land where ours does, so the difference is upstream (the record
-    // build) or in a step not yet transcribed. Not pinned.
+    // ulps. The terrain edge sweep is where they come from: on a
+    // mp_dawnville grid (16.3) 106 of 108 face contacts match retail and
+    // 42 of 61 edge contacts miss by a few ulps of the fraction, which the
+    // transcribed
+    // edge sweep and record build, reread instruction by instruction and
+    // recomputed in 80 bits, do not explain. Not pinned.
     ("1.1d", "mp_brecourt", 211, "+ 38 11810176"),
-    ("1.1d", "mp_brecourt", 231, "+ 45 1869120"),
-    ("1.1d", "mp_brecourt", 245, "+ 36 9098432"),
     ("1.1d", "mp_dawnville", 168, "+ 26 1406848"),
     ("1.1d", "mp_dawnville", 182, "- 15 4825344"),
-    ("1.1d", "mp_dawnville", 125, "+ 53 12702784"),
-    ("1.1d", "mp_hurtgen", 146, "+ 106 11812224"),
     ("1.1d", "mp_hurtgen", 204, "- 76 13886464"),
-    ("1.1d", "mp_hurtgen", 147, "+ 106 11812224"),
     ("1.1d", "mp_pavlov", 164, "- 8 8255552"),
     ("1.1d", "mp_pavlov", 111, "- 14 11546880"),
     ("1.1d", "mp_pavlov", 142, "- 106 7589120"),
     ("1.1d", "mp_railyard", 156, "+ 15 8784320"),
-    ("1.1d", "mp_rocket", 80, "+ 243 12263168"),
-    ("1.1d", "mp_rocket", 149, "+ 250 2840832"),
-    ("1.1d", "mp_rocket", 140, "+ 253 10993408"),
-    ("1.1d", "mp_rocket", 86, "+ 225 16260864"),
-    ("1.1d", "mp_rocket", 88, "+ 226 15843584"),
-    ("1.1d", "mp_rocket", 94, "+ 254 12892928"),
-    ("1.1d", "mp_rocket", 97, "+ 222 407296"),
-    ("1.1d", "mp_rocket", 98, "+ 230 16646912"),
-    ("1.1d", "mp_rocket", 100, "+ 226 1577728"),
-    ("1.1d", "mp_rocket", 103, "+ 253 1732352"),
-    ("1.1d", "mp_rocket", 266, "+ 234 12870912"),
-    ("1.1d", "mp_rocket", 271, "+ 254 7371520"),
     ("1.5b", "mp_bocage", 181, "+ 20 11853952"),
     ("1.5b", "mp_bocage", 182, "+ 19 15885184"),
     ("1.5b", "mp_bocage", 184, "+ 19 2629120"),

@@ -973,7 +973,7 @@ running retail server, in 16.1.
 
 | builtin | table | address | retail | ours |
 |---|---|---|---|---|
-| `placeSpawnpoint` | entity methods 37 | 0x5bedc | VERIFIED: three calls to `trap_TraceCapsule` (0x5bf72, 0x5bfb8, 0x5bff4, `R_386_PC32` relocations), each passing `playerMins` and `playerMaxs` (`R_386_32` relocations onto 0x7dce8 and 0x7dcf4, whose `.data` reads (-15, -15, 0) and (15, 15, 72)), contents mask 0x2810011 and the entity's own number; the constants 128 (0x5bf45) and 262144 (0x5bf91). INFERRED: the first sweeps that player capsule from the origin up 128, the second from the first's endpoint down 262144, the entity moves to the second's endpoint, the second trace's result word at results+0x28 goes into `gentity_t+0x7c` (which field that is, is a further inference: the ground entity), and the third, zero-length at that endpoint, prints `WARNING: Spawn point entity %i is in solid at (%i, %i, %i)` when it starts solid | all three traces as the same capsule under the same mask (`CollisionWorld::box_trace`), and the move; nothing stored for `gentity_t+0x7c`, since our trace carries no entity identity. 16.1 is the measurement |
+| `placeSpawnpoint` | entity methods 37 | 0x5bedc | VERIFIED: three calls to `trap_TraceCapsule` (0x5bf72, 0x5bfb8, 0x5bff4, `R_386_PC32` relocations), each passing `playerMins` and `playerMaxs` (`R_386_32` relocations onto 0x7dce8 and 0x7dcf4, whose `.data` reads (-15, -15, 0) and (15, 15, 72)), contents mask 0x2810011 and the entity's own number; the constants 128 (0x5bf45) and 262144 (0x5bf91). INFERRED: the first sweeps that player capsule from the origin up 128, the second from the first's endpoint down 262144, the entity moves to the third's endpoint (16.3), the second trace's result word at results+0x28 goes into `gentity_t+0x7c` (which field that is, is a further inference: the ground entity), and the third, zero-length at that endpoint, prints `WARNING: Spawn point entity %i is in solid at (%i, %i, %i)` when it starts solid | all three traces as the same capsule under the same mask (`CollisionWorld::box_trace`), and the move; nothing stored for `gentity_t+0x7c`, since our trace carries no entity identity. 16.1 is the measurement |
 | `setClientNameMode` | functions 89 | 0x5f208 | INFERRED: matches the argument against `auto_change` and `manual_change`, stores 0 or 1 in `level+0x210`, `Scr_Error("Unknown mode")` otherwise. The two constants are `scr_const+0xfc`/`+0xfe`, named by `GScr_LoadConsts` 0x58550, both VERIFIED data reads. So is the claim that the only two readers of `level+0x210` in the module are `ClientUserinfoChanged` (0x421eb) and the name-change path at 0x5ba99: the relocation table has exactly four `level+0x210` sites, these two and this function's own pair | recorded on the host, both errors faithful; nothing reads it until clients exist |
 | `newHudElem` | functions 77 | 0x4b184 | INFERRED: first free `g_hudelems` record, zeroed but for `fontscale` 1.0 (0x4b19b), a packed white `color` (0x4b1d9), `archived` 1 (0x4b1fc) and owner `0x3ff` (0x4b249); `Scr_Error("out of hudelems")` when full | the allocation, the pool size, the failure and all four defaults |
 | `<hudelem> setTimer` | hudelem methods 2 | 0x4b8e4 | INFERRED: exactly one parameter, seconds to milliseconds with the x87 rounding mode set to round-up (0x4b942), rejects a result not above zero, zeroes +0x30..+0x48 and +0x60/+0x64/+0x68, then writes the element type 4 at +0x0 and the absolute end time `level.time + ms` at +0x5c | faithful, the clear included |
@@ -1052,7 +1052,7 @@ went with `TraceInput::reach` (bsp-ibsp59-format.md, "The leaf walk").
 What is left:
 
 - 131 last-bit residuals, 1 to 160 ulps, on sloped terrain and brush
-  contacts. INFERRED, vcod measurement: the 1.1d terrain face and edge
+  contacts (115 after 16.3, mp_rocket 164 among them). INFERRED, vcod measurement: the 1.1d terrain face and edge
   clips recomputed with an 80-bit `long double` land where ours does on
   mp_rocket's 80 and 149, and so does every rounding variant of the face
   clip's stores, so the difference is upstream of the clip (the record
@@ -1074,6 +1074,62 @@ What is left:
 - UO's mp_uo_powcamp 288, 332 and 334: a floor at z 0 under a sloped
   ceiling. Retail lands 2^-14 or so short of ours' 0.125 (0.12499). Not
   pinned.
+
+### 16.3 The spawnpoint takes the third trace's endpoint
+
+VERIFIED, `game.mp.i386.so` 0x5bedc (`annotate_func.py`): all three
+`trap_TraceCapsule` calls write the one result buffer at `ebp-0x30`
+(0x5bf6b, `[ebp-0x54]` pushed at 0x5bfb4 and 0x5bff0); the third's start
+and end are both `ebp-0x3c`, copied from the second's endpoint at
+0x5bfc4-0x5bfd3; `G_SetOrigin` (0x5c086) is handed `ebp-0x2c`, the buffer's
+endpoint, after the third call. So the spawnpoint lands where the zero-length
+test ends, not where the drop ended. The warning reads the buffer's byte
++0x2e (0x5bffc), which the position test sets with +0x2f (`cod_lnxded`
+0x805472a: `tw+0xf2`, `tw+0xf3`).
+
+VERIFIED, `cod_lnxded` 1.1d `CM_BoxTrace` (0x80563d1-0x8056420, 0x8056887):
+the delta is the shifted end left on the x87 stack minus the shifted start
+stored as a float, and the endpoint is `start + fraction * delta` off the
+unshifted start. For a zero-length trace at a height `z` whose `z + 36`
+(the capsule centre) needs one bit more than a float holds, the delta is
+that rounding error, a half step either way, and the endpoint moves by it:
+`cm_endpos` already models this. INFERRED, from the same reading of 1.5b's
+store of the shifted end (`collision::cm_endpos` under `Arith::Stored`): on
+1.5b and United Offensive the delta is 0 and the endpoint stays.
+
+VERIFIED, `placespawn_ab` on `placebits-retail.txt` (2026-10-19): taking the
+third trace's endpoint closes 17 of the 25 1.1d rows (mp_brecourt 231 and
+245, mp_dawnville 125, mp_hurtgen 146 and 147, twelve mp_rocket rows, every
+one of them a drop whose `z + 36` crosses a power of two), and moves no 1.5b
+or UO row. It opens mp_rocket 164: ours placed it to the bit before by
+leaving its drop's endpoint alone. INFERRED, vcod arithmetic: retail's 164
+(476.72915649, odd in its last bit, `z + 36` past 512) is no shift of any
+float, since a shifted endpoint `s + e` has `s + e + 36 = R + 2e` on the
+coarser grid; so retail's third trace there did not report fraction 1. It
+printed no in-solid warning (console log of the same run), so it did not
+report all-solid either. Not pinned. Its drop and that of the other
+1.1d grid point that misses, (12116, 3860), rest on terrain triangle 7530's
+edge 0 in ours.
+
+VERIFIED, retail 1.1d, `probe_placebits` rewritten as a grid of
+`script_origin` drops (13x13, 2 units apart, around mp_dawnville's entity
+168 at (112, -15672, 64), and again from z 99.875, 99 and 30), each run's
+lines compared with ours: 44 of 169 differ by 1 to 16 ulps, the same 44 from
+every start height. In ours 108 of those drops end on a terrain face and 61
+on an edge sweep; 106 of the faces and 19 of the edges match retail. The
+mp_rocket grid around entity 164 (13x13, 4 units apart, from z 512) differs
+at the two edge points above only. INFERRED, vcod arithmetic: the edge
+residual is in the sweep's inputs or its record, not the sweep: a C
+transcription of 0x8052e7d-0x8053235 in 80-bit `long double` (every store
+read off the disassembly: `a`, `du`, `b` and `c` stored, `b`, `dv`, the
+discriminant and the root kept, `t` stored) gives ours' fraction on all 61,
+and rounding any one of `q`, `b`, the separation, `dv`, `bq`, `aa`, the
+discriminant or the root to a float matches fewer. The edge record build
+(0x80527c0-0x805285b: `VectorNormalize` 0x8065a38, `PerpendicularVector`
+0x80661fc through `ProjectPointOnPlane` 0x806717c, `CrossProduct`
+0x80659cc) and the edge list's dedup (the coplanarity test after the `CrossProduct` call at 0x8051e3a) read as
+`terrain.rs` builds them, and running the records the other way along
+matches 3 more and breaks others. Not pinned.
 
 ## 17. Placed weapons register their item at spawn, before any script runs
 
