@@ -2855,10 +2855,26 @@ list below. INFERRED: the numbering and every condition in it.
 11. `client->ps.stats[1]` (`ps+0xF8`) takes `(int)vectoyaw(attacker->origin -
     self->origin)`, or `(int)vectoyaw(inflictor->origin - self->origin)` when
     there is no usable attacker, or `(int)self->angles[1]` when there is
-    neither. VERIFIED: the three stores. INFERRED: which arm runs, and
-    reading `stats[1]` as the dead yaw, which is the label
-    `docs/protocol-1.1.md` carries for it; the store is the strongest
-    evidence there is for that reading and is still a reading.
+    neither. VERIFIED: the three stores. VERIFIED, 0x49c2c..0x49ca3: an
+    attacker is usable when it is non-null and not `self`, an inflictor the
+    same; `origin` is `r.currentOrigin` (`+0x134`) and `angles[1]`
+    `r.currentAngles[1]` (`+0x144`), each truncated by a `fistp` under `|
+    0xc00`. VERIFIED: the function called is `vectoyaw` (0x3dccc), not
+    `vectoangles`: 0 for a vector with no horizontal part, else the
+    `fpatan` stored as a double, times 180 and over pi in double (`.rodata
+    0x72a88`, 0x72a90), stored as a float, and 360 (0x72a98) added on the
+    stack when it is below 0. INFERRED: reading `stats[1]` as the dead
+    yaw, which is the label `docs/protocol-1.1.md` carries for it; the
+    store is the strongest evidence there is for that reading and is still
+    a reading. INFERRED, with 4.4's inflictor rule: a grenade's own thrower
+    (attacker and entity inflictor both `self`) reads his own yaw, a death
+    whose attacker is the world faces the world's `r.currentOrigin`, which
+    no spawn writes, so the map's origin, and `Cmd_Kill_f`, which passes
+    `self` three times (0x49608..0x4960a), reads his own yaw.
+    vcod: `builtins::combat::dead_yaw` on the entities, through
+    `builtins::math::vectoyaw`; until 2026-10-19 it faced the attacker
+    even when that was the victim (a zero vector, so 0) and read the view
+    yaw for a world death (`a_death_faces_what_player_die_reads`).
 12. `client->ps.viewangles` takes `self->angles`.
 13. `self->s.loopSound = 0`, `trap_UnlinkEntity`, `self+0x114 = 30.0`
     (`.rodata 0x743f0`), `trap_LinkEntity`. INFERRED: `self+0x114` is the
@@ -3607,8 +3623,10 @@ death-specific path, since the step per 50 ms snapshot is the same ~9 units the
 stance lerp uses.
 
 VERIFIED: `stats[1]` reads 0 on every death by `kill`. INFERRED: that is 5.1
-item 11's `vectoyaw(attacker->origin - self->origin)` on a zero vector, since
-the attacker is the victim; 8.4 has the case where it is not.
+item 11's third arm, `(int)self->angles[1]`: `Cmd_Kill_f` names the victim
+as both inflictor and attacker, so neither is usable, and this probe's
+`angles` yaw read 0 at each of those deaths. 8.4 has the case where the
+attacker is usable.
 
 VERIFIED: the four damage fields stay 0 across every death by `kill`.
 
