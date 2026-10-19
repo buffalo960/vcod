@@ -60,8 +60,6 @@ struct Case {
     stand_dz: f32,
     /// Retail's round yaw less ours, 65536ths of a degree, on every round.
     dir_yaw: i32,
-    /// Retail's `PROBE eye` less ours, on every row.
-    eye_off: [f32; 3],
     /// Phases whose round's `PROBE dir` may sit past [`DIR_NEAR`].
     dir_gaps: &'static [&'static str],
     gaps: Gaps,
@@ -131,14 +129,6 @@ const DIR_YAW_11: i32 = 1;
 /// trigger cmds sit on the frame and the cmd before 18 ms ahead, as the
 /// other eleven's do; the cause is not found (same section).
 const DIR_GAPS_11: &[&str] = &["t_prone", "t_right"];
-/// The UO `-cmds` run's shooter spawned standing on the sloped point
-/// (976, -792, -2.05), and retail's spawn think left him (6, 3, -1)
-/// (the target probe's view of his `trDelta`) where ours leaves (10, 5,
-/// -1): his eye then rests 0.166 and 0.083 units nearer his spot than
-/// ours, on every row. Every other row of the run matches. 1.1d's think
-/// off (976, -864) matches; this is the first capture of a standing 1.5
-/// or UO spawn think on a slope (cod11-combat.md 3.6).
-const EYE_OFF_UO: [f32; 3] = [-0.166016, -0.083008, 0.0];
 
 /// The buttons, `wbuttons` and `up` of a `f "PROBE_IN ..."` command
 /// (`vehicle_probe::direct_input`).
@@ -490,9 +480,7 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
     );
     for (k, r) in &rb {
         let mut o = ob[k];
-        if k.1 == "eye" {
-            (0..3).for_each(|i| o[i] += c.eye_off[i]);
-        } else if k.1 == "origin" || !k.0.contains("prone") {
+        if k.1 != "eye" && (k.1 == "origin" || !k.0.contains("prone")) {
             o[2] += c.stand_dz;
         }
         if (0..3).any(|i| (r[i] - o[i]).abs() > BONE_NEAR) {
@@ -571,7 +559,6 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             late_ms: 3450,
             stand_dz: 0.0,
             dir_yaw: 0,
-            eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: &[],
             press: false,
@@ -592,7 +579,6 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             late_ms: LATE_11,
             stand_dz: 0.0,
             dir_yaw: 0,
-            eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: &[],
             press: false,
@@ -621,7 +607,6 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             late_ms: 2800,
             stand_dz: STAND_DZ_15,
             dir_yaw: 0,
-            eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: CELL_GAPS_15,
             press: false,
@@ -642,7 +627,6 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             late_ms: LATE_UO,
             stand_dz: 0.0,
             dir_yaw: 0,
-            eye_off: [0.0; 3],
             dir_gaps: &[],
             gaps: &[],
             press: false,
@@ -662,7 +646,6 @@ fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
         late_ms,
         stand_dz: 0.0,
         dir_yaw: 0,
-        eye_off: [0.0; 3],
         dir_gaps: &[],
         gaps: &[],
         press: false,
@@ -700,13 +683,7 @@ fn a_dropped_body_on_uo_lands_and_poses_as_on_retail_on_its_cmds() {
         return;
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-cmds-uo.txt");
-    check(
-        fs,
-        &Case {
-            eye_off: EYE_OFF_UO,
-            ..cmds_case(fixture, CMDS_JOIN_UO, CMDS_LATE_UO)
-        },
-    );
+    check(fs, &cmds_case(fixture, CMDS_JOIN_UO, CMDS_LATE_UO));
 }
 
 /// The `-press` captures' join times (their headers' first playing
