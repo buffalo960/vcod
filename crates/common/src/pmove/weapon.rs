@@ -444,6 +444,23 @@ pub fn pm_weapon(
     dt_ms: i32,
     events: &mut Vec<PmEvent>,
 ) {
+    // Both `weapAnim` setters write nothing on a cmd whose weapon byte is 0
+    // (1.1 dll 0x3000ffe0 and 0x30010010, UO 0x43f9c and 0x44024; combat
+    // doc 1.2): a raise of empty hands keeps `WEAP_RAISE` past its finish.
+    let anim = ps.weap_anim;
+    pm_weapon_step(ps, input, weapons, dt_ms, events);
+    if input.weapon == 0 {
+        ps.weap_anim = anim;
+    }
+}
+
+fn pm_weapon_step(
+    ps: &mut PlayerState,
+    input: &PmInput,
+    weapons: &[Option<WeaponDef>],
+    dt_ms: i32,
+    events: &mut Vec<PmEvent>,
+) {
     // `PM_UpdateAimDownSightLerp` opens the machine, ahead of the grenade
     // and the timers (1.1 0x39143, 1.5 0x30467, UO `PM_Weapon`'s first
     // call), so it reads the timers and the state the frame starts with. The
@@ -1564,8 +1581,11 @@ mod tests {
         }
     }
 
+    /// The cmds below carry the weapon in hand, as a retail client's do: a
+    /// byte of 0 would leave every `weapAnim` write undone (section 1.2).
     fn held(ads: bool) -> PmInput {
         PmInput {
+            weapon: 1,
             ads,
             ..Default::default()
         }
@@ -1578,6 +1598,7 @@ mod tests {
         frames: usize,
     ) -> Vec<i32> {
         let input = PmInput {
+            weapon: ps.weapon,
             attack,
             ..Default::default()
         };
@@ -1609,6 +1630,7 @@ mod tests {
     fn a_grenade_pulls_back_and_throws_on_release() {
         let (mut ps, w) = armed(&frag());
         let held = PmInput {
+            weapon: 1,
             attack: true,
             ..Default::default()
         };
@@ -1624,7 +1646,16 @@ mod tests {
         assert_eq!(ev, Vec::<i32>::new());
         assert_eq!(ps.grenade_time_left_ms, 4000);
         let mut throw = Vec::new();
-        pm_weapon(&mut ps, &PmInput::default(), &w, 50, &mut throw);
+        pm_weapon(
+            &mut ps,
+            &PmInput {
+                weapon: 1,
+                ..Default::default()
+            },
+            &w,
+            50,
+            &mut throw,
+        );
         assert_eq!(
             throw,
             vec![PmEvent {
@@ -1870,6 +1901,7 @@ mod tests {
     fn the_melee_bit_swings_once_per_press() {
         let (mut ps, w) = armed(&with_melee(carbine()));
         let held = PmInput {
+            weapon: 1,
             melee: true,
             ..Default::default()
         };
@@ -2092,6 +2124,7 @@ mod tests {
         let (mut ps, w) = armed(&d);
         step(&mut ps, &w, &held(true), 6);
         let pull = PmInput {
+            weapon: 1,
             attack: true,
             ads: true,
             ..Default::default()
@@ -2445,6 +2478,7 @@ mod tests {
         step(&mut ps, &w, &held(true), 6);
         assert_eq!(ps.weapon_pos_frac, 1.0);
         let ads_fire = PmInput {
+            weapon: 1,
             attack: true,
             ads: true,
             ..Default::default()
@@ -2452,6 +2486,27 @@ mod tests {
         step(&mut ps, &w, &ads_fire, 1);
         assert_eq!(ps.aim_spread_scale, 0.0, "no add from the sight");
         assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_ADS_ATTACK);
+    }
+
+    /// Both `weapAnim` setters refuse a cmd whose weapon byte is 0 (section
+    /// 1.2): retail's grenade capture's last throw raises empty hands and
+    /// `throw_down` and `idle_after` read `WEAP_RAISE` from then on, where
+    /// the probe sent 0 for the weapon it no longer held. The raise still
+    /// finishes.
+    #[test]
+    fn a_cmd_weapon_byte_of_zero_writes_no_weapon_anim() {
+        for (byte, anim) in [(0, WEAP_RAISE | ANIM_TOGGLEBIT), (1, WEAP_IDLE)] {
+            let (mut ps, w) = armed(&carbine());
+            ps.weaponstate = WEAPON_RAISING;
+            ps.weap_anim = WEAP_RAISE | ANIM_TOGGLEBIT;
+            let input = PmInput {
+                weapon: byte,
+                ..Default::default()
+            };
+            step(&mut ps, &w, &input, 1);
+            assert_eq!(ps.weaponstate, WEAPON_READY, "byte {byte}");
+            assert_eq!(ps.weap_anim, anim, "byte {byte}");
+        }
     }
 
     /// Every `weapAnim` write flips the toggle, `WEAP_IDLE` included, so each
