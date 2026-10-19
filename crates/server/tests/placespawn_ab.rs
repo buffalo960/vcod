@@ -33,28 +33,9 @@ const BITS_FIXTURE: &str = "tests/fixtures/spawnpoints/placebits-retail.txt";
 /// moves at all, closed or not. cod11-gsc-object-model.md 16.1 has what
 /// each group rests on.
 const BITS_GAPS: &[(&str, &str, u32, &str)] = &[
-    // Last-bit residuals on sloped terrain contacts, 64 to 256 2^-24ths:
-    // the 1.1d terrain face and edge clips recomputed in 80-bit precision
-    // land where ours does, so the difference is upstream (the record
-    // build) or in a step not yet transcribed. mp_dawnville's 166 matched
-    // under the 72-unit box only by its rounding. Not pinned.
-    ("1.1d", "mp_brecourt", 245, "+ 36 9098432"),
-    ("1.1d", "mp_dawnville", 125, "+ 53 12702784"),
-    ("1.1d", "mp_dawnville", 166, "+ 37 10431040"),
-    ("1.1d", "mp_hurtgen", 146, "+ 106 11812224"),
-    ("1.1d", "mp_hurtgen", 147, "+ 106 11812224"),
-    ("1.1d", "mp_rocket", 80, "+ 243 12263168"),
-    ("1.1d", "mp_rocket", 149, "+ 250 2840832"),
-    ("1.1d", "mp_rocket", 140, "+ 253 10993408"),
-    ("1.1d", "mp_rocket", 86, "+ 225 16260864"),
-    ("1.1d", "mp_rocket", 88, "+ 226 15843584"),
-    ("1.1d", "mp_rocket", 94, "+ 254 12892928"),
-    ("1.1d", "mp_rocket", 97, "+ 222 407296"),
-    ("1.1d", "mp_rocket", 98, "+ 230 16646912"),
-    ("1.1d", "mp_rocket", 100, "+ 226 1577728"),
-    ("1.1d", "mp_rocket", 103, "+ 253 1732352"),
-    ("1.1d", "mp_rocket", 266, "+ 234 12870912"),
-    ("1.1d", "mp_rocket", 271, "+ 254 7371520"),
+    // 128 2^-24ths off retail; 16.3 does not reach it, since
+    // 1.5b's zero-length trace leaves the drop's endpoint as it is. Not
+    // pinned.
     ("1.5b", "mp_neuville", 90, "+ 2 12574592"),
 ];
 
