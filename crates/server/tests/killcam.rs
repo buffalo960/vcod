@@ -97,8 +97,8 @@ impl Rig {
     /// One frame; B's snapshot.
     fn step(&mut self, a: &UserCmd, b: &UserCmd) -> Snapshot {
         self.now += Duration::from_millis(50);
-        self.ca.send_frame(a);
-        self.cb.send_frame(b);
+        self.ca.send_frame(&crate::common::echo_weapon(&self.ca, a));
+        self.cb.send_frame(&crate::common::echo_weapon(&self.cb, b));
         common::step_pair(
             &mut self.sv,
             (&self.qa, &mut self.ca),

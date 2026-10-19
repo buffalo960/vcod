@@ -2089,7 +2089,11 @@ mod tests {
 
         let world = vcod_common::collision::test_world(&[]);
         let world = vcod_common::movetrace::MoveWorld::bare(&world);
-        let cmd = vcod_common::net::msg::NULL_USERCMD;
+        // The cgame selects what `a` names and asks for it in every cmd.
+        let cmd = vcod_common::net::msg::UserCmd {
+            weapon: colt as u8,
+            ..vcod_common::net::msg::NULL_USERCMD
+        };
         let mut sim = player_sim();
         sim.ps.weapons_held = host.client_weapons[0].held;
         sim.ps.weapon_slots = host.client_weapons[0].slots;

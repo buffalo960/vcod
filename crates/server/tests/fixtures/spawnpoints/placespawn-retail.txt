@@ -3,8 +3,9 @@
 # time, with crates/gsc/tests/fixtures/semantics/probe_placespawn.gsc as the
 # gametype:
 #   tools/run_probe.sh probe_placespawn <map>
-# Each line: entity number, origin before, origin after. Read by
-# crates/server/tests/placespawn_ab.rs.
+# Each line: entity number, origin before, origin after. Evidence for
+# docs/research/cod11-gsc-object-model.md 16.1; placespawn_ab.rs now gates
+# placebits-retail.txt, the bit-exact capture.
 
 ## mp_brecourt
 PROBE place 123 (-3801.00, 934.00, 76.00) (-3801.00, 934.00, 50.73)

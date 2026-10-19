@@ -390,19 +390,21 @@ fn ours(map: &str, poses: &[Pose], join: (&str, &str), fs: vcod_common::pk3::Pk3
 /// three to a frame, and the land anim depends on it. Off the 249.8 takeoff,
 /// 16 ms steps start the landing frame near -237, past the -220 the land
 /// anim needs (`LAND_ANIM_SPEED`); one 50 ms cmd a frame starts it at -210.
-/// `send_frame`'s stamp, quantizing and `delta_angles` rebase, per cmd.
+/// `send_frame`'s stamp, quantizing and `delta_angles` rebase, per cmd. The
+/// weapon byte echoes `ps.weapon`, as the probe's loop did.
 fn send_at_probe_rate<T: vcod_common::net::Transport>(
     cl: &mut vcod_common::net::NetClient<T>,
     input: &UserCmd,
 ) {
     let now = cl.server_clock_ms();
-    let da = cl
-        .snapshots()
-        .newest()
+    let newest = cl.snapshots().newest();
+    let da = newest
         .map(|s| vcod_common::net::DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(&PROTOCOL_V1, n)));
+    let weapon = newest.map_or(0, |s| s.ps.field_i32(&PROTOCOL_V1, "weapon") as u8);
     let cmds = [now - 34, now - 17, now].map(|t| {
         let mut c = *input;
         c.server_time = t;
+        c.weapon = weapon;
         if let Some(da) = da {
             for (a, d) in c.angles.iter_mut().zip(da) {
                 *a = (*a - d) & 0xffff;

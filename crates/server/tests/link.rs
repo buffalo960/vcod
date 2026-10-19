@@ -63,8 +63,8 @@ fn a_planting_client_is_linked_and_the_abort_releases_it() {
     // and the bombzones become plantable.
     for _ in 0..200 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
@@ -92,8 +92,8 @@ fn a_planting_client_is_linked_and_the_abort_releases_it() {
     // starts planting and links the planter.
     for _ in 0..60 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&hold);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &hold));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     let s = ca.snapshots().newest().expect("a snapshot");
@@ -120,8 +120,8 @@ fn a_planting_client_is_linked_and_the_abort_releases_it() {
     // under the link and the origin held to the tenth of a unit (23.2).
     for _ in 0..30 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&walk);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &walk));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     let s = ca.snapshots().newest().expect("a snapshot");
@@ -136,8 +136,8 @@ fn a_planting_client_is_linked_and_the_abort_releases_it() {
     // Released: the abort branch calls `other unlink()`.
     for _ in 0..40 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     let s = ca.snapshots().newest().expect("a snapshot");
@@ -168,8 +168,8 @@ fn a_client_linked_on_the_move_keeps_its_velocity() {
     );
     for _ in 0..200 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
     }
     // Facing along the flak88 rather than into its clip, so the walk keeps
@@ -195,8 +195,11 @@ fn a_client_linked_on_the_move_keeps_its_velocity() {
     let mut linked = Vec::new();
     for i in 0..40 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(if i < 4 { &walk } else { &walk_use });
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(
+            &ca,
+            if i < 4 { &walk } else { &walk_use },
+        ));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         let s = ca.snapshots().newest().expect("a snapshot");
         if s.ps.field_i32(p, "pm_type") == 1 {
@@ -223,8 +226,8 @@ fn a_client_linked_on_the_move_keeps_its_velocity() {
     let mut after = Vec::new();
     for _ in 0..10 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&stand);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &stand));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         let s = ca.snapshots().newest().expect("a snapshot");
         if s.ps.field_i32(p, "pm_type") == 0 {
@@ -277,8 +280,8 @@ fn set_origin_moves_a_player_a_unit_up_and_flips_the_teleport_bit() {
     let mut landed = None;
     for _ in 0..800 {
         now += Duration::from_millis(FRAME_MS as u64);
-        ca.send_frame(&NULL_USERCMD);
-        cb.send_frame(&NULL_USERCMD);
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
         let (ea, eb) = step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
             for e in events {
