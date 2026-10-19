@@ -644,6 +644,10 @@ struct Channel {
     /// timer reads 0 on the hold clock; `None` when the continuous state
     /// owns the channel.
     held_until_ms: Option<i32>,
+    /// When the channel's `legsTimer`/`torsoTimer` last set by an event
+    /// reads 0 on the hold clock. Unlike `held_until_ms` it outlives the
+    /// release: the wire timer runs down to 0 past it.
+    timer_until_ms: Option<i32>,
     /// serverTime the anim on the channel started, which is the phase a
     /// server-side pose plays it from. The wire carries only the toggle, so
     /// a client stamps its own.
@@ -745,13 +749,27 @@ impl AnimState {
     /// The torso restarted on no anim at all, toggle flipped whatever it
     /// held: what a death leaves the channel reading (512 beside the death
     /// `legsAnim` in both retail deaths, cod11-combat.md section 8).
+    /// The `both` line that raised it set `torsoTimer` beside `legsTimer`
+    /// (retail's death frames read the two equal, combat doc 16.4).
     pub fn restart_torso_empty(&mut self, now_ms: i32) {
         self.torso = Channel {
             index: 0,
             toggle: !self.torso.toggle,
             held_until_ms: None,
+            timer_until_ms: self.legs.timer_until_ms,
             start_ms: now_ms,
         };
+    }
+
+    /// The wire's `legsTimer` and `torsoTimer` at `command_ms`, the last
+    /// processed cmd's serverTime: each event's duration + 50 run down by
+    /// every cmd since, floored at 0.
+    pub fn timers(&self, command_ms: i32) -> (i32, i32) {
+        let left = |c: &Channel| {
+            c.timer_until_ms
+                .map_or(0, |t| t.wrapping_sub(command_ms).max(0))
+        };
+        (left(&self.legs), left(&self.torso))
     }
 
     pub fn legs(&self) -> i32 {
@@ -812,7 +830,9 @@ fn apply_event(
         return;
     };
     let held = hold(anim).map(|d| hold_ms.wrapping_add(d as i32 + LERP_MS));
-    ch.start(index, held, now_ms);
+    if ch.start(index, held, now_ms) && held.is_some() {
+        ch.timer_until_ms = held;
+    }
 }
 
 #[cfg(test)]
