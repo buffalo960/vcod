@@ -1905,7 +1905,7 @@ fn predictor_rides_retail_movers() {
 
 const WORLDCOPY_WIRE: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy-wire.txt";
 /// The script-spawned `script_brushmodel` of the world-copy capture: index
-/// 0, spawned stationary at (0, 0, -64) on the 11150 snapshot.
+/// 0, spawned stationary at (0, 0, -64) on the 11750 snapshot.
 const COPY: u32 = 171;
 
 /// Retail's player riding a moving world copy, predicted from each snapshot
@@ -1927,7 +1927,7 @@ fn predictor_rides_a_retail_world_copy() {
         base: glam::Vec3::new(0.0, 0.0, -64.0),
         ..Trajectory::default()
     };
-    copy.insert(0, (11150, spawned, Trajectory::default()));
+    copy.insert(0, (11750, spawned, Trajectory::default()));
     let mut bad = Vec::new();
     let mut compared = 0;
     for w in rides.windows(2) {

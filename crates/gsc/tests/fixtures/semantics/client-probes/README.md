@@ -1794,15 +1794,16 @@ deletes a `func_static`. Every frame of a phase logs `PROBE f <phase>
 client's `RIDE_NEW` lines carry each entity as it entered the snapshot.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30331 SECS=45 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33631 SECS=45 \
     tools/run_probe.sh client-probes/probe_worldcopy mp_carentan
 # second shell, about 6 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:30331 --probe-team allies --probe-ride --probe-secs 38
+cargo run -p vcod -- --net-probe 127.0.0.1:33631 --probe-team allies --probe-ride --probe-secs 38
 ```
 
-The 2026-10-12 run is
-`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt` and
-`-worldcopy-wire.txt`; `crates/server/tests/worldcopy_ab.rs` and
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt` (the
+`PROBE` lines, then the client's `CMDS` lines) and `-worldcopy-wire.txt`
+(the client's `RIDE` and trajectory lines); `crates/server/tests/worldcopy_ab.rs` and
 `predict_ab.rs`'s `predictor_rides_a_retail_world_copy` replay them.
 
 ## probe_worldcopy2
@@ -1817,14 +1818,15 @@ per frame and a 3 x 3 grid of `PROBE tr` traces at each rest. Then three
 `damage`, `death` and `trigger` notify logged.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30421 SECS=60 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33632 SECS=60 \
     tools/run_probe.sh client-probes/probe_worldcopy2 mp_carentan
 # second shell, about 7 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:30421 --probe-team allies --probe-secs 50
+cargo run -p vcod -- --net-probe 127.0.0.1:33632 --probe-team allies --probe-ride --probe-secs 50
 ```
 
-The 2026-10-12 run is
-`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt`;
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt`, the `PROBE` lines and then the
+client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
 ## probe_worldcopy3
@@ -1837,14 +1839,15 @@ prints `%g`, so to the ten-thousandth where `PROBE f`'s vector stops at the
 hundredth.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30471 SECS=55 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33633 SECS=55 \
     tools/run_probe.sh client-probes/probe_worldcopy3 mp_carentan
 # second shell, about 7 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:30471 --probe-team allies --probe-secs 45
+cargo run -p vcod -- --net-probe 127.0.0.1:33633 --probe-team allies --probe-ride --probe-secs 45
 ```
 
-The 2026-10-12 run is
-`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt`;
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt`, the `PROBE` lines and then the
+client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
 ## probe_turnedslab
@@ -1857,14 +1860,15 @@ turned face's normal, and at each the slab lifts 2 and comes back. A `PROBE
 f` and a `PROBE g` line per frame.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30521 SECS=40 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33634 SECS=40 \
     tools/run_probe.sh client-probes/probe_turnedslab mp_harbor
 # second shell, about 8 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:30521 --probe-team allies --probe-secs 30
+cargo run -p vcod -- --net-probe 127.0.0.1:33634 --probe-team allies --probe-ride --probe-secs 30
 ```
 
-The 2026-10-12 run is
-`crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`;
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`, the `PROBE` lines and then the
+client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
 ## probe_tiltslab
