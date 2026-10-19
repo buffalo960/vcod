@@ -521,6 +521,18 @@ pub struct CmdLog {
     pub start: i32,
     pub stamps: Vec<i32>,
     pub bits: BTreeMap<usize, (u8, u8)>,
+    /// The weapon byte of each cmd whose byte differs from the step's
+    /// `weapon`; `None` on a capture whose line carries no `w=`, which
+    /// replays the step's switch on its own clock instead.
+    pub weapons: Option<BTreeMap<usize, u8>>,
+}
+
+impl CmdLog {
+    /// The weapon byte retail's cmd `i` carried, if the log has the column.
+    fn weapon(&self, i: usize, step: &Step) -> Option<u8> {
+        let w = self.weapons.as_ref()?;
+        Some(w.get(&i).copied().unwrap_or(step.weapon))
+    }
 }
 
 impl Step {
@@ -670,10 +682,20 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
                     (i.parse().unwrap(), (b.parse().unwrap(), w.parse().unwrap()))
                 })
                 .collect();
+            let weapons = m.get("w").map(|v| {
+                v.split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(|c| {
+                        let (i, w) = c.split_once(':').unwrap();
+                        (i.parse().unwrap(), w.parse().unwrap())
+                    })
+                    .collect()
+            });
             step.cmds = Some(CmdLog {
                 start: m["start"].parse().unwrap(),
                 stamps,
                 bits,
+                weapons,
             });
         } else if let Some(rest) = line.strip_prefix("!trace ") {
             let m = kv(rest);
@@ -917,6 +939,29 @@ pub fn replay_as(
             let first = log.stamps[0];
             let hands_on = steps.get(si + 1).is_some_and(|s| s.cmds.is_some());
             let end = step.trace.iter().filter_map(|t| t.server_time).max();
+            // A step no logged step ran into opens on cmds the probe sent
+            // before its clock started, which its log does not hold: its
+            // traces' `commandTime`s name them. Run them on the held input,
+            // or the first logged cmd's msec spans the gap and a press on it
+            // lands in another chop of the move (`melee_tap`'s melee delay
+            // read 34 ms short).
+            if carry.is_empty() {
+                let ours_ct = cl
+                    .snapshots()
+                    .newest()
+                    .map_or(i32::MIN, |s| s.ps.field_i32(p, "commandTime"));
+                let early: std::collections::BTreeSet<i32> = step
+                    .trace
+                    .iter()
+                    .filter_map(|t| t.command_time)
+                    .filter(|&ct| ct < first && ct > ours_ct - shift)
+                    .collect();
+                for ct in early {
+                    let mut cmd = base;
+                    cmd.weapon = weapon_byte(step, 0, held(&cl));
+                    carry.push((ct, cmd));
+                }
+            }
             let mut next = 0;
             let mut frame = open;
             let more = |frame: i32, next: usize| {
@@ -941,7 +986,9 @@ pub fn replay_as(
                 while next < log.stamps.len() && log.stamps[next] <= ran {
                     let st = log.stamps[next];
                     let mut cmd = base;
-                    cmd.weapon = weapon_byte(step, i64::from(st - first), ours_now);
+                    cmd.weapon = log
+                        .weapon(next, step)
+                        .unwrap_or_else(|| weapon_byte(step, i64::from(st - first), ours_now));
                     (cmd.buttons, cmd.wbuttons) = log
                         .bits
                         .get(&next)
@@ -973,7 +1020,9 @@ pub fn replay_as(
             for k in next..log.stamps.len() {
                 let st = log.stamps[k];
                 let mut cmd = base;
-                cmd.weapon = weapon_byte(step, i64::from(st - first), ours_now);
+                cmd.weapon = log
+                    .weapon(k, step)
+                    .unwrap_or_else(|| weapon_byte(step, i64::from(st - first), ours_now));
                 (cmd.buttons, cmd.wbuttons) = log
                     .bits
                     .get(&k)
