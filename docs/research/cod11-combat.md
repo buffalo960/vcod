@@ -5416,10 +5416,19 @@ the stores above every base is retail's to the bit. VERIFIED, live
 wall bounce at x 1583.775 sat 4 steps off in `z` before and is exact
 after. VERIFIED, live (retail UO, mp_brecourt, 2026-10-19,
 `mp_brecourt-scriptmodel-roll-uo.txt`): the second frag's four terrain
-contacts are retail's to the bit, but they were before the port too; no
-UO capture taken so far (that one, mp_foy, mp_dawnville, the carentan
-throws, the harbor water frag) separates the two arithmetics, so UO's
-side rests on the disassembly. A frag striking a body (the first frag in
+contacts are retail's to the bit, but they were before the port too, as
+were mp_foy's, mp_dawnville's, the carentan throws' and the harbor water
+frag's. VERIFIED, live (retail UO, 2026-10-19,
+`missiles/mp_brecourt-frag-roll-uo-45.txt`, `-135.txt` and
+`mp_uo_hurtgen-frag-slide-uo.txt`, `client-probes/probe_skyshot`'s spot
+part): three frags land on terrain (lump-26 triangles under every
+contact) and roll to rest, the hurtgen one sliding down a face of normal
+z 0.59, too steep to snap or rest on, struck every frame over 21 floor
+contacts. Replayed from each launch's wire `pos` and `apos`, every
+snapshot to the explode carries retail's `pos` base and delta, ground and
+`apos` to the bit under the stores above; under 1.1d's arithmetic (the
+evaluate, the dot, `delta_at` and the move length kept) all three part
+from retail at their first contact. A frag striking a body (the first frag in
 the UO brecourt capture, the carentan prone captures) still lands a few
 float steps off in `z`: the bone trace's own stores, which vcod does not
 port (`cod11-turrets.md` 13.5).
@@ -5427,7 +5436,15 @@ port (`cod11-turrets.md` 13.5).
 vcod: `Trajectory::evaluate_stored`, `missile::delta_at` and
 `Missile::bounce` port these under 1.5's and UO's rules (`!Missile::kept`).
 `scriptmodel_ab`'s `a_frag_rolls_up_terrain_like_retail_on_15` and
-`_on_uo` compare the bits.
+`_on_uo` compare the bits, and `game::missile`'s
+`uo_frags_roll_on_brecourts_terrain_like_retail` and
+`a_uo_frag_slides_down_hurtgens_terrain_like_retail` replay the three UO
+flights above. The replay starts at the launch's wire state, not at a
+thrower: the spot part's thrower lands where his cmds' timing puts him,
+so retail's muzzle point moves by up to a unit and a half between runs on
+a grade, and a held pitch of exactly 30 puts the throw's `trDelta.z` on a
+whole unit, where retail and ours truncate to 599 and 600 (INFERRED from
+the first frames' heights; not chased).
 
 ### 12.6 1.5's and UO's fall test
 
@@ -5526,6 +5543,31 @@ constants but one (below).
   sloped floor, and the 2026-10-17 take's at 177.9, 357.9 and 173.3, the
   first and last `flat + 180`, with the roll unwrapped (533.7, 599.0 and
   298.0; 499.9, 480.6 and 298.4 before).
+- VERIFIED, `game.mp.i386.so` 1.1d `AngleNormalize360` (0x3eb30) and
+  `game.mp.uo.i386.so`'s: the angle times 182.04445 stays on the x87
+  stack into the `fistp`, not rounded to a float first. 988.76947 is
+  179999.993 65536ths, which truncates to 179999 (268.76404); an `f32`
+  product rounds it onto 180000 (268.76953). VERIFIED,
+  `missiles/mp_uo_hurtgen-frag-slide-uo.txt`: with the `f32` product
+  vcod's pitch at the 22800 contact sat one 65536th (80.04639 against
+  80.04089) off retail's.
+- VERIFIED, `game.mp.uo.i386.so`: UO's floor arm with `rest` 0 also
+  stores the evaluated angles into `s.apos.trBase` and the impact time
+  into `s.apos.trTime` (0x5d551-0x5d58a) before the draw; its caller
+  `G_BounceMissile` overwrites both after the call (0x5dab8-0x5dae2, the
+  angles and `level.time`), so the wire never shows it. UO's
+  `BG_EvaluateTrajectory` line arm (0x1fec6) stores `dt` (0x1fee1) and
+  each `base + delta * dt` (0x1fef8, 0x1ff11, 0x1ff2a).
+- VERIFIED, live (retail UO, the three `missiles/*-uo*.txt` roll
+  captures): every floor factor lies in 0.85 to 1.15 (0.867 to 1.143
+  over 29 contacts, the rate reversed on some and kept on others). VERIFIED:
+  UO sends `apos.trBase` as 16-bit angles (`bits -100`, coduo-diff.md 3),
+  so the wire carries a pitch or roll as 65536ths of a turn (a roll of
+  463.25226 reads 103.24951), and the yaw and roll leave
+  `G_MissileLandAngles` unwrapped as on 1.1d. VERIFIED: replayed with the
+  kept `apos` evaluate in place of the stored one, the three still match
+  every snapshot. INFERRED: the two evaluates differ by far less than a
+  65536th, so UO's wire cannot separate them.
 
 vcod: `Missile::land_angles` (`crates/server/src/game/missile.rs`), its
 draws off the pool's own state (`Draws`). Retail's `rand()` sequence is
@@ -5534,7 +5576,9 @@ not reproducible, so a gate pins the draws a capture shows
 `bounce_angles_match_retail_on_1_1` replays the sky frag with its tumble
 and five factors pinned, and every `apos` ours sends matches retail's bit
 for bit. Before the port ours wrapped all three angles with `rem_euclid`,
-kept the throw's pitch rate and rested every frag at pitch 0.
+kept the throw's pitch rate and rested every frag at pitch 0. On UO
+`game::missile`'s roll replays (12.5) pin each contact's draw the same way
+and compare `apos` through the wire's 65536ths.
 
 ---
 
