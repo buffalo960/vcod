@@ -1288,6 +1288,13 @@ cargo run -p vcod -- --game-dir <1.1 install> --net-probe 127.0.0.1:<p> --save-s
 The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-states-1.1.txt`,
 which `predict_ab` replays.
 
+On 1.5b (`COD_VERSION=1.5`, `COD_DIR` at a stock 1.5 `main/`, the client
+with `--game-dir` there and `--capture-tag states-1.5`) the run takes
+`+set probe_suicide_wait 10.5` after the map, which kills the body inside
+a stance change's `pm_time`, the timer 1.5's corpse ladder test reads
+(`cod11-player-clip.md` 1.1). That capture is
+`mp_carentan-dm-slope-8ms-states-1.5.txt`.
+
 ## probe_menuresponse
 
 What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for
