@@ -5185,7 +5185,8 @@ impl Server {
             linked: sim.link_to.is_some(),
             stranded: self.nav.as_ref().is_some_and(|g| {
                 let at = sim.ps.origin.into();
-                g.dead_end(at) || (self.nav_settled() && g.pit(at))
+                let spawns = self.world.as_ref().map_or(&[][..], |w| &w.spawn_points);
+                g.dead_end(at) || (self.nav_settled() && g.pit(at, spawns))
             }),
             on_ladder: sim.ps.on_ladder,
             ladder_normal: sim.ps.ladder_normal.into(),

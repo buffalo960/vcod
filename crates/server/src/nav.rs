@@ -1113,11 +1113,15 @@ impl NavGraph {
     }
 
     /// Whether [`Self::nearest`] to `p`, on its floor, reaches no node of
-    /// the largest component: a pit the graph knows no way out of, whose
-    /// roam pool is the pit itself. mp_foy's hollow at (4620, -2225, -14)
-    /// is dropped into from rims 38 to 58 up and left by no walk or jump
-    /// (bot-navigation.md section 3).
-    pub fn pit(&self, p: [f32; 3]) -> bool {
+    /// the largest component, and no spawn cut off the same way reaches it:
+    /// a pit only a fall from the fight leads into, whose roam pool is the
+    /// pit itself. mp_foy's hollow at (4620, -2225, -14) is dropped into
+    /// from rims 38 to 58 up and left by no walk or jump. A room a cut-off
+    /// spawn leads to is a place to be whose way out the graph missed:
+    /// mp_italy's allied bunker spawns (6682, -2624, -706) and the charge
+    /// room under them reach no node of it under `bas` (bot-navigation.md
+    /// section 3).
+    pub fn pit(&self, p: [f32; 3], spawns: &[[f32; 3]]) -> bool {
         let Some(n) = self.nearest(p) else {
             return false;
         };
@@ -1127,8 +1131,15 @@ impl NavGraph {
         let Some(main) = (0..self.members.len()).max_by_key(|&c| self.members[c].len()) else {
             return false;
         };
+        let reaches = |c: usize, to: usize| self.reach[c][to / 64] & (1 << (to % 64)) != 0;
         let own = self.comp[n as usize] as usize;
-        self.reach[own][main / 64] & (1 << (main % 64)) == 0
+        !reaches(own, main)
+            && !spawns.iter().any(|s| {
+                self.nearest(*s).is_some_and(|m| {
+                    let c = self.comp[m as usize] as usize;
+                    !reaches(c, main) && reaches(c, own)
+                })
+            })
     }
 
     /// Whether [`Self::nearest`] to `p` stands more than a step off its
@@ -7228,7 +7239,8 @@ mod tests {
     }
 
     /// A drop from the main component into two nodes that reach only each
-    /// other: a pit on its floor, not from the rim over it.
+    /// other: a pit on its floor, not from the rim over it, nor with a
+    /// spawn in it or over it that is cut off too.
     #[test]
     fn a_pair_dropped_into_with_no_way_out_is_a_pit() {
         let g = NavGraph::from_parts(
@@ -7241,10 +7253,19 @@ mod tests {
             ],
             vec![vec![1], vec![0, 2], vec![1, 3], vec![4], vec![3]],
         );
-        assert!(g.pit([96.0, 16.0, -40.0]));
-        assert!(!g.pit([32.0, 0.0, 0.0]));
+        assert!(g.pit([96.0, 16.0, -40.0], &[[0.0, 0.0, 8.0]]));
+        assert!(!g.pit([32.0, 0.0, 0.0], &[]));
         // Over the pit, a storey up: not on its floor.
-        assert!(!g.pit([96.0, 16.0, 0.0]));
+        assert!(!g.pit([96.0, 16.0, 0.0], &[]));
+        // A spawn in it: a room to be in.
+        assert!(!g.pit([96.0, 16.0, -40.0], &[[96.0, 32.0, -32.0]]));
+        // A spawn on a ledge cut off over it, its one way a drop into it.
+        let (mut nodes, mut edges) = (g.nodes.clone(), g.edges.clone());
+        nodes.push(Vec3::new(128.0, 64.0, 0.0));
+        edges.push(vec![4]);
+        let g = NavGraph::from_parts(nodes, edges);
+        assert!(!g.pit([96.0, 16.0, -40.0], &[[128.0, 64.0, 8.0]]));
+        assert!(g.pit([96.0, 16.0, -40.0], &[[0.0, 0.0, 8.0]]));
     }
 
     #[test]

@@ -1137,9 +1137,20 @@ lands (`nav_build` without `GAMETYPE` leaves ten of mp_foy's 391
 spawns and ten of mp_italy's 371 reaching no node of the largest
 component; with `GAMETYPE=tdm` all of mp_foy's reach it), so the rule
 waits for a graph over the script's current brush links
-(`Server::nav_settled`). mp_dawnville's spawns 38 and 74 ((-652, -17194,
-56) and (-648, -17088, 80)) reach no node of it on 1.1 and UO alike: a
-bot spawned there now types `kill` after 10 s where it paced before.
+(`Server::nav_settled`). Nor is a component a pit when a spawn that is
+cut off too reaches it: a bot spawned there would kill itself over and
+over. On mp_italy's `bas` (four shooting bots, seed 5) the allied
+bunker spawns round (6682, -2624, -706) reach no node of the largest
+component on the settled graph, nor does the charge room at z -898
+under them (VERIFIED, measured, ours, `BAS_TRACE`): with the rule
+counting them as pits, the allied defender spawned there, walked down
+to keep the charge room and typed `kill` three times between ticks 7100
+and 7800 (round over at 11679, against 12959 with no pit rule). With the
+spawn test the rule never fires on that run, which ends on 12959.
+mp_dawnville's spawns 38 and 74 ((-652, -17194, 56) and (-648, -17088,
+80)) reach no node of it on 1.1 and UO alike, so they are no pit
+either. Open: how a bot leaves mp_italy's allied bunker; the graph has
+no way out of it under `bas`.
 
 ## 3. Following
 
