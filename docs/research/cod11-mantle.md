@@ -628,7 +628,7 @@ UO), and what vcod runs at each (2026-10-18):
 |---|---|---|---|
 | `PM_SetMovementDir` | 0x2e9ab, 0x2eaec, 0x2eb2f | in 0x1f48f / 0x23f62 | shorts (`aim::angle_normalize_180`) |
 | Going prone, the torso clamp | 0x31ed7 | in 0x232c4 / 0x27e16 | shorts since 2026-10-18 (`enter_prone`) |
-| Ladder yaw cap, `bg_ladder_yawcap` | 0x32ed0, 0x32f68 | `PM_UpdateViewAngles` | not modelled |
+| Ladder yaw cap, `bg_ladder_yawcap` | 0x32ed0, 0x32f68 | `PM_UpdateViewAngles` (`Accurate`) | modelled since 2026-10-19 (`cap_ladder_yaw`) |
 | Prone yaw delta | 0x3306e, 0x3307c | swing fit 0x25ff5 and `PM_UpdateViewAngles` | shorts |
 | Prone yaw placed | 0x33266 (`AngleNormalize360`) | `Accurate` | shorts in 0..360 since 2026-10-18 on 1.1 |
 | Prone pitch cap delta | 0x33295, 0x332a3 | `PM_UpdateViewAngles` | shorts since 2026-10-18 (`cap_prone_pitch`) |
@@ -1165,10 +1165,76 @@ So ladders are brushes flagged at the material level, not entities.
   climbing or hanging, it never hops off. Read off the code: the sign is the
   wish's own `z` (`[ebp-0x10]`, 0x33d38), not the cmd's.
 - Yaw lock: `AngleDelta(vectoyaw(vLadderVec), viewYaw)` clamped to ±75 degrees
-  (0x4B; cvar-backed float `bg_ladder_yawcap`, .bss 0x16E9C0) is stored to
-  ps+0x7C (a movement-direction field; exact client-side use unverified).
+  (the immediate 0x4b at 0x33dd1, 0x33dda) is stored to ps+0x7C (a
+  movement-direction field; exact client-side use unverified). An earlier
+  read of this file tied the 75 to `bg_ladder_yawcap`; that cvar (vmCvar at
+  .bss 0x16e9c0) is read only at 0x32e96, 0x32ed6, 0x32f4e and 0x32f58, the
+  view cap below, and registered at 0x7e2a8. VERIFIED, `.rel.text`
+  relocations.
 - Leaving a ladder fires event 0x90 (EV_WATER_TOUCH per the EV table - the
   pairing looks odd; flagged unverified).
+
+### The ladder yaw cap
+
+`PM_UpdateViewAngles` holds a climber's view within `bg_ladder_yawcap`
+(default 100) of the rungs. VERIFIED, disassembly with the relocations
+resolved: 1.1d 0x32e7d-0x32f75, 1.5b 0x26270-0x263ca, UO 0x2b535-0x2b6a5.
+
+- It runs right after the view is built from the cmd and `delta_angles`
+  (and the pitch clamp), ahead of the prone arm, on `pm_flags` 0x10 (last
+  frame's ladder flag), `groundEntityNum` 1023 (off the ground) and a
+  non-zero `bg_ladder_yawcap.integer` (vmCvar +0xc). VERIFIED, 1.1d
+  0x32e7d-0x32e9b; 1.5b 0x26270-0x2629b; UO 0x2b535-0x2b560. On UO the seat
+  arcs' arm jumps past it (0x2b384).
+- `d = AngleDelta(vectoyaw(vLadderVec) + 180, viewangles[1])`, the 180 at
+  rodata 0x70c78 on 1.1d. 1.1d keeps the facing on the x87 stack (saved
+  as a TBYTE at `[ebp-0x80]`) and hands `AngleDelta` its float; 1.5b and UO
+  store the facing to a float first (0x262b7, 0x2b57c). VERIFIED.
+- Only `d > cap` or `d < -cap` acts, both strict. The excess `d - cap` or
+  `d + cap` (1.5b and UO store it to a float) times 182.04445 (0x70c7c) is
+  truncated under control word 0xc00, masked to 16 bits and added to
+  `delta_angles[1]` (ps+0x4c; UO ps+0x50). VERIFIED, 1.1d 0x32f12-0x32f3d,
+  1.5b 0x26345-0x26379, UO 0x2b60a-0x2b653.
+- The view is placed at `facing - cap` for a positive excess, `facing +
+  cap` otherwise, through `AngleNormalize360` on 1.1d (0x32f67, shorts
+  grid, 0..360) and `AngleNormalize360Accurate` on 1.5b (0x263a4, 0x263c5)
+  and UO (0x2b67e, 0x2b69f). VERIFIED.
+
+Measured 2026-10-19 (VERIFIED, `--probe-ladder 90 --save-ladder turn`
+under `client-probes/probe_ladder` on mp_ship's hold ladder, facing 90:
+`crates/server/tests/fixtures/playerstate/mp_ship-dm-ladder-turn.txt`,
+`-turn-1.5.txt`, `-turn-uo.txt`): hanging off the ground with the view
+swept left, 1.1d holds it at 189.99756 and pushes `delta_angles[1]` from
+there on, 1.5b at 190 exactly; swept right, 349.99695 on 1.1d, 350 on
+1.5b, and UO's wire shows -10.003052, the 350 truncated by its 16-bit
+angle field (coduo-diff.md 3). A climb and a flick while turned are held
+the same way. At the foot, on the ground with the ladder flag still set,
+the view sweeps 160 off with nothing pushed. The wire carries
+`vLadderVec` (0,-1,0 there) on all three.
+
+vcod: `pmove::cap_ladder_yaw`, ahead of the prone arm in both the move
+and the linked arm, with `LADDER_YAWCAP` 100 (the cvar's default; vcod
+reads no `bg_ladder_yawcap`). The push goes through `view_yaw_correction`
+as the prone cap's does. vcod-server sends `vLadderVec` and the predictor
+reads it and the ladder flag back (`predict::from_wire`), so the client
+caps where the server does and its airborne ladder probe runs along
+`-vLadderVec`, as retail's does. `tests/ladder_yawcap_ab.rs` replays the
+three captures through `cmd::player_step`: `delta_angles[1]`, the view
+yaw and the origin match at every snapshot, rebased and free-running per
+phase.
+
+What it does to bots (2026-10-19): a push-off used to jump facing out
+from the face, 180 off the rungs, which the cap turns 80 degrees on the
+jump's frame, and `PM_CheckJump` jumps along the view; it now jumps
+facing the face, which the jump reflects straight out
+(bot-navigation.md). The graph's walks send their angles net of the
+`delta_angles` they start each tick with, as a bot does, so a push holds
+a walk's view on the cap rather than turning the rest of it. Graph
+digests against the build without the cap, 1.1 stock maps (VERIFIED,
+`--example nav_build`): mp_depot one
+node and three edges fewer, mp_railyard one edge fewer, mp_harbor and
+mp_ship as many nodes and edges with a different digest, the rest the
+same; walks that face away on the rungs now turn as retail's body does.
 
 **Animation**: the movement-anim update (fn 0x322C8) selects, when airborne on
 a ladder and outside the 300 ms post-jump lockout, MOVETYPE CLIMBUP (value 16)

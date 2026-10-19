@@ -202,6 +202,10 @@ const PRONE_SOFT_MARGIN: f32 = 5.0;
 /// `proneDirection` (coduo-movement.md 7). Mirrored to clients; vcod
 /// keeps the default.
 pub const LMG_YAWCAP: f32 = 55.0;
+/// `bg_ladder_yawcap`'s default: how far a climber off the ground may look
+/// away from the rungs (cod11-mantle.md, "The ladder yaw cap"). Mirrored
+/// to clients; vcod keeps the default.
+pub const LADDER_YAWCAP: f32 = 100.0;
 pub const PRONE_SWING_DEG_PER_SEC: f32 = 55.0;
 /// How far the prone view may pitch off `proneTorsoPitch`, rodata 0x70c94
 /// and 0x70c98 (`PM_UpdateViewAngles`).
@@ -1208,7 +1212,9 @@ pub fn pmove(
         return events;
     }
     // `PM_UpdateViewAngles` runs ahead of the stance (`PmoveSingle` 0x340fc),
-    // so the prone clamps read last frame's stance and pitches.
+    // so the prone clamps read last frame's stance and pitches, and the
+    // ladder cap last frame's ladder flag and ground.
+    cap_ladder_yaw(ps);
     update_prone_view(ps, input, world, dt);
     update_lean(ps, input, true, world, dt);
     update_stance(ps, input, world, dt, &mut events);
@@ -1305,6 +1311,7 @@ fn linked_move(
 ) {
     // `PM_UpdateViewAngles`, ahead of the dispatch in every arm; under a link
     // the lean skips its wall clamp (0x32c63).
+    cap_ladder_yaw(ps);
     update_prone_view(ps, input, world, dt);
     update_lean(ps, input, true, world, dt);
     // The arm's first store: `groundEntityNum` 1023, `pml.walking` and
@@ -2845,6 +2852,43 @@ fn pitch_for_yaw_on_normal(yaw_deg: f32, normal: Vec3) -> f32 {
     if pitch < 0.0 { pitch + 360.0 } else { pitch }
 }
 
+/// The ladder arm of `PM_UpdateViewAngles` (1.1 0x32e7d-0x32f75, 1.5
+/// 0x26270-0x263ca, UO 0x2b535-0x2b6a5): on last frame's ladder flag and
+/// off the ground, a view more than [`LADDER_YAWCAP`] off the rungs'
+/// facing, `AngleDelta(vectoyaw(vLadderVec) + 180, yaw)`, is pushed back
+/// onto the cap through `delta_angles` and placed at `facing -/+ cap`,
+/// through `AngleNormalize360` on 1.1 and `AngleNormalize360Accurate` on
+/// 1.5 and UO (cod11-mantle.md, "The ladder yaw cap").
+fn cap_ladder_yaw(ps: &mut PlayerState) {
+    if !ps.on_ladder || ps.on_ground {
+        return;
+    }
+    let d = angle_delta(
+        ladder_facing(ps.ladder_normal, ps.rules),
+        view_deg(ps.yaw),
+        ps.rules,
+    );
+    if d.abs() <= LADDER_YAWCAP {
+        return;
+    }
+    let excess = d - LADDER_YAWCAP.copysign(d);
+    // 1.1 keeps the facing on the x87 stack; 1.5 and UO stored it.
+    let facing = if ps.rules.v15() {
+        f64::from(ladder_facing(ps.ladder_normal, ps.rules))
+    } else {
+        vectoyaw(ps.ladder_normal) + 180.0
+    };
+    let at = (facing - f64::from(LADDER_YAWCAP.copysign(excess))) as f32;
+    let yaw = if ps.rules.v15() {
+        normalize360_accurate(at)
+    } else {
+        short_normalize360(f64::from(at))
+    };
+    ps.view_yaw_correction = excess;
+    ps.view_capped[1] = Some(yaw);
+    ps.yaw = view_rad(yaw);
+}
+
 /// The prone half of `PM_UpdateViewAngles` (0x32d7c): the body swinging to
 /// follow the view, the view capped to the yaw cone around the body and
 /// pitched no further than the cap off `proneTorsoPitch`. Retail enforces
@@ -3774,17 +3818,23 @@ fn air_accelerate(ps: &mut PlayerState, wishdir: Vec3, wishspeed: f64, dt: f32) 
 /// negative one; 1.1 adds the 180 on the x87 stack, 1.5 and UO to a stored
 /// float.
 fn ladder_facing(v: Vec3, rules: MoveRules) -> f32 {
-    let yaw = if v.x == 0.0 && v.y == 0.0 {
-        0.0
-    } else {
-        f64::from(f64::from(v.y).atan2(f64::from(v.x)).to_degrees() as f32)
-    };
-    let yaw = if yaw < 0.0 { yaw + 360.0 } else { yaw };
+    let yaw = vectoyaw(v);
     if rules.v15() {
         yaw as f32 + 180.0
     } else {
         (yaw + 180.0) as f32
     }
+}
+
+/// `vectoyaw` (1.1 0x3dccc, 1.5 0x338ab): the double atan2's degrees
+/// rounded to a float, 360 added to a negative one, 0 straight up or down.
+/// 1.1 hands the sum back on the x87 stack, so it is left unrounded here.
+fn vectoyaw(v: Vec3) -> f64 {
+    if v.x == 0.0 && v.y == 0.0 {
+        return 0.0;
+    }
+    let yaw = f64::from(f64::from(v.y).atan2(f64::from(v.x)).to_degrees() as f32);
+    if yaw < 0.0 { yaw + 360.0 } else { yaw }
 }
 
 /// `AngleDelta`: `a - b` through a truncated 16-bit angle, in -180..180.
@@ -6186,6 +6236,30 @@ mod tests {
         };
         ladder_move(&mut ps, &PmInput::default(), n, &w, 0.008, &mut Vec::new());
         assert_eq!(ps.movement_dir, 29);
+    }
+
+    /// `bg_ladder_yawcap` (1.1 0x32e7d, 1.5 0x26270): off the ground on
+    /// the rungs facing 90, a view at 200 is pushed back 10 degrees and
+    /// placed at 190, on the shorts grid on 1.1 and exactly on 1.5; on the
+    /// ground, or inside the cap, it stays (mp_ship-dm-ladder-turn*.txt).
+    #[test]
+    fn a_climber_looking_away_is_held_100_off_the_rungs() {
+        let at = |yaw: f32, ground: bool, rules: MoveRules| {
+            let mut ps = PlayerState::spawn(Vec3::ZERO, yaw);
+            ps.rules = rules;
+            ps.on_ladder = true;
+            ps.on_ground = ground;
+            ps.ladder_normal = -Vec3::Y;
+            cap_ladder_yaw(&mut ps);
+            (ps.view_yaw_correction, ps.view_capped[1])
+        };
+        let (c, yaw) = at(200.0, false, MoveRules::V1_1);
+        assert!((c + 10.0).abs() < 0.01, "{c}");
+        assert_eq!(yaw, Some(short_normalize360(190.0)));
+        assert_eq!(at(200.0, false, MoveRules::V1_5).1, Some(190.0));
+        assert_eq!(at(-30.0, false, MoveRules::Uo).1, Some(350.0));
+        assert_eq!(at(200.0, true, MoveRules::V1_1), (0.0, None));
+        assert_eq!(at(189.0, false, MoveRules::V1_1), (0.0, None));
     }
 
     /// `SetClientViewAngle`'s prone arm (1.1 0x41e30, 1.5 0x3bf08): the

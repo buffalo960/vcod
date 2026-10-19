@@ -8,8 +8,8 @@ use crate::movetrace::MoveWorld;
 use crate::net::flags::{
     EF_CROUCH, EF_IN_VEHICLE_V22, EF_MOUNTED, EF_MOUNTED_DUCK, EF_MOUNTED_PRONE, EF_MOUNTED_STAND,
     EF_PRONE, PM_DEAD_LINKED, PM_NORMAL, PM_NORMAL_LINKED, PMF_BACKWARDS_RUN, PMF_DUCKED,
-    PMF_JUMP_HELD, PMF_JUMP_PENALTY, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE, PMF_SPRINT_V22,
-    PMF_WINDED_V22,
+    PMF_JUMP_HELD, PMF_JUMP_PENALTY, PMF_LADDER, PMF_PRONE, PMF_PRONE_BLOCKED, PMF_PRONE_DIVE,
+    PMF_SPRINT_V22, PMF_WINDED_V22,
 };
 use crate::net::msg::{self, UserCmd};
 use crate::net::protocol::{ENTITYNUM_NONE, Protocol};
@@ -111,6 +111,10 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
     ps.movement_dir = s8("movementDir");
     ps.bob_cycle = int("bobCycle") as u8;
 
+    // Last frame's ladder flag and the ladder's normal: the airborne
+    // ladder probe and the yaw cap read both.
+    ps.on_ladder = pm_flags & PMF_LADDER != 0;
+    ps.ladder_normal = vec3("vLadderVec");
     ps.ducked = pm_flags & PMF_DUCKED != 0;
     ps.prone_dive = pm_flags & PMF_PRONE_DIVE != 0;
     ps.prone_blocked = pm_flags & PMF_PRONE_BLOCKED != 0;
