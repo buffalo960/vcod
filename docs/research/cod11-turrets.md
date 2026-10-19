@@ -876,6 +876,11 @@ VERIFIED: `setPlayerAngles` (player method 11, 0x44df0) calls
 (0x44e60). VERIFIED: its only other calls are `va` and `Scr_Error`
 (0x44e24..0x44e43). INFERRED: those two are the not-a-player error path, and
 the builtin is otherwise the vector read followed by `SetClientViewAngle`.
+INFERRED, from the store order above: a prone player's `angles` read
+back after `setPlayerAngles` are the cone's held angles, not the
+script's. vcod's builtin holds them through the host's mirror of the
+cone (`pmove::ProneCone`, set at each cmd and by `spawn`) since
+2026-10-19.
 
 The triggers:
 

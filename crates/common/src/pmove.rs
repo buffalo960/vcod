@@ -2951,23 +2951,46 @@ fn cap_prone_pitch(ps: &mut PlayerState) {
 /// `AngleDelta` and placed through the short-truncating
 /// `AngleNormalize360` / `AngleNormalize180` on all three. Wire degrees,
 /// pitch positive down (cod11-mantle.md, "AngleDelta").
-pub fn prone_view_angle(ps: &PlayerState, mut angles: [f32; 3]) -> [f32; 3] {
-    if ps.stance != Stance::Prone || ps.mounted.is_some() || ps.seat.is_some() {
-        return angles;
+pub fn prone_view_angle(ps: &PlayerState, angles: [f32; 3]) -> [f32; 3] {
+    ProneCone::of(ps).map_or(angles, |cone| cone.hold(angles))
+}
+
+/// What [`prone_view_angle`] reads off a playerstate: the body's yaw and
+/// torso pitch of a prone player not on a turret or in a seat. The server
+/// mirrors it to the script host, whose `setPlayerAngles` writes the held
+/// angles to the entity's `angles` (1.1 0x4209f).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProneCone {
+    pub direction: f32,
+    pub torso_pitch: f32,
+    pub rules: MoveRules,
+}
+
+impl ProneCone {
+    pub fn of(ps: &PlayerState) -> Option<Self> {
+        (ps.stance == Stance::Prone && ps.mounted.is_none() && ps.seat.is_none()).then_some(Self {
+            direction: ps.prone_direction,
+            torso_pitch: ps.prone_torso_pitch,
+            rules: ps.rules,
+        })
     }
-    let d = angle_normalize180(angle_delta(ps.prone_direction, angles[1], ps.rules));
-    if d > 45.0 {
-        angles[1] = short_normalize360(f64::from(ps.prone_direction - 45.0));
-    } else if d < -45.0 {
-        angles[1] = short_normalize360(f64::from(ps.prone_direction + 45.0));
+
+    /// `angles` held inside the cone, wire degrees.
+    pub fn hold(self, mut angles: [f32; 3]) -> [f32; 3] {
+        let d = angle_normalize180(angle_delta(self.direction, angles[1], self.rules));
+        if d > 45.0 {
+            angles[1] = short_normalize360(f64::from(self.direction - 45.0));
+        } else if d < -45.0 {
+            angles[1] = short_normalize360(f64::from(self.direction + 45.0));
+        }
+        let d = angle_normalize180(angle_delta(self.torso_pitch, angles[0], self.rules));
+        if d > 45.0 {
+            angles[0] = short_normalize180(f64::from(self.torso_pitch - 45.0));
+        } else if d < -15.0 {
+            angles[0] = short_normalize180(f64::from(self.torso_pitch + 15.0));
+        }
+        angles
     }
-    let d = angle_normalize180(angle_delta(ps.prone_torso_pitch, angles[0], ps.rules));
-    if d > 45.0 {
-        angles[0] = short_normalize180(f64::from(ps.prone_torso_pitch - 45.0));
-    } else if d < -15.0 {
-        angles[0] = short_normalize180(f64::from(ps.prone_torso_pitch + 15.0));
-    }
-    angles
 }
 
 /// `AngleNormalize360Accurate` (1.5 0x36ae0): whole turns added or taken
