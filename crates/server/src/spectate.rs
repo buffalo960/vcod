@@ -314,9 +314,9 @@ pub struct ClientSim {
     /// The last link was a `setOrigin`'s or `TeleportPlayer`'s, at the
     /// unsnapped `ps.origin`; the next cmd's link clears it.
     linked_unsnapped: bool,
-    /// Out of a seat since this client's last `G_RunClient`: `pm_type`
-    /// stays 1 (7 dead) until that turn steps it down, so the cmds left in
-    /// an exit's frame run linked and move nothing
+    /// Out of a seat since this client's last `G_RunClient` or end frame:
+    /// `pm_type` stays 1 (7 dead) until one of them writes it again, so the
+    /// cmds left in an exit's frame run linked and move nothing
     /// (docs/research/coduo-vehicles.md 11.2).
     unseated: bool,
     /// `ps.serverCursorHint`, written every frame by the end-of-frame pass
@@ -824,6 +824,10 @@ impl ClientSim {
         // (object-model doc, 23.2).
         self.link_to = None;
         self.unseated = false;
+        // The memset takes the seat's `vehType` and `vehMotion`, which an
+        // exit or a death in the seat left (coduo-vehicles.md 11.7).
+        self.veh_type = 0;
+        self.veh_motion = 0;
         // `ClientSpawn`'s memset. Only a playing client's end frame writes
         // the hint again, so a spectator and the intermission camera keep 0.
         self.set_cursor_hint(0, 0);
@@ -1070,6 +1074,11 @@ impl ClientSim {
         if !self.dead {
             self.dead = true;
             self.contents = CONTENTS_CORPSE;
+            // `ps.viewangles` takes the entity's angles (combat doc 5.1 step
+            // 12), which every cmd leaves (0, view yaw, 0): the corpse's
+            // view loses its pitch, a seated rider's too.
+            self.view_angles = [0.0, self.view_angles[1], 0.0];
+            self.ps.pitch = 0.0;
             // `player_die`'s relink (combat doc 5.1 step 13): `solid` 0
             // until the next link, even for a body whose session stays
             // `playing`.
@@ -1405,7 +1414,15 @@ impl ClientSim {
             self.ps.linked = self.link_to.is_some() || self.seat.is_some() || self.unseated;
             if let Some(w) = world {
                 // A corpse's landing event; nothing in it is `ClientEvents`'.
-                cmd::dead_step(&mut self.ps, &mut self.ring, dt, &w, self.respawned);
+                cmd::dead_step(
+                    &mut self.ps,
+                    &mut self.ring,
+                    cmd,
+                    dt,
+                    &w,
+                    weapons,
+                    self.respawned,
+                );
                 self.dead_eye = true;
             } else if !self.respawned {
                 // `PM_Weapon`'s `pm_type > 5` arm (`cmd::dead_step`).
@@ -1948,8 +1965,12 @@ impl ClientSim {
     /// all four fields as the last surviving hit left them (8.4).
     pub fn end_frame(&mut self, now_ms: i32) {
         // `ClientEndFrame` writes `pm_type` (0x41079) and `ps.speed`
-        // (0x41100) ahead of its `P_DamageFeedback` call (0x41128).
+        // (0x41100) ahead of its `P_DamageFeedback` call (0x41128). The
+        // write reads the link alone (UO 0x52f59: 1 or 7 linked, 0 or 6
+        // not), so a rider the vehicle think put out runs the next frame's
+        // cmds unlinked (coduo-vehicles.md 11.2).
         self.pm_dead = self.dead_arm();
+        self.unseated = false;
         if self.pm_type == PmType::Normal {
             self.ps.speed = self.max_speed as f32;
             self.ps.gravity = self.gravity as f32;

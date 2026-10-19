@@ -3158,7 +3158,12 @@ list below. INFERRED: the numbering and every condition in it.
     `builtins::math::vectoyaw`; until 2026-10-19 it faced the attacker
     even when that was the victim (a zero vector, so 0) and read the view
     yaw for a world death (`a_death_faces_what_player_die_reads`).
-12. `client->ps.viewangles` takes `self->angles`.
+12. `client->ps.viewangles` takes `self->angles`. INFERRED: those are
+    (0, view yaw, 0), which `ClientThink_real`'s tail writes after every
+    cmd (`cod11-gametypes-re-bel.md` 8.6), so the corpse's view loses its
+    pitch. VERIFIED on UO (`player_die` 0x5f972, the same stores, and
+    `coduo-vehicles.md` 11.7's capture, 24.999 to 0). vcod:
+    `ClientSim::die`; it kept the pitch until 2026-10-19.
 13. `self->s.loopSound = 0`, `trap_UnlinkEntity`, `self+0x114 = 30.0`
     (`.rodata 0x743f0`), `trap_LinkEntity`. INFERRED: `self+0x114` is the
     bounding box's `maxs[2]`, since it sits three floats past `self+0x108` and

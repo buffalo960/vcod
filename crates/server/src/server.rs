@@ -8111,8 +8111,8 @@ impl Server {
             );
             mirror_vitals(&mut self.clients, rt);
             // `G_RunClient`'s `pm_type` step down for a rider who left a
-            // seat ahead of the entity pass; one the vehicle think below puts
-            // out runs the next frame's cmds linked.
+            // seat ahead of the entity pass; for one the vehicle think below
+            // puts out, `ClientEndFrame`'s write does it.
             for sim in self
                 .clients
                 .iter_mut()

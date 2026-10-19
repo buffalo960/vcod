@@ -1236,19 +1236,35 @@ fn retail_state_rows(
         let eye = |w: &msg::PlayerState| w.field_f32(p, "viewHeightCurrent");
         compared += 1;
         moved += usize::from(n.origin(p) != s.origin(p));
+        // `PmoveSingle`'s head runs for a corpse too: the cone on the held
+        // weapon and the backpedal flag (cod11-player-clip.md 1.1).
+        let dead = matches!(
+            pm_type,
+            vcod_common::net::flags::PM_DEAD | vcod_common::net::flags::PM_DEAD_LINKED
+        );
+        let head_differs = dead
+            && (pred.ps.aim_spread_scale.to_bits() != n.field_f32(p, "aimSpreadScale").to_bits()
+                || pred.ps.backwards_run
+                    != (n.field_i32(p, "pm_flags") & vcod_common::net::flags::PMF_BACKWARDS_RUN
+                        != 0));
         if bits(pred.ps.origin.to_array()) != bits(n.origin(p))
             || bits(pred.ps.velocity.to_array()) != bits(vel(n))
             || pred.ps.view_height().to_bits() != eye(n).to_bits()
+            || head_differs
         {
             bad.push(format!(
-                "ct {}: predicted {} {} eye {} retail {:?} {:?} eye {}",
+                "ct {}: predicted {} {} eye {} cone {} back {} retail {:?} {:?} eye {} cone {} pm_flags {:#x}",
                 ct(n),
                 pred.ps.origin,
                 pred.ps.velocity,
                 pred.ps.view_height(),
+                pred.ps.aim_spread_scale,
+                pred.ps.backwards_run,
                 n.origin(p),
                 vel(n),
-                eye(n)
+                eye(n),
+                n.field_f32(p, "aimSpreadScale"),
+                n.field_i32(p, "pm_flags")
             ));
         }
     }

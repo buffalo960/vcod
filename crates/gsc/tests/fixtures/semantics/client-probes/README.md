@@ -329,7 +329,10 @@ logs `PROBE seat` / `PROBE seatnext <time> <num> <origin> <angles>` straight
 after the `spawn` and a frame later. `probe_vehicle`'s `probe_respawn N`
 does the same for a seated player N seconds after the seat, 200 units off
 the vehicle's starting left. Recipes in the headers of
-`crates/server/tests/fixtures/seatspawn/`.
+`crates/server/tests/fixtures/seatspawn/`. Its `probe_suicide S` kills a
+seated player with `suicide()` S seconds after his first seat and logs
+`PROBE dead` lines for 3 s; `mp_peaks-tdm-slope-8ms-jeep-die-uo.txt`'s
+header has the recipe (`coduo-vehicles.md` 11.7).
 
 ## probe_prone
 
