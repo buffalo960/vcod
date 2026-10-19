@@ -836,7 +836,6 @@ fn launch_angles_match_retail_on_1_1() {
     }
 }
 
-
 /// One `apos` as the wire carried it: type, `trTime` from the launch's,
 /// base, delta.
 type Apos = (i32, i32, [f32; 3], [f32; 3]);
@@ -955,8 +954,7 @@ fn bounce_angles_match_retail_on_1_1() {
     let ours = our_apos(&log);
     assert!(retail.len() >= 6, "five bounces on retail: {retail:?}");
     assert_eq!(
-        ours,
-        retail,
+        ours, retail,
         "pinned draws {draws:?}\nours   {ours:?}\nretail {retail:?}"
     );
 }

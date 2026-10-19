@@ -1849,7 +1849,9 @@ mod tests {
         let mut bounces = 0;
         for f in 1..=80 {
             for m in ms.missiles_mut() {
-                if m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50) == Stepped::Bounced {
+                if m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50)
+                    == Stepped::Bounced
+                {
                     bounces += 1;
                 }
             }
@@ -1991,7 +1993,9 @@ mod tests {
         let mut loud = 0;
         for f in 1..=80 {
             for m in ms.missiles_mut() {
-                if m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50) == Stepped::Bounced {
+                if m.step(Some(&world), &[], &[], None, &mut Draws::default(), f * 50)
+                    == Stepped::Bounced
+                {
                     loud += 1;
                 }
             }
@@ -2034,11 +2038,14 @@ mod tests {
         );
         let mut stepped = Stepped::Flew;
         for f in 1..=6 {
-            stepped =
-                ms.missiles_mut()
-                    .next()
-                    .unwrap()
-                    .step(Some(&world), &sims, &[], None, &mut Draws::default(), f * 50);
+            stepped = ms.missiles_mut().next().unwrap().step(
+                Some(&world),
+                &sims,
+                &[],
+                None,
+                &mut Draws::default(),
+                f * 50,
+            );
             if stepped != Stepped::Flew {
                 break;
             }
@@ -2231,7 +2238,14 @@ mod tests {
                 1000,
             );
             let m = ms.missiles_mut().next().unwrap();
-            m.step(Some(&world), &[], std::slice::from_ref(&top), None, &mut Draws::default(), 1050);
+            m.step(
+                Some(&world),
+                &[],
+                std::slice::from_ref(&top),
+                None,
+                &mut Draws::default(),
+                1050,
+            );
             let d = m.traj.delta;
             assert!((d.x - 300.0 * scale).abs() < 0.5, "body {body}: {d}");
         }

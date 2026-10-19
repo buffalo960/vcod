@@ -5,7 +5,8 @@
 //! What is compared is the flight from the pullback on: the frame the
 //! missile first reached the wire, how many bounces the contact loop
 //! produced, the wire `pos` at each of retail's samples to the capture's
-//! one decimal, when the fuse went off and where and how it came to rest. A
+//! one decimal, the part of `apos` no random draw moves (12.7), when the
+//! fuse went off and where and how it came to rest. A
 //! flight that runs on into the steps after its throw is followed there, so
 //! a long cook's explode is compared too. Both sides are timed from the first snapshot whose
 //! playerstate reads the pullback, not from the step's first snapshot, which
@@ -361,6 +362,30 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
                 tr.tr_type, tr.base.x, tr.base.y, tr.base.z, tr.delta.x, tr.delta.y, tr.delta.z
             )
         };
+        // `apos` past the launch, its deterministic part: type, time, the
+        // yaw and its rate (the tumble has none), and a resting pitch laid
+        // onto the floor modulo the half turn (combat doc 12.7). The
+        // tumble's pitch and roll rates and each bounce's pitch rate factor
+        // are retail's `rand()` draws, which ours cannot repeat; with those
+        // pinned the whole `apos` is gated bit for bit in
+        // `missile_edge_ab::bounce_angles_match_retail_on_1_1`.
+        let apos_wire = |tr: &Trajectory, at: i32| {
+            let time = if tr.tr_type == TR_STATIONARY {
+                tr.tr_time
+            } else {
+                tr.tr_time - at
+            };
+            let laid = if tr.tr_type == TR_STATIONARY {
+                format!(",{:.1}", tr.base.x.rem_euclid(180.0))
+            } else {
+                String::new()
+            };
+            format!(
+                "{},{time},{:.1},{:.1}{laid}",
+                tr.tr_type, tr.base.y, tr.delta.y
+            )
+        };
+        let mut apos_rows = 0;
         let mut pos_rows = 0;
         for rs in &r {
             let t = rs.server_time - ra;
@@ -370,6 +395,15 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
                 ));
                 continue;
             };
+            let (rw, ow) = (apos_wire(&rs.apos, ra), apos_wire(&os.apos, oa));
+            if rw != ow {
+                apos_rows += 1;
+                if apos_rows <= 3 {
+                    bad.push(format!(
+                        "{label}: {t} ms after the pullback apos retail {rw} ours {ow}"
+                    ));
+                }
+            }
             let (rw, ow) = (wire(&rs.pos, ra), wire(&os.pos, oa));
             if rw != ow {
                 pos_rows += 1;
@@ -379,6 +413,9 @@ fn a_thrown_grenade_flies_bounces_and_explodes_like_retail() {
                     ));
                 }
             }
+        }
+        if apos_rows > 3 {
+            bad.push(format!("{label}: {} more apos rows differ", apos_rows - 3));
         }
         if pos_rows > 3 {
             bad.push(format!("{label}: {} more pos rows differ", pos_rows - 3));
