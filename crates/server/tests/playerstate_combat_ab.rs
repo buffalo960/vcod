@@ -621,6 +621,19 @@ fn the_weapon_channel_matches_retail_on_15_mp_carentan() {
     check_on(&PROTOCOL_V6, fs, "mp_carentan", "dm", "combat-15");
 }
 
+/// A second 1.5b take whose `advance` walk stalled twice: the probe turned
+/// the walk 45 degrees, then 90, and the `!cmds` line's `a=` names the cmd
+/// of each turn, so the walk is compared too.
+#[test]
+fn the_weapon_channel_matches_retail_on_15_mp_carentan_after_a_stall_turn() {
+    let Some(fs) = vcod_common::testing::game_fs()
+        .filter(|fs| vcod_server::server::install_protocol(fs).version == PROTOCOL_V6.version)
+    else {
+        return;
+    };
+    check_on(&PROTOCOL_V6, fs, "mp_carentan", "dm", "combat-15-stall");
+}
+
 /// United Offensive 1.51b's kar98k under the same combat script
 /// (`--save-combat --capture-tag uo --probe-team axis` beside
 /// `COD_VERSION=uo tools/run_server.sh`, docs/research/coduo-diff.md 20),

@@ -1009,6 +1009,23 @@ A second UO take whose `advance` walk stalled (`-combat-uo-stall`)
 passes too: the replay steers a walk's cmds by retail's traced view
 (`coduo-diff.md` 20).
 
+Since 2026-10-19 (later that day) the line also logs each cmd's absolute
+view shorts (`a=`, pitch/yaw before `delta_angles` comes off) and its
+`forward`/`right`/`up` (`m=`), each where it changes, and the first step's
+log opens on the cmds already sent past its first snapshot's
+`commandTime`. A step whose line carries `a=` replays retail's view and
+movement cmd for cmd (`common::CmdLog::aim`), so `playerstate_combat_ab`
+compares its walks too. VERIFIED, the first 1.5b take
+that was not committed: with the first step's pre-start cmds unlogged,
+the replay opened `advance` on the last traced `commandTime` (31685) and
+ran the first walking cmd (31733) as 48 ms of walking, the spread
+counter reading 48.96 where retail read 17.34, one 17 ms cmd of
+`hipSpreadMoveAdd` over decay: the probe had sent a standing cmd at 31716
+that ran in the same frame. The committed 1.5b take,
+`mp_carentan-dm-combat-15`, logs both columns and passes whole on a
+protocol 6 server, `advance` included, with no gap (VERIFIED, gate;
+`cod15-protocol-diff.md`).
+
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for
 the wire, `advance_ads` the ramp, and `fire` the `adsFire` `weaponDelay`
