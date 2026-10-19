@@ -298,8 +298,9 @@ pub fn set_player_origin(
 }
 
 /// `self setPlayerAngles(angles)`, a player method (0x44df0): a straight
-/// `SetClientViewAngle` call. The script's `angles` moves now, as retail's
-/// `r.currentAngles` does; the sim's view is queued.
+/// `SetClientViewAngle` call. The script's `angles` moves now to what the
+/// prone arm leaves, as retail's `r.currentAngles` does (0x4209f); the
+/// sim's view is queued with the script's, which the sim holds the same.
 pub fn set_player_angles(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -310,8 +311,9 @@ pub fn set_player_angles(
     let Some(&Value::Vector(angles)) = args.first() else {
         return Err(ErrorKind::BadType("setPlayerAngles takes a vector"));
     };
+    let held = host.client_prone_cone[slot].map_or(angles, |cone| cone.hold(angles));
     let field = cx.intern_folded("angles");
-    host.set_field(cx, entity_receiver(recv)?, field, Value::Vector(angles))?;
+    host.set_field(cx, entity_receiver(recv)?, field, Value::Vector(held))?;
     host.client_sim_ops
         .push((slot, SimOp::SetViewAngles { angles }));
     Ok(Value::Undefined)
@@ -2150,6 +2152,56 @@ mod tests {
         };
         sim.set_view_angle(angles);
         assert_eq!(sim.view_angles(), [10.0, 90.0, 0.0]);
+    }
+
+    /// On a prone player `SetClientViewAngle` stores the angles its prone
+    /// arm held, not the script's, in `r.currentAngles` (1.1 0x4209f), so
+    /// the thread reads them back held; the sim holds its view the same.
+    #[test]
+    fn setplayerangles_on_a_prone_player_reads_back_held() {
+        use crate::game::host::ClientEvent;
+        use crate::game::script::ScriptRuntime;
+        use vcod_common::pmove::{MoveRules, ProneCone};
+        let mut rt = ScriptRuntime::for_test(
+            r#"
+            main() {}
+            look() {
+                self setPlayerAngles((60, 100, 0));
+                self.pitch = self.angles[0];
+                self.yaw = self.angles[1];
+            }
+        "#,
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "p".into(),
+        });
+        rt.run_frame(0);
+        let cone = ProneCone {
+            direction: 10.0,
+            torso_pitch: 0.0,
+            rules: MoveRules::default(),
+        };
+        rt.set_client_prone_cone(0, Some(cone));
+        let e = rt.client_entity(0).unwrap();
+        rt.start_thread_for_test(e, "look");
+        rt.run_frame(50);
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+        let held = cone.hold([60.0, 100.0, 0.0]);
+        // 55 and 15 degrees, each a whole number of shorts.
+        assert!((held[1] - 55.0).abs() < 0.01 && (held[0] - 15.0).abs() < 0.01);
+        let mut read = |f: &str| rt.client_field(0, f).unwrap().parse::<f32>().unwrap();
+        // The field prints `%g`, six digits.
+        let (pitch, yaw) = (read("pitch"), read("yaw"));
+        assert!((pitch - held[0]).abs() < 1e-3, "{pitch}");
+        assert!((yaw - held[1]).abs() < 1e-3, "{yaw}");
+        let mut sim = crate::spectate::ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.become_player([0.0; 3], 0.0, [0; 3]);
+        sim.ps.stance = vcod_common::pmove::Stance::Prone;
+        sim.ps.prone_direction = 10.0;
+        assert_eq!(ProneCone::of(&sim.ps), Some(cone));
+        sim.set_view_angle([60.0, 100.0, 0.0]);
+        assert_eq!(sim.view_angles(), held);
     }
 
     /// `freezeControls` checks its receiver, reads its bool and stores it
