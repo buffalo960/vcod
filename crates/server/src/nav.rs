@@ -4556,8 +4556,11 @@ const PUSH_OFF_TICKS: usize = 40;
 /// floor behind the climber's back: `Some` when `to` lies 8 or more
 /// units out from the face, between a jump under and a step over the
 /// body, and the push-off run on a copy lands on that floor within 64
-/// units of `to`. The flight is the jump facing out from the face, then
-/// the back key, held facing the same way, until the body lands. A ladder
+/// units of `to`. The flight is the jump facing the face, which
+/// `PM_CheckJump` reflects straight out, then the forward key, held facing
+/// the same way, until the body lands: facing out, `bg_ladder_yawcap`
+/// would turn the view 80 degrees on the jump's frame and the jump with
+/// it (cod11-mantle.md, "The ladder yaw cap"). A ladder
 /// move climbs and strafes along the face but never steps off it, so a
 /// floor behind the climber is left only by the jump, and the jump alone
 /// carries a body about 60 units out (bot-navigation.md section 3, the
@@ -4579,7 +4582,7 @@ pub fn push_off(
     {
         return None;
     }
-    let yaw = n.y.atan2(n.x).to_degrees();
+    let yaw = (-n.y).atan2(-n.x).to_degrees();
     let mut ps = *ps;
     let mut delta = [0; 3];
     let mut ring = EventRing::default();
@@ -4588,7 +4591,7 @@ pub fn push_off(
     for i in 0..PUSH_OFF_TICKS {
         let cmd = UserCmd {
             server_time: FRAME_MS * (i as i32 + 1),
-            forward: if i == 0 { 0 } else { -127 },
+            forward: if i == 0 { 0 } else { 127 },
             up: if i == 0 { 127 } else { 0 },
             angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
             ..NULL_USERCMD
@@ -4748,9 +4751,16 @@ impl Sim {
                 }
             }
         }
+        // The walk's angles are absolute: net of `delta_angles` as the tick
+        // starts, as a bot's aim is (`bots::cmd_angles`), so a ladder yaw
+        // cap's push holds the view on the cap instead of turning the rest
+        // of the walk.
+        let d = self.delta;
+        let angles = [0, 1, 2].map(|i| cmd.angles[i] - d[i]);
         for &server_time in &times[..n] {
             let cmd = UserCmd {
                 server_time,
+                angles,
                 ..*cmd
             };
             chop(self.time, &cmd, |step, dt| {
@@ -7281,15 +7291,12 @@ mod tests {
             ps.origin
         );
         let yaw = push_off(w, &ps, floor, &[]).expect("a push-off");
-        assert!(
-            (yaw - 270.0).abs() < 1.0 || (yaw + 90.0).abs() < 1.0,
-            "{yaw}"
-        );
+        assert!((yaw - 90.0).abs() < 1.0, "{yaw}");
         // Run on at the floor, the same jump overshoots.
         let mut free = ps;
         for i in 0..40 {
             let cmd = UserCmd {
-                forward: if i == 0 { 0 } else { 127 },
+                forward: if i == 0 { 0 } else { -127 },
                 up: if i == 0 { 127 } else { 0 },
                 angles: [0, (yaw * ANGLE2SHORT) as i32, 0],
                 ..NULL_USERCMD

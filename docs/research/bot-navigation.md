@@ -1265,9 +1265,13 @@ creeping inside 24 units with its heading held, as the ladder pass's walks
 did. Off a ladder, a drop the graph's forward walk ran off is run off
 (`BotView::run_off`). On the rungs with the waypoint a floor behind the
 climber, 8 or more units out from the face and from a jump under to a
-step over the body, the bot pushes off: it jumps facing out from the face,
-then holds the back key facing the same way until it lands
-(`nav::push_off`, `BotView::push_off`), and only where that flight, run on
+step over the body, the bot pushes off: it jumps facing the face, which
+`PM_CheckJump` reflects straight out, then holds the forward key facing
+the same way until it lands (`nav::push_off`, `BotView::push_off`). Until
+2026-10-19 it jumped facing out and braked on the back key, the same
+flight, but `bg_ladder_yawcap` turns a view more than 100 degrees off the
+rungs back onto the cap on the jump's frame and the jump with it
+(cod11-mantle.md, "The ladder yaw cap"). It pushes off only where that flight, run on
 a copy of the body, lands on the waypoint's floor within 64 units of it.
 A ladder move climbs and strafes along the face but never steps off it,
 so the jump is the only way onto such a floor, and the jump alone, run on
@@ -1775,7 +1779,9 @@ round that day, "2026-10-12b"):
   until a spell took it down the rungs. A body hung there, faced out from
   the face or into it, with any move key, climbs or descends but never
   leaves the rungs. Jumping off facing out (yaw 270) from z 101 to 130 and
-  then holding the back key, it lands on the floor at 104 at
+  then holding the back key (measured before the yaw cap was modelled;
+  the same flight is now the jump and the forward key facing the rungs),
+  it lands on the floor at 104 at
   y -255.9 to -258.2; holding nothing or the forward key it lands in the
   hull at -64, 120 to 170 units out; faced 45 degrees off, braked, at
   x 2116.6 or 2176.4, y -244 (`nav::tests::a_push_off_lands_on_the_floor_behind_the_rungs`).
