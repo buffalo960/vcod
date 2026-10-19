@@ -64,6 +64,11 @@ struct Case {
     /// lines, and runs a cmd stamped up to [`PRESS_LEAD_MS`] before a frame
     /// after it.
     press: bool,
+    /// Sends each cmd as a packet of its own, both clients' in cmd time
+    /// order, rather than each client's frame as one packet, shooter first.
+    interleave: bool,
+    /// Phases whose round (point and direction) may part from retail's.
+    round_gaps: &'static [&'static str],
 }
 
 /// How far before a frame's time the `-press` captures' late cmds are
@@ -199,11 +204,14 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
             .newest()
             .is_some_and(|s| s.ps.field_i32(cl.protocol(), "pm_type") == 0)
     };
-    let send = |cl: &mut NetClient<common::ClientEnd>,
-                hold: &mut common::ProbeHold,
-                input: (u8, u8, i8),
-                pressed: &[(i32, (u8, u8, i8))],
-                weapon: Option<u8>| {
+    // A live client's cmds for the frame, which the caller sends; a client
+    // not yet playing sends its frame here.
+    let frame_cmds = |cl: &mut NetClient<common::ClientEnd>,
+                      hold: &mut common::ProbeHold,
+                      input: (u8, u8, i8),
+                      pressed: &[(i32, (u8, u8, i8))],
+                      weapon: Option<u8>|
+     -> Vec<UserCmd> {
         if live(cl) {
             let mut cmds = hold.cmds(cl, input.0);
             for c in &mut cmds {
@@ -220,9 +228,12 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
                     c.weapon = w;
                 }
             }
-            cl.send_cmds(&cmds);
-        } else if let Some(c) = cl.send_frame(&UserCmd::default()) {
-            hold.last = c.server_time;
+            cmds
+        } else {
+            if let Some(c) = cl.send_frame(&UserCmd::default()) {
+                hold.last = c.server_time;
+            }
+            Vec::new()
         }
     };
     for i in 0..4000i64 {
@@ -255,15 +266,51 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
                 }
             }
         }
-        if let Some(ca) = ca.as_mut() {
-            send(ca, &mut ha, ia, &pa, selected);
-        }
-        send(&mut cb, &mut hb, ib, &pb, None);
-        for (addr, q) in [(common::ADDR, &qa), (common::ADDR_B, &qb)] {
-            let pending: Vec<Vec<u8>> = q.borrow_mut().to_server.drain(..).collect();
-            for p in pending {
-                sv.handle_packet(addr, &p, now);
+        let mut packets: Vec<(std::net::SocketAddr, Vec<u8>)> = Vec::new();
+        let drain = |q: &Rc<RefCell<Queues>>, addr, out: &mut Vec<_>| {
+            out.extend(q.borrow_mut().to_server.drain(..).map(|p| (addr, p)));
+        };
+        let a_cmds = match ca.as_mut() {
+            Some(ca) => frame_cmds(ca, &mut ha, ia, &pa, selected),
+            None => Vec::new(),
+        };
+        drain(&qa, common::ADDR, &mut packets);
+        let b_cmds = frame_cmds(&mut cb, &mut hb, ib, &pb, None);
+        drain(&qb, common::ADDR_B, &mut packets);
+        if c.interleave {
+            // One packet a cmd, both clients' in cmd time order, as the
+            // 60 Hz clients sent them: whose cmd ran first decides whether a
+            // round meets the angles the hold's `setPlayerAngles` left on
+            // the target or the ones his next cmd wrote back.
+            let mut all: Vec<(i32, bool, UserCmd)> = a_cmds
+                .iter()
+                .map(|c| (c.server_time, false, *c))
+                .chain(b_cmds.iter().map(|c| (c.server_time, true, *c)))
+                .collect();
+            all.sort_by_key(|e| (e.0, e.1));
+            for (_, target, cmd) in all {
+                if target {
+                    cb.send_cmds(&[cmd]);
+                    drain(&qb, common::ADDR_B, &mut packets);
+                } else if let Some(ca) = ca.as_mut() {
+                    ca.send_cmds(&[cmd]);
+                    drain(&qa, common::ADDR, &mut packets);
+                }
             }
+        } else {
+            if let Some(ca) = ca.as_mut()
+                && !a_cmds.is_empty()
+            {
+                ca.send_cmds(&a_cmds);
+            }
+            drain(&qa, common::ADDR, &mut packets);
+            if !b_cmds.is_empty() {
+                cb.send_cmds(&b_cmds);
+            }
+            drain(&qb, common::ADDR_B, &mut packets);
+        }
+        for (addr, p) in packets {
+            sv.handle_packet(addr, &p, now);
         }
         sv.tick(now);
         for (to, p) in sv.take_outgoing() {
@@ -510,7 +557,10 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
     }
 
     let (rh, oh) = (hits(&retail), hits(&ours));
-    for (phase, r) in &rh {
+    for (phase, r) in rh
+        .iter()
+        .filter(|(p, _)| !c.round_gaps.contains(&p.as_str()))
+    {
         let o = oh.get(phase);
         let near = o.is_some_and(|o| {
             o.0 == r.0 && o.1 == r.1 && (0..3).all(|i| (o.2[i] - r.2[i]).abs() <= POINT_NEAR)
@@ -520,13 +570,19 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
         }
     }
     let (rd, od) = (dirs(&retail), dirs(&ours));
-    for (phase, r) in &rd {
+    for (phase, r) in rd
+        .iter()
+        .filter(|(p, _)| !c.round_gaps.contains(&p.as_str()))
+    {
         let o = od.get(phase).copied();
         if o.is_none_or(|o| (0..3).any(|i| (o[i] - r[i]).abs() > DIR_NEAR)) {
             bad.push(format!("round {phase} direction: retail {r:?} ours {o:?}"));
         }
     }
-    for phase in oh.keys().filter(|p| !rh.contains_key(*p)) {
+    for phase in oh
+        .keys()
+        .filter(|p| !rh.contains_key(*p) && !c.round_gaps.contains(&p.as_str()))
+    {
         bad.push(format!(
             "round {phase}: ours hit {:?}, retail none",
             oh[phase]
@@ -549,6 +605,8 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             stand_dz: 0.0,
             gaps: &[],
             press: false,
+            interleave: false,
+            round_gaps: &[],
         },
     );
 }
@@ -567,6 +625,8 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             stand_dz: 0.0,
             gaps: &[],
             press: false,
+            interleave: false,
+            round_gaps: &[],
         },
     );
 }
@@ -593,6 +653,8 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             stand_dz: STAND_DZ_15,
             gaps: CELL_GAPS_15,
             press: false,
+            interleave: false,
+            round_gaps: &[],
         },
     );
 }
@@ -611,6 +673,8 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             stand_dz: 0.0,
             gaps: &[],
             press: false,
+            interleave: false,
+            round_gaps: &[],
         },
     );
 }
@@ -630,6 +694,8 @@ fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
         stand_dz: 0.0,
         gaps: &[],
         press: false,
+        interleave: false,
+        round_gaps: &[],
     }
 }
 
@@ -719,4 +785,126 @@ fn a_round_on_uo_leaves_along_retails_aim_on_its_press() {
     };
     let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-press-uo.txt");
     check(fs, &press_case(fixture, PRESS_JOIN_UO, PRESS_LATE_UO));
+}
+
+/// The `-turn` and `-turnonce` captures' join times (their headers' first
+/// playing snapshots, joined as [`cmds_case`]'s are).
+const TURN_JOIN_11: i64 = 9000;
+const TURN_LATE_11: i64 = 2700;
+const ONCE_JOIN_11: i64 = 9100;
+const ONCE_LATE_11: i64 = 2300;
+const TURN_JOIN_15: i64 = 8400;
+const TURN_LATE_15: i64 = 3800;
+const TURN_JOIN_UO: i64 = 8300;
+const TURN_LATE_UO: i64 = 4300;
+const ONCE_JOIN_15: i64 = 8400;
+const ONCE_LATE_15: i64 = 3800;
+const ONCE_JOIN_UO: i64 = 9150;
+const ONCE_LATE_UO: i64 = 4600;
+
+/// The `-turn` rounds that met the upright target: every round's cmd
+/// carries the time of a cmd of the target's (both answer the same
+/// snapshot), and the capture does not say which packet the server took
+/// first. Sent after his, the round meets the body upright; sent ahead,
+/// it meets the tilt the hold's `setPlayerAngles` left on him, which is
+/// what the replay sends (shooter first on a tie). The `-turnonce`
+/// captures measure the same rounds without the tilt
+/// (docs/research/cod11-combat.md 3.7).
+const TURN_ROUND_GAPS_11: &[&str] = &["t_down2", "t_up"];
+const TURN_ROUND_GAPS_15: &[&str] = &["t_down2", "t_yaw_down"];
+const TURN_ROUND_GAPS_UO: &[&str] = &["t_down2"];
+
+/// `probe_turn 1` (docs/research/cod11-combat.md 3.7): the target's view
+/// turns at each phase's start, and nothing poses him until the shooter's
+/// round 1.5 s later, then the grid 0.3 s on and again a frame after.
+fn turn_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
+    Case {
+        interleave: true,
+        ..cmds_case(fixture, join_ms, late_ms)
+    }
+}
+
+/// The hold sets the turn every frame, which tilts the whole body by the
+/// view's pitch until the target's next cmd: every grid, run after the
+/// hold in the thread pass, reads the tilted body, and the grid a frame
+/// later the upright one.
+#[test]
+fn a_body_stands_in_the_angles_setplayerangles_gave_it_until_his_next_cmd() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-turn.txt");
+    check(
+        fs,
+        &Case {
+            round_gaps: TURN_ROUND_GAPS_11,
+            ..turn_case(fixture, TURN_JOIN_11, TURN_LATE_11)
+        },
+    );
+}
+
+#[test]
+fn a_body_stands_in_the_angles_setplayerangles_gave_it_until_his_next_cmd_on_15() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-turn-1.5.txt");
+    check(
+        fs,
+        &Case {
+            round_gaps: TURN_ROUND_GAPS_15,
+            ..turn_case(fixture, TURN_JOIN_15, TURN_LATE_15)
+        },
+    );
+}
+
+#[test]
+fn a_body_stands_in_the_angles_setplayerangles_gave_it_until_his_next_cmd_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-turn-uo.txt");
+    check(
+        fs,
+        &Case {
+            round_gaps: TURN_ROUND_GAPS_UO,
+            ..turn_case(fixture, TURN_JOIN_UO, TURN_LATE_UO)
+        },
+    );
+}
+
+/// `probe_turnonce 1`: the turn is set for 0.2 s only, so the round, the
+/// first thing to pose the target since, meets him upright. On 1.5 and UO
+/// each skeleton build eases his controls one step from where the last
+/// build left them, and the round's packet is a build of its own: the
+/// round reads one step past the last phase's second grid, the grid two,
+/// not the settled turn (cod11-movers.md 15). Eased once an end frame
+/// instead, the `t_down2` round lands 12 units off retail's; not eased by
+/// the round, every round misses by 2 to 20.
+/// 1.1d sets its controls outright, so its rounds read the settled turn.
+#[test]
+fn a_round_poses_a_turned_body_at_its_turn() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-turnonce.txt");
+    check(fs, &turn_case(fixture, ONCE_JOIN_11, ONCE_LATE_11));
+}
+
+#[test]
+fn a_round_on_15_poses_a_turned_body_one_build_on() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-turnonce-1.5.txt");
+    check(fs, &turn_case(fixture, ONCE_JOIN_15, ONCE_LATE_15));
+}
+
+#[test]
+fn a_round_on_uo_poses_a_turned_body_one_build_on() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture = include_str!("fixtures/leanhit/mp_carentan-leanhit-turnonce-uo.txt");
+    check(fs, &turn_case(fixture, ONCE_JOIN_UO, ONCE_LATE_UO));
 }
