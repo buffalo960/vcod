@@ -2009,6 +2009,16 @@ impl CollisionWorld {
             .is_none_or(|m| m.load(Ordering::Relaxed))
     }
 
+    /// Whether model `model`'s brushes clip where the BSP put them: linked
+    /// and not moved off its spawn pose. Model 0 always.
+    pub fn model_in_place(&self, model: usize) -> bool {
+        self.model_linked(model)
+            && !self
+                .model_posed
+                .get(model)
+                .is_some_and(|m| m.load(Ordering::Relaxed))
+    }
+
     /// Unlinks the brush models the stock map-load scripts take out of the
     /// clip, for a world no script and no snapshot drives (the gates; the
     /// client takes them from the snapshot, `pmove::movers`):
