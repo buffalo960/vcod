@@ -4519,9 +4519,8 @@ fn write_combat_fixture(
     out.push_str("# current, st= the first cmd's serverTime and d= the steps\n");
     out.push_str("# to each next one, in= <index>:<buttons>/<wbuttons> for each cmd whose bits\n");
     out.push_str("# differ from the !input base (the taps and presses), w= <index>:<byte> for\n");
-    out.push_str(
-        "# each cmd whose weapon byte differs from the step's weapon=. A trace's commandTime\n",
-    );
+    out.push_str("# each cmd whose weapon byte differs from the cmd before it (the first from\n");
+    out.push_str("# the step's weapon=). A trace's commandTime\n");
     out.push_str("# is the last cmd its frame ran.\n");
     out.push_str("# Values are the raw i32 wire words, floats as their bit patterns.\n");
     // Where the script stood and looked at its first step. A replay that
@@ -4666,15 +4665,17 @@ hold_ms={} walks={} wait_ready={} weapon={}\n",
                 .filter(|(_, c)| (c.2, c.3) != (step.base.buttons, step.base.wbuttons))
                 .map(|(i, c)| format!("{i}:{}/{}", c.2, c.3))
                 .collect();
-            // The byte against the step's `weapon=`: a switch is held on
-            // the wire until `ps.weapon` reads it (`WeaponSwitch`).
-            let step_weapon = mine.first().map_or(0, |s| s.weapon);
-            let bytes: Vec<String> = sent
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| i32::from(c.4) != step_weapon)
-                .map(|(i, c)| format!("{i}:{}", c.4))
-                .collect();
+            // Where the byte changes, the first cmd against the step's
+            // `weapon=`: a switch is held on the wire until `ps.weapon`
+            // reads it (`WeaponSwitch`).
+            let mut byte = mine.first().map_or(0, |s| s.weapon);
+            let mut bytes: Vec<String> = Vec::new();
+            for (i, c) in sent.iter().enumerate() {
+                if i32::from(c.4) != byte {
+                    byte = i32::from(c.4);
+                    bytes.push(format!("{i}:{byte}"));
+                }
+            }
             out.push_str(&format!(
                 "!cmds start={start} st={} d={} in={} w={}\n",
                 first.1,

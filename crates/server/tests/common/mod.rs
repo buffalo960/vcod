@@ -521,9 +521,9 @@ pub struct CmdLog {
     pub start: i32,
     pub stamps: Vec<i32>,
     pub bits: BTreeMap<usize, (u8, u8)>,
-    /// The weapon byte of each cmd whose byte differs from the step's
-    /// `weapon`; `None` on a capture whose line carries no `w=`, which
-    /// replays the step's switch on its own clock instead.
+    /// The weapon byte from each cmd on which it changes, the first
+    /// against the step's `weapon`; `None` on a capture whose line carries
+    /// no `w=`, which replays the step's switch on its own clock instead.
     pub weapons: Option<BTreeMap<usize, u8>>,
 }
 
@@ -531,7 +531,7 @@ impl CmdLog {
     /// The weapon byte retail's cmd `i` carried, if the log has the column.
     fn weapon(&self, i: usize, step: &Step) -> Option<u8> {
         let w = self.weapons.as_ref()?;
-        Some(w.get(&i).copied().unwrap_or(step.weapon))
+        Some(w.range(..=i).next_back().map_or(step.weapon, |(_, b)| *b))
     }
 }
 
