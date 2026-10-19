@@ -246,6 +246,7 @@ fn client_spawn(
             .and_then(|p| p.borrow_mut().get_mut(slot)?.pop_front().flatten())
     {
         (origin, angles) = pin;
+        origin = pinned_spot(host, cx, origin);
     }
 
     // `ClientSpawn`'s `Scr_SetString(ent->classname, "player")` (0x4271d).
@@ -307,6 +308,35 @@ fn client_spawn(
         mode,
     });
     Ok(Value::Undefined)
+}
+
+/// A spawn pin's origin is a capture's `%g` print of a placed spawnpoint,
+/// six digits of a float whose last bits steer the spawn think (a fall from
+/// rest ties `PmoveSingle`'s velocity clamp, cod15-movement.md 4): the
+/// entity it names lends its own origin.
+fn pinned_spot(host: &mut GameHost, cx: &mut Cx, pin: [f32; 3]) -> [f32; 3] {
+    // Half a unit in the sixth significant digit.
+    let near = |a: f32, b: f32| {
+        let unit = 10f32.powi(b.abs().max(1e-3).log10().floor() as i32 - 5);
+        (a - b).abs() <= unit * 0.5
+    };
+    let field = cx.intern_folded("origin");
+    let ids: Vec<EntId> = host
+        .ents
+        .iter_inuse()
+        .map(|(id, _)| id)
+        .filter(|id| id.0 >= MAX_CLIENTS as u32)
+        .collect();
+    let mut found = ids
+        .into_iter()
+        .filter_map(|id| match host.get_field(cx, id, field) {
+            Value::Vector(o) if (0..3).all(|i| near(o[i], pin[i])) => Some(o),
+            _ => None,
+        });
+    match (found.next(), found.next()) {
+        (Some(o), None) => o,
+        _ => pin,
+    }
 }
 
 /// Where `ClientSpawn`'s think on the client's last cmd leaves a spawn at

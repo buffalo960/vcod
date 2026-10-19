@@ -117,8 +117,9 @@ impl PredictedEvents {
 /// then the newest snapshot's events less the copies of slots the
 /// prediction played. `own`: the playerstate is ours, not a followed
 /// player's; `predicting`: ours, of a `pm_type` the client predicts;
-/// `predicted`: this frame's prediction, when it ran. The frame we die or
-/// reach the intermission still skips the copies, then tracking stops.
+/// `predicted`: this frame's prediction, when it ran. The frame we reach a
+/// state the client does not predict (a linked corpse) still skips the
+/// copies, then tracking stops.
 #[allow(clippy::too_many_arguments)]
 pub fn frame_events(
     tracked: &mut PredictedEvents,

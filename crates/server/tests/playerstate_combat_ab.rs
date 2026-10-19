@@ -11,13 +11,14 @@
 //! (`common::CmdLog`), so ours samples the same frames retail did and every
 //! channel is compared sample for sample, with no slack.
 //!
-//! Needs `COD_DIR`; without the paks it returns early.
+//! The 1.1 captures need `COD_DIR` at a 1.1 install, the UO one at a UO
+//! install; without the paks each returns early.
 
 mod common;
 
-use common::{Sample, Trace, parse_fixture, replay};
+use common::{Sample, Trace, parse_fixture};
 use std::collections::BTreeSet;
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V22, Protocol};
 
 const EV_FIRE_WEAPON: i32 = 159;
 const EV_FIRE_WEAPON_LASTSHOT: i32 = 161;
@@ -194,9 +195,11 @@ fn torso_flips(trace: &[Trace]) -> usize {
         .count()
 }
 
-fn trace_of(s: &Sample, ms: i64) -> Trace {
-    let (p, ps) = (&PROTOCOL_V1, &s.ps);
-    let ev = |i: usize| ps.field_i32(p, &format!("events[{i}]"));
+/// One of our samples as a trace, its events in 1.1's numbering as the
+/// probe prints a capture's.
+fn trace_of(p: &Protocol, s: &Sample, ms: i64) -> Trace {
+    let ps = &s.ps;
+    let ev = |i: usize| (p.event_to_v1)(ps.field_i32(p, &format!("events[{i}]")));
     Trace {
         ms,
         weaponstate: ps.field_i32(p, "weaponstate"),
@@ -294,6 +297,18 @@ fn check(map: &str, gametype: &str, kind: &str) {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
+    check_on(&PROTOCOL_V1, fs, map, gametype, kind);
+}
+
+/// [`check`] on `proto`'s server, the capture taken on that protocol's
+/// retail server.
+fn check_on(
+    proto: &'static Protocol,
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    gametype: &str,
+    kind: &str,
+) {
     let path = format!(
         "{}/tests/fixtures/playerstate/{map}-{gametype}-{kind}.txt",
         env!("CARGO_MANIFEST_DIR")
@@ -309,8 +324,9 @@ fn check(map: &str, gametype: &str, kind: &str) {
     );
     let team = common::header_value(&text, "joined", &path).to_string();
     let weapon = common::header_value(&text, "weapon", &path).to_string();
-    let held =
-        vcod_server::configstrings::weapon_index(&weapon).expect("the joined weapon in CS 7");
+    let held = vcod_server::defs::Defs::of(proto)
+        .weapon_index(&weapon)
+        .expect("the joined weapon in CS 7");
     let mut steps = parse_fixture(&text, held as u8);
     // The combat script's `advance` ends wherever its stall turns steered
     // it, and the still `idle` after it turns the view back to the spawn's
@@ -330,10 +346,10 @@ fn check(map: &str, gametype: &str, kind: &str) {
     // where a blast lands, and so who it hurts, is the map's business and
     // not the input's (`# grenade` header, AGENTS.md).
     let place = common::captured_place(&text);
-    let replayed = replay(map, gametype, &steps, (&team, &weapon), fs, place);
+    let replayed = common::replay_as(proto, map, gametype, &steps, (&team, &weapon), fs, place);
     let mine: Vec<Vec<Trace>> = replayed
         .iter()
-        .map(|step| step.iter().map(|s| trace_of(s, s.ms)).collect())
+        .map(|step| step.iter().map(|s| trace_of(proto, s, s.ms)).collect())
         .collect();
     // `COMBAT_REPORT=<label>` prints retail's and our trace of that step.
     if let Ok(label) = std::env::var("COMBAT_REPORT") {
@@ -504,7 +520,7 @@ fn check(map: &str, gametype: &str, kind: &str) {
                 let Some(r) = step.settled.get(*field) else {
                     continue;
                 };
-                let o = last.ps.field_i32(&PROTOCOL_V1, field);
+                let o = last.ps.field_i32(proto, field);
                 if o != *r {
                     bad.push(format!("{}: {field} retail {r}, ours {o}", step.label));
                 }
@@ -586,4 +602,16 @@ fn the_scoped_sight_and_view_match_retail_on_mp_carentan() {
 #[test]
 fn the_grenade_and_melee_channels_match_retail_on_mp_carentan() {
     check("mp_carentan", "tdm", "grenade");
+}
+
+/// United Offensive 1.51b's kar98k under the same combat script
+/// (`--save-combat --capture-tag uo --probe-team axis` beside
+/// `COD_VERSION=uo tools/run_server.sh`, docs/research/coduo-diff.md 20),
+/// replayed on a protocol 22 server. Needs `COD_DIR` at a UO install.
+#[test]
+fn the_weapon_channel_matches_retail_on_uo_mp_cassino() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_on(&PROTOCOL_V22, fs, "mp_cassino", "dm", "combat-uo");
 }

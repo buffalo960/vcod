@@ -339,6 +339,10 @@ pub struct ClientSim {
     pain_after_ms: i32,
     /// The aim block's state between cmds (`pmove::aim`, combat doc 15).
     aim_state: pmove::aim::AimState,
+    /// `ps.viewangles` as `ClientSpawn`'s `SetClientViewAngle` leaves them
+    /// for its think's aim block: the spawn's yaw as given, not quantized
+    /// (180 stays 180 where a cmd's view reads -180).
+    spawn_view: [f32; 3],
     /// The last damage's kick, which the aim block plays out
     /// (`P_DamageFeedback` step 6, combat doc 6).
     kick: pmove::aim::DamageKick,
@@ -575,6 +579,7 @@ impl ClientSim {
             delta_angles: spawn_delta_angles(yaw_deg, cmd_angles),
             view_angles: view,
             aim_state: Default::default(),
+            spawn_view: [0.0; 3],
             kick: Default::default(),
             gun_kick: Default::default(),
             aim: [view[0], view[1]],
@@ -810,6 +815,7 @@ impl ClientSim {
         // `ClientSpawn`'s memset clears the aim block's state with the rest
         // of the client.
         self.aim_state = Default::default();
+        self.spawn_view = [0.0, yaw_deg, 0.0];
         self.kick = Default::default();
         self.gun_kick = Default::default();
         self.aim = [self.view_angles[0], self.view_angles[1]];
@@ -1015,6 +1021,11 @@ impl ClientSim {
         world: Option<MoveWorld<'_>>,
     ) -> UserCmd {
         let think = self.spawn_cmd(last, now_ms);
+        // The think's aim block runs ahead of its `Pmove`, on the spawn's
+        // own view and the memset's weapon 0, so the sway's last view is
+        // the spawn's yaw when the loadout's first cmd turns off it (combat
+        // doc 15.3, "The spawn's view").
+        self.aim_on(self.spawn_view, SPAWN_THINK_MS as i32, now_ms, &[]);
         if let Some(w) = world {
             self.spawn_move(w, &think);
         }
@@ -1392,14 +1403,10 @@ impl ClientSim {
         if self.pm_dead {
             if let Some(w) = world {
                 // A corpse's landing event; nothing in it is `ClientEvents`'.
-                for e in pmove::dead_move(&mut self.ps, &w, dt) {
-                    self.ring.add(e.event, e.parm);
-                }
+                cmd::dead_step(&mut self.ps, &mut self.ring, dt, &w, self.respawned);
                 self.dead_eye = true;
-            }
-            // `PM_Weapon`'s `pm_type > 5` arm, behind its `PMF_RESPAWNED`
-            // return (0x390ee..0x390fe).
-            if !self.respawned {
+            } else if !self.respawned {
+                // `PM_Weapon`'s `pm_type > 5` arm (`cmd::dead_step`).
                 self.ps.weapon = 0;
             }
             self.relink();
@@ -2186,6 +2193,11 @@ impl ClientSim {
     /// the moves have not yet touched, the way retail runs it before
     /// `Pmove`. `msec` is the cmd's whole length, which retail caps at 200.
     pub fn update_aim(&mut self, msec: i32, now_ms: i32, weapons: &[Option<WeaponDef>]) {
+        self.aim_on(self.view_angles, msec, now_ms, weapons);
+    }
+
+    /// [`Self::update_aim`] on `view` for `ps.viewangles`.
+    fn aim_on(&mut self, view: [f32; 3], msec: i32, now_ms: i32, weapons: &[Option<WeaponDef>]) {
         if self.pm_type != PmType::Normal || self.dead {
             return;
         }
@@ -2199,7 +2211,7 @@ impl ClientSim {
         }
         let input = pmove::aim::AimInput {
             def,
-            view: self.view_angles,
+            view,
             msec,
             now_ms,
             kick: self.kick,
@@ -2208,10 +2220,7 @@ impl ClientSim {
         };
         self.aim = pmove::aim::aim_angles(&self.ps, &mut self.aim_state, &input);
         let wrap = |d: f32| (d + 180.0).rem_euclid(360.0) - 180.0;
-        self.gun_offset = [
-            wrap(self.aim[0] - self.view_angles[0]),
-            wrap(self.aim[1] - self.view_angles[1]),
-        ];
+        self.gun_offset = [wrap(self.aim[0] - view[0]), wrap(self.aim[1] - view[1])];
     }
 
     /// `G_PlayerEvent`'s fire arm on a 1.5 or UO server (1.5b 0x3b2e4, UO
@@ -2591,6 +2600,13 @@ impl ClientSim {
         if !player && self.respawned {
             set("pm_flags", PMF_RESPAWNED);
         }
+        // The spawn's standing eye, which the intermission's think never
+        // moves: retail's 1.1d `probe_states` capture reads 60 and 60
+        // (cod11-player-clip.md 1.1).
+        if self.pm_type == PmType::Intermission {
+            set("viewHeightCurrent", self.ps.view_height().to_bits() as i32);
+            set("viewHeightTarget", self.ps.stance.view_height() as i32);
+        }
         set("viewlocked", i32::from(self.viewlocked));
         set("shellshockIndex", self.shellshock[0]);
         set("shellshockTime", self.shellshock[1]);
@@ -2783,6 +2799,18 @@ mod tests {
             let w = r.under(own, p);
             assert_eq!(w.fields[at("clientNum")], 3, "protocol {}", p.version);
         }
+    }
+
+    /// The spawn's think runs the aim block on the spawn's own yaw, 180 as
+    /// given where the cmd's view reads -180, so the sway's last view is it
+    /// (combat doc 15.3, "The spawn's view").
+    #[test]
+    fn the_spawn_think_aims_along_the_spawns_yaw() {
+        let mut sim = ClientSim::spectator([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
+        sim.become_player([0.0, 0.0, 8.0], 180.0, NULL_USERCMD.angles);
+        assert_eq!(sim.view_angles()[1], -180.0);
+        sim.spawn_think_on(&NULL_USERCMD, 1000, None);
+        assert_eq!(sim.aim, [0.0, 180.0]);
     }
 
     /// A jump's clock and origin travel as `jumpTime` and `fJumpPeak`, and

@@ -374,11 +374,12 @@ fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
 between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
 `single_shot` and `crouch_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
 `mp_carentan-tdm-ads-sniper.txt` `hip_shot`, `mp_cassino-dm-combat-uo.txt`
-`crouch_fire`: five of fourteen on the 2026-10-18 recapture of the 1.1
-files, four on the 2026-10-17 one); whether a snapshot lands on it is the cmd grid's business, so
-`combat_uo_ab` leaves that lone sample out of the `weapAnim` sets it
-compares; `playerstate_combat_ab`, whose 1.1 captures all log their cmds
-(1.13), keeps it. UO's jeep passenger
+`sustained_fire` and `crouch_fire`: six of fourteen on the 2026-10-18
+recapture of the 1.1 files and the 2026-10-19 one of the UO file, four on
+the 2026-10-17 ones); whether a snapshot lands on it is the cmd grid's
+business. `playerstate_combat_ab`, whose 1.1 and UO captures all log their
+cmds (1.13) and which replays them frame for frame, keeps it and compares
+it. UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
@@ -998,6 +999,12 @@ and its first cmd while it read the weapon file, so a first step's first
 cmd covered the stall; on the grenade script that put the whole swing
 inside one chopped cmd (`weaponDelay` 15 on its first sample). The probe
 now starts the first step an iteration after the read.
+
+UO's `mp_cassino-dm-combat-uo` was retaken the same way on the 1.51b
+server (2026-10-19), and `playerstate_combat_ab` replays it on a protocol 22
+server through the same exact comparison, with no gap (VERIFIED, gate;
+`coduo-diff.md` 20). The tolerant `combat_uo_ab`, which compared value sets
+per step and dropped the rechamber's lone idle sample, is gone with it.
 
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for
@@ -2557,26 +2564,29 @@ replays on the `PROBE_IN` lines rather than the logged inputs.
 - 1.5b: every row matches, every round's direction within 2e-5. VERIFIED,
   vcod measurement.
 - 1.1d: every row matches but the rounds' directions. VERIFIED, vcod
-  measurement: all 13 leave one 65536th of yaw (0.0055 degrees) left of
-  ours, and 11 of them sit within 2e-7 of retail's once ours is turned by
-  it (`leanhit_ab::DIR_YAW_11`). INFERRED, from the constant offset on
-  every round: retail's scope froze a turn-sway yaw lag of a 65536th
-  where ours froze none (15.3). Retail's snapshots read view yaw 0 from
-  the spawn to the freeze, as ours' cmds do; which turn left the lag is
-  not found. `t_prone` (3.5e-5 low in z) and `t_right` (4.4e-5 in y, 3e-5
-  in z) stay off past that, under a 65536th of view each, so one side
-  read the hold's exact angles and the other a cmd's quantized ones,
-  though their trigger cmds sit on the frame with the cmd before 18 ms
-  ahead, as the other eleven's do (`leanhit_ab::DIR_GAPS_11`, open).
-- UO: every row matches but the shooter's `PROBE eye`, 0.166 and 0.083
-  units off ours in x and y on every row (`leanhit_ab::EYE_OFF_UO`). He
-  spawned standing on the sloped point (976, -792, -2.04889); VERIFIED,
-  live: the target probe read his `trDelta` (6, 3, -1) on the spawn
-  frame. VERIFIED, vcod measurement: ours' spawn think leaves (10, 5, -1)
-  on the same last cmd (no keys, no buttons), and the drop carries the
-  difference into his rest spot. 1.1d's think off (976, -864) gives (1, 4,
-  0) on both. No earlier capture spawned a standing 1.5b or UO body on a
-  slope (cod15-movement.md 4, "The spawn's lie-down"; open).
+  measurement: all 13 left one 65536th of yaw (0.0055 degrees) left of
+  ours. The shooter spawned at yaw 180 and the hold turned him to 0; the
+  spawn's own think fed retail's sway a last view of 180 that ours never
+  saw, and the turn off it decayed to -1 65536th by the cmd the scope froze
+  the sway on (15.3, "The spawn's view"). VERIFIED, vcod measurement: with
+  ours' spawn think running the block, 11 rounds leave within 2e-7 of
+  retail's direction with no offset. `t_prone` (3.5e-5 low in z) and
+  `t_right` (4.4e-5 in y, 3e-5 in z) stay off: ours read the hold's exact
+  angles and retail a cmd's quantized ones. VERIFIED, vcod measurement:
+  replayed with the shooter's cmd 18 ms before the trigger run after the
+  frame (`ProbeHold::lead_ms` 18), both match and seven others move off.
+  INFERRED: on retail that cmd reached the server after the frame's
+  threads in those two phases only; the capture logs no cmd's arrival
+  against the frames, so the replay cannot place it
+  (`leanhit_ab::DIR_GAPS_11`, open; 15.1, "The cmd that fires").
+- UO: every row matches, the shooter's `PROBE eye` included. He spawned
+  standing on the sloped point (976, -792, -2.04889); VERIFIED, live: the
+  target probe read his `trDelta` (6, 3, -1) on the spawn frame. Ours'
+  think left (10, 5, -1) until the spawn pin took the placed spawnpoint's
+  own float and ours placed it as retail does; VERIFIED, vcod
+  measurement: ours now leaves (6, 3, -1) and the eye rows match
+  without an offset (cod15-movement.md 4, "The think on a slope,
+  standing").
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
@@ -5338,8 +5348,68 @@ vcod: `Trajectory::evaluate_kept`, `missile::delta_at` and
 `TR_LINEAR` arm (0x2c640) keeps `dt` and each `base + delta * dt` on the
 stack the same way, so `evaluate_kept` covers a line too (a rocket's
 `pos`, a grenade's `apos`). They run under 1.1's rules
-only (`Missile::kept`). 1.5b and UO keep the `f32` arithmetic they had,
-which no capture has measured against their -O0 stores.
+only (`Missile::kept`).
+
+**The arithmetic on 1.5 and UO.** Read in the disassembly of 1.5b's
+`game.mp.i386.so` and UO's `game.mp.uo.i386.so` with
+`tools/re/annotate_func.py`. The two builds are the same -O0 code at
+different addresses: `BG_EvaluateTrajectory`, `G_BounceMissile` and
+`G_RunMissile`'s snap have the same length and the same instruction
+sequence (UO's `G_BounceMissile` 0x5d6e5 is 0x478 bytes, like 1.5b's
+0x53d71). 1.5b addresses below, UO's beside them
+where read. Each named store rounds to a float; the rest stays on the
+stack.
+
+- VERIFIED: `BG_EvaluateTrajectory` (1.5b 0x1b877, UO 0x1fe63) stores
+  `dt`, the ms times 0.001 (`.rodata 0x74e8c`), as a float (0x1ba87). The
+  gravity arm (0x1ba6c, UO 0x20058) stores each `base + delta * dt`, then
+  takes `z - dt * 400 * dt` (400 at `.rodata 0x74e9c`) off the stored `z`
+  and stores it again (0x1bade-0x1baf0). The line arm (0x1b8da) is the
+  first half alone.
+- VERIFIED: `BG_EvaluateTrajectoryDelta`'s gravity arm (0x1c002) stores
+  `dt` the same way (0x1c01d), then `delta.z - dt * 800`, rounded once
+  (0x1c053-0x1c062).
+- VERIFIED: `G_BounceMissile`'s impact time is 1.1d's: the frame length
+  times `tr.fraction` on the stack, truncated (0x53dc8-0x53de6).
+- VERIFIED: the dot is summed on the stack and stored (0x53e33, UO
+  0x5d7a7). Each `trDelta` component is `dot * -2.0 * n + v`, rounded once
+  (0x53e3c-0x53e87). The 0.125/0.5 (UO 0.1/0.4) scale is a float times a
+  float, stored.
+- VERIFIED: the rest test (0x53fbc) and the event gate (0x54180) are
+  1.1d's: the change's components stored, the sum of squares on the stack,
+  passed to `sqrt` as a double, the root stored.
+- VERIFIED: the nudge stores each `0.1 * n` component, then each
+  `currentOrigin + d` (0x54057-0x540de).
+- VERIFIED: `G_RunMissile`'s 0.001 move test reads the stored-length
+  `VectorNormalize` (0x54c61; `x87::normalize_stored`).
+- VERIFIED: the ground snap (0x5501f-0x55073, UO 0x5f477) is 1.1d's:
+  `trBase.z` takes `((endpos.z + 1.5) - currentOrigin.z) + trBase.z`,
+  rounded once, and `currentOrigin.z` takes `endpos.z + 1.5`.
+- VERIFIED: UO's sky push (0x5f24e-0x5f284) is `n * -2.0 + endpos`, each
+  component rounded once, which a float add of the exact `2 n` gives.
+
+VERIFIED, live (retail 1.5b, mp_brecourt, 2026-10-19,
+`mp_brecourt-scriptmodel-roll-1.5.txt`, `probe_scriptmodel`'s prone
+part): both frags miss the target and bounce up the field's terrain over
+four contacts to rest. With the `f32` arithmetic vcod ran before, every
+base from the second contact sat one float step off retail's in `y`; with
+the stores above every base is retail's to the bit. VERIFIED, live
+(retail 1.5b, `mp_carentan-scriptmodel-throw-1.5.txt`): the second frag's
+wall bounce at x 1583.775 sat 4 steps off in `z` before and is exact
+after. VERIFIED, live (retail UO, mp_brecourt, 2026-10-19,
+`mp_brecourt-scriptmodel-roll-uo.txt`): the second frag's four terrain
+contacts are retail's to the bit, but they were before the port too; no
+UO capture taken so far (that one, mp_foy, mp_dawnville, the carentan
+throws, the harbor water frag) separates the two arithmetics, so UO's
+side rests on the disassembly. A frag striking a body (the first frag in
+the UO brecourt capture, the carentan prone captures) still lands a few
+float steps off in `z`: the bone trace's own stores, which vcod does not
+port (`cod11-turrets.md` 13.5).
+
+vcod: `Trajectory::evaluate_stored`, `missile::delta_at` and
+`Missile::bounce` port these under 1.5's and UO's rules (`!Missile::kept`).
+`scriptmodel_ab`'s `a_frag_rolls_up_terrain_like_retail_on_15` and
+`_on_uo` compare the bits.
 
 ### 12.6 1.5's and UO's fall test
 
@@ -7264,7 +7334,9 @@ one that pulled the trigger.
   captures tapped in the grid's frame and logged no input by cmd, and
   their `DIR_GAPS_*` lists stayed open; their 2026-10-19 rerun with
   `probe_tapwait 1` replays without them on the plain windows and the
-  `PROBE_IN` lines, but for 1.1d's frozen yaw lag and two rounds (3.6).
+  `PROBE_IN` lines, but for two 1.1d rounds whose cmd before the trigger
+  ran after the frame on retail (3.6). A fixture that logs the shooter's
+  own `commandTime` with each snapshot would place every such cmd.
 - The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
   `-press-1.5` replay with the shooter's sway state logged per cmd). The
   shooter holds the sight from his first cmd (12450, `in=10:16`), but
@@ -7402,6 +7474,29 @@ reads below, and the constants; INFERRED: the conditions.
   cgame `0x300361f0`: the client passes `1 + (swayShellShockScale - 1) *
   ease` through a shellshock and 1.0 otherwise, so the shellshock key is a
   client-side thing.
+
+**The spawn's view.** VERIFIED, 1.1d `ClientSpawn` (`0x4268c`): the
+`__bzero` of the whole `0x22c4`-byte client at `0x42804` clears the sway
+state at `client+0x2278` and the playerstate's weapon with it,
+`SetClientViewAngle` (`0x429e2`) writes the spawn's angles into
+`ps.viewangles`, and `ClientThink_real` (`0x42a82`) runs on the zeroed
+cmd. VERIFIED: the block has no weapon or `pm_type` gate (`0x3ffc4`:
+only `sessionState` 3 and 2 branch off it), and the sway reads
+`weaponDefs[ps.weapon]` straight off the table (`0x3a557`-`0x3a568`).
+INFERRED: the think's block runs on weapon 0's def, zero but its name
+(`0x35b55`), so its sway moves nothing and stores the spawn's angles as
+its last view; the loadout's first cmd then turns off them. A spawn
+point at yaw 180 is stored as 180, so the turn onto 0 reads
+`AngleSubtract(0, 180)` -180 (`0x3e968`: `while > 180` and `while <
+-180`), and the lag starts negative; vcod's quantized view reads -180
+there, which would turn it the other way. VERIFIED, vcod measurement
+(`leanhit_ab`'s 1.1d `-cmds` capture): the lag that decay leaves when the
+scope freezes it is the -1 65536th all 13 of its rounds carried (3.6).
+INFERRED: 1.5b's and UO's `ClientSpawn` make the same three calls (1.5b
+`0x3ceac`, `0x3cf1e`, `0x3cf35`; UO `0x45342`, `0x453f2`, `0x45409`) and
+their sway reads `BG_GetInfoForWeapon(ps.weapon)` (1.5b `0x32083`, UO
+`0x392d3`). VERIFIED, vcod measurement: with the spawn's block run on
+all three, every 1.5b and UO `leanhit_ab` case still passes.
 
 ### 15.4 `BG_CalculateViewAngles` (`0x3a930`)
 

@@ -865,13 +865,31 @@ mod tests {
     fn not_predictable_is_none() {
         let world = test_world(&[]);
         let mut snap = standing(5000, 0.0);
-        set(&mut snap, "pm_type", 6);
+        set(&mut snap, "pm_type", 7);
         let r = ring((5008..=5040).step_by(8), false);
         assert!(
             Predictor::default()
                 .predict(P, &snap, &r, &world, &[], &still(), &[], 0.0)
                 .is_none()
         );
+    }
+
+    /// Retail's cgame predicts its own corpse: one killed running slides on
+    /// to a stop and its eye sinks, whatever the cmds hold.
+    #[test]
+    fn a_corpse_is_predicted() {
+        let world = test_world(&[]);
+        let mut snap = standing(5000, 0.0);
+        set(&mut snap, "pm_type", 6);
+        set(&mut snap, "velocity[0]", 150.0f32.to_bits() as i32);
+        set(&mut snap, "origin[2]", 0.125f32.to_bits() as i32);
+        let r = ring((5008..=5200).step_by(8), true);
+        let v = Predictor::default()
+            .predict(P, &snap, &r, &world, &[], &still(), &[], 0.0)
+            .expect("a corpse is predicted");
+        assert!(v.pred.ps.origin.x > 0.0, "{}", v.pred.ps.origin);
+        assert_eq!(v.pred.ps.velocity.x, 0.0);
+        assert!(v.pred.ps.view_height() < 60.0);
     }
 
     /// Two frames on idle cmds: the first on a snapshot at x 0, the second
