@@ -80,11 +80,48 @@ fn read_header(name: &str, r: &mut Reader) -> Result<Header> {
 }
 
 /// The clip's own length in ms, read from the header alone: a caller that only
-/// needs the timing does not pay for the tracks. Rounded, since the animation
-/// channels count in whole ms.
+/// needs the timing does not pay for the tracks. The engine's
+/// `XAnimGetLength` syscall (`cod_lnxded` 0x08088b3d..0x08088b5b): frames
+/// over the float framerate times 1000.0 on the x87 stack, stored under a
+/// 0xc00 control word, so truncated (player-model-anim-system.md, "The
+/// weapon channel").
 pub fn duration_ms(name: &str, data: &[u8]) -> Result<u32> {
     let h = read_header(name, &mut Reader::new(data))?;
-    Ok(((h.frame_count - 1) as f32 / h.framerate * 1000.0).round() as u32)
+    Ok(x87_length_ms(h.frame_count - 1, h.framerate as u32))
+}
+
+/// `(int)(frames / fps * 1000.0)` in 80-bit extended precision, rounding
+/// each step to a 64-bit mantissa (nearest even) and truncating the store.
+fn x87_length_ms(frames: u32, fps: u32) -> u32 {
+    if frames == 0 || fps == 0 {
+        return 0;
+    }
+    // Rounds `m * 2^-e` (m > 0) to a 64-bit mantissa.
+    fn round64(m: u128, e: i32) -> (u128, i32) {
+        let bits = 128 - m.leading_zeros() as i32;
+        if bits <= 64 {
+            return (m, e);
+        }
+        let sh = bits - 64;
+        let (mut q, rem, half) = (m >> sh, m & ((1 << sh) - 1), 1u128 << (sh - 1));
+        if rem > half || (rem == half && q & 1 == 1) {
+            q += 1;
+        }
+        (q, e - sh)
+    }
+    // The quotient, with enough bits below the mantissa to round it.
+    let shift = 100;
+    let num = u128::from(frames) << shift;
+    let (mut q, rem) = (num / u128::from(fps), num % u128::from(fps));
+    // A sticky bit, so an inexact tie rounds up.
+    if rem != 0 {
+        q = (q << 1) | 1;
+    } else {
+        q <<= 1;
+    }
+    let (q, e) = round64(q, shift + 1);
+    let (p, e) = round64(q * 1000, e);
+    (if e >= 0 { p >> e } else { p << -e }) as u32
 }
 
 /// A track's key frame list: an explicit index list only when
@@ -326,6 +363,17 @@ pub fn load(fs: &Pk3Fs, name: &str) -> Result<XAnim> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_clip_length_truncates_as_the_engine_stores_it() {
+        // 1.1d's death clip: 3066.67 reads 3066 (retail's `legsTimer` 3116).
+        assert_eq!(x87_length_ms(92, 30), 3066);
+        assert_eq!(x87_length_ms(58, 30), 1933);
+        assert_eq!(x87_length_ms(60, 30), 2000);
+        // A tenth rounds up in extended precision, so it stays whole.
+        assert_eq!(x87_length_ms(3, 30), 100);
+        assert_eq!(x87_length_ms(1, 3), 333);
+    }
 
     /// 3 frames at 30 fps; bone 0 full-quat with sparse rot keys, bone 1 simple.
     fn fixture() -> Vec<u8> {

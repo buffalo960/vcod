@@ -314,6 +314,10 @@ pub fn set_player_angles(
     let held = host.client_prone_cone[slot].map_or(angles, |cone| cone.hold(angles));
     let field = cx.intern_folded("angles");
     host.set_field(cx, entity_receiver(recv)?, field, Value::Vector(held))?;
+    // The DObj stands in `r.currentAngles` until the next cmd.
+    if let Some(s) = host.dobj_posed.get_mut(slot) {
+        s.set_angles(Some(held));
+    }
     host.client_sim_ops
         .push((slot, SimOp::SetViewAngles { angles }));
     Ok(Value::Undefined)

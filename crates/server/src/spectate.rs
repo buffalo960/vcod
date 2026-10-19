@@ -1845,12 +1845,15 @@ impl ClientSim {
     /// The health itself is the host's and arrives through the mirror.
     /// `rng` is the server's own draw state: the two anims here are the ones
     /// the script lists several of, and retail picks among them at random.
+    /// `now_ms` is the frame clock the death clip's phase starts on,
+    /// `cmd_ms` the client's last processed cmd's serverTime, which its
+    /// timers count from (combat doc 16.4, "The dying body").
     pub fn take_damage(
         &mut self,
         op: &SimOp,
         anims: Option<&AnimInputs>,
         rng: &mut u64,
-        now_ms: i32,
+        (now_ms, cmd_ms): (i32, i32),
     ) {
         let SimOp::Damaged {
             damage,
@@ -1916,7 +1919,7 @@ impl ClientSim {
             sel.torso = None;
             let resolve = |name: &str| inputs.anims.wire_of(name);
             let length = |name: &str| inputs.anims.length_ms(name);
-            self.anim.event(&sel, now_ms, now_ms, resolve, length);
+            self.anim.event(&sel, now_ms, cmd_ms, resolve, length);
         }
         self.anim.restart_torso_empty(now_ms);
     }
@@ -2045,8 +2048,8 @@ impl ClientSim {
         })
     }
 
-    /// The controls the frame's skeleton builds eased to, which the record
-    /// keeps for the next end frame's ease (coduo-vehicles.md 13).
+    /// The controls the last skeleton build eased to, which the record
+    /// keeps for the next build's ease (coduo-vehicles.md 13).
     pub fn keep_eased(&mut self, c: vcod_common::playerpose::Controllers) {
         if self.pose.eased.is_some() {
             self.pose.eased = Some(c);
@@ -2144,17 +2147,11 @@ impl ClientSim {
             seat_ramp: Default::default(),
             ease_ms: frametime_ms,
         };
-        // The hook runs the controls toward this frame's targets
-        // (docs/research/coduo-vehicles.md 14, "The controllers").
+        // The end frame only sets the targets: the hook eases toward them
+        // on each skeleton build that follows (`combat::DobjStamps`;
+        // docs/research/coduo-vehicles.md 14, "The controllers").
         if vcod_common::playerpose::Controllers::eased(self.ps.rules) {
-            self.pose.eased = match self.pose.target_controllers() {
-                Some(target) => {
-                    let mut c = eased.unwrap_or_default();
-                    c.ease_toward(&target, frametime_ms);
-                    Some(c)
-                }
-                None => eased,
-            };
+            self.pose.eased = Some(eased.unwrap_or_default());
         }
         if let Some(a) = anims {
             let goal = self
@@ -2407,10 +2404,11 @@ impl ClientSim {
         };
         set("clientNum", client_num);
         set("iCompassFriendInfo", self.compass_friend);
-        set(
-            "commandTime",
-            self.frozen_command_time.unwrap_or(command_time),
-        );
+        let command_time = self.frozen_command_time.unwrap_or(command_time);
+        set("commandTime", command_time);
+        let (legs_timer, torso_timer) = self.anim.timers(command_time);
+        set("legsTimer", legs_timer);
+        set("torsoTimer", torso_timer);
         // Mode-dependent.
         set("pm_type", self.wire_pm_type());
         set("eFlags", self.ps_eflags());
@@ -3887,7 +3885,7 @@ mod tests {
             dead_yaw: 0,
             fatal: false,
         };
-        sim.take_damage(&op, None, &mut 1, 1000);
+        sim.take_damage(&op, None, &mut 1, (1000, 1000));
         sim.health = 26;
         sim.end_frame(1000);
         let w = sim.to_wire(p, 0, 0);
@@ -3902,7 +3900,7 @@ mod tests {
     fn a_hit_writes_the_feedback_the_capture_measured() {
         let p = &PROTOCOL_V1;
         let mut sim = target();
-        sim.take_damage(&hit_op(67, false), None, &mut 1, 1000);
+        sim.take_damage(&hit_op(67, false), None, &mut 1, (1000, 1000));
         sim.health = 33; // the host's mirror
         sim.end_frame(1000);
         let w = sim.to_wire(p, 0, 0);
@@ -3921,7 +3919,7 @@ mod tests {
             sim.ps.velocity
         );
 
-        sim.take_damage(&hit_op(10, false), None, &mut 1, 1300);
+        sim.take_damage(&hit_op(10, false), None, &mut 1, (1300, 1300));
         sim.health = 23;
         sim.end_frame(1300);
         let w = sim.to_wire(p, 0, 0);
@@ -3933,7 +3931,7 @@ mod tests {
             "no second EV_PAIN inside 700 ms"
         );
 
-        sim.take_damage(&hit_op(10, false), None, &mut 1, 1800);
+        sim.take_damage(&hit_op(10, false), None, &mut 1, (1800, 1800));
         sim.health = 13;
         sim.end_frame(1800);
         let w = sim.to_wire(p, 0, 0);
@@ -3962,7 +3960,7 @@ mod tests {
         let mut sim = ClientSim::spectator([0.0; 3], 0.0, NULL_USERCMD.angles);
         sim.become_player([0.0; 3], 0.0, NULL_USERCMD.angles);
         assert_eq!(sim.body(3).map(|b| b.contents), Some(CONTENTS_BODY));
-        sim.take_damage(&hit_op(100, true), None, &mut 1, 1000);
+        sim.take_damage(&hit_op(100, true), None, &mut 1, (1000, 1000));
         assert_eq!(sim.contents, CONTENTS_CORPSE);
         let b = sim.body(3).expect("a corpse stays linked");
         assert_eq!(b.contents & (MASK_PLAYERSOLID | MASK_DEADSOLID), 0);
@@ -3983,7 +3981,7 @@ mod tests {
         for _ in 0..20 {
             sim.step(&NULL_USERCMD, 0.05, Some(MoveWorld::bare(&w_test)), &[]);
         }
-        sim.take_damage(&op(false), None, &mut 1, 1000);
+        sim.take_damage(&op(false), None, &mut 1, (1000, 1000));
         sim.health = 33;
         sim.end_frame(1000);
         for _ in 0..10 {
@@ -3991,7 +3989,7 @@ mod tests {
         }
         assert_eq!(sim.ps.velocity.length(), 0.0, "the knockback has decayed");
 
-        sim.take_damage(&op(true), None, &mut 1, 2000);
+        sim.take_damage(&op(true), None, &mut 1, (2000, 2000));
         sim.health = 0;
         sim.end_frame(2000);
         assert!(sim.dead);
@@ -4079,7 +4077,7 @@ mod tests {
             dead_yaw: 0,
             fatal: false,
         };
-        sim.take_damage(&op, None, &mut 1, 500);
+        sim.take_damage(&op, None, &mut 1, (500, 500));
         sim.end_frame(500);
         let w = sim.to_wire(p, 0, 0);
         assert_eq!(w.field_i32(p, "damageYaw"), 255);

@@ -405,18 +405,19 @@ fn apply_sim_ops(
     now_ms: i32,
 ) {
     for (slot, op) in rt.take_sim_ops() {
-        let Some(sim) = clients
-            .get_mut(slot)
-            .and_then(Option::as_mut)
-            .and_then(|c| c.sim.as_mut())
-        else {
+        let Some(c) = clients.get_mut(slot).and_then(Option::as_mut) else {
             continue;
         };
-        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, now_ms);
+        let st = c.last_processed_st;
+        let Some(sim) = c.sim.as_mut() else {
+            continue;
+        };
+        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, (now_ms, st));
     }
 }
 
-/// One op of [`apply_sim_ops`].
+/// One op of [`apply_sim_ops`]. `cmd_ms` is the client's last processed
+/// cmd's serverTime, the clock its anim timers run on.
 #[allow(clippy::too_many_arguments)]
 fn apply_sim_op(
     sim: &mut ClientSim,
@@ -426,7 +427,7 @@ fn apply_sim_op(
     anims: Option<&vcod_common::animtree::PlayerAnims>,
     weapons: &crate::weapons::WeaponTable,
     rng: &mut u64,
-    now_ms: i32,
+    (now_ms, cmd_ms): (i32, i32),
 ) {
     use crate::game::host::SimOp;
     match op {
@@ -449,7 +450,7 @@ fn apply_sim_op(
                 weapon: crate::items::item_name(weapons.list(), index).unwrap_or_default(),
                 weapon_class: weapons.class(index),
             });
-            sim.take_damage(&op, inputs.as_ref(), rng, now_ms);
+            sim.take_damage(&op, inputs.as_ref(), rng, (now_ms, cmd_ms));
         }
     }
 }
@@ -614,6 +615,17 @@ struct VehicleFireCtx<'a> {
 /// its muzzle against the bodies, charged to the rider with the vehicle as
 /// the inflictor. A vehicle round leaves no impact of its own: the client
 /// traces it (event parm bit 7).
+/// `GameHost::dobj_posed`, which an engine trace stamps its bodies in
+/// (`combat::DobjStamps`); empty on a host with no script.
+fn dobj_stamps(
+    script: Option<&mut script::ScriptRuntime>,
+) -> &mut [crate::game::combat::DobjStamps] {
+    match script {
+        Some(rt) => &mut rt.host.dobj_posed,
+        None => &mut [],
+    }
+}
+
 fn vehicle_fire(
     clients: &mut [Option<Client>],
     rt: &mut script::ScriptRuntime,
@@ -696,17 +708,14 @@ fn vehicle_fire(
                 .enumerate()
                 .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
                 .collect();
-            let mut bones = match (fs, anims) {
-                (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                    fs,
-                    anims,
-                    rigs: &mut *rigs,
-                    arith: vcod_common::patch::Arith::for_protocol(rt.host.defs.proto),
-                    now_ms,
-                    posed: None,
-                }),
-                _ => None,
-            };
+            let mut bones = crate::game::combat::BoneTraceCtx::of(
+                fs,
+                anims,
+                &mut *rigs,
+                now_ms,
+                &mut rt.host.dobj_posed,
+                vcod_common::patch::Arith::for_protocol(rt.host.defs.proto),
+            );
             crate::game::combat::bullet_fire_from(
                 shot.attacker,
                 pass,
@@ -1339,7 +1348,8 @@ fn mirror_for_callback(
 }
 
 /// What a callback queued for `slot`, applied to its sim before its next cmd:
-/// retail's script writes the playerstate there and then.
+/// retail's script writes the playerstate there and then. `at` is the frame
+/// clock and the client's last processed cmd's serverTime.
 #[allow(clippy::too_many_arguments)]
 fn apply_callback_ops(
     rt: &mut script::ScriptRuntime,
@@ -1348,14 +1358,14 @@ fn apply_callback_ops(
     anims: Option<&vcod_common::animtree::PlayerAnims>,
     weapons: &crate::weapons::WeaponTable,
     rng: &mut u64,
-    now_ms: i32,
+    at: (i32, i32),
 ) {
     let (weapon_ops, sim_ops) = rt.take_ops_of(slot);
     for op in weapon_ops {
         apply_weapon_op(sim, op);
     }
     for op in sim_ops {
-        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, now_ms);
+        apply_sim_op(sim, rt, slot, op, anims, weapons, rng, at);
     }
     mirror_weapons_of(sim, rt, slot);
     mirror_vitals_of(sim, rt, slot);
@@ -3742,17 +3752,14 @@ impl Server {
             .script
             .as_mut()
             .map_or_else(Vec::new, |rt| rt.placed_script_models());
-        let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
-            (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                fs,
-                anims,
-                rigs: &mut self.hit_rigs,
-                arith: vcod_common::patch::Arith::for_protocol(self.proto),
-                now_ms: self.sv_time_ms,
-                posed: None,
-            }),
-            _ => None,
-        };
+        let mut bones = crate::game::combat::BoneTraceCtx::of(
+            self.fs.as_deref(),
+            self.anims.as_deref(),
+            &mut self.hit_rigs,
+            self.sv_time_ms,
+            dobj_stamps(self.script.as_mut()),
+            vcod_common::patch::Arith::for_protocol(self.proto),
+        );
         let mut v = standing_blast_victim(feet);
         v.slot = slot;
         crate::game::combat::can_damage(
@@ -7795,17 +7802,8 @@ impl Server {
             // is re-anchored on its own turn, after its parent's.
             self.pending_explosions.clear();
             let collision = self.world.as_ref().map(|w| &w.collision);
-            let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
-                (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                    fs,
-                    anims,
-                    rigs: &mut self.hit_rigs,
-                    arith: vcod_common::patch::Arith::for_protocol(self.proto),
-                    now_ms: self.sv_time_ms,
-                    posed: None,
-                }),
-                _ => None,
-            };
+            let (fs, anims, now_ms) = (self.fs.as_deref(), self.anims.as_deref(), self.sv_time_ms);
+            let arith = vcod_common::patch::Arith::for_protocol(self.proto);
             // Where a callback earlier in the walk set a client down: its
             // link moved off the one its last cmd made (`setOrigin` relinks
             // at once, combat doc 14.7), and the walk measures it there.
@@ -8026,9 +8024,21 @@ impl Server {
                                 Some(e) => rt.blast_models(e),
                                 None => rt.placed_script_models(),
                             };
-                            if let Some(hit) =
-                                blast.hit(&v, collision, &models, &bodies, bones.as_mut())
-                            {
+                            if let Some(hit) = blast.hit(
+                                &v,
+                                collision,
+                                &models,
+                                &bodies,
+                                crate::game::combat::BoneTraceCtx::of(
+                                    fs,
+                                    anims,
+                                    &mut self.hit_rigs,
+                                    now_ms,
+                                    &mut rt.host.dobj_posed,
+                                    arith,
+                                )
+                                .as_mut(),
+                            ) {
                                 rt.deliver_hits(vec![hit]);
                             }
                         }
@@ -8046,9 +8056,21 @@ impl Server {
                             }
                             let bodies = live_bodies(rt);
                             let models = rt.blast_models(id);
-                            if let Some(damage) =
-                                blast.entity_damage(&v, collision, &models, &bodies, bones.as_mut())
-                            {
+                            if let Some(damage) = blast.entity_damage(
+                                &v,
+                                collision,
+                                &models,
+                                &bodies,
+                                crate::game::combat::BoneTraceCtx::of(
+                                    fs,
+                                    anims,
+                                    &mut self.hit_rigs,
+                                    now_ms,
+                                    &mut rt.host.dobj_posed,
+                                    arith,
+                                )
+                                .as_mut(),
+                            ) {
                                 if rt.host.vehicles.live.contains_key(&v.id) {
                                     rt.damage_vehicle(
                                         v.id,
@@ -8330,7 +8352,7 @@ impl Server {
                 // `BG_PlayerAnimation` (0x41486) runs after this slot's
                 // aim trace: a higher slot's trace meets this frame's
                 // pose, a lower one's met the last (combat doc 16.1).
-                if let Some(c) = rt.take_dobj_eased(slot) {
+                if let Some(c) = rt.dobj_record(slot) {
                     sim.keep_eased(c);
                 }
                 sim.commit_pose(
@@ -8374,17 +8396,14 @@ impl Server {
                     .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
                     .collect();
                 let collision = self.world.as_ref().map(|w| &w.collision);
-                let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
-                    (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                        fs,
-                        anims,
-                        rigs: &mut self.hit_rigs,
-                        arith: vcod_common::patch::Arith::for_protocol(self.proto),
-                        now_ms: self.sv_time_ms,
-                        posed: None,
-                    }),
-                    _ => None,
-                };
+                let mut bones = crate::game::combat::BoneTraceCtx::of(
+                    self.fs.as_deref(),
+                    self.anims.as_deref(),
+                    &mut self.hit_rigs,
+                    self.sv_time_ms,
+                    &mut rt.host.dobj_posed,
+                    vcod_common::patch::Arith::for_protocol(self.proto),
+                );
                 // 1.1 and 1.5 hand `G_Damage` the gunner as the inflictor,
                 // so the callback is told his own weapon and `player_die`
                 // credits the gun (turrets doc 12.6); UO hands it the gun,
@@ -8613,6 +8632,7 @@ impl Server {
                 })
             })
             .collect();
+        let mut stamp_packet: Option<u64> = None;
         loop {
             // The oldest packet's next item across every client, its `kill`
             // ahead of its cmds.
@@ -8637,9 +8657,18 @@ impl Server {
                     next = Some((item.0, item.1, slot));
                 }
             }
-            let Some((_, is_cmd, slot)) = next else {
+            let Some((packet, is_cmd, slot)) = next else {
                 break;
             };
+            // `SV_PacketEvent` bumps the skeleton stamp ahead of each
+            // packet (`cod_lnxded` 0x0808c870): the rounds its cmds fire
+            // pose the bodies under a build of their own (movers doc 15).
+            if stamp_packet != Some(packet) {
+                stamp_packet = Some(packet);
+                if let Some(rt) = self.script.as_mut() {
+                    rt.clear_dobj_stamps();
+                }
+            }
             if !is_cmd {
                 let (_, command) = self.clients[slot].as_mut().unwrap().commands_at.remove(0);
                 match command {
@@ -9010,6 +9039,9 @@ impl Server {
             // What the passes queued for the mover reaches its sim before its
             // next cmd, as `Touch_Item` and `G_Damage` write the playerstate
             // inside this one (items doc, 13.2).
+            let st = self.clients[slot]
+                .as_ref()
+                .map_or(0, |c| c.last_processed_st);
             if let (Some(rt), Some(sim)) = (
                 self.script.as_mut(),
                 self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()),
@@ -9022,7 +9054,7 @@ impl Server {
                     self.anims.as_deref(),
                     &weapons,
                     &mut self.rng,
-                    now_ms,
+                    (now_ms, st),
                 );
             }
             if died {
@@ -9135,7 +9167,7 @@ impl Server {
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
-            now_ms,
+            (now_ms, st),
         );
     }
 
@@ -9272,22 +9304,20 @@ impl Server {
             .enumerate()
             .filter_map(|(i, c)| Some((i, c.as_ref()?.sim.as_ref()?)))
             .collect();
-        let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
-            (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                fs,
-                anims,
-                rigs: &mut self.hit_rigs,
-                arith: vcod_common::patch::Arith::for_protocol(self.proto),
-                now_ms: self.sv_time_ms,
-                posed: None,
-            }),
-            _ => None,
-        };
+
         let targets = self
             .script
             .as_ref()
             .map(|rt| rt.host.missiles.shot_targets())
             .unwrap_or_default();
+        let mut bones = crate::game::combat::BoneTraceCtx::of(
+            self.fs.as_deref(),
+            self.anims.as_deref(),
+            &mut self.hit_rigs,
+            self.sv_time_ms,
+            dobj_stamps(self.script.as_mut()),
+            vcod_common::patch::Arith::for_protocol(self.proto),
+        );
         let point = crate::game::combat::strike_point(
             muzzle,
             end,
@@ -9362,7 +9392,7 @@ impl Server {
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
-            now_ms,
+            (now_ms, st),
         );
         relink(bodies, &self.clients, slot);
     }
@@ -9434,7 +9464,7 @@ impl Server {
             self.anims.as_deref(),
             weapons,
             &mut self.rng,
-            now_ms,
+            (now_ms, st),
         );
         relink(bodies, &self.clients, slot);
     }
@@ -9525,17 +9555,14 @@ impl Server {
             let collision = self.world.as_ref().map(|w| &w.collision);
             // The locational trace's context, absent on a host with no paks
             // or no animtree; a shot then lands at hit location `none`.
-            let mut bones = match (self.fs.as_deref(), self.anims.as_deref()) {
-                (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                    fs,
-                    anims,
-                    rigs: &mut self.hit_rigs,
-                    arith: vcod_common::patch::Arith::for_protocol(self.proto),
-                    now_ms: self.sv_time_ms,
-                    posed: None,
-                }),
-                _ => None,
-            };
+            let mut bones = crate::game::combat::BoneTraceCtx::of(
+                self.fs.as_deref(),
+                self.anims.as_deref(),
+                &mut self.hit_rigs,
+                self.sv_time_ms,
+                dobj_stamps(self.script.as_mut()),
+                vcod_common::patch::Arith::for_protocol(self.proto),
+            );
             let name = crate::items::item_name(weapons.list(), weapon as usize).unwrap_or_default();
             match attack {
                 Attack::Shot(shot) => crate::game::combat::bullet_fire(
@@ -9630,7 +9657,7 @@ impl Server {
                 self.anims.as_deref(),
                 weapons,
                 &mut self.rng,
-                now_ms,
+                (now_ms, st),
             );
             relink(bodies, &self.clients, victim);
         }

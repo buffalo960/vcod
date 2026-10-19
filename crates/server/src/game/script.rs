@@ -1652,10 +1652,15 @@ impl ScriptRuntime {
         }
     }
 
-    /// The controls the slot's skeleton builds eased to past his last end
-    /// frame, once (`GameHost::dobj_eased`).
-    pub fn take_dobj_eased(&mut self, slot: usize) -> Option<vcod_common::playerpose::Controllers> {
-        self.host.dobj_eased.get_mut(slot).and_then(Option::take)
+    /// The controls the slot's last skeleton build eased to
+    /// (`GameHost::dobj_posed`).
+    pub fn dobj_record(&self, slot: usize) -> Option<vcod_common::playerpose::Controllers> {
+        self.host.dobj_posed.get(slot)?.record()
+    }
+
+    /// Starts a new skeleton stamp, as each client packet does.
+    pub fn clear_dobj_stamps(&mut self) {
+        self.host.clear_dobj_stamps();
     }
 
     /// The animtree a builtin poses a body with.
@@ -2020,6 +2025,9 @@ impl ScriptRuntime {
             return;
         };
         let host = &mut self.host;
+        if let Some(s) = host.dobj_posed.get_mut(slot) {
+            s.set_angles(None);
+        }
         self.vm.with_cx(|cx| {
             let field = cx.intern_folded("angles");
             let _ = host.set_field(cx, ent, field, Value::Vector([0.0, yaw, 0.0]));
@@ -3074,9 +3082,8 @@ impl ScriptRuntime {
                 return Some(x);
             }
         }
-        // Past the loop no script asks for a bone this frame; a callback
-        // between frames poses under the packet's own stamp.
-        self.host.clear_dobj_stamps();
+        // The end frames' traces stay under `G_RunFrame`'s stamp; the next
+        // client packet starts its own.
         None
     }
 
@@ -3102,17 +3109,14 @@ impl ScriptRuntime {
             Vec::new()
         };
         let (fs, anims) = (host.fs.clone(), host.anims.clone());
-        let mut bones = match (fs.as_deref(), anims.as_deref()) {
-            (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-                fs,
-                anims,
-                rigs: &mut host.hit_rigs,
-                arith: vcod_common::patch::Arith::for_protocol(host.defs.proto),
-                now_ms,
-                posed: None,
-            }),
-            _ => None,
-        };
+        let mut bones = crate::game::combat::BoneTraceCtx::of(
+            fs.as_deref(),
+            anims.as_deref(),
+            &mut host.hit_rigs,
+            now_ms,
+            &mut host.dobj_posed,
+            vcod_common::patch::Arith::for_protocol(host.defs.proto),
+        );
         let grenade = host.missiles.grenade_at(id);
         let turn = host
             .missiles
