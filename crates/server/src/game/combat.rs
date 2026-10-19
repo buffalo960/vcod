@@ -190,26 +190,62 @@ pub struct BoneTraceCtx<'a> {
     pub posed: Option<&'a mut [DobjStamps]>,
 }
 
-/// One client's skeleton under the frame's stamp (`GameHost::dobj_posed`):
+impl<'a> BoneTraceCtx<'a> {
+    /// The context when the host has paks and an animtree; `posed` is
+    /// `GameHost::dobj_posed`, which every engine and script trace stamps.
+    pub fn of(
+        fs: Option<&'a vcod_common::pk3::Pk3Fs>,
+        anims: Option<&'a PlayerAnims>,
+        rigs: &'a mut HitRigs,
+        now_ms: i32,
+        posed: &'a mut [DobjStamps],
+    ) -> Option<Self> {
+        Some(Self {
+            fs: fs?,
+            anims: anims?,
+            rigs,
+            now_ms,
+            posed: Some(posed),
+        })
+    }
+}
+
+/// One client's skeleton under the current stamp (`GameHost::dobj_posed`):
 /// when each bone was first posed and by which build. Each build that finds
 /// a bone missing runs the DObj's controller hook, which on 1.5 and UO eases
-/// the controls one more step (docs/research/coduo-vehicles.md 13, "The
-/// glide back").
+/// the controls one more step from where the last build left them, in this
+/// stamp or an earlier one; a stamp nothing builds in eases nothing
+/// (docs/research/coduo-vehicles.md 13, "The glide back"; cod11-movers.md
+/// 15).
 #[derive(Clone, Default, Debug)]
 pub struct DobjStamps {
     /// Each bone's posing time and build.
     bones: Vec<Option<(i32, usize)>>,
-    /// The controls each build posed with, the first the end frame's.
+    /// The controls each build posed with.
     builds: Vec<Option<vcod_common::playerpose::Controllers>>,
+    /// The controls the last build eased to (the record's `+0x408` block),
+    /// kept across stamps: the next build eases on from them.
+    record: Option<vcod_common::playerpose::Controllers>,
+    /// `r.currentAngles`, which places the DObj, while a `setPlayerAngles`
+    /// holds them (pitch and roll too) until the client's next cmd writes
+    /// `(0, view yaw, 0)` back (`SetClientViewAngle` 0x4209f,
+    /// `ClientThink_real` 0x405e2; cod11-combat.md 3.7).
+    angles: Option<[f32; 3]>,
 }
 
 impl DobjStamps {
+    /// A new stamp: every bone goes unposed, the record stays.
     pub fn clear(&mut self) {
         self.bones.clear();
         self.builds.clear();
     }
 
-    /// Stamps each bone of `want` the frame has not posed with `now_ms`
+    /// A new client in the slot: no record either.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Stamps each bone of `want` the stamp has not posed with `now_ms`
     /// under a new build (one hook run), and returns every `want` bone's
     /// stamp in order.
     pub fn stamp(
@@ -222,15 +258,21 @@ impl DobjStamps {
         self.bones.resize(n_bones, None);
         if want.iter().any(|&b| self.bones[b].is_none()) {
             let build = self.builds.len();
-            let controls = match self.builds.last() {
-                None => pose.eased,
-                Some(last) => last.map(|mut c| {
-                    if let Some(target) = pose.target_controllers() {
-                        c.ease_toward(&target, pose.ease_ms);
-                    }
-                    c
-                }),
+            // `pose.eased` is the record as the last end frame took it; 1.1
+            // (`None`) sets its controls outright.
+            let last = match self.builds.last() {
+                Some(last) => *last,
+                None => pose.eased.and(self.record.or(pose.eased)),
             };
+            let controls = last.map(|mut c| {
+                if let Some(target) = pose.target_controllers() {
+                    c.ease_toward(&target, pose.ease_ms);
+                }
+                c
+            });
+            if controls.is_some() {
+                self.record = controls;
+            }
             self.builds.push(controls);
             for &b in want {
                 self.bones[b].get_or_insert((now_ms, build));
@@ -256,12 +298,22 @@ impl DobjStamps {
         inputs
     }
 
-    /// The controls the frame's builds eased to, when any build eased past
-    /// the end frame's: the record keeps them.
-    pub fn eased_past_end_frame(&self) -> Option<vcod_common::playerpose::Controllers> {
-        (self.builds.len() > 1)
-            .then(|| self.builds.last().copied().flatten())
-            .flatten()
+    /// `setPlayerAngles` wrote `r.currentAngles`; `None` once a cmd wrote
+    /// them back.
+    pub fn set_angles(&mut self, angles: Option<[f32; 3]>) {
+        self.angles = angles;
+    }
+
+    /// The rotation a trace poses `body` in: `r.currentAngles`.
+    pub fn frame(&self, body: &HitBody) -> Quat {
+        self.angles
+            .map_or_else(|| body.frame(), vcod_common::turretpose::angles_quat)
+    }
+
+    /// The controls the last build eased to, which the end frame's record
+    /// takes (`ClientSim::keep_eased`).
+    pub fn record(&self) -> Option<vcod_common::playerpose::Controllers> {
+        self.record
     }
 }
 
@@ -1392,9 +1444,12 @@ pub fn trace_bodies_faced(
             continue;
         };
         let stamps = posed.as_deref_mut().and_then(|p| p.get_mut(body.slot));
+        let frame = stamps
+            .as_deref()
+            .map_or_else(|| body.frame(), |s| s.frame(body));
         let pose = stamped_pose(&skel, body, anims, rigs, fs, *now_ms, stamps);
         // Into the body's own frame: its `tag_origin` sits at the feet.
-        let inv = body.frame().inverse();
+        let inv = frame.inverse();
         let (ls, le) = (inv * (start - body.origin), inv * (end - body.origin));
         // A bone past `limit` lies behind what the trace already met: the
         // box can open in front of a hull or wall the bones stand behind
@@ -1413,7 +1468,7 @@ pub fn trace_bodies_faced(
             slot: body.slot,
             fraction: hit.fraction,
             hitloc,
-            normal: body.frame() * hit.normal,
+            normal: frame * hit.normal,
         });
     }
     best
@@ -2035,9 +2090,9 @@ mod tests {
         ps
     }
 
-    /// A later build in the frame eases the controls a step past the end
-    /// frame's, and a bone the first build posed keeps the first's
-    /// (coduo-vehicles.md 13, "The glide back").
+    /// Each build eases the controls a step on from the last build's, in
+    /// its stamp or an earlier one, and a bone the first build posed keeps
+    /// the first's (coduo-vehicles.md 13, "The glide back"; movers doc 15).
     #[test]
     fn each_build_eases_the_controls_once_more() {
         use vcod_common::playerpose::Controllers;
@@ -2050,18 +2105,33 @@ mod tests {
         pose.input.view = [0.0, 90.0, 0.0];
         pose.angles.torso_yaw = 40.0;
         let target = pose.target_controllers().expect("UO aims its controls");
-        let mut once = Controllers::default();
-        once.ease_toward(&target, 50);
-        assert_ne!(once, Controllers::default(), "the target moves something");
+        let steps = |n: usize| {
+            let mut c = Controllers::default();
+            for _ in 0..n {
+                c.ease_toward(&target, 50);
+            }
+            c
+        };
+        assert_ne!(steps(1), steps(2), "the target is more than a step away");
 
         let mut stamps = DobjStamps::default();
+        assert_eq!(stamps.record(), None);
         assert_eq!(stamps.stamp(4, &[0, 1], 50, &pose), [(50, 0), (50, 0)]);
+        assert_eq!(stamps.record(), Some(steps(1)));
         assert_eq!(stamps.stamp(4, &[1], 50, &pose), [(50, 0)], "no new build");
-        assert_eq!(stamps.eased_past_end_frame(), None);
+        assert_eq!(stamps.record(), Some(steps(1)));
         assert_eq!(stamps.stamp(4, &[1, 2], 50, &pose), [(50, 0), (50, 1)]);
-        assert_eq!(stamps.eased_past_end_frame(), Some(once));
+        assert_eq!(stamps.record(), Some(steps(2)));
+        // A new stamp eases on from the record, not from the end frame's.
         stamps.clear();
         assert_eq!(stamps.stamp(4, &[3], 100, &pose), [(100, 0)]);
+        assert_eq!(stamps.record(), Some(steps(3)));
+        // A stamp nothing builds in eases nothing.
+        stamps.clear();
+        stamps.clear();
+        assert_eq!(stamps.record(), Some(steps(3)));
+        stamps.reset();
+        assert_eq!(stamps.record(), None);
     }
 
     /// 1.1d truncates the origin and the point; 1.5b and UO take the

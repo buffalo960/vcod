@@ -515,15 +515,14 @@ pub struct GameHost {
     /// frame's until `G_DObjUpdateServerTime` runs past the frame's first
     /// thread pass (`G_RunFrame` 0x50653, 0x506ed), this frame's after.
     pub dobj_time_ms: i32,
-    /// When each bone of each client's skeleton was posed this frame. The
-    /// engine caches a DObj's bones under a stamp `SV_Frame` bumps once
-    /// ahead of `G_RunFrame` (`cod_lnxded` 0x0808cdf8, 0x080c4eb8), so a
-    /// bone, and every bone above it, keeps the pose the frame first asked
+    /// When each bone of each client's skeleton was posed under the
+    /// current stamp, and the controls his last build eased to. The engine
+    /// caches a DObj's bones under a stamp `SV_Frame` bumps ahead of the
+    /// bots' cmds and of `G_RunFrame`, and `SV_PacketEvent` ahead of each
+    /// client packet (`cod_lnxded` 0x0808cdf8, 0x0808c870, 0x080c4eb8), so
+    /// a bone, and every bone above it, keeps the pose the stamp first asked
     /// for (movers doc 15, "A bone asked for before the anim update").
     pub dobj_posed: Vec<crate::game::combat::DobjStamps>,
-    /// The controls a client's skeleton builds eased to past his last end
-    /// frame's, for the record (`ClientSim`'s `pose.eased`) at his next.
-    pub dobj_eased: Vec<Option<vcod_common::playerpose::Controllers>>,
     /// `level+0x29f0`, the one-shot latch `map_restart` and `exitLevel`
     /// share (docs/research/cod11-map-cycle.md section 1): 0 until one of
     /// them runs, then 1 or 2, and the second call is a script error naming
@@ -680,13 +679,9 @@ pub type SpawnPin = Option<([f32; 3], [f32; 3])>;
 pub(crate) const RNG_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
 impl GameHost {
-    /// Starts a new skeleton stamp: every client's bones go unposed, and
-    /// the controls his builds eased to wait for his next end frame.
+    /// Starts a new skeleton stamp: every client's bones go unposed.
     pub fn clear_dobj_stamps(&mut self) {
-        for (stamps, eased) in self.dobj_posed.iter_mut().zip(&mut self.dobj_eased) {
-            if let Some(c) = stamps.eased_past_end_frame() {
-                *eased = Some(c);
-            }
+        for stamps in &mut self.dobj_posed {
             stamps.clear();
         }
     }
@@ -704,8 +699,8 @@ impl GameHost {
         if let Some(v) = self.client_viewmodel.get_mut(slot) {
             *v = 0;
         }
-        if let Some(e) = self.dobj_eased.get_mut(slot) {
-            *e = None;
+        if let Some(s) = self.dobj_posed.get_mut(slot) {
+            s.reset();
         }
         if let Some(s) = self.client_shellshock.get_mut(slot) {
             *s = [0; 3];
@@ -1422,7 +1417,6 @@ impl GameHost {
             initializing: true,
             dobj_time_ms: 0,
             dobj_posed: vec![Default::default(); MAX_CLIENTS],
-            dobj_eased: vec![None; MAX_CLIENTS],
             level_latch: LevelLatch::None,
             pers_carry: Vec::new(),
             console: Vec::new(),

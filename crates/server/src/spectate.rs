@@ -2043,8 +2043,8 @@ impl ClientSim {
         })
     }
 
-    /// The controls the frame's skeleton builds eased to, which the record
-    /// keeps for the next end frame's ease (coduo-vehicles.md 13).
+    /// The controls the last skeleton build eased to, which the record
+    /// keeps for the next build's ease (coduo-vehicles.md 13).
     pub fn keep_eased(&mut self, c: vcod_common::playerpose::Controllers) {
         if self.pose.eased.is_some() {
             self.pose.eased = Some(c);
@@ -2142,17 +2142,11 @@ impl ClientSim {
             seat_ramp: Default::default(),
             ease_ms: frametime_ms,
         };
-        // The hook runs the controls toward this frame's targets
-        // (docs/research/coduo-vehicles.md 14, "The controllers").
+        // The end frame only sets the targets: the hook eases toward them
+        // on each skeleton build that follows (`combat::DobjStamps`;
+        // docs/research/coduo-vehicles.md 14, "The controllers").
         if vcod_common::playerpose::Controllers::eased(self.ps.rules) {
-            self.pose.eased = match self.pose.target_controllers() {
-                Some(target) => {
-                    let mut c = eased.unwrap_or_default();
-                    c.ease_toward(&target, frametime_ms);
-                    Some(c)
-                }
-                None => eased,
-            };
+            self.pose.eased = Some(eased.unwrap_or_default());
         }
         if let Some(a) = anims {
             let goal = self

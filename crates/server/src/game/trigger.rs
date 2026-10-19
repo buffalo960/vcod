@@ -737,16 +737,13 @@ pub fn aim_trace(
     let (lookat_f, id) = best?;
     let bodies: Vec<_> = host.client_bodies.iter().flatten().cloned().collect();
     let (fs, anims) = (host.fs.clone(), host.anims.clone());
-    let mut bones = match (fs.as_deref(), anims.as_deref()) {
-        (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
-            fs,
-            anims,
-            rigs: &mut host.hit_rigs,
-            now_ms,
-            posed: None,
-        }),
-        _ => None,
-    };
+    let mut bones = crate::game::combat::BoneTraceCtx::of(
+        fs.as_deref(),
+        anims.as_deref(),
+        &mut host.hit_rigs,
+        now_ms,
+        &mut host.dobj_posed,
+    );
     let priority = if rifle {
         &crate::game::combat::RIFLE_PRIORITY
     } else {
