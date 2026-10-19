@@ -119,7 +119,13 @@ vcod: `pmove::dead_linked_move`, which `cmd::dead_step` takes when
 `ps.linked` is set, on the server and in the predictor;
 `predictor_holds_retail_linked_corpse_1_1` matches 481 of 481 snapshots
 bit for bit (6 differed while vcod drew 7 off the snapshot, and the dead
-move would have stopped the velocity). 1.5b and UO are not captured.
+move would have stopped the velocity). VERIFIED live on 1.5b and UO the same
+way (2026-10-19, `probe_deadlink` with `COD_VERSION=1.5` and `uo`,
+ports 33571 and 33572, `mp_carentan-dm-slope-8ms-deadlink-1.5.txt` and
+`-uo.txt`): the corpse keeps (13, -157, 0) on 1.5b and (17, -199, 0) on
+UO, `groundEntityNum` 1023, for 24 s of `pm_type` 7, its eye 60 to 8.
+`predictor_holds_retail_linked_corpse_1_5` matches 479 of 479 snapshots
+and `_uo` 475 of 475 bit for bit, with no change to vcod's arm.
 
 VERIFIED, retail 1.5b through the predictor the same way (2026-10-19,
 `mp_carentan-dm-slope-8ms-states-1.5.txt`, `probe_states` with

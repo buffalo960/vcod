@@ -760,6 +760,7 @@ const UO_RUNS: &[(&str, &str)] = &[
     ("mp_foy-dm-slope-8ms-uofoot-crouch.txt", "mp_foy"),
     ("mp_foy-dm-slope-8ms-uofoot-mount.txt", "mp_foy"),
     ("mp_carentan-dm-slope-8ms-uostates-uo.txt", "mp_carentan"),
+    ("mp_carentan-dm-slope-8ms-deadlink-uo.txt", "mp_carentan"),
     ("mp_carentan-dm-slope-8ms-uoturret-uo.txt", "mp_carentan"),
     ("mp_carentan-dm-slope-8ms-speedgrav-uo.txt", "mp_carentan"),
 ];
@@ -1142,6 +1143,7 @@ fn predictor_matches_the_1_5_server_step() {
         "mp_carentan-dm-slope-8ms-turns-1.5.txt",
         "mp_carentan-dm-slope-8ms-speedgrav-1.5.txt",
         "mp_carentan-dm-slope-8ms-states-1.5.txt",
+        "mp_carentan-dm-slope-8ms-deadlink-1.5.txt",
     ]
     .iter()
     .filter_map(|file| capture_side_by_side(&PROTOCOL_V6, &fs, file, "mp_carentan").err())
@@ -1331,6 +1333,41 @@ fn predictor_holds_retail_linked_corpse_1_1() {
         &PROTOCOL_V1,
         &fs,
         "mp_carentan-dm-slope-8ms-deadlink-1.1.txt",
+        vcod_common::net::flags::PM_DEAD_LINKED,
+        400,
+        0,
+    );
+}
+
+/// The linked corpse of retail 1.5b's `probe_deadlink` capture: 1.5's
+/// dispatch sends `pm_type` 7 to the linked arm too. Needs `COD_DIR` at a
+/// 1.5 install, or a UO one (its `main/` is 1.5's).
+#[test]
+fn predictor_holds_retail_linked_corpse_1_5() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V6,
+        &fs,
+        "mp_carentan-dm-slope-8ms-deadlink-1.5.txt",
+        vcod_common::net::flags::PM_DEAD_LINKED,
+        400,
+        0,
+    );
+}
+
+/// The linked corpse of retail UO's `probe_deadlink` capture. Needs
+/// `COD_DIR` at a United Offensive install.
+#[test]
+fn predictor_holds_retail_linked_corpse_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V22,
+        &fs,
+        "mp_carentan-dm-slope-8ms-deadlink-uo.txt",
         vcod_common::net::flags::PM_DEAD_LINKED,
         400,
         0,

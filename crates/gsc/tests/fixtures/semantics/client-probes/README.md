@@ -1297,7 +1297,7 @@ a stance change's `pm_time`, the timer 1.5's corpse ladder test reads
 
 ## probe_deadlink
 
-A linked corpse (`pm_type` 7) on 1.1d: the placed allied player is linked
+A linked corpse (`pm_type` 7) on 1.1d, 1.5b and UO: the placed allied player is linked
 to a `script_origin` inside the moves script's diagonal runs, killed half a
 second later, and stays a linked corpse to the end of the run.
 `docs/research/cod11-player-clip.md` 1.1. The link wait is timed against
@@ -1311,7 +1311,11 @@ cargo run -p vcod -- --game-dir <1.1 install> --net-probe 127.0.0.1:<p> --save-s
 ```
 
 The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-deadlink-1.1.txt`,
-which `predict_ab` replays.
+which `predict_ab` replays. The same two shells with `COD_VERSION=1.5`
+(`COD_DIR` and the client's `--game-dir` at a stock 1.5 `main/`,
+`--capture-tag deadlink-1.5`) and `COD_VERSION=uo` (`--game-dir <UO
+install> --mod-dir uo`, `--capture-tag deadlink-uo`) took the `-1.5.txt`
+and `-uo.txt` captures with the same link wait.
 
 ## probe_menuresponse
 
