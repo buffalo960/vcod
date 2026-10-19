@@ -1629,6 +1629,7 @@ pub fn probe(
             } else if save_combat {
                 // The join names the weapon; the reload step is sized
                 // off its `reloadTime` rather than one rifle's number.
+                let fresh = !combat.weapon_read && !join.weapon.is_empty();
                 combat.use_weapon(fs, &join.weapon, client.configstrings());
                 if (probe_sway || save_lean)
                     && combat.aim_yaw.is_none()
@@ -1643,11 +1644,12 @@ pub fn probe(
                         longest_sightline(w, eye)
                     });
                 }
-                // The clock after the reads above: the weapon file and the
-                // sight line take 100-200 ms on the first settled snapshot,
-                // and a first step timed from before them opened with a
-                // snapshot gap and that much of its hold already spent.
-                if combat.step(Instant::now(), s) {
+                // The first step starts an iteration after the reads above:
+                // the weapon file and the sight line take 100-200 ms on the
+                // first settled snapshot, and a step begun on it opened with
+                // a snapshot gap and a first cmd whose msec spanned it, so
+                // `melee_tap`'s whole swing ran inside one chopped cmd.
+                if !fresh && combat.step(Instant::now(), s) {
                     // The sway run is a measurement: its impact lines
                     // went to stdout and there is no fixture for it.
                     if !probe_sway {
