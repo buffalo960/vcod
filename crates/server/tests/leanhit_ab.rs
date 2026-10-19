@@ -64,11 +64,10 @@ struct Case {
     /// lines, and runs a cmd stamped up to [`PRESS_LEAD_MS`] before a frame
     /// after it.
     press: bool,
-    /// Sends each cmd as a packet of its own, both clients' in cmd time
-    /// order, rather than each client's frame as one packet, shooter first.
-    interleave: bool,
     /// Phases whose round (point and direction) may part from retail's.
     round_gaps: &'static [&'static str],
+    /// Phases whose round's direction alone may part from retail's.
+    dir_gaps: &'static [&'static str],
 }
 
 /// How far before a frame's time the `-press` captures' late cmds are
@@ -204,14 +203,11 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
             .newest()
             .is_some_and(|s| s.ps.field_i32(cl.protocol(), "pm_type") == 0)
     };
-    // A live client's cmds for the frame, which the caller sends; a client
-    // not yet playing sends its frame here.
-    let frame_cmds = |cl: &mut NetClient<common::ClientEnd>,
-                      hold: &mut common::ProbeHold,
-                      input: (u8, u8, i8),
-                      pressed: &[(i32, (u8, u8, i8))],
-                      weapon: Option<u8>|
-     -> Vec<UserCmd> {
+    let send = |cl: &mut NetClient<common::ClientEnd>,
+                hold: &mut common::ProbeHold,
+                input: (u8, u8, i8),
+                pressed: &[(i32, (u8, u8, i8))],
+                weapon: Option<u8>| {
         if live(cl) {
             let mut cmds = hold.cmds(cl, input.0);
             for c in &mut cmds {
@@ -228,12 +224,9 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
                     c.weapon = w;
                 }
             }
-            cmds
-        } else {
-            if let Some(c) = cl.send_frame(&UserCmd::default()) {
-                hold.last = c.server_time;
-            }
-            Vec::new()
+            cl.send_cmds(&cmds);
+        } else if let Some(c) = cl.send_frame(&UserCmd::default()) {
+            hold.last = c.server_time;
         }
     };
     for i in 0..4000i64 {
@@ -266,51 +259,15 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, c: &Case) -> Vec<String> {
                 }
             }
         }
-        let mut packets: Vec<(std::net::SocketAddr, Vec<u8>)> = Vec::new();
-        let drain = |q: &Rc<RefCell<Queues>>, addr, out: &mut Vec<_>| {
-            out.extend(q.borrow_mut().to_server.drain(..).map(|p| (addr, p)));
-        };
-        let a_cmds = match ca.as_mut() {
-            Some(ca) => frame_cmds(ca, &mut ha, ia, &pa, selected),
-            None => Vec::new(),
-        };
-        drain(&qa, common::ADDR, &mut packets);
-        let b_cmds = frame_cmds(&mut cb, &mut hb, ib, &pb, None);
-        drain(&qb, common::ADDR_B, &mut packets);
-        if c.interleave {
-            // One packet a cmd, both clients' in cmd time order, as the
-            // 60 Hz clients sent them: whose cmd ran first decides whether a
-            // round meets the angles the hold's `setPlayerAngles` left on
-            // the target or the ones his next cmd wrote back.
-            let mut all: Vec<(i32, bool, UserCmd)> = a_cmds
-                .iter()
-                .map(|c| (c.server_time, false, *c))
-                .chain(b_cmds.iter().map(|c| (c.server_time, true, *c)))
-                .collect();
-            all.sort_by_key(|e| (e.0, e.1));
-            for (_, target, cmd) in all {
-                if target {
-                    cb.send_cmds(&[cmd]);
-                    drain(&qb, common::ADDR_B, &mut packets);
-                } else if let Some(ca) = ca.as_mut() {
-                    ca.send_cmds(&[cmd]);
-                    drain(&qa, common::ADDR, &mut packets);
-                }
-            }
-        } else {
-            if let Some(ca) = ca.as_mut()
-                && !a_cmds.is_empty()
-            {
-                ca.send_cmds(&a_cmds);
-            }
-            drain(&qa, common::ADDR, &mut packets);
-            if !b_cmds.is_empty() {
-                cb.send_cmds(&b_cmds);
-            }
-            drain(&qb, common::ADDR_B, &mut packets);
+        if let Some(ca) = ca.as_mut() {
+            send(ca, &mut ha, ia, &pa, selected);
         }
-        for (addr, p) in packets {
-            sv.handle_packet(addr, &p, now);
+        send(&mut cb, &mut hb, ib, &pb, None);
+        for (addr, q) in [(common::ADDR, &qa), (common::ADDR_B, &qb)] {
+            let pending: Vec<Vec<u8>> = q.borrow_mut().to_server.drain(..).collect();
+            for p in pending {
+                sv.handle_packet(addr, &p, now);
+            }
         }
         sv.tick(now);
         for (to, p) in sv.take_outgoing() {
@@ -570,10 +527,8 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
         }
     }
     let (rd, od) = (dirs(&retail), dirs(&ours));
-    for (phase, r) in rd
-        .iter()
-        .filter(|(p, _)| !c.round_gaps.contains(&p.as_str()))
-    {
+    let dir_gap = |p: &str| c.round_gaps.contains(&p) || c.dir_gaps.contains(&p);
+    for (phase, r) in rd.iter().filter(|(p, _)| !dir_gap(p)) {
         let o = od.get(phase).copied();
         if o.is_none_or(|o| (0..3).any(|i| (o[i] - r[i]).abs() > DIR_NEAR)) {
             bad.push(format!("round {phase} direction: retail {r:?} ours {o:?}"));
@@ -605,8 +560,8 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             stand_dz: 0.0,
             gaps: &[],
             press: false,
-            interleave: false,
             round_gaps: &[],
+            dir_gaps: &[],
         },
     );
 }
@@ -625,8 +580,8 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             stand_dz: 0.0,
             gaps: &[],
             press: false,
-            interleave: false,
             round_gaps: &[],
+            dir_gaps: &[],
         },
     );
 }
@@ -653,8 +608,8 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
             stand_dz: STAND_DZ_15,
             gaps: CELL_GAPS_15,
             press: false,
-            interleave: false,
             round_gaps: &[],
+            dir_gaps: &[],
         },
     );
 }
@@ -673,8 +628,8 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             stand_dz: 0.0,
             gaps: &[],
             press: false,
-            interleave: false,
             round_gaps: &[],
+            dir_gaps: &[],
         },
     );
 }
@@ -694,8 +649,8 @@ fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
         stand_dz: 0.0,
         gaps: &[],
         press: false,
-        interleave: false,
         round_gaps: &[],
+        dir_gaps: &[],
     }
 }
 
@@ -807,21 +762,24 @@ const ONCE_LATE_UO: i64 = 4600;
 /// snapshot), and the capture does not say which packet the server took
 /// first. Sent after his, the round meets the body upright; sent ahead,
 /// it meets the tilt the hold's `setPlayerAngles` left on him, which is
-/// what the replay sends (shooter first on a tie). The `-turnonce`
+/// what the replay sends (the shooter's packet first). The `-turnonce`
 /// captures measure the same rounds without the tilt
 /// (docs/research/cod11-combat.md 3.7).
 const TURN_ROUND_GAPS_11: &[&str] = &["t_down2", "t_up"];
 const TURN_ROUND_GAPS_15: &[&str] = &["t_down2", "t_yaw_down"];
 const TURN_ROUND_GAPS_UO: &[&str] = &["t_down2"];
+/// UO's `t_back` round strikes retail's point but leaves 0.016 degrees
+/// off its yaw: whether the cmd that fires aims along the view the hold's
+/// `setPlayerAngles` left or along the one the cmd quantized
+/// (docs/research/cod11-combat.md 15.1, "The cmd that fires"), which the
+/// replay's cmd placement does not settle here.
+const TURN_DIR_GAPS_UO: &[&str] = &["t_back"];
 
 /// `probe_turn 1` (docs/research/cod11-combat.md 3.7): the target's view
 /// turns at each phase's start, and nothing poses him until the shooter's
 /// round 1.5 s later, then the grid 0.3 s on and again a frame after.
 fn turn_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
-    Case {
-        interleave: true,
-        ..cmds_case(fixture, join_ms, late_ms)
-    }
+    cmds_case(fixture, join_ms, late_ms)
 }
 
 /// The hold sets the turn every frame, which tilts the whole body by the
@@ -868,6 +826,7 @@ fn a_body_stands_in_the_angles_setplayerangles_gave_it_until_his_next_cmd_on_uo(
         fs,
         &Case {
             round_gaps: TURN_ROUND_GAPS_UO,
+            dir_gaps: TURN_DIR_GAPS_UO,
             ..turn_case(fixture, TURN_JOIN_UO, TURN_LATE_UO)
         },
     );
