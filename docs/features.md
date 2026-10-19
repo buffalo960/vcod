@@ -173,8 +173,8 @@ something, the bullet links it.
   ladder took out of your hands. A select shows retail's weapon-slot strip,
   UO's with its satchel and binocular slots.
 - Predicts your movement by replaying unacknowledged cmds through the same
-  step the server runs, free-flying spectator, corpse and intermission
-  included. A correction eases out over 100 ms.
+  step the server runs, free-flying spectator, corpse (a linked one too) and
+  intermission included. A correction eases out over 100 ms.
 - A script's `shellShock` plays retail's effect from its `.shock` file: the
   view trails and shakes, the mouse damps, the walk slows to 0.4, the mix
   ducks under the shellshock loop. `cg_shellshock <secs> [file]` tries one
@@ -354,7 +354,9 @@ something, the bullet links it.
   at an eighth of their speed), rest (on a player too, falling once he
   leaves on 1.5 and UO; the bounce and the arc keep 1.1d's x87
   arithmetic and 1.5b's and UO's float stores, so a frag rolls over
-  terrain on retail's bits) and explode
+  terrain on retail's bits; on 1.5 and UO the bone trace takes the stores
+  too, so where the pose is retail's a strike on a body lands on retail's
+  bit) and explode
   with retail's falloff, and a blast
   walks its victims in retail's area-tree order, so the guy in front still
   eats it for the guy behind. The panzerfaust (and UO's bazooka and

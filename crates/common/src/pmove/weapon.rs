@@ -487,7 +487,7 @@ fn pm_weapon_step(
             && ps.weaponstate == WEAPON_DROPPING
             && ps.weapon_time_ms == 0
         {
-            pickup(ps, weapons, events);
+            pickup(ps, input, weapons, events);
         }
         open_cone_on_prone_move(ps, input);
         return;
@@ -503,7 +503,7 @@ fn pm_weapon_step(
         // gone from under the player -- raises on this frame and never shows
         // `weaponstate` 2.
         if ps.weaponstate == WEAPON_DROPPING && ps.weapon_time_ms == 0 {
-            pickup(ps, weapons, events);
+            pickup(ps, input, weapons, events);
         }
         open_cone_on_prone_move(ps, input);
         return;
@@ -524,7 +524,7 @@ fn pm_weapon_step(
     // "finish a weapon change": the pickup half runs only in state 2.
     if ps.weaponstate == WEAPON_DROPPING {
         if ps.weapon_time_ms == 0 {
-            pickup(ps, weapons, events);
+            pickup(ps, input, weapons, events);
         }
         return;
     }
@@ -882,18 +882,6 @@ fn hands_forced_empty(ps: &PlayerState) -> bool {
     ps.on_ladder || ps.weapon_disabled
 }
 
-/// The putaway a caller outside the machine starts: `switchToWeapon` asks for
-/// the same change a usercmd's weapon byte does, and goes through the drop
-/// and the raise rather than swapping the weapon in place (section 1.8).
-pub fn begin_switch(
-    ps: &mut PlayerState,
-    weapons: &[Option<WeaponDef>],
-    target: u8,
-    events: &mut Vec<PmEvent>,
-) -> bool {
-    putaway(ps, weapons, target, events)
-}
-
 /// Whether `to` is `from`'s `altWeapon`, the select-fire mode on the same gun
 /// (def `+0x2fc`): the switch between the two is the alt arm of the putaway
 /// and the pickup.
@@ -919,7 +907,6 @@ fn putaway(
         return false;
     }
     ps.weapon_delay_ms = 0;
-    ps.pending_weapon = target;
     ps.weaponstate = WEAPON_DROPPING;
     // The short branch of section 1.8: a weapon that is gone from under the
     // player, and a grenade still on its pin, go without a drop time, an anim
@@ -1004,21 +991,24 @@ fn alt_slot_swap(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], target: u8
     }
 }
 
-/// The pickup half of section 1.8 (`.so` 0x37d84). Retail re-reads
-/// `cmd.weapon` here; vcod raises the weapon the putaway latched, which a
-/// bot's `switchToWeapon` stand-in ([`begin_switch`]) needs, its cmds still
-/// naming the old weapon until `ps.weapon` changes. The ladder forces 0 the same way retail's
-/// `pm_flags & 0x10` does (1.5's `disableWeapon` too, 0x2e4bc): without it
-/// this raises a weapon the next frame's ladder clause holsters again.
-fn pickup(ps: &mut PlayerState, weapons: &[Option<WeaponDef>], events: &mut Vec<PmEvent>) {
-    let target = ps.pending_weapon;
-    ps.pending_weapon = 0;
+/// The pickup half of section 1.8 (`.so` 0x37d84): the weapon raised is
+/// the cmd's byte, forced to 0 on the ladder (retail's `pm_flags & 0x10`;
+/// 1.5's `disableWeapon` too, 0x2e4bc), when not held or past the table. A
+/// putaway whose cmds go back to the old byte raises the old weapon.
+fn pickup(
+    ps: &mut PlayerState,
+    input: &PmInput,
+    weapons: &[Option<WeaponDef>],
+    events: &mut Vec<PmEvent>,
+) {
+    let target = input.weapon;
     let old = ps.weapon;
-    ps.weapon = if hands_forced_empty(ps) || !holds(ps, target) {
-        0
-    } else {
-        target
-    };
+    ps.weapon =
+        if hands_forced_empty(ps) || !holds(ps, target) || usize::from(target) >= weapons.len() {
+            0
+        } else {
+            target
+        };
     // The arms are exclusive and each writes `weapAnim` once: the same
     // weapon back in hand goes idle, a different one raises. The capture's
     // `to_frag` counts the toggle flips that prove it (section 1.14).
@@ -2608,7 +2598,6 @@ mod tests {
         let events = step(&mut ps, &w, &input, 1);
         assert_eq!(events, vec![EV_PUTAWAY_WEAPON]);
         assert_eq!(ps.weaponstate, WEAPON_DROPPING);
-        assert_eq!(ps.pending_weapon, 2);
 
         let events = step(&mut ps, &w, &input, 14);
         assert_eq!(events, vec![EV_RAISE_WEAPON]);
@@ -2620,6 +2609,27 @@ mod tests {
         step(&mut ps, &w, &input, 9);
         assert_eq!(ps.weaponstate, WEAPON_RAISING);
         step(&mut ps, &w, &input, 1);
+        assert_eq!(ps.weaponstate, WEAPON_READY);
+        assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_IDLE);
+    }
+
+    /// The pickup reads the cmd's byte, not the putaway's target (section
+    /// 1.8, `.so` 0x37d84): a byte gone back to the held weapon mid-drop
+    /// brings that weapon back to idle, with no raise.
+    #[test]
+    fn the_pickup_raises_what_the_cmd_names_at_the_drop_end() {
+        let (mut ps, mut w) = armed(&carbine());
+        w.push(Some(def(0.2, 0.0, 1.0, 0.3, 8, false)));
+        give(&mut ps, 2, 3);
+        let old = ps.weapon;
+        let to = |weapon| PmInput {
+            weapon,
+            ..Default::default()
+        };
+        assert_eq!(step(&mut ps, &w, &to(2), 1), vec![EV_PUTAWAY_WEAPON]);
+        let events = step(&mut ps, &w, &to(old), 14);
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(ps.weapon, old);
         assert_eq!(ps.weaponstate, WEAPON_READY);
         assert_eq!(ps.weap_anim & !ANIM_TOGGLEBIT, WEAP_IDLE);
     }

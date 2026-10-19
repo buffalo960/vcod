@@ -519,6 +519,14 @@ pub struct CmdLog {
     /// against the step's `weapon`; `None` on a capture whose line carries
     /// no `w=`, which replays the step's switch on its own clock instead.
     pub weapons: Option<BTreeMap<usize, u8>>,
+    /// The absolute pitch and yaw shorts from each cmd on which they
+    /// change, the first always; `None` on a capture whose line carries no
+    /// `a=`, whose walks infer the view off the traces ([`walk_yaw`]).
+    pub views: Option<BTreeMap<usize, [i32; 2]>>,
+    /// `forward`, `right` and `up` from each cmd on which they change, the
+    /// first always; `None` on a capture whose line carries no `m=`, whose
+    /// cmds hold the step's base.
+    pub moves: Option<BTreeMap<usize, [i8; 3]>>,
 }
 
 impl CmdLog {
@@ -526,6 +534,26 @@ impl CmdLog {
     fn weapon(&self, i: usize, step: &Step) -> Option<u8> {
         let w = self.weapons.as_ref()?;
         Some(w.range(..=i).next_back().map_or(step.weapon, |(_, b)| *b))
+    }
+
+    /// The absolute pitch and yaw retail's cmd `i` carried, if the log has
+    /// the column.
+    fn view(&self, i: usize) -> Option<[i32; 2]> {
+        Some(*self.views.as_ref()?.range(..=i).next_back()?.1)
+    }
+
+    /// Sets cmd `i`'s view and movement: the logged ones where the log has
+    /// them, else the walk's inferred yaw and the step's base.
+    fn aim(&self, i: usize, step: &Step, cmd: &mut UserCmd) {
+        if let Some([pitch, yaw]) = self.view(i) {
+            cmd.angles[0] = pitch;
+            cmd.angles[1] = yaw;
+        } else if let Some(yaw) = walk_yaw(step, self.stamps[i]) {
+            cmd.angles[1] = yaw;
+        }
+        if let Some((_, &[f, r, u])) = self.moves.as_ref().and_then(|m| m.range(..=i).next_back()) {
+            (cmd.forward, cmd.right, cmd.up) = (f, r, u);
+        }
     }
 }
 
@@ -685,11 +713,34 @@ pub fn parse_fixture(text: &str, default_weapon: u8) -> Vec<Step> {
                     })
                     .collect()
             });
+            let views = m.get("a").map(|v| {
+                v.split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(|c| {
+                        let (i, a) = c.split_once(':').unwrap();
+                        let (p, y) = a.split_once('/').unwrap();
+                        (i.parse().unwrap(), [p.parse().unwrap(), y.parse().unwrap()])
+                    })
+                    .collect()
+            });
+            let moves = m.get("m").map(|v| {
+                v.split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(|c| {
+                        let (i, a) = c.split_once(':').unwrap();
+                        let mut it = a.split('/').map(|x| x.parse::<i8>().unwrap());
+                        let mv = [0; 3].map(|_| it.next().unwrap());
+                        (i.parse().unwrap(), mv)
+                    })
+                    .collect()
+            });
             step.cmds = Some(CmdLog {
                 start: m["start"].parse().unwrap(),
                 stamps,
                 bits,
                 weapons,
+                views,
+                moves,
             });
         } else if let Some(rest) = line.strip_prefix("!trace ") {
             let m = kv(rest);
@@ -790,8 +841,9 @@ pub struct Sample {
 /// The absolute yaw short retail's walk cmd stamped `st` carried, read off
 /// the view of the first trace whose `commandTime` reached it (the last
 /// trace's past them all). The probe's stall response turns a walk 45
-/// degrees and its `!cmds` line does not log angles, so the view is the only
-/// record of the turn; a still step sends its base yaw. `None` off a walk.
+/// degrees and a capture whose `!cmds` line has no `a=` does not log angles,
+/// so the view is the only record of the turn; a still step sends its base
+/// yaw. `None` off a walk.
 fn walk_yaw(step: &Step, st: i32) -> Option<i32> {
     if !step.walks {
         return None;
@@ -973,6 +1025,13 @@ pub fn replay_as(
                     .collect();
                 for ct in early {
                     let mut cmd = base;
+                    // A walk stands still until its clock runs
+                    // (`CombatProbe::cmd`): the probe sends the null cmd at
+                    // the held view.
+                    if step.walks {
+                        (cmd.buttons, cmd.wbuttons) = (0, 0);
+                        (cmd.forward, cmd.right, cmd.up) = (0, 0, 0);
+                    }
                     cmd.weapon = weapon_byte(step, 0, held(&cl));
                     carry.push((ct, cmd));
                 }
@@ -1009,9 +1068,7 @@ pub fn replay_as(
                         .get(&next)
                         .copied()
                         .unwrap_or((base.buttons, base.wbuttons));
-                    if let Some(yaw) = walk_yaw(step, st) {
-                        cmd.angles[1] = yaw;
-                    }
+                    log.aim(next, step, &mut cmd);
                     batch.push((st, cmd));
                     next += 1;
                 }
@@ -1046,9 +1103,7 @@ pub fn replay_as(
                     .get(&k)
                     .copied()
                     .unwrap_or((base.buttons, base.wbuttons));
-                if let Some(yaw) = walk_yaw(step, st) {
-                    cmd.angles[1] = yaw;
-                }
+                log.aim(k, step, &mut cmd);
                 carry.push((st, cmd));
             }
             shift_carried = hands_on.then_some(shift);
@@ -1816,23 +1871,16 @@ pub struct ProbeHold {
     /// the 50 ms from its time, where there are any. A `setOrigin` drop
     /// lands where its cmds' split stops it (cod11-combat.md 3.6).
     pub times: Vec<i32>,
-    /// Under [`ProbeHold::framed`], how many ms before a frame's time a
-    /// captured cmd may be stamped and still run after that frame: the net
-    /// probe stamps a cmd with the snapshot's time on its arrival, so one
-    /// stamped `lead` before it went out while the server was still
-    /// running that frame (cod11-combat.md 15.1, "The cmd that fires").
-    pub lead_ms: i32,
     /// Each captured snapshot's time and `commandTime` (the `CMDS` lines'
     /// `ct=`, sorted), the last cmd retail ran before that frame: under
     /// [`ProbeHold::framed`] the cmds sent on a snapshot are the captured
     /// ones past its `commandTime` up to the next snapshot's, which places
-    /// each cmd on retail's side of a frame, in place of
-    /// [`ProbeHold::lead_ms`]'s window (cod11-combat.md 15.1, "The cmd that
-    /// fires").
+    /// each cmd on retail's side of a frame, in place of the 50 ms from
+    /// the frame's time (cod11-combat.md 15.1, "The cmd that fires").
     pub ran: Vec<(i32, i32)>,
     /// The newest snapshot's time, view and `delta_angles` at the last
-    /// [`ProbeHold::cmds`], and the snapshot's before it: a cmd stamped
-    /// inside [`ProbeHold::lead_ms`] before the newest went out on the
+    /// [`ProbeHold::cmds`], and the snapshot's before it: under
+    /// [`ProbeHold::ran`] a cmd stamped before the newest went out on the
     /// older one.
     pub seen: [Option<SeenSnap>; 2],
 }
@@ -1840,10 +1888,13 @@ pub struct ProbeHold {
 /// A snapshot's time, view and `delta_angles`, as [`ProbeHold::seen`] keeps it.
 pub type SeenSnap = (i32, [f32; 3], [i32; 3]);
 
-/// The input changes of a client's `CMDS` lines: each `in=<k>:<buttons>:
-/// <wbuttons>:<up>` as the `serverTime` of the line's `k`-th cmd and the
-/// buttons, `wbuttons` and `up` it and the cmds after it went out with.
-pub fn cmds_inputs(text: &str, who: &str) -> Vec<(i32, (u8, u8, i8))> {
+/// A cmd's buttons, `wbuttons` and `up`.
+pub type CmdInput = (u8, u8, i8);
+
+/// Each cmd of a client's `CMDS` lines, those prefixed `who` only, in the
+/// order it went out: its `serverTime` and the input an `in=<k>:<buttons>:
+/// <wbuttons>:<up>` set on it, which the cmds after it went out with too.
+fn cmds_sent(text: &str, who: &str) -> Vec<(i32, Option<CmdInput>)> {
     let mut out = Vec::new();
     for l in text.lines() {
         let Some(rest) = l
@@ -1858,53 +1909,65 @@ pub fn cmds_inputs(text: &str, who: &str) -> Vec<(i32, (u8, u8, i8))> {
                 .and_then(|t| t.parse::<i32>().ok())
                 .expect("a CMDS start"),
         ];
+        let mut ins = BTreeMap::new();
         for tok in f {
             if let Some(d) = tok.strip_prefix("d=") {
                 for d in d.split(',').filter(|d| !d.is_empty()) {
                     times.push(times.last().unwrap() + d.parse::<i32>().expect("a CMDS step"));
                 }
-            } else if let Some(ins) = tok.strip_prefix("in=") {
-                for e in ins.split(',') {
+            } else if let Some(i) = tok.strip_prefix("in=") {
+                for e in i.split(',') {
                     let v: Vec<i32> = e.split(':').map(|x| x.parse().expect("an input")).collect();
-                    out.push((times[v[0] as usize], (v[1] as u8, v[2] as u8, v[3] as i8)));
+                    ins.insert(v[0] as usize, (v[1] as u8, v[2] as u8, v[3] as i8));
                 }
             }
         }
+        out.extend(
+            times
+                .iter()
+                .enumerate()
+                .map(|(k, &t)| (t, ins.get(&k).copied())),
+        );
     }
-    out.sort_by_key(|e| e.0);
+    out
+}
+
+/// The cmds of [`cmds_sent`] the server runs: a cmd no newer than one
+/// sent before it is skipped (`SV_UserMove`), and the net probe sends
+/// those, a stamp off a snapshot's arrival a ms under its clock's last
+/// one, or the same time twice.
+fn cmds_run(text: &str, who: &str) -> Vec<(i32, CmdInput)> {
+    let (mut out, mut input, mut newest) = (Vec::new(), (0, 0, 0), i32::MIN);
+    for (t, set) in cmds_sent(text, who) {
+        input = set.unwrap_or(input);
+        if t > newest {
+            newest = t;
+            out.push((t, input));
+        }
+    }
+    out
+}
+
+/// The input changes of a client's `CMDS` lines, keyed by the `serverTime`
+/// of the first cmd the server runs with each ([`cmds_run`]).
+pub fn cmds_inputs(text: &str, who: &str) -> Vec<(i32, CmdInput)> {
+    let mut out = Vec::new();
+    let mut last = None;
+    let changed = cmds_sent(text, who).iter().any(|c| c.1.is_some());
+    for (t, input) in cmds_run(text, who) {
+        if changed && last != Some(input) {
+            out.push((t, input));
+            last = Some(input);
+        }
+    }
     out
 }
 
 /// The cmd times of a client's `CMDS` lines (the net probe's
-/// `--probe-fall` and `--probe-uo-weapon` stdout), each line a first
-/// `serverTime` and the steps after it, those prefixed `who` only.
+/// `--probe-fall` and `--probe-uo-weapon` stdout) the server runs
+/// ([`cmds_run`]), each line a first `serverTime` and the steps after it.
 pub fn cmds_times(text: &str, who: &str) -> Vec<i32> {
-    let mut out = Vec::new();
-    for l in text.lines() {
-        let Some(rest) = l
-            .strip_prefix(who)
-            .and_then(|r| r.trim_start().strip_prefix("CMDS st="))
-        else {
-            continue;
-        };
-        let (st, rest) = rest.split_once(' ').unwrap_or((rest, ""));
-        let mut t: i32 = st.parse().expect("a CMDS start");
-        out.push(t);
-        let steps = rest
-            .split_whitespace()
-            .next()
-            .and_then(|d| d.strip_prefix("d="));
-        for d in steps
-            .into_iter()
-            .flat_map(|d| d.split(','))
-            .filter(|d| !d.is_empty())
-        {
-            t += d.parse::<i32>().expect("a CMDS step");
-            out.push(t);
-        }
-    }
-    out.sort_unstable();
-    out
+    cmds_run(text, who).into_iter().map(|c| c.0).collect()
 }
 
 /// The `ct=<serverTime>:<commandTime>` pairs of a client's `CMDS` lines,
@@ -1950,11 +2013,14 @@ impl ProbeHold {
         let mut times = Vec::new();
         if self.framed {
             let f = s.server_time;
+            // The `commandTime` of the newest snapshot logged at or before
+            // `t`, inside the logged span: a stall that kept snapshots off
+            // the client also kept its cmds off the server, so a frame in
+            // the gap ran none of them.
             let ct = |t: i32| {
-                self.ran
-                    .binary_search_by_key(&t, |e| e.0)
-                    .ok()
-                    .map(|i| self.ran[i].1)
+                let last = self.ran.last()?.0;
+                let i = self.ran.partition_point(|e| e.0 <= t);
+                (i > 0 && t <= last).then(|| self.ran[i - 1].1)
             };
             // A snapshot pair retail logged sends what retail ran between
             // the two, none included.
@@ -1966,15 +2032,18 @@ impl ProbeHold {
                     &self.times[lo..hi.max(lo)]
                 }
                 None => {
-                    let (lo, hi) = (f - self.lead_ms, f + FRAME_MS as i32 - self.lead_ms);
-                    let lo = self.times.partition_point(|&c| c < lo);
-                    let hi = self.times.partition_point(|&c| c < hi);
+                    let lo = self.times.partition_point(|&c| c < f);
+                    let hi = self.times.partition_point(|&c| c < f + FRAME_MS as i32);
                     &self.times[lo..hi]
                 }
             };
             if captured.is_empty() && ran.is_none() {
                 times.extend([f, f + 16, f + 32].into_iter().filter(|&c| c > t));
             } else {
+                // Cmds a stall held back go out late, older than a frame.
+                if ran.is_some() {
+                    t = self.last;
+                }
                 times.extend(captured.iter().copied().filter(|&c| c > t));
             }
         } else {
@@ -2002,11 +2071,7 @@ impl ProbeHold {
         let mut out = Vec::new();
         for &t in &times {
             let (v, da) = match self.seen[1] {
-                Some((_, ov, oda))
-                    if (self.lead_ms > 0 || !self.ran.is_empty()) && t < s.server_time =>
-                {
-                    (ov, oda)
-                }
+                Some((_, ov, oda)) if !self.ran.is_empty() && t < s.server_time => (ov, oda),
                 _ => (v, da),
             };
             out.push(UserCmd {

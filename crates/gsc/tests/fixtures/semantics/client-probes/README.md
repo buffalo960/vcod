@@ -1295,6 +1295,24 @@ a stance change's `pm_time`, the timer 1.5's corpse ladder test reads
 (`cod11-player-clip.md` 1.1). That capture is
 `mp_carentan-dm-slope-8ms-states-1.5.txt`.
 
+## probe_deadlink
+
+A linked corpse (`pm_type` 7) on 1.1d: the placed allied player is linked
+to a `script_origin` inside the moves script's diagonal runs, killed half a
+second later, and stays a linked corpse to the end of the run.
+`docs/research/cod11-player-clip.md` 1.1. The link wait is timed against
+this machine's join; check the capture's velocity at the link and move
+`probe_link_wait` if it reads 0. Two shells:
+
+```
+COD_DIR=<1.1 install> COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> PROBE_SECS=100 tools/run_probe.sh client-probes/probe_deadlink mp_carentan +set probe_link_wait 49.95
+# 10 s later:
+cargo run -p vcod -- --game-dir <1.1 install> --net-probe 127.0.0.1:<p> --save-slope --slope-every-state --probe-moves --probe-cmd-ms 8 --probe-team allies --probe-weapon m1carbine_mp --capture-tag deadlink-1.1 --probe-secs 75
+```
+
+The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-deadlink-1.1.txt`,
+which `predict_ab` replays.
+
 ## probe_menuresponse
 
 What `Cmd_MenuResponse_f` hands the script for each shape of `mr`, for

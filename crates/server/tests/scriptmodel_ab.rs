@@ -807,9 +807,9 @@ fn a_frag_rolls_up_terrain_like_retail_on_15() {
 /// 1.51b, whose bounce keeps 0.4 of the reflection: the second frag rolls
 /// up the grade over four contacts to retail's bit. The first strikes the
 /// target's prone body on the grade before the terrain, and that strike
-/// lands 0.007 off retail's (his pose on a grade, not the missile's
-/// arithmetic), so its states are held to retail's type and ground and to
-/// 0.01. Runs only with `COD_DIR` at a UO install.
+/// lands 0.007 off retail's (his pose on a grade, not the missile's or the
+/// bone trace's arithmetic), so its states are held to retail's type and
+/// ground and to 0.01. Runs only with `COD_DIR` at a UO install.
 #[test]
 fn a_frag_rolls_up_terrain_like_retail_on_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
@@ -928,9 +928,12 @@ const SLIDING_SPAWN_15: [f32; 3] = [976.016, -863.939, -5.89044];
 const LEVEL_SPAWN_15: [f32; 3] = [1080.0, 3488.0, -23.875];
 const LEVEL_SPAWN_UO: [f32; 3] = [1800.0, 2696.0, -23.875];
 
-/// How far ours' frag may strike and rest off retail's on a prone back,
-/// both throwers spawned alike: the strike's z lands a float step off
-/// retail's (-10.666934 against -10.666932).
+/// How far ours' frag may rest off retail's on a prone back, both
+/// throwers spawned alike. The first strike is retail's to the bit (the
+/// bone trace's float stores, cod11-combat.md 3.1, "The arithmetic on 1.5
+/// and UO"); the contacts after it land a float step or three off in z
+/// (on 1.5b -16.471392 against -16.471394), which the pose's own
+/// arithmetic leaves (3.1).
 const BACK_NEAR: f32 = 0.0001;
 
 /// mp_carentan on 1.5b, the target lying still with the body his drop
@@ -985,9 +988,9 @@ fn a_frag_strikes_a_prone_players_back_on_uo() {
 }
 
 /// The prone part on `fs`'s install against `fixture`: the first frag's
-/// first strike on the target (his number its ground), with `rests` its
-/// first rest on him, and its first four bases, each within `near` of
-/// retail's; both frags end on the floor.
+/// first strike on the target (his number its ground) retail's to the bit,
+/// with `rests` its first rest on him, and its first four bases, each
+/// within `near` of retail's; both frags end on the floor.
 fn prone_back_gate(
     fs: vcod_common::pk3::Pk3Fs,
     fixture: &str,
@@ -1016,6 +1019,12 @@ fn prone_back_gate(
             .find(|g| g.2 == 0 && (g.0 == 0) == rest)
             .map(|g| g.1)
     };
+    let (rs, os) = (on_him(&r[0], false), on_him(&o[0], false));
+    assert_eq!(
+        os.map(|b| b.map(f32::to_bits)),
+        rs.map(|b| b.map(f32::to_bits)),
+        "the first strike on him: retail {rs:?}, ours {os:?}"
+    );
     for rest in [false, true] {
         let (rb, ob) = (on_him(&r[0], rest), on_him(&o[0], rest));
         if !rest || rests {

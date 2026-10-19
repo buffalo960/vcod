@@ -1112,17 +1112,20 @@ fn predictor_matches_the_uo_server_step() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// 1.1d's spectator spell, corpse and intermission (`probe_states`) through
-/// the protocol 1 round trip. Needs `COD_DIR` at a 1.1 install.
+/// 1.1d's spectator spell, corpse and intermission (`probe_states`) and its
+/// linked corpse (`probe_deadlink`) through the protocol 1 round trip. Needs `COD_DIR` at a 1.1 install.
 #[test]
 fn predictor_matches_the_1_1_server_step() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
-    let failures: Vec<String> = ["mp_carentan-dm-slope-8ms-states-1.1.txt"]
-        .iter()
-        .filter_map(|file| capture_side_by_side(&PROTOCOL_V1, &fs, file, "mp_carentan").err())
-        .collect();
+    let failures: Vec<String> = [
+        "mp_carentan-dm-slope-8ms-states-1.1.txt",
+        "mp_carentan-dm-slope-8ms-deadlink-1.1.txt",
+    ]
+    .iter()
+    .filter_map(|file| capture_side_by_side(&PROTOCOL_V1, &fs, file, "mp_carentan").err())
+    .collect();
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
@@ -1312,6 +1315,25 @@ fn predictor_drops_retail_corpse_1_1() {
         vcod_common::net::flags::PM_DEAD,
         70,
         30,
+    );
+}
+
+/// The linked corpse of retail 1.1d's `probe_deadlink` capture, killed
+/// linked in a diagonal run: `pm_type` 7 takes the linked arm, so the
+/// velocity holds, `groundEntityNum` reads 1023 and only the eye sinks.
+/// Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn predictor_holds_retail_linked_corpse_1_1() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    retail_state_rows(
+        &PROTOCOL_V1,
+        &fs,
+        "mp_carentan-dm-slope-8ms-deadlink-1.1.txt",
+        vcod_common::net::flags::PM_DEAD_LINKED,
+        400,
+        0,
     );
 }
 

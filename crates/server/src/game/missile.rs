@@ -534,7 +534,12 @@ impl Missile {
             bones,
         ) {
             hit.tr.fraction = h.fraction;
-            hit.tr.endpos = from + travel * h.fraction;
+            let arith = if self.kept() {
+                vcod_common::patch::Arith::Kept
+            } else {
+                vcod_common::patch::Arith::Stored
+            };
+            hit.tr.endpos = crate::game::combat::trace_point(from, to, h.fraction, arith);
             hit.tr.normal = h.normal;
             hit.tr.surface_flags = 0;
             hit.player = Some(h.slot);

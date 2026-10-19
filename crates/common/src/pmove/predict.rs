@@ -32,15 +32,13 @@ pub struct Predicted {
     pub respawned: bool,
 }
 
-/// Whether a `pm_type` is one the client predicts: normal, linked, a
-/// free-flying spectator, the intermission and a dead body. Retail's
-/// `CG_PredictPlayerState` (cgame 0x300294f0) predicts every own `pm_type`;
-/// vcod draws a dead body that is linked (7) off the snapshot
+/// Whether a `pm_type` is one the client predicts: all of them, as
+/// retail's `CG_PredictPlayerState` (cgame 0x300294f0) does
 /// (docs/research/cod11-player-clip.md 1.1).
 pub fn predictable(pm_type: i32) -> bool {
     matches!(
         pm_type,
-        PM_NORMAL | PM_NORMAL_LINKED | PM_SPECTATOR | PM_INTERMISSION | PM_DEAD
+        PM_NORMAL | PM_NORMAL_LINKED | PM_SPECTATOR | PM_INTERMISSION | PM_DEAD | PM_DEAD_LINKED
     )
 }
 
@@ -194,9 +192,6 @@ pub fn from_wire(p: &Protocol, w: &msg::PlayerState, last_cmd: Option<&UserCmd>)
         ps.last_cmd_angles = [cmd.angles[0], cmd.angles[1]];
         ps.last_cmd_ads = cmd.buttons & msg::BUTTON_ADS != 0;
         ps.melee_latched = cmd.buttons & msg::BUTTON_MELEE != 0;
-        if ps.weaponstate == weapon::WEAPON_DROPPING {
-            ps.pending_weapon = cmd.weapon;
-        }
     }
 
     // `pml.previous_origin`.
@@ -243,7 +238,8 @@ pub fn run_cmd(
         // `PmoveSingle`'s dispatch sends 5 past every move (1.1 0x34456) and
         // `PM_UpdateViewAngles` returns on it (0x32d91): the cmd moves
         // nothing.
-    } else if pred.pm_type == PM_DEAD {
+    } else if matches!(pred.pm_type, PM_DEAD | PM_DEAD_LINKED) {
+        pred.ps.linked = pred.pm_type == PM_DEAD_LINKED;
         cmd::chop(pred.command_time, cmd, |_, dt| {
             cmd::dead_step(&mut pred.ps, &mut pred.ring, dt, world, pred.respawned);
             pred.ps.jump_latched
@@ -423,12 +419,10 @@ mod tests {
         assert_eq!(pred.ps.speed, 250.0);
     }
 
-    /// A putaway in flight raises the weapon the cmd at `commandTime` asked
-    /// for, not weapon 0.
+    /// The cmd at `commandTime` seeds the latches the wire lacks.
     #[test]
     fn the_cmd_at_command_time_seeds_what_the_wire_lacks() {
-        let mut w = standing(5000);
-        set(&mut w, "weaponstate", i32::from(weapon::WEAPON_DROPPING));
+        let w = standing(5000);
         let last = UserCmd {
             server_time: 5000,
             buttons: msg::BUTTON_ADS | msg::BUTTON_MELEE,
@@ -437,15 +431,9 @@ mod tests {
             ..Default::default()
         };
         let pred = from_wire(&PROTOCOL_V1, &w, Some(&last));
-        assert_eq!(pred.ps.pending_weapon, 6);
         assert_eq!(pred.ps.last_cmd_angles, [10, 20]);
         assert!(pred.ps.last_cmd_ads);
         assert!(pred.ps.melee_latched);
-        set(&mut w, "weaponstate", i32::from(weapon::WEAPON_READY));
-        assert_eq!(
-            from_wire(&PROTOCOL_V1, &w, Some(&last)).ps.pending_weapon,
-            0
-        );
     }
 
     #[test]

@@ -74,9 +74,8 @@ interpolated snapshot (0x300291d0) on four tests at
 order: the globals are demo playback, `cg_nopredict` and synchronous
 clients. So the cgame predicts its own spectator, under 0x800011
 (INFERRED), its own corpse under 0x810011 and the intermission. vcod
-predicts `pm_type` 0, 1, 4, 5 and 6 (`predict::predictable`) and clips the
-spectator with `MASK_SPECTATOR`, the same 0x800011; it draws a linked
-corpse (7) off the snapshot.
+predicts every `pm_type` (`predict::predictable`) and clips the spectator
+with `MASK_SPECTATOR`, the same 0x800011.
 
 VERIFIED, 1.1d `PmoveSingle`: the dispatch's `pm_type - 1` table at
 `.rodata` 0x70ce8 sends 5 to 0x34456, the function's exit past every move,
@@ -103,6 +102,24 @@ because `PM_CheckLadderMove`'s timer return there wants `pm_flags` 0x300
 too (UO `FUN_0003c9a6`'s opening test, 1.5 `FUN_00037330`'s); vcod's dead
 move had kept 1.1's bare `pm_time` test and held 29 of the 59 snapshots
 still.
+
+VERIFIED, the linked corpse's arm on all three servers: 1.5b's
+`PmoveSingle` table (`.rodata` 0x75ae8, GOT-relative) sends 1 and 7 to
+0x286f1, UO's (0x9b9a8) to 0x2de0a, and 6 to the default arm with 0. In
+1.1d's linked arm `PM_UpdateViewAngles` keeps its dead return (only
+`PM_UpdateLean`, whose wall clamp skips on `pm_type == 1` alone,
+0x32c63) and `PM_CheckDuck` (0x316f4) takes its `pm_type > 5` arm, the
+dead bounds and `deadViewHeight` with the flat-rate eye. VERIFIED live
+(2026-10-19, `client-probes/probe_deadlink` on 1.1d, port 33481,
+`mp_carentan-dm-slope-8ms-deadlink-1.1.txt`): a body linked to a
+`script_origin` mid diagonal run and killed half a second later keeps
+velocity (159, -159, 0) for 24 s of `pm_type` 7, reads
+`groundEntityNum` 1023 throughout and only its eye moves, 60 to 8.
+vcod: `pmove::dead_linked_move`, which `cmd::dead_step` takes when
+`ps.linked` is set, on the server and in the predictor;
+`predictor_holds_retail_linked_corpse_1_1` matches 481 of 481 snapshots
+bit for bit (6 differed while vcod drew 7 off the snapshot, and the dead
+move would have stopped the velocity). 1.5b and UO are not captured.
 
 VERIFIED, retail 1.5b through the predictor the same way (2026-10-19,
 `mp_carentan-dm-slope-8ms-states-1.5.txt`, `probe_states` with
@@ -1504,11 +1521,7 @@ The gates:
 - **A client that sends no cmds** keeps the `solid` of its last link. That
   is retail's rule too (section 4.2), not a divergence; the same holds for
   a client at intermission, whose contents go 0 without a relink.
-- **Prediction of a linked corpse.** Retail's cgame predicts every own
-  `pm_type` (section 1.1); vcod predicts 0, 1, 4, 5 and 6 and draws 7 off
-  the snapshot. Retail runs 7 through the linked arm; vcod-server runs a
-  linked corpse's cmds through the dead move, so the two would not agree.
-  No capture holds one. The spectator's clear at `pm_type` 4 is
+- **The spectator's clear** at `pm_type` 4 is
   `MASK_SPECTATOR`.
 - **The packing clamp.** VERIFIED: retail clamps all three bytes to `[1,
   255]` (section 4.1). `Body::pack_solid` clamps `zd` to `[1, 255]` and `zu`
