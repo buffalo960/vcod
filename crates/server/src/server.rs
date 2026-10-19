@@ -1328,6 +1328,7 @@ struct Touched {
     view: [f32; 3],
     /// The stance a mount saves for the release.
     stance: vcod_common::pmove::Stance,
+    prone_cone: Option<vcod_common::pmove::ProneCone>,
 }
 
 /// One client's cmds since its animation was last picked: the events they
@@ -8303,6 +8304,7 @@ impl Server {
                 // taken again after it.
                 rt.set_client_on_ground(slot, sim.on_ground());
                 rt.set_client_stance(slot, sim.ps.stance);
+                rt.set_client_prone_cone(slot, vcod_common::pmove::ProneCone::of(&sim.ps));
                 let rifle = self
                     .weapon_table
                     .get(sim.ps.weapon as usize)
@@ -8909,6 +8911,7 @@ impl Server {
                 eye: sim.ps.view().eye.into(),
                 view: sim.view_angles(),
                 stance: sim.ps.stance,
+                prone_cone: vcod_common::pmove::ProneCone::of(&sim.ps),
             };
             round.last_cmd = Some(cmd);
             sim.pers_cmd = cmd;
@@ -8945,6 +8948,7 @@ impl Server {
                 rt.set_client_pm_type(t.slot, t.pm_type);
                 rt.set_client_on_ground(t.slot, t.on_ground);
                 rt.set_client_stance(t.slot, t.stance);
+                rt.set_client_prone_cone(t.slot, t.prone_cone);
                 // Ahead of `weapon_changes`, which lands after the script
                 // frame: a grab tests `ps.weapon` as this cmd left it.
                 if let Some(w) = t.weapon {
