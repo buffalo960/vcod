@@ -153,6 +153,25 @@ impl Trajectory {
         )
     }
 
+    /// 1.5b's and United Offensive's server `BG_EvaluateTrajectory` (1.5b
+    /// `.so` 0x1b877, UO 0x1fe63) for a gravity arc or a line: `dt` stored
+    /// as a float, each component's `base + delta * dt` rounded once into
+    /// its store (1.5b 0x1b8da, 0x1ba6c), then an arc's stored `z` less
+    /// `dt * 400 * dt` on the stack, rounded once (0x1bade). Other types are
+    /// [`Trajectory::evaluate`]'s.
+    pub fn evaluate_stored(&self, at_ms: i32) -> Vec3 {
+        if self.tr_type != TR_LINEAR && self.tr_type != TR_GRAVITY {
+            return self.evaluate(at_ms);
+        }
+        let dt = f64::from((at_ms - self.tr_time) as f32 * 0.001);
+        let r = (self.base.as_dvec3() + self.delta.as_dvec3() * dt).as_vec3();
+        if self.tr_type == TR_LINEAR {
+            return r;
+        }
+        let half_g = f64::from(0.5 * DEFAULT_GRAVITY);
+        r.with_z((f64::from(r.z) - dt * half_g * dt) as f32)
+    }
+
     /// The inverse of [`Trajectory::read`]: every word of the `prefix` trajectory.
     pub fn write(&self, ent: &mut EntityState, p: &Protocol, prefix: &str) {
         let mut seti = |name: &str, v: i32| {

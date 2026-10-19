@@ -186,13 +186,16 @@ fn ours_pinned(
                 missiles.insert(*num);
                 let slot = (i("eventSequence") - 1) & 3;
                 lines.push(format!(
-                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} apos {} {} {} \
-                     atraj {} {} {} {} {} etype {} ev {} parm {}",
+                    "VEH {} missile {num} type {} base {:.3} {:.3} {:.3} bits {:#x} {:#x} {:#x} \
+                     apos {} {} {} atraj {} {} {} {} {} etype {} ev {} parm {}",
                     snap.server_time,
                     i("pos.trType"),
                     f("pos.trBase[0]"),
                     f("pos.trBase[1]"),
                     f("pos.trBase[2]"),
+                    f("pos.trBase[0]").to_bits(),
+                    f("pos.trBase[1]").to_bits(),
+                    f("pos.trBase[2]").to_bits(),
                     f("apos.trBase[0]"),
                     f("apos.trBase[1]"),
                     f("apos.trBase[2]"),
