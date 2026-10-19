@@ -3548,9 +3548,9 @@ before the change and after: the corpse slid 56.4 and 21.8 units, the live
 player 58.9 and 54.7. The probe clients send a cmd every 16 ms plus their
 own loop time on either server, so the cmd count is the client's; the
 residual 3 units are within what one run of each measures, which this pair
-of runs does not settle. Not modelled: `pm_type` 7, a dead player still
-linked, which takes `0x34220` and does not move at all; `dead_move` runs
-for it as for 6.
+of runs does not settle. `pm_type` 7, a dead player still
+linked, takes `0x34220` and does not move at all: vcod runs
+`dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
 
 ---
 
