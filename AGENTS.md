@@ -625,7 +625,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
 so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   locational bone trace and its hit point (`BoneTraceCtx::arith`, 3.1). A 1.5 or
   UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
-  a replay world in a test sets it too. The client's world runs
+  a replay world in a test sets it too. A 1.5 or UO body's bones for a
+  trace or a tag link come from the engine's own unnormalized anim
+  records and skeleton build (`PoseBuffer::stored_worlds`, combat doc
+  3.1, "The pose on 1.5 and UO"), not the glam pose. The client's world runs
   `Arith::for_client()` on every protocol: the Windows clients are one
   MSVC build that stores some of those and keeps the rest (8), so a
   client replay of a Linux capture corrects in the last bits.

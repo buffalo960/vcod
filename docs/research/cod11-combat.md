@@ -2190,7 +2190,9 @@ branches:
   zero the fraction and return; a segment that leaves the box goes on to
   the next bone with the flag set. INFERRED, off `SV_ClipMoveToEntity` (UO
   0x809aa78): with no bone hit the two bytes are ORed into the trace's
-  start-solid and all-solid. vcod's `bone_trace` returns at once on either.
+  start-solid and all-solid. vcod's `bone_trace` follows the rule on both
+  builds (`a_segment_leaving_a_box_it_starts_in_goes_on`); nothing in vcod
+  reads the start-solid flag of a walk that scored no bone.
 
 So the engine's box record is 40 bytes, `{ vec3 mins; vec3 maxs; vec3
 sphereCentre; float radius }`. The file supplies the first 24; INFERRED that
@@ -2235,14 +2237,9 @@ sequence apart from addresses and struct offsets in each pair:
 
 vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
 matrix, the slab), `HitBody::axis_stored`, `combat::trace_point` for a
-round, a swing and a missile. The bone's quaternion and origin are still
-vcod's pose, composed in `f32` (`PoseBuffer::bone_worlds`); retail's
-skeleton build composes them through its own stores (UO 0x80c8056, the
-product with each component rounded once, and 0x80c7f9a, the child's
-offset through the parent's stored matrix). INFERRED, not ported: ported
-alone on the captures below it moved UO's mp_carentan slide further from
-retail's (1-3 steps where it was 1), so the local poses it composes are
-not yet retail's bits either.
+round, a swing, a missile and a `bulletTrace` that stops on a body. The
+bone's quaternion and origin come from the engine's own pose (next
+section).
 
 VERIFIED, vcod measurement (`scriptmodel_ab`, the prone captures): before
 the port a frag's first strike on a prone body on mp_carentan landed 4
@@ -2250,9 +2247,93 @@ float steps off retail's z on both 1.5b captures and on UO
 (-10.666936 against -10.666932); the frame, slab and end point alone
 brought it to 1 step and left the rest on him 10 off; with the stored
 matrix the strike is retail's bit on all three and the contacts after it
-sit 1 to 3 steps off in z. The UO mp_brecourt strike on a graded prone
-body stays 118 steps off in y and 447 in z: the pose on the grade, not
-the trace.
+sit 1 to 3 steps off in z.
+
+#### The pose on 1.5 and UO
+
+The bones a 1.5b or UO trace meets are not a normalized pose. VERIFIED,
+read out of a live UO 1.51b server under gdb (2026-10-19,
+`client-probes/probe_pronebones` with `probe_rays 1`, the prone target
+on mp_brecourt's grade): at `SV_LocationalTraceModel`'s entry (UO
+0x80c7394) the DObj's skeleton (`dobj+4`, `dobj+0x17` bones) holds a
+64-byte matrix per bone from `+0x30` and then a 32-byte record per bone:
+a quaternion, a weight and a translation. At the skeleton build's entry
+(0x80c5c96) the records hold the frame's local pose: each animated
+bone's quaternion is its key's four shorts times `1 / 32767` (0x80ea1ac,
+float `0x38000100`), not normalized (`|q|^2 - 1` from -2.3e-5 to
+1.2e-5 over the body), and a bone no clip keys holds its xmodel bind
+rotation's shorts the same way, `w` rebuilt in integers as a key's is.
+The build turned those records into every matrix and world record of
+the dump to the bit (vcod measurement, a Python run of the functions
+below on the dumped records). The same holds on 1.5b
+(`cod_lnxded` 1.5b, trace 0x80d2000, build 0x80d0902, one layout).
+
+- VERIFIED, the sampler (UO 0x80b9b72, 0x80ba17a, the end-key arm
+  0x80ba782): per bone a clip tracks, each short lerped between its two
+  keys by the stored fraction `(frame - key) / (next - key)` and times
+  the stored `weight / 32767` is added to the record's sum, each sum
+  stored; translations lerp and scale by the weight the same way; the
+  weight is added to the record's `+0x10`. A track with no rotation
+  adds the weight to `w`.
+- VERIFIED, the tree walk's arithmetic (UO 0x80bdbdc, called by the
+  anim calc 0x80bf2a8 on the root at weight 1 into the records): the
+  root's division multiplies every sum by the stored `1 / w`; a nested
+  node's normalization scales by the stored `w / (float)sqrt(|q|^2)`,
+  the square root libm's double. INFERRED, off its branches: a node
+  with one weighted child passes the call to it at its own weight; with
+  two or more, the first child writes the buffer and the rest add to it,
+  then the root divides by the summed weight and a nested node
+  normalizes its sum to its weight in place or, with a buffer of its
+  own, adds it so normalized into its parent's. VERIFIED, the dump: a
+  clip that plays alone reaches the build as its raw shorts. INFERRED:
+  vcod's two-level legs/torso node list stands for the tree, with the
+  nodes and their clips in vcod's order; no capture yet checks a blend's
+  summation order.
+- VERIFIED, the controls (game.mp.uo `G_DObjSetLocalTag` 0x88e34,
+  `G_DObjSetControlTagAngles` 0x88ec0, both through 0x88cf6): the
+  record is `QuatMultiply(roll, QuatMultiply(pitch, yaw))` (0x4d25f,
+  each component stored), each half angle `(float)(pi / 360) * angle`
+  passed as a float and its sine and cosine stored (0x4f464), the
+  weight 0 and the translation the tag's (the origin for a control).
+- VERIFIED, the build's arithmetic (UO 0x80c5c96): a bone's quaternion
+  is its record times its parent's (0x80c8056) or, for a control bone,
+  the other order (0x80c818e, the control in model space), each
+  component stored; its matrix off that quaternion (0x80c7d82, above);
+  its origin is its record's translation plus its xmodel bind position
+  (stored), turned through the parent's matrix and added to the parent's
+  origin, each component rounded once (0x80c7f9a). INFERRED, off its
+  branches: a root keeps its record, the control mask picks 0x80c818e,
+  and a part's bone that repeats an earlier part's copies that bone's
+  record and matrix.
+
+vcod: `skeleton::Record`, kept by `PoseBuffer::blend_nodes` and the
+controllers, `PoseBuffer::stored_worlds` (the build), read by the stored
+bone trace and by a client parent's tag in `linkTo`
+(`link::client_bone_stored`, `G_CalcTagParentAxis` through the parent's
+stored `AnglesToAxis` and `Frame::within_stored`).
+
+VERIFIED, vcod measurement (`pronepose_ab`'s `probe_rays` gates, the
+target's own cmds replayed): on UO the target's origin, eight bone marks
+and all 406 rays a frame that stop on him are retail's bits; before the
+port the rays sat 1 to 139 steps off. Every record and world record of
+the gdb dump matches ours. On 1.5b the origin and the marks are
+retail's bits and the rays sit within 3 steps: 1.5b's prone idle moves,
+and the dump's locals sit up to 8 steps off ours where a key is lerped,
+the frame fraction vcod takes off its clip's seconds where the engine
+steps a float time every frame (`RAY_STEPS_15`).
+
+VERIFIED, vcod measurement (`scriptmodel_ab`, the UO mp_brecourt roll):
+the first frag strikes the prone target's legs and rests on the grade
+by them. On the 2026-10-19 capture, which logged neither client's cmds,
+the strike lands 0.007 off retail's (118 steps in y, 447 in z) whatever
+the pose's arithmetic. VERIFIED, three reruns of that recipe
+(2026-10-20): the target's drop onto the grade left his `fTorsoHeight`
+at -0.487 and -0.516 in the two runs that lay him along 270 (-0.425 and
+-0.491 in UO `probe_pronebones` runs on the same spot, -0.445 on 1.5b), and
+the first frag rested at (1666.97, 840.95) and (1667.06, 841.31): the
+strike rides the drop. On the rerun whose cmds both clients logged
+(`-roll-uo-cmds.txt`), with those cmds replayed, both frags' every state
+is retail's to the bit.
 
 ### 3.2 The 48-byte trace result
 
@@ -7266,7 +7347,8 @@ The other walks and links (2026-10-18):
 
 Not routed through the tree: the
 relink `G_RunFrame` makes of every client when `g_bounds_width` or
-`g_bounds_height` changes (0x5082f, a debug cvar vcod does not register);
+`g_bounds_height_standing` changes (0x5082f, cheat cvars whose change vcod
+ignores, cod11-gsc-object-model.md 16.2);
 `func_*` entities, which vcod spawns none of. vcod raises the `"touch"` notifies at the
 top of the next script frame in the order the walk made them and hands the
 `"trigger"` queue out in retail's rounds (`ScriptRuntime::trigger_rounds`);

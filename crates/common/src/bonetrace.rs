@@ -3,8 +3,8 @@
 //! `docs/research/cod11-combat.md` section 3.
 
 use crate::patch::Arith;
-use crate::skeleton::{PoseBuffer, Skeleton};
-use glam::{Quat, Vec3};
+use crate::skeleton::{PoseBuffer, Skeleton, axes_stored};
+use glam::Vec3;
 
 /// The winning bone, in the frame the ray was given in.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,8 +14,8 @@ pub struct BoneHit {
     pub hit_location: u8,
     /// Skeleton bone index.
     pub bone: usize,
-    /// The ray started inside this bone's box, which retail reports as
-    /// start-solid and returns on at once.
+    /// The segment lies inside this bone's box end to end, which retail
+    /// reports as all-solid at fraction 0 and returns on at once.
     pub start_solid: bool,
     /// The struck face's outward normal, a signed axis of the bone's frame
     /// turned into the ray's (combat doc 3.1); zero on a start-solid.
@@ -74,8 +74,10 @@ fn slab(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, bool, Vec3)>
 /// so far is skipped before any geometry runs, a box is clipped to the
 /// fraction found so far (`limit` before any), so it scores only where the
 /// segment enters it no farther, a higher priority then takes the hit, an
-/// equal one only when nearer, and a segment that starts inside a box
-/// returns at once. A higher priority beats distance only in bone order.
+/// equal one only when nearer. A segment inside a box end to end returns
+/// at once; one that starts inside a box and leaves it scores nothing on
+/// that bone and the walk goes on (1.1d `cod_lnxded` 0x80c4bc5, UO
+/// 0x80c7a8a). A higher priority beats distance only in bone order.
 pub fn bone_trace(
     skel: &Skeleton,
     pose: &PoseBuffer,
@@ -102,6 +104,10 @@ pub fn bone_trace(
         let Some((t, inside, n)) = slab(ls, le - ls, b.hit_mins, b.hit_maxs) else {
             continue;
         };
+        let ends_in = (0..3).all(|a| le[a] >= b.hit_mins[a] && le[a] <= b.hit_maxs[a]);
+        if inside && !ends_in {
+            continue;
+        }
         if inside {
             return Some(BoneHit {
                 fraction: 0.0,
@@ -162,32 +168,6 @@ pub fn into_frame_stored(p: Vec3, rows: &[Vec3; 3], origin: Vec3) -> Vec3 {
     Vec3::new(dot(rows[0]), dot(rows[1]), dot(rows[2]))
 }
 
-/// A bone's axes off its quaternion, as UO's skeleton build writes its
-/// matrix (0x80c7d82 from 0x80c6289): `2 / |q|^2` and every product
-/// stored, each element rounded once.
-fn axes_stored(q: Quat) -> [Vec3; 3] {
-    let f = f64::from;
-    let (x, y, z, w) = (q.x, q.y, q.z, q.w);
-    let n = st(f(st(f(x) * f(x))) + f(st(f(y) * f(y))) + f(st(f(z) * f(z))) + f(w) * f(w));
-    if n == 0.0 {
-        return [Vec3::X, Vec3::Y, Vec3::Z];
-    }
-    let s = f(st(2.0 / f(n)));
-    let xx = f(st(f(st(f(x) * f(x))) * s));
-    let yy = f(st(f(st(f(y) * f(y))) * s));
-    let zz = f(st(f(st(f(z) * f(z))) * s));
-    let xs = f(st(f(x) * s));
-    let (xy, xz, xw) = (f(st(xs * f(y))), f(st(xs * f(z))), f(st(xs * f(w))));
-    let ys = f(st(f(y) * s));
-    let (yz, yw) = (f(st(ys * f(z))), f(st(ys * f(w))));
-    let zw = f(st(f(z) * f(w) * s));
-    [
-        Vec3::new(st(1.0 - (yy + zz)), st(xy + zw), st(xz - yw)),
-        Vec3::new(st(xy - zw), st(1.0 - (xx + zz)), st(yz + xw)),
-        Vec3::new(st(xz + yw), st(yz - xw), st(1.0 - (xx + yy))),
-    ]
-}
-
 /// 1.5b's and UO's slab test, store for store (UO 0x80c788a..0x80c7a8a).
 fn bone_trace_stored(
     skel: &Skeleton,
@@ -197,7 +177,15 @@ fn bone_trace_stored(
     priority: &PriorityMap,
     limit: f32,
 ) -> Option<BoneHit> {
-    let worlds = pose.bone_worlds(skel);
+    // Retail's build off the engine-side records where the pose kept them.
+    let worlds: Vec<(Vec3, [Vec3; 3])> = match pose.stored_worlds(skel) {
+        Some(w) => w.iter().map(|b| (b.origin, b.axes)).collect(),
+        None => pose
+            .bone_worlds(skel)
+            .iter()
+            .map(|&(p, q)| (p, axes_stored(q.to_array())))
+            .collect(),
+    };
     let mut best: Option<BoneHit> = None;
     let mut fraction = limit;
     let mut best_priority = MIN_PRIORITY;
@@ -209,14 +197,13 @@ fn bone_trace_stored(
         if prio < best_priority {
             continue;
         }
-        let (bp, br) = worlds[bi];
-        let rows = axes_stored(br);
+        let (bp, rows) = worlds[bi];
         let (ls, le) = (
             into_frame_stored(start, &rows, bp),
             into_frame_stored(end, &rows, bp),
         );
         let (mut enter, mut exit) = (0.0f32, fraction);
-        let mut starts_in = true;
+        let (mut starts_in, mut ends_in) = (true, true);
         let mut face: Option<(usize, f32)> = None;
         for (sign, planes) in [(-1.0f32, b.hit_mins), (1.0, b.hit_maxs)] {
             for axis in 0..3 {
@@ -236,6 +223,7 @@ fn bone_trace_stored(
                         face = Some((axis, sign));
                     }
                 } else if d2 > 0.0 {
+                    ends_in = false;
                     let den = st(f64::from(d1) - f64::from(d2));
                     if f64::from(d1) > f64::from(exit) * f64::from(den) {
                         exit = st(f64::from(d1) / f64::from(den));
@@ -246,11 +234,12 @@ fn bone_trace_stored(
                 }
             }
         }
+        // One that starts inside and leaves flags the trace start-solid,
+        // which nothing reads, and scores nothing here (UO 0x80c7a8a).
+        if starts_in && !ends_in {
+            continue;
+        }
         if starts_in {
-            // Retail returns only on a segment inside the box end to end;
-            // one that leaves it flags the trace start-solid and the walk
-            // goes on (UO 0x80c7a8a, 1.1d 0x80c4bc5). Both return here, as
-            // [`bone_trace`] does (combat doc 3.1).
             return Some(BoneHit {
                 fraction: 0.0,
                 hit_location: b.hit_location,
@@ -280,6 +269,7 @@ fn bone_trace_stored(
 mod tests {
     use super::*;
     use crate::xmodel::{Bone, XModel};
+    use glam::Quat;
 
     /// `riflePriorityMap` (combat doc, 2.3).
     const RIFLE: PriorityMap = [1, 9, 9, 9, 8, 7, 6, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 0];
@@ -358,11 +348,14 @@ mod tests {
     #[test]
     fn stored_axes_follow_the_quaternion() {
         let q = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        let [x, y, z] = axes_stored(q);
+        let [x, y, z] = axes_stored(q.to_array());
         assert!((x - Vec3::Y).abs().max_element() < 1e-6, "{x}");
         assert!((y + Vec3::X).abs().max_element() < 1e-6, "{y}");
         assert_eq!(z, Vec3::Z);
-        assert_eq!(axes_stored(Quat::IDENTITY), [Vec3::X, Vec3::Y, Vec3::Z]);
+        assert_eq!(
+            axes_stored(Quat::IDENTITY.to_array()),
+            [Vec3::X, Vec3::Y, Vec3::Z]
+        );
     }
 
     #[test]
@@ -417,16 +410,37 @@ mod tests {
         assert!(shoot(&skel, &pose, Vec3::ZERO).is_none());
     }
 
+    /// A segment that starts inside a box and leaves it scores nothing on
+    /// that bone: the walk goes on to the head behind it, on both builds.
     #[test]
-    fn a_segment_starting_inside_a_box_is_start_solid() {
+    fn a_segment_leaving_a_box_it_starts_in_goes_on() {
         let (skel, pose) = rig(vec![
             bone("torso", Vec3::new(0.0, 0.0, 0.0), Vec3::splat(5.0), 4),
             bone("head", Vec3::new(50.0, 0.0, 0.0), Vec3::splat(2.0), 2),
         ]);
-        let hit = shoot(&skel, &pose, Vec3::ZERO).unwrap();
-        assert!(hit.start_solid);
-        assert_eq!(hit.fraction, 0.0);
-        assert_eq!(hit.hit_location, 4); // returns at once, never reaches the head
+        for arith in [Arith::Kept, Arith::Stored] {
+            let to = Vec3::X * 100.0;
+            let hit = bone_trace_in(&skel, &pose, Vec3::ZERO, to, &RIFLE, 1.0, arith).unwrap();
+            assert!(!hit.start_solid);
+            assert_eq!(hit.hit_location, 2);
+            assert!((hit.fraction - 0.48).abs() < 1e-3, "{}", hit.fraction);
+        }
+    }
+
+    /// A segment inside a box end to end is all-solid at fraction 0, and the
+    /// walk stops there.
+    #[test]
+    fn a_segment_inside_a_box_is_all_solid() {
+        let (skel, pose) = rig(vec![
+            bone("torso", Vec3::new(0.0, 0.0, 0.0), Vec3::splat(5.0), 4),
+            bone("head", Vec3::new(3.0, 0.0, 0.0), Vec3::splat(2.0), 2),
+        ]);
+        for arith in [Arith::Kept, Arith::Stored] {
+            let to = Vec3::X * 2.0;
+            let hit = bone_trace_in(&skel, &pose, Vec3::ZERO, to, &RIFLE, 1.0, arith).unwrap();
+            assert!(hit.start_solid);
+            assert_eq!((hit.fraction, hit.hit_location), (0.0, 4));
+        }
     }
 
     /// The link box is only a broad phase: a ray can cross the column a
