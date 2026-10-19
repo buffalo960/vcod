@@ -2463,7 +2463,8 @@ Against ours (`leanhit_ab`, cmds as above, each capture's join times):
 VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-18, `probe_leanhit`
 with `probe_bones`, `probe_fall`, `probe_pin` and `probe_stamp` set,
 fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
-`-cmds-uo.txt`, each with both net probe clients' `CMDS` lines):
+`-cmds-uo.txt`, each with both net probe clients' `CMDS` lines; since
+2026-10-19 those fixtures hold a rerun with `probe_tapwait 1`, below):
 
 - The drop. `probe_fall` logs each player's height off his spot for ten
   frames after each `setOrigin` (`PROBE fall`). He settles in one frame,
@@ -2498,13 +2499,41 @@ fixtures `mp_carentan-leanhit-cmds.txt`, `-cmds-1.5.txt` and
 - The rounds. The damage callback logs each round's direction
   (`PROBE dir`). VERIFIED, vcod measurement: with the aim block on the
   last frame's clock (15.1) and the hit-box clip (3.1), every round's part
-  and point match on all three servers. The directions match to 2e-5 but
+  and point match on all three servers. The directions matched to 2e-5 but
   for up to 8e-5 (0.02 units at the target) on the shooter's left lean
   against the target's right on all three, every phase in which the target
-  leans or lies on 1.5b and UO, and two more on UO
-  (`leanhit_ab::DIR_GAPS_*`). Each is which view the round read, the
-  hold's exact angles or a cmd's quantized ones (15.1, "The cmd that
-  fires").
+  leans or lies on 1.5b and UO, and two more on UO. Each is which view the
+  round read, the hold's exact angles or a cmd's quantized ones (15.1,
+  "The cmd that fires"), and these runs tapped in the grid's frame.
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, 2026-10-19, the same
+recipe with `probe_tapwait 1`, ports 33251-33253, now the `-cmds`
+fixtures): a second run of the `-press` recipe, which `leanhit_ab`
+replays on the `PROBE_IN` lines rather than the logged inputs.
+
+- 1.5b: every row matches, every round's direction within 2e-5. VERIFIED,
+  vcod measurement.
+- 1.1d: every row matches but the rounds' directions. VERIFIED, vcod
+  measurement: all 13 leave one 65536th of yaw (0.0055 degrees) left of
+  ours, and 11 of them sit within 2e-7 of retail's once ours is turned by
+  it (`leanhit_ab::DIR_YAW_11`). INFERRED, from the constant offset on
+  every round: retail's scope froze a turn-sway yaw lag of a 65536th
+  where ours froze none (15.3). Retail's snapshots read view yaw 0 from
+  the spawn to the freeze, as ours' cmds do; which turn left the lag is
+  not found. `t_prone` (3.5e-5 low in z) and `t_right` (4.4e-5 in y, 3e-5
+  in z) stay off past that, under a 65536th of view each, so one side
+  read the hold's exact angles and the other a cmd's quantized ones,
+  though their trigger cmds sit on the frame with the cmd before 18 ms
+  ahead, as the other eleven's do (`leanhit_ab::DIR_GAPS_11`, open).
+- UO: every row matches but the shooter's `PROBE eye`, 0.166 and 0.083
+  units off ours in x and y on every row (`leanhit_ab::EYE_OFF_UO`). He
+  spawned standing on the sloped point (976, -792, -2.04889); VERIFIED,
+  live: the target probe read his `trDelta` (6, 3, -1) on the spawn
+  frame. VERIFIED, vcod measurement: ours' spawn think leaves (10, 5, -1)
+  on the same last cmd (no keys, no buttons), and the drop carries the
+  difference into his rest spot. 1.1d's think off (976, -864) gives (1, 4,
+  0) on both. No earlier capture spawned a standing 1.5b or UO body on a
+  slope (cod15-movement.md 4, "The spawn's lie-down"; open).
 
 **The leaning eye's PVS.** VERIFIED, live (retail 1.1d, mp_carentan tdm,
 2026-10-17, `client-probes/probe_leanpvs`, fixture
@@ -7031,7 +7060,7 @@ order and every gate, which are control flow.
 
 The `level.time` the block reads is the one a cmd runs on, the last
 frame's: cmds run ahead of `G_RunFrame` (player-clip doc 8.12). VERIFIED,
-vcod measurement (`leanhit_ab`'s `-cmds` captures, 1.1d, 1.5b and UO, each
+vcod measurement (`leanhit_ab`'s first `-cmds` captures, 2026-10-18, 1.1d, 1.5b and UO, each
 round's direction logged by the damage callback): fed the frame's own
 time, ours' scoped rounds left 0.01 to 0.02 degrees off retail's in pitch
 and yaw. Read as a shift of the idle's sines, the pitch residual of 12
@@ -7097,8 +7126,11 @@ one that pulled the trigger.
   and UO runs leaves within 2e-5 of retail's direction, and so does
   every 1.5b round since its sight test was ported (below). The target's
   `setOrigin` drop under the same lead lands 0.21 off retail's first
-  fall row, so its cmds keep the plain windows (open). The `-cmds` captures' `DIR_GAPS_*` stay: they tap in
-  the grid's frame and log no input by cmd.
+  fall row, so its cmds keep the plain windows (open). The first `-cmds`
+  captures tapped in the grid's frame and logged no input by cmd, and
+  their `DIR_GAPS_*` lists stayed open; their 2026-10-19 rerun with
+  `probe_tapwait 1` replays without them on the plain windows and the
+  `PROBE_IN` lines, but for 1.1d's frozen yaw lag and two rounds (3.6).
 - The 1.5b first round's lag, read 2026-10-18 (vcod measurement, the
   `-press-1.5` replay with the shooter's sway state logged per cmd). The
   shooter holds the sight from his first cmd (12450, `in=10:16`), but

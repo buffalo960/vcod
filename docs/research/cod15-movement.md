@@ -351,6 +351,20 @@ three `a_spawn_lies_down_on_its_own_yaw_*` gates hold the heading, the
 prone body and every bone to retail's; `specspawn_ab` holds the spectator's
 spawn frame.
 
+The think on a slope, standing (open). VERIFIED, live (retail UO 1.51b,
+2026-10-19, `client-probes/probe_leanhit`, fixture
+`crates/server/tests/fixtures/leanhit/mp_carentan-leanhit-cmds-uo.txt`
+and the target probe's raw log): the shooter spawned standing on the tdm
+point (976, -792, -2.04889) facing 180, his last cmd a spectator's with
+no keys and no buttons, and the spawn frame's snapshot carried his
+`trDelta` as (6, 3, -1). VERIFIED, vcod measurement (`leanhit_ab`'s UO
+`-cmds` replay): ours' think leaves (10, 5, -1) there, and the hold's
+drop carries the difference into his rest spot, 0.166 and 0.083 units
+off retail's (`leanhit_ab::EYE_OFF_UO`). 1.1d's think on its zeroed cmd
+off (976, -864) gives (1, 4, 0) on both servers. The 1.5b `-cmds` run's
+target spawned on the same UO point but lay down in the think, so no
+capture yet shows a standing 1.5b think on a slope.
+
 The framed cadence elsewhere. VERIFIED, vcod measurement (2026-10-16,
 `ProbeHold::framed` forced on for every `ProbeHold` user): `scriptmodel_ab`,
 `vehicle_ram_ab` and `vehicle_shell_ab` pass either way at both installs;
