@@ -1401,6 +1401,8 @@ impl ClientSim {
         // nothing it presses reaches the mover or the weapon (combat doc,
         // 1.12 and 6, the `pm_type > 5` returns).
         if self.pm_dead {
+            // `pm_type` 7 takes the linked arm (`cmd::dead_step`).
+            self.ps.linked = self.link_to.is_some() || self.seat.is_some() || self.unseated;
             if let Some(w) = world {
                 // A corpse's landing event; nothing in it is `ClientEvents`'.
                 cmd::dead_step(&mut self.ps, &mut self.ring, dt, &w, self.respawned);
@@ -3794,6 +3796,13 @@ mod tests {
         sim.dead = true;
         sim.end_frame(0);
         assert_eq!(sim.wire_pm_type(), PM_DEAD_LINKED);
+        // A linked corpse takes the linked arm: no fall, no slide, no snap.
+        for _ in 0..10 {
+            sim.step(&run, 0.05, Some(MoveWorld::bare(&w)), &[]);
+        }
+        assert_eq!((sim.ps.origin, sim.ps.velocity), (origin, velocity));
+        assert!(!sim.on_ground());
+        assert!(sim.ps.view_height() < 60.0, "the dead eye sinks");
         // A spawn unlinks: `ClientSpawn` calls `G_EntUnlink`.
         sim.become_player([0.0; 3], 0.0, NULL_USERCMD.angles);
         assert_eq!(sim.link_to, None);

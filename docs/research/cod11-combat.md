@@ -636,7 +636,13 @@ conditions.
 - Same function: otherwise, when `pm->cmd.weapon` differs from `ps->weapon`,
   it begins a change to `cmd.weapon` provided `cmd.weapon` is 0 or the
   matching bit is set in `ps->weapons` (`ps+0x30C`), and it skips that when
-  `pm_flags & 0x4000` is set with a non-zero current weapon.
+  `pm_flags & 0x4000` is set with a non-zero current weapon. INFERRED,
+  `cod11-mantle.md` ("`pm_flags` 0x4000") and `coduo-diff.md` for 1.1d and
+  UO: no server sets that bit. 1.5b's `game.mp.i386.so` holds one
+  `or $0x4000` (0x530e7, in `turret_use`), and it lands on
+  `client+0x80`, `ps.eFlags`'s `EF_MOUNTED_PRONE`, not on `pm_flags`
+  (`ps+0xc`) (VERIFIED objdump; no `orb $0x40` into `ps+0xd` either). vcod
+  models no 0x4000 skip on any of the three.
 - Same function: it also begins a change to 0 when the player no longer owns
   `ps->weapon`.
 - dll `0x30010570`, `.so` `0x37a9c`, the putaway: the target must be in
@@ -667,6 +673,10 @@ conditions.
 - dll `0x300107c0`, the pickup half, which runs only in state 2: the new
   weapon is `cmd.weapon`, forced to 0 when `pm_flags & 0x10` is set, when the
   player does not own it, or when it exceeds the weapon count.
+  vcod: `weapon::pickup` reads the cmd's byte too, so a putaway whose cmds
+  go back to the held weapon brings it back to idle. `switchToWeapon`
+  writes no playerstate; a bot answers its `a <n>` (9.8) by moving its own
+  byte (`Bot::observe`), as a cgame's selection would.
 - Same function: it writes `ps->weapon`, refreshes the cached weapon def, and
   when old and new are equal sets `weaponstate` 0 with `WEAP_IDLE`.
 - Same function: otherwise it sets `weaponstate` 1, raises event `0x9B`
@@ -3649,9 +3659,9 @@ before the change and after: the corpse slid 56.4 and 21.8 units, the live
 player 58.9 and 54.7. The probe clients send a cmd every 16 ms plus their
 own loop time on either server, so the cmd count is the client's; the
 residual 3 units are within what one run of each measures, which this pair
-of runs does not settle. Not modelled: `pm_type` 7, a dead player still
-linked, which takes `0x34220` and does not move at all; `dead_move` runs
-for it as for 6.
+of runs does not settle. `pm_type` 7, a dead player still
+linked, takes `0x34220` and does not move at all: vcod runs
+`dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
 
 ---
 
