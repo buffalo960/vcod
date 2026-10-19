@@ -29,9 +29,9 @@
 //! `destroy()` has freed its object needs this crate's object table and its
 //! deferred free, and nothing in them depends on the map's own entities.
 //!
-//! `probe_placespawn` is claimed here and run in `placespawn_ab.rs`, which
-//! drops the spawnpoints of all twelve stock maps rather than this capture's
-//! one.
+//! `probe_placespawn` is claimed here: it drops the spawnpoints of all
+//! twelve stock maps, which `placespawn_ab.rs` gates to the bit through
+//! `client-probes/probe_placebits` instead.
 //!
 //! `probe_loadfx_wait` is claimed here for `probe_bootstrap`'s reason: it
 //! loads effects on both sides of `level.initializing`, which only the real
