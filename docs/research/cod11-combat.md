@@ -374,11 +374,12 @@ fourteen rechambers, a sample reading `weaponstate` 0 with the idle index
 between the shot's 3 and the rechamber's 4 (`mp_pavlov-dm-combat.txt`
 `single_shot` and `crouch_fire`, `mp_pavlov-dm-ads.txt` `ads_shot`,
 `mp_carentan-tdm-ads-sniper.txt` `hip_shot`, `mp_cassino-dm-combat-uo.txt`
-`crouch_fire`: five of fourteen on the 2026-10-18 recapture of the 1.1
-files, four on the 2026-10-17 one); whether a snapshot lands on it is the cmd grid's business, so
-`combat_uo_ab` leaves that lone sample out of the `weapAnim` sets it
-compares; `playerstate_combat_ab`, whose 1.1 captures all log their cmds
-(1.13), keeps it. UO's jeep passenger
+`sustained_fire` and `crouch_fire`: six of fourteen on the 2026-10-18
+recapture of the 1.1 files and the 2026-10-19 one of the UO file, four on
+the 2026-10-17 ones); whether a snapshot lands on it is the cmd grid's
+business. `playerstate_combat_ab`, whose 1.1 and UO captures all log their
+cmds (1.13) and which replays them frame for frame, keeps it and compares
+it. UO's jeep passenger
 does the same (`coduo-vehicles.md` 7), and UO's timer (0x360fa) and 1.5's
 (0x2f5ce) have the same shape (VERIFIED decompile). This section used to infer the opposite from pavlov's
 3-to-4 step; that step spans a whole server frame of cmds, so it cannot
@@ -998,6 +999,12 @@ and its first cmd while it read the weapon file, so a first step's first
 cmd covered the stall; on the grenade script that put the whole swing
 inside one chopped cmd (`weaponDelay` 15 on its first sample). The probe
 now starts the first step an iteration after the read.
+
+UO's `mp_cassino-dm-combat-uo` was retaken the same way on the 1.51b
+server (2026-10-19), and `playerstate_combat_ab` replays it on a protocol 22
+server through the same exact comparison, with no gap (VERIFIED, gate;
+`coduo-diff.md` 20). The tolerant `combat_uo_ab`, which compared value sets
+per step and dropped the rechamber's lone idle sample, is gone with it.
 
 **As implemented.** `crates/common/src/pmove/weapon.rs` carries all of the
 above: `update_ads_flag` the flag, `ads_pm_flags` the `0x20`/`0x80` pair for
