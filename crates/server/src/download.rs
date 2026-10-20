@@ -41,6 +41,10 @@ impl Refusal {
 pub struct WwwConfig {
     pub base_url: String,
     pub disconnected: bool,
+    /// The request after a failed www transfer goes over UDP (1.5b). UO's
+    /// server clears the flag on the next message and redirects again on
+    /// the one after (cod15-protocol-diff.md 14).
+    pub udp_fallback: bool,
 }
 
 /// One client's www state (UO coduo_lnxded client +0x10c08, +0x10c0c,
@@ -52,7 +56,7 @@ pub struct WwwState {
     /// `wwwdl ack` came back: nothing more is written for the transfer.
     pub acked: bool,
     /// The last www transfer failed (`wwwdl fail`, `chkfail`): the next one
-    /// goes over UDP.
+    /// goes over UDP, or on UO waits a message ([`WwwConfig::udp_fallback`]).
     pub fallback: bool,
 }
 
@@ -180,10 +184,10 @@ impl ServerDownload {
     ///
     /// With `www` set and a client that sent `cl_wwwDownload 1`, the
     /// redirect goes out instead, on every message until `wwwdl ack`, and
-    /// nothing after it. A client without `cl_wwwDownload`, or one whose
-    /// last www transfer failed, gets the blocks: 1.5b's order, which opens
-    /// the pak before the www branch (UO's stalls the first and redirects
-    /// the second again; cod15-protocol-diff.md 14).
+    /// nothing after it. A client without `cl_wwwDownload` gets the blocks:
+    /// 1.5b's order, which opens the pak before the www branch (UO's
+    /// stalls; cod15-protocol-diff.md 14). One whose last www transfer
+    /// failed gets the blocks on 1.5b and the redirect again on UO.
     #[allow(clippy::too_many_arguments)]
     pub fn write(
         &mut self,
@@ -223,11 +227,14 @@ impl ServerDownload {
                     state.redirected = true;
                     return true;
                 }
+                state.fallback = false;
+                if !www.udp_fallback {
+                    return true;
+                }
                 log::info!(
                     "falling back to regular downloading for failed file {}",
                     self.name
                 );
-                state.fallback = false;
             }
             log::info!("clientDownload: beginning {:?}", self.name);
             state.redirected = false;
@@ -382,6 +389,7 @@ mod tests {
         WwwConfig {
             base_url: "http://127.0.0.1:31072".into(),
             disconnected,
+            udp_fallback: true,
         }
     }
 
@@ -504,6 +512,42 @@ mod tests {
         );
         assert_eq!(blocks(&w.finish(), &huff)[0].1, 10);
         assert_eq!(state, WwwState::default());
+    }
+
+    /// UO after a failed www transfer, live on coduo_lnxded 1.51b
+    /// (2026-10-20, `crates/server/tests/fixtures/handshake/www-refuse-uo.txt`): the
+    /// re-request's first message carries nothing and the next one
+    /// redirects again; no block goes over UDP.
+    #[test]
+    fn uo_redirects_again_after_a_failed_www_transfer() {
+        let huff = Huffman::new();
+        let cfg = WwwConfig {
+            udp_fallback: false,
+            ..www(false)
+        };
+        let mut state = WwwState {
+            redirected: true,
+            acked: true,
+            fallback: false,
+        };
+        assert_eq!(
+            wwwdl(&mut state, "chkfail", "vcod", "main/foo.pk3"),
+            WwwReply::CloseAndGamestate
+        );
+        let mut dl = ServerDownload::new("main/foo.pk3");
+        let first_op = |w: MsgWriter| {
+            let ops = w.finish();
+            let mut r = MsgReader::new(&ops, &huff);
+            (r.read_byte(), r.read_short())
+        };
+        let mut w = MsgWriter::new(&huff);
+        let open = |_: &str| Ok(vec![1; 10]);
+        assert!(dl.write(&mut w, 0, 4, open, Some(&cfg), true, &mut state));
+        assert_ne!(first_op(w).0, SVC_DOWNLOAD, "the first message is empty");
+        let mut w = MsgWriter::new(&huff);
+        assert!(dl.write(&mut w, 50, 4, open, Some(&cfg), true, &mut state));
+        assert_eq!(first_op(w), (SVC_DOWNLOAD, -1), "the redirect again");
+        assert!(state.redirected && !state.fallback && !state.acked);
     }
 
     #[test]
