@@ -341,6 +341,17 @@ impl AimRule {
     pub fn locks_view(self) -> bool {
         self != AimRule::Uo
     }
+
+    /// The angles the fire's `AngleVectors` reads: 1.1's the gunner's view
+    /// (0x51488), 1.5's and UO's the barrel's `angles2` plus the gun's
+    /// angles, each sum a float, roll 0 (1.5b 0x51193, UO 0x5a99a; turrets
+    /// doc 13.8).
+    pub fn fire_angles(self, view: [f32; 3], angles2: [f32; 3], gun: [f32; 3]) -> [f32; 3] {
+        match self {
+            AimRule::V1 => view,
+            AimRule::V15 | AimRule::Uo => [angles2[0] + gun[0], angles2[1] + gun[1], 0.0],
+        }
+    }
 }
 
 /// The manned aim (turrets doc 6.2, 14.3): each barrel axis follows the
@@ -893,6 +904,19 @@ mod tests {
         fire_tick(&mut r, true);
         let out: Vec<_> = (0..4).map(|_| loop_tick(&mut r, 9, false)).collect();
         assert_eq!(out, vec![(9, false), (9, false), (9, false), (0, false)]);
+    }
+
+    /// UO's fire aims along the barrel, not the gunner's view: `angles2`
+    /// plus the gun's angles, read under gdb on retail UO 1.51b with the
+    /// forward `AngleVectors` gave (turrets doc 13.8).
+    #[test]
+    fn a_uo_round_leaves_along_the_barrel() {
+        let a2 = [f32::from_bits(0x3f967800), f32::from_bits(0xbeecc000), 0.0];
+        let fire = AimRule::Uo.fire_angles([1.0, 2.0, 3.0], a2, [0.0, 229.0, 0.0]);
+        assert_eq!(
+            crate::game::spawn::angle_forward(fire).map(f32::to_bits),
+            [0xbf29781e, 0xbf3fcdb6, 0xbca8103c]
+        );
     }
 
     #[test]

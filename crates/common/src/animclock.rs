@@ -451,6 +451,7 @@ impl ChannelClock {
             },
             _ => (0.0, 0.0),
         };
+        let windowed = window.is_some();
         let blend = match window {
             None => blend_ms(anims, old_index, new_index, legs),
             Some(w) => blend_ms_windowed(anims, old_index, new_index, legs, now_ms, w),
@@ -471,10 +472,11 @@ impl ChannelClock {
             .collect();
         // A node already blending out comes back from the weight it had, in
         // the part of the blend time that distance takes.
-        let from = match fading.iter().position(|(p, _)| p.index == new_index) {
-            Some(i) => fading.remove(i).1.at(now_ms),
-            None => 0.0,
-        };
+        let back = fading
+            .iter()
+            .position(|(p, _)| p.index == new_index)
+            .map(|i| fading.remove(i));
+        let from = back.map_or(0.0, |(_, w)| w.at(now_ms));
         fading.sort_by(|a, b| b.1.at(now_ms).total_cmp(&a.1.at(now_ms)));
         fading.truncate(FADES);
         self.fading = [None; FADES];
@@ -482,16 +484,34 @@ impl ChannelClock {
             *slot = Some(f);
         }
         self.anim = wire;
-        self.current = Play {
-            index: new_index,
-            base_ms: now_ms,
-            base_s: phase * new.map_or(0.0, |n| n.duration),
-            // The goal weight call's own rate; the updater sets the real one.
-            rate: 1.0,
-            time_ms: now_ms,
-            time_t: phase_t,
-            frequency: new.map_or(0.0, |n| n.frequency),
-            looping: new.is_some_and(|n| n.looping),
+        // 1.5's and UO's setter (1.5b 0x28ced, UO 0x2ce5f) sets the phase
+        // only on a node whose weight read 0, and restarts a weighted one
+        // only from the torso (a fresh corpse's death never), so a weighted
+        // legs clip plays on from where it stands (cod11-combat.md 3.1,
+        // "The setter on a weighted node").
+        let (phase, phase_t) = if windowed && back.is_some() {
+            (0.0, 0.0)
+        } else {
+            (phase, phase_t)
+        };
+        self.current = match back {
+            Some((p, _)) if windowed && (legs || new.is_some_and(|n| n.death)) => Play {
+                base_ms: now_ms,
+                base_s: p.seconds(now_ms),
+                rate: 1.0,
+                ..p
+            },
+            _ => Play {
+                index: new_index,
+                base_ms: now_ms,
+                base_s: phase * new.map_or(0.0, |n| n.duration),
+                // The goal weight call's own rate; the updater sets the real one.
+                rate: 1.0,
+                time_ms: now_ms,
+                time_t: phase_t,
+                frequency: new.map_or(0.0, |n| n.frequency),
+                looping: new.is_some_and(|n| n.looping),
+            },
         };
         self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
         if !legs {
@@ -1009,6 +1029,52 @@ mod tests {
         let mut plain = ChannelClock::default();
         plain.update(&anims, false, fire, &seen(0.0, 0), at(2100));
         assert_eq!(weight(&plain, 2130), 1.0);
+    }
+
+    /// 1.5's and UO's setter keeps the time of a legs node that still has
+    /// weight, where 1.1's restarts it at the spread phase; the torso's
+    /// restarts it at 0 (1.5b 0x28ced, UO 0x2ce5f).
+    #[test]
+    fn a_weighted_node_keeps_its_time_on_15() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let (run, stand) = (
+            anims.wire_of("pb_combatrun_forward_loop").unwrap(),
+            anims.wire_of("pb_stand_alert").unwrap(),
+        );
+        let at = |t| Times::end_frame(t);
+        let time_of = |c: &ChannelClock, i: i32, t| {
+            c.layers(t)
+                .iter()
+                .find(|l| l.index == i)
+                .and_then(|l| l.time)
+                .unwrap()
+        };
+        let back = |windowed: bool, legs: bool| {
+            let (mut c, mut window) = (ChannelClock::default(), 0);
+            let mut set = |c: &mut ChannelClock, wire, t| {
+                if windowed {
+                    c.update_windowed(&anims, legs, wire, &seen(0.0, 0), at(t), &mut window);
+                } else {
+                    c.update(&anims, legs, wire, &seen(0.0, 0), at(t));
+                }
+            };
+            set(&mut c, run, 1000);
+            set(&mut c, stand, 2000);
+            // The run is still blending out.
+            let fading = time_of(&c, run, 2100);
+            set(&mut c, run, 2100);
+            (fading, time_of(&c, run, 2100))
+        };
+        let (fading, kept) = back(true, true);
+        assert!(fading > 0.0);
+        assert_eq!(kept.to_bits(), fading.to_bits());
+        let (fading, spread) = back(false, true);
+        assert_eq!(spread, spread_phase(2100, 3));
+        assert_ne!(spread, fading);
+        assert_eq!(back(true, false).1, 0.0);
     }
 
     /// A `FIREWEAPON` anim carries its own 30 ms blend (0x2888d).

@@ -684,6 +684,11 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   (`Server::pin_stuck_velocities`, player-clip doc 6.2).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
+- A cmd's `Pmove` is one `movetrace::Pm`, handed to every chopped step's
+  world (`MoveWorld::in_pmove`): 1.5's and UO's `PM_trace` drops bodies
+  from its mask for the rest of the cmd once a trace starts in one, and
+  its touch list is `ClientImpacts`' `"touch"` on both players, all three
+  patches. Make one per cmd, never per step (cod11-player-clip.md 13).
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat
   tag in `ClientEndFrame`, so the predictor keeps the snapshot's origin,
   and the view's 12000 pitch clamp (16000 on foot) and the jeep

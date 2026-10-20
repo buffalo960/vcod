@@ -472,7 +472,8 @@ takes `framed`, which lands him on retail's float after the script's
 - `PM_trace` (0x1e738), new: a trace starting inside a body adds it to the
   touch list, drops bodies from the mask for the rest of the move, and
   retraces. Every mover trace but `PM_GroundTraceMissed` goes through it.
-  VERIFIED. Not modelled.
+  VERIFIED. Modelled, and measured on the spawn's think
+  (cod11-player-clip.md 13).
 - `PmoveSingle`: `PM_Footsteps` runs before `PM_Weapon` (0x28889, 0x2888e;
   1.1 after, 0x34331/0x34336); the talk button keeps the sight bit
   (`buttons &= 0x12`, 0x27f5e; "The talk button" below); the ADS-prone move zeroing tests the
@@ -1049,5 +1050,5 @@ bolt delay and `disableWeapon` of 6; `pm_flags` 0x2000 keeps its place
 through the wire rewrite and 0x100000 lands on `flags::PMF_WEAPON_DISABLED`. The client reads the bob cvars out
 of the mirror on a 1.5 server (`pmove::BobCvars`, the defaults elsewhere)
 and draws the eye bob on both. The ADS-prone zeroing runs on every patch
-(`coduo-movement.md` 13). Not modelled: `PM_trace` and the talk-button
-zeroing. The near-ground sight test is (section 5).
+(`coduo-movement.md` 13). `PM_trace` runs as `MoveWorld::pm_trace`
+(cod11-player-clip.md 13). Not modelled: the talk-button zeroing. The near-ground sight test is (section 5).
