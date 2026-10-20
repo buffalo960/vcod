@@ -595,8 +595,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
 - No render soup collides: model 0 clips through its brushes and lump 24
   (terrain partitions, patch facet grids). A patch's box is its subdivided
   grid grown by a unit, not its control points.
-- Static props and 0x2080 kerb brushes clip bullets, blasts, UO's missiles
-  (clipmask 0x2802091; 1.1's fly on 0x11) and items, never a moving
+- Static props and 0x2080 kerb brushes clip bullets, blasts, missiles
+  (clipmask 0x2802091 on all three) and items, never a moving
   player. `shot_trace`, `missile_trace` and `item_trace` see props,
   `box_trace` does not.
 - A submodel's brushes, and the patches and terrain lump 27 gives it
