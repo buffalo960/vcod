@@ -3492,13 +3492,16 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> 
 }
 
 /// The world's ladders as axial boxes: the `SURF_LADDER` brushes of the
-/// world model, with touching ones merged, since a tall ladder is often
-/// several brushes stacked.
+/// world model and of every submodel linked where it spawned (mp_italy's
+/// allied `bas` bunker is left by the two in its base's `*4`,
+/// bot-navigation.md section 2), with touching ones merged, since a tall
+/// ladder is often several brushes stacked.
 fn ladders(world: &CollisionWorld) -> Vec<(Vec3, Vec3)> {
     let mut boxes: Vec<(Vec3, Vec3)> = world
         .brushes
         .iter()
-        .filter(|b| b.model == 0 && b.surface_flags & vcod_common::collision::SURF_LADDER != 0)
+        .filter(|b| b.surface_flags & vcod_common::collision::SURF_LADDER != 0)
+        .filter(|b| world.model_in_place(b.model as usize))
         .filter_map(|b| {
             let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
             for &(n, d) in &b.planes {
@@ -7184,6 +7187,36 @@ mod tests {
     /// under the steep face, the step lifts the body onto it and it slides
     /// back, off the ground most ticks; only a jump from a tick on the
     /// ground takes it onto the ledge 40 up (bot-navigation.md "Jumps").
+    /// mp_italy's allied `bas` bunker is left by the ladders in its base's
+    /// `*4`, not the world's: a rung off each is found while the base
+    /// stands, and none once a breach unlinks it (bot-navigation.md 2).
+    #[test]
+    fn italys_allied_bunker_ladders_are_its_bases() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let entry = fs.resolve_map("mp_italy").unwrap();
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let inside = |b: &(Vec3, Vec3)| {
+            b.0.x >= 6436.0 && b.1.x <= 6876.0 && b.0.y >= -2844.0 && b.1.y <= -2404.0
+        };
+        let climbs = |world: &CollisionWorld| {
+            with_rules(MoveRules::Uo, || {
+                ladders(world)
+                    .into_iter()
+                    .filter(inside)
+                    .flat_map(|(lo, hi)| [Vec3::Y, -Vec3::Y].map(|n| rung(world, lo, hi, n)))
+                    .flatten()
+                    .filter(|(foot, head, up, _)| *up && foot.z < -700.0 && head.z > foot.z + 100.0)
+                    .count()
+            })
+        };
+        assert_eq!(climbs(&world.collision), 2);
+        world.collision.set_model_linked(4, false);
+        assert_eq!(climbs(&world.collision), 0);
+    }
+
     /// mp_cassino's allied upper floor at z 208 leaves by a window sill at
     /// 240 over the street at 0: the walk jumps onto the sill and falls 240,
     /// under `bg_fallDamageMinHeight`'s 256 (bot-navigation.md, "Other

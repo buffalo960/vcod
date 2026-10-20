@@ -20,6 +20,10 @@ pub(super) struct BotAdmin {
     /// The name draw's own generator, so naming a bot never moves the
     /// server's `rand()` sequence the seeded tests replay.
     name_rng: u64,
+    /// The bots' own seeds and challenges: retail's `SV_AddTestClient`
+    /// draws no `rand()`, so adding a bot leaves the shared sequence the
+    /// spread and the recoil take where it was.
+    pub(super) seed_rng: u64,
     last_pass: Option<i32>,
     /// A console command changed something; plan on the next tick.
     dirty: bool,
@@ -34,11 +38,17 @@ impl BotAdmin {
             pinned: Default::default(),
             shoot,
             name_rng: seed ^ 0x9e37_79b9_7f4a_7c15,
+            seed_rng: seed_stream(seed),
             last_pass: None,
             dirty: false,
             orders: Vec::new(),
         }
     }
+}
+
+/// The bot seed stream's start off a server seed.
+pub(super) fn seed_stream(seed: u64) -> u64 {
+    (seed ^ 0xd1b5_4a32_d192_ed03) | 1
 }
 
 impl Server {
@@ -167,8 +177,8 @@ impl Server {
     }
 
     /// Connects one bot in the first free public slot, asking for `side`
-    /// (allies on `Side::None`). The two `rand()` draws are the ones
-    /// `--bots` always made, in its order.
+    /// (allies on `Side::None`). Its two draws come off the bots' own seed
+    /// stream, never the server's `rand()`.
     fn add_bot(&mut self, side: Side, s: Settings) -> Option<usize> {
         let private = self.private_clients().max(0) as usize;
         let Some(slot) = self.free_slot_from(private) else {
@@ -179,7 +189,11 @@ impl Server {
             Side::Axis => "axis",
             _ => "allies",
         };
-        let mut bot = crate::bots::Bot::new(team, self.bot_admin.shoot, self.rand() as u64);
+        let mut bot = crate::bots::Bot::new(
+            team,
+            self.bot_admin.shoot,
+            rand_from(&mut self.bot_admin.seed_rng) as u64,
+        );
         if self.move_rules() == vcod_common::pmove::MoveRules::Uo {
             bot.menus = &crate::bots::WEAPON_MENUS_UO;
         }
@@ -198,7 +212,7 @@ impl Server {
         let mut client = Client::new(
             addr,
             0x7000 + slot as u16,
-            self.rand(),
+            rand_from(&mut self.bot_admin.seed_rng),
             userinfo,
             Instant::now(),
         );
@@ -376,5 +390,34 @@ impl Server {
             u8::from(s.shoot),
         ));
         self.print(&text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Adding bots leaves the server's shared `rand()` where it was, and
+    /// each bot draws off a stream of its own.
+    #[test]
+    fn adding_a_bot_draws_nothing_off_the_shared_rand() {
+        let cfg = ServerConfig {
+            map: "mp_carentan".into(),
+            hostname: "vcod test".into(),
+            max_clients: 4,
+            gametype: "dm".into(),
+            test_entities: 0,
+            trace: false,
+            bots: 0,
+            bots_shoot: false,
+        };
+        let mut sv = Server::new(cfg, Instant::now());
+        sv.test_seed_rng(5);
+        let before = sv.rng;
+        let s = sv.bot_settings();
+        let a = sv.add_bot(Side::Axis, s).expect("a slot");
+        let b = sv.add_bot(Side::Allies, s).expect("a slot");
+        assert_eq!(sv.rng, before);
+        assert_ne!(sv.bots[&a].rng, sv.bots[&b].rng);
     }
 }
