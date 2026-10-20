@@ -2031,6 +2031,41 @@ The capsule pair, `cod_lnxded` (1.1d):
   Q3's `CM_Trace` does (0x8056310's `local_f4` / `local_1c` setup has
   that shape).
 
+### 22.3 A client's `r.mins`/`r.maxs` follow the stance
+
+The box the touch pass and `isTouching` read on a client's side is the
+one its last cmd's pmove left, not the standing 70.
+
+- VERIFIED, 1.1d `game.mp.i386.so` (`tools/re/annotate_func.py`):
+  `ClientThink_real` calls `Pmove` at 0x40466 on the `pmove_t` at
+  `ebp-0xf8`, then copies `ebp-0x38..ebp-0x24` into `ent+0x100..+0x114`
+  at 0x40539-0x40569, ahead of `ClientEvents` (0x40589),
+  `trap_LinkEntity` (0x40595) and `G_TouchTriggers` (0x405b3).
+- VERIFIED, 1.5b: the same copy, `ebp-0x58..ebp-0x44` (the `pmove_t` at
+  `ebp-0x118`, `Pmove` at 0x3993d) into `ent+0x104..+0x118` at
+  0x39a3f-0x39a7e, ahead of `trap_LinkEntity` (0x39ab9) and
+  `G_TouchTriggers` (0x39ad6). UO 1.51b: `ebp-0x60..ebp-0x4c` (the
+  `pmove_t` at `ebp-0x138`, `Pmove` at 0x41a80) into `ent+0x108..+0x11c`
+  at 0x41b99-0x41bd8, ahead of `trap_LinkEntity` (0x41c13) and
+  `G_TouchTriggers` (0x41c30).
+- INFERRED, off the Q3 lineage and the offset (`pmove_t + 0xc0` on 1.1d
+  and 1.5b, `+ 0xd8` on UO, right after the touch list): the copied
+  vectors are `pm.mins` and `pm.maxs`, which `PM_CheckDuck` sizes to the
+  stance (`cod11-player-clip.md`; 70, 50 or 30 high).
+- VERIFIED, 1.1d: `ClientSpawn` writes `playerMins`/`playerMaxs` into
+  `ent+0x100..+0x114` at 0x42775-0x427b7, the standing box, before its
+  own think. 1.5b writes the same six words through GOT slots at
+  0x3cae3-0x3cb3c, UO at 0x44f5f-0x44fb8; INFERRED that those slots are
+  `playerMins`/`playerMaxs`.
+- VERIFIED: no write to `ent+0x100..+0x11c` in `SpectatorThink` on any
+  of the three, so a spectator keeps the standing box `ClientSpawn` left.
+
+vcod holds the height per client (`GameHost::client_height`, mirrored off
+the sim after each cmd and set by the `spawn` builtin's think,
+`PlayerState::box_height`) and builds `GameHost::client_box` from it;
+`trigger::touched` and `trigger::entity_contact` read that box. VERIFIED,
+read out of `crates/server/src/game/trigger.rs`.
+
 ## 23. The aim trace, linking, objectives and the HUD tweens
 
 What stage 3 of the gsc gameplay program needs out of the module: the trace

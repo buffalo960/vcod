@@ -990,8 +990,10 @@ impl GameHost {
         self.area.link(slot as u32, &link);
     }
 
-    /// A client's standing box, for a link the host makes without the sim:
-    /// the stance lives on the sim, the height the last cmd left here.
+    /// A client's `r.mins`/`r.maxs`: the stance box its last cmd's pmove left
+    /// (`ClientThink_real` copies `pm.mins`/`pm.maxs`,
+    /// docs/research/cod11-gsc-object-model.md 22.3), for a link, the touch
+    /// pass and `isTouching`. The stance lives on the sim, the height here.
     pub fn client_box(&self, slot: usize) -> ([f32; 3], [f32; 3]) {
         use vcod_common::pmove::HALF_WIDTH;
         (

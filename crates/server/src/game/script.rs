@@ -780,7 +780,7 @@ impl ScriptRuntime {
         let host = &mut self.host;
         let hits = self
             .vm
-            .with_cx(|cx| crate::game::trigger::touched(host, cx, origin));
+            .with_cx(|cx| crate::game::trigger::touched(host, cx, slot, origin));
         log::trace!(target: "touch_pass", "slot {slot} at {origin:?}: {hits:?}");
         // One walk, in the tree's order: each entity's two `"touch"`
         // notifies (0x3fa42, 0x3fa61), then its touch function, an item's
@@ -5549,7 +5549,7 @@ mod tests {
                     crate::game::builtins::uo::set_contents(host, cx, recv, &[Value::Int(c)])
                         .unwrap();
                 }
-                crate::game::trigger::touched(host, cx, [0.0; 3]).contains(&mount)
+                crate::game::trigger::touched(host, cx, 0, [0.0; 3]).contains(&mount)
             })
         };
         assert!(touched(&mut rt, None));

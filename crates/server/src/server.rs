@@ -1328,7 +1328,7 @@ fn mirror_for_callback(
     // What `cloneplayer` and the dropped cook read.
     rt.set_client_entity_state(slot, Some(sim.to_entity(proto, slot, st)));
     rt.set_client_grenade_ms(slot, sim.ps.grenade_time_left_ms);
-    rt.set_client_height(slot, (sim.ps.maxs() - sim.ps.mins()).z);
+    rt.set_client_height(slot, sim.ps.box_height());
     // What `dropItem` hands the dropped weapon, and where it starts.
     rt.set_client_ammo(slot, sim.ps.ammo, sim.ps.ammoclip);
     rt.set_client_dobj(slot, sim.dobj(slot));
@@ -9138,7 +9138,7 @@ impl Server {
                 rt.set_client_body(slot, sim.and_then(|(s, _)| s.hit_body(slot)));
                 rt.set_client_dobj(slot, sim.and_then(|(s, _)| s.dobj(slot)));
                 if let Some((s, _)) = sim {
-                    rt.set_client_height(slot, (s.ps.maxs() - s.ps.mins()).z);
+                    rt.set_client_height(slot, s.ps.box_height());
                     rt.set_client_link_origin(slot, s.link_origin().into());
                 }
             }
