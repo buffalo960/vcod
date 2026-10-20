@@ -643,9 +643,10 @@ pub fn probe(
             .is_some_and(|t| t.starts_with("overlap-wall")),
     );
     let mut wrote_bump = false;
-    // A tag starting `torso` fires and reloads on the move (probe_torso).
+    // A tag starting `torso` fires and reloads on the move (probe_torso),
+    // one starting `stopgo` stops and goes inside the legs blends.
     let mut legs =
-        crate::legs_probe::LegsProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("torso")));
+        crate::legs_probe::LegsProbe::new(crate::legs_probe::Walk::of_tag(tag.as_deref()));
     let mut wrote_legs = false;
     let mut shock = crate::shock_probe::ShockProbe::default();
     let mut wrote_shock = false;
