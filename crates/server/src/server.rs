@@ -13139,6 +13139,7 @@ mod tests {
         held.current = frag as u8;
         let rt = sv.script.as_mut().unwrap();
         rt.host.weapons = sv.weapon_table.clone();
+        rt.host.precache_items_for_test(&["fraggrenade_mp"]);
         rt.host.client_weapons[0] = held;
         let c = sv.clients[0].as_mut().unwrap();
         let sim = c.sim.as_mut().unwrap();
@@ -13341,6 +13342,7 @@ mod tests {
     fn a_frag_given_back_in_the_frame_it_was_thrown_stays_held() {
         // The clients never spawn, so they are still G_InitGentity's "noclass".
         let script = "main() { \
+               precacheitem(\"fraggrenade_mp\"); \
                while (1) { \
                  wait 0.05; \
                  g = getentarray(\"grenade\", \"classname\"); \
@@ -13414,6 +13416,8 @@ mod tests {
         held.current = colt as u8;
         let rt = sv.script.as_mut().unwrap();
         rt.host.weapons = table.clone();
+        rt.host
+            .precache_items_for_test(&["m1carbine_mp", "thompson_mp", "colt_mp"]);
         rt.host.client_weapons[0] = held;
         rt.host.client_vitals[0] = crate::game::host::Vitals {
             health: 100,
@@ -13594,6 +13598,7 @@ mod tests {
         held.current = carbine as u8;
         let rt = sv.script.as_mut().unwrap();
         rt.host.weapons = sv.weapon_table.clone();
+        rt.host.precache_items_for_test(&["fraggrenade_mp"]);
         rt.host.client_weapons[0] = held;
         rt.host.client_vitals[0] = crate::game::host::Vitals {
             health: 100,

@@ -7,6 +7,7 @@
 //! `Items::bitstring` and the item models `RegisterItem` precaches.
 
 use crate::defs::Defs;
+use crate::weapons::WeaponTable;
 use vcod_common::pk3::Pk3Fs;
 
 /// `BG_FindItem` (0x2e214) is a `strcmp`, so the lookup is case-sensitive;
@@ -82,47 +83,19 @@ pub fn item_models(defs: &Defs, fs: Option<&Pk3Fs>, name: &str) -> Vec<String> {
     .collect()
 }
 
-/// A weapon and its alt-fire mode sit at adjacent configstring 7 indices —
-/// `bar_mp`/`bar_slow_mp`, `fg42_mp`/`fg42_semi_mp`, `mp44_mp`/
-/// `mp44_semi_mp`, `ppsh_mp`/`ppsh_semi_mp`, `thompson_mp`/
-/// `thompson_semi_mp`, on both decoded captures. `RegisterItem` (0x4e504)
-/// registers a weapon item and then walks a "next" index read from its
-/// weapon definition (offset 0x2fc, also read by `BG_GivePlayerWeapon` at
-/// 0x36b0a), registering that item too and stopping when the chain hits 0
-/// or loops back to where it started — a link `BG_GivePlayerWeapon` reads
-/// from the same field, so it is real weapon data, not a placed-entity
-/// artifact (M2). The link itself is data-driven (each weapon's file names
-/// its alt mode), which this crate does not parse yet; deriving it from
-/// the adjacent-slot naming convention instead of hand-copying the five
-/// known pairs keeps it from drifting out of step with the list.
-pub(crate) fn alt_weapon_index(defs: &Defs, index: usize) -> Option<usize> {
-    let weapons: Vec<&str> = defs.weapons.split(' ').collect();
-    if index == 0 || index > weapons.len() {
-        return None;
-    }
-    let name = weapons[index - 1];
-
-    // `index` is the base weapon: its alt mode is the next slot.
-    if let Some(base) = name.strip_suffix("_mp")
-        && index < weapons.len()
-    {
-        let next = weapons[index];
-        if next == format!("{base}_semi_mp") || next == format!("{base}_slow_mp") {
-            return Some(index + 1);
-        }
-    }
-
-    // `index` is the alt mode: the base weapon is the previous slot.
-    for suffix in ["_semi_mp", "_slow_mp"] {
-        if let Some(root) = name.strip_suffix(suffix)
-            && index > 1
-            && weapons[index - 2] == format!("{root}_mp")
-        {
-            return Some(index - 1);
-        }
-    }
-
-    None
+/// `bg_itemlist`'s `+0x18` for the five compiled-in rows, the name
+/// `RegisterItem`'s late-registration error prints (1.1d, 1.5b and UO
+/// alike, read with `gameso.py`); a weapon row's is blank there, so the
+/// error takes the weapon file's internal name (`def+4`) instead.
+fn pickup_name(classname: &str) -> Option<&'static str> {
+    Some(match classname {
+        "item_ammo_stielhandgranate_open" => "Stielhandgranate_mp Ammo Open",
+        "item_ammo_stielhandgranate_closed" => "Stielhandgranate_mp Ammo Closed",
+        "item_health_small" => "Small Health",
+        "item_health" => "Med Health",
+        "item_health_large" => "Large Health",
+        _ => return None,
+    })
 }
 
 fn hex_digit(nibble: u8) -> char {
@@ -166,22 +139,45 @@ impl Items {
         Items { defs, registered }
     }
 
-    /// `RegisterItem` (0x4e504): marks `name` registered and, for a weapon
-    /// item, its alt-fire mode too (see `alt_weapon_index`). An unknown
-    /// name is a `BG_FindItem` miss and registers nothing, as retail
-    /// ignores it. Returns the items registered, the named one first, which
-    /// is what `GameHost::register_item` walks to precache their models.
-    pub fn register(&mut self, name: &str) -> Vec<&'static str> {
+    /// `RegisterItem` (0x4e504): marks `name` registered and, for a weapon,
+    /// every weapon on its `altWeapon` chain (object model doc 15, M2). An
+    /// item already registered is left alone; a new one past
+    /// `level.initializing` is the script error retail raises. An unknown
+    /// name is a `BG_FindItem` miss and registers nothing. Returns the items
+    /// registered, the named one first, which `GameHost::register_item`
+    /// walks to precache their models.
+    pub fn register(
+        &mut self,
+        name: &str,
+        weapons: &WeaponTable,
+        initializing: bool,
+    ) -> Result<Vec<&'static str>, String> {
         let Some(index) = item_index(self.defs, name) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        self.registered[index] = true;
-        let mut done: Vec<&'static str> = item_name(self.defs, index).into_iter().collect();
-        if let Some(alt) = alt_weapon_index(self.defs, index) {
-            self.registered[alt] = true;
-            done.extend(item_name(self.defs, alt));
+        if self.registered[index] {
+            return Ok(Vec::new());
         }
-        done
+        let own = item_name(self.defs, index).unwrap_or_default();
+        if !initializing {
+            let shown = pickup_name(own).unwrap_or(own);
+            return Err(format!(
+                "game tried to register the item '{shown}' after initialization finished"
+            ));
+        }
+        let chain = if index <= self.defs.proto.max_weapons {
+            weapons.alt_chain(index)
+        } else {
+            vec![index]
+        };
+        let mut done = Vec::new();
+        for i in chain {
+            if let Some(r) = self.registered.get_mut(i) {
+                *r = true;
+                done.extend(item_name(self.defs, i));
+            }
+        }
+        Ok(done)
     }
 
     /// `SaveRegisteredItems` (0x4ef08): four items per lowercase hex
@@ -212,6 +208,37 @@ impl Items {
 mod tests {
     use super::*;
 
+    /// Every configstring 7 weapon, the five stock alt-fire pairs naming
+    /// each other through `altWeapon` as their files do.
+    fn alt_table() -> WeaponTable {
+        let pairs = [
+            ("bar_mp", "bar_slow_mp"),
+            ("fg42_mp", "fg42_semi_mp"),
+            ("mp44_mp", "mp44_semi_mp"),
+            ("ppsh_mp", "ppsh_semi_mp"),
+            ("thompson_mp", "thompson_semi_mp"),
+        ];
+        let names = crate::defs::V1.weapons.split(' ');
+        let mut defs: Vec<Option<vcod_common::weapon::WeaponDef>> = std::iter::once(None)
+            .chain(names.clone().map(|name| {
+                let alt = pairs
+                    .iter()
+                    .find_map(|&(a, b)| (a == name).then_some(b).or((b == name).then_some(a)));
+                let map = alt
+                    .map(|a| ("altWeapon".to_string(), a.to_string()))
+                    .into_iter()
+                    .collect();
+                Some(vcod_common::weapon::WeaponDef::from_map(&map))
+            }))
+            .collect();
+        vcod_common::weapon_table::link_alts(&mut defs, names);
+        WeaponTable::from_defs(defs)
+    }
+
+    fn register(items: &mut Items, name: &str) {
+        items.register(name, &alt_table(), true).unwrap();
+    }
+
     /// The packing from `SaveRegisteredItems` (0x4ef08): four items per
     /// lowercase hex character, bit `i & 3`, partial nibble flushed.
     /// `bg_numItems` is 70, so the string is 18 characters.
@@ -229,11 +256,54 @@ mod tests {
     #[test]
     fn a_weapon_registers_at_its_one_based_configstring_seven_index() {
         let mut items = Items::default();
-        items.register("bar_mp");
+        register(&mut items, "bar_mp");
         assert!(items.bitstring().starts_with('7'));
         let mut items = Items::default();
-        items.register("thompson_semi_mp");
+        register(&mut items, "thompson_semi_mp");
         assert_eq!(items.bitstring().chars().nth(8), Some('1'));
+    }
+
+    /// The alt link is the weapon file's `altWeapon`, not configstring 7
+    /// adjacency: an alt mode registers its base, and a weapon whose file
+    /// names no alt registers alone even beside a `_semi_mp` neighbour.
+    #[test]
+    fn the_alt_link_follows_the_weapon_files() {
+        let mut items = Items::default();
+        assert_eq!(
+            items.register("thompson_semi_mp", &alt_table(), true),
+            Ok(vec!["thompson_semi_mp", "thompson_mp"])
+        );
+        let mut items = Items::default();
+        assert_eq!(
+            items.register("bar_mp", &WeaponTable::empty(), true),
+            Ok(vec!["bar_mp"])
+        );
+    }
+
+    /// Past `level.initializing` a new item is `RegisterItem`'s script
+    /// error and sets nothing; one already registered passes and indexes
+    /// nothing again. A compiled-in row names itself by its pickup name.
+    #[test]
+    fn a_new_item_past_initialization_is_an_error() {
+        let mut items = Items::default();
+        register(&mut items, "bar_mp");
+        let before = items.bitstring();
+        assert_eq!(
+            items.register("bar_slow_mp", &alt_table(), false),
+            Ok(vec![])
+        );
+        assert_eq!(
+            items.register("mp40_mp", &alt_table(), false),
+            Err("game tried to register the item 'mp40_mp' after initialization finished".into())
+        );
+        assert_eq!(
+            items.register("item_health_small", &alt_table(), false),
+            Err(
+                "game tried to register the item 'Small Health' after initialization finished"
+                    .into()
+            )
+        );
+        assert_eq!(items.bitstring(), before);
     }
 
     /// An unknown item name registers nothing, as retail's `BG_FindItem`
@@ -242,7 +312,7 @@ mod tests {
     fn an_unknown_item_name_registers_nothing() {
         let mut items = Items::default();
         let before = Items::default().bitstring();
-        items.register("no_such_item_mp");
+        register(&mut items, "no_such_item_mp");
         assert_eq!(items.bitstring(), before);
     }
 
@@ -266,7 +336,7 @@ mod tests {
             "mp44_mp",
             "kar98k_sniper_mp",
         ] {
-            items.register(name);
+            register(&mut items, name);
         }
         let ours = items.bitstring();
         let retail = "1ce0cfb40000000001";
@@ -305,7 +375,7 @@ mod tests {
             "kar98k_sniper_mp",
             "stielhandgranate_mp",
         ] {
-            items.register(name);
+            register(&mut items, name);
         }
         let ours = items.bitstring();
         let retail = "7df31f0d1000000001";

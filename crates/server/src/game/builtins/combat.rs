@@ -2083,7 +2083,7 @@ mod tests {
     #[test]
     fn suicide_kills_the_player_and_runs_the_killed_callback() {
         const SCRIPT: &str = r#"
-            main() {}
+            main() { precacheItem("m1carbine_mp"); }
             CodeCallback_PlayerConnect() {
                 self giveWeapon("m1carbine_mp");
                 self setSpawnWeapon("m1carbine_mp");

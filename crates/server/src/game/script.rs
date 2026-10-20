@@ -5162,6 +5162,7 @@ mod tests {
             takedamage: true,
         };
         for (name, s) in [("m1carbine_mp", 1), ("colt_mp", 3), ("fraggrenade_mp", 4)] {
+            rt.host.precache_items_for_test(&[name]);
             let w = crate::configstrings::weapon_index(name).unwrap();
             let d = rt.host.weapons.get(w).unwrap().clone();
             rt.host.client_weapons[0].give(w, s);

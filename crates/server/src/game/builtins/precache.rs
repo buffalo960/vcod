@@ -239,7 +239,7 @@ pub fn precache_item(
     if !crate::items::is_item(host.defs, &name) {
         return Err(ErrorKind::Custom(format!("unknown item '{name}'")));
     }
-    host.register_item(&name);
+    host.register_item(&name)?;
     Ok(Value::Undefined)
 }
 
