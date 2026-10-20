@@ -154,11 +154,9 @@ impl Vm {
     }
 
     /// Kills every thread whose `self` is `target`, for a host freeing that
-    /// entity. INFERRED from the stock scripts: `waitRespawnButton` polls
-    /// `self useButtonPressed()` with no `endon("disconnect")`, and a retail
-    /// server survives a dead player leaving, so its entity free must end
-    /// the threads running on it rather than leave them to error on a
-    /// freed `self`. A thread's `self` is its first frame's receiver; a
+    /// entity: a retail free ends them (`probe_stale_self`,
+    /// cod11-gsc-language.md). A thread asleep over any other free is
+    /// dropped when it is next picked (`step_runnable`). A thread's `self` is its first frame's receiver; a
     /// frame above it may have called a method on another entity, which
     /// changes nothing about whose thread it is.
     pub fn kill_threads_of(&mut self, target: impl Into<Target>) {
@@ -450,9 +448,19 @@ impl Vm {
                 return errors;
             };
             self.now_ms = at;
-            if let Some(t) = self.threads.iter_mut().find(|t| t.id == tid) {
-                t.state = ThreadState::Runnable;
+            let Some(idx) = self.threads.iter().position(|t| t.id == tid) else {
+                continue;
+            };
+            // Freeing an entity or a hudelem ends every thread whose `self`
+            // it is (`probe_stale_self`, `probe_stale_self_hud`); one asleep
+            // over the free is dropped here, before it runs a step.
+            if let Some(Target::Entity(e)) = self.threads[idx].frames.first().and_then(|f| f.recv)
+                && !host.is_live(e)
+            {
+                self.threads.remove(idx);
+                continue;
             }
+            self.threads[idx].state = ThreadState::Runnable;
             self.step_thread(host, tid, &mut errors);
             steps += 1;
         }
