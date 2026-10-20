@@ -2009,7 +2009,9 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=33881 SECS=20 \
 
 The 2026-10-20 run is
 `crates/server/tests/fixtures/movers/mp_carentan-dm-moverreads.txt`;
-`crates/server/tests/ride_ab.rs` replays it.
+`crates/server/tests/ride_ab.rs` replays it. The same recipe under
+`COD_VERSION=1.5` and `COD_VERSION=uo` wrote `-moverreads-1.5.txt` and
+`-moverreads-uo.txt` (2026-10-20), replayed by the same file.
 
 ## probe_sinecrush
 
