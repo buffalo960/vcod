@@ -326,6 +326,21 @@ velocity; vcod derives them that way and raises no takeoff on the mount, since
 mounting takes no impulse. Neither capture climbs a ladder, so nothing here is
 measured against retail beyond the flag and the blocks.
 
+**The lie-down in the air.** VERIFIED, `game.mp.i386.so` 1.5b
+`PM_Footsteps` (0x24ae8): an airborne body whose eye target is not its
+flags' stance goes on to the ground code (0x24e51; cod15-movement.md 4,
+the footstep cadence). INFERRED, off the same branch: the movetype
+selection after it runs for that body too, which is the stance window's
+idle. VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20,
+`probe_scriptmodel`'s prone part, the `-cmds` fixtures and a gdb run):
+a target holding prone as `setorigin` drops him a unit shows the
+lie-down's legs (1.5b 111, UO 174) in the snapshot where `pm_flags` first
+reads prone, still in the air; vcod showed them a snapshot later, on the
+landing. vcod: `ClientSim::footsteps_select` takes that arm under 1.5 and
+UO rules, and `update_anims` selects through it, so the prone idle's
+clip starts on retail's frame (`scriptmodel_ab`'s `-cmds` gates, combat
+doc 3.1, "The prone strike on mp_carentan").
+
 **What this overturned.** VERIFIED: pavlov `run_forward` carries velocity
 `(0, -148)` at `viewangles[1]` -31.94, 58 degrees off the facing, and pavlov
 `strafe_right` carries `(-143, 0)`; projecting either onto the facing selects

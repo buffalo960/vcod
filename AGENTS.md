@@ -380,7 +380,8 @@ header of the fixture it produced.
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
   `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
   `probe_hqtime`, `probe_bastime`, `probe_domtime` and `probe_menuclock`,
-  and `--probe-say` beside `probe_threadorder`, have run there. On UO's mp_carentan the
+  `--probe-say` beside `probe_threadorder` and `--probe-uo-weapon direct`
+  beside `probe_rise`, have run there. On UO's mp_carentan the
   grenade script throws its one frag and the steps after it hold nothing.
 
 ### The A/B gates
@@ -689,6 +690,9 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
 - A vehicle's collmap clips as that vehicle's own model instance
   (`CollisionWorld::set_model_instance`; one inline model serves every
   vehicle of a kind), passed by its own traces as `Pusher::Copy(entity)`.
+  Its brushes clip in lump order and a contact at fraction 0 ends them,
+  so a later brush never reads a sweep all solid (`coduo-vehicles.md`
+  11.7).
   Its hull against rounds, missiles and blast probes is the xmodel's
   collision posed per bone (`vehicle::placed_models`), not the collmap.
   The server poses it with `Scr_Vehicle_Controller`'s controls only
