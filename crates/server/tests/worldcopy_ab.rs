@@ -18,8 +18,7 @@
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
 //! beside a turned submodel as it lifts.
 //!
-//! Each capture but `-sinecrush.txt` holds its
-//! client's cmds (`CMDS` lines), and ours replays them
+//! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
 //! cmds split it (movers doc 21, "The slide down the slope").
 //!
@@ -83,17 +82,6 @@ const TILT_PLANES: &[(&str, [f32; 3], [f32; 3])] = &[
     ("slope", [-0.5, 0.0, 0.866_025_4], [-1.0, 0.0, 28.732_05]),
     ("roll", [0.0, -0.5, 0.866_025_4], [0.0, -14.0, 74.248_71]),
 ];
-
-/// When ours' client starts joining in the crush capture: it is playing
-/// about 700 ms later, after the sinking copy's floor is under the real one
-/// (at 2000) and before the probe places it (at 2400). Earlier, it spawns
-/// inside the copy's floor and is crushed where it spawned.
-const CRUSH_JOIN_MS: u32 = 1400;
-
-/// How far the crushed player's corpse may sit from retail's while it
-/// falls, the first [`FALL_ROWS`] rows after the death.
-const CORPSE_TOL: f32 = 0.6;
-const FALL_ROWS: usize = 2;
 
 /// The most `G_BounceItem` lifts a landing item off its floor:
 /// `0.5 + 0.5 * rand() * -2^-31` (items doc 14.2).
@@ -235,60 +223,44 @@ struct Ours {
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy", PROBE, SERVER, 0, false))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy", PROBE, SERVER, false))
         .as_ref()
 }
 
 fn ours2() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy2", PROBE2, SERVER2, 0, true))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy2", PROBE2, SERVER2, true))
         .as_ref()
 }
 
 fn ours3() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy3", PROBE3, SERVER3, 0, true))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy3", PROBE3, SERVER3, true))
         .as_ref()
 }
 
 fn ours_slab() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("mp_harbor", "probe_turnedslab", PROBE_SLAB, SLAB, 0, true))
+    RUN.get_or_init(|| run_ours("mp_harbor", "probe_turnedslab", PROBE_SLAB, SLAB, true))
         .as_ref()
 }
 
 fn ours_tilt() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours("mp_harbor", "probe_tiltslab", PROBE_TILT, TILT, 0, true))
+    RUN.get_or_init(|| run_ours("mp_harbor", "probe_tiltslab", PROBE_TILT, TILT, true))
         .as_ref()
 }
 
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| {
-        run_ours(
-            MAP,
-            "probe_sinecrush",
-            PROBE_CRUSH,
-            CRUSH,
-            CRUSH_JOIN_MS,
-            true,
-        )
-    })
-    .as_ref()
+    RUN.get_or_init(|| run_ours(MAP, "probe_sinecrush", PROBE_CRUSH, CRUSH, true))
+        .as_ref()
 }
 
 /// [`run_once`], run again once if the client's first snapshot missed
 /// retail's: how long ours takes to join differs by map.
-fn run_ours(
-    map: &str,
-    name: &str,
-    probe: &str,
-    fixture: &str,
-    join_ms: u32,
-    probe_rate: bool,
-) -> Option<Ours> {
-    let ours = run_once(map, name, probe, fixture, join_ms, probe_rate, 0)?;
+fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool) -> Option<Ours> {
+    let ours = run_once(map, name, probe, fixture, probe_rate, 0)?;
     let text = std::fs::read_to_string(fixture).unwrap();
     let Some(&(first, _)) = common::cmds_ran(&text, "").first() else {
         return Some(ours);
@@ -296,7 +268,7 @@ fn run_ours(
     match ours.first_snap {
         Some(t) if t != first => {
             let late = (t - first) as i64;
-            run_once(map, name, probe, fixture, join_ms, probe_rate, late)
+            run_once(map, name, probe, fixture, probe_rate, late)
         }
         _ => Some(ours),
     }
@@ -313,7 +285,6 @@ fn run_once(
     name: &str,
     probe: &str,
     fixture: &str,
-    join_ms: u32,
     probe_rate: bool,
     late_ms: i64,
 ) -> Option<Ours> {
@@ -356,13 +327,6 @@ fn run_once(
     }));
     let mut offset = None;
     let mut pack = None;
-    // The server runs alone until `join_ms`: the client the crush capture
-    // had took that long to be playing.
-    for _ in 0..join_ms / FRAME_MS as u32 {
-        now += Duration::from_millis(FRAME_MS as u64);
-        sv.tick(now);
-        sv.take_outgoing();
-    }
     // A capture that logs its client's cmds (`CMDS` lines) is replayed on
     // them: the client joins so its first snapshot falls on retail's, and
     // each cmd runs on retail's side of a frame (`ProbeHold::framed`).
@@ -395,10 +359,12 @@ fn run_once(
     let mut first_snap = None;
     for _ in 0..3000 {
         now += Duration::from_millis(FRAME_MS as u64);
+        // Playing, linked (`pm_type` 1) or dead (6): a corpse falls on the
+        // cmds too.
         let live = cl
             .snapshots()
             .newest()
-            .is_some_and(|s| s.ps.field_i32(&PROTOCOL_V1, "pm_type") == 0);
+            .is_some_and(|s| matches!(s.ps.field_i32(&PROTOCOL_V1, "pm_type"), 0 | 1 | 6));
         if replay && live {
             let cmds = hold.cmds(&cl, 0);
             cl.send_cmds(&cmds);
@@ -510,14 +476,6 @@ fn send_at_probe_rate(cl: &mut NetClient<ClientEnd>) {
         c
     });
     cl.send_cmds(&cmds);
-}
-
-/// A dead player's z off a `PROBE f` line.
-fn corpse_z(line: &str) -> Option<f32> {
-    if !line.contains(" dead ") {
-        return None;
-    }
-    vectors(line).first().copied().flatten().map(|p| p[2])
 }
 
 fn diff(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -844,22 +802,9 @@ fn a_sine_mover_crushes_what_it_cannot_push_like_retail() {
         }
     }
     assert_eq!(ours.len(), retail.len(), "line count");
-    // The corpse's fall, the first two rows after the death, lasts the
-    // client's cmds: retail's fell 32 ms of them by 2450 (cod11-movers.md
-    // 21). From its rest on, every line is exact, the sink under a live
-    // player's rest included.
-    let mut fall = FALL_ROWS;
+    // Replayed on retail's cmds, the corpse falls and rests where retail's
+    // did (cod11-movers.md 21): every line is exact.
     for (r, o) in retail.iter().zip(&ours) {
-        let (rz, oz) = (corpse_z(r), corpse_z(o));
-        if let (Some(a), Some(b)) = (rz, oz)
-            && fall > 0
-        {
-            fall -= 1;
-            let strip = |l: &str, z: f32| l.replacen(&format!("{z:.2})"), ")", 1);
-            assert_eq!(strip(o, b), strip(r, a));
-            assert!((a - b).abs() <= CORPSE_TOL, "retail {r}\nours   {o}");
-            continue;
-        }
         assert_eq!(o, r);
     }
     assert!(killed, "the bobbing drops the level one period in");

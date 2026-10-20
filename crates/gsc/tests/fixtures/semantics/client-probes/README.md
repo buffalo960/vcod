@@ -2025,13 +2025,14 @@ sinking copy's ceiling crushes it. The level drops at 4000, so the client has
 to be playing by 2.4 s of level time: start it straight after the server.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30422 SECS=20 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=34211 SECS=20 \
     tools/run_probe.sh client-probes/probe_sinecrush mp_carentan &
-sleep 0.3; cargo run -p vcod -- --net-probe 127.0.0.1:30422 --probe-team allies --probe-secs 15
+sleep 0.3; cargo run -p vcod -- --net-probe 127.0.0.1:34211 --probe-team allies --probe-ride --probe-secs 15
 ```
 
-The 2026-10-12 run is
-`crates/server/tests/fixtures/movers/mp_carentan-dm-sinecrush.txt`;
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-sinecrush.txt`, `PROBE`
+lines and then the client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
 ## probe_linkto2
@@ -2355,9 +2356,12 @@ VCOD_NETSIM="ping=40,jitter=70" cargo run -p vcod -- --net-probe 127.0.0.1:<p> \
     --probe-ride --probe-team allies --probe-secs 34
 ```
 
-The fixture is `crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`,
-gated by `ride_ab.rs`'s `a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail`
-(cod11-movers.md 12, "A blocked mover").
+The 2026-10-20 run (port 34213) is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`: the `PROBE`
+lines, then the client's `RIDE` and trajectory lines and its `CMDS` lines,
+which carry the `commandTime` of every snapshot it parsed. `ride_ab.rs`'s
+`a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail` replays the
+cmds (cod11-movers.md 12, "A blocked mover").
 
 ## probe_anglesnap
 
