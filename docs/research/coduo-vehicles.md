@@ -1836,8 +1836,10 @@ not measured.
       the turret's ramp matches frame for frame, so the lag is in the
       body, and it is not traced. The relink after the write links
       at `r.currentOrigin` as written, unsnapped, where `ClientThink_real`'s
-      own link takes the snapped origin (INFERRED, read of `G_RunClient`
-      0x41dfc: no snap between `G_SetFixedLink` and `SV_LinkEntity`), so
+      own link takes the snapped origin: `G_RunClient` (0x41dfc) runs
+      `G_SetFixedLink(ent, 2)`, `G_SetOrigin(ent, r.currentOrigin)`,
+      `trap_LinkEntity` and then copies `r.currentOrigin` into `ps.origin`,
+      with no snap on the way (VERIFIED decompile), so
       through the first stint `r.absmin` sits 20 above the seat's
       `ps.origin` less the box's unit and, once a `nextvehslot` asked for
       the slot, level with it. vcod linked the rider at the truncated
