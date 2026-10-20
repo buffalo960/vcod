@@ -851,6 +851,21 @@ by function and measures them against a capture.
   client `noInactivityKick`; a vehicle-node object (`targetname`, `target`,
   `origin`, `angles`, `speed`, `lookahead`). The field type enum was
   renumbered (`Scr_GetGenericField`).
+- Field types 1, 2 and 8 (UO 1.51b `game.mp.uo.i386.so`):
+  `Scr_GetGenericField` (0x72131), `Scr_SetGenericField` (0x71f15), the
+  entity key parser (0x715de) and `G_DuplicateEntityFields` (0x7183f) have
+  no case for any of
+  them (VERIFIED). The vehicle-node key parser (0x95e32, walking the node
+  table 0xb33a0) stores type 1 as a `short` and type 2 as a byte, both
+  through `atoi` (VERIFIED), and type 9 as the second component of a
+  `"%f %f %f"` key through `AngleNormalize360Accurate` (VERIFIED), the
+  yaw that `Scr_GetGenericField` reads back as (0, yaw, 0).
+  `GScr_AddFieldsForVehicleNode` (0x983d4) registers 0, 1, 2, 3, 5, 6, 7
+  and 9 (VERIFIED). No stock record carries 1, 2 or 8, and no switch in
+  the module names 8 (VERIFIED, `dump_script_fields.py`; a grep of the
+  decompile for the three table addresses), so 8 stays unnamed. The
+  entity table's `light` (type 12) is skipped by its registrar and read
+  by no switch (VERIFIED).
 - Spawn classnames (0xae800, 32 against 27): `script_vehicle`,
   `script_vehicle_collmap`, `script_vehicle_owner_icon`, `trigger_mount`,
   `trigger_dammage`, plus `info_vehicle_node(_rotate)` (VERIFIED).

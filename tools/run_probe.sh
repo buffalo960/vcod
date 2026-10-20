@@ -19,9 +19,16 @@
 #   COD_VERSION      1.1 (default), 1.5 or uo, as tools/run_server.sh takes it
 #   COD_LNXDED       server binary (default private/reference/cod-lnxded-1.1d/cod_lnxded,
 #                    cod-lnxded-1.5b/cod_lnxded for 1.5)
-#   COD_LNXDED_HOME  homepath holding main/game.mp.i386.so (default private/server,
-#                    private/server-1.5 for 1.5)
+#   COD_LNXDED_HOME  homepath holding main/game.mp.i386.so (uo/game.mp.uo.i386.so).
+#                    Unset, the module comes from private/server (private/server-1.5,
+#                    private/server-uo) and the run gets a homepath of its port's own,
+#                    private/homes/<that name>-<port>, so concurrent probes on two
+#                    ports never share a games_mp.log (tools/retail_home.sh). The
+#                    path goes to stderr.
 #   PORT             UDP port (default 28970, clear of run_server.sh's 28960)
+#   PRE_MAP_ARGS     engine arguments placed before +map, as shell words, for
+#                    what has to be set before the load (a latched cvar, sv_pure):
+#                    PRE_MAP_ARGS='+set sv_pure 1 +set sv_hostname "two words"'
 #   SECS             how long to let the server run (default 25)
 #   PROBE_SECS       alias for SECS, so a recipe can name either
 #
@@ -60,11 +67,12 @@ case "${COD_VERSION:-1.1}" in
     *) echo "COD_VERSION must be 1.1, 1.5 or uo" >&2; exit 1 ;;
 esac
 BIN="${COD_LNXDED:-$REF/$EXE}"
-HOMEPATH="${COD_LNXDED_HOME:-$HOME_DEFAULT}"
 [ -x "$BIN" ] || { echo "server binary $BIN missing or not executable; set COD_LNXDED" >&2; exit 1; }
-[ -f "$HOMEPATH/$GAMEDIR/$MODULE" ] || {
-    echo "no game module at $HOMEPATH/$GAMEDIR/$MODULE; set COD_LNXDED_HOME" >&2; exit 1; }
-HOMEPATH="$(cd "$HOMEPATH" && pwd)"
+PORT_USED="${PORT:-28970}"
+MODULE="$GAMEDIR/$MODULE"
+. tools/retail_home.sh
+# Parsed as shell words, so a quoted value with spaces survives.
+eval "PRE_ARGS=(${PRE_MAP_ARGS:-})"
 
 # Loose files under the homepath shadow nothing in the paks: no stock gametype
 # is named like a probe. The .txt is the description file the engine warns
@@ -92,10 +100,11 @@ timeout "${PROBE_SECS:-${SECS:-25}}" "$BIN" \
     +set g_logSync 1 \
     +set fs_basepath "$COD_DIR" \
     +set fs_homepath "$HOMEPATH" \
-    +set net_port "${PORT:-28970}" \
+    +set net_port "$PORT_USED" \
     +set sv_maxclients 8 \
     +set sv_pure 0 \
     +set g_gametype "$NAME" \
+    "${PRE_ARGS[@]}" \
     +map "$MAP" \
     "${ENGINE_ARGS[@]}" > "$CONSOLE" 2>&1 || true
 

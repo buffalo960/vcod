@@ -23,7 +23,8 @@ its `GScr_AddFieldsFor*` function, so no address is hardcoded.
 `type` selects the storage conversion in Scr_GetGenericField/Scr_SetGenericField.
 1.1 (0x6248c / 0x6257c; jump table 0x7968c) and 1.5 (0x65f50) share one enum,
 TYPES below. UO renumbered it (Scr_GetGenericField 0x72131, UO_TYPES); 1, 2
-and 8 have no case there. A record whose type the registering function
+and 8 have no case there. Only the vehicle-node key parser (0x95e32) reads 1
+and 2; nothing in the module reads 8 (coduo-diff.md section 13). A record whose type the registering function
 rejects is skipped and never becomes a script field (ACCEPTED, read off each
 `GScr_AddFieldsFor*`'s compare chain or switch). Client field ids are tagged
 `| 0xC000`, which is how Scr_GetEntityField (1.1 0x62824) routes an id to
@@ -70,6 +71,11 @@ UO_TYPES = {
     9: TYPES[6],
     10: TYPES[7],
     11: TYPES[8],
+    # Spawn keys only: the vehicle-node parser's atoi into a short or a byte.
+    1: "short (spawn key only, no script getter)",
+    2: "byte (spawn key only, no script getter)",
+    8: "unused (no case in the module)",
+    12: "unused (no case in the module)",
 }
 
 # 1.1 and 1.5 register the same sets (1.5 0x65bbf, 0x3bd88, 0x4965c).

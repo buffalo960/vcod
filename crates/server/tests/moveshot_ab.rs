@@ -11,7 +11,8 @@
 //! wall 1090 units out reads the muzzle across the view.
 //!
 //! Ours runs the same probe gametype, replays the capture's cmds at their
-//! own times (gunkick_ab.rs's replay) and compares every impact in order.
+//! own times (gunkick_ab.rs's replay) and compares every impact in order,
+//! and every snapshot's `bobCycle`.
 //! `MOVESHOT_REPORT=1` prints both sides. The 1.5 capture runs at a 1.5
 //! install, the UO ones at a UO install.
 
@@ -357,6 +358,16 @@ fn check(p: &'static Protocol, fs: Pk3Fs, part: Part, tag: &str) {
     }
     let retail = cap.impacts;
     let mut bad = Vec::new();
+    // The walk bob rides every moving round, so its phase matches retail's
+    // on every snapshot both sides sent, a lean-strafe's start included
+    // (coduo-movement.md 16).
+    for r in &cap.states {
+        if let Some(o) = our_states.iter().find(|o| o.0 == r.0)
+            && o.2 != r.2
+        {
+            bad.push(format!("ct {}: retail bobCycle {} ours {}", r.0, r.2, o.2));
+        }
+    }
     for i in 0..retail.len().max(ours.len()) {
         let (r, o) = (retail.get(i), ours.get(i));
         let line = format!("{} {tag} round {i}: retail {r:?} ours {o:?}", part.name);
