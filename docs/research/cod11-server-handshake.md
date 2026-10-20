@@ -1342,8 +1342,13 @@ holds on UO.
   `--ban-file`), checked at `getchallenge` before the temporary bans with
   retail's print (`GUID 0`) and refusal; `unbanUser` gives retail's three
   replies, an empty one standing for a list that has never had a file or
-  an entry. vcod's own lines need no `\r` and the last needs no line end,
-  so its `unbanUser` finds a name retail's misses there.
+  an entry. vcod's own lines need no `\r`. An entry read off a last line
+  with no line end is never matched, as on retail, and a rewrite keeps
+  that line last and unended (`Bans::unended`). Retail's `banUser`
+  appends `%i %s\r\n` after such a line, running the two lines together
+  so the file check reads only the first guid (INFERRED from the append
+  at 0x8089121 and the line walk at 0x8088ff8); vcod ends the line
+  first, so the new ban holds.
 
 ### Shutdown (`SV_Shutdown` 0x808ad8c)
 
