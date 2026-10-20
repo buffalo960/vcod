@@ -167,6 +167,11 @@ pub struct Client {
     /// The serverTime of the last usercmd the sim consumed; cmd-to-cmd
     /// deltas drive the pmove dt, retail-style.
     pub last_processed_st: i32,
+    /// Retail's `cl->lastUsercmd.serverTime`: `SV_UserMove` hands the game
+    /// only a cmd past it (`cod_lnxded` 0x8087264, cod11-combat.md 3.6), so a
+    /// redundant copy never reaches `ClientThink`, where one past it but
+    /// not past `commandTime` still rotates `pers.oldcmd`.
+    pub last_usercmd_st: i32,
     /// Usercmds received but not yet replayed, oldest first. Bounded so a
     /// flooded client cannot build unbounded latency.
     pub pending: Vec<QueuedCmd>,
@@ -256,6 +261,7 @@ impl Client {
             reliable_kind: [CmdKind::CanIgnore; MAX_RELIABLE_COMMANDS],
             message_ack: 0,
             last_processed_st: 0,
+            last_usercmd_st: 0,
             pending: Vec::new(),
             commands_at: Vec::new(),
             flame: None,
@@ -284,6 +290,7 @@ impl Client {
         self.commands_at.clear();
         self.last_cmd = NULL_USERCMD;
         self.last_processed_st = 0;
+        self.last_usercmd_st = 0;
     }
 
     /// `SV_MapRestart_f`'s client pass (map-cycle doc, section 4 steps 9 to

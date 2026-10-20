@@ -1345,6 +1345,14 @@ impl ClientSim {
         self.linked_unsnapped = true;
     }
 
+    /// `G_SetFixedLink`'s write of a seated UO rider's `ps.origin` and
+    /// `r.currentOrigin` in `G_RunClient`, which relinks there unsnapped
+    /// (coduo-vehicles.md 13, "The tank driver's link offset").
+    pub fn seat_linked_at(&mut self, origin: Vec3) {
+        self.ps.origin = origin;
+        self.linked_unsnapped = true;
+    }
+
     /// `SetClientViewAngle` (0x41e30): the view becomes `angles` (degrees,
     /// wire convention), held to the prone cone first on a prone player
     /// (`pmove::prone_view_angle`), and `delta_angles` is rewritten so the
@@ -1407,6 +1415,16 @@ impl ClientSim {
     /// fall: no `EV_PAIN` from an end frame at or before `until_ms`.
     pub fn debounce_pain(&mut self, until_ms: i32) {
         self.pain_after_ms = until_ms;
+    }
+
+    /// A cmd `ClientThink_real` drops as stale (its clock not past
+    /// `commandTime`): `ClientThink` (game.mp.uo 0x51d13) has already
+    /// rotated it into `pers.cmd` and the one before into `pers.oldcmd`,
+    /// which the next cmd's turn spread reads (cod11-combat.md 2.1).
+    pub fn stale_cmd(&mut self, cmd: &UserCmd) {
+        self.last_cmd_angles = cmd.angles;
+        self.ps.last_cmd_angles = [cmd.angles[0], cmd.angles[1]];
+        self.ps.last_cmd_ads = cmd.buttons & vcod_common::net::msg::BUTTON_ADS != 0;
     }
 
     /// Advance one frame, returning the events the move raised, already in the

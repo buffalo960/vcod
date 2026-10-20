@@ -1392,7 +1392,7 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
 /// `G_RunClient` (game.mp.uo 0x41dfc) on a seated rider: `G_SetFixedLink`
 /// mode 2 puts `r.currentOrigin` and `ps.origin` at the seat tag of the
 /// vehicle as it stands, shifted by the link's own offset, and links him
-/// there. His end frame puts `ps.origin` and `r.currentOrigin` back on the
+/// there unsnapped. His end frame puts `ps.origin` and `r.currentOrigin` back on the
 /// seat (coduo-vehicles.md 13, "The tank driver's link offset").
 fn run_rider_link(
     rt: &mut script::ScriptRuntime,
@@ -1408,7 +1408,7 @@ fn run_rider_link(
     }) else {
         return;
     };
-    sim.ps.origin = at;
+    sim.seat_linked_at(at);
     rt.set_client_origin(slot, at.to_array());
     link_client(rt, slot, sim);
 }
@@ -4793,6 +4793,7 @@ impl Server {
         sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(proto);
         client.sim = Some(sim);
         client.last_processed_st = sv_time_ms;
+        client.last_usercmd_st = sv_time_ms;
         log::info!("client {slot} {name:?} connected (test client)");
         *entry = Some(client);
     }
@@ -7470,6 +7471,7 @@ impl Server {
                 self.sv_time_ms.wrapping_add(200),
             )
         });
+        c.last_usercmd_st = entering.map_or(c.last_processed_st, |c| c.server_time);
         log::info!("client {slot} {:?} begin (spectator)", c.name);
         // `ClientBegin`: the notify that releases the connect callback's
         // `waittill("begin")`. The event queues rather than fires here, so it
@@ -7521,7 +7523,7 @@ impl Server {
                 return;
             }
         }
-        self.end_frames(&moved, wall_ms);
+        self.end_frames(&moved, (wall_ms, frames));
     }
 
     /// How far this frame moves the game clock. 1.1's `SV_Frame` steps
@@ -8554,10 +8556,10 @@ impl Server {
     }
 
     /// `SV_Frame`'s steps past its game frames.
-    fn end_frames(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    fn end_frames(&mut self, moved: &[MoveSummary], wall: (Option<f32>, u32)) {
         self.check_timeouts();
         // Every entity built once, then culled and written per client.
-        self.send_snapshots(moved, wall_ms);
+        self.send_snapshots(moved, wall);
         self.send_unentered();
         self.send_zombies();
         // `SV_Frame`'s last step (0x808d258).
@@ -8718,6 +8720,10 @@ impl Server {
                 continue;
             }
             let mut cmd = c.pending.remove(0).cmd;
+            let fresh = cmd.server_time > c.last_usercmd_st;
+            if fresh {
+                c.last_usercmd_st = cmd.server_time;
+            }
             // `ClientThink_real` holds the cmd's clock within 1000 ms behind
             // and 200 ms ahead of the `level.time` it runs on, the last
             // frame's (player-clip doc 8.12).
@@ -8729,6 +8735,9 @@ impl Server {
             // rather than clamped away.
             let dt_ms = cmd.server_time.wrapping_sub(c.last_processed_st);
             if dt_ms <= 0 {
+                if let Some(sim) = c.sim.as_mut().filter(|_| fresh) {
+                    sim.stale_cmd(&cmd);
+                }
                 continue;
             }
             let sim = c.sim.as_mut().unwrap();
@@ -9872,7 +9881,9 @@ impl Server {
     /// still in its ring, uncompressed otherwise. Every entity state is built
     /// once from the world the moves and the script frame left, then culled
     /// and written per client.
-    fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    /// `wall` is `--trace`'s: the wall gap since the last tick and the
+    /// frames this tick ran, so a catch-up tick's gap reads against them.
+    fn send_snapshots(&mut self, moved: &[MoveSummary], wall: (Option<f32>, u32)) {
         let live = self.build_world_frame();
         let svs_ms = self.svs_time_ms();
         if let Some(rt) = self.script.as_mut() {
@@ -10135,9 +10146,10 @@ impl Server {
                     )
                 });
                 log::info!(
-                    "trace c{slot} msg {message_num} wall {} sv {} ct {} lead {} \
+                    "trace c{slot} msg {message_num} wall {} frames {} sv {} ct {} lead {} \
 cmds {processed} span {span} queued {queued} ack {} behind {ack_behind} {base_desc} {} B{walk}",
-                    wall_ms.map_or("-".into(), |w| format!("{w:.1}")),
+                    wall.0.map_or("-".into(), |w| format!("{w:.1}")),
+                    wall.1,
                     self.sv_time_ms,
                     command_time,
                     lead,
@@ -11196,6 +11208,52 @@ mod tests {
         assert!(
             !Rc::ptr_eq(&spawned, &compiled(&sv)),
             "the restart ran the old text after a new overlay"
+        );
+    }
+
+    /// `scriptUsage` on retail 1.1d, mp_brecourt `tdm` (handshake doc,
+    /// "Console commands over rcon"): the gametype's two waits, then the
+    /// 32 minefield threads, in code address order, not by file name.
+    #[test]
+    fn script_usage_orders_files_as_retail() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(
+            ServerConfig {
+                map: "mp_brecourt".into(),
+                gametype: "tdm".into(),
+                ..cfg()
+            },
+            now,
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        for _ in 0..10 {
+            sv.tick(now);
+        }
+        let text = sv.script.as_mut().unwrap().script_usage();
+        // The var usage numbers are vcod's own VM's; the counts and the
+        // order are retail's.
+        let heads: Vec<&str> = text
+            .lines()
+            .filter_map(|l| match l.starts_with("count") {
+                true => l.split(',').next(),
+                false => l.starts_with("(file").then_some(l),
+            })
+            .collect();
+        assert_eq!(
+            heads,
+            [
+                "count: 1",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 992)",
+                "count: 1",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 1184)",
+                "count: 32",
+                "(file 'maps\\mp\\_minefields.gsc', line 19)",
+            ],
+            "{text}"
         );
     }
 

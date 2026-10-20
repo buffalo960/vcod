@@ -29,6 +29,9 @@ pub(super) struct BotAdmin {
     dirty: bool,
     /// Team menu answers for moved bots, sent with the bots' own replies.
     pub(super) orders: Vec<(usize, String)>,
+    /// Each bot's `pers["team"]` as last logged: the script, not the menu
+    /// answer, decides it (`bel` deals out the allied places).
+    landed: BTreeMap<usize, String>,
 }
 
 impl BotAdmin {
@@ -42,6 +45,7 @@ impl BotAdmin {
             last_pass: None,
             dirty: false,
             orders: Vec::new(),
+            landed: BTreeMap::new(),
         }
     }
 }
@@ -100,6 +104,13 @@ impl Server {
                 ),
                 None => Default::default(),
             };
+            if let Some(b) = bot
+                && !team.is_empty()
+                && self.bot_admin.landed.get(&slot) != Some(&team)
+            {
+                log::info!("bot {slot} {:?} is on team {team}", b.name);
+                self.bot_admin.landed.insert(slot, team.clone());
+            }
             let side = match Side::parse(&team) {
                 Some(s @ (Side::Allies | Side::Axis)) => s,
                 // Still joining: the side its answer will take.
@@ -149,6 +160,9 @@ impl Server {
         self.bot_admin
             .pinned
             .retain(|slot| self.bots.contains_key(slot));
+        self.bot_admin
+            .landed
+            .retain(|slot, _| self.bots.contains_key(slot));
         let roster = self.bot_roster();
         // A human counts once he has picked a side; one still in the menus
         // or spectating takes no bot's place.
@@ -227,13 +241,16 @@ impl Server {
                 name: name.clone(),
             });
         }
-        log::info!("client {slot} {name:?} connected (bot, team {team})");
+        // The menu answer only: `bel`'s script picks the side, which the
+        // pass logs once `pers["team"]` holds it.
+        log::info!("client {slot} {name:?} connected (bot, asks for {team})");
         Some(slot)
     }
 
     /// Drops a bot through `SV_DropClient`, as a kick would.
     fn remove_bot(&mut self, slot: usize) {
         self.bot_admin.pinned.remove(&slot);
+        self.bot_admin.landed.remove(&slot);
         self.drop_client(slot, "EXE_PLAYERKICKED");
         self.bots.remove(&slot);
     }
@@ -419,5 +436,49 @@ mod tests {
         let b = sv.add_bot(Side::Allies, s).expect("a slot");
         assert_eq!(sv.rng, before);
         assert_ne!(sv.bots[&a].rng, sv.bots[&b].rng);
+    }
+
+    /// On `bel` every bot answers the team menu with axis and the script
+    /// deals out the allied places: the side logged is `pers["team"]`,
+    /// never the side the bot was added for.
+    #[test]
+    fn a_bel_bot_lands_where_the_script_puts_it() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let cfg = ServerConfig {
+            map: "mp_brecourt".into(),
+            hostname: "vcod test".into(),
+            max_clients: 8,
+            gametype: "bel".into(),
+            test_entities: 0,
+            trace: false,
+            bots: 4,
+            bots_shoot: false,
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(cfg, now);
+        sv.load_scripts(std::rc::Rc::new(fs))
+            .expect("load the scripts");
+        for _ in 0..200 {
+            sv.tick(now);
+        }
+        let asked = sv.bots.values().filter(|b| b.team() == "allies").count();
+        let landed = sv.bot_admin.landed.clone();
+        assert_eq!(landed.len(), 4, "{landed:?}");
+        for (slot, team) in &landed {
+            assert_eq!(
+                sv.script
+                    .as_mut()
+                    .unwrap()
+                    .client_pers(*slot, "team")
+                    .as_deref(),
+                Some(team.as_str())
+            );
+        }
+        // Half asked for allies; bel's script made one of the four allied.
+        assert_eq!(asked, 2);
+        assert_eq!(landed.values().filter(|t| *t == "allies").count(), 1);
     }
 }
