@@ -767,7 +767,7 @@ and the zombie half of `Server::drop_client`.
   runs `ScriptRuntime::client_disconnect` inside the drop, after the
   notice on 1.1 and before it on 1.5 and UO, with the slot already out
   of `clients`, and sends its commands and configstrings at once; the
-  notify's waiters park for the next frame (`Vm::notify_for_frame`), and
+  notify's waiters run in the next frame's first pass (`Vm::notify`), and
   the disconnect sets `ranks_dirty`. The same three runs against
   vcod-server print the same lines and the same message layout.
   `a_timed_out_clients_callback_lines_go_out_with_its_drop_notice`,
@@ -848,7 +848,7 @@ free, past `sv_reconnectlimit`, prints `%s:reconnect` and takes that slot.
   VERIFIED (capture).
 - vcod, before 2026-10-18: the waiter ran in the packet pass, a frame
   (50 ms) earlier. Now `ClientEvent::Begin` notifies through
-  `Vm::notify_for_frame` and sets `ranks_dirty`, as `ClientConnect`'s
+  `Vm::notify` and sets `ranks_dirty`, as `ClientConnect`'s
   closing `CalculateRanks` (0x42677) does. Ours prints the first
   snapshot's `serverTime` too. `the_begin_waiter_runs_on_the_next_frames_clock`
   pins it.
