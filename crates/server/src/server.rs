@@ -8647,12 +8647,16 @@ impl Server {
             EV_FIRE_MELEE, EV_FIRE_WEAPON, EV_FIRE_WEAPON_LASTSHOT, EV_WEAPON_ALT,
         };
         use vcod_common::pmove::{EV_LANDING_PAIN_BASE, EV_LANDING_PAIN_LAST};
-        // Every client's body, the mover's own rewritten after each of its
-        // steps: retail relinks after each `Pmove`.
+        // Every linked client's body, the mover's own rewritten after each
+        // of its steps: retail relinks after each `Pmove`. A blocked push
+        // leaves its pair out of the tree until each one's next cmd
+        // (movers doc 12, "The candidate trace").
+        let area = self.script.as_ref().map(|rt| &rt.host.area);
         let mut bodies: Vec<Body> = self
             .clients
             .iter()
             .enumerate()
+            .filter(|(s, _)| area.is_none_or(|a| a.last_link(*s as u32).is_some()))
             .filter_map(|(s, c)| c.as_ref()?.sim.as_ref()?.body(s as u32))
             .collect();
         // The server's pmove point contents meet the mount triggers

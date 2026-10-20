@@ -1985,6 +1985,43 @@ pub fn cmds_times(text: &str, who: &str) -> Vec<i32> {
     cmds_run(text, who).into_iter().map(|c| c.0).collect()
 }
 
+/// Each cmd the server runs of a client's `CMDS` lines ([`cmds_run`]) and
+/// the probe's wall clock at its send in microseconds (the `w=` token, the
+/// first absolute and the steps after it), which orders two probes'
+/// packets on one host as the server read them. Empty for a capture that
+/// logs no `w=`.
+pub fn cmds_walls(text: &str, who: &str) -> Vec<(i32, u64)> {
+    let mut walls = Vec::new();
+    for l in text.lines() {
+        let Some(rest) = l
+            .strip_prefix(who)
+            .and_then(|r| r.trim_start().strip_prefix("CMDS st="))
+        else {
+            continue;
+        };
+        let Some(w) = rest.split_whitespace().find_map(|t| t.strip_prefix("w=")) else {
+            return Vec::new();
+        };
+        let mut at = 0u64;
+        for (k, d) in w.split(',').enumerate() {
+            let d: u64 = d.parse().expect("a w= step");
+            at = if k == 0 { d } else { at + d };
+            walls.push(at);
+        }
+    }
+    let sent = cmds_sent(text, who);
+    assert_eq!(sent.len(), walls.len(), "{who}: a w= per cmd");
+    let mut newest = i32::MIN;
+    let mut out = Vec::new();
+    for ((t, _), w) in sent.into_iter().zip(walls) {
+        if t > newest {
+            newest = t;
+            out.push((t, w));
+        }
+    }
+    out
+}
+
 /// The `ct=<serverTime>:<commandTime>` pairs of a client's `CMDS` lines,
 /// those prefixed `who` only, sorted by time.
 pub fn cmds_ran(text: &str, who: &str) -> Vec<(i32, i32)> {

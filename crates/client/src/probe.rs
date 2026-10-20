@@ -11526,13 +11526,17 @@ const KILLCAM_TAIL: Duration = Duration::from_secs(3);
 /// before (`snap=<k>:<serverTime>`), so a replay presses on retail's cmd,
 /// and each of those snapshots' `commandTime` (`ct=<serverTime>:
 /// <commandTime>`), the last cmd the server ran before that frame, so a
-/// replay runs each cmd on retail's side of a frame.
+/// replay runs each cmd on retail's side of a frame. `w=` is each cmd's
+/// wall clock at the send, the first in microseconds since the epoch and
+/// the steps after it, which orders two probes' packets on one host as
+/// the server received them.
 /// `client-probes/probe_fall` drops the player from a height. Writes no
 /// fixture.
 #[derive(Default)]
 struct FallProbe {
     last: Option<Vec<i32>>,
     cmds: Vec<(i32, Option<i32>)>,
+    walls: Vec<u64>,
     inputs: Vec<String>,
     snaps: Vec<String>,
     ran: Vec<String>,
@@ -11562,6 +11566,11 @@ impl FallProbe {
             self.last_snap = Some(t);
         }
         self.cmds.push((server_time, yaw));
+        self.walls.push(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_micros() as u64),
+        );
         if self.cmds.len() >= FALL_CMDS_PER_LINE {
             let steps: Vec<String> = self
                 .cmds
@@ -11589,12 +11598,18 @@ impl FallProbe {
                     list.clear();
                 }
             }
+            let walls: Vec<String> = std::iter::once(self.walls[0])
+                .chain(self.walls.windows(2).map(|w| w[1].saturating_sub(w[0])))
+                .map(|w| w.to_string())
+                .collect();
             println!(
-                "CMDS st={} d={}{yaws}{tail}",
+                "CMDS st={} d={}{yaws}{tail} w={}",
                 self.cmds[0].0,
-                steps.join(",")
+                steps.join(","),
+                walls.join(",")
             );
             self.cmds.clear();
+            self.walls.clear();
         }
     }
 
