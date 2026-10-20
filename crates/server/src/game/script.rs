@@ -1080,7 +1080,7 @@ impl ScriptRuntime {
         };
         // Held, the blend 0x61389 last set stands.
         if !held {
-            sim.gunner_leaves = placed.as_ref().map(|g| g.leaves.clone());
+            sim.set_gunner_blend(placed.as_ref(), self.host.level_time_ms);
         }
         if let Some(mut at) = placed.as_ref().map(|g| g.origin) {
             if let Some(world) = &self.host.world {

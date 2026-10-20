@@ -1753,6 +1753,7 @@ pub fn build_instances(
                         nodes: st.torso.node_weights(render_time),
                         group_pitch: pitch,
                         turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
+                        turret_left: None,
                         seat_leaves: st.seat.next(goal),
                         controllers,
                         leaf_times: Vec::new(),

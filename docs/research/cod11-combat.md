@@ -2489,8 +2489,9 @@ vcod: `PlayerAnims::leaf_motion` holds the frequency of each leaf under
 a plain `complete` group, `playerpose::SeatRamp` starts a
 `animclock::LeafTime` at 0 for a leaf set from no weight and keeps it
 while the leaf keeps weight, and the server's 1.5 and UO pose samples a
-seat leaf at it (`PoseInputs::leaf_times`). A sync group's leaves (an
-MG42 gunner's, the tank gunner's seat) stay on the seconds. VERIFIED,
+seat leaf at it (`PoseInputs::leaf_times`). A sync group's leaves sample
+the group's own time: an MG42 gunner's at the weighted mean frequency
+(cod11-turrets.md 13.9); the tank gunner's seat stays on the seconds. VERIFIED,
 vcod measurement (2026-10-20): `vehicle_ab`'s jeep driver bones move by
 at most 0.01 on 8 of 2170 samples, and no UO vehicle or turret gate
 changes: every stock seat leaf is a single frame (`c_mp_jeep_driver_turnL`,
