@@ -442,8 +442,22 @@ use vcod_common::net::event_ids::EV_BULLET_HIT_SMALL;
 const SURF_FLESH: i32 = 7;
 /// The surface flag that suppresses the impact effect (combat doc, 2.3).
 const SURF_NO_IMPACT: u32 = 0x4;
-/// How far a bullet travels: `muzzle + forward * 8192` (combat doc, 2.2).
-const BULLET_RANGE: f32 = 8192.0;
+/// How far a bullet travels on 1.1 and 1.5: `muzzle + forward * 8192`
+/// (combat doc, 2.2).
+pub const BULLET_RANGE: f32 = 8192.0;
+/// UO's `BG_Bullet_Endpos` (game.mp.uo 0x3011c) runs 10000 out, for every
+/// `Bullet_Fire` and the artillery strike (combat doc, 2.2).
+pub const UO_BULLET_RANGE: f32 = 10_000.0;
+
+/// How far a protocol's server traces a bullet.
+pub fn bullet_range(p: &vcod_common::net::protocol::Protocol) -> f32 {
+    if p.version == vcod_common::net::protocol::PROTOCOL_V22.version {
+        UO_BULLET_RANGE
+    } else {
+        BULLET_RANGE
+    }
+}
+
 /// The deepest `Bullet_Fire_Extended` recursion that still traces; the
 /// first call is depth 0 (combat doc, 2.3).
 const MAX_BULLET_DEPTH: i32 = 12;
@@ -619,7 +633,13 @@ pub fn bullet_fire(
     let Some((_, me)) = sims.iter().find(|(slot, _)| *slot == shooter) else {
         return ShotResult::default();
     };
-    let (muzzle, forward, end) = aim_end(me, def, ads, stance, aim, world, rng);
+    // Only a UO server's rounds carry a `UoRound`.
+    let range = if uo.is_some() {
+        UO_BULLET_RANGE
+    } else {
+        BULLET_RANGE
+    };
+    let (muzzle, forward, end) = aim_end(me, def, ads, stance, aim, range, world, rng);
     let round = Round {
         damage: def.damage,
         rifle_bullet: def.sounds.rifle_bullet,
@@ -634,15 +654,17 @@ pub fn bullet_fire(
 }
 
 /// `CalcMuzzlePoints` and `BG_Bullet_Endpos`: the muzzle, the aim's forward
-/// and where a round with the weapon's spread ends, [`BULLET_RANGE`] out.
+/// and where a round with the weapon's spread ends, `range` out.
 /// `world` is what a UO LMG on its bipod traces its muzzle against; no
 /// rocket or strike is fired from one.
+#[allow(clippy::too_many_arguments)]
 pub fn aim_end(
     me: &ClientSim,
     def: &WeaponDef,
     ads: bool,
     stance: &SpreadStance,
     aim: [f32; 2],
+    range: f32,
     world: Option<&CollisionWorld>,
     rng: &mut u64,
 ) -> (Vec3, Vec3, Vec3) {
@@ -656,9 +678,16 @@ pub fn aim_end(
     let right = Vec3::new(yaw.sin(), -yaw.cos(), 0.0);
     let up = right.cross(forward);
     let (x, y) = gun_random(rng);
-    let r = spread_deg(def, me, ads, stance).to_radians().tan() * BULLET_RANGE;
-    let end = muzzle + forward * BULLET_RANGE + right * (x * r) + up * (y * r);
+    let r = spread_deg(def, me, ads, stance).to_radians().tan() * range;
+    let end = bullet_end(muzzle, forward, range) + right * (x * r) + up * (y * r);
     (muzzle, forward, end)
+}
+
+/// `muzzle + forward * range`, the product unrounded: `BG_Bullet_Endpos`
+/// adds it on the x87 stack (game.mp.uo 0x30189), which only a range that
+/// is no power of two can tell apart.
+fn bullet_end(muzzle: Vec3, forward: Vec3, range: f32) -> Vec3 {
+    (muzzle.as_dvec3() + forward.as_dvec3() * f64::from(range)).as_vec3()
 }
 
 /// A turret's round (turrets doc 6.3): `Bullet_Fire` with no spread from the
@@ -673,6 +702,7 @@ pub fn bullet_fire_from(
     pass: Pass,
     muzzle: Vec3,
     dir: Vec3,
+    range: f32,
     damage: i32,
     rifle_bullet: bool,
     falloff: Option<Falloff>,
@@ -691,7 +721,7 @@ pub fn bullet_fire_from(
         uo: None,
         falloff,
     };
-    let end = muzzle + dir * BULLET_RANGE;
+    let end = bullet_end(muzzle, dir, range);
     fire_round(
         shooter, pass, muzzle, end, dir, round, sims, targets, world, models, hitlocs, bones,
     )
@@ -1248,6 +1278,7 @@ impl BodyPose {
                     .into_iter()
                     .collect(),
             },
+            leaf_times: self.seat_ramp.leaf_times(now_ms),
             node_time: self.rules.v15(),
         }
     }
@@ -1341,17 +1372,17 @@ fn trace_attack(
 }
 
 /// A locational trace's end point on a body or model at `fraction` of
-/// `start..end`. 1.5b's and UO's `SV_ClipMoveToEntity` (1.5b 0x8099b18,
+/// `start..end`. `SV_ClipMoveToEntity` (1.1d 0x8091352, 1.5b 0x8099b18,
 /// UO 0x809ab10) rounds each `start + (end - start) * fraction` once off
 /// the x87 stack: `trap_LocationalTrace` is a point trace, which skips
 /// the box path's stored move (cod11-combat.md 3.1).
 pub fn trace_point(start: Vec3, end: Vec3, fraction: f32, arith: Arith) -> Vec3 {
     match arith {
-        Arith::Stored => {
+        Arith::Stored | Arith::Kept => {
             let s = start.as_dvec3();
             (s + (end.as_dvec3() - s) * f64::from(fraction)).as_vec3()
         }
-        Arith::Kept | Arith::Msvc => start + (end - start) * fraction,
+        Arith::Msvc => start + (end - start) * fraction,
     }
 }
 
@@ -2221,6 +2252,37 @@ mod tests {
         );
     }
 
+    /// 1.1d's end point keeps the difference and the product on the x87
+    /// stack too (0x8091352): ours' replay of the turret `-spawn` capture's
+    /// wound, whose z an `f32` product rounds a step low.
+    #[test]
+    fn a_1_1_hit_point_rounds_once() {
+        let b = |h: [u32; 3]| Vec3::from_array(h.map(f32::from_bits));
+        let (start, end) = (
+            b([0x44d54d3a, 0x44e3e2d7, 0x41e5738f]),
+            b([0xc55cbd0b, 0xc58bc88a, 0xc30b61ca]),
+        );
+        let p = trace_point(start, end, f32::from_bits(0x3d0e1d95), Arith::Kept);
+        assert_eq!(p.z.to_bits(), 0x41b6cd59);
+    }
+
+    /// UO's `BG_Bullet_Endpos` (0x3011c) runs a round 10000 out, the product
+    /// unrounded: a turret round's muzzle, forward and the end the engine
+    /// traced, read under gdb on retail UO 1.51b (turrets doc 13.8).
+    #[test]
+    fn a_uo_round_ends_on_retails_bits() {
+        let b = |h: [u32; 3]| Vec3::from_array(h.map(f32::from_bits));
+        let end = bullet_end(
+            b([0x44d544ae, 0x44e3ea34, 0x41e57399]),
+            b([0xbf29781e, 0xbf3fcdb6, 0xbca8103c]),
+            UO_BULLET_RANGE,
+        );
+        assert_eq!(
+            end.to_array().map(f32::to_bits),
+            [0xc5998df5, 0xc5b12810, 0xc330795e]
+        );
+    }
+
     /// Each build eases the controls a step on from the last build's, in
     /// its stamp or an earlier one, and a bone the first build posed keeps
     /// the first's (coduo-vehicles.md 13, "The glide back"; movers doc 15).
@@ -2549,6 +2611,7 @@ mod tests {
                 },
                 muzzle,
                 Vec3::X,
+                BULLET_RANGE,
                 45,
                 true,
                 None,
@@ -2842,6 +2905,7 @@ mod tests {
                 pass,
                 Vec3::new(10.0, 0.0, 40.0),
                 Vec3::X,
+                BULLET_RANGE,
                 50,
                 false,
                 None,
@@ -2924,6 +2988,7 @@ mod tests {
             Pass::client(0, &sims),
             Vec3::new(10.0, 0.0, 40.0),
             Vec3::X,
+            BULLET_RANGE,
             50,
             true,
             None,
@@ -3005,6 +3070,7 @@ mod tests {
             },
             Vec3::new(40.0, 0.0, 40.0),
             Vec3::X,
+            BULLET_RANGE,
             60,
             true,
             None,
