@@ -115,6 +115,9 @@ type Ev = (i32, i32, String);
 struct Sample {
     /// Retail's `serverTime`; ours carries the one it pairs with.
     t: i32,
+    /// `commandTime`, the stamp of the last cmd the frame ran; retail's
+    /// only where the capture logs it (`ct=`).
+    ct: Option<i32>,
     viewlocked: i32,
     viewlocked_ent: i32,
     e_flags: i32,
@@ -520,6 +523,7 @@ impl Rig {
         let ev = |name: &str| ev_v1(p, g(name));
         Sample {
             t: s.server_time,
+            ct: Some(ps("commandTime")),
             viewlocked: ps("viewlocked"),
             viewlocked_ent: ps("viewlocked_entNum"),
             e_flags: ps("eFlags"),
@@ -1479,24 +1483,6 @@ const FIXTURE_VICTIM_SCRIPT: &str = concat!(
 /// The first of two cmds stamped 16450 (sent at probe ms 1571), whose yaw
 /// -157 the snapshot at 16450 already reads (turrets doc 13.3).
 const EARLY_VICTIM: &[i32] = &[1571];
-/// The cmds, by the probe's send `ms`, that reached the server a frame
-/// early on the `-spawn` capture (turrets doc 13.3, 13.4): cmd 21551 (sent at probe
-/// ms 2089), whose yaw -101 the snapshot at 21550 reads; the 21550 sent
-/// after it is stamped below it and never runs.
-const EARLY_SPAWN: &[i32] = &[2089];
-/// The same on 1.5b: the first 35900 (16036), whose step the refused
-/// phase's 35900 already shows.
-const EARLY_SPAWN_15: &[i32] = &[16036];
-/// Cmds 21184 and 21234, whose yaws 173 and 179 the snapshots at 21200 and
-/// 21250 do not show yet (171 and 177, the cmds before them).
-const LATE_SPAWN_15: &[i32] = &[21184, 21234];
-/// The same on UO: 22101 (1536) and 22551 (1987), each followed by a cmd
-/// stamped a ms below it, whose yaws -163 and -111 the snapshots at 22100
-/// and 22550 read, and the strafe's first 35800 (15238).
-const EARLY_SPAWN_UO: &[i32] = &[1536, 1987, 15238];
-/// The strafe's 36284, which the landing at 36300 does not show: retail's
-/// body moved one cmd's way that frame and two the next.
-const LATE_SPAWN_UO: &[i32] = &[36284];
 /// When in a frame the target's cmds go out: the net probe sends one every
 /// 16 ms of its own clock, three a frame.
 const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
@@ -1559,10 +1545,8 @@ struct RetailCmd {
 }
 
 struct Capture {
-    /// The cmds that reached the server a frame late (see [`LATE_SPAWN_15`]).
-    late: &'static [i32],
     /// The cmds, by send `ms`, that reached the server a frame early (see
-    /// [`EARLY_SPAWN`]).
+    /// [`EARLY_VICTIM`]), on a capture that predates `ct=`.
     early: &'static [i32],
     weapon: String,
     gun: u32,
@@ -1636,6 +1620,7 @@ fn parse(text: &str) -> Capture {
             };
             let s = Sample {
                 t: i("serverTime"),
+                ct: m.get("ct").map(|v| v.parse().unwrap()),
                 viewlocked: i("viewlocked"),
                 viewlocked_ent: i("viewlocked_entNum"),
                 e_flags: i("eFlags"),
@@ -1701,7 +1686,6 @@ fn parse(text: &str) -> Capture {
         }
     }
     Capture {
-        late: &[],
         early: &[],
         target_cmds: Vec::new(),
         cvars: &[],
@@ -1842,12 +1826,20 @@ fn target_cmds(text: &str) -> Vec<i32> {
     out
 }
 
-/// The retail snapshot a cmd's effect first shows in.
+/// The retail snapshot a cmd's effect first shows in: the first whose
+/// `commandTime` reached its stamp, where the capture logs it. A cmd stamped
+/// at or below one already run lands in the same frame and runs on neither
+/// server (turrets doc 13.4).
 fn frame_of(cap: &Capture, c: &RetailCmd) -> Option<i32> {
+    if cap.traces.iter().any(|(_, s)| s.ct.is_some()) {
+        return cap
+            .traces
+            .iter()
+            .find(|(_, s)| s.ct.is_some_and(|ct| ct >= c.st))
+            .map(|(_, s)| s.t);
+    }
     let t = cap.traces.iter().map(|(_, s)| s.t).find(|&t| c.st < t)?;
-    Some(if cap.late.contains(&c.st) {
-        t + FRAME_MS as i32
-    } else if cap.early.contains(&c.ms) {
+    Some(if cap.early.contains(&c.ms) {
         t - FRAME_MS as i32
     } else {
         t
@@ -1983,6 +1975,10 @@ fn diff(cap: &Capture, ours: &[Sample], fs: &Pk3Fs) -> Vec<String> {
             turret_ring,
             turret_parms
         );
+        // Where retail logged it, every frame ran the same last cmd.
+        if let Some(ct) = r.ct {
+            row("ct", ct.to_string(), format!("{:?}", o.ct.unwrap_or(0)));
+        }
         row("legs_anim", anim(r.legs_anim), anim(o.legs_anim ^ legs0));
         row("torso_anim", anim(r.torso_anim), anim(o.torso_anim));
         if dist(r.origin, o.origin) > ORIGIN_EPS {
@@ -2186,8 +2182,6 @@ fn spawn_gate(
     tag: &str,
     fs: impl Fn() -> Option<Pk3Fs>,
     p: &'static Protocol,
-    early: &'static [i32],
-    late: &'static [i32],
     gaps: &[(&str, &str)],
 ) {
     if fs().is_none() {
@@ -2200,8 +2194,6 @@ fn spawn_gate(
         )
     };
     let cap = Capture {
-        early,
-        late,
         target_cmds: target_cmds(&read(&path("-target"))),
         ..parse(&read(&path("")))
     };
@@ -2425,8 +2417,6 @@ fn the_spawn_capture_matches_retail_on_mp_carentan() {
         "spawn",
         vcod_common::testing::game_fs_11,
         &PROTOCOL_V1,
-        EARLY_SPAWN,
-        &[],
         &[],
     );
 }
@@ -2441,8 +2431,6 @@ fn the_spawn_capture_matches_15b_on_mp_carentan() {
             })
         },
         &PROTOCOL_V6,
-        EARLY_SPAWN_15,
-        LATE_SPAWN_15,
         &[],
     );
 }
@@ -2453,8 +2441,6 @@ fn the_spawn_capture_matches_uo_on_mp_carentan() {
         "spawn-uo",
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
-        EARLY_SPAWN_UO,
-        LATE_SPAWN_UO,
         &[],
     );
 }
@@ -2467,8 +2453,6 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
         "hitfine-uo",
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
-        &[],
-        &[],
         &[],
     );
 }
