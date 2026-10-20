@@ -1563,8 +1563,8 @@ pub struct Server {
     level_seed: u64,
     /// [`Server::pin_spawns`]'s queues, handed to every level's script.
     spawn_pins: Option<crate::game::host::SpawnPins>,
-    /// [`Server::pin_stuck_velocities`]'s pins.
-    stuck_pins: HashMap<(i32, usize), glam::Vec2>,
+    /// [`Server::pin_stuck_rand`]'s generator.
+    stuck_rand: Option<vcod_common::rng::GlibcRand>,
     /// The map's collision and spawn, loaded by the binary; tests run
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
@@ -2048,15 +2048,17 @@ impl Server {
         self.spawn_pins = Some(pins);
     }
 
-    /// Test-facing: a `StuckInClient` push in the end frame at level time
-    /// `t` leaves slot `s` with the horizontal velocity pinned at `(t, s)`
-    /// instead of its `rand()` jitter's. A gate replays a retail capture's
-    /// pushes with it: retail seeds `rand()` from the wall clock.
-    pub fn pin_stuck_velocities(&mut self, pins: HashMap<(i32, usize), [f32; 2]>) {
-        self.stuck_pins = pins
-            .into_iter()
-            .map(|(k, v)| (k, glam::Vec2::from(v)))
-            .collect();
+    /// Test-facing: `StuckInClient` draws its jitter from glibc's `rand()`
+    /// seeded `seed`, past `skip` draws. A gate replays a retail capture's
+    /// pushes with the seed recovered off it: retail seeds `rand()` from
+    /// the clock and draws only the jitter after the joins (player-clip
+    /// doc 13.4).
+    pub fn pin_stuck_rand(&mut self, seed: u32, skip: usize) {
+        let mut g = vcod_common::rng::GlibcRand::new(seed);
+        for _ in 0..skip {
+            g.next_u31();
+        }
+        self.stuck_rand = Some(g);
     }
 
     /// `new` with the generator seeded from `seed`; the binary passes the
@@ -2099,7 +2101,7 @@ impl Server {
             rng: seed,
             level_seed: seed,
             spawn_pins: None,
-            stuck_pins: HashMap::new(),
+            stuck_rand: None,
             world: None,
             sv_time_ms: 0,
             paused_ms: 0,
@@ -8321,15 +8323,12 @@ impl Server {
                     } else {
                         StuckRules::V1_5
                     };
-                    let rand = || (vcod_common::rng::xorshift(&mut self.rng) >> 33) as u32;
-                    if let Some(mut push) = stuck_in_client(slot, &views, rules, rand) {
-                        let t = self.sv_time_ms;
-                        if let Some(v) = self.stuck_pins.get(&(t, slot)) {
-                            push.self_vel = *v;
-                        }
-                        if let Some(v) = self.stuck_pins.get(&(t, push.other)) {
-                            push.other_vel = *v;
-                        }
+                    let (rng, glibc) = (&mut self.rng, &mut self.stuck_rand);
+                    let rand = || match glibc {
+                        Some(g) => g.next_u31(),
+                        None => (vcod_common::rng::xorshift(rng) >> 33) as u32,
+                    };
+                    if let Some(push) = stuck_in_client(slot, &views, rules, rand) {
                         let me = self.clients[slot]
                             .as_mut()
                             .and_then(|c| c.sim.as_mut())

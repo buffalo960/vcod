@@ -777,10 +777,10 @@ through the four logged frames and the half second after, and neither
 player moves. Which body blocks it this far apart is not traced; ours
 stalls on the same frames.
 
-vcod: `push_candidate_ab` replays both captures as it does 1.1's, and pins
-each push's velocities from the `RIDE` lines (`Server::pin_stuck_velocities`):
-retail seeds `rand()` from the clock, so the jitter cannot be replayed.
-Every row matches, level times, slab and all three coordinates of both
+vcod: `push_candidate_ab` replays both captures as it does 1.1's, and
+draws each push's jitter from glibc's `rand()` under the seed recovered off
+the `RIDE` lines (`Server::pin_stuck_rand`, player-clip doc 13.4). Every
+row matches, level times, slab and all three coordinates of both
 players. Before `StuckInClient` took 1.5's scan the pairs stayed stacked
 on ours and 48 rows failed across the two.
 

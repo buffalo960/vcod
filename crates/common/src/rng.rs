@@ -2,7 +2,8 @@
 //! clause a death or a pain picks, `randomFloat`, the bullet spread and the
 //! connect challenge. Retail's own generator is glibc's `rand()`, which
 //! nothing here has to reproduce -- only the shape of the draw and its
-//! reproducibility from a seed.
+//! reproducibility from a seed. [`GlibcRand`] is that generator, for a test
+//! that replays a capture's draws from the seed recovered off it.
 
 /// One xorshift64* step: advances `state` and returns the scrambled output.
 /// A zero state is the degenerate one xorshift never leaves, so a caller
@@ -12,6 +13,52 @@ pub fn xorshift(state: &mut u64) -> u64 {
     *state ^= *state << 25;
     *state ^= *state >> 27;
     state.wrapping_mul(0x2545_f491_4f6c_dd1d)
+}
+
+/// glibc's `srand` / `rand` (the default `TYPE_3` additive generator), the
+/// libc the retail Linux servers link. Their `G_InitGame` seeds it with
+/// `srand(Com_Milliseconds())` (map-cycle doc 4.8), so a capture's draws
+/// replay from the seed that fits them (player-clip doc 13.4).
+#[derive(Clone, Debug)]
+pub struct GlibcRand {
+    r: [i32; 34],
+    i: usize,
+}
+
+impl GlibcRand {
+    /// `srand(seed)`: a seed of 0 is 1, as glibc's.
+    pub fn new(seed: u32) -> Self {
+        let mut r = [0i32; 34];
+        r[0] = if seed == 0 { 1 } else { seed as i32 };
+        for i in 1..31 {
+            // 16807 * r mod (2^31 - 1), by Schrage's method as glibc's.
+            let (hi, lo) = (r[i - 1] / 127773, r[i - 1] % 127773);
+            let w = 16807 * lo - 2836 * hi;
+            r[i] = if w < 0 { w + 2147483647 } else { w };
+        }
+        for i in 31..34 {
+            r[i] = r[i - 31];
+        }
+        let mut g = GlibcRand { r, i: 0 };
+        for _ in 0..310 {
+            g.step();
+        }
+        g
+    }
+
+    fn step(&mut self) -> i32 {
+        // The ring holds the last 34 words; word n is n-31 plus n-3.
+        let n = self.i % 34;
+        let v = self.r[(n + 3) % 34].wrapping_add(self.r[(n + 31) % 34]);
+        self.r[n] = v;
+        self.i += 1;
+        v
+    }
+
+    /// `rand()`: 31 bits, `[0, RAND_MAX]`.
+    pub fn next_u31(&mut self) -> u32 {
+        (self.step() as u32) >> 1
+    }
 }
 
 #[cfg(test)]
@@ -40,5 +87,18 @@ mod tests {
             (16..48).contains(&high),
             "{high} of 64 draws had the top bit set"
         );
+    }
+
+    /// glibc 2.x's `srand(1)` sequence, and its seed 0 read as 1.
+    #[test]
+    fn glibc_rand_matches_glibc() {
+        let mut g = GlibcRand::new(1);
+        let first: Vec<u32> = (0..5).map(|_| g.next_u31()).collect();
+        assert_eq!(
+            first,
+            [1804289383, 846930886, 1681692777, 1714636915, 1957747793]
+        );
+        let mut z = GlibcRand::new(0);
+        assert_eq!(z.next_u31(), 1804289383);
     }
 }

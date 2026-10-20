@@ -688,8 +688,9 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
 - One spectator anywhere turns `StuckInClient` off on 1.1 only; 1.5's and
   UO's scans pass over him, so two players set down on one spot part at
-  once there, in a `rand()` direction a gate pins from the capture
-  (`Server::pin_stuck_velocities`, player-clip doc 6.2).
+  once there, in a `rand()` direction a gate replays from the glibc seed
+  recovered off the capture (`Server::pin_stuck_rand`, player-clip doc
+  13.4).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - A brush model is traced at its live `r.currentAngles`, not its link's: a
