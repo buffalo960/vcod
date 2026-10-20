@@ -1281,7 +1281,8 @@ fn a_map_command_reloads_the_level_on_the_live_netchan() {
             &cb,
             &vcod_common::net::msg::NULL_USERCMD,
         ));
-        let (ea, eb, sent) = common::step_pair_seen(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
+        let (ea, eb, sent) =
+            common::step_pair_joining(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         for (to, pkt) in &sent {
             if let Some(("loadingnewmap", rest)) = vcod_common::net::connectionless::parse_oob(pkt)
             {
@@ -1439,7 +1440,8 @@ fn map_restart_re_inits_the_level_without_a_gamestate() {
                 &cb,
                 &vcod_common::net::msg::NULL_USERCMD,
             ));
-            let (ea, eb) = common::step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
+            let (ea, eb, _) =
+                common::step_pair_joining(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
             for (i, (events, join, cl)) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)]
                 .into_iter()
                 .enumerate()
