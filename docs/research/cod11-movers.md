@@ -425,7 +425,7 @@ out of the tree and blocks nothing, as in retail. A player is moved from
 `ps.origin`: VERIFIED, vcod measurement against the ride fixture, a push from
 the truncated link origin lost the fraction retail's pushed player keeps
 (`push_y` frame 8, y 2427.6 against our 2428.8). Its candidate test is
-a box, as retail's; its position test is our capsule plus a sweep from where
+a box, as retail's, and the whole trace ("The candidate trace" below); its position test is our capsule plus a sweep from where
 the body stood that passes through the pusher, because a zero-length capsule
 is never `startsolid` under terrain and without the sweep the lowered slab
 pushed the player through the ground. VERIFIED, vcod measurement against
@@ -624,6 +624,86 @@ the ground test and the trace, for players and items alike.
 `push::tests::the_box_test_drops_a_box_that_only_touches` pins the
 comparisons; with the test forced to drop everything,
 `push_order_ab` fails, so it is on the path the gates run.
+
+### The candidate trace
+
+VERIFIED, game.mp: the trace at `0x554ee` passes the listed entity's own
+number and box at its `r.currentOrigin` as both start and end, and the
+entity is kept only when the trace's entity number equals the pusher's
+(`0x55515`). It is a whole `trap_Trace`, not a clip against the pusher
+alone, so what it names is decided in `cod_lnxded`:
+
+- VERIFIED, `SV_Trace` (0x80916f4): the world clip runs first; a trace it
+  leaves at fraction 0 jumps to the copy-out (0x8091a64) and walks no
+  entity, its entity number `0x3fe` (`ENTITYNUM_WORLD`) for any fraction
+  below 1.
+- VERIFIED, the walk (0x80599c8): a node whose contents word misses the
+  mask, or whose start fraction is not below the trace's, returns at once;
+  otherwise it recurses into the side above the split (`+0x20`) or below
+  (`+0x24`) when the box, its half extents grown a unit (clip `+0x18`),
+  lies wholly on that side, into both, above first, when it does not, and
+  only then calls the per-entity clip (0x8090f18) on each entry of the
+  node's own list, from its head (0x8059bfa..0x8059c16).
+- VERIFIED, the per-entity clip (0x8090f18): an entity whose `r.contents`
+  misses the mask, that is the pass entity, or that the pass entity or its
+  owner owns, is skipped; a brush model clips through `CM_InlineModel` at
+  its angles, anything else through `CM_TempBoxModel` over `r.mins` and
+  `r.maxs`. The result replaces the trace only on a strictly smaller
+  fraction (`fcomps`, `and ah,0x45`, `dec ah`, `cmp ah,0x40`, `jae`,
+  0x809100a..0x809101a), and then takes the entity's `s.number`
+  (`movzwl (%esi)` at 0x809103c into trace `+0x28`); a tie only ORs in its
+  `startsolid` and `allsolid`.
+
+INFERRED: so a position test is named by the world when the box starts in
+it, and otherwise by the first entity in the walk's order whose clip the
+box is inside; every later one ties at fraction 0. A listed player sunk
+into the floor, or overlapped by a player the walk meets before the
+pusher, is not kept, and the mover passes through him.
+
+VERIFIED, off a capture against the retail 1.1d Linux server, mp_carentan
+under a `dm`-shaped probe, a spectator then two `allies` clients,
+2026-10-20: `crates/server/tests/fixtures/movers/mp_carentan-dm-pushcand.txt`
+(the server's `PROBE` lines from `client-probes/probe_pushcand.gsc`). The
+spectator keeps `StuckInClient` off (`cod11-player-clip.md` 6.2), so two
+players set down on one spot stay stacked at z -30. Each phase is a
+one-frame `movey(-8, 0.05)` of the `*5` slab into players at y 2430:
+
+- **Alone.** The player is moved 8 on the slab's moving frame.
+- **Sunk.** A player `setOrigin`ed to z -33, 1.1 into the street, stays at
+  (-215, 2430, -33.00) while the slab moves its 8 through him.
+- **Stacked** and **half** (the second player 15 to the side). The slab
+  holds at 0 for all four logged frames and the half second after, its
+  move never ending, and neither player moves.
+
+INFERRED, off the walk and the capture: in the last two the slab, relinked
+at its node's head ahead of the filter (0x553ae), is met before the
+partner, so at least one player is kept; he fits nowhere with the other
+still linked, and the slab stalls.
+
+VERIFIED, the same capture: a stall on the last frame of a move holds the
+move. `G_MoverTeam`'s `reached` call (0x558a0..0x558e9) follows the push,
+and a blocked push returns before it (above), so the trajectory's end is
+tried again every frame.
+
+vcod: `push::names_pusher` is the trace: `CollisionWorld::world_box_position_test`
+(model 0's brushes against the box, its terrain and patches by the capsule
+position tests), then `AreaTree::trace_order`, retail's walk, with the
+pusher, a submodel, a world copy or a vehicle's collmap clipped through
+`pusher_box_trace` and anything else as its link box less the unit; a box
+touching another's face counts as inside (INFERRED, Q3's
+`CM_TestBoxInBrush`). It reads `ps.origin`, which `ClientThink_real` writes
+back to `r.currentOrigin` past the touch pass (0x405c7). `mover::run_one`
+keeps the plans as they stood before a frame retired a segment, and
+`mover::stall` puts them back and takes back the notifies they owed.
+`crates/server/tests/push_candidate_ab.rs` replays the capture: the slab and
+every player's x and y match retail's on every row. Its `Z_GAPS` names the
+heights it does not compare: a `setOrigin` drop's rest on the street rides
+the client's cmd times (section 21), and once the slab stalls on the pair
+retail lets one fall a cmd's worth into the other (-30.10 to -30.46, and
+the half pair's second to the street), where ours stays at -30. INFERRED:
+the stall leaves the pair unlinked until each one's next cmd, and ours
+clips a moving body against every playing sim whether or not it is in the
+area tree.
 
 ### `TR_SINE` and the crush arm
 
