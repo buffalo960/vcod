@@ -25,7 +25,7 @@
 
 mod common;
 
-use common::{Join, Queues, step_pair};
+use common::{Join, Queues, step_pair, step_pair_b_first};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -285,7 +285,18 @@ fn ours_after_late(
             } else if let Some(c) = sh.send_frame(&UserCmd::default()) {
                 hold.last = c.server_time;
             }
-            step_pair(&mut sv, (&qa, &mut ta), (&qb, sh), now)
+            // From both clients' entry to the target's placement the
+            // shooter's packets go first: a frame runs the later packet's
+            // menu threads first (`client-probes/probe_threadorder`), so
+            // the target, which retail's recipe joined first, still spawns
+            // first. Before the entry the connects keep slot order.
+            let entered = ta.state() == vcod_common::net::NetState::Active
+                && sh.state() == vcod_common::net::NetState::Active;
+            if placed_at.is_some() || !entered {
+                step_pair(&mut sv, (&qa, &mut ta), (&qb, sh), now)
+            } else {
+                step_pair_b_first(&mut sv, (&qa, &mut ta), (&qb, sh), now)
+            }
         } else {
             for p in qa.borrow_mut().to_server.drain(..).collect::<Vec<_>>() {
                 sv.handle_packet(common::ADDR, &p, now);

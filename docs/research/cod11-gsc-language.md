@@ -624,12 +624,58 @@ vcod's `Vm::step_runnable` is that pick: a `wait` stamps the thread with a
 queue number, a notify stamps its waiters newest first, and the frame's pass
 takes the earliest due, highest stamp until nothing is due. Where it is not
 retail's: the pass stops after `MAX_THREADS_PER_FRAME` (10,000) steps and
-leaves the rest for the next frame, where retail stalls for good; and the
-packet pass (`Vm::run_runnable`) takes woken threads only, in start order,
-leaving a `wait 0` for the frame; neither is measured. A last-queued-first
-pick there reordered the two gate clients' joins and moved their spawn
-points, so what retail does when several clients' packets land in one frame
-is the open question.
+leaves the rest for the next frame, where retail stalls for good; not
+measured.
+
+**The packet pass: nothing runs between frames but the callbacks, VERIFIED
+(`client-probes/probe_threadorder`, retail 1.1d on mp_pavlov,
+2026-10-20).** One client sent its client commands in pairs, both of a
+pair in one packet: `mr` alone, `mr` then `kill`, `kill` then `mr`, two
+`mr`s. Three threads wait on the player's `menuresponse` (started w1, w2,
+w4), one on a level `"killed"` that `Callback_PlayerKilled` notifies (w3,
+started between w2 and w4); the callback starts a thread (`kt`) and each
+of them logs, takes a `wait 0` and logs again. A ticker queued on each
+frame's `wait 0.05` records its last `getTime()`. Retail printed, with T
+the frame the packet landed after:
+
+- The callback runs inside the command, on T's `getTime()`, to its first
+  suspend, and a thread it starts runs inside it (`killed`, `kt`,
+  `killed_after` at T).
+- Everything else runs on the next frame, T+50, ahead of the ticker (each
+  line reads `tick` T): the waiters the commands woke and the callback's
+  `wait 0`s, in one pick, last queued first. `mr` then `kill`: `killedz`,
+  `ktz`, `w3`, then w1, w2, w4. `kill` then `mr`: w1, w2, w4, then
+  `killedz`, `ktz`, `w3`. One notify's waiters go in start order, and a
+  woken thread's own `wait 0` resumes at once, before the next.
+- The second of two `mr`s in one packet reaches nobody: no waiter has run
+  by then, as with two notifies in one script step (`probe_notify_twice`).
+- Two clients' packets in one frame go the same way (a second run, two
+  probes each sending `kill` every 3 s, the second one 17 ms later each
+  round, so their packets crossed a frame boundary twice): client 1's
+  callback ran first at T, then client 0's, and at T+50 client 0's
+  `killedz` and `ktz` ran before client 1's, then the two level waiters
+  the first kill woke, in start order. The second kill's notify found
+  them already woken.
+
+INFERRED, from those lines and the `G_RunFrame` order in "The script
+clock": a notify from a command or a callback only wakes its waiters, a
+`wait 0` taken there is due on the clock, and both wait for `G_RunFrame`'s
+first `Scr_RunCurrentThreads` (0x50653), where the thread pick above takes
+them; no `Scr_RunCurrentThreads` runs between a packet's commands.
+`SV_ExecuteClientMessage` runs a packet's client commands in order
+(`cod11-combat.md` 9.2).
+
+vcod, before 2026-10-20: the menu answers were notified after the move
+pass, behind every `kill`, and a packet pass (`Vm::run_runnable`) ran the
+woken threads before `level.time` advanced, in start order, so they read
+T and ran ahead of the callback's `wait 0`s. Now `mr` is a
+`PacketCommand` run in packet order with `kill`, nothing steps between
+frames, and the frame's first pass takes the woken threads with the rest.
+Gate: `crates/server/tests/threadorder_ab.rs`, both runs. A test harness
+that joins two clients in one frame therefore spawns the later packet's
+first: `common::join_pair_stamped` hands the second client's packets to the
+server first once both are in, so the first spawns first, as a retail
+client that joined earlier does.
 
 **The script clock.** The VM keeps its own clock, separate from
 `level.time`, and a frame's threads run on it a frame behind.
@@ -877,12 +923,11 @@ the second. `GameHost::queue_trigger` refuses an entry past 0x100
 notify to `engine_notifies`, and a `trigger_damage` activation returns it
 with `"damage"` from `damage_nonclient`, so a builtin's blast notifies it
 inside the step. Gate: `crates/server/tests/touchorder_ab.rs`, both probes
-at each patch. A notify raised between frames, where the
-entity may be gone by the frame (`ClientDisconnect`'s `menuresponse`,
-`ClientBegin`'s `begin`), goes through `Vm::notify_for_frame` instead,
-which wakes the waiters at once and parks them for the next frame's pass
-(`cod11-server-handshake.md`, "When the game hears a drop" and "When the
-client's `begin` is heard").
+at each patch. A notify raised between frames (`ClientDisconnect`'s
+`menuresponse`, `ClientBegin`'s `begin`, a client command's) wakes its
+waiters at once, and they run in the next frame's first pass ("The packet
+pass" above; `cod11-server-handshake.md`, "When the game hears a drop" and
+"When the client's `begin` is heard").
 
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe

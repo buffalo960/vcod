@@ -792,6 +792,24 @@ spectator's first snapshot, the prone key already held, read `pm_type` 4
 with 140 in the ring. `vcod-server` with the same probe reads the same on
 all three.
 
+VERIFIED live, 2026-10-20: `client-probes/probe_rise` with a
+`--probe-uo-weapon direct --probe-cmd-ms 50` client, whose inputs the gsc
+sets (fixtures `mp_carentan-dm-slope-50ms-rise-1.1.txt` and
+`mp_ship-dm-slope-50ms-rise-1.1.txt` in `crates/server/tests/fixtures/playerstate/`).
+On mp_carentan, prone under the attic roof at (144 528 288.125), where a
+34-high capsule no longer fits: letting go of prone and pressing crouch
+each kept `pm_flags` 0x40001 and raised 142 on every cmd; with `wbuttons`
+0x2 beside the crouch key, or alone, nothing. At (176 656 288.125), where
+a 50-high capsule fits and a 58-high one does not: letting go of prone
+crouched (`pm_flags` 0x40002, eye target 40) and from the next cmd raised
+141 on every cmd; with 0x2 nothing; a held crouch stayed crouched
+silently; a prone press there lay down (0x40003). Back in the open, the
+release stood. On mp_ship, hung on the hold ladder at (4332 -94 120)
+facing the rungs: `pm_flags` 0x40010, and the crouch key, the prone key
+and each with 0x2 all raised 140 on every cmd and left the body standing.
+`rise_ab` holds `vcod-server` to each phase's settled `pm_flags`,
+`eFlags`, eye target and event ids.
+
 vcod: `pmove::update_stance` is the arms above and `update_prone_pitch` the
 airborne one; `PmInput::stance_held` is `wbuttons` 0x2; `ClientSim::step`
 raises the spectator's 140. The playing client sets its wanted stance off

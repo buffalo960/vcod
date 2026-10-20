@@ -276,12 +276,24 @@ Q3's caps, in 1.1d and UO alike (VERIFIED decompile, `cod_lnxded`
   past 16 clusters is hidden only when `lastCluster` is the first seen
   number of the range.
 
-`bsp::Visibility::link_clusters` and `link_visible` follow this. INFERRED,
-Q3's C, the 1.1d and UO `BoxOnPlaneSide` being hand-written assembly
-Ghidra does not decode: an axial plane puts a box whose low side sits on
-it in front only and one whose high side sits on it behind only; any
-other plane puts the farthest corner at the plane in front and needs the
-nearest strictly behind for the back.
+`bsp::Visibility::link_clusters` and `link_visible` follow this.
+
+The walk's side test is Q3's x87 `BoxOnPlaneSide`, which objdump reads
+where Ghidra does not: `cod_lnxded` 1.1d 0x80c8634, 1.5b 0x80d5f94,
+`coduo_lnxded` 0x80cb294. VERIFIED, the instructions: it jumps on the
+plane's sign bits (`+0x11`, a table of eight arms) to sum the box's two
+corners along the normal on the x87 stack, compares the first against
+`dist` (`+0xc`) and adds 1 unless it is below, then adds 2 when the
+second is below (0x80c87e9..0x80c8802). There is no axial case, and the
+leaf walk calls it on every node with no type check first (1.1d
+0x8053e1d, 0x8054006, 0x80541a6; 1.5b 0x805760a; UO 0x805743e). The sign
+bits are set for a normal component below 0 (1.1d's plane loader,
+0x804af70..0x804af8c, and `SetPlaneSignbits` 0x8067204). INFERRED, off
+those: the farthest corner at or past the plane puts the box in front and
+the nearest strictly short of it puts it behind, an axial plane included,
+so a box whose high side lies on an axial plane is on both sides, which
+Q3's C version (`p->dist >= emaxs` gives the back only) is not.
+`bsp::box_on_plane_side` takes the sums in f64.
 
 1.5 and United Offensive add a broadcast time and a fog cull to this test
 (`docs/research/cod15-protocol-diff.md` 15).
@@ -312,6 +324,9 @@ sample. VERIFIED, `game.mp.i386.so` 1.1d: `ClientDisconnect` (0x42aac) calls
 `G_FreeEntity` on the client (0x42bfc), and `G_FreeEntity` (0x66948) walks
 every entity in use (`inuse`, +0x160, 0x66ad1) and stores 0x3ff into a
 `s.groundEntityNum` (+0x7c) equal to the freed number (0x66b0e, 0x66b13).
+VERIFIED, 1.5b and UO: their `G_FreeEntityRefs` (0x6d1cc, 0x79a06), which
+`G_FreeEntity` calls, makes the same store (0x6d27b, 0x79ab5;
+`docs/research/cod11-turrets.md` 8).
 INFERRED: the scriptmover and the turret carry `G_Spawn`'s zeroed 0, which
 names entity 0, so slot 0's departure turns them. A trace is
 therefore taken after one client has come and gone, and
@@ -652,7 +667,7 @@ Retail does not send a server command when it is issued. `SV_AddServerCommand` (
 
 - **Type.** Every caller passes a type with the text. VERIFIED, the pushes ahead of each `trap_SendServerCommand` call in `game.mp.i386.so` (69 sites) and each `SV_SendServerCommand` (`0x808b900`) call in cod_lnxded: type 0 for `c`, `e`, `f`, `g`, `h`, `i`, `j`/`k`/`l` (`G_Voice`) and `s`; type 1 for `a`, `b`, `d` (`SV_SetConfigstring`, `0x8089d0f`), `m`, `n` (`0x80d39f1`), `o`, `p`, `q`, `r`, `t`, `u`, `v` and `w`. No letter appears with both. vcod derives the type from the letter (`CmdKind::of`, `crates/server/src/client.rs`).
 - **Bots.** VERIFIED: `0x808b68c` returns at once when `client_t + 0x5a8f4` is set, and the one store to that field is the `1` at `0x80876a3` in `SV_AddTestClient` (the `bot%d` connect string). INFERRED: a test client is queued nothing. vcod's bots read the ring themselves, so the rules below skip them.
-- **Not ready.** VERIFIED: `0x808b6aa` compares `reliableSequence - reliableAcknowledge` with `0x1f` and `0x808b6af` the state with 4. INFERRED, off those branches: when the client is more than 31 commands behind or not `CS_ACTIVE`, the loop at `0x808b6d1` closes up the unsent part of the queue (`reliableSent + 1` onward) over every type-0 slot, and a type-0 command being added returns without queueing (`0x808b733`). So a print sent to a connecting client is lost, and a cvar is not. VERIFIED live, `client-probes/probe_squash` on retail 2026-10-07: an `iprintln` before `waittill("begin")` never arrived and the `setClientCvar` beside it did.
+- **Not ready.** VERIFIED: `0x808b6aa` compares `reliableSequence - reliableAcknowledge` with `0x1f` and `0x808b6af` the state with 4. INFERRED, off those branches: when the client is more than 31 commands behind or not `CS_ACTIVE`, the loop at `0x808b6d1` closes up the unsent part of the queue (`reliableSent + 1` onward) over every type-0 slot, and a type-0 command being added returns without queueing (`0x808b733`). So a print sent to a connecting client is lost, and a cvar is not. VERIFIED live, `client-probes/probe_squash` on retail 2026-10-07: an `iprintln` before `waittill("begin")` never arrived and the `setClientCvar` beside it did. VERIFIED live for `CS_PRIMED` too, 2026-10-20 on 1.1d, 1.5b and UO 1.51b, `client-probes/probe_primedprint` on mp_carentan with the client's sequenced packets dropped for 3 s after its gamestate (`crates/server/tests/fixtures/handshake/primed-print.txt`): of a self `iprintln`, a broadcast `iprintln` and a `setClientCvar` every quarter second until `begin`, no print arrived and every cvar did, the one queued while connected inside the gamestate message and the rest with the first snapshot. vcod's server matches (`connect.rs`, `prints_sent_while_primed_are_dropped_and_cvars_kept`).
 - **Squash.** VERIFIED: `0x808b580` (called at `0x808b748`) scans `reliableSent + 1 ..= reliableSequence`, skips a slot whose type is 0 (`0x808b5a6`) or whose first letter differs or is `x`, `y` or `z` (`0x808b5c6`, the big configstring chunks), returns the slot on a `strcmp` match of the rest (`0x808b5e4`), and otherwise jumps through the table at `0x80d5820`: `a`, `b`, `o`, `p`, `q`, `r` and `t` land on the return (`0x808b65e`), `d` and `v` on a comparison of the first space-delimited token after the letter (`0x808b606`), everything else on the next slot. INFERRED, off `0x808b74d`..`0x808b7be`: a found slot is removed by shifting the later ones down and the new command takes the last slot, so `reliableSequence` does not move; with none found it goes up by one. So an unsent `d <n>` or `v <name>` is replaced by a later one for the same index or name, an unsent `t`, `b` or `a` by any later one, and anything by the same text; a command already carried by a message (`reliableSent`, raised by the snapshot writer at `0x808f917` and `0x808faf8`) never is. VERIFIED live, the same probe, one frame of `setClientCvar("sq_a", 1)`, `("sq_a", 2)`, `("sq_b", 1)`, `("sq_c", 1)`, two `iprintln("sq dup")`, two `closeMenu()`, `("sq_d", 1)`, `iprintln("sq between")`, `("sq_d", 2)` arrived as `v sq_a "2"`, `v sq_b "1"`, `v sq_c "1"`, `f "sq dup"` twice, one `u`, `f "sq between"`, `v sq_d "2"`; `("sq_a", 3)` and `("sq_a", 4)` half a second apart both arrived.
 - **Overflow.** VERIFIED: `0x808b7ea` compares `reliableAcknowledge` with `reliableSequence - 65`; on equality it prints the queue (`===== pending server commands =====`), calls `0x8087880` with `EXE_SERVERCOMMANDOVERFLOW` (`0x80d58c2`) and stores `w "EXE_SERVERCOMMANDOVERFLOW"` (`0x80d58dc`) in the slot. VERIFIED: `0x8087880` writes its argument to `client_t + 0x8` when the state is not 1 and that field is still 0. INFERRED: that is a drop deferred to later in the frame, so the client is dropped once a 65th unacked command would overwrite the oldest, and its last message carries the notice. vcod drops at once with the same reason, before writing the slot.
 

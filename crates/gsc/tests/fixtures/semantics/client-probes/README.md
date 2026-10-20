@@ -451,6 +451,32 @@ Against ours: `vcod-server mp_carentan --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_pronedrop.gsc --set
 probe_teleport=1`.
 
+## probe_rise
+
+The stance refusals' server half, any 1.1 map it knows (mp_carentan,
+mp_ship). It drives one `--probe-uo-weapon direct` client through `PROBE_IN`
+lines: on mp_carentan it lies him down in the street, moves him prone under
+two attic ceilings (one a crouch does not fit, one a stand does not) and
+tries each rise with and without `wbuttons` 0x2, then kills him twice with
+the trigger held, through dm's killed callback and through one that keeps
+his weapon; on mp_ship it hangs him on the hold ladder and holds each stance
+key. It logs `PROBE phase <time> <name>`, `PROBE place`, `PROBE killed` and
+`PROBE done`. The client's `--save-slope --slope-every-state` capture, with
+the `PROBE` lines appended, is the fixture `crates/server/tests/rise_ab.rs`
+replays; `docs/research/cod11-mantle.md`, "The forced-stance events", and
+`cod11-combat.md` 16.5 have the readings.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=55 \
+    tools/run_probe.sh client-probes/probe_rise mp_carentan
+# second shell, about 6 s later (mp_ship: --probe-weapon enfield_mp, --probe-secs 25):
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team allies \
+    --probe-weapon m1carbine_mp --probe-uo-weapon direct --save-slope \
+    --slope-every-state --capture-tag rise-1.1 --probe-cmd-ms 50 --probe-secs 45
+```
+
+Then append the server's `PROBE` lines to the fixture.
+
 ## probe_freeze
 
 `freezeControls`' server half. It calls `freezecontrols(true)` on each
@@ -2486,3 +2512,36 @@ script on any 1.1d map and blasts at it twice.
 
 Retail's lines are in `crates/server/tests/dmgtrig_ab.rs` (the
 belltower's, the touch walks') and `cod11-combat.md` 14.8 (the spawn).
+
+## probe_threadorder
+
+Which order a frame runs the threads one client packet woke
+(`docs/research/cod11-gsc-language.md`, "The packet pass"). One plain
+probe spawns from the script and sends its client commands in pairs; two
+commands with one `--probe-say` time ride one packet.
+
+```
+COD_DIR=<1.1 install> COD_LNXDED_HOME=<absolute, no '+'> PORT=33681 PROBE_SECS=45 \
+    tools/run_probe.sh client-probes/probe_threadorder mp_pavlov
+# second shell, 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:33681 --probe-secs 24 \
+    --probe-say "6:mr {sid} 0 a" --probe-say "9:mr {sid} 0 b" --probe-say "9:kill" \
+    --probe-say "12:kill" --probe-say "12:mr {sid} 0 c" \
+    --probe-say "15:mr {sid} 0 d" --probe-say "15:mr {sid} 0 e"
+```
+
+The two-client run (server as above with `PORT=33683 PROBE_SECS=70`)
+starts two probes at the same moment with only `kill`s, at 6, 9, ... 48 s on one and the same plus 17 ms more each round
+on the other, so some rounds put both packets in one frame:
+
+```
+for k in $(seq 0 14); do A="$A --probe-say $((6+3*k)):kill"; \
+    B="$B --probe-say $(python3 -c "print(f'{6+3.017*$k:.3f}')"):kill"; done
+cargo run -p vcod -- --net-probe 127.0.0.1:33683 --probe-secs 53 $A &
+cargo run -p vcod -- --net-probe 127.0.0.1:33683 --probe-secs 53 $B
+```
+
+Retail's lines, 2026-10-20, are
+`crates/server/tests/fixtures/threadorder/mp_pavlov.txt` and
+`mp_pavlov-pair.txt`, which `threadorder_ab.rs` replays on ours. It needs a client, so
+`capture_probes.sh` and `semantics_ab.rs` cannot run it.
