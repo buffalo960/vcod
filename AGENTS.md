@@ -682,6 +682,9 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   (`Server::pin_stuck_velocities`, player-clip doc 6.2).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
+- A brush model is traced at its live `r.currentAngles`, not its link's: a
+  finished rotate leaves them truncated to 65536ths (60 reads 59.99634),
+  so the clip turns by that (movers doc 22).
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat
   tag in `ClientEndFrame`, so the predictor keeps the snapshot's origin,
   and the view's 12000 pitch clamp (16000 on foot) and the jeep
