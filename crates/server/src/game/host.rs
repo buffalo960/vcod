@@ -466,6 +466,10 @@ pub struct GameHost {
     /// UO 0x4588): `g_speed`'s integer at the connect, what `ClientEndFrame`
     /// stores in `ps.speed` (cod15-movement.md, "ps.speed"). 1.1 has none.
     pub client_max_speed: Vec<i32>,
+    /// 1.5's and UO's `sessionsquad` client field by slot (1.5b
+    /// `sess` 0x217c): 0 none, 1 `squad_alpha`, 2 `squad_bravo`. 1.1 has
+    /// none (cod15-protocol-diff.md, "say_squad").
+    pub client_squad: Vec<u8>,
     /// A slot `Cmd_Vote_f` drops for its complaints; `Server` drops it
     /// before it sends the vote's lines.
     pub complaint_drop: Option<usize>,
@@ -720,6 +724,9 @@ impl GameHost {
         let g_speed = crate::game::builtins::cvar::atoi(self.cvars.get("g_speed"));
         if let Some(m) = self.client_max_speed.get_mut(slot) {
             *m = g_speed;
+        }
+        if let Some(q) = self.client_squad.get_mut(slot) {
+            *q = 0;
         }
         self.reset_client_objectives(slot);
         // The carried `pers`, if the boundary this client crossed kept one;
@@ -1395,6 +1402,7 @@ impl GameHost {
             client_voted: vec![false; MAX_CLIENTS],
             client_complaints: vec![crate::game::vote::Complaint::default(); MAX_CLIENTS],
             client_max_speed: vec![vcod_common::pmove::SPEED_RUN as i32; MAX_CLIENTS],
+            client_squad: vec![0; MAX_CLIENTS],
             complaint_drop: None,
             client_buttons: vec![0; MAX_CLIENTS],
             client_last_cmd: vec![vcod_common::net::msg::NULL_USERCMD; MAX_CLIENTS],
@@ -2007,6 +2015,10 @@ impl Host for GameHost {
                 "maxspeed" if !self.speaks_1_1() => {
                     return Value::Int(self.client_max_speed[ent.0 as usize]);
                 }
+                "sessionsquad" if !self.speaks_1_1() => {
+                    let name = SQUADS[self.client_squad[ent.0 as usize] as usize];
+                    return Value::String(cx.intern_exact(name));
+                }
                 // Retail keeps an icon index and reads 0 back as ""
                 // (0x41b7c); the name is stored here, so only the unset
                 // case needs the answer.
@@ -2146,6 +2158,13 @@ impl GameHost {
             fields::route_entity(cx.resolve_folded(field))
         };
         let max_speed = !self.speaks_1_1() && cx.resolve_folded(field) == "maxspeed";
+        if !self.speaks_1_1()
+            && cx.resolve_folded(field) == "sessionsquad"
+            && self.ents.get(ent).is_some_and(|e| e.client.is_some())
+        {
+            self.client_squad[ent.0 as usize] = squad_of(cx, value)?;
+            return Ok(());
+        }
         let Some(e) = self.ents.get_mut(ent) else {
             return Err(ErrorKind::BadType("no such entity"));
         };
@@ -2311,6 +2330,28 @@ fn head_icon_index(
         .and_then(|r| r.iter().position(|s| s.eq_ignore_ascii_case(&name)))
         .map(|i| i as i32 + 1)
         .ok_or_else(|| ErrorKind::Custom(format!("Head icon '{name}' was not precached")))
+}
+
+/// `.sessionsquad`'s names by stored value (1.5b getter 0x3b5e4).
+const SQUADS: [&str; 3] = ["none", "squad_alpha", "squad_bravo"];
+
+/// `.sessionsquad`'s setter (1.5b 0x3b515, UO 0x43803): the three names in
+/// [`SQUADS`], anything else the error.
+fn squad_of(cx: &mut Cx, value: Value) -> Result<u8, ErrorKind> {
+    let Value::String(a) = value else {
+        return Err(ErrorKind::BadType("sessionsquad takes a string"));
+    };
+    let name = cx.resolve(a);
+    SQUADS
+        .iter()
+        .position(|&s| s == name)
+        .map(|i| i as u8)
+        .ok_or_else(|| {
+            ErrorKind::Custom(format!(
+                "'{name}' is an illegal sessionsquad string. Must be squad_alpha, squad_bravo, \
+                 or none."
+            ))
+        })
 }
 
 /// `.headiconteam`'s setter (0x41c84): `none`, `axis` and `allies` store
