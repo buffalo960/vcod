@@ -210,8 +210,10 @@ pub struct Shell {
 pub struct Missile {
     pub id: EntId,
     /// The thrower's client slot, `r.ownerNum`: what the move trace passes
-    /// through and who the blast is charged to.
-    pub owner: usize,
+    /// through and who the blast is charged to. `None` once the thrower has
+    /// left: `G_FreeEntity`'s sweep stores 0x3ff there and NULL in `parent`
+    /// (combat doc 13.7), so nothing is passed and nothing is charged.
+    pub owner: Option<usize>,
     /// `s.weapon`, the 1-based configstring 7 index. The client draws the
     /// projectile off it.
     pub weapon: u8,
@@ -289,7 +291,10 @@ const GRENADE_DIE_MS: i32 = 100;
 
 /// One blast for the radius damage pass to charge.
 pub struct Explosion {
-    pub owner: usize,
+    /// `parent` (the splash's attacker) and `r.ownerNum` (the direct hit's):
+    /// `None` when the thrower left before it went off, and then
+    /// `G_RadiusDamage` returns before its walk (combat doc 13.7).
+    pub owner: Option<usize>,
     pub inflictor: EntId,
     pub weapon: u8,
     pub at: Vec3,
@@ -432,7 +437,7 @@ impl Missile {
     fn passes(&self) -> usize {
         match self.shootable {
             Some(s) if !s.owner_passes => usize::MAX,
-            _ => self.owner,
+            _ => self.owner.unwrap_or(usize::MAX),
         }
     }
 
@@ -497,7 +502,7 @@ impl Missile {
             .shell
             .and_then(|s| s.vehicle)
             .map(|v| v.0)
-            .or_else(|| (self.passes() != usize::MAX).then_some(self.owner as u32));
+            .or_else(|| (self.passes() != usize::MAX).then_some(self.passes() as u32));
         let mut hit = MissileHit {
             tr: self.trace(world, from, to),
             player: None,
@@ -1193,6 +1198,20 @@ impl Missiles {
         }
     }
 
+    /// `G_FreeEntity`'s owner sweep for a client that left (1.1d
+    /// 0x66add..0x66af7, 1.5b and UO `G_FreeEntityRefs`; combat doc 13.7):
+    /// `parent` NULL and `r.ownerNum` 0x3ff on whatever he threw or fired,
+    /// so its traces stop passing his slot and its blast charges nobody. A
+    /// UO vehicle's shell is owned by the vehicle, not the driver, and keeps
+    /// him.
+    pub fn free_owner_refs(&mut self, slot: usize) {
+        for m in &mut self.live {
+            if m.owner == Some(slot) && m.shell.is_none_or(|s| s.vehicle.is_none()) {
+                m.owner = None;
+            }
+        }
+    }
+
     /// A throw's `trDelta`: `velocity` truncated per axis, plus the
     /// thrower's `carried` velocity along it. 1.1d's `FireWeapon`
     /// (0x6900c-0x6909c) normalizes `velocity` in place and keeps the dot
@@ -1264,7 +1283,7 @@ impl Missiles {
         };
         self.live.push(Missile {
             id,
-            owner,
+            owner: Some(owner),
             weapon,
             model,
             traj: Trajectory {
@@ -1355,7 +1374,7 @@ impl Missiles {
                     id: m.id,
                     lo: m.origin + SHOOTABLE_MINS,
                     hi: m.origin + SHOOTABLE_MAXS,
-                    owner: s.owner_passes.then_some(m.owner),
+                    owner: m.owner.filter(|_| s.owner_passes),
                 })
             })
             .collect()
@@ -1411,7 +1430,7 @@ impl Missiles {
         };
         self.live.push(Missile {
             id,
-            owner,
+            owner: Some(owner),
             weapon,
             model: 0,
             traj: Trajectory {
@@ -1487,7 +1506,7 @@ impl Missiles {
         };
         self.live.push(Missile {
             id,
-            owner,
+            owner: Some(owner),
             weapon,
             model: 0,
             traj: Trajectory {
@@ -1927,11 +1946,44 @@ mod tests {
         let frame = ms.run(None, &[], &[], None, 14_000);
         assert_eq!(frame.exploded.len(), 1);
         assert_eq!(frame.exploded[0].inflictor, id);
-        assert_eq!(frame.exploded[0].owner, 0);
+        assert_eq!(frame.exploded[0].owner, Some(0));
         assert!(
             frame.temp.is_empty(),
             "the explode rides the missile's ring"
         );
+    }
+
+    /// `G_FreeEntity`'s owner sweep (13.7): a thrower who leaves is passed
+    /// by nothing his grenade traces and charged with nothing it does; a
+    /// UO vehicle's shell is the vehicle's and keeps its driver.
+    #[test]
+    fn a_leaver_s_grenade_loses_its_owner_and_a_vehicle_s_shell_does_not() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles::default();
+        armed(&mut ms, &mut host, &mut vm, Vec3::ZERO, Vec3::ZERO, 10_000);
+        let shell = Shell {
+            drop_at_ms: None,
+            speed: 3000.0,
+            damage: 300,
+            vehicle: Some(EntId(200, 0)),
+        };
+        let ents = &mut host.ents;
+        vm.with_cx(|cx| {
+            ms.fire_rocket(ents, cx, 0, 42, Vec3::Z * 40.0, Vec3::X, shell, 6, true, 0)
+        })
+        .unwrap();
+        ms.free_owner_refs(1);
+        assert_eq!(
+            ms.missiles()[0].passes(),
+            0,
+            "another slot's leave cleared it"
+        );
+        ms.free_owner_refs(0);
+        assert_eq!(ms.missiles()[0].owner, None);
+        assert_eq!(ms.missiles()[0].passes(), usize::MAX);
+        assert_eq!(ms.missiles()[1].owner, Some(0));
+        let frame = ms.run(None, &[], &[], None, 14_000);
+        assert_eq!(frame.exploded[0].owner, None);
     }
 
     /// Section 13 and the capture: the explode flips `eType` to 0, adds 178
