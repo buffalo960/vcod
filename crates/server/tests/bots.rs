@@ -744,6 +744,79 @@ fn a_bot_climbs_down_mp_ships_mast_from_the_spar() {
     );
 }
 
+/// mp_depot's roof at 508 by the ladder at x -2750, and the ledges at 326
+/// south and north of the ladder's foot (bot-navigation.md section 3, "The
+/// lip walk"). Bots sent from across the roof onto either ledge, seed 183's
+/// way among them (west along y -1246 with the south ledge below), get
+/// down without falling past the ledge to the yard at -24 and stand on it.
+/// Off that turn a bot once left the lip of the drop onto the south ledge
+/// at 81 units/s to the proving walk's 14 and fell; the drop is now a risky
+/// edge and the bots back down the ladder.
+#[test]
+#[ignore = "builds mp_depot's graph and runs a bot 28 times down off its roof; run with --ignored"]
+fn a_bot_gets_down_off_mp_depots_roof_onto_the_ledges() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let fs = Rc::new(fs);
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_depot").unwrap()).unwrap())
+        .expect("parse bsp");
+    let ledges = [[-2747.6, -1270.8, 326.2], [-2754.6, -1150.3, 326.2]];
+    let mut failed = Vec::new();
+    // Across the roof east of the ladder's head; (-2600, -1300) and
+    // (-2730, -1300) stand on the floor at 344 south of it.
+    let mut starts = Vec::new();
+    for x in [-2600.0, -2650.0, -2700.0, -2730.0] {
+        for y in [-1300.0, -1246.0, -1215.0, -1150.0] {
+            if y != -1300.0 || x == -2650.0 || x == -2700.0 {
+                starts.push([x, y]);
+            }
+        }
+    }
+    for ledge in ledges {
+        for &[x, y] in &starts {
+            let mut now = Instant::now();
+            let mut cfg = cfg(1, false, "dm");
+            cfg.map = "mp_depot".into();
+            let mut sv = vcod_server::Server::new(cfg, now);
+            sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+            sv.load_scripts(fs.clone()).expect("load scripts");
+            let slot = (0..900)
+                .find_map(|_| {
+                    run(&mut sv, &mut now, 1);
+                    sv.bot_slots().into_iter().find(|s| {
+                        sv.bot_body(*s).is_some_and(|b| b.playing)
+                            && sv
+                                .test_nav_route([-2714.2, -1217.0, 527.5], ledge)
+                                .is_some()
+                    })
+                })
+                .expect("the bot plays on the built graph");
+            let (z, _) = sv.test_floor_under([x, y, 600.0]).expect("the roof");
+            assert!(z > 500.0, "({x}, {y}) is on the roof, not at {z}");
+            sv.place_client(slot, [x, y, z + 0.2], 180.0);
+            sv.test_bot_goal(slot, Some(ledge));
+            let mut lowest = f32::MAX;
+            let on_ledge = (0..250).any(|_| {
+                run(&mut sv, &mut now, 1);
+                let b = sv.bot_body(slot).unwrap();
+                lowest = lowest.min(b.origin[2]);
+                b.on_ground
+                    && (b.origin[2] - ledge[2]).abs() < 4.0
+                    && (b.origin[0] - ledge[0]).hypot(b.origin[1] - ledge[1]) < 24.0
+            });
+            if !on_ledge || lowest < 320.0 {
+                failed.push(([x, y], ledge, lowest, sv.bot_body(slot).map(|b| b.origin)));
+            }
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "(start, ledge, lowest z, at): {failed:?}"
+    );
+}
+
 /// Six shooting bots on a United Offensive server (protocol 22) in stock
 /// `tdm` on mp_cassino for 90 s of game time: they fight with the weapons
 /// UO's menus offer, never a light machine gun (UO fires one only off its

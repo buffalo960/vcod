@@ -119,7 +119,8 @@ check.
   vcod-server --test nav_census -- --ignored`) and the ignored tests in
   `server/tests/bots.rs` (~5 s together, 40 s of CPU): three mp_ship
   six-bot runs, mp_ship's boat, mp_ship's head-on ladder pair, mp_ship's
-  hold ladder top and mp_hurtgen's crease (a graph build each). With
+  hold ladder top, mp_hurtgen's crease and mp_depot's roof ledges (a
+  graph build each). With
   `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
   mp_cassino six-bot tdm run and its walled-in spawns test (the file
@@ -242,7 +243,10 @@ check.
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
   lines; `COD_VERSION` picks the server as `run_server.sh` does (UO's
   gametypes and log live under the homepath's `uo/`). A worktree has no
-  `private/`; link the main checkout's in (it is gitignored). `tools/capture_probes.sh > .../retail-captures.txt` reruns the
+  `private/`; link the main checkout's in (it is gitignored). The retail engine runs at most 32 `+`
+  commands and folds the rest of the line into the 32nd's value;
+  `run_probe.sh` spends twelve, so a recipe gets twenty `+set`s.
+  `tools/capture_probes.sh > .../retail-captures.txt` reruns the
   top-level probes for `crates/gsc/tests/semantics_ab.rs`. Read that
   directory's `README.md` before writing a probe: six engine behaviours
   dictate a probe's shape.

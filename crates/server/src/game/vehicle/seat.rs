@@ -117,10 +117,20 @@ impl Posed {
 
     /// The model's collision triangles where the posed bones carry them, in
     /// the vehicle's own frame.
-    pub fn collision(&self) -> Vec<vcod_common::collision::ModelTri> {
-        let mut out = Vec::new();
-        vcod_common::vehiclepose::posed_collision(&self.rig.model, &self.worlds, &mut out);
-        out
+    pub fn collision(
+        &self,
+    ) -> (
+        Vec<vcod_common::collision::ModelTri>,
+        Vec<vcod_common::collision::ModelSurf>,
+    ) {
+        let (mut out, mut surfs) = (Vec::new(), Vec::new());
+        vcod_common::vehiclepose::posed_collision_surfs(
+            &self.rig.model,
+            &self.worlds,
+            &mut out,
+            &mut surfs,
+        );
+        (out, surfs)
     }
 }
 

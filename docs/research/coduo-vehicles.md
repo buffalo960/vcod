@@ -1469,6 +1469,76 @@ not measured.
   `misc_mg42` and `misc_turret` (scr_const 0x4e, 0x50), so a vehicle's
   health falls; the stock scripts set 2900 and refund friendly fire
   (VERIFIED decompile and script).
+- **A frag's splash on a hull.** `Scr_Vehicle_DamageScale` (0x9ccad)
+  takes `MOD_GRENADE_SPLASH` (4) through its own arm: the scale is the
+  inflictor's weapon's `vehiclescale` (weapon info `+0x4ac`, read off the
+  grenade's `s.weapon` through `BG_GetInfoForWeapon`) when it is above
+  0, else 1, times `dmgScaleUnder` / 100 when the point sits under half
+  the hull's height plus 10 and within 0.8 `r.maxs[1]` of the origin
+  (VERIFIED decompile). `G_Damage` (0x5fedb) passes it the attacker and
+  the inflictor in that order; `G_ExplodeMissile` (0x6e2b5) hands
+  `G_RadiusDamage` the grenade as the inflictor (VERIFIED decompile). The
+  stock frags carry `vehiclescale 0.5` (`fraggrenade_mp`,
+  `stielhandgranate_mp`, VERIFIED, the files). A grenade's fuse explode
+  never sets 0x100000; only `G_MissileImpact` does (VERIFIED decompile).
+- **Measured, rockets and frags.** Retail UO 1.51b, 2026-10-20,
+  `client-probes/probe_vehblast` (fixtures `*-blast-tank-rocket-uo.txt`,
+  `*-blast-tank-frag-uo.txt`, `*-blast-jeep-rocket-uo.txt`,
+  `*-blast-jeep-frag-uo.txt` and the `*-uo-blasttank`, `*-uo-fragtank`,
+  `*-uo-blastjeep`, `*-uo-fragjeep` snapshot pairs; recipes in their
+  headers):
+  - A bazooka round on the Panzer IV: 500 on its flank, 329 on its front,
+    1000 on its rear (1000 times the side, front and rear scales, no
+    falloff at 200 to 300), `MOD_PROJECTILE`, attacker the shooter,
+    inflictor the rocket; the explode is 186, `eFlags` 0x210000, type 2,
+    weapon 5, surface 13 (metal). The third takes the tank under the
+    script's 2000 health buffer and `_tankdrive_gmi` kills it inside the
+    notify: the probe's waiter, woken by the same notify, reads -999
+    (VERIFIED, live).
+  - On the Willys: 899 on its flank (1000 times the f32 0.9, truncated),
+    which kills it; its wreck's `radiusDamage(origin + (0, 0, 25), 300,
+    80, 0)` reaches the shooter 245 units off for 11 `MOD_EXPLOSIVE`
+    10.6 s later, after `setContents(0)`. A round 150 off its flank
+    charges nothing: the splash is under 100 (VERIFIED, live).
+  - Frags: 60 by the tank's flank (120 times 0.5), 60 on its deck, 120
+    under the jeep's body (times the under scale 2), 51 and 60 by it;
+    those that land further off charge nothing (under 100 before the
+    scale). The explodes are 185 with `eFlags` 0x100 and no vehicle bit
+    (VERIFIED, live).
+    The deck frag rests on the hull at z 51.7 (its ground the tank) and
+    its explode's down trace (mask 0x11) meets nothing: surface 0, parm
+    0, the splash point 10 up (VERIFIED, live).
+  - The bazooka's hip spread (7 degrees) draws on each server, so its
+    contacts repeat neither between two retail runs nor against ours;
+    the amounts do (VERIFIED, live).
+  `vehicle_blast_ab` replays all four on ours: notifies, the shooter's own
+  blasts and the explodes match field for field, a rocket's aim within
+  its spread (VERIFIED, replay). Three fixes closed it: the frag's
+  `vehiclescale` (ours charged 120 by the flank), a wreck with no
+  contents meeting no trace (the entity clip skips one whose `r.contents`
+  meet none of the mask, `coduo_lnxded` 0x809a72a, VERIFIED decompile;
+  ours' posed hull still stopped the wreck's blast), and the hull's
+  clip a surface at a time (below). One shot keeps a gap:
+  mp_cassino's spot 300 ahead of the tank, (4376, -1979), where retail's
+  placed shooter slides 65 to 90 units toward -y before the press (two
+  runs, two slides) and ours stands at 1.12; a pmove or ground question,
+  the amount still matches (VERIFIED, replay and live).
+- **The hull's clip, surface by surface.** The DObj clip (`coduo_lnxded`
+  0x80c7be8 over each model, 0x80c4892 over its surfaces) moves the
+  segment into each surface's bone frame and tries the surface only when
+  its contents meet the mask and the segment's part up to the best
+  fraction so far enters the surface's stored `mins`/`maxs` (0x805e387, a
+  slab test with no epsilon, the minimum faces first) (VERIFIED
+  decompile). Its triangle test enters through the front (start ahead,
+  strictly, end behind), backs the fraction off 0.125 (`0x80ea90c`) and
+  keeps it when under the best, even below 0 (VERIFIED decompile). So a
+  triangle on a surface walked later loses to an earlier surface's hit
+  when its bounds start past it, whatever its backed-off fraction: the
+  deck frag above slid down the tank's right side 0.1 off the wall, and
+  the wall's -0.045 lost to the deck's 0.152 (VERIFIED, replay). vcod's
+  posed vehicle hull keeps each surface's run, bone frame and bounds
+  (`vehiclepose::posed_collision_surfs`, `collision::clip_model_surfs`);
+  script models still clip every triangle at once.
 - A rider takes a tenth of a blast, a fifth in artillery
   (`G_VehicleOccupantRadiusDamageScale` 0x8ba86), and a tank's driver
   nothing whose inflictor is not his own tank
@@ -2028,8 +2098,9 @@ not measured.
     is 12 (VERIFIED decompile), which turns the client to the impact
     row's `vehicle` column. vcod's shell names the entity its trace
     stopped on (a vehicle's collmap names its vehicle) and the entity pass
-    marks the explode when that is a live vehicle. No capture has a shell
-    on a vehicle yet; the unit test drives one into a named collmap.
+    marks the explode when that is a live vehicle: `vehicle_shell_ab`
+    (a shell) and `vehicle_blast_ab` (a bazooka round) match retail's 186
+    with 0x100000 (section 13).
   - The landing surface off the tank (section 7) was the same per-side
     material.
 - **Riders.** Every damage path into a player's callback goes through
@@ -2041,6 +2112,8 @@ not measured.
   some; under the sweep each seat's rounds by height within retail's,
   and the driver's and gunner's silhouettes ray for ray (section 13,
   VERIFIED, replay).
+- **Rockets and frags.** Section 13's measured blasts
+  (`vehicle_blast_ab`).
 - **Hulls, shells, pushes.** Section 13's hull (`vehicle_hits_ab`,
   `vehicle_armor_ab` with the probe client's cmd stream), shell
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).

@@ -3473,6 +3473,67 @@ In S&D the objective names the point and can hold the bot still
 (`bot-objectives.md`); a bot standing at its objective or linked by the
 script is never counted as stuck.
 
+### The lip walk
+
+The 2026-10-20 round compared the bot with the walk that proved its edge,
+tick by tick, at `mp_depot`'s roof by the ladder at x -2750, on master
+180696ad (per-bot generators in). VERIFIED (measured, same detector and
+settings, release; ours only):
+
+| | seeds | stalled bot-ticks | falls | deaths |
+|---|---|---|---|---|
+| `mp_depot` master | 1-2047 odd | 2194 | 7 | 0 |
+| `mp_ship` master | 1-1023 odd | 82 | 3 | 0 |
+
+- The two drops 10-12h left are gone as creeps. VERIFIED (measured, the
+  graph's edges and walks): the roof node (-2751, -1244.3, 508.1) drops
+  to the ledge at (-2747.6, -1270.8, 326.1) by a forward run, marked
+  risky, and nothing on the roof drops to the north ledge
+  (-2754.6, -1150.3, 326.1). Bots reach both by backing down the ladder
+  from its head (-2714.2, -1217, 527.4) to its foot (-2766, -1217,
+  326.1). Every creep-only drop near a ladder on the graph also lands off
+  a turn at `TURN_PACE`, or never from rest, so `Follower::creeps_off`
+  holds none of them. `tests/bots.rs`
+  `a_bot_gets_down_off_mp_depots_roof_onto_the_ledges` sends a bot from
+  14 starts across the roof to each ledge; all 28 runs stand on it with
+  the body never under 320.
+- From rest on the head the bot and the walk's creep (`walk_with`, pace
+  0) move alike: 5.78 units a tick backing at the first's -127, a grab of
+  the rungs on the same tick past the lip, 6 units a tick down them.
+  The creep on the roof is 0.754 units a tick to the walk's 0.785, the
+  bot's weapon. VERIFIED (measured, both traces).
+- With `RISK_COST` at 0 the plans take the forward drop: the bots come
+  onto (-2751, -1244.3) running west off the turn at about 170 units/s,
+  `Follower::edge_holds`' run from the body misses, and the follower
+  goes round by the ladder. All 28 starts got down. VERIFIED (measured).
+- The deaths are gone; the depot stalls are seed 663's 2118 (an unstick
+  spell at (-1999, -470, 376) ran the bot down 32 into the gutter at
+  (-2028, -451, 344), off the graph, which it never left) and seed 1145's
+  76. The depot falls and seed 225's on `mp_ship` were unstick spells
+  off a ledge beside another bot.
+- Seed 1145 is a jump the bot makes and the walk did not. The bot stood
+  in the pit at (-1569, 2087, 212) with the jump edge to the step at
+  (-1533.2, 2112, 239.1) ahead; it jumped as soon as `jump_cue` read it
+  pinned, carrying 5 units a tick from its last landing, fell back, and
+  did it again. The flood proved the edge running at the column's centre
+  (-1536, 2112): the run bobbed on the step and jumped at 1 unit a tick,
+  landing at (-1540, 2112.8, 239.1) within the node's floor. Aimed at the
+  node, the same run bobs on the step and never lands it. VERIFIED
+  (measured, walk traces). On `mp_depot` 194 of the 963 jump edges do
+  not land walked at their node: aimed at a column's centre, at a node
+  made where a centre's walk came to rest, or 8 units aside
+  (`walk_jobs`' sidestep).
+- Tried and dropped: walking every jump edge again aimed at its node and
+  keeping only those that land (`nav_census`, VERIFIED): `mp_dawnville`
+  went from 178 spawns in one component to 176. Spawns 88 and 154 at
+  (145, -15311, 7) are reached only by the jump from (-96, -15409, -13)
+  to (-89, -15360, 19), proved 8 units aside; aimed at the node the run
+  pins on the wall at y -15375 and `jump_clear` refuses the jump, while
+  a bot sent there on master jumps on its cue and arrives from 2 of 3
+  starts. The walk's jump and the bot's are not the same rule: the walk
+  jumps after two pinned ticks and only where `jump_clear` passes, the
+  bot whenever it closes under `PINNED`.
+
 ## 4. Memory and hearing
 
 Two goals sit between a visible enemy and `Roam`, both kept by the brain

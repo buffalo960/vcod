@@ -757,7 +757,12 @@ by function and measures them against a capture.
   `flamethrower`; `weaponSlot` adds `satchel` and `binocular`;
   `projExplosionType` is `grenade`, `smoke`, `rocket`, `molotov`,
   `artillery`, `mortar`, `tank`, `b17`, `none` (1.5: grenade, rocket,
-  molotov, none); new `ammoType`.
+  molotov, none); new `ammoType`. Of the MP files in `pakuo0*.pk3` only
+  `grenade` (the four frags), `smoke` (the smoke and flash grenades),
+  `rocket` (bazooka, panzerfaust, panzerschreck, satchel), `artillery`
+  (the strike binoculars), `tank` (the six main guns) and `none` occur;
+  no stock MP weapon explodes as `mortar` (5) or `b17`, so a stock
+  server never sends an explode of either type (VERIFIED, the files).
 - About 40 new keys (VERIFIED, the files and the parser): bipod
   (`lmgDeploy*`, `adsDeploy*`, `deploySound`, `breakdownSound`), falloff
   (`damageInnerRadius`, `damageOuterRadius`, `minDamagePercent`, used by
