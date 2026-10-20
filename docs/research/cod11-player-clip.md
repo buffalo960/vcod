@@ -429,6 +429,25 @@ INFERRED: so one spectator, one intermission client or one client still
 connecting, in any slot, turns `StuckInClient` off for every player on the
 server. Section 10.3 is the capture.
 
+1.5b and UO pass over such a slot instead. VERIFIED, 1.5b
+`game.mp.i386.so` `StuckInClient` (0x3a449): the scan's own-view test on
+the other slot (`and eax,0x20000` at 0x3a50e, 1.5's own-view bit) and its
+`sessionState` test (`+0x20cc`, 0x3a525) both branch to the loop's
+increment at 0x3aaac, as do the in-use, self, health and contents tests.
+VERIFIED, UO `game.mp.uo.i386.so` `StuckInClient` (0x4258c): the same
+shape (own view 0x80000 at 0x42651, `sessionState` `+0x4504` at 0x42668,
+increment at 0x42c03), plus one more skip: a partner whose `s.eFlags`
+carries 0x100000 (`and eax,0x100000` at 0x426ce), UO's `EF_IN_VEHICLE`
+(`coduo-diff.md` 9). INFERRED: on 1.5 and UO a spectator turns nothing
+off, and a seated UO player is nobody's partner. VERIFIED, off the 1.5b
+and UO runs of `probe_pushcand` (`cod11-movers.md` 12, "The candidate
+trace"): with a spectator connected, two players `setOrigin`ed onto one
+spot are shoved apart on the next end frame, both velocities 190 long.
+
+vcod: `game::stuck::stuck_in_client` takes `StuckRules::V1_1` on protocol
+1 and `StuckRules::V1_5` on 1.5 and UO; `StuckView::seated` is the
+vehicle skip.
+
 ### 6.3 Overlap
 
 INFERRED, from the compares: an inclusive overlap of the two absolute boxes
@@ -451,6 +470,16 @@ VERIFIED: the float at 0x72d30 reads -2^-31 and the one at 0x72d34 reads
   `self.velocity.xy = -dir * s_self`, z untouched;
 - both take `pm_time` 300 and `pm_flags |= 0x100`;
 - it returns 1 at the first overlap found.
+
+VERIFIED, 1.5b rodata 0x77b68..0x77b78 reads -1.0, 2^31, 1.0, 0.0 and
+1e-4, and UO's 0x9de2c..0x9de3c the same five; the jitter at 1.5's
+0x3a842 is `fild` of `rand()`, divided by 2^31, doubled (`fld st(0)`,
+`faddp`) and less 1.0, added to the difference on the x87 stack before
+its store. INFERRED: so on 1.5 and UO each `j = rand() / 2^30 - 1`, in
+[-1, 1): two stacked players part in any direction, where 1.1's push
+always points them into one quadrant. The speed test reads `sqrt` of the
+horizontal velocity above 0.0 where 1.1 tests for a non-zero component,
+the same set of cases.
 
 VERIFIED: `ClientEndFrame` stores `ps.speed` at 0x41100. INFERRED: the
 store runs ahead of the `StuckInClient` call and writes `(int)g_speed`.
