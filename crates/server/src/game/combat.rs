@@ -1248,6 +1248,7 @@ impl BodyPose {
                     .into_iter()
                     .collect(),
             },
+            leaf_times: self.seat_ramp.leaf_times(now_ms),
             node_time: self.rules.v15(),
         }
     }
