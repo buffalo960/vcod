@@ -409,6 +409,33 @@ is why the server deploys crouched on the script trigger where the
 predictor, with hint value 0, deploys standing. A brush `trigger_mount`
 is tested by its box, not its brushes; no stock map places one.
 
+A mount is in the touch pass only while its contents meet
+`G_TouchTriggers`' area query, `trap_EntitiesInBox` under 0x405c0008
+(`G_TouchTriggers` 0x3fb15, VERIFIED decompile);
+nothing else in the pass reads a trigger's kind. VERIFIED, retail UO
+1.51b on mp_foy (2026-10-20, `client-probes/probe_mounttouch`, one
+spawned `--probe-team allies` probe standing inside a standing script
+mount around his spawn), `"trigger"` notifies per one-second phase:
+
+| contents | fires |
+|---|---|
+| spawned, 0x401c4008 | 57 |
+| `setContents(0x4000)` | 2 |
+| `setContents(0x400000)` | 55 |
+| `setContents(0)` | 2 |
+| `setContents(0x40000000)` | 55 |
+| `setContents(0x401c4008)` | 59 |
+
+`setContents` returned the contents before each phase (0x401c4008,
+0x4000, 0x400000, 0, 0x40000000; VERIFIED, same run). The mount fires
+once per cmd, not per frame: the probe's client sends about 60 cmds a
+second (INFERRED, from the counts against 20 server frames). INFERRED:
+the two fires under a mask-missing contents are notifies the cmds before
+the `setContents` queued, delivered after the counting thread started.
+vcod-server's touch pass (`game::trigger::touched`) queries the area tree
+under the same mask, so `setContents` takes a mount out of it and puts
+it back (`set_contents_moves_a_mount_in_and_out_of_the_touch_pass`).
+
 `crates/server/tests/mount_uo_ab.rs` replays the three captures' cmds
 through vcod-server on `probe_uofoot` (VERIFIED, 2026-10-16): every
 snapshot's `pm_flags`, hint and value run through the same states as

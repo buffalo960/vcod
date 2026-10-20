@@ -507,7 +507,7 @@ fn register_sound_alias(host: &mut GameHost, name: String) {
 /// are deliberately absent: five alt-fire files (`bar_slow_mp`,
 /// `fg42_semi_mp`, `mp44_semi_mp`, `ppsh_semi_mp`, `thompson_semi_mp`) carry
 /// an empty `radiantName`, since they are never placed directly and reach
-/// `Items::register` only through the alt-fire link (`alt_weapon_index`);
+/// `Items::register` only through the alt-fire link (`WeaponTable::alt_chain`);
 /// the three `mg42_bipod_*` files carry no `radiantName` key at all, since
 /// a mounted mg42 is placed as `misc_mg42` with its item named by the
 /// `weaponinfo` key instead (see `spawn_item_name`); `ptrs41_antitank_rifle_mp`

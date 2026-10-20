@@ -5491,6 +5491,33 @@ mod tests {
         }
     }
 
+    /// `G_TouchTriggers` finds a mount through the area query's mask
+    /// 0x405c0008 alone, so `setContents` takes it out of the touch pass
+    /// or puts it back: retail UO's `probe_mounttouch` fired 57 times a
+    /// second spawned (0x401c4008), 2 under 0x4000 and under 0, 55 under
+    /// 0x400000 and under 0x40000000 (coduo-movement.md 11).
+    #[test]
+    fn set_contents_moves_a_mount_in_and_out_of_the_touch_pass() {
+        let mut rt = pickup_rig();
+        let mount = spawn_mount(&mut rt, [-40.0, -40.0, -10.0], [40.0, 40.0, 80.0], false);
+        let touched = |rt: &mut ScriptRuntime, contents: Option<i32>| {
+            rt.with_host(|host, cx| {
+                if let Some(c) = contents {
+                    let recv = Some(Target::Entity(mount));
+                    crate::game::builtins::uo::set_contents(host, cx, recv, &[Value::Int(c)])
+                        .unwrap();
+                }
+                crate::game::trigger::touched(host, cx, [0.0; 3]).contains(&mount)
+            })
+        };
+        assert!(touched(&mut rt, None));
+        assert!(!touched(&mut rt, Some(0x4000)));
+        assert!(touched(&mut rt, Some(0x40_0000)));
+        assert!(!touched(&mut rt, Some(0)));
+        assert!(touched(&mut rt, Some(0x4000_0000)));
+        assert!(touched(&mut rt, Some(0x401c_4008)));
+    }
+
     /// A held LMG hints 7 where its probe, 15 ahead and 1 up, is inside a
     /// script mount, 0 when it faces away or has the bipod down; the
     /// value is 0 off the mount's contents and the spawnflag only off the
