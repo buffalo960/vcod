@@ -668,13 +668,16 @@ or a swap without a non-playing snapshot were never counted.
   eleven pass; the three `turret_ab` rows are retail captures, so their
   spawns are re-proven against retail's.
 - VERIFIED, the gate: ours' seven `PROBE spawned` origins equal retail's to
-  the hundredth, and the marker matches retail's but for one mean, y -900
-  where retail reads -901 (a truncation edge, `objective_position`'s
-  vector is stored truncated, 23.3 of the object-model doc). VERIFIED, the
-  second capture: retail's allied body leaves the probe's spot at
-  `(1432, -988)` on the frame after the move (-987, then -986); ours holds
-  one frame more. INFERRED: the gate's client sends one cmd a frame where
-  the net probe sends about three, and a slide off a `setOrigin` onto the
-  grade moves only on a cmd's own time (AGENTS.md, "A fall onto a slope").
-  With the menu thread on the new clock the same row still differs. The
-  two `marker` rows are `GAPS`.
+  the hundredth, and so does every marker origin. VERIFIED, the second
+  capture: retail's allied body leaves the probe's spot at `(1432, -988)`
+  on the frame after the move (-987, then -986). VERIFIED, vcod
+  measurement (2026-10-20): with the gate's clients sending one cmd a
+  frame, ours held the body one frame more and the marker's fifth mean
+  read y -900 where retail reads -901 (a truncation edge,
+  `objective_position`'s vector is stored truncated, 23.3 of the
+  object-model doc). Sending the net probe's cadence instead, three cmds
+  a frame 16, 16 and 18 ms apart at the snapshot's view
+  (`common::ProbeHold`, `framed` and `aim`), every marker row matches on
+  both roles and no other row of the gate moves, at 1.1d and UO: the
+  slide off a `setOrigin` onto the grade moves only on a cmd's own time
+  (AGENTS.md, "A fall onto a slope").
