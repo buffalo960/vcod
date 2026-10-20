@@ -1399,7 +1399,9 @@ start time is the old anim's `trap_XAnimGetTime` when the old one had a
 `moveSpeed` and loops (0x2a890..0x2a8bc), else `((bg.time / 100 +
 clientNum * 360) % 1000) * 0.001` (0x2a8c4..0x2a919, `clientNum` at
 `ci+0x8`); `trap_XAnimSetTime` (0x2aa5a) applies it after the goal weight
-call whenever the new anim has a `moveSpeed`.
+call whenever the new anim has a `moveSpeed`. 1.5b's and UO's setters
+set it only on a node whose weight reads 0 (cod11-combat.md 3.1, "The
+setter on a weighted node").
 
 **The phase on 1.5 and UO.** VERIFIED, disassembly of 1.5b's `game.mp`
 setter (file address 0x18ced; Ghidra's `FUN_00028ced`, its image 0x10000

@@ -257,7 +257,13 @@ fn client_spawn(
     // so the spawning thread reads the origin the think left. The sim moves
     // in the frame's spawn pass (`Server`); this is the same think on a
     // fresh sim, for script and the link.
-    let (moved, view_yaw, cone, height) = spawn_think(host, slot, mode, origin, angles[1]);
+    let (moved, view_yaw, cone, height, touched) = spawn_think(host, slot, mode, origin, angles[1]);
+    // The think's `ClientThink_real` ends in `ClientImpacts`, inside the
+    // builtin.
+    let touch = cx.intern_folded("touch");
+    for (notified, other) in host.impacts(slot, &touched) {
+        cx.notify(Target::Entity(notified), touch, vec![other]);
+    }
     host.client_prone_cone[slot] = cone;
     let origin_field = cx.intern_folded("origin");
     host.set_field(cx, id, origin_field, Value::Vector(moved))?;
@@ -345,7 +351,8 @@ fn pinned_spot(host: &mut GameHost, cx: &mut Cx, pin: [f32; 3]) -> [f32; 3] {
 /// Where `ClientSpawn`'s think on the client's last cmd leaves a spawn at
 /// `origin` (1.5b 0x3cf35, UO 0x45409; 1.1d's null cmd), and the view yaw
 /// its cmd gives, degrees, and the prone cone it leaves (1.5's and UO's
-/// held prone lies down): the arms of `Server`'s spawn pass on a fresh sim.
+/// held prone lies down), and what its move touched: the arms of
+/// `Server`'s spawn pass on a fresh sim, among the other live players.
 /// The spot itself with no world.
 fn spawn_think(
     host: &GameHost,
@@ -353,7 +360,13 @@ fn spawn_think(
     mode: SpawnMode,
     origin: [f32; 3],
     yaw_deg: f32,
-) -> ([f32; 3], f32, Option<vcod_common::pmove::ProneCone>, f32) {
+) -> (
+    [f32; 3],
+    f32,
+    Option<vcod_common::pmove::ProneCone>,
+    f32,
+    Vec<u32>,
+) {
     let last = host.client_last_cmd[slot];
     let mut sim = crate::spectate::ClientSim::spectator(origin, yaw_deg, last.angles);
     sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(host.defs.proto);
@@ -361,15 +374,22 @@ fn spawn_think(
         SpawnMode::Player => sim.become_player(origin, yaw_deg, last.angles),
         SpawnMode::Spectator => sim.become_spectator(origin, yaw_deg, last.angles),
         SpawnMode::Intermission => {
-            return (origin, yaw_deg, None, vcod_common::pmove::HEIGHT_STAND);
+            return (
+                origin,
+                yaw_deg,
+                None,
+                vcod_common::pmove::HEIGHT_STAND,
+                Vec::new(),
+            );
         }
     }
+    let bodies = host.move_bodies(slot);
     let world = host
         .world
         .as_ref()
-        .map(|w| vcod_common::movetrace::MoveWorld::bare(&w.collision));
+        .map(|w| vcod_common::movetrace::MoveWorld::new(&w.collision, &bodies, slot as u32));
     let moved = world.is_some();
-    let think = sim.spawn_think_on(&last, host.level_time_ms, world);
+    let (think, touched) = sim.spawn_think_on(&last, host.level_time_ms, world);
     let view = vcod_common::pmove::cmd::view_angles(think.angles, sim.delta_angles());
     let cone = vcod_common::pmove::ProneCone::of(&sim.ps);
     let height = sim.ps.box_height();
@@ -378,6 +398,7 @@ fn spawn_think(
         view[1],
         cone,
         height,
+        touched,
     )
 }
 

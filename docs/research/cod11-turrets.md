@@ -2141,8 +2141,9 @@ frame, at weight 0).
   take clip 157 at weight 0, the same on all three; which input turns it
   is not found.
 - vcod: `turret_ab`'s `hit_gate` replays each capture as `spawn_gate` does
-  and holds the target's playerstate, each hit's point (0.02) and each grid
-  cell (0.1) to retail's; the gunner's own rows are the `-spawn` gates'.
+  and holds the target's playerstate, each hit's point (to the bit, 13.8)
+  and each grid cell (0.1) to retail's; the gunner's own rows are the
+  `-spawn` gates'.
 
 ### 13.7 The frame ahead: UO's spawn DObj and the script trace
 
@@ -2209,6 +2210,62 @@ What 13.6 left open, read 2026-10-17. Addresses are module VAs as
   (`Capture::target_spawn`). The rig's joins answer the team menu a frame
   before the placement, where retail's probe spawned in the placement's
   frame; the pose does not depend on it.
+
+### 13.8 The muzzle and the round's end on 1.5 and UO
+
+What was left of `turret_ab`'s `HIT_NEAR` once the prone strike put the
+end point on retail's bits (cod11-combat.md 3.1, "The prone strike on
+mp_carentan"): on every capture the wound landed on retail's point or a
+float step off it, and each kill on the knockback's first frame 0.0005 to
+0.015 off (13.6). Read 2026-10-20 under gdb on retail UO 1.51b, three runs
+of the `-hitfine-uo` recipe (13.5) on port 34231, each run's capture
+replayed on ours. Scripts and dumps are in the gitignored `tmp/` of the
+branch's worktree. Breakpoints: the locational trace (`coduo_lnxded`
+0x80c7394, the world start and end of its caller's clip), after it
+(0x809aa78, the fraction) and after the end point (0x809ab53); in the game
+module, after the fire's muzzle stores (0x5aa90).
+
+- VERIFIED, `game.mp.uo.i386.so` `BG_Bullet_Endpos` (0x3011c): the range is
+  10000.0 (0x461c4000, stored at 0x3012e), not 1.1d's and 1.5b's 8192
+  (1.5b `Bullet_Endpos` 0x6de56 stores 0x46000000). Each end component is
+  `muzzle + forward * 10000` with the product on the x87 stack (0x30189),
+  then the spread terms. Its callers are `Bullet_Fire` (0x7a8d5) and
+  `Weapon_ArtilleryStrike_Fire` (0x7b77e). `Bullet_Fire` is called by the
+  turret's fire (0x5ab94), `FireWeapon` (0x7be48) and three sites among
+  the `CMD_VEH_*` turret commands (0x8f44c, 0x8fb8d, 0x900c3).
+- VERIFIED, gdb: the clip's end is that sum to the bit. On the first run
+  ours traced from the same muzzle to 8192, and its hit point came out a
+  float step off in y. Retail's start, end and fraction give retail's
+  point in the one-rounding form (cod11-combat.md 3.1).
+- VERIFIED, the fire's aim on 1.5b (0x51193) and UO (0x5a99a):
+  `AngleVectors` reads the turret entity's 0x68 plus 0x144 (UO 0x148),
+  each sum stored, roll 0. 1.1d reads the gunner's `ps.viewangles`
+  (6.3). VERIFIED, gdb: on UO 0x68 is `angles2` and 0x148 the gun's own
+  angles ((9.997559, 30.002686, 0) and (0, 229, 0) on one shot). The
+  forward it gives is the round's direction and the muzzle's. vcod's
+  forward from the gunner's view read 4 float steps off in x.
+- VERIFIED, gdb: `tag_player`'s world origin matches ours to a step in z,
+  but `|tag_flash - tag_player|` reads 53.80326 and 53.80867 on two
+  aims, where ours is the bind pose's 53.80957. So ours' muzzle sits
+  about 0.006 further along the aim. VERIFIED, `xmodel/mg42_bipod`'s
+  bones: `tag_player` hangs off `tag_aim` (under `tag_dummy`), and
+  `tag_flash` off `tag_aim_animated`, `mg01`, `bi_base` and `tag_pivot`.
+  The two chains pivot on different points, so the reach changes with
+  the aim. INFERRED: retail poses `tag_flash` on its own chain under the
+  barrel's controllers, and 1.1d does too. vcod turns `tag_player` about
+  `tag_aim` and reaches the bind distance.
+- vcod measurement (`turret_ab`, `TURRET_REPORT=1`): with the range and
+  the aim, every first-frame wound of the 1.5b and UO captures but two
+  lands on retail's bits. The two (`-hitfine-uo` 30150 and
+  `-hitgrid-uo-ground` 30350) and 1.1d's `-hitgrid` 30400 are a float step
+  off, which is the muzzle's reach above. Most of that offset lies along
+  the round, so only the last bit of the point moves. Each knockback kill
+  stays as 13.6 leaves it (0.0005 to 0.013).
+
+vcod: `combat::bullet_range` (`UO_BULLET_RANGE` on UO), `combat::bullet_end`,
+`turret::AimRule::fire_angles`. `turret_ab`'s hit rows must be retail's
+to the bit. Each gate names the rows it tolerates (`MUZZLE_GAP`,
+`KNOCKBACK_GAP`), and those stay within `HIT_NEAR` (0.02).
 
 ## 14. The client
 
