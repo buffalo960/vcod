@@ -49,27 +49,72 @@ pub struct RiderInput {
 const ATTACK: u8 = vcod_common::net::msg::BUTTON_ATTACK;
 const ALT: u8 = vcod_common::net::msg::BUTTON_MELEE;
 
-/// The undriven vehicles' own thinks, then `G_VehicleClientThink`, for one
-/// server frame: a driven vehicle steps every frame, any other on its
-/// 50 ms think. Retail runs the undriven ones in the entity pass and
-/// `G_VehicleClientThink` after it (`G_RunFrame` 0x5a1d1), so a vehicle a
-/// driver pushes moves on its next think, the frame after
+/// Each client slot's seated input, for the thinks: its last cmd and view
+/// (`pers.cmd`). `sims` is every client with a sim, by slot.
+pub fn rider_inputs(
+    host: &GameHost,
+    sims: &[(usize, &crate::spectate::ClientSim)],
+) -> Vec<Option<RiderInput>> {
+    let mut inputs = vec![None; sims.iter().map(|(slot, _)| slot + 1).max().unwrap_or(0)];
+    for &(slot, sim) in sims {
+        if sim.seat.is_none() {
+            continue;
+        }
+        let health = host.client_vitals.get(slot).map_or(0, |v| v.health);
+        inputs[slot] = Some(RiderInput {
+            forward: sim.pers_cmd.forward,
+            right: sim.pers_cmd.right,
+            up: sim.pers_cmd.up,
+            buttons: sim.pers_cmd.buttons,
+            view: sim.view_angles(),
+            sighted: sim.ps.weapon_pos_frac != 0.0,
+            alive: !sim.dead && health > 0,
+        });
+    }
+    inputs
+}
+
+/// An undriven vehicle's `G_RunThink` on its turn in the entity pass
+/// (`G_RunEntity`, game.mp.uo 0x69a35): its 50 ms think when due. A driven
+/// one's turn does nothing; `G_VehicleClientThink` steps it ([`run_driven`],
+/// docs/research/coduo-vehicles.md 12, "The think's turn"). Whether it
+/// thought.
+pub fn run_undriven(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    id: EntId,
+    inputs: &[Option<RiderInput>],
+) -> bool {
+    let now = host.level_time_ms;
+    if host
+        .vehicles
+        .live
+        .get(&id)
+        .is_none_or(|v| v.driven || now < v.next_think)
+    {
+        return false;
+    }
+    think(host, cx, id, inputs);
+    if let Some(v) = host.vehicles.live.get_mut(&id) {
+        v.next_think = now + STEP_MS;
+    }
+    true
+}
+
+/// `G_VehicleClientThink` (0x9b0ce), after the entity pass: every driven
+/// vehicle steps once a server frame, in pool-slot order, so a vehicle a
+/// driver pushes moves on its own next think, the frame after
 /// (docs/research/coduo-vehicles.md 12). `inputs` is each client slot's
 /// seated input.
-pub fn run(host: &mut GameHost, cx: &mut Cx, inputs: &[Option<RiderInput>]) {
+pub fn run_driven(host: &mut GameHost, cx: &mut Cx, inputs: &[Option<RiderInput>]) {
     let now = host.level_time_ms;
-    for driven in [false, true] {
-        for id in host.vehicles.in_slot_order() {
-            let Some(v) = host.vehicles.live.get(&id) else {
-                continue;
-            };
-            if v.driven != driven || !driven && now < v.next_think {
-                continue;
-            }
-            think(host, cx, id, inputs);
-            if let Some(v) = host.vehicles.live.get_mut(&id) {
-                v.next_think = now + STEP_MS;
-            }
+    for id in host.vehicles.in_slot_order() {
+        if !host.vehicles.live.get(&id).is_some_and(|v| v.driven) {
+            continue;
+        }
+        think(host, cx, id, inputs);
+        if let Some(v) = host.vehicles.live.get_mut(&id) {
+            v.next_think = now + STEP_MS;
         }
     }
 }

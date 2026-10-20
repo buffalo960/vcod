@@ -756,36 +756,23 @@ fn vehicle_fire(
     }
 }
 
-/// `G_VehicleClientThink` and the undriven vehicles' thinks
-/// (`crate::game::vehicle::think`), handed each rider's last cmd and view;
-/// then what the step left for the riders: dead riders out, the hull's
-/// angles for the next cmds' clamps, `vehMotion`, the hull-view bit and the
-/// gunner's overheat.
+/// `G_VehicleClientThink` (`crate::game::vehicle::think::run_driven`),
+/// handed each rider's last cmd and view; then what this frame's thinks,
+/// the undriven ones' in the entity pass included, left for the riders:
+/// dead riders out, the hull's angles for the next cmds' clamps,
+/// `vehMotion`, the hull-view bit and the gunner's overheat.
 fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
-    use crate::game::vehicle::think::RiderInput;
     if rt.host.vehicles.live.is_empty() {
         return;
     }
-    let inputs: Vec<Option<RiderInput>> = clients
+    let sims: Vec<(usize, &crate::spectate::ClientSim)> = clients
         .iter()
         .enumerate()
-        .map(|(slot, c)| {
-            let c = c.as_ref()?;
-            let sim = c.sim.as_ref()?;
-            sim.seat?;
-            Some(RiderInput {
-                forward: sim.pers_cmd.forward,
-                right: sim.pers_cmd.right,
-                up: sim.pers_cmd.up,
-                buttons: sim.pers_cmd.buttons,
-                view: sim.view_angles(),
-                sighted: sim.ps.weapon_pos_frac != 0.0,
-                alive: !sim.dead && rt.client_vitals(slot).health > 0,
-            })
-        })
+        .filter_map(|(slot, c)| Some((slot, c.as_ref()?.sim.as_ref()?)))
         .collect();
+    let inputs = crate::game::vehicle::think::rider_inputs(&rt.host, &sims);
     rt.vehicle_deaths();
-    rt.with_host(|host, cx| crate::game::vehicle::think::run(host, cx, &inputs));
+    rt.with_host(|host, cx| crate::game::vehicle::think::run_driven(host, cx, &inputs));
     rt.vehicle_deaths();
     apply_seat_ops(clients, rt);
     crush(clients, rt);
@@ -1566,8 +1553,8 @@ pub struct Server {
     level_seed: u64,
     /// [`Server::pin_spawns`]'s queues, handed to every level's script.
     spawn_pins: Option<crate::game::host::SpawnPins>,
-    /// [`Server::pin_stuck_velocities`]'s pins.
-    stuck_pins: HashMap<(i32, usize), glam::Vec2>,
+    /// [`Server::pin_stuck_rand`]'s generator.
+    stuck_rand: Option<vcod_common::rng::GlibcRand>,
     /// The map's collision and spawn, loaded by the binary; tests run
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
@@ -2051,15 +2038,17 @@ impl Server {
         self.spawn_pins = Some(pins);
     }
 
-    /// Test-facing: a `StuckInClient` push in the end frame at level time
-    /// `t` leaves slot `s` with the horizontal velocity pinned at `(t, s)`
-    /// instead of its `rand()` jitter's. A gate replays a retail capture's
-    /// pushes with it: retail seeds `rand()` from the wall clock.
-    pub fn pin_stuck_velocities(&mut self, pins: HashMap<(i32, usize), [f32; 2]>) {
-        self.stuck_pins = pins
-            .into_iter()
-            .map(|(k, v)| (k, glam::Vec2::from(v)))
-            .collect();
+    /// Test-facing: `StuckInClient` draws its jitter from glibc's `rand()`
+    /// seeded `seed`, past `skip` draws. A gate replays a retail capture's
+    /// pushes with the seed recovered off it: retail seeds `rand()` from
+    /// the clock and draws only the jitter after the joins (player-clip
+    /// doc 13.4).
+    pub fn pin_stuck_rand(&mut self, seed: u32, skip: usize) {
+        let mut g = vcod_common::rng::GlibcRand::new(seed);
+        for _ in 0..skip {
+            g.next_u31();
+        }
+        self.stuck_rand = Some(g);
     }
 
     /// `new` with the generator seeded from `seed`; the binary passes the
@@ -2103,7 +2092,7 @@ impl Server {
             spread_draws: Default::default(),
             level_seed: seed,
             spawn_pins: None,
-            stuck_pins: HashMap::new(),
+            stuck_rand: None,
             world: None,
             sv_time_ms: 0,
             paused_ms: 0,
@@ -4419,7 +4408,8 @@ impl Server {
                 let enemy =
                     enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
-                view.noise = crate::bots::loudest(&noises, *slot, view.origin);
+                let hearing = self.bots.get(slot).map_or(1.0, |b| b.skill.hearing);
+                view.noise = crate::bots::loudest(&noises, *slot, view.origin, hearing);
                 let held = self.bot_sidesteps.remove(slot);
                 if let Some(e) = enemy {
                     (view.friend_in_line, view.sidestep) =
@@ -8039,10 +8029,11 @@ impl Server {
                     continue;
                 };
                 // A thrower who left is `r.ownerNum` 0x3ff: the direct hit's
-                // `G_Damage` gets a NULL attacker (combat doc 13.7).
-                let attacker = x
-                    .owner
-                    .unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
+                // `G_Damage` gets a NULL attacker. A UO vehicle shell keeps
+                // its driver's slot (`+0x330`) after he left, and the freed
+                // entity there reads number 0 (combat doc 13.7).
+                let owner = rt.charged_owner(x.owner);
+                let attacker = owner.unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
                 // A shell's direct hit lands before its splash, which skips
                 // the client it struck (`G_MissileImpact`, coduo-diff.md 21).
                 // UO's `G_MissileImpact` drops the inflictor with the owner
@@ -8120,7 +8111,7 @@ impl Server {
                 }
                 // `G_RadiusDamage` returns before its walk when `parent`, its
                 // attacker, is NULL: the thrower left (combat doc 13.7).
-                let Some(owner) = x.owner else {
+                let Some(owner) = owner else {
                     if x.concussive {
                         rt.spawn_concussive();
                     }
@@ -8329,15 +8320,12 @@ impl Server {
                     } else {
                         StuckRules::V1_5
                     };
-                    let rand = || (vcod_common::rng::xorshift(&mut self.rng) >> 33) as u32;
-                    if let Some(mut push) = stuck_in_client(slot, &views, rules, rand) {
-                        let t = self.sv_time_ms;
-                        if let Some(v) = self.stuck_pins.get(&(t, slot)) {
-                            push.self_vel = *v;
-                        }
-                        if let Some(v) = self.stuck_pins.get(&(t, push.other)) {
-                            push.other_vel = *v;
-                        }
+                    let (rng, glibc) = (&mut self.rng, &mut self.stuck_rand);
+                    let rand = || match glibc {
+                        Some(g) => g.next_u31(),
+                        None => (vcod_common::rng::xorshift(rng) >> 33) as u32,
+                    };
+                    if let Some(push) = stuck_in_client(slot, &views, rules, rand) {
                         let me = self.clients[slot]
                             .as_mut()
                             .and_then(|c| c.sim.as_mut())
