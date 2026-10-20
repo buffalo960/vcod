@@ -18,10 +18,12 @@
 //! and cook, its tank and jeep seats, a mounted MG, 1.5's moves and turns). The UO one runs
 //! at a UO install, the 1.5 one at a 1.5 or UO install.
 //!
-//! `predictor_replays_retail_slope_runs` replays every 1.1d slope capture
-//! that logs the whole playerstate through the predictor: each retail
-//! snapshot rebuilt through `from_wire`, retail's cmds run through
-//! `run_cmd`, the next snapshot's origin matched to the bit.
+//! `predictor_replays_retail_slope_runs` (and its `_1_5` and `_uo` twins)
+//! replays every 1.1d (1.5b, UO 1.51b) slope capture that logs the whole
+//! playerstate through the predictor under its version's rules: each
+//! retail snapshot rebuilt through `from_wire`, retail's cmds run through
+//! `run_cmd`, the next snapshot's origin matched to the bit, but where the
+//! server moved the body and the rows `REPLAY_GAPS` names.
 //!
 //! `predictor_rides_retail_movers` predicts the ride capture's player from
 //! one snapshot to the next while the slab under him moves: the slab clipped
@@ -1544,9 +1546,26 @@ struct Delta {
     d: Vec3,
     ground_disagrees: bool,
     /// Moved by the server between snapshots, which no prediction follows:
-    /// a spawn's or teleport's `eFlags` 0x8 flip, or the probe gsc's
-    /// `setOrigin` (its `PROBE place <time>` line at the snapshot's time).
+    /// a spawn's or teleport's `eFlags` 0x8 flip, the probe gsc's
+    /// `setOrigin` (its `PROBE place <time>` line at the snapshot's time),
+    /// or a body that moved while carried ([`carried`]) at either end.
     relocated: bool,
+}
+
+/// A body whose origin the server sets each frame and whose pmove moves
+/// nothing: linked (`pm_type` 1 or 7, the parent's carry), in a UO vehicle
+/// seat (placed at the seat tag, coduo-vehicles.md 3) or on a mounted MG
+/// (placed by the turret pass, cod11-turrets.md).
+fn carried(p: &Protocol, w: &msg::PlayerState) -> bool {
+    use vcod_common::net::flags::{
+        EF_IN_VEHICLE_V22, EF_MOUNTED, PM_DEAD_LINKED, PM_NORMAL_LINKED,
+    };
+    let pm = w.field_i32(p, "pm_type");
+    let ef = w.field_i32(p, "eFlags");
+    pm == PM_NORMAL_LINKED
+        || pm == PM_DEAD_LINKED
+        || ef & EF_MOUNTED != 0
+        || (p.version == PROTOCOL_V22.version && ef & EF_IN_VEHICLE_V22 != 0)
 }
 
 /// The serverTimes of the gsc's `PROBE place <time> (x, y, z)` lines.
@@ -1578,8 +1597,13 @@ fn snap_times(text: &str) -> Vec<i32> {
 /// `run_cmd`, as a predicting client does; one row per snapshot, the
 /// predicted origin against retail's. `PREDICT_TRACE=<commandTime>` prints
 /// that snapshot's prediction cmd by cmd.
-fn replay(text: &str, world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> Vec<Delta> {
-    let lines = parse_capture(P, text);
+fn replay(
+    p: &Protocol,
+    text: &str,
+    world: &CollisionWorld,
+    weapons: &[Option<WeaponDef>],
+) -> Vec<Delta> {
+    let lines = parse_capture(p, text);
     let cmds: Vec<UserCmd> = lines
         .iter()
         .filter_map(|l| match l {
@@ -1600,12 +1624,13 @@ fn replay(text: &str, world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> 
             CaptureLine::Cmd(_) => None,
         })
         .zip(snap_times(text));
-    let ct = |w: &msg::PlayerState| w.field_i32(P, "commandTime");
-    let eflags = |w: &msg::PlayerState| w.field_i32(P, "eFlags");
+    let ct = |w: &msg::PlayerState| w.field_i32(p, "commandTime");
+    let eflags = |w: &msg::PlayerState| w.field_i32(p, "eFlags");
     let (first, _) = snaps.next().expect("a snapshot before the first cmd");
-    let rebuild = |w: &msg::PlayerState| predict::from_wire(P, w, by_time.get(&ct(w)));
+    let rebuild = |w: &msg::PlayerState| predict::from_wire(p, w, by_time.get(&ct(w)));
     let mut pred = rebuild(first);
     let (mut last_ct, mut last_eflags) = (ct(first), eflags(first));
+    let mut last = first;
     let mut next_cmd = 0usize;
     let mut rows = Vec::new();
     let mw = MoveWorld::bare(world);
@@ -1639,30 +1664,49 @@ fn replay(text: &str, world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> 
         }
         rows.push(Delta {
             ct: s_ct,
-            d: pred.ps.origin - Vec3::from(w.origin(P)),
+            d: pred.ps.origin - Vec3::from(w.origin(p)),
             ground_disagrees: pred.ps.on_ground
-                != (w.field_i32(P, "groundEntityNum") == ENTITYNUM_WORLD as i32),
-            relocated: (eflags(w) ^ last_eflags) & 0x8 != 0 || places.contains(&t),
+                != (w.field_i32(p, "groundEntityNum") == ENTITYNUM_WORLD as i32),
+            relocated: (eflags(w) ^ last_eflags) & 0x8 != 0
+                || places.contains(&t)
+                || ((carried(p, w) || carried(p, last)) && w.origin(p) != last.origin(p)),
         });
         pred = rebuild(w);
-        (last_ct, last_eflags) = (s_ct, eflags(w));
+        (last_ct, last_eflags, last) = (s_ct, eflags(w), w);
     }
     rows
 }
 
-/// Every slope capture off the retail 1.1d server whose `!snap` lines log
-/// the whole playerstate (`wire=`), replayed exactly: a snapshot off
-/// retail's origin by any amount, or on the other side of the ground, fails
-/// unless the server moved the body ([`Delta::relocated`]).
-/// `mp_carentan-dm-slope-8ms-prone-{mound,street}.txt` predate the `wire=`
-/// field (no eye leg, speed or gravity to rebuild from); their `-1.1`
-/// recaptures stand in for them here.
-#[test]
-fn predictor_replays_retail_slope_runs() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        return;
-    };
-    let weapons = vcod_common::weapon_table::from_configstring(&fs, retail_cs7());
+/// Every slope capture off one retail server (`server`, its header's name)
+/// whose `!snap` lines log the whole playerstate (`wire=`), replayed under
+/// `p` exactly: a snapshot off retail's origin by any amount, or on the other
+/// side of the ground, fails unless the server moved the body
+/// ([`Delta::relocated`]). Each capture's weapons are its own `# cs7`
+/// header's, or mp_carentan's 1.1 list where it has none.
+/// Rows the replay cannot match, `(file, commandTime)`, each with its reason.
+/// A listed row that matches fails the gate, so the list cannot go stale.
+const REPLAY_GAPS: &[(&str, i32)] = &[
+    // The dead driver's corpse is pushed out of the jeep's hull by
+    // `ClientThink_real` ahead of `Pmove` (`vehicle_overlap`, coduo-vehicles.md
+    // 11.6, 11.7): the game's velocity write, which no predictor runs, at
+    // the two snapshots after the death.
+    ("mp_peaks-tdm-slope-8ms-jeep-die-uo.txt", 18743),
+    ("mp_peaks-tdm-slope-8ms-jeep-die-uo.txt", 18793),
+    // One float step under retail's z (8.124999 against 8.124998) where the
+    // crouched walk steps off the kerb onto brush 2290: the cmd's plain
+    // slide lands at 8.124999, its overclip lifts it to 8.12503 and the
+    // ground snap's 9-unit trace sets it back down. Only the snapshot's end
+    // state is retail's, so which of those three stores rounds differently
+    // on 1.5b is not known; UO's run of the same route matches.
+    ("mp_carentan-dm-slope-8ms-patchwalk-kerb-1.5.txt", 29991),
+    // One float step on x (460.2108 against 460.21082) after seven crouched
+    // diagonal cmds on terrain triangle 2177, y and z exact. Same evidence
+    // limit as the kerb's row: the cmd that rounds apart is not visible in
+    // 20 Hz snapshots, and UO's run of the route matches.
+    ("mp_carentan-dm-slope-8ms-patchwalk-pole-1.5.txt", 30492),
+];
+
+fn replay_retail_runs(p: &Protocol, fs: &vcod_common::pk3::Pk3Fs, server: &str, min_runs: usize) {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/playerstate");
     let mut runs: Vec<(String, String)> = std::fs::read_dir(dir)
         .expect("the fixture directory")
@@ -1673,13 +1717,16 @@ fn predictor_replays_retail_slope_runs() {
             (name, std::fs::read_to_string(&p).unwrap())
         })
         .filter(|(_, text)| {
-            text.lines().next().is_some_and(|l| l.contains("CoD 1.1d")) && text.contains(" wire=")
+            text.lines()
+                .next()
+                .is_some_and(|l| l.contains(&format!("CoD {server} ")))
+                && text.contains(" wire=")
         })
         .collect();
     runs.sort();
     assert!(
-        runs.len() >= 15,
-        "only {} 1.1 slope fixtures in {dir}",
+        runs.len() >= min_runs,
+        "only {} {server} slope fixtures in {dir}",
         runs.len()
     );
     let mut worlds: HashMap<(String, String), CollisionWorld> = HashMap::new();
@@ -1691,17 +1738,28 @@ fn predictor_replays_retail_slope_runs() {
         let world = worlds
             .entry((map.to_owned(), gametype.to_owned()))
             .or_insert_with(|| {
-                let (world, entities) = load_world(&fs, map);
+                let (world, entities) = load_world(fs, map);
                 world.unlink_script_brushes(&entities, gametype);
+                world.set_arith(vcod_common::patch::Arith::for_protocol(p));
                 world
             });
-        let rows = replay(text, world, &weapons);
+        let cs7 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("# cs7 "))
+            .unwrap_or(retail_cs7());
+        let weapons = vcod_common::weapon_table::from_configstring(fs, cs7);
+        let rows = replay(p, text, world, &weapons);
         assert!(rows.len() > 100, "{name}: only {} snapshots", rows.len());
         let relocated = rows.iter().filter(|r| r.relocated).count();
-        let off: Vec<_> = rows
-            .iter()
-            .filter(|r| !r.relocated && (r.d != Vec3::ZERO || r.ground_disagrees))
-            .collect();
+        let gap = |r: &Delta| REPLAY_GAPS.contains(&(name.as_str(), r.ct));
+        let is_off = |r: &Delta| !r.relocated && (r.d != Vec3::ZERO || r.ground_disagrees);
+        for r in rows.iter().filter(|r| gap(r) && !is_off(r)) {
+            failures.push(format!(
+                "{name}: ct {} matches; drop it from REPLAY_GAPS",
+                r.ct
+            ));
+        }
+        let off: Vec<_> = rows.iter().filter(|r| is_off(r) && !gap(r)).collect();
         println!(
             "{name}: {} snapshots, {relocated} moved by the server, {} off retail",
             rows.len(),
@@ -1717,6 +1775,37 @@ fn predictor_replays_retail_slope_runs() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// The retail 1.1d slope captures.
+/// `mp_carentan-dm-slope-8ms-prone-{mound,street}.txt` predate the `wire=`
+/// field (no eye leg, speed or gravity to rebuild from); their `-1.1`
+/// recaptures stand in for them here. Needs `COD_DIR` at a 1.1 install.
+#[test]
+fn predictor_replays_retail_slope_runs() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    replay_retail_runs(&PROTOCOL_V1, &fs, "1.1d", 15);
+}
+
+/// The retail 1.5b slope captures under 1.5's rules. Needs `COD_DIR` at a
+/// 1.5 install, or a UO one (its `main/` is 1.5's).
+#[test]
+fn predictor_replays_retail_slope_runs_1_5() {
+    let Some(fs) = fs_15() else {
+        return;
+    };
+    replay_retail_runs(&PROTOCOL_V6, &fs, "1.5b", 10);
+}
+
+/// The retail United Offensive 1.51b slope captures under UO's rules. Needs
+/// `COD_DIR` at a United Offensive install.
+#[test]
+fn predictor_replays_retail_slope_runs_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    replay_retail_runs(&PROTOCOL_V22, &fs, "UO 1.51b", 30);
+}
 // ---------------------------------------------------------------------------
 // Riding a retail mover.
 
@@ -1986,4 +2075,34 @@ fn predictor_rides_a_retail_world_copy() {
         bad.len(),
         bad.join("\n")
     );
+}
+
+/// Where retail UO's `probe_uostates` unlink left its player, 6.8 units
+/// into mp_carentan's street terrain: the ground trace starts in solid
+/// without being all solid (a terrain clip never reads all solid), and so
+/// does its retrace from a thousandth under the origin, so the body stays
+/// off the ground under every version's rules (cod11-mantle.md, "A start
+/// in solid on the ground trace"). It used to stand there and walk off at
+/// full speed. Needs `COD_DIR` at any install.
+#[test]
+fn a_body_sunk_in_terrain_finds_no_ground() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    let (world, entities) = load_world(&fs, "mp_carentan");
+    world.unlink_script_brushes(&entities, "dm");
+    for p in [&PROTOCOL_V1, &PROTOCOL_V6, &PROTOCOL_V22] {
+        world.set_arith(vcod_common::patch::Arith::for_protocol(p));
+        let mw = MoveWorld::bare(&world);
+        let mut ps = pm::PlayerState::spawn(Vec3::new(902.2071, 2019.3634, -43.596127), 90.0);
+        ps.rules = pm::MoveRules::for_protocol(p);
+        let input = pm::PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        for _ in 0..6 {
+            pm::pmove(&mut ps, &input, &mw, 0.008, &[]);
+            assert!(!ps.on_ground, "protocol {}: {:?}", p.version, ps.origin);
+        }
+    }
 }

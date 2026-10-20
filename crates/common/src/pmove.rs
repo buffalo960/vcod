@@ -3625,10 +3625,18 @@ fn near_ground_missed(ps: &PlayerState, world: &MoveWorld, mask: u32) -> bool {
 /// Q3 `bg_pmove.c` `PM_GroundTrace`.
 fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmInput) {
     // From a quarter unit above the origin to a quarter below (0x304c0..
-    // 0x304d3, `.rodata 0x70ba8`): a box resting on a face starts clear.
+    // 0x304d3, `.rodata 0x70ba8`): a box resting on a face starts clear. On
+    // a mounted gun from the origin to a unit below (0x304a5..0x304b6).
+    let reach = if ps.mounted.is_some() {
+        (0.0, 1.0)
+    } else {
+        (0.25, 0.25)
+    };
+    let (x, y) = (ps.origin.x, ps.origin.y);
+    let end = ps.origin - Vec3::Z * reach.1;
     let mut t = world.box_trace(
-        ps.origin + Vec3::Z * 0.25,
-        ps.origin - Vec3::Z * 0.25,
+        ps.origin + Vec3::Z * reach.0,
+        end,
         ps.mins(),
         ps.maxs(),
         mask,
@@ -3639,13 +3647,23 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmIn
             None => {
                 ps.jump_origin_z = 0.0;
                 ps.jump_penalty = false;
-                ps.ground_plane = None;
-                ps.near_ground = false;
-                ps.on_ground = false;
-                ps.ground_normal = Vec3::Z;
-                ps.ground_surface_flags = 0;
+                lose_ground(ps);
                 return;
             }
+        }
+    }
+    // A start in solid that is not all solid (a terrain clip's, which never
+    // reads all solid) is traced again from a thousandth under the origin
+    // (0x30540..0x3058c, `.rodata 0x70bac`); a start in solid there too
+    // leaves the ground, the jump's origin kept (0x3065e). 1.5 0x21e26 and
+    // UO alike (cod11-mantle.md, "A start in solid on the ground trace").
+    // The x, y and end are the first trace's, the z the corrected origin's.
+    if t.startsolid {
+        let from = Vec3::new(x, y, ps.origin.z - 0.001);
+        t = world.box_trace(from, end, ps.mins(), ps.maxs(), mask);
+        if t.startsolid {
+            lose_ground(ps);
+            return;
         }
     }
     // Any hit ends the jump's step allowance, thrown off or not (0x305c8).
@@ -3695,6 +3713,16 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmIn
         ps.ground_normal = Vec3::Z;
         ps.ground_surface_flags = 0;
     }
+}
+
+/// What a ground trace that cannot stand the body clears: `groundEntityNum`
+/// 1023 and `pml.groundPlane`, `pml.walking` and 1.5's near flag.
+fn lose_ground(ps: &mut PlayerState) {
+    ps.ground_plane = None;
+    ps.near_ground = false;
+    ps.on_ground = false;
+    ps.ground_normal = Vec3::Z;
+    ps.ground_surface_flags = 0;
 }
 
 /// Feet, waist and eye point-contents samples.
