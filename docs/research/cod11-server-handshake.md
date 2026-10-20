@@ -1072,9 +1072,9 @@ the game and a socket on 127.0.0.1:20510 standing in for the master.
   those pointers element by element, a shorter record first on a shared
   prefix; a group is a run of equal records. INFERRED from 0x809d2d0 and
   0x80a2218. A pointer's order is the compiled code buffer's, which
-  `GScr_LoadGameTypeScript` (game module 0x69158) fills with the gametype
-  before `_callbacksetup` and the level script after (0x41026 in the
-  export). INFERRED. With `developer 1` and `developer_script 1` retail
+  `GScr_LoadScripts` (game module 0x693c8) fills through
+  `GScr_LoadGameTypeScript` (0x69158: the gametype, then
+  `_callbacksetup`) and then `Scr_LoadScript("maps/mp/<map>")`. INFERRED. With `developer 1` and `developer_script 1` retail
   prints positions as `(file 'maps\mp\gametypes\tdm.gsc', line 992)\n`
   followed by the source line verbatim (its `\r\n` kept) and a line of
   spaces ending in `*` under the column. VERIFIED. On mp_brecourt every
