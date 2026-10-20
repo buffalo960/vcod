@@ -218,7 +218,13 @@ fn main() {
             let kills: Vec<Vec<String>> = sv
                 .script_log()
                 .iter()
-                .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+                .filter_map(|l| {
+                    // Not the `TANK;` of a `D;` line's `MOD_CRUSH_TANK`.
+                    l.trim_end()
+                        .split_once("K;")
+                        .filter(|(pre, _)| !pre.ends_with(|c: char| c.is_ascii_alphanumeric()))
+                        .map(|(_, k)| k)
+                })
                 .map(|k| k.split(';').map(str::to_string).collect())
                 .collect();
             let frag = |k: &Vec<String>| k[10].starts_with("MOD_GRENADE");

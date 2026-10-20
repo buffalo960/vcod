@@ -149,7 +149,13 @@ fn a_bot_drives_a_tank_off_and_gets_out() {
 fn gun_kills(sv: &vcod_server::Server) -> Vec<(String, String)> {
     sv.script_log()
         .iter()
-        .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+        .filter_map(|l| {
+            // Not the `TANK;` of a `D;` line's `MOD_CRUSH_TANK`.
+            l.trim_end()
+                .split_once("K;")
+                .filter(|(pre, _)| !pre.ends_with(|c: char| c.is_ascii_alphanumeric()))
+                .map(|(_, k)| k)
+        })
         .map(|k| k.split(';').map(str::to_string).collect::<Vec<_>>())
         .filter(|k| k.len() > 8)
         .map(|k| (k[5].clone(), k[8].clone()))

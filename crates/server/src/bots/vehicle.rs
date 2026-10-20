@@ -291,7 +291,9 @@ impl Bot {
         self.rider.fighting = enemy.is_some();
         if seat.seat == 1 {
             self.drive(view, seat, &mut cmd);
-        } else if seat.driven || enemy.is_some() {
+        } else if enemy.is_some() || seat.driven && seat.speed.abs() >= STALL_SPEED {
+            // A rider with nobody to shoot is idle while the vehicle
+            // stands, whoever drives it.
             self.rider.idle = 0;
         } else {
             self.rider.idle += 1;

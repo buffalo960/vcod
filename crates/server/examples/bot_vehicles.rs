@@ -71,11 +71,13 @@ fn game(
     for slot in sv.bot_slots() {
         t.boardings += sv.bot_body(slot).map_or(0, |b| b.boardings);
     }
-    for k in sv
-        .script_log()
-        .iter()
-        .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
-    {
+    for k in sv.script_log().iter().filter_map(|l| {
+        // Not the `TANK;` of a `D;` line's `MOD_CRUSH_TANK`.
+        l.trim_end()
+            .split_once("K;")
+            .filter(|(pre, _)| !pre.ends_with(|c: char| c.is_ascii_alphanumeric()))
+            .map(|(_, k)| k)
+    }) {
         let k: Vec<&str> = k.split(';').collect();
         t.kills += 1;
         let w = k.get(8).copied().unwrap_or("");
