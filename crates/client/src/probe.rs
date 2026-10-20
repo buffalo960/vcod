@@ -1217,9 +1217,10 @@ pub fn probe(
         };
         last_sent = sent.or(last_sent);
         if let Some(c) = sent {
-            // `--probe-vehicle` and `--probe-uo-weapon` log their cmd times
-            // too, which a gate replays where a landing rides the split.
-            if probe_fall || vehicle.is_some() {
+            // `--probe-vehicle`, `--probe-uo-weapon` and `--probe-ride` log
+            // their cmd times too, which a gate replays where a landing rides
+            // the split.
+            if probe_fall || probe_ride || vehicle.is_some() {
                 fall.record_cmd(
                     c.server_time,
                     fall_walk.map(|_| c.angles[1]),
@@ -12406,10 +12407,15 @@ struct RideProbe {
     movers: std::collections::HashMap<u32, [i32; 3]>,
     /// The last snapshot's entity numbers; `None` before the first.
     present: Option<std::collections::HashSet<u32>>,
+    /// The last snapshot printed: the loop asks once per cmd.
+    last: Option<i32>,
 }
 
 impl RideProbe {
     fn observe(&mut self, snap: &net::snapshot::Snapshot) {
+        if self.last.replace(snap.server_time) == Some(snap.server_time) {
+            return;
+        }
         let p = wire();
         if let Some(present) = &self.present {
             for (&num, ent) in snap.entities.iter().filter(|(n, _)| !present.contains(n)) {
