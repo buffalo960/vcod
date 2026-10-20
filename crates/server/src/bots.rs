@@ -273,10 +273,14 @@ pub struct BotView {
     /// A held rocket launcher (`weaponClass rocketlauncher`) with a round
     /// left, clip or reserve: what breaches a `bas` base.
     pub rocket: Option<u8>,
-    /// A held rocket launcher with no round left: what a `bas` bot holds
-    /// when it taps for another, so the pickup's swap drops it and not
-    /// the gun (`cod11-items.md` 5).
-    pub spent_rocket: Option<u8>,
+    /// `ps.weaponslots` 1 and 2, the two primaries (0 for an empty slot).
+    /// With both full a primary pickup drops the weapon in hand, or slot
+    /// 1's with the pistol out, never the pistol (`cod11-items.md` 5), so
+    /// a `bas` bot draws the one it would rather lose before it taps.
+    pub primaries: [u8; 2],
+    /// The rocket launchers held (`weaponClass rocketlauncher`), as a
+    /// `weapons_held` mask.
+    pub launchers: u64,
     /// A held bullet weapon other than the pistol with a round left, clip
     /// or reserve: what the bot fights with once its primary is a spent
     /// launcher.
@@ -486,9 +490,10 @@ pub struct BasView {
     pub bases: Vec<BasBaseView>,
     /// Rocket launchers lying about to be picked up with the use key: the
     /// maps' `mpweapon_bazooka`, `_panzerschreck` and `_panzerfaust`, which
-    /// respawn 15 s after a pickup, and drops.
+    /// respawn 15 s after a pickup, and drops with a round left.
     pub launchers: Vec<[f32; 3]>,
-    /// Bullet weapons lying about with a round in the clip: drops, mostly.
+    /// Bullet weapons lying about with a round in the clip or the reserve:
+    /// drops, mostly.
     pub guns: Vec<[f32; 3]>,
     pub rank: usize,
 }
@@ -857,9 +862,9 @@ struct Objective {
     /// Ticks stood at a breach stand with no shot from it; past
     /// [`BREACH_IDLE_TICKS`] the next stand is tried (`pick`).
     idle: u32,
-    /// Ticks since an S&D defuser's settled view picked a weapon lying by
-    /// the bomb instead of its trigger; while set it closes in to
-    /// [`DEFUSE_CLOSE`].
+    /// Ticks since an S&D defuser's, or a `bas` planter's or defuser's,
+    /// settled view picked a weapon lying by the charge instead of its
+    /// trigger; while set it closes in to [`DEFUSE_CLOSE`].
     close_in: u32,
 }
 
@@ -1326,11 +1331,7 @@ impl Bot {
             (ObjRole::Attack, None) => site().map(ObjTarget::Plant),
             (ObjRole::Defend, Some(b)) if sd.lead => Some(ObjTarget::Defuse {
                 bomb: b,
-                reach: if (1..DEFUSE_CLOSE_TICKS).contains(&self.obj.close_in) {
-                    DEFUSE_CLOSE
-                } else {
-                    DEFUSE_REACH
-                },
+                reach: self.press_reach(DEFUSE_REACH),
                 ticks: DEFUSE_TICKS,
             }),
             // Everyone else keeps off the defuser's line to the bomb.
@@ -1504,7 +1505,7 @@ impl Bot {
                 {
                     return Some(ObjTarget::Defuse {
                         bomb: c,
-                        reach: BAS_REACH,
+                        reach: self.press_reach(BAS_REACH),
                         ticks: BAS_DEFUSE_TICKS,
                     });
                 }
@@ -1582,7 +1583,7 @@ impl Bot {
                     },
                     Some(c) if t.breached => ObjTarget::Defuse {
                         bomb: c,
-                        reach: BAS_REACH,
+                        reach: self.press_reach(BAS_REACH),
                         ticks: BAS_PLANT_TICKS,
                     },
                     _ if t.breached => guard(t.at),
@@ -1743,7 +1744,7 @@ impl Bot {
     fn think_objective(&mut self, view: &BotView, cmd: UserCmd) -> Option<UserCmd> {
         self.obj.rest = self.obj.rest.saturating_sub(1);
         let t = self.objective_target(view);
-        if view.sd.is_some() && matches!(t, Some(ObjTarget::Defuse { .. })) {
+        if Self::press_swaps_guarded(view) && matches!(t, Some(ObjTarget::Defuse { .. })) {
             if self.obj.close_in > 0 {
                 self.obj.close_in += 1;
             }
@@ -1809,7 +1810,7 @@ impl Bot {
                     0
                 };
                 let mut cmd = self.hold_use(view, cmd, aim);
-                let swaps = view.sd.is_some()
+                let swaps = Self::press_swaps_guarded(view)
                     && view.use_takes_weapon
                     && self.obj.close_in < DEFUSE_CLOSE_TICKS;
                 if self.obj.settled >= SETTLE_TICKS && swaps {
@@ -1844,11 +1845,14 @@ impl Bot {
                     0
                 };
                 let mut cmd = self.hold_use(view, cmd, aim);
-                // An empty launcher in hand first: the swap drops what is
-                // held, and a bot that tapped with its gun out traded it.
-                let swap = view
-                    .spent_rocket
-                    .filter(|&r| r != view.weapon && matches!(view.uo, Some(UoView::Bas(_))));
+                // The primary it would rather lose in hand first: the swap
+                // drops what is held, and a bot that tapped with its gun
+                // out traded it.
+                let swap = match view.uo.as_ref() {
+                    Some(UoView::Bas(b)) => Self::swap_out(view, b.launchers.contains(&spot)),
+                    _ => None,
+                }
+                .filter(|&w| w != view.weapon);
                 if let Some(r) = swap {
                     cmd.weapon = r;
                     cmd.buttons = 0;
@@ -1926,6 +1930,45 @@ impl Bot {
         } else {
             self.fetch = Some((aim, best, ticks));
         }
+    }
+
+    /// The S&D defuse and the `bas` plant and defuse hold use off the
+    /// press a weapon lying in reach would answer ([`DEFUSE_CLOSE`]).
+    fn press_swaps_guarded(view: &BotView) -> bool {
+        view.sd.is_some() || matches!(view.uo, Some(UoView::Bas(_)))
+    }
+
+    /// `far`, or [`DEFUSE_CLOSE`] while closing in over a charge whose
+    /// press would take a weapon lying by it.
+    fn press_reach(&self, far: f32) -> f32 {
+        if (1..DEFUSE_CLOSE_TICKS).contains(&self.obj.close_in) {
+            DEFUSE_CLOSE
+        } else {
+            far
+        }
+    }
+
+    /// The primary a `bas` bot holds when it taps for a weapon lying about,
+    /// a launcher with `launcher`: with a slot free nothing drops (`None`);
+    /// else an empty one before a loaded one, then one of the kind being
+    /// fetched, then not the gun it fights with. A launcher fetch with a
+    /// spent launcher and a gun drops the launcher; a gun fetch with a
+    /// loaded launcher and a dry gun drops the gun.
+    fn swap_out(view: &BotView, launcher: bool) -> Option<u8> {
+        let [a, b] = view.primaries;
+        if a == 0 || b == 0 {
+            return None;
+        }
+        let cost = |w: u8| {
+            let bit = |m: u64| w < 64 && m >> w & 1 == 1;
+            (
+                bit(view.loaded),
+                bit(view.launchers) != launcher,
+                view.gun == Some(w),
+                w != view.weapon,
+            )
+        };
+        Some(if cost(b) < cost(a) { b } else { a })
     }
 
     /// A tap at a `bas` launcher: [`LAUNCHER_TAPS`] at one with no rocket
@@ -3704,7 +3747,8 @@ mod tests {
             unpin: None,
             pistol: None,
             rocket: None,
-            spent_rocket: None,
+            primaries: [10, 0],
+            launchers: 0,
             gun: None,
             reload_ms: 2500,
             draw_ms: 750,
@@ -3882,6 +3926,36 @@ mod tests {
             pressed.is_some_and(|t| t >= DEFUSE_CLOSE_TICKS as usize - 2),
             "{pressed:?}"
         );
+    }
+
+    /// The `bas` charge press keeps back from a weapon lying by the
+    /// charge as the S&D defuse does: it closes in, then presses.
+    #[test]
+    fn a_bas_planter_closes_in_rather_than_take_a_weapon_by_the_charge() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = bas_view();
+        let charge = [2000.0, 0.0, -176.0];
+        let aim = [2000.0, 0.0, -160.0];
+        let b = their_base(&mut v);
+        b.breached = true;
+        b.charge = Some(BombView {
+            origin: charge,
+            aim,
+        });
+        v.origin = [1920.0, 0.0, -176.0];
+        let (tp, ty) = aim_angles(&v, aim);
+        v.view = [tp, ty, 0.0];
+        v.use_takes_weapon = true;
+        for tick in 0..10 {
+            assert_eq!(bot.think(&v).buttons & BUTTON_USE, 0, "tick {tick}");
+        }
+        assert_eq!(bot.goal(&v), Goal::To(charge), "closes in");
+        v.origin = [1990.0, 0.0, -176.0];
+        v.use_takes_weapon = false;
+        assert_eq!(bot.goal(&v), Goal::Hold);
+        let (tp, ty) = aim_angles(&v, aim);
+        v.view = [tp, ty, 0.0];
+        assert!((0..4).any(|_| bot.think(&v).buttons & BUTTON_USE != 0));
     }
 
     #[test]
@@ -6205,7 +6279,9 @@ mod tests {
         v.origin = [260.0, 200.0, 8.0];
         let (pitch, yaw) = aim_angles(&v, [300.0, 200.0, 8.0]);
         v.view = [pitch.clamp(-80.0, 80.0), yaw, 0.0];
-        v.spent_rocket = Some(5);
+        v.primaries = [10, 5];
+        v.weapons_held |= 1 << 5;
+        v.launchers = 1 << 5;
         let mut used = false;
         for _ in 0..60 {
             let cmd = bot.think(&v);
@@ -6216,6 +6292,39 @@ mod tests {
         v.weapon = 5;
         let used = (0..60).any(|_| bot.think(&v).buttons & BUTTON_USE != 0);
         assert!(used, "no tap once it is in hand");
+    }
+
+    /// What a `bas` bot holds for a weapon tap: nothing drawn with a
+    /// primary slot free; else an empty primary, one of the fetched kind,
+    /// then not the gun it fights with (`cod11-items.md` 5).
+    #[test]
+    fn a_bas_bot_draws_the_primary_it_would_rather_lose() {
+        let mut v = view();
+        // Carbine 10 loaded in hand, panzerschreck 5, gun 12.
+        v.weapons_held = (1 << 10) | (1 << 5) | (1 << 12);
+        v.launchers = 1 << 5;
+        v.primaries = [10, 0];
+        assert_eq!(Bot::swap_out(&v, true), None, "a slot free");
+        // A loaded launcher and a dry gun: a gun fetch loses the gun, not
+        // the rocket in hand.
+        (v.primaries, v.weapon, v.loaded, v.gun) = ([10, 5], 5, 1 << 5, None);
+        assert_eq!(Bot::swap_out(&v, false), Some(10));
+        // A launcher fetch the same: the dry gun before the loaded rocket.
+        assert_eq!(Bot::swap_out(&v, true), Some(10));
+        // Both dry: the kind fetched goes.
+        v.loaded = 0;
+        assert_eq!(Bot::swap_out(&v, true), Some(5));
+        assert_eq!(Bot::swap_out(&v, false), Some(10));
+        // Two loaded guns, a launcher fetch: not the one it fights with,
+        // whichever is in hand.
+        (v.primaries, v.loaded, v.gun) = ([10, 12], (1 << 10) | (1 << 12), Some(10));
+        v.weapon = 10;
+        assert_eq!(Bot::swap_out(&v, true), Some(12));
+        // Nothing else between them: the one in hand, with no draw.
+        v.gun = None;
+        assert_eq!(Bot::swap_out(&v, true), Some(10));
+        v.weapon = 12;
+        assert_eq!(Bot::swap_out(&v, true), Some(12));
     }
 
     /// A bot with no round left anywhere asks for `kill`, once it has
