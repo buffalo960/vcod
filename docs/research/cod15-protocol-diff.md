@@ -1042,8 +1042,10 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
 ## 15. What the snapshot builder culls
 
 1.5b's and United Offensive's `SV_AddEntitiesVisibleFromPoint`
-(`cod_lnxded` 1.5b 0x8095c30, `coduo_lnxded` 0x8096b97) and UO's
-`SV_inSnapshot` (0x808e3a9) add two tests to 1.1's. 1.1d's builder makes
+(`cod_lnxded` 1.5b 0x8095c30, `coduo_lnxded` 0x8096b97) and their
+`SV_inSnapshot` (1.5b 0x808d5d2, UO 0x808e3a9) add two tests to 1.1's;
+the compass's side, measured live on all three, is
+`cod11-hud-protocol.md` 9. 1.1d's builder makes
 no game call (VERIFIED: no `vmMain` 0x17 call in the 1.1d decompile, and
 1.1d's `vmMain` has no case past 0x14).
 

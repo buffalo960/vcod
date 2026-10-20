@@ -2233,6 +2233,19 @@ on 1.1 (`SVF_BROADCAST`, and slot 1 rides slot 0's snapshots); on UO it
 reads 0 from the sound's frame through the frame 350 ms later, the one
 whose snapshot first leaves slot 1 out, and the word is back 400 ms after
 the sound.
+VERIFIED live, the same probe rerun 2026-10-20 on retail 1.1d, 1.5b and UO
+1.51b with four more steps (`snapcull-carentan-{11,15,uo}.txt`; 1.5b's
+gated by `cull15_ab`): 1.5b reads every row above as UO does, the
+no-cluster teammate kept at `0x00ff9881` and the sounded one at 0 for
+400 ms. Slot 1 is then set at (1120, 432, 0), in slot 0's PVS about 1300
+units off, and the word reads 0 on all three. Under `setCullFog(0, 1000,
+...)` it reads `0x00ffc6c1` on 1.5b and UO, the fog test hiding him, and
+stays 0 on 1.1, where slot 1 still carries the earlier `SVF_BROADCAST`, so
+1.1's row says nothing about a fog. On 1.5b and UO a `playSound` inside the
+fog reads 0 for 400 ms, as without one: the broadcast time is tested before
+the fog. `setExpFog` puts the word back to 0. Slot 1's own list empties
+under the fog on 1.5b and UO (all it was sent lies past 1000 units) and
+keeps all 22 entities on 1.1, whose builder has no fog test.
 VERIFIED, `BG_PlayerStateToEntityState` (`0x2cbe8`): `s.eType` is 1 when
 the playerstate's `pm_flags` has `0x10000` or `0x40000` and 7 otherwise.
 
