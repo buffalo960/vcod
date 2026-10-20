@@ -1567,7 +1567,8 @@ impl ClientSim {
         let linked_idle = self.ps.linked && self.ps.rules.v15();
         // Retail's compare is `xyspeed < 10.0`, so the constant itself is
         // moving.
-        let xyspeed = self.ps.velocity.truncate().length();
+        // What the footsteps read, before the clamp and the snap.
+        let xyspeed = self.ps.footsteps_xyspeed;
         let moving = xyspeed >= ANIM_IDLE_SPEED;
         let stopping = cmd.forward == 0 && cmd.right == 0 && xyspeed <= ANIM_STOP_SPEED;
         let back = self.ps.backwards_run;
