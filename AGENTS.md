@@ -675,6 +675,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   clients linked in the area tree: a blocked push leaves its player out
   until his own next cmd, and a two-client gate on that orders the
   clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
+- One spectator anywhere turns `StuckInClient` off on 1.1 only; 1.5's and
+  UO's scans pass over him, so two players set down on one spot part at
+  once there, in a `rand()` direction a gate pins from the capture
+  (`Server::pin_stuck_velocities`, player-clip doc 6.2).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat
