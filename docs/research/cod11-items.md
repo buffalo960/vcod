@@ -650,6 +650,18 @@ intermission clients count toward the distance, so in play every slot scores
 evicted every time. INFERRED: the new drop then takes slot 0, so once the ring
 is full, each further drop evicts the one before it.
 
+VERIFIED, `LaunchItem` 0x4dbcc..0x4dbde: 1.1d's ring stores the entity
+number (`(ent - g_entities) / 0x314`), and `GetFreeCueSpot` reads it back
+through `g_entities[n]` and tests only `inuse` (0x4da80..0x4da8c), while
+`G_FreeEntity` (0x66948) has no store into `level+0x1d5c`. INFERRED: a
+drop freed by a pickup or a script `delete` keeps its slot once another
+entity takes its number, and when that slot is 0 of a full ring the next
+drop schedules the free on the new holder (0x4db75..0x4db85). VERIFIED,
+1.5b and UO: `G_FreeEntityRefs` zeroes a ring word equal to the freed
+entity (cod11-turrets.md 8), so there a freed drop's slot is empty at
+once. vcod: `DropRing::claim` reads the slot by number on 1.1 and by the
+entity's handle on 1.5 and UO.
+
 VERIFIED, `G_RunItem` (0x4eb18): a `trap_PointContents` with mask 0x80000000
 (0x4ec47..0x4ec4f) and a `G_FreeEntity` (0x4ec5f). VERIFIED, on a patched
 map (section 14.5): an item whose origin is in a brush carrying that bit when

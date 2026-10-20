@@ -431,12 +431,18 @@ pub fn pm_weapon(
     events: &mut Vec<PmEvent>,
 ) {
     // Both `weapAnim` setters write nothing on a cmd whose weapon byte is 0
-    // (1.1 dll 0x3000ffe0 and 0x30010010, UO 0x43f9c and 0x44024; combat
-    // doc 1.2): a raise of empty hands keeps `WEAP_RAISE` past its finish.
+    // (1.1 dll 0x3000ffe0 and 0x30010010, 1.5b 0x2d9b8 and 0x2da19, UO
+    // 0x33f9c and 0x34024; combat doc 1.2): a raise of empty hands keeps
+    // `WEAP_RAISE` past its finish. UO's writes a `gas` weapon's index
+    // bare, the toggle cleared.
     let anim = ps.weap_anim;
+    let gas = ps.rules == MoveRules::Uo
+        && weapon_def(weapons, ps.weapon).is_some_and(|d| d.weapon_type == WEAPON_TYPE_GAS);
     pm_weapon_step(ps, input, weapons, dt_ms, events);
     if input.weapon == 0 {
         ps.weap_anim = anim;
+    } else if gas && ps.weap_anim != anim {
+        ps.weap_anim &= !ANIM_TOGGLEBIT;
     }
 }
 
@@ -1313,6 +1319,8 @@ fn rechamber_check(
 /// `weaponType 1`, the one type with a pullback between the trigger and the
 /// shot (section 1.11).
 const WEAPON_TYPE_GRENADE: &str = "grenade";
+/// United Offensive's flamethrower type, `weaponType` 4.
+const WEAPON_TYPE_GAS: &str = "gas";
 
 /// Section 1.11, the pullback: arm the fuse and hold the pin for
 /// `holdFireTime`.
@@ -1637,6 +1645,37 @@ mod tests {
         assert_eq!(ps.grenade_time_left_ms, 4000);
         assert_eq!(ps.weaponstate, WEAPON_FIRING);
         assert_eq!(ps.ammoclip[1], 3);
+    }
+
+    /// UO's setter writes a `gas` weapon's index without the toggle
+    /// (game.mp.uo 0x33fcd..0x33ff2): the `uo-flame` capture's flamethrower
+    /// reads `weapAnim` 2 firing and 0 between bursts, never 0x200. 1.1's
+    /// rules flip the toggle on the same weapon.
+    #[test]
+    fn a_uo_gas_weapon_fires_without_the_toggle() {
+        let mut d = carbine();
+        d.weapon_type = "gas".into();
+        d.semi_auto = false;
+        let fire = PmInput {
+            weapon: 1,
+            attack: true,
+            ..Default::default()
+        };
+        for (rules, toggled) in [(MoveRules::Uo, false), (MoveRules::V1_1, true)] {
+            let (mut ps, w) = armed(&d);
+            ps.rules = rules;
+            let mut seen = Vec::new();
+            for _ in 0..8 {
+                step(&mut ps, &w, &fire, 1);
+                seen.push(ps.weap_anim);
+            }
+            assert!(seen.contains(&WEAP_ATTACK) || seen.contains(&(WEAP_ATTACK | ANIM_TOGGLEBIT)));
+            assert_eq!(
+                seen.iter().any(|a| a & ANIM_TOGGLEBIT != 0),
+                toggled,
+                "{rules:?} {seen:?}"
+            );
+        }
     }
 
     /// UO's cook (coduo-movement.md 12, the `uofoot` captures): the sight

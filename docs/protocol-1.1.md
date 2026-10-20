@@ -276,12 +276,24 @@ Q3's caps, in 1.1d and UO alike (VERIFIED decompile, `cod_lnxded`
   past 16 clusters is hidden only when `lastCluster` is the first seen
   number of the range.
 
-`bsp::Visibility::link_clusters` and `link_visible` follow this. INFERRED,
-Q3's C, the 1.1d and UO `BoxOnPlaneSide` being hand-written assembly
-Ghidra does not decode: an axial plane puts a box whose low side sits on
-it in front only and one whose high side sits on it behind only; any
-other plane puts the farthest corner at the plane in front and needs the
-nearest strictly behind for the back.
+`bsp::Visibility::link_clusters` and `link_visible` follow this.
+
+The walk's side test is Q3's x87 `BoxOnPlaneSide`, which objdump reads
+where Ghidra does not: `cod_lnxded` 1.1d 0x80c8634, 1.5b 0x80d5f94,
+`coduo_lnxded` 0x80cb294. VERIFIED, the instructions: it jumps on the
+plane's sign bits (`+0x11`, a table of eight arms) to sum the box's two
+corners along the normal on the x87 stack, compares the first against
+`dist` (`+0xc`) and adds 1 unless it is below, then adds 2 when the
+second is below (0x80c87e9..0x80c8802). There is no axial case, and the
+leaf walk calls it on every node with no type check first (1.1d
+0x8053e1d, 0x8054006, 0x80541a6; 1.5b 0x805760a; UO 0x805743e). The sign
+bits are set for a normal component below 0 (1.1d's plane loader,
+0x804af70..0x804af8c, and `SetPlaneSignbits` 0x8067204). INFERRED, off
+those: the farthest corner at or past the plane puts the box in front and
+the nearest strictly short of it puts it behind, an axial plane included,
+so a box whose high side lies on an axial plane is on both sides, which
+Q3's C version (`p->dist >= emaxs` gives the back only) is not.
+`bsp::box_on_plane_side` takes the sums in f64.
 
 1.5 and United Offensive add a broadcast time and a fog cull to this test
 (`docs/research/cod15-protocol-diff.md` 15).
@@ -312,6 +324,9 @@ sample. VERIFIED, `game.mp.i386.so` 1.1d: `ClientDisconnect` (0x42aac) calls
 `G_FreeEntity` on the client (0x42bfc), and `G_FreeEntity` (0x66948) walks
 every entity in use (`inuse`, +0x160, 0x66ad1) and stores 0x3ff into a
 `s.groundEntityNum` (+0x7c) equal to the freed number (0x66b0e, 0x66b13).
+VERIFIED, 1.5b and UO: their `G_FreeEntityRefs` (0x6d1cc, 0x79a06), which
+`G_FreeEntity` calls, makes the same store (0x6d27b, 0x79ab5;
+`docs/research/cod11-turrets.md` 8).
 INFERRED: the scriptmover and the turret carry `G_Spawn`'s zeroed 0, which
 names entity 0, so slot 0's departure turns them. A trace is
 therefore taken after one client has come and gone, and
