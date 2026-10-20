@@ -1513,6 +1513,23 @@ list below. INFERRED: the ordering, and every "when", "otherwise" and
   SHORT2ANGLE(oldcmd.angles[i]))) * 0.01 * hipSpreadTurnAdd / pml.frametime`
   (`0x3868e`-`0x386ed`). The input is a usercmd angle delta across one pmove
   step, not `ps->viewangles` and not a delta across a server frame.
+- `oldcmd` is `pers.oldcmd`, and `ClientThink` rotates it before
+  `ClientThink_real` looks at the cmd: game.mp.uo `ClientThink` (0x51d13)
+  copies `pers.cmd` (`client+0x4524`, six words) over `pers.oldcmd`
+  (`+0x453c`) and fetches the new cmd into `pers.cmd`, then calls
+  `ClientThink_real` (0x50c91), which clamps the cmd's clock and returns
+  when `serverTime - commandTime` is not positive; its `Pmove` reads
+  `pers.oldcmd` (`local_10[0x114f..0x1154]`) (VERIFIED decompile). So a
+  cmd the engine hands over (past `cl->lastUsercmd.serverTime`, 3.6)
+  whose clock is not past `commandTime` moves nothing yet becomes the
+  next cmd's `oldcmd`. The case that shows it: a spawn's think sets
+  `commandTime` to the frame's time, and the client's first cmd after it,
+  stamped at that time and turned onto the new `delta_angles`, is
+  dropped but still bases the turn term, so UO's turn add stays shut
+  (VERIFIED, `vehicle_ab`'s `the_jeep_driver_killed_in_his_seat_replays_on_ours`
+  with the replay sending that cmd after the spawn: with the dropped cmd
+  left out of `oldcmd`, ours read `aimSpreadScale` 226 where retail's read
+  0). vcod: `ClientSim::stale_cmd`, off `Client::last_usercmd_st`.
 - `hipSpreadMoveAdd` (`0x258`) non-zero (`0x386fe`) with either of
   `cmd.forwardmove` / `cmd.rightmove` non-zero (`0x38712`) adds it flat
   (`0x38719`); airborne adds 1.28 twice (`0x3873c`-`0x3874a`). The whole add
