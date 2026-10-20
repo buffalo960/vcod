@@ -7,7 +7,9 @@ how it is packed into the wire `solid`, how the client's prediction clips the
 same players, and `StuckInClient`, the end-frame push that separates two
 players found inside each other, and the landing stun that shares the push's
 timer (section 8). Sections 8.9, 9 and 10 read the retail captures;
-section 11 is what vcod does and section 12 where it differs.
+section 11 is what vcod does and section 12 where it differs. Section 13
+covers 1.5's and UO's `PM_trace`, the touch list both patches notify, and
+1.5's push.
 
 Evidence rules as everywhere in this directory. This document carries no
 document-level default: every claim carries its own label. VERIFIED is a byte
@@ -1585,3 +1587,133 @@ The gates:
 - **Other solid entities.** Clipping a player against anything but a capsule
   player is not modelled: the predictor logs and skips a solid entity
   without `eFlags` 0x10, and no mover pushes a player.
+
+## 13. A move that starts in a body, the touch list, 1.5's push
+
+Modules beside 1.1d's: 1.5b's `game.mp.i386.so` and UO 1.51b's
+`game.mp.uo.i386.so`, addresses as `nm -D` prints them (a Ghidra export
+shows each 0x10000 higher), and the 1.5 and UO `cgame_mp_x86.dll`, image
+base 0x30000000.
+
+### 13.1 `PM_trace` on 1.5 and UO
+
+VERIFIED: 1.5b `PM_trace` (0x1e738) calls `pm->trace` (`pm+0xec`) with
+its caller's arguments; when the result's `startsolid` (byte `trace+0x2f`)
+is set and its contents (`trace+0x20`) hold 0x2000000, it calls
+`PM_AddTouchEnt` with the trace's `entityNum` (u16 `trace+0x28`), clears
+0x2000000 from `pm->tracemask` (`pm+0x34`) and calls `pm->trace` again
+with its mask argument less 0x2000000. UO's (0x23174) is the same through
+`pm+0x104`. VERIFIED: 1.1d exports no `PM_trace`; its `PM_SlideMove`
+(0x347c0) calls `pm->trace` (`pm[0x3a]`) itself. VERIFIED: the 1.5 cgame's
+copy is 0x30007950 and UO's 0x30008280, the same test and clear.
+
+INFERRED: the cleared mask holds for the rest of the `Pmove`, every chopped
+step included: `pm` lives across `Pmove`'s loop and nothing in pmove sets
+the bit back. `ClientThink_real` fills `pm.tracemask` afresh for each cmd.
+
+VERIFIED, 1.5b's callers, each with `pm->tracemask` as the mask:
+`PM_CorrectAllSolid` (0x21761, both traces), `PM_GroundTrace` (0x21ccd,
+both), `PM_CheckLadderMove` (0x27330, both), `PM_SlideMove` (0x28d7d) and
+`PM_StepSlideMove` (0x29942, its three). `PM_FootstepEvent` (0x246d3)
+passes `tracemask & 0xfdfeffff` and 0x25816 passes 2. VERIFIED:
+`PM_GroundTraceMissed` (0x21a17) calls `pm->trace` directly under
+`pm->tracemask`; the stance tests at 0x232c4 trace through `pm+0xf0` and
+`pm+0xf4` under `tracemask & 0xfdffffff`; `PM_UpdateLean` (0x25c2e) traces
+0x2810011 through the pointer it is handed. INFERRED: so after a drop the
+missed-ground probe sees no bodies either, and the lean always does.
+
+VERIFIED: `PM_AddTouchEnt` (1.1d 0x3466c, 1.5b 0x1e857, UO 0x23293) skips
+entity 0x3fe (the world), a full list (count `pm+0x3c`, `pm+0x54` on UO,
+at 32) and an entity already listed. VERIFIED: `PM_SlideMove` adds the
+trace's entity after each bump that stopped short of fraction 1 (1.1d's
+call follows the fraction-1 break; 1.5b's at 0x28d7d likewise).
+
+### 13.2 `ClientImpacts`
+
+VERIFIED: `ClientImpacts` (1.1d 0x3f780, 1.5b 0x38574, UO 0x3f9ba) walks
+`pm->touchents`, skips an entity listed earlier and, with the script
+system active, notifies `scr_const+0x90` on the client with the entity
+(`Scr_AddEntity(other)`, `Scr_Notify(client, ...)`) and then on the entity
+with the client, then calls the entity's touch function and the client's
+where set. VERIFIED live below: the notify is `"touch"`. INFERRED: a
+client entity's touch function is null, so between players only the two
+notifies run.
+
+### 13.3 What the captures measured
+
+`client-probes/probe_spawnbody` on mp_carentan's flat brush floor
+(1132, -376, -151.875), fixtures
+`crates/server/tests/fixtures/playerstate/mp_carentan-dm-spawnbody-1.1.txt`,
+`-1.5.txt` and `-uo.txt`, 2026-10-20: the host stands on the spot facing
++x and the spawner is `spawn`ed at an x offset off it with forward held
+or not, and the gsc logs the origin the spawn's think left.
+
+VERIFIED, 1.5b and UO alike, every run of each trial:
+
+| trial | spawn x | yaw | forward | think's x |
+|---|---|---|---|---|
+| inside_out | 1140 | 0 | 127 | 1152.549072 |
+| inside_through | 1140 | 180 | 127 | 1127.450928 |
+| inside_still | 1140 | 0 | 0 | 1140, z -151.875 |
+| outside_in | 1101 | 0 | 127 | 1101.873047 |
+
+and a `"touch"` on each player from the other on the spawn's frame, the
+host's line first. VERIFIED, 1.1d: every think leaves the spot as spawned
+and no spawn notifies a touch.
+
+INFERRED: the 1.5 think runs the held key (cod15-movement.md 4, "The
+spawn's lie-down"), so `inside_out` and `inside_through` start 8 inside
+the host and walk the same 12.549 either way, through him: `PM_trace`
+dropped the bodies on the think's first trace. `outside_in` starts 31 off
+and stops 30.127 short of the host's centre, the body clip's backoff
+(section 2.2): the think's traces meet the other players. Its touch is
+the slide's; the inside trials' are `PM_trace`'s.
+
+VERIFIED, all three: the spawner put 60 behind the host and walked into
+him on his own cmds stops at x 1101.874512 (once 1101.87439 on 1.5b), and
+both players log a `"touch"` from the other on every frame he pushes,
+eight frames a walk (one UO walk nine), the host's line first. INFERRED: 1.1d's
+`ClientImpacts` runs the slide's touches as 1.5's does.
+
+### 13.4 1.5's `StuckInClient`
+
+The scan and the vehicle skip are section 6.2's. VERIFIED: each axis's
+jitter is `rand() / D + rand() / D - C` on one `rand()`, with `D` = 2^31
+(1.5b .rodata 0x77b6c `0x4f000000`, UO 0x9de30) and `C` = 1.0 (0x77b70, UO
+0x9de34). INFERRED: a jitter in [-1, 1).
+
+VERIFIED (`mp_carentan-dm-bump-overlap-spectator-15-walker.txt` and
+`-script.txt`, 1.5b, a plain `--net-probe` holding slot 0): the first
+snapshot after `PROBE overlap 35900` gives the still walker velocity
+(133.40303, -135.29092) with `pm_time` 300 and the target the reverse;
+the target's `solid` reads 0 on the next two. INFERRED: the push fired
+beside the spectator, and its direction from a zero separation,
+(-0.702, 0.712) as `normalize(j)` of the target's side, has `jx < 0 <
+jy`, which 1.1d's (-3, -1] cannot draw. Both players then read CORPSE, so
+no cmd after a push starts inside a BODY: the push, not `PM_trace`,
+separates two playing players a script put together. INFERRED: what reaches
+`PM_trace` on a live server is a move that starts in a body inside one
+frame, before the end frame's push: the spawn's think above, or a cmd
+after a callback that moved a player.
+
+### 13.5 As implemented
+
+`movetrace::Pm` is one `Pmove`'s state: the dropped mask and the touch
+list. The server's cmd loop, the predictor and the spawn's think
+(`ClientSim::spawn_move`) make one per cmd and hand it to each step's
+`MoveWorld` (`in_pmove`). `MoveWorld::pm_trace` is `PM_trace`;
+`pmove.rs` routes the callers of 13.1 through it under 1.5 and UO rules
+and `PM_GroundTraceMissed`'s two traces through `pm_mask`. `slide_move`
+lists every entity it bumps on all three. `GameHost::impacts` is
+`ClientImpacts`: the cmd loop raises its notifies after the touch pass
+and ahead of the use key (`ClientThink_real` 0x40614), the `spawn`
+builtin inside the call. The spawn's think moves among the other live
+players (`GameHost::move_bodies`). `spawnbody_ab.rs` holds every trial's origin
+and touches against the three captures; `stuck_ab.rs` holds 13.4's
+capture.
+
+Not modelled: an entity's own touch function from `ClientImpacts` (none
+on a player); a body
+`StuckInClient` marked CORPSE still reads as a body to the spawn's think
+(`move_bodies`), and that think sees the other players where the tick's
+moves left them, not where a script moved them since.

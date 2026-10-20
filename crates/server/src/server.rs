@@ -1313,6 +1313,8 @@ struct Touched {
     /// The stance a mount saves for the release.
     stance: vcod_common::pmove::Stance,
     prone_cone: Option<vcod_common::pmove::ProneCone>,
+    /// The entities the cmd's `Pmove` touched, for `ClientImpacts`.
+    impacts: Vec<u32>,
 }
 
 /// One client's cmds since its animation was last picked: the events they
@@ -7734,12 +7736,19 @@ impl Server {
                         // UO's `G_DObjUpdate` (0x87df9) rebuilds a client's
                         // DObj when the spawning thread sets his model.
                         sim.dobj_ahead = sim.ps.rules == vcod_common::pmove::MoveRules::Uo;
-                        let think = sim.spawn_think_on(
+                        // The builtin's think on its fresh sim already ran
+                        // this one's `ClientImpacts`.
+                        let bodies = rt.host.move_bodies(s.slot);
+                        let (think, _) = sim.spawn_think_on(
                             &last_cmd,
                             self.sv_time_ms,
-                            self.world
-                                .as_ref()
-                                .map(|w| vcod_common::movetrace::MoveWorld::bare(&w.collision)),
+                            self.world.as_ref().map(|w| {
+                                vcod_common::movetrace::MoveWorld::new(
+                                    &w.collision,
+                                    &bodies,
+                                    s.slot as u32,
+                                )
+                            }),
                         );
                         // `ClientSpawn` runs inside `self spawn()`, ahead of
                         // the loadout the script gives after it, so the
@@ -8863,6 +8872,8 @@ impl Server {
             // The movetype each of `raised` selects its anim by.
             let mut raised_movetype = Vec::new();
             let mut take = None;
+            // The cmd's `Pmove`: its mask and its touch list span its steps.
+            let pm = vcod_common::movetrace::Pm::default();
             let mut overlap = None;
             if !frozen {
                 // The aim block runs once per cmd, on the whole cmd, before
@@ -8907,7 +8918,9 @@ impl Server {
                         step,
                         dt,
                         collision.map(|w| {
-                            MoveWorld::new(w, &bodies, slot as u32).with_boxes(&mount_boxes)
+                            MoveWorld::new(w, &bodies, slot as u32)
+                                .with_boxes(&mount_boxes)
+                                .in_pmove(&pm)
                         }),
                         weapons.defs(),
                     );
@@ -9071,6 +9084,12 @@ impl Server {
                 view: sim.view_angles(),
                 stance: sim.ps.stance,
                 prone_cone: vcod_common::pmove::ProneCone::of(&sim.ps),
+                // `SpectatorThink` runs no `ClientImpacts`.
+                impacts: if sim.pm_type == crate::spectate::PmType::Normal {
+                    pm.touched()
+                } else {
+                    Vec::new()
+                },
             };
             round.last_cmd = Some(cmd);
             sim.pers_cmd = cmd;
@@ -9139,6 +9158,8 @@ impl Server {
                 // (0x405c7), ahead of the use key's `Cmd_Activate_f`. The
                 // item half reads `ps.origin` either way.
                 rt.set_client_origin(t.slot, t.origin);
+                // `ClientImpacts` (0x40614), between the two.
+                rt.client_impacts(t.slot, &t.impacts);
                 rt.item_pass(t.slot, t.buttons, t.eye, t.view);
                 // A vehicle's seat changes land inside the use cmd too.
                 apply_seat_ops(&mut self.clients, rt);

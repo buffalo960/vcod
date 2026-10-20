@@ -3,8 +3,10 @@
 //! (docs/research/cod11-player-clip.md).
 
 use crate::collision::{Capsule, CollisionWorld, Prim, Trace};
+use crate::net::protocol::ENTITYNUM_WORLD;
 use crate::patch::Arith;
 use glam::Vec3;
+use std::cell::{Cell, RefCell};
 
 pub const CONTENTS_BODY: u32 = 0x2000000;
 pub const CONTENTS_CORPSE: u32 = 0x4000000;
@@ -69,6 +71,35 @@ impl ContentsBox {
     }
 }
 
+/// What one `Pmove` keeps beside the playerstate across its steps:
+/// `pm->tracemask` once [`MoveWorld::pm_trace`] dropped the bodies from it,
+/// and `pm->touchents`, which `ClientImpacts` notifies after the move
+/// (docs/research/cod11-player-clip.md 13). A caller makes one per cmd and
+/// hands it to every step's world through [`MoveWorld::in_pmove`].
+#[derive(Debug, Default)]
+pub struct Pm {
+    bodies_off: Cell<bool>,
+    touched: RefCell<Vec<u32>>,
+}
+
+/// `MAXTOUCH`: `PM_AddTouchEnt` keeps no more (1.1d 0x3466c, 1.5b 0x1e857).
+const MAX_TOUCH: usize = 32;
+
+impl Pm {
+    /// `PM_AddTouchEnt`: once per entity, never the world, at most 32.
+    pub fn add_touch(&self, entity: u32) {
+        let mut t = self.touched.borrow_mut();
+        if entity != ENTITYNUM_WORLD && t.len() < MAX_TOUCH && !t.contains(&entity) {
+            t.push(entity);
+        }
+    }
+
+    /// The touch list in the order the move first met each entity.
+    pub fn touched(&self) -> Vec<u32> {
+        self.touched.borrow().clone()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct MoveWorld<'a> {
     pub world: &'a CollisionWorld,
@@ -77,6 +108,8 @@ pub struct MoveWorld<'a> {
     pub pass: u32,
     /// Entity boxes the point contents add; empty on the client.
     pub boxes: &'a [ContentsBox],
+    /// The `Pmove` this world serves, if any.
+    pub pm: Option<&'a Pm>,
 }
 
 impl<'a> MoveWorld<'a> {
@@ -86,6 +119,7 @@ impl<'a> MoveWorld<'a> {
             bodies: &[],
             pass: u32::MAX,
             boxes: &[],
+            pm: None,
         }
     }
 
@@ -95,12 +129,64 @@ impl<'a> MoveWorld<'a> {
             bodies,
             pass,
             boxes: &[],
+            pm: None,
         }
     }
 
     /// The same world with entity boxes in its point contents.
     pub fn with_boxes(self, boxes: &'a [ContentsBox]) -> MoveWorld<'a> {
         MoveWorld { boxes, ..self }
+    }
+
+    /// The same world serving `pm`'s `Pmove`.
+    pub fn in_pmove(self, pm: &'a Pm) -> MoveWorld<'a> {
+        MoveWorld {
+            pm: Some(pm),
+            ..self
+        }
+    }
+
+    /// `pm->tracemask` as `mask` once this `Pmove`'s [`Self::pm_trace`]
+    /// dropped the bodies from it: what `PM_GroundTraceMissed` traces under.
+    pub fn pm_mask(&self, mask: u32) -> u32 {
+        if self.pm.is_some_and(|pm| pm.bodies_off.get()) {
+            mask & !CONTENTS_BODY
+        } else {
+            mask
+        }
+    }
+
+    /// 1.5's and UO's `PM_trace` (1.5b 0x1e738, UO 0x23174) under
+    /// `pm->tracemask` `mask`: a trace that starts inside a body adds it
+    /// to the touch list, drops bodies from the mask for the rest of the
+    /// `Pmove` and is traced again without them
+    /// (docs/research/cod11-player-clip.md 13).
+    pub fn pm_trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> Trace {
+        let mask = self.pm_mask(mask);
+        let t = self.box_trace(start, end, mins, maxs, mask);
+        let body = match t.hit {
+            Some(Prim::Body(e)) if t.startsolid => e,
+            _ => return t,
+        };
+        if !self
+            .bodies
+            .iter()
+            .any(|b| b.entity == body && b.contents & CONTENTS_BODY != 0)
+        {
+            return t;
+        }
+        if let Some(pm) = self.pm {
+            pm.add_touch(body);
+            pm.bodies_off.set(true);
+        }
+        self.box_trace(start, end, mins, maxs, mask & !CONTENTS_BODY)
+    }
+
+    /// `PM_AddTouchEnt` of what `t` stopped on, when a `Pmove` listens.
+    pub fn touch(&self, t: &Trace) {
+        if let Some(pm) = self.pm {
+            pm.add_touch(self.entity_num(t));
+        }
     }
 
     pub fn box_trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> Trace {
@@ -729,5 +815,48 @@ mod tests {
             MoveWorld::new(&w, &bodies, 0).entity_num(&t),
             crate::net::protocol::ENTITYNUM_WORLD
         );
+    }
+
+    /// `PM_trace`: a start inside a body retraces without bodies, lists the
+    /// body as touched and keeps bodies out of the rest of the `Pmove`; a
+    /// later sweep into another body passes it.
+    #[test]
+    fn a_trace_starting_in_a_body_drops_bodies_for_the_rest_of_the_move() {
+        let w = test_world(&[]);
+        let bodies = [
+            body_at(8.0, 70.0),
+            Body {
+                entity: 2,
+                ..body_at(100.0, 70.0)
+            },
+        ];
+        let pm = Pm::default();
+        let mw = MoveWorld::new(&w, &bodies, 0).in_pmove(&pm);
+        let start = Vec3::new(0.0, 0.0, 1.0);
+        let end = Vec3::new(200.0, 0.0, 1.0);
+        assert!(mw.box_trace(start, end, STAND.0, STAND.1, LIVE).startsolid);
+        assert_eq!(mw.pm_mask(LIVE), LIVE);
+        let t = mw.pm_trace(start, end, STAND.0, STAND.1, LIVE);
+        assert!(!t.startsolid && t.fraction == 1.0, "{t:?}");
+        assert_eq!(pm.touched(), vec![1]);
+        assert_eq!(mw.pm_mask(LIVE), LIVE & !CONTENTS_BODY);
+        let t = mw.pm_trace(Vec3::new(50.0, 0.0, 1.0), end, STAND.0, STAND.1, LIVE);
+        assert_eq!(t.fraction, 1.0);
+        // A fresh move clips both again.
+        let pm = Pm::default();
+        let mw = MoveWorld::new(&w, &bodies, 0).in_pmove(&pm);
+        let t = mw.pm_trace(Vec3::new(50.0, 0.0, 1.0), end, STAND.0, STAND.1, LIVE);
+        assert!(t.fraction < 1.0);
+        assert!(pm.touched().is_empty());
+    }
+
+    #[test]
+    fn the_touch_list_skips_the_world_and_repeats_and_holds_32() {
+        let pm = Pm::default();
+        pm.add_touch(crate::net::protocol::ENTITYNUM_WORLD);
+        for e in (0..40).chain(0..5) {
+            pm.add_touch(e);
+        }
+        assert_eq!(pm.touched(), (0..32).collect::<Vec<_>>());
     }
 }
