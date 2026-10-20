@@ -606,6 +606,93 @@ pub fn clip_model_tris(
         .map(|_| (trace.fraction, trace.normal, trace.surface_flags))
 }
 
+/// One xmodel collision surface of a posed model: its run in the model's
+/// triangle list, the map from the model's frame into its bone's posed
+/// frame (`bone = rot * p + pos`) and its stored bounds there.
+#[derive(Clone, Debug)]
+pub struct ModelSurf {
+    pub tris: std::ops::Range<usize>,
+    pub rot: glam::Quat,
+    pub pos: Vec3,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+}
+
+/// [`clip_model_tris`] a surface at a time, as the engine's posed xmodel
+/// clip walks them (`coduo_lnxded` 0x80c4892): a surface whose contents
+/// meet the mask is tried only when the segment, moved into its bone's
+/// frame, enters its stored bounds before the best fraction so far
+/// (0x805e387, no epsilon). A triangle a later surface carries can then
+/// lose to one found first even where its backed-off fraction is smaller
+/// (docs/research/coduo-vehicles.md 13, "A blast on a hull").
+pub fn clip_model_surfs(
+    start: Vec3,
+    end: Vec3,
+    tris: &[ModelTri],
+    surfs: &[ModelSurf],
+    mask: u32,
+    fraction: f32,
+) -> Option<(f32, Vec3, u32)> {
+    let mut trace = Trace {
+        fraction,
+        endpos: end,
+        normal: Vec3::ZERO,
+        surface_flags: 0,
+        startsolid: false,
+        allsolid: false,
+        hit: None,
+        enter: -1.0,
+        copy: None,
+    };
+    for s in surfs {
+        let Some(first) = tris.get(s.tris.start) else {
+            continue;
+        };
+        if first.contents & mask == 0 {
+            continue;
+        }
+        let (bs, be) = (s.rot * start + s.pos, s.rot * end + s.pos);
+        if segment_misses_box(bs, be, s.mins, s.maxs, trace.fraction) {
+            continue;
+        }
+        for i in s.tris.clone() {
+            clip_segment_model(&mut trace, start, end, &tris[i], Prim::Model(i as u32));
+        }
+    }
+    trace
+        .hit
+        .map(|_| (trace.fraction, trace.normal, trace.surface_flags))
+}
+
+/// `coduo_lnxded` 0x805e387: whether the segment's part up to `max`
+/// misses the box, slab by slab, the minimum faces first.
+fn segment_misses_box(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, max: f32) -> bool {
+    let (mut lo, mut hi) = (0.0f32, max);
+    for (sign, b) in [(-1.0f32, mins), (1.0, maxs)] {
+        for i in 0..3 {
+            let f1 = (start[i] - b[i]) * sign;
+            let f2 = (end[i] - b[i]) * sign;
+            if 0.0 < f1 {
+                if 0.0 < f2 {
+                    return true;
+                }
+                if lo * (f1 - f2) < f1 {
+                    lo = f1 / (f1 - f2);
+                    if hi <= lo {
+                        return true;
+                    }
+                }
+            } else if 0.0 < f2 && hi * (f1 - f2) < f1 {
+                hi = f1 / (f1 - f2);
+                if hi <= lo {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// What a brush clip sweeps: the capsule every movement trace is, or the
 /// plain box of retail's `trap_Trace`, which `G_MoverPush` tests bodies with.
 #[derive(Clone, Copy)]
@@ -5851,5 +5938,41 @@ mod tests {
             checked += 1;
         }
         checked
+    }
+
+    /// A point sliding down a hull's side onto its deck: the side's
+    /// backed-off fraction is under the deck's, but the deck's surface comes
+    /// first and the side's bounds start past it, so the posed clip stops on
+    /// the deck (coduo-vehicles.md 13, "A blast on a hull").
+    #[test]
+    fn a_later_surface_past_the_best_fraction_is_not_clipped() {
+        let tri = |a: [f32; 3], b: [f32; 3], c: [f32; 3]| ModelTri {
+            tri: [Vec3::from(a), Vec3::from(b), Vec3::from(c)],
+            contents: 1,
+            surface_flags: 0,
+        };
+        // The deck faces +z at z 0, the side +y at y 0 below it; each
+        // surface's bounds a unit deep behind its face.
+        let tris = [
+            tri([-10.0, -10.0, 0.0], [10.0, -10.0, 0.0], [0.0, 10.0, 0.0]),
+            tri([-10.0, 0.0, -10.0], [0.0, 0.0, 10.0], [10.0, 0.0, -10.0]),
+        ];
+        let surf = |i: usize, mins: [f32; 3], maxs: [f32; 3]| ModelSurf {
+            tris: i..i + 1,
+            rot: glam::Quat::IDENTITY,
+            pos: Vec3::ZERO,
+            mins: Vec3::from(mins),
+            maxs: Vec3::from(maxs),
+        };
+        let surfs = [
+            surf(0, [-10.0, -10.0, -1.0], [10.0, 10.0, 0.0]),
+            surf(1, [-10.0, -1.0, -10.0], [10.0, 0.0, 10.0]),
+        ];
+        let (start, end) = (Vec3::new(0.0, 0.1, 1.0), Vec3::new(0.0, -0.4, -5.0));
+        let whole = clip_model_tris(start, end, &tris, 1, 1.0).unwrap();
+        assert_eq!(whole.1.y, 1.0, "every triangle at once: the side");
+        let posed = clip_model_surfs(start, end, &tris, &surfs, 1, 1.0).unwrap();
+        assert_eq!(posed.1.z, 1.0, "a surface at a time: the deck");
+        assert!((posed.0 - (1.0 - 0.125) / 6.0).abs() < 1e-6, "{}", posed.0);
     }
 }

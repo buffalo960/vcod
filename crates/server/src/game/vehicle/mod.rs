@@ -577,7 +577,7 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
         let Some(posed) = seat::posed(host, cx, id) else {
             continue;
         };
-        let tris = posed.collision();
+        let (tris, surfs) = posed.collision();
         if tris.is_empty() {
             continue;
         }
@@ -587,6 +587,7 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
             origin: posed.origin,
             axis: glam::Mat3::from_quat(posed.rot),
             tris: std::rc::Rc::from(tris),
+            surfs: std::rc::Rc::from(surfs),
             owner,
             takes_damage: true,
             body: false,

@@ -1289,6 +1289,7 @@ impl GameHost {
                 origin: vec(self.get_field(cx, id, origin)),
                 axis: vcod_common::props::rotation(vec(self.get_field(cx, id, angles))),
                 tris,
+                surfs: Default::default(),
                 owner: None,
                 takes_damage: self.script_takedamage.contains(&id),
                 body: self

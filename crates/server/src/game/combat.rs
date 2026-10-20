@@ -1780,6 +1780,9 @@ pub struct PlacedModel {
     pub origin: Vec3,
     pub axis: glam::Mat3,
     pub tris: std::rc::Rc<[vcod_common::collision::ModelTri]>,
+    /// A posed vehicle's collision surfaces over `tris`, each culled by its
+    /// bounds in its bone's frame; empty clips `tris` whole.
+    pub surfs: std::rc::Rc<[vcod_common::collision::ModelSurf]>,
     /// `r.ownerNum`, `None` for `ENTITYNUM_NONE`: a driven vehicle's
     /// driver, which a trace's pass rule reads.
     pub owner: Option<u32>,
@@ -1797,8 +1800,14 @@ impl PlacedModel {
     /// world normal and the surface's flags.
     pub fn clip(&self, start: Vec3, end: Vec3, mask: u32, best: f32) -> Option<(f32, Vec3, u32)> {
         let local = |p: Vec3| self.axis.transpose() * (p - self.origin);
-        vcod_common::collision::clip_model_tris(local(start), local(end), &self.tris, mask, best)
-            .map(|(f, n, flags)| (f, self.axis * n, flags))
+        let (s, e) = (local(start), local(end));
+        match self.surfs.is_empty() {
+            true => vcod_common::collision::clip_model_tris(s, e, &self.tris, mask, best),
+            false => {
+                vcod_common::collision::clip_model_surfs(s, e, &self.tris, &self.surfs, mask, best)
+            }
+        }
+        .map(|(f, n, flags)| (f, self.axis * n, flags))
     }
 }
 
@@ -2766,6 +2775,7 @@ mod tests {
             origin: Vec3::new(100.0, 0.0, 40.0),
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
+            surfs: Default::default(),
             owner: None,
             takes_damage: true,
             body: false,
@@ -2847,6 +2857,7 @@ mod tests {
             origin: Vec3::new(x, 0.0, 40.0),
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
+            surfs: Default::default(),
             owner: None,
             takes_damage: false,
             body: false,
@@ -3250,6 +3261,7 @@ mod tests {
             origin: Vec3::new(30.0, 0.0, muzzle.z),
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([p, r, q]), face([p, t, r])]),
+            surfs: Default::default(),
             owner: None,
             takes_damage,
             body: false,
@@ -3493,6 +3505,7 @@ mod tests {
             origin: Vec3::new(24.0, 0.0, 0.0),
             axis: glam::Mat3::IDENTITY,
             tris: std::rc::Rc::from(vec![face([a, b, c]), face([a, c, d])]),
+            surfs: Default::default(),
             owner: None,
             takes_damage: false,
             body: false,
