@@ -15,6 +15,17 @@ pub const COVER_INNER: f32 = 96.0;
 /// hold the ring round the goal he is making for.
 pub const ESCORTS: usize = 1;
 
+impl super::Bot {
+    /// The bot carries a retrieval objective: it keeps running for the
+    /// goal, the keys on the path, and fights on the way (as a `bas` bot
+    /// clearing a charge's blast does) rather than close on what it sees.
+    pub(super) fn carrying(&self, view: &super::BotView) -> bool {
+        view.re
+            .as_ref()
+            .is_some_and(|r| r.objectives.iter().any(|m| m.mine))
+    }
+}
+
 /// splitmix64 over the round, the team and the slot.
 fn mix(round: u32, team: i32, slot: usize) -> u64 {
     let mut z = (u64::from(round) << 40) ^ ((team as u64) << 32) ^ slot as u64;
@@ -41,6 +52,18 @@ pub fn round_shift(team: i32, round: u32) -> usize {
 
 /// A playing bot's slot, team and the edges of its path ahead.
 pub type TeamPath = (usize, i32, Vec<(u32, u32)>);
+
+/// An S&D bot's site rank (`SdView::rank`) this round. The attackers all
+/// go for one site, picked per round by [`round_shift`]; the defenders
+/// spread over both by [`round_rank`] (bot-objectives.md section 9).
+pub fn site_rank(attack: bool, slot: usize, mates: &[usize], team: i32, round: u32) -> usize {
+    let shift = round_shift(team, round);
+    if attack {
+        shift
+    } else {
+        round_rank(slot, mates, team, round) + shift
+    }
+}
 
 /// The edges every other teammate's path still runs along, `(low, high)`,
 /// sorted.
@@ -99,6 +122,23 @@ mod tests {
         // And the shift takes both values.
         let shifts: Vec<usize> = (0..16).map(|r| round_shift(2, r)).collect();
         assert!(shifts.contains(&0) && shifts.contains(&1));
+    }
+
+    #[test]
+    fn attackers_share_a_site_and_defenders_split() {
+        let mates = [1, 4, 6];
+        for round in 0..8 {
+            let att: Vec<usize> = mates
+                .iter()
+                .map(|&s| site_rank(true, s, &mates, 1, round) % 2)
+                .collect();
+            assert!(att.iter().all(|&r| r == att[0]));
+            let def: Vec<usize> = mates
+                .iter()
+                .map(|&s| site_rank(false, s, &mates, 2, round) % 2)
+                .collect();
+            assert!(def.contains(&0) && def.contains(&1));
+        }
     }
 
     #[test]

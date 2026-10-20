@@ -4553,9 +4553,9 @@ impl Server {
                     continue;
                 };
                 let mates: Vec<usize> = side.iter().filter(|s| s.1 == mine).map(|s| s.0).collect();
-                let rank = crate::bots::team::round_rank(*slot, &mates, mine, round)
-                    + crate::bots::team::round_shift(mine, round);
-                let cover = (role == crate::bots::ObjRole::Attack)
+                let attack = role == crate::bots::ObjRole::Attack;
+                let rank = crate::bots::team::site_rank(attack, *slot, &mates, mine, round);
+                let cover = attack
                     .then(|| {
                         let mates: Vec<_> = planting
                             .iter()

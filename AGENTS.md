@@ -127,7 +127,8 @@ check.
   ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
-  `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
+  `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
+  `--example team_tally` `bot-objectives.md` 9's 1.1 `sd`/`re` objective tally; its
   `digest` matches across two builds only when they built the same graph,
   the check for a collision change meant to move no trace.
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
