@@ -873,8 +873,8 @@ raised in every cmd reaches a waiter once a frame.
   `cod11-gametypes-re-bel.md` 8.7): the menu thread `Cmd_MenuResponse_f`'s
   `menuresponse` wakes reads the new frame's `getTime()` and runs ahead
   of a `wait 0.05` due on that frame, so it too waits for the frame's
-  first round. vcod still runs it in the packet pass on the last frame's
-  clock; that section says why it is open.
+  first round. vcod does the same since the packet pass change ("The
+  packet pass"); `gametypes_ab`'s `spawn clock` rows gate it.
 - VERIFIED: `Touch_Multi` (0x65a18), `hurt_touch` (0x64dc4),
   `Activate_trigger_damage` (0x650c0) and `G_Trigger` (0x656f0, the
   `trigger_lookat` path) do not notify `"trigger"`. Each appends (entity
