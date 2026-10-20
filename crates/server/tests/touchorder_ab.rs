@@ -145,3 +145,78 @@ fn the_touch_pass_wakes_its_threads_in_retails_order() {
         }
     }
 }
+
+/// `client-probes/probe_trigqueue` on ours, no client, on mp_carentan.
+fn trigqueue(
+    fs: vcod_common::pk3::Pk3Fs,
+    proto: &'static vcod_common::net::protocol::Protocol,
+) -> Vec<String> {
+    let map = "mp_carentan";
+    let bsp_path = fs.resolve_map(map).expect("map in the paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(map, "probe_trigqueue"), now);
+    sv.set_protocol(proto);
+    sv.overlay_script(
+        "maps/mp/gametypes/probe_trigqueue",
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_trigqueue.gsc"),
+    );
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, 8000);
+    sv.script_log()
+        .iter()
+        .map(|l| l.trim().to_string())
+        .filter(|l| l.starts_with("PROBE"))
+        .collect()
+}
+
+/// The full queue: retail 1.1d, 1.5b and UO 1.51b logged the same lines
+/// (`fixtures/touchorder/trigqueue.txt`). 256 activations in one step
+/// queue and are dropped with the round's queue; the 257th notifies on the
+/// spot, its waiter running after the step; a thread off the frame grid
+/// queues after the rounds, so its entries are handed out next frame, 256
+/// rounds of one.
+fn check_trigqueue(
+    fs: vcod_common::pk3::Pk3Fs,
+    proto: &'static vcod_common::net::protocol::Protocol,
+) {
+    let retail: Vec<&str> = include_str!("fixtures/touchorder/trigqueue.txt")
+        .lines()
+        .filter(|l| l.starts_with("PROBE"))
+        .collect();
+    let ours = trigqueue(fs, proto);
+    if std::env::var_os("TO_REPORT").is_some() {
+        eprintln!("ours:\n{}", ours.join("\n"));
+    }
+    assert_eq!(ours, retail);
+}
+
+#[test]
+fn a_full_trigger_queue_notifies_on_the_spot_on_1_1() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check_trigqueue(fs, &vcod_common::net::protocol::PROTOCOL_V1);
+}
+
+#[test]
+fn a_full_trigger_queue_notifies_on_the_spot_on_1_5() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version
+        != vcod_common::net::protocol::PROTOCOL_V6.version
+    {
+        return;
+    }
+    check_trigqueue(fs, &vcod_common::net::protocol::PROTOCOL_V6);
+}
+
+#[test]
+fn a_full_trigger_queue_notifies_on_the_spot_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_trigqueue(fs, &vcod_common::net::protocol::PROTOCOL_V22);
+}
