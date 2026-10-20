@@ -1597,52 +1597,12 @@ fn wire_from(snap: &Snap, weapon: u8) -> msg::PlayerState {
     w
 }
 
-#[derive(Clone, Copy, Default)]
+/// A snapshot's predicted origin against retail's.
 struct Delta {
-    dz: f32,
-    dxy: f32,
+    ct: i32,
+    d: Vec3,
     ground_disagrees: bool,
 }
-
-struct Stats {
-    max_dz: f32,
-    max_dxy: f32,
-    p95_dz: f32,
-    p95_dxy: f32,
-    p99_dz: f32,
-    p99_dxy: f32,
-    outliers: usize,
-    ground_disagreements: usize,
-}
-
-fn stats(rows: &[Delta]) -> Stats {
-    let mut dz: Vec<f32> = rows.iter().map(|r| r.dz.abs()).collect();
-    let mut dxy: Vec<f32> = rows.iter().map(|r| r.dxy).collect();
-    dz.sort_by(f32::total_cmp);
-    dxy.sort_by(f32::total_cmp);
-    let at = |v: &[f32], q: f32| v.get((q * v.len() as f32) as usize).copied().unwrap_or(0.0);
-    Stats {
-        max_dz: dz.last().copied().unwrap_or(0.0),
-        max_dxy: dxy.last().copied().unwrap_or(0.0),
-        p95_dz: at(&dz, 0.95),
-        p95_dxy: at(&dxy, 0.95),
-        p99_dz: at(&dz, 0.99),
-        p99_dxy: at(&dxy, 0.99),
-        outliers: rows
-            .iter()
-            .filter(|r| r.dz.abs() > 1.0 || r.dxy > 1.0)
-            .count(),
-        ground_disagreements: rows.iter().filter(|r| r.ground_disagrees).count(),
-    }
-}
-
-/// `playerstate_slope_ab.rs`'s rebased tolerances.
-const P95_TOLERANCE_Z: f32 = 0.02;
-const P95_TOLERANCE_XY: f32 = 0.05;
-const P99_TOLERANCE_Z: f32 = 0.05;
-const P99_TOLERANCE_XY: f32 = 0.6;
-const MAX_TOLERANCE_Z: f32 = 0.5;
-const OUTLIER_SHARE: f32 = 0.015;
 
 /// Each snapshot rebuilt through `from_wire` and the cmds up to the next
 /// snapshot's `commandTime` run through `run_cmd`, as a predicting client
@@ -1680,10 +1640,9 @@ fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>])
             predict::run_cmd(&mut pred, &cmds[next_cmd], &mw, weapons);
             next_cmd += 1;
         }
-        let d = pred.ps.origin - s.origin;
         rows.push(Delta {
-            dz: d.z,
-            dxy: d.truncate().length(),
+            ct: s.ct,
+            d: pred.ps.origin - s.origin,
             ground_disagrees: pred.ps.on_ground != (s.ground == ENTITYNUM_WORLD as i32),
         });
         pred = rebuild(s);
@@ -1726,34 +1685,16 @@ fn predictor_replays_retail_slope_runs() {
         let text = std::fs::read_to_string(path).unwrap();
         let rows = replay(&parse_fixture(&text), world, &weapons);
         assert!(rows.len() > 100, "{name}: only {} snapshots", rows.len());
-        let s = stats(&rows);
-        println!(
-            "{name}: {} snapshots, p95 dz {:.3} dxy {:.3}, p99 dz {:.3} dxy {:.3}, \
-             max dz {:.3} dxy {:.3}, {} past a unit, {} ground disagreements",
-            rows.len(),
-            s.p95_dz,
-            s.p95_dxy,
-            s.p99_dz,
-            s.p99_dxy,
-            s.max_dz,
-            s.max_dxy,
-            s.outliers,
-            s.ground_disagreements,
-        );
-        if s.p95_dz > P95_TOLERANCE_Z || s.p95_dxy > P95_TOLERANCE_XY {
-            failures.push(format!("{name}: p95 past the tolerance"));
-        }
-        if s.p99_dz > P99_TOLERANCE_Z || s.p99_dxy > P99_TOLERANCE_XY {
-            failures.push(format!("{name}: p99 past the tolerance"));
-        }
-        if s.max_dz > MAX_TOLERANCE_Z {
-            failures.push(format!("{name}: max dz past the tolerance"));
-        }
-        if s.outliers as f32 > OUTLIER_SHARE * rows.len() as f32 {
+        // Both runs replay exactly: a snapshot off retail by any amount fails.
+        let off: Vec<_> = rows
+            .iter()
+            .filter(|r| r.d != Vec3::ZERO || r.ground_disagrees)
+            .collect();
+        println!("{name}: {} snapshots, {} off retail", rows.len(), off.len());
+        for r in off.iter().take(5) {
             failures.push(format!(
-                "{name}: {} of {} snapshots past a unit",
-                s.outliers,
-                rows.len()
+                "{name}: ct {} off by {:?}, ground disagrees {}",
+                r.ct, r.d, r.ground_disagrees
             ));
         }
     }
