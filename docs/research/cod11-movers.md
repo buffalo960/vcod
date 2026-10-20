@@ -1403,6 +1403,58 @@ call whenever the new anim has a `moveSpeed`. 1.5b's and UO's setters
 set it only on a node whose weight reads 0 (cod11-combat.md 3.1, "The
 setter on a weighted node").
 
+**The phase on 1.5 and UO.** VERIFIED, disassembly of 1.5b's `game.mp`
+setter (file address 0x18ced; Ghidra's `FUN_00028ced`, its image 0x10000
+higher) and UO's (0x1ce5f), the same instructions: the spread arm
+(1.5b 0x18fa2..0x19036, UO 0x1d114..0x1d1a8) takes the period from the
+OLD anim (`ci+0x10`'s value before the store, toggle off): its
+`trap_XAnimGetLength` + 200 when `trap_XAnimIsPrimitive` says it is a
+clip, else 1000. VERIFIED, same code: the phase is
+`clientNum * 0.36f + (bg.time % period) / period`, the remainder an
+`idiv`, the quotient and the product summed on the x87 stack and stored
+as a float, then that float less its `fistp` under a 0xc00 control word
+(truncated), stored again. VERIFIED, the constant: 0.36f at 1.5b
+0x73cc4, UO 0x995e4. VERIFIED, `XAnimGetLength` on both engines
+(syscall 0x61; 1.5b `cod_lnxded` 0x808f584, UO 0x8090396): frames over
+the float framerate on the x87 stack (1.5b 0x80c9b5e), times 1000.0f
+(0x80df1f8, UO 0x80e50f8), stored truncated, as on 1.1d. VERIFIED,
+1.5's cgame (`cgame_mp15.dll` 0x30003a82..0x30003af6): the same period
+and sum, but MSVC keeps the sum unstored and truncates it through
+`_ftol` (0x3005cf7c), so the client's phase is the unrounded sum's
+fraction rounded once; vcod's client takes the server's (one float
+rounding of the sum apart, under 1e-6). vcod:
+`animclock::spread_phase_15`, used by the windowed setter
+(`ChannelClock::update_windowed`), with `AnimMotion::length_ms`.
+
+VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20, `probe_legs`
+with a `--save-legs` client, fixtures `mp_carentan-dm-legs-{1.5,uo}.txt`
+and their `-legs-client-` halves; recipe in each header): the run out of
+the settle's idle and every later movement clip the walk starts fresh
+pose like retail's to 0.01 units and 0.08 degrees once the run's blend
+out of the idle ends (`legs_ab`'s `..._on_15` and `..._on_uo`). Under
+1.1's spread the same rows read 20 units off, 243 of them failing.
+VERIFIED, same captures: the placement's one-unit drop stops at z
+-151.64139 (vz -33) on 1.5 and reads -151.35341 (vz -28) for one UO
+frame because the probe sent a cmd at the placement's own level time,
+25000, which the client half does not list (its `!cmd` lines start a
+cmd later): 1.5 falls 18, 16 and 16 ms from commandTime 24982 and UO 2,
+16 and 16 from 24998. The fall itself is pmove's: under 1.5's stored
+tail (cod15-movement.md 7) the 18 ms step from rest takes the move as
+its velocity (-7), then -20 and -33, so the body ends 0.234 over the
+floor and the next ground trace (0.25 down) stands it there; UO's 2 ms
+step does not take the move and ends -2, -15, -28. Both to every digit
+the snapshots print. INFERRED: the cmd at 25000 is the probe's, which
+ends each frame's cmds on the frame's time (25050, 25100, ... in both
+logs). `legs_ab` replays retail's commandTime on the placement frame and
+that cmd before the log's first; the 1.5 walk is then exact throughout
+(its join fit to 8250). The probe dropped from its spawn point, so the
+settle's idle start is in neither half; on UO the best fit of the join
+still leaves the settle 0.11 units and 2.9 degrees off, named in
+`legs_ab`'s `GAPS_UO`. VERIFIED, same captures:
+the crouch walk back that returns at 42000 while its node still blends
+out keeps its time, as "The setter on a weighted node" (cod11-combat.md
+3.1) has it, to 0.03 units.
+
 **The blend.** VERIFIED, the setter: `lf+0x18` starts at the new anim's
 `+0x40` (0x2a6ab; `BG_FinalizePlayerAnims` writes -1 there for an unset 0,
 0x27f1d), or 200 for no anim (0x2a6c7). For the legs (`lf == ci+0x37c`,

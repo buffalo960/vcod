@@ -166,10 +166,7 @@ impl Bot {
     /// objective, a defuse against the clock, a body counted in a zone.
     fn duty_bound(&self, view: &BotView) -> bool {
         if self.objective_busy(view)
-            || view
-                .re
-                .as_ref()
-                .is_some_and(|re| re.objectives.iter().any(|m| m.mine))
+            || self.carrying(view)
             || matches!(&view.uo, Some(UoView::Ctf(c)) if c.carrying)
         {
             return true;
@@ -204,7 +201,7 @@ impl Bot {
             return look;
         };
         // Backing off, the sights stay up on an enemy in sight; dropped, the
-        // retreating side scored fewer kills (bot-objectives.md 9).
+        // retreating side scored fewer kills (bot-objectives.md 10).
         if view.enemy.is_none() {
             cmd.buttons &= !msg::BUTTON_ADS;
         }

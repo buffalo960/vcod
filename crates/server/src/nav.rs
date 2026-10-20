@@ -1528,6 +1528,10 @@ const DROP_PASS: f32 = 8.0;
 /// What a [`NavGraph::risky`] drop adds to a plan's cost: a long way round
 /// is taken first.
 const RISK_COST: f32 = 4000.0;
+/// What a teammate's path costs another plan over its length, on top of
+/// the length: a way round up to this much longer is taken instead
+/// (bot-objectives.md section 9).
+pub const CROWD_COST: f32 = 1.0;
 /// How far aside of a drop's node [`NavGraph::mark_risky`] walks it again.
 const RISK_ASIDE: f32 = 4.0;
 /// How many of the nearest nodes [`NavGraph::nearest_walkable`] walks to.
@@ -1661,6 +1665,10 @@ pub struct Follower {
     /// The plan under way, and whether it leaves out `avoid` (a plain one
     /// follows if it fails).
     search: Option<Search>,
+    /// Edges teammates' paths run along, each `(low, high)` and sorted: a
+    /// plan pays [`CROWD_COST`] more on them (`bots::team::crowd`). Set by
+    /// the server each tick; read when a plan starts.
+    pub crowd: Vec<(u32, u32)>,
     round: bool,
     /// The threat an [`Goal::Away`](crate::bots::Goal::Away) destination
     /// was picked against.
@@ -2221,7 +2229,7 @@ impl Follower {
             // else through them again: whatever blocked one may have moved.
             let avoid: Vec<(u32, u32)> = self.avoid.iter().map(|e| (e.0, e.1)).collect();
             self.round = !avoid.is_empty();
-            self.search = Some(Search::new(g, start, to, avoid));
+            self.search = Some(Search::new(g, start, to, avoid).crowded(self.crowd.clone()));
         }
         let search = self.search.as_mut()?;
         let mut slice = (*budget).min(PLAN_SLICE);
@@ -2238,7 +2246,7 @@ impl Follower {
             Plan::Failed if self.round => {
                 let s = self.search.take()?;
                 self.round = false;
-                self.search = Some(Search::new(g, s.from, s.to, Vec::new()));
+                self.search = Some(Search::new(g, s.from, s.to, Vec::new()).crowded(s.crowd));
                 None
             }
             Plan::Failed => {
@@ -2881,6 +2889,15 @@ impl Follower {
     }
 
     /// Test-facing: the current waypoint's node and the one after it.
+    /// The edges of the path still ahead, the one under way first.
+    pub fn ahead(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.path
+            .get(self.next.saturating_sub(1)..)
+            .unwrap_or(&[])
+            .windows(2)
+            .map(|w| (w[0], w[1]))
+    }
+
     pub fn current(&self) -> (Option<u32>, Option<u32>) {
         (
             self.path.get(self.next).copied(),
@@ -3341,6 +3358,7 @@ pub struct Search {
     from: u32,
     to: u32,
     avoid: Vec<(u32, u32)>,
+    crowd: Vec<(u32, u32)>,
     cost: Vec<f32>,
     came: Vec<u32>,
     open: BinaryHeap<Open>,
@@ -3354,6 +3372,7 @@ impl Search {
             from,
             to,
             avoid,
+            crowd: Vec::new(),
             cost: vec![f32::INFINITY; n],
             came: vec![u32::MAX; n],
             open: BinaryHeap::new(),
@@ -3367,6 +3386,13 @@ impl Search {
             });
         }
         s
+    }
+
+    /// The search with `crowd`'s edges (`(low, high)`, sorted) costing
+    /// [`CROWD_COST`] times more.
+    pub fn crowded(mut self, crowd: Vec<(u32, u32)>) -> Search {
+        self.crowd = crowd;
+        self
     }
 
     /// Expands nodes until the path is found or ruled out, each one taken
@@ -3409,7 +3435,15 @@ impl Search {
                 } else {
                     0.0
                 };
-                let c = self.cost[node as usize] + here.distance(g.nodes[next as usize]) + risk;
+                let mut len = here.distance(g.nodes[next as usize]);
+                if self
+                    .crowd
+                    .binary_search(&(node.min(next), node.max(next)))
+                    .is_ok()
+                {
+                    len *= 1.0 + CROWD_COST;
+                }
+                let c = self.cost[node as usize] + len + risk;
                 if c < self.cost[next as usize] {
                     self.cost[next as usize] = c;
                     self.came[next as usize] = node;

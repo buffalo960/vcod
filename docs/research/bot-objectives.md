@@ -117,8 +117,8 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
 ## 3. The brain
 
 Goal order: a plant or defuse in progress (use held, or linked), a live
-frag, a retreat's cover (section 9), a visible enemy, a health pack for a
-hurt bot (section 9), objective travel, then the rest. Use is pressed only at the
+frag, a retreat's cover (section 10), a visible enemy, a health pack for a
+hurt bot (section 10), objective travel, then the rest. Use is pressed only at the
 objective, since its rising edge also picks up weapons and mounts turrets.
 
 - Sites are dealt out by rank: a bot's place among its team's bots by slot
@@ -1226,7 +1226,65 @@ tick (every 500 ms, or the tick after an `addbot` or `removebot`).
   `EXE_PLAYERKICKED`, so the game's `ClientDisconnect` and the drop notice
   run as for a kick, and the slot frees at once (a bot leaves no zombie).
 
-## 9. Retreat
+## 9. Team play
+
+vcod's own, with nothing on retail to measure against. `bots::team` holds
+the rules; the server applies them once a frame with the whole team in
+hand (`Server::bot_think`'s view pass) and puts the answers in each bot's
+view.
+
+- Per-round deal. The rank that deals out S&D sites and `re` objectives
+  is the team shuffled by the level's `sv_serverid` (`team::round_rank`),
+  which every `map_restart` moves on, so a bot that guarded A last round
+  may guard B this one. Until 2026-10-20 it was the bot's place by slot,
+  and the same bot went to the same site every round of a map.
+- S&D attackers go together. Every attacker goes for one site, picked per
+  round (`team::round_shift`, `team::site_rank`); the defenders still
+  split over both. A failed plant moves the bot on to the other site as
+  before.
+- Plant cover. An attacker with a teammate held at a plant
+  (`linkTo`, inside a zone) within 1500 units guards him from 96 to 250
+  units off (`SdView::cover`) instead of making for its own site.
+- `re` escort. Only the attacker nearest the carrier
+  (`team::ESCORTS`, `ReView::escort`) keeps by him; the rest go ahead and
+  hold the ring round the goal he makes for. The carrier himself keeps
+  his path keys through a fight and only turns the view to shoot
+  (`Bot::carrying`), as a `bas` bot clearing a charge's blast does: before,
+  he went `Goal::To` whatever he saw and chased it off the way home.
+- Route spreading. On an objective level (`sd`, `re`, UO's `ctf`, `dom`,
+  `hq`, `bas`) a plan pays double length on an edge a teammate's path
+  ahead still runs along (`nav::CROWD_COST`, `team::crowd`,
+  `Follower::crowd`), so a way round up to twice as long is taken over
+  the teammate's. Read when a plan starts; `dm`, `tdm` and `bel` plan as
+  before, so the `dm` stall runs (`ship_stalls`) are unchanged.
+
+VERIFIED (measured, ours, 2026-10-20, release, `--example team_tally`, 8
+shooting bots, seeds 1-11 odd, 6000 ticks (300 s) per run, the ten 1.1 maps
+that run both gametypes, totals over 60 runs each). Columns: plants,
+defuses, pickups, captures, the attackers' round wins, the defenders',
+kills. The machine was under heavy load; the runs are tick-driven and
+seeded, so load does not move them.
+
+| Build | sd plant | defuse | att W | def W | re pickup | capture | att W | def W |
+|---|---|---|---|---|---|---|---|---|
+| master (6f1b7fb2) | 217 | 80 | 138 | 154 | 234 | 9 | 164 | 198 |
+| shuffle + cover + escort + crowd, attackers split | 186 | 75 | 117 | 160 | 221 | 9 | 184 | 175 |
+| crowd alone | 215 | 87 | 124 | 149 | 232 | 10 | 176 | 183 |
+| shuffle + cover + escort alone | 211 | 78 | 130 | 149 | 239 | 5 | 182 | 184 |
+| all, attackers on one site (S&D) | 232 | 65 | 168 | 105 | | | | |
+| all + carrier keeps running (`re`) | | | | | 231 | 18 | 164 | 189 |
+
+The last two rows are the shipped build: the one-site rule touches no
+`re` level and the carrier rule no `sd` one.
+
+Spreading attackers over both sites lost S&D rounds: one or two bots at a
+site met the defenders' half alone. Sent together they won 62% of the
+rounds that ended (168 of 273) against 47% on master. In `re` the
+captures doubled (9 to 18); pickups and round wins stay inside the run to
+run spread. Captures are still rare: most carriers die on the way, and
+the rounds end on eliminations (section 4.2).
+
+## 10. Retreat
 
 A bot in a fight breaks contact when it is hurt or its clip runs dry, then
 reloads, waits and plays on (`crates/server/src/bots/retreat.rs`). Retail

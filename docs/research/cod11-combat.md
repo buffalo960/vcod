@@ -2550,6 +2550,20 @@ the torso has at weight, or a torso restart of a node the legs set this
 frame, would read the shared node's weight and time. vcod's two lerp
 frames keep separate clocks.
 
+VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20, `probe_legs` with
+a `--save-legs --capture-tag stopgo-*` client, fixtures
+`movers/mp_carentan-dm-legs{,-client}-stopgo-{1.5,uo}.txt`, recipe in
+each header): the legs leave a run some 350 ms after its keys let go
+(the body has to slow under 10 units/s), and a go 400-500 ms after the
+release takes the run back 100-200 ms into its blend to the idle. On
+both servers the run's bones then go on from the run's own time:
+`legs_ab`'s `a_body_stopping_and_going_is_posed_like_retail_on_15` /
+`_on_uo` match every row from the first stop on to 0.05 units and 0.3
+degrees, and with `animclock::restart_weighted_nodes` forcing 1.1's
+restart the same replays miss 83 (1.5b) and 78 (UO) rows from the first
+go on, up to 29 units and 97 degrees. A strafe swap (right, 150 ms
+left, right) takes the right strafe back the same way.
+
 #### The prone strike on mp_carentan
 
 VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20,
@@ -4130,6 +4144,46 @@ residual 3 units are within what one run of each measures, which this pair
 of runs does not settle. `pm_type` 7, a dead player still
 linked, takes `0x34220` and does not move at all: vcod runs
 `dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
+
+### 5.8 A `trigger_hurt` kill and the corpse's fall
+
+VERIFIED, `client-probes/probe_hurtfall` on retail 1.1d, 2026-10-20, three
+runs (`crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtfall.txt`,
+`-hurtlow.txt`, `-hurtland.txt`, recipes in their headers). The probe lifts
+mp_carentan's one `trigger_hurt` (entity 72, `dmg 1000`, model `*1`, the
+kill slab at z -176..-160 under the whole map) by an origin write and drops
+a `--probe-ride` client from z 362 over the street at (900 1930) through
+it. The origin write moves the slab's touch volume: every run killed at the
+lifted height.
+
+- VERIFIED, all three: the damage callback gets the trigger as inflictor
+  and attacker, `dflags` 0, `MOD_TRIGGER_HURT`, weapon `none`, an
+  undefined point and an undefined direction, hitloc `none`; the killed
+  callback's direction prints `(0.00, 0.00, 0.00)`. INFERRED: the undefined
+  pair is `hurt_touch`'s (0x64dc4) null point and direction through
+  `Scr_PlayerDamage` (0x5ca18), the shape the sine crush showed
+  (`cod11-movers.md` 21), so stock `dm.gsc` adds `iDFLAGS_NO_KNOCKBACK`
+  and `finishPlayerDamage` sets no knockback timer (0x43952).
+- VERIFIED, `-hurtfall.txt` (slab at 224..240, kill at z 233): the corpse
+  falls the remaining 276 on the client's cmds, lands at -43.19 at 3450 and
+  then creeps south about 0.05 a frame for 2.5 s, the street's grade under
+  `PM_DeadMove` (5.7).
+- VERIFIED, `-hurtlow.txt` (slab moved to 27..43 at the drop, kill at z 24):
+  the corpse lands 150 ms after the kill at y 1928.90 and creeps the same
+  way. A 120 ms knockback timer on the kill would have slid it on to y
+  1905 (vcod before the fix; `hurtfall_ab` fails on that).
+- VERIFIED, `-hurtland.txt` (slab at -56..-40 from the first frame, its top
+  3 over the street): the kill comes first, at origin -42.00 with the street
+  at -43.17 under it, and the landing's fall damage callback follows in the
+  same frame (both read 3350): 66 points on a body at health 0, which reads
+  -66 from then on, with no second killed callback. INFERRED: the kill is
+  the touch pass of a cmd still airborne and the fall damage the next cmd's
+  `PM_CrashLand` through `ClientEvents` (0x3fda8), the dead player's landing
+  of `cod11-player-clip.md` 8.8.
+
+**As implemented.** `ScriptRuntime::deliver_world_hit` passes the callback
+undefined vectors. `crates/server/tests/hurtfall_ab.rs` replays each
+capture's cmds on vcod-server and holds every `PROBE` line exact.
 
 ---
 
@@ -9199,13 +9253,47 @@ truncated: 1.1d's 92 frames at 30 read 3066, where a rounded 3067 was
 vcod's before 2026-10-19. INFERRED: 1.5b and UO store it the same way
 (their clips here are exact or round down either way).
 
+VERIFIED (capture), 2026-10-20, a death raised inside the packet pass on
+all three servers (`mp_carentan-dm-hit-target-killtimers{,-1.5,-uo}.txt`,
+the `--probe-kill-cmds 1,3` target with `ct`, `legsTimer` and `torsoTimer`
+on each `!trace`): the `kill` runs ahead of its message's cmd, and the
+probe's cmds behind it are 1 ms apart, so the death frame reads the
+clip's length + 50 less 1 or less 3 (949 and 947 for a 900 ms clip; 27
+deaths, each read against its own clip). The hold is set on the last cmd
+ahead of the `kill`, and every cmd behind it runs it down, alive or dead.
+VERIFIED (capture), 1.1d, a bullet death inside the shooter's cmd
+(`mp_carentan-dm-hit-target-paintimers.txt`, ms 26759, index 21, 900 ms):
+`ct + timer` reads 304200, so the hold was set at 303250, between the
+victim's snapshot cmds 303233 and 303284; that is the frame's
+`level.time` too, so this one capture does not split the two clocks; the
+`kill` captures do. VERIFIED (capture), same file: its two surviving
+hits (ms 26200, health 60; ms 26557, health 24) leave both timers at 0
+and `legsAnim` on the idle or the knockback's run.
+
+VERIFIED (disassembly), the event argument at every `BG_AnimScriptEvent`
+call site: 1.1d `game.mp.i386.so` (13 `.rel.text` relocations, 0x2ee1a ..
+0x49b85) passes 1, 2, 3, 4, 5, 6, 7, 10 or 13; 1.5b (16 PLT calls, 0x1fcb8
+.. 0x46f5d) and UO (19, 0x247f7 .. 0x4fb93) the same set, UO adding 14 and
+15. VERIFIED (data), the event name table (8-byte rows: 1.1d 0x7b478,
+1.5b 0x80120, UO 0xa9120) starts `PAIN`, `DEATH`, `FIREWEAPON`, `JUMP`,
+`JUMPBK`, `LAND`, `DROPWEAPON`, `RAISEWEAPON`, `CLIMBMOUNT`,
+`CLIMBDISMOUNT`, `RELOAD`, `CROUCH_TO_PRONE`, `PRONE_TO_CROUCH`,
+`MELEEATTACK` (UO then `LMG_DEPLOY`, `LMG_BREAKDOWN`). So no server game
+module raises `PAIN` (0): a surviving hit sets no anim and no timer, and
+`DEATH` (1) is raised only from `player_die` (1.1d 0x49b85, 1.5b 0x46f5d,
+UO 0x4fb93).
+
 Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
 and UO like any other; `dyingpose_ab::a_dying_body_poses_like_{retail,15,uo}`
 hold every bone of all 60 frames within 0.015 of retail's (the logs'
 rounding). `AnimState::timers` writes `legsTimer` and `torsoTimer` off each
 event's hold, `take_damage` stamps the death's on the client's last cmd
-(`dyingpose_ab::a_death_runs_its_timers_down_like_*`), and
-`xanim::duration_ms` truncates in extended precision.
+(`dyingpose_ab::a_death_runs_its_timers_down_like_*`, and inside the
+packet pass `kill_cmds_ab::a_kills_death_timers_match_*_by_its_cmds`, which
+fail with the frame clock), a surviving hit returns before the anim, and
+`combat.rs::a_shot_takes_health_and_a_second_one_kills` holds a hit's and a
+bullet death's timers on ours, `a_shot_sets_the_victims_timers_as_retail_does`
+on the capture. `xanim::duration_ms` truncates in extended precision.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 
