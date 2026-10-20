@@ -475,12 +475,13 @@ pub fn aim_radians(aim: [f32; 2]) -> (f32, f32) {
 
 /// The cone's half-angle in degrees for this shot (combat doc, 2.1): the
 /// hip minimum `stance` gives blended toward `hipSpreadMax` by
-/// `aimSpreadScale`, or the same blend from `adsSpread` off a settled sight.
+/// the last end frame's `aimSpreadScale` (`ClientSim::spread_frac`), or the
+/// same blend from `adsSpread` off a settled sight.
 /// `ads` is `fWeaponPosFrac == 1.0`, the exact compare retail's two arms
 /// split on, and not the usercmd's sight bit: the sight is up for the whole
 /// of a transition and the cone is the hip one until it lands.
 fn spread_deg(def: &WeaponDef, sim: &ClientSim, ads: bool, stance: &SpreadStance) -> f32 {
-    let scale = sim.ps.aim_spread_scale / 255.0;
+    let scale = sim.spread_frac;
     let min = if ads {
         def.ads_spread
     } else {
@@ -491,7 +492,7 @@ fn spread_deg(def: &WeaponDef, sim: &ClientSim, ads: bool, stance: &SpreadStance
 
 /// `gunrandom` (combat doc, 2.2): a point in the unit disc with the radius
 /// drawn uniformly, so the cone is denser at its centre.
-fn gun_random(rng: &mut u64) -> (f32, f32) {
+pub(crate) fn gun_random(rng: &mut u64) -> (f32, f32) {
     let angle = crate::game::host::rand_unit(rng) * std::f32::consts::TAU;
     let radius = crate::game::host::rand_unit(rng);
     (radius * angle.cos(), radius * angle.sin())
@@ -669,18 +670,106 @@ pub fn aim_end(
     rng: &mut u64,
 ) -> (Vec3, Vec3, Vec3) {
     let muzzle = muzzle_point_in(&me.ps, world);
-    let (yaw, pitch) = aim_radians(aim);
-    let forward = Vec3::new(
-        pitch.cos() * yaw.cos(),
-        pitch.cos() * yaw.sin(),
-        pitch.sin(),
-    );
-    let right = Vec3::new(yaw.sin(), -yaw.cos(), 0.0);
-    let up = right.cross(forward);
-    let (x, y) = gun_random(rng);
-    let r = spread_deg(def, me, ads, stance).to_radians().tan() * range;
-    let end = bullet_end(muzzle, forward, range) + right * (x * r) + up * (y * r);
-    (muzzle, forward, end)
+    let frame = aim_frame(aim);
+    let spread = spread_deg(def, me, ads, stance);
+    let end = spread_point(&frame, muzzle, spread, range, gun_random(rng), arith_of(me));
+    (muzzle, frame[0], end)
+}
+
+/// `Weapon_RocketLauncher_Fire` (1.1d 0x68c40, 1.5b 0x6e6bc, UO 0x7b3da):
+/// the muzzle, the aim's forward and the rocket's direction, the spread
+/// point 16 out normalized (combat doc 13.6). `draw` is `gunrandom`'s pair.
+pub fn rocket_aim(
+    me: &ClientSim,
+    def: &WeaponDef,
+    ads: bool,
+    stance: &SpreadStance,
+    aim: [f32; 2],
+    draw: (f32, f32),
+) -> (Vec3, Vec3, Vec3) {
+    let muzzle = muzzle_point_in(&me.ps, None);
+    let frame = aim_frame(aim);
+    let spread = spread_deg(def, me, ads, stance);
+    let dir = rocket_dir(&frame, spread, draw, arith_of(me));
+    (muzzle, frame[0], dir)
+}
+
+/// The rocket's spread point 16 out from the origin, normalized as the
+/// protocol's `VectorNormalize` rounds.
+fn rocket_dir(frame: &[Vec3; 3], spread: f32, draw: (f32, f32), arith: Arith) -> Vec3 {
+    let d = spread_point(frame, Vec3::ZERO, spread, ROCKET_REACH, draw, arith);
+    match arith {
+        Arith::Kept => vcod_common::x87::normalize_in_place(d),
+        Arith::Stored | Arith::Msvc => vcod_common::x87::normalize_stored(d),
+    }
+}
+
+/// How far out `Weapon_RocketLauncher_Fire` builds its spread point
+/// (1.1d .rodata 0x79c68, UO 0x7b3ec).
+const ROCKET_REACH: f32 = 16.0;
+
+/// A 1.1 shooter's sums stay on the x87 stack; 1.5b's and UO's are stored.
+fn arith_of(me: &ClientSim) -> Arith {
+    if me.ps.rules.v15() {
+        Arith::Stored
+    } else {
+        Arith::Kept
+    }
+}
+
+/// `AngleVectors` of the aim block's pitch and yaw with no roll: forward,
+/// right and up. Each angle rounded to float radians, its `fsincos` stored
+/// (UO 0x3b068, 0x3f464); with the roll 0 every component is one product
+/// or one sine, so the three servers agree. `right.z` is `-sin(roll) *
+/// cos(pitch)`, a negative zero.
+pub fn aim_frame(aim: [f32; 2]) -> [Vec3; 3] {
+    let sin_cos = |deg: f32| {
+        let rad = f64::from((f64::from(deg) * (std::f64::consts::PI / 180.0)) as f32);
+        (rad.sin() as f32, rad.cos() as f32)
+    };
+    let (sp, cp) = sin_cos(aim[0]);
+    let (sy, cy) = sin_cos(aim[1]);
+    [
+        Vec3::new(cp * cy, cp * sy, -sp),
+        Vec3::new(sy, -cy, -0.0),
+        Vec3::new(sp * cy, sp * sy, cp),
+    ]
+}
+
+/// `base + forward * reach + right * x * k + up * y * k`, `k` the spread's
+/// `tan` times `reach` and `(x, y)` the `gunrandom` draw: `BG_Bullet_Endpos`
+/// (1.1d 0x69624, UO 0x3011c) with `base` the muzzle, the rocket's direction
+/// before its normalize with `base` 0. 1.1d keeps everything past the
+/// tangent's float on the x87 stack and rounds each component once; 1.5b
+/// and UO store `k`, the two offsets and each component after every add
+/// (combat doc 2.2).
+fn spread_point(
+    frame: &[Vec3; 3],
+    base: Vec3,
+    spread: f32,
+    reach: f32,
+    (x, y): (f32, f32),
+    arith: Arith,
+) -> Vec3 {
+    let [f, r, u] = frame.map(|v| v.as_dvec3());
+    let base = base.as_dvec3();
+    let t = f64::from((f64::from(spread) * std::f64::consts::PI / 180.0).tan() as f32);
+    let reach = f64::from(reach);
+    match arith {
+        Arith::Kept => {
+            let k = t * reach;
+            let (x, y) = (f64::from(x) * k, f64::from(y) * k);
+            (f * reach + base + r * x + u * y).as_vec3()
+        }
+        Arith::Stored | Arith::Msvc => {
+            let st = |v: f64| f64::from(v as f32);
+            let k = st(t * reach);
+            let (x, y) = (st(f64::from(x) * k), st(f64::from(y) * k));
+            let e = (f * reach + base).as_vec3().as_dvec3();
+            let e = (r * x + e).as_vec3().as_dvec3();
+            (u * y + e).as_vec3()
+        }
+    }
 }
 
 /// `muzzle + forward * range`, the product unrounded: `BG_Bullet_Endpos`
@@ -2281,6 +2370,111 @@ mod tests {
             end.to_array().map(f32::to_bits),
             [0xc5998df5, 0xc5b12810, 0xc330795e]
         );
+    }
+
+    /// UO bazooka rounds read under gdb on retail UO 1.51b (combat doc
+    /// 13.6): the aim block's angles, the frame `AngleVectors` gave, the
+    /// spread and `gunrandom`'s pair, the spread point 16 out after each
+    /// store, its normalize, and the `trDelta` `fire_rocket` truncates off
+    /// it at 2800. The first is `probe_uofx`'s hip shot along (0, 0), the
+    /// other two `probe_skyshot`'s 80 degrees up.
+    #[test]
+    fn a_uo_rocket_leaves_on_retails_bits() {
+        let bits = |v: Vec3| v.to_array().map(f32::to_bits);
+        // aim, frame, spread, draw, pre-normalize, dir, delta
+        type Row = (
+            [u32; 2],
+            [[u32; 3]; 3],
+            u32,
+            [u32; 2],
+            [u32; 3],
+            [u32; 3],
+            [u32; 3],
+        );
+        let rows: [Row; 3] = [
+            (
+                [0, 0],
+                [
+                    [0x3f800000, 0, 0x80000000],
+                    [0, 0xbf800000, 0x80000000],
+                    [0, 0, 0x3f800000],
+                ],
+                0x40e00000,
+                [0xbea62115, 0xbf0d3c83],
+                [0x41800000, 0x3f232f51, 0xbf8abbb1],
+                [0x3f7f368f, 0x3d22aee9, 0xbd8a4e86],
+                [0x452e7000, 0x42de0000, 0xc33d0000],
+            ),
+            (
+                [0x438c13af, 0x4239034e],
+                [
+                    [0x3df9a6d8, 0x3e0268d6, 0x3f7bfd95],
+                    [0x3f38ef66, 0xbf310455, 0x80000000],
+                    [0xbf2e3e98, 0xbf3609e9, 0x3e348598],
+                ],
+                0x40800000,
+                [0x3edcb079, 0xbec36cc8],
+                [0x4025b98e, 0x400080a1, 0x417ac938],
+                [0x3e259737, 0x3e006601, 0x3f7a9542],
+                [0x43e20000, 0x43af8000, 0x452b4000],
+            ),
+            (
+                [0x438c1400, 0x422ff91e],
+                [
+                    [0x3e01e702, 0x3dfad4e8, 0x3f7bfd16],
+                    [0x3f31cf9a, 0xbf382bfe, 0x80000000],
+                    [0xbf354935, 0xbf2f0655, 0x3e3490ab],
+                ],
+                0x40800000,
+                [0xbdeb9f54, 0xbed0aff9],
+                [0x4010d921, 0x40174be9, 0x417ab3b7],
+                [0x3e10c8e2, 0x3e173af0, 0x3f7a9798],
+                [0x43c58000, 0x43ce8000, 0x452b4000],
+            ),
+        ];
+        for (aim, frame, spread, draw, pre, dir, delta) in rows {
+            let ours = aim_frame(aim.map(f32::from_bits));
+            assert_eq!(ours.map(bits), frame, "the frame at {aim:x?}");
+            let spread = f32::from_bits(spread);
+            let draw = (f32::from_bits(draw[0]), f32::from_bits(draw[1]));
+            let d = spread_point(&ours, Vec3::ZERO, spread, ROCKET_REACH, draw, Arith::Stored);
+            assert_eq!(bits(d), pre);
+            // `fire_rocket` normalizes it once more.
+            let d = crate::game::missile::rocket_launch_dir(
+                rocket_dir(&ours, spread, draw, Arith::Stored),
+                true,
+            );
+            assert_eq!(bits(d), dir);
+            assert_eq!(bits((d * 2800.0).trunc()), delta);
+        }
+    }
+
+    /// UO kar98k rounds from the hip, read under gdb on retail UO 1.51b
+    /// (`probe_uofx`): `BG_Bullet_Endpos`'s stored `k` and end point.
+    #[test]
+    fn a_uo_rounds_spread_lands_on_retails_bits() {
+        let v = |h: [u32; 3]| Vec3::from_array(h.map(f32::from_bits));
+        let frame = aim_frame([0.0, 0.0]);
+        let muzzle = v([0x44a70000, 0xc3ac0000, 0x43442000]);
+        let spread = f32::from_bits(0x40000000);
+        for (draw, end) in [
+            (
+                [0x3e7b9475, 0xbe369fc7],
+                [0x46312000, 0xc3d6e5b4, 0x4305d890],
+            ),
+            (
+                [0xbe9a816c, 0x3da3ec80],
+                [0x46312000, 0xc36e9ebc, 0x4360136f],
+            ),
+            (
+                [0x3f45c833, 0x3f16b6ac],
+                [0x46312000, 0xc41972c0, 0x43c8db2b],
+            ),
+        ] {
+            let draw = (f32::from_bits(draw[0]), f32::from_bits(draw[1]));
+            let e = spread_point(&frame, muzzle, spread, UO_BULLET_RANGE, draw, Arith::Stored);
+            assert_eq!(e.to_array().map(f32::to_bits), end);
+        }
     }
 
     /// Each build eases the controls a step on from the last build's, in

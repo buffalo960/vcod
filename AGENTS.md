@@ -318,9 +318,9 @@ header of the fixture it produced.
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
   (`coduo-diff.md` 18), the `*-uo-overheat.bin` pair the same crew with a
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
-  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin`, `*-uo-satchel.bin`
-  and `*-uo-bazooka.bin` pairs a spectator following a shooter under
-  `client-probes/probe_uofx` (the arty, smoke, mg and satchel ones
+  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin`, `*-uo-satchel.bin`,
+  `*-uo-bazooka.bin` and `*-uo-bazooka-draw.bin` (under gdb) pairs a
+  spectator following a shooter under `client-probes/probe_uofx` (the arty, smoke, mg and satchel ones
   `--probe-uo-weapon`, the satchel with the smoke script;
   `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on

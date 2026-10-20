@@ -1556,6 +1556,9 @@ pub struct Server {
     outbox: Vec<(SocketAddr, Vec<u8>)>,
     limiter: RateLimiter,
     rng: u64,
+    /// Test-facing: the next rockets' `gunrandom` pairs, a retail
+    /// capture's, in place of `rng`'s ([`Server::pin_spread_draws`]).
+    spread_draws: std::collections::VecDeque<(f32, f32)>,
     /// The next level's script seed, `G_InitGame`'s `Rand_Init` argument:
     /// retail passes the wall clock at every load and restart, so no level
     /// repeats the last one's draws (map-cycle doc 4.8). Stepped at every
@@ -2097,6 +2100,7 @@ impl Server {
             outbox: Vec::new(),
             limiter: RateLimiter::new(now),
             rng: seed,
+            spread_draws: Default::default(),
             level_seed: seed,
             spawn_pins: None,
             stuck_pins: HashMap::new(),
@@ -3689,6 +3693,12 @@ impl Server {
         if let Some(rt) = self.script.as_mut() {
             rt.host.missiles.pin_draws(draws);
         }
+    }
+
+    /// Test-facing: the `gunrandom` pairs the next rockets' spread takes,
+    /// read off retail under gdb (combat doc 13.6).
+    pub fn pin_spread_draws(&mut self, draws: Vec<(f32, f32)>) {
+        self.spread_draws = draws.into();
     }
 
     /// Test-facing: the next rockets' `trDelta`, a retail capture's
@@ -9432,8 +9442,9 @@ impl Server {
     }
 
     /// `Weapon_RocketLauncher_Fire` (0x68c40, combat doc 13.6): a rocket from
-    /// the muzzle along the bullet's spread aim, stamped with the `level.time`
-    /// a cmd runs under, then the shooter pushed 64 back along the view.
+    /// the muzzle along the spread aim 16 out (`combat::rocket_aim`), stamped
+    /// with the `level.time` a cmd runs under, then the shooter pushed 64
+    /// back along the view.
     fn launch(&mut self, shot: Shot, weapons: &crate::weapons::WeaponTable) {
         let Some(def) = weapons.get(shot.weapon as usize) else {
             return;
@@ -9444,16 +9455,13 @@ impl Server {
         else {
             return;
         };
-        let (muzzle, forward, end) = crate::game::combat::aim_end(
-            sim,
-            def,
-            shot.ads,
-            &shot.stance,
-            shot.aim,
-            crate::game::combat::BULLET_RANGE,
-            None,
-            &mut self.rng,
-        );
+        let rng = &mut self.rng;
+        let draw = self
+            .spread_draws
+            .pop_front()
+            .unwrap_or_else(|| crate::game::combat::gun_random(rng));
+        let (muzzle, forward, dir) =
+            crate::game::combat::rocket_aim(sim, def, shot.ads, &shot.stance, shot.aim, draw);
         sim.ps.velocity += forward * ROCKET_KICK;
         let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
         let Some(rt) = self.script.as_mut() else {
@@ -9473,7 +9481,7 @@ impl Server {
                 shot.slot,
                 shot.weapon,
                 muzzle,
-                (end - muzzle).normalize_or_zero(),
+                dir,
                 shell,
                 kind,
                 false,
