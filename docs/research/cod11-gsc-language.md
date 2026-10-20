@@ -861,7 +861,7 @@ waiters in start order, as the thread pick paragraph has it. vcod's
 `Vm::notify` does the same: it only flips the waiter to runnable
 (`sched::tests::two_notifies_of_the_same_event_in_one_step_lose_the_second`).
 
-**Engine notifies and the trigger queue (`game.mp.i386.so` 1.1d).**
+**Engine notifies and the trigger queue (`game.mp.i386.so` 1.1d, 1.5b, UO).**
 INFERRED, from the bullets below: what the game module notifies outside a
 script step only wakes waiters too; they run at the next `Scr_RunCurrentThreads`, so a notify
 raised in every cmd reaches a waiter once a frame.
@@ -893,17 +893,41 @@ raised in every cmd reaches a waiter once a frame.
   last woken first, and each later round runs the next cmd's triggers.
 - VERIFIED: 1.5b's `G_RunFrame` (0x506c9..0x5082a, count at
   `level+0x2e10`) and UO 1.51b's (0x59cf5..0x59e56, `level+0x2e60`) run the
-  same rounds. INFERRED: with the same order.
+  same rounds. 1.5b's `G_Trigger` (0x69f68, queue at `level+0x2210`) and
+  UO's (0x76218, `level+0x2260`) are the queue append, with the same
+  0x100 check; their `Touch_Multi` calls it.
+- VERIFIED, `client-probes/probe_touchorder` on retail 1.5b and UO 1.51b,
+  2026-10-20 (`tests/fixtures/touchorder/mp_pavlov-1.5.txt`, `-uo.txt`):
+  every phase's first frame logs the same lines in the same order as
+  1.1d's, and each later cmd of a frame one more `f` pair.
+- VERIFIED, `client-probes/probe_trigqueue` on retail 1.1d, 1.5b and UO
+  1.51b, 2026-10-20, three byte-identical logs
+  (`tests/fixtures/touchorder/trigqueue.txt`). A script-spawned
+  `trigger_damage` with `enableLinkTo` (no wait armed) takes N
+  `radiusDamage`s in one step from a thread on the frame grid, which runs
+  inside the first round. N = 1 or 256 log no `"trigger"`: every entry is
+  dropped with the round's queue. N = 257 or 259 log one, at the step's
+  own time: the 257th activation notifies on the spot, its waiter runs
+  after the step, and the later spot notifies reach no waiter. From a
+  thread woken off the grid (`wait 0.06`), which runs after the rounds,
+  N = 1 logs one `"trigger"` the next frame, and N = 258 logs one at the
+  step's time and 256 the next frame, one per round. INFERRED: on 1.5b
+  and UO too a thread due past the rounds' clock runs after the count is
+  zeroed, so its entries wait for the next frame's rounds.
 
 vcod: `engine_notifies` holds what retail notifies on the spot and
 `trigger_fires` the queue; `ScriptRuntime::run_threads` raises the first at
 the top of the script frame and `ScriptRuntime::trigger_rounds` hands out
-the second. The full-queue arm is not modelled. Gate:
-`crates/server/tests/touchorder_ab.rs`. A notify raised between frames
-(`ClientDisconnect`'s `menuresponse`, `ClientBegin`'s `begin`, a client
-command's) wakes its waiters at once, and they run in the next frame's
-first pass ("The packet pass" above; `cod11-server-handshake.md`, "When the
-game hears a drop" and "When the client's `begin` is heard").
+the second. `GameHost::queue_trigger` refuses an entry past 0x100
+(`TRIGGER_QUEUE_LEN`); a cmd's touch and the lookat path then push the
+notify to `engine_notifies`, and a `trigger_damage` activation returns it
+with `"damage"` from `damage_nonclient`, so a builtin's blast notifies it
+inside the step. Gate: `crates/server/tests/touchorder_ab.rs`, both probes
+at each patch. A notify raised between frames (`ClientDisconnect`'s
+`menuresponse`, `ClientBegin`'s `begin`, a client command's) wakes its
+waiters at once, and they run in the next frame's first pass ("The packet
+pass" above; `cod11-server-handshake.md`, "When the game hears a drop" and
+"When the client's `begin` is heard").
 
 **`getentarray` order: map entities first, then spawn order, VERIFIED.** The
 map's own four `script_origin` entities come back before three the probe

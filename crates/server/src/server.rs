@@ -3686,8 +3686,10 @@ impl Server {
 
     /// Test-facing: the seed the spread and the melee rolls draw from, so a
     /// gate that needs a shot to land where it did once can have it again.
+    /// The bots added after it draw their own streams off `seed` too.
     pub fn test_seed_rng(&mut self, seed: u64) {
         self.rng = seed | 1;
+        self.bot_admin.seed_rng = bot_admin::seed_stream(seed);
     }
 
     /// Whether a shot fired from eye height at `origin` along `yaw_deg`
@@ -4537,9 +4539,10 @@ impl Server {
                     on_ladder: ps.as_ref().is_some_and(|ps| ps.on_ladder),
                     velocity: ps.as_ref().map_or(glam::Vec3::ZERO, |ps| ps.velocity),
                 };
-                // The generator alone, so the world stays readable.
-                let rng = &mut self.rng;
-                let mut rand = || rand_from(rng);
+                // The bot's own generator, copied out so the world stays
+                // readable and written back below.
+                let mut rng = self.bots.get(&slot).map_or(1, |b| b.rng);
+                let mut rand = || rand_from(&mut rng);
                 let at = view.origin;
                 let world = self.world.as_ref().map(|w| &w.collision);
                 let others =
@@ -4626,6 +4629,9 @@ impl Server {
                         ),
                         _ => None,
                     };
+                }
+                if let Some(b) = self.bots.get_mut(&slot) {
+                    b.rng = rng;
                 }
                 self.bot_paths.insert(slot, follower);
             }
@@ -5108,6 +5114,7 @@ impl Server {
             deployed: sim.ps.deployed(),
             deploy_yaw: sim.ps.prone_direction,
             ads_frac: sim.ps.weapon_pos_frac,
+            spread_scale: sim.ps.aim_spread_scale,
             speed: sim.ps.velocity.truncate().length(),
             velocity: sim.ps.velocity.into(),
             dead: sim.dead,

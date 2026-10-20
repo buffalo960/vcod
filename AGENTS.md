@@ -781,7 +781,8 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   fires off the use key's aim pick. A trigger-woken thread runs on the next
   frame's clock. A trigger's own `"trigger"` (touch, hurt, lookat,
   damage) goes through `G_RunFrame`'s queue, one per entity a round
-  (`host.trigger_fires`); what retail notifies on the spot (a touch, the
+  (`host.trigger_fires`, pushed through `GameHost::queue_trigger`, which
+  refuses one past 0x100 for the caller to notify on the spot); what retail notifies on the spot (a touch, the
   use key, an item take, a mover's end, a blast's or a round's
   `"damage"` on an entity) goes in `host.engine_notifies`
   (`cod11-gsc-language.md`, "Engine notifies and the trigger queue").

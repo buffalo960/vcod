@@ -267,9 +267,33 @@ The flood's neighbour walks meet few ladders square on: a climb ends a storey
 up and up to 70 units past the face, out of the column the walk aimed at. A
 pass after the flood (`NavGraph::link_ladders`) handles them on their own.
 
-- The ladders are the world model's `SURF_LADDER` brushes as axial boxes,
-  touching boxes merged (a tall ladder is often several brushes). Each box's
-  two broad faces, normal along its thinner horizontal axis, are tried.
+- The ladders are the `SURF_LADDER` brushes of the world model and of
+  every submodel linked where it spawned (`CollisionWorld::model_in_place`)
+  as axial boxes, touching boxes merged (a tall ladder is often several
+  brushes). Each box's two broad faces, normal along its thinner
+  horizontal axis, are tried.
+- VERIFIED (the BSPs, UO install): every UO `bas` map keeps its bunkers'
+  ladders in the base's own `script_brushmodel`, two a base, and no other
+  stock map has a ladder outside model 0: mp_foy `*15`, `*60`, `*63`,
+  `*66`, `*69`, `*72`; mp_italy `*2` to `*7`; mp_kursk `*73` to `*98` by
+  fives; mp_ponyri `*27` to `*42` by threes; mp_rhinevalley `*28` to
+  `*33`. mp_italy's allied base `*4` (targetname `ps5`,
+  `script_idnumber`, 73 `clip_nosight_rock` brushes, one `clip_metal`,
+  two `common/ladder` with contents 0x28010000) is the whole shell of the
+  bunker round (6682, -2624, -714): its five spawns there (58, 62, 63, 64
+  and 68) stand in a room it closes on every side, at a prone body's
+  height too, and its ladders at x 6720 to 6764, y -2742 to -2730 and x
+  6546 to 6588, y -2814 to -2804 (z -716 up to -582 and -546) are the
+  way out. `bas.gsc`'s breach (`BaseAssault_base_think`) hides, unlinks
+  and deletes every target of the base with a `script_idnumber`, so the
+  ladders go with the walls. VERIFIED (measured, release `nav_build`
+  `UO=1`, before and after the submodel ladders): mp_italy's spawns that
+  reach the main component go 361 to 371 of 371 (the five above and
+  245, 246, 247, 303, 304 round (2780, -4360, -72), the western allied
+  base `*3`'s), in one component 361 both; mp_foy, mp_kursk, mp_ponyri
+  and mp_rhinevalley move by -44 to +504 nodes and keep their counts (324 /
+  381, 261 / 282, 219 / 272, 344 / 386). 1.1 has none, so its graphs
+  are unchanged. (`nav::tests::italys_allied_bunker_ladders_are_its_bases`.)
 - The foot is a body dropped 16 units in front of the face's middle, 16
   units above the box's bottom, facing away from it. Facing it, the airborne
   grab hangs the body on the face and it never lands. Where a body does not
@@ -1149,8 +1173,9 @@ and 7800 (round over at 11679, against 12959 with no pit rule). With the
 spawn test the rule never fires on that run, which ends on 12959.
 mp_dawnville's spawns 38 and 74 ((-652, -17194, 56) and (-648, -17088,
 80)) reach no node of it on 1.1 and UO alike, so they are no pit
-either. Open: how a bot leaves mp_italy's allied bunker; the graph has
-no way out of it under `bas`.
+either. The allied bunker's way out was its base's two ladders, which
+the build read only off model 0 (section 2, "Ladders"); since
+2026-10-19 its spawns reach the largest component.
 
 ## 3. Following
 

@@ -60,6 +60,9 @@ pub const EF_MOUNTED_PRONE: i32 = 0x4000;
 pub const EF_NODRAW: i32 = 0x100;
 /// On a turret entity: the server fired it this frame (turrets doc 6.3).
 pub const EF_FIRING: i32 = 0x400;
+/// `PmoveSingle` sets it on every cmd with the talk bit and clears it on
+/// every other (cod15-movement.md 5, "The talk button"); UO's 0x20000.
+pub const EF_TALK: i32 = 0x40000;
 /// An `ET_PLAYER`'s `pingPlayer` bit (docs/research/cod11-hud-protocol.md,
 /// "Compass friendlies").
 pub const EF_PING: i32 = 0x80000;
@@ -408,6 +411,7 @@ mod tests {
         assert_eq!(map(0x80), EF_NODRAW);
         assert_eq!(map(0x200), EF_FIRING);
         assert_eq!(map(0x6000), EF_MOUNTED);
+        assert_eq!(map(0x20000), EF_TALK);
         assert_eq!(map(0x40000), EF_PING);
         assert_eq!(map(0x80000), EF_FRIEND_PING);
         assert_eq!(map(0x100000), EF_IN_VEHICLE_V22);

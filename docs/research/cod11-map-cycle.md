@@ -1064,7 +1064,8 @@ order of the list.
   `and byte [edx+0xe], 0xfb`. That is the "looking out of its own body" bit
   `cod11-gsc-object-model.md` records.
 - `ps.eFlags` (`+0x80`, netfield offset 128) is masked with `0xfffbfbff`,
-  which clears bits `0x400` and `0x40000`. UNVERIFIED: what either bit means.
+  which clears bits `0x400` and `0x40000`: the held trigger and the talk bit
+  `PmoveSingle` sets (`cod15-movement.md` 5, "The talk button"). VERIFIED.
 
 The arm writes no health, and the client's own health is gone by the time it
 is on the wire. VERIFIED: the dm map-change capture's `pm_type=5` traces read
