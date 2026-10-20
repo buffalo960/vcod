@@ -23,6 +23,7 @@ use crate::spectate::{ClientSim, PmType};
 use crate::world::{TestEntities, World};
 
 mod bot_admin;
+mod bot_vehicles;
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
@@ -4476,6 +4477,7 @@ impl Server {
                 });
             }
         }
+        self.bot_vehicle_views(&mut views);
         let breach_models = if views.iter().any(|(_, v)| v.rocket.is_some()) {
             self.bot_breach_models(uo.as_ref())
         } else {
@@ -4597,7 +4599,8 @@ impl Server {
                 // readable and written back below.
                 let mut rng = self.bots.get(&slot).map_or(1, |b| b.rng);
                 let mut rand = || rand_from(&mut rng);
-                let at = view.origin;
+                // A seat plans from the vehicle on the ground under it.
+                let at = view.seat.map_or(view.origin, |s| s.origin);
                 let world = self.world.as_ref().map(|w| &w.collision);
                 let others =
                     |all: &[(usize, glam::Vec3, glam::Vec3)]| -> Vec<(glam::Vec3, glam::Vec3)> {
@@ -5273,6 +5276,9 @@ impl Server {
                 .level_cvars
                 .as_ref()
                 .is_some_and(|(g, _)| g == "sd" || g == "re"),
+            // Filled for the level's vehicles in pass 2.
+            vehicles: Vec::new(),
+            seat: None,
         })
     }
 
@@ -5705,6 +5711,8 @@ impl Server {
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
             deployed: sim.ps.deployed(),
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
+            seat: sim.seat.map(|s| (s.vehicle, s.pos)),
+            boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
         })
     }
 
