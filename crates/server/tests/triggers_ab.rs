@@ -20,7 +20,8 @@
 //! brush is the kill volume under the floor and a walking player never reaches
 //! it, so every fire line is a `trigger_multiple` and the hurt half of the
 //! touch pass -- the cadence, the damage, the slow spawnflag -- has no retail
-//! evidence behind it here. Entity 72 is pinned as existing and as surviving
+//! evidence behind it here (`hurtfall_ab.rs` lifts it into a falling
+//! player's path on mp_carentan and gates the kill and the corpse). Entity 72 is pinned as existing and as surviving
 //! the gametype's deletion pass, and no further. Nor does any other trigger
 //! kind fire: `dm` on this map deletes its `trigger_use` and `trigger_lookat`
 //! with the three `script_gameobjectname` entities, and the map ships no

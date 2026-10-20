@@ -6,7 +6,9 @@
 //! `legs_ab.rs` replays cmd for cmd beside the gsc's bone log. Under a
 //! `--capture-tag` starting `torso` it runs [`TORSO_SCRIPT`] instead, firing,
 //! reloading and aiming on the move beside `client-probes/probe_torso`, for
-//! `torso_ab.rs`.
+//! `torso_ab.rs`. Under one starting `stopgo` it runs [`STOPGO_SCRIPT`],
+//! whose short stops and swaps take a legs clip back while it still blends
+//! out, beside the same `probe_legs`.
 
 use std::time::Instant;
 use vcod_common::net;
@@ -110,6 +112,54 @@ const TORSO_SCRIPT: &[Step] = &[
     step("end", 1500, 0, 0, false),
 ];
 
+/// Stop and go: the legs leave a run some 350 ms after its keys let go,
+/// once the body has slowed, so each short stop holds 400-500 ms and the
+/// next go takes the run back inside its 120-250 ms blend to the idle,
+/// while it still has weight (`legs_ab.rs`, cod11-combat.md 3.1, "The
+/// setter on a weighted node"); the strafe swap does the same in one
+/// 150 ms step. Each long stop lets every node settle first. Forward runs
+/// 3 s and backward 1.7 s, inside the street's 680 units.
+const STOPGO_SCRIPT: &[Step] = &[
+    step("settle", 1500, 0, 0, false),
+    step("run", 1000, 127, 0, false),
+    step("stop", 1000, 0, 0, false),
+    step("back", 1000, -127, 0, false),
+    step("back_stop", 400, 0, 0, false),
+    step("back_go", 700, -127, 0, false),
+    step("stop2", 1000, 0, 0, false),
+    step("go", 700, 127, 0, false),
+    step("go_stop", 400, 0, 0, false),
+    step("go2", 500, 127, 0, false),
+    step("go_stop2", 450, 0, 0, false),
+    step("go3", 400, 127, 0, false),
+    step("go_stop3", 500, 0, 0, false),
+    step("go4", 400, 127, 0, false),
+    step("stop3", 1000, 0, 0, false),
+    step("strafe_right", 700, 0, 127, false),
+    step("strafe_swap", 150, 0, -127, false),
+    step("strafe_right2", 600, 0, 127, false),
+    step("stop4", 1000, 0, 0, false),
+    step("strafe_left", 1300, 0, -127, false),
+    step("stop5", 1000, 0, 0, false),
+];
+
+/// Which walk a `--save-legs` run takes, off its `--capture-tag`.
+pub enum Walk {
+    Legs,
+    Torso,
+    StopGo,
+}
+
+impl Walk {
+    pub fn of_tag(tag: Option<&str>) -> Self {
+        match tag {
+            Some(t) if t.starts_with("torso") => Walk::Torso,
+            Some(t) if t.starts_with("stopgo") => Walk::StopGo,
+            _ => Walk::Legs,
+        }
+    }
+}
+
 pub struct LegsProbe {
     script: &'static [Step],
     torso: bool,
@@ -121,11 +171,14 @@ pub struct LegsProbe {
 }
 
 impl LegsProbe {
-    /// The torso walk when `torso`, the plain one otherwise.
-    pub fn new(torso: bool) -> Self {
+    pub fn new(walk: Walk) -> Self {
         Self {
-            script: if torso { TORSO_SCRIPT } else { SCRIPT },
-            torso,
+            script: match walk {
+                Walk::Legs => SCRIPT,
+                Walk::Torso => TORSO_SCRIPT,
+                Walk::StopGo => STOPGO_SCRIPT,
+            },
+            torso: matches!(walk, Walk::Torso),
             placed: None,
             seen: None,
             lines: Vec::new(),

@@ -209,7 +209,7 @@ fn board(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Boarded
 /// frame, where the seeded draw's sloped point slides and sets a walk
 /// first. Every mp_cassino capture's `legsAnim` toggle reads the flat
 /// spawn's (coduo-vehicles.md 13, "The driver's idle"); on mp_peaks the
-/// seeded draw already reads retail's, `JEEP_GUN`'s aside.
+/// seeded draw already reads retail's, `JEEP_GUN`'s aside ([`JEEP_GUN_PIN`]).
 const FLAT_SPAWNS: &[(&str, Spot)] = &[("mp_cassino", ([64.0, 152.0, 0.125], [0.0, 270.0, 0.0]))];
 
 /// A spawn pin's origin and angles.
@@ -958,28 +958,75 @@ const BONE_TOLERANCE: f32 = 0.6;
 
 const JEEP_GUN: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt";
 
+/// The capture opens in the seat, so its spawn is not in evidence. Its
+/// `legsAnim` toggle reads one set more than the seeded draw gives (606 to
+/// 94): a spawn whose think lands sliding sets a walk before the idle.
+/// Retail's [`JEEP_GUN_SPAWN`] run spawned on tdm spawnpoint 277 and reads
+/// 606 too. Of the map's 32 tdm spawns pinned, 277 and (-1328, -160) match
+/// every field here; the other 30 miss the toggle (coduo-vehicles.md 13,
+/// "The driver's idle").
+const JEEP_GUN_PIN: Spot = ([-3872.0, 3064.0, -25.528], [0.0, 255.0, 0.0]);
+
 #[test]
 fn the_jeep_gun_replays_on_ours() {
     let text = std::fs::read_to_string(JEEP_GUN).unwrap();
     let lines = parse(&text);
     let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
-    let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
+    let setup = Setup {
+        pins: vec![vec![Some(JEEP_GUN_PIN)]],
+        ..Setup::default()
+    };
+    let Some(ours) = replay_with("mp_peaks", "willyjeep_mp", &cvars, &lines, &setup, |_| {}) else {
         return;
     };
-    tally(&lines, &ours).assert_within(JEEP_GUN_GAPS);
+    tally(&lines, &ours.samples).assert_within(&[]);
 }
 
-/// The capture opens in the seat, so its spawn is not in evidence. Its
-/// `legsAnim` toggle reads one set more than ours from the first snapshot
-/// (606 to our 94, the same clip): retail's spawn set a walk before the
-/// idle, as a sloped point's think does (coduo-vehicles.md 13, "The
-/// driver's idle"). None of the map's 32 tdm spawns, pinned, reproduces
-/// both that toggle and the event ring retail's seat carries.
-const JEEP_GUN_GAPS: &[Gap] = &[Gap {
-    field: "legsAnim",
-    snaps: 0..=usize::MAX,
-    why: "retail's unrecorded spawn set one clip more",
-}];
+const JEEP_GUN_SPAWN: &str =
+    "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-spawn-uo.txt";
+
+/// `GUN` on the jeep again, logged from the spawn
+/// (`--slope-from-spawn`): retail's spawn on tdm spawnpoint 277
+/// (`fixtures/vehicles/mp_peaks-jeep-gun-spawn-uo.txt`) lands its think
+/// sliding at (-12, 0, -3) with the walk 128 set, so the seat reads 606.
+/// Ours on that spawn, every field from where [`replay`] opens a capture
+/// (900 ms into the seat) to the end.
+#[test]
+fn the_jeep_gun_from_a_logged_spawn_replays_on_ours() {
+    let text = std::fs::read_to_string(JEEP_GUN_SPAWN).unwrap();
+    let lines = from_the_seat(parse(&text));
+    let cvars = [("probe_side", "75"), ("probe_pitch", "15")];
+    let setup = Setup {
+        pins: vec![vec![Some(JEEP_GUN_PIN)]],
+        ..Setup::default()
+    };
+    let Some(ours) = replay_with("mp_peaks", "willyjeep_mp", &cvars, &lines, &setup, |_| {}) else {
+        return;
+    };
+    tally(&lines, &ours.samples).assert_within(&[]);
+}
+
+/// A capture logged from the spawn cut where a seated one opens: at the
+/// first snapshot [`CAPTURE_LAG_MS`] past the seat, with the cmds sent
+/// since the snapshot before it.
+fn from_the_seat(lines: Vec<Line>) -> Vec<Line> {
+    let seated = lines
+        .iter()
+        .find_map(|l| match l {
+            Line::Snap(s) if s.wire.get("pm_type") == Some(&1) => Some(s.t),
+            _ => None,
+        })
+        .expect("a seated snapshot");
+    let first = lines
+        .iter()
+        .position(|l| matches!(l, Line::Snap(s) if s.t >= seated + CAPTURE_LAG_MS))
+        .expect("a snapshot past the lag");
+    let from = lines[..first]
+        .iter()
+        .rposition(|l| matches!(l, Line::Snap(_)))
+        .map_or(0, |i| i + 1);
+    lines.into_iter().skip(from).collect()
+}
 
 const TANK_GUN: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-gun-uo.txt";
 const TANK_GUN_BONES: &str = "tests/fixtures/vehicles/mp_cassino-tank-gun-bones-uo.txt";
