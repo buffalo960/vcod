@@ -3624,13 +3624,24 @@ stalled bot-ticks / falls / deaths):
 | master 8433f794 | 2186 / 2 / 0 | 76 / 1 / 0 |
 | the walk's rule with its room test, no re-proof | 68 / 2 / 0 (1-383) | 129 / 5 / 0 (1-767) |
 | the walk's rule with its room test, re-proof with it | 68 / 0 / 0 (1-383) | 341 / 6 / 2 (1-767) |
-| the rule without the room test, re-proof as a bot (kept) | 131 / 1 / 0 | 126 / 1 / 1 |
+| the rule without the room test, re-proof as a bot | 131 / 1 / 0 | 126 / 1 / 1 |
+| and no jump under a top while climbing a ramp, centre aims (kept) | 2 / 1 / 0 | 201 / 0 / 3 |
 
 Seed 1145 on `mp_depot`: 76 stalled bot-ticks on master, 0 on the kept
 row. Master's depot total is seed 663's 2118 (the gutter spell, "The
-lip walk") and seed 221's 68, which the kept row still has. The ship
-counts move by a seed or two's stall between any two builds, so the
-rows differ within that noise but for the spots named below.
+lip walk") and seed 221's 68; the kept row has neither. The ship counts
+move by a seed or two's stall between any two builds, but the kept row
+is worse than master at two spots, both where two bots meet: the
+stairwell at (5340-5467, 193-381, 204-448) round the deep jump edge
+(5402, 321, 344) -> (5404, 354, 204) (seeds 513, 909, 1105, 1361, 1463,
+1507; in 1105 the bot stands at the stair's top at (5392, 325, 352)
+behind bot 3 for 12 ticks, then spells), and the mast ladder
+(4960, 64, 1090-1192) to the crow's nest (seeds 323, 417, 843, 1305),
+where the three deaths fell from the nest at 1254 to the deck at 692:
+in 417 the bot, heading down for the ladder head (4964, 36, 1219) with
+bot 1 climbing under it, walked off the nest's west side at
+(4920, 22, 1254). VERIFIED (measured, traces); why the new graph sends
+bots there more often is not traced.
 
 - The cue is the walk's own rule (`nav::PinJump`, run by `walk_sliding`
   and by `Bot::think`): jump on the ground after two ticks moved under
@@ -3669,11 +3680,11 @@ rows differ within that noise but for the spots named below.
   to spawns 88 and 154, now lands at its node: the walk with the room
   test pins on the wall at y -15375 and refuses the jump, the bot's
   jump there lands (`nav::tests::a_jump_edge_is_proved_again_by_the_bots_jump`).
-  Aimed jumps after the pass (`examples/nav_build.rs`): `mp_brecourt`
-  44, `mp_carentan` 112, `mp_chateau` 82, `mp_dawnville` 38,
-  `mp_depot` 77, `mp_harbor` 15, `mp_hurtgen` 53, `mp_pavlov` 85,
-  `mp_powcamp` 25, `mp_railyard` 106, `mp_rocket` 38, `mp_ship` 124;
-  `mp_depot` loses 14 edges (91 525 to 91 511). Spawns in one component
+  Aimed jumps after the pass, on the kept row (`examples/nav_build.rs`):
+  `mp_brecourt` 44, `mp_carentan` 116, `mp_chateau` 88, `mp_dawnville`
+  40, `mp_depot` 81, `mp_harbor` 15, `mp_hurtgen` 65, `mp_pavlov` 88,
+  `mp_powcamp` 28, `mp_railyard` 107, `mp_rocket` 43, `mp_ship` 124;
+  `mp_depot` has 91 527 edges to master's 91 525. Spawns in one component
   are unchanged on all twelve (`tests/nav_census.rs`; dawnville 178).
   VERIFIED (measured). A room-tested re-proof dropped 0 to 22 edges a map
   aimed at the node and both sides, 20 to 146 aimed at the node alone,
@@ -3686,10 +3697,22 @@ rows differ within that noise but for the spots named below.
   walk on has in none (205, 423, 463, 625, 965, 1369 at the head, 57,
   381, 929, 1003 on the stair above). VERIFIED (measured, the same seeds
   each way).
-- Left: the stair at (5404-5467, 321-354, 204-332) on `mp_ship` (seeds
-  445, 481: a fall at (5416, 325, 312) and stalls round the deep jump
-  edge's top at 204), and the pit at (-1409, 2087, 212) on `mp_depot`
-  (seed 159: the plans dither between the pit's exits, a bot bobbing up
+- The jump right under a top waits for a tick that rose under a unit
+  (`nav::jump_under`, for the walk and the bot). With the re-proof
+  above, `nav_census` at United Offensive lost `mp_uo_dawnville`'s
+  spawns 220 and 248 (193 < 195): their one way in is the jump edge
+  (-241, -16802, 103) -> (-190, -16848, 176) up a ramp, and the
+  floor-bound walk jumped under the top at (-195, -16833, 138) while it
+  still rose 2 units a tick, flew past the floor and fell back to 151;
+  the flood's walk, with no floor and no jump under it, ran on to the
+  ramp's head, stalled and jumped onto it
+  (`nav::tests::a_jump_from_a_ramp_waits_for_its_head`). The re-proof
+  also tries the top's column centre, where the flood aimed. VERIFIED
+  (measured, walk traces, UO rules). All twelve 1.1 censuses are
+  unchanged.
+- Left: `mp_ship`'s stairwell and mast ladder above, and the pit at
+  (-1409, 2087, 212) on `mp_depot` (seed 159 on the row before the
+  kept one: the plans dither between the pit's exits, a bot bobbing up
   the slope at (-1280, 2100) to (-1280, 2148, 227), a plain edge).
 
 ## 4. Memory and hearing
