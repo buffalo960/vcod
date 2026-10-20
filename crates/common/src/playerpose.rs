@@ -453,6 +453,9 @@ pub struct SeatRamp {
     node: Option<usize>,
     /// Leaf, weight at `start_ms`, goal, and the ms to reach it.
     leaves: Vec<(usize, f32, f32, f32)>,
+    /// The node time of each leaf [`PlayerAnims::leaf_motion`] knows, from
+    /// when it was last given weight from none.
+    times: Vec<(usize, crate::animclock::LeafTime)>,
     start_ms: i32,
     /// The ramp of the node last left, its own `held` dropped.
     held: Option<Box<SeatRamp>>,
@@ -477,8 +480,28 @@ impl SeatRamp {
     }
 
     /// One end frame's goals at `now_ms`: [`seat_inputs`]' node and leaves,
-    /// `None` for a body with no seat blend.
-    pub fn set(&mut self, goal: Option<(usize, Vec<(usize, f32)>)>, now_ms: i32) {
+    /// `None` for a body with no seat blend. `motion` is
+    /// [`PlayerAnims::leaf_motion`]: a leaf it knows starts its node time at
+    /// 0 whenever it is set from no weight, as the engine allocates it
+    /// afresh (UO `coduo_lnxded` 0x80c05a2, cod11-combat.md 3.1).
+    pub fn set(
+        &mut self,
+        goal: Option<(usize, Vec<(usize, f32)>)>,
+        now_ms: i32,
+        motion: impl Fn(usize) -> Option<(f32, bool)>,
+    ) {
+        for (_, t) in self.times.iter_mut() {
+            t.settle(now_ms);
+        }
+        if let Some(h) = self.held.as_mut() {
+            for (_, t) in h.times.iter_mut() {
+                t.settle(now_ms);
+            }
+        }
+        let fresh = |leaf: usize| {
+            motion(leaf)
+                .map(|(f, looping)| (leaf, crate::animclock::LeafTime::new(now_ms, f, looping)))
+        };
         if self.node.is_some() && goal.as_ref().map(|g| g.0) != self.node {
             let mut left = std::mem::take(self);
             left.held = None;
@@ -487,6 +510,7 @@ impl SeatRamp {
         let Some((node, goal)) = goal else {
             self.node = None;
             self.leaves.clear();
+            self.times.clear();
             return;
         };
         if self.node != Some(node) {
@@ -494,6 +518,7 @@ impl SeatRamp {
             // time, which the blend normalizes to the goal weights.
             self.node = Some(node);
             self.leaves = goal.iter().map(|&(l, w)| (l, w, w, 0.0)).collect();
+            self.times = goal.iter().filter_map(|&(l, _)| fresh(l)).collect();
             self.start_ms = now_ms;
             if self.held.as_ref().is_some_and(|h| h.node == Some(node)) {
                 self.held = None;
@@ -501,10 +526,13 @@ impl SeatRamp {
             return;
         }
         let mut next: Vec<(usize, f32, f32, f32)> = Vec::new();
+        let mut times = Vec::new();
         for &(leaf, to) in &goal {
             let from = (0..self.leaves.len())
                 .find(|&i| self.leaves[i].0 == leaf)
                 .map_or(0.0, |i| self.weight(i, now_ms));
+            let kept = self.times.iter().find(|t| t.0 == leaf && from != 0.0);
+            times.extend(kept.copied().or_else(|| fresh(leaf)));
             // The setter snaps a weight within 0.001 of its goal and
             // raises a zero one to 0.001 of it (`cod_lnxded` 0x080bd674).
             let from = if from == 0.0 { 0.001 * to } else { from };
@@ -521,10 +549,23 @@ impl SeatRamp {
             if w != 0.0 && goal.iter().all(|&(l, _)| l != leaf) {
                 // Cleared with no time: it holds until the next step.
                 next.push((leaf, w, 0.0, 1.0));
+                times.extend(self.times.iter().find(|t| t.0 == leaf).copied());
             }
         }
         self.leaves = next;
+        self.times = times;
         self.start_ms = now_ms;
+    }
+
+    /// Each leaf's node time at `now_ms` where [`Self::set`]'s `motion`
+    /// knew it, the node last left's too, as
+    /// [`PoseInputs::leaf_times`] takes them.
+    pub fn leaf_times(&self, now_ms: i32) -> Vec<(usize, f32)> {
+        self.times
+            .iter()
+            .map(|(l, t)| (*l, t.at(now_ms)))
+            .chain(self.held.iter().flat_map(|h| h.leaf_times(now_ms)))
+            .collect()
     }
 
     /// The node and the leaves' weights at `now_ms`, then the node last
@@ -933,6 +974,10 @@ pub struct PoseInputs<'a> {
     /// current seat's comes first, then the node a seat change left, which
     /// the old legs clip fades out on.
     pub seat_leaves: Vec<(usize, Vec<(usize, f32)>)>,
+    /// Under [`Self::node_time`], the node time of each seat leaf that steps
+    /// one of its own ([`SeatRamp::leaf_times`]); a leaf not listed samples
+    /// at its layer's seconds.
+    pub leaf_times: Vec<(usize, f32)>,
     /// Sample each clip at its engine node time ([`crate::animclock::Layer::time`])
     /// rather than its seconds: the 1.5 and UO server's stored pose
     /// (cod11-combat.md 3.1, "The clip's float time").
@@ -1008,7 +1053,11 @@ fn layer_clips(
                 if let Some(anim) = clip(&inputs.anims.tree.nodes[leaf].name) {
                     // Each leaf under the seat's node steps a time of its
                     // own, which the channel clock does not keep.
-                    let frame = anim.frame_pos(l.seconds, anim.looping);
+                    let own = inputs.leaf_times.iter().find(|t| t.0 == leaf);
+                    let frame = match own.filter(|_| inputs.node_time) {
+                        Some(&(_, t)) => t * anim.frame_count.saturating_sub(1) as f32,
+                        None => anim.frame_pos(l.seconds, anim.looping),
+                    };
                     out.push((anim, frame, l.weight * w));
                 }
             }
@@ -1545,9 +1594,9 @@ main
     #[test]
     fn the_seat_blend_ramps_over_100_ms() {
         let mut r = SeatRamp::default();
-        r.set(Some((7, vec![(1, 1.0)])), 1000);
+        r.set(Some((7, vec![(1, 1.0)])), 1000, |_| None);
         assert_eq!(r.at(1000), vec![(7, vec![(1, 1.0)])]);
-        r.set(Some((7, vec![(1, 0.6), (2, 0.4)])), 1050);
+        r.set(Some((7, vec![(1, 0.6), (2, 0.4)])), 1050, |_| None);
         let w = |r: &SeatRamp, t: i32, leaf: usize| {
             r.at(t)[0]
                 .1
@@ -1558,10 +1607,10 @@ main
         assert!(near(w(&r, 1050, 1), 1.0) && near(w(&r, 1050, 2), 0.0004));
         assert!(near(w(&r, 1100, 1), 0.8) && (w(&r, 1100, 2) - 0.2).abs() < 0.001);
         assert!(near(w(&r, 1150, 1), 0.6) && near(w(&r, 1150, 2), 0.4));
-        r.set(Some((7, vec![(1, 0.6), (3, 0.4)])), 1100);
+        r.set(Some((7, vec![(1, 0.6), (3, 0.4)])), 1100, |_| None);
         assert!((w(&r, 1100, 2) - 0.2).abs() < 0.001, "held until the step");
         assert_eq!(w(&r, 1150, 2), 0.0);
-        r.set(Some((9, vec![(4, 1.0)])), 1150);
+        r.set(Some((9, vec![(4, 1.0)])), 1150, |_| None);
         let at = r.at(1150);
         assert_eq!(at[0], (9, vec![(4, 1.0)]));
         let (node, left) = &at[1];
@@ -1570,14 +1619,52 @@ main
             near(left[0].1, 0.7) && (left[1].1 - 0.2).abs() < 0.001,
             "{left:?}"
         );
-        r.set(None, 1200);
+        r.set(None, 1200, |_| None);
         assert_eq!(r.at(1200), vec![(9, vec![(4, 1.0)])]);
-        r.set(Some((9, vec![(4, 1.0)])), 1250);
+        r.set(Some((9, vec![(4, 1.0)])), 1250, |_| None);
         assert_eq!(
             r.at(1250),
             vec![(9, vec![(4, 1.0)])],
             "back on it, held no more"
         );
+    }
+
+    /// A seat leaf's node time starts at 0 on the frame it is given weight
+    /// from none and steps every frame after, through a reweight; one set
+    /// again after its weight reached 0 starts over, and a leaf with no
+    /// known clip keeps none.
+    #[test]
+    fn a_seat_leaf_steps_its_own_time_from_its_allocation() {
+        let motion = |leaf: usize| match leaf {
+            1 => Some((1.0, true)),
+            2 => Some((30.0, false)),
+            _ => None,
+        };
+        let time = |r: &SeatRamp, t: i32, leaf: usize| {
+            r.leaf_times(t).iter().find(|l| l.0 == leaf).map(|l| l.1)
+        };
+        let mut r = SeatRamp::default();
+        r.set(Some((7, vec![(1, 1.0), (3, 0.0)])), 1000, motion);
+        assert_eq!(time(&r, 1000, 1), Some(0.0));
+        assert_eq!(time(&r, 1049, 1), Some(0.0));
+        assert_eq!(time(&r, 1050, 1), Some(0.05));
+        assert_eq!(time(&r, 1000, 3), None);
+        // Reweighted with leaf 2 joining: 1 keeps counting, 2 starts at 0.
+        r.set(Some((7, vec![(1, 0.5), (2, 0.5)])), 1100, motion);
+        assert_eq!(time(&r, 1100, 1), Some(0.1));
+        assert_eq!(time(&r, 1100, 2), Some(0.0));
+        // Two frames at 1.5 a frame clamp at the clip's end.
+        assert_eq!(time(&r, 1200, 2), Some(1.0));
+        // Leaf 2 dropped: it reads 0 at the next step, so set again it is
+        // a fresh allocation; leaf 1, never at 0, runs on.
+        r.set(Some((7, vec![(1, 1.0)])), 1200, motion);
+        r.set(Some((7, vec![(1, 0.5), (2, 0.5)])), 1250, motion);
+        assert_eq!(time(&r, 1250, 2), Some(0.0));
+        let mut t = 0.0f32;
+        for _ in 0..5 {
+            t = (f64::from(t) + f64::from(0.05f32)) as f32;
+        }
+        assert_eq!(time(&r, 1250, 1), Some(t));
     }
 
     /// Prone halves (down) or quarters (up) the torso pitch onto `back_up`

@@ -506,8 +506,8 @@ struct Args {
     /// aims it), `aim` holds it at the view the gsc sets every frame, `throw`
     /// pulls a grenade back and lets go twice at that view (`aim` and
     /// `throw` run on any patch: `client-probes/probe_scriptmodel`), and
-    /// `direct` holds that view with the buttons, lean and stance the gsc
-    /// sends it (`client-probes/probe_leanhit`).
+    /// `direct` holds that view with the buttons, lean, stance and keys the
+    /// gsc sends it (`client-probes/probe_leanhit`, `probe_spawnbody`).
     /// Writes no fixture; a following spectator records it (recipe in
     /// docs/research/coduo-diff.md section 19).
     #[arg(
