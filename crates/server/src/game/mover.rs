@@ -212,6 +212,11 @@ struct Mover {
     /// The groups whose running segment ended this frame: one
     /// `Reached_ScriptMover` link each (0x5fa17, 0x5faba).
     reach_links: u8,
+    /// Both plans as they stood before this frame retired a segment, and
+    /// the notifies that owed: `G_MoverTeam` calls `reached` only after a
+    /// push that went through (0x558a0..0x558e9), so a blocked push on the
+    /// last frame of a move puts them back and the move runs on.
+    unreached: Option<(Plan, Plan, Vec<&'static str>)>,
 }
 
 /// One frame's move of a brush model mover, for the server to push players
@@ -408,11 +413,16 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         .iter()
         .filter(|p| p.notify.is_some() && level_ms >= p.current.tr_time + p.current.tr_duration)
         .count() as u8;
+    let unadvanced = (m.pos.clone(), m.apos.clone());
     for plan in [&mut m.pos, &mut m.apos] {
         if let Some(e) = plan.advance(level_ms) {
             done.push(Done { ent: id, event: e });
         }
     }
+    m.unreached = (m.pos != unadvanced.0 || m.apos != unadvanced.1).then(|| {
+        let events = done.iter().map(|d| d.event).collect();
+        (unadvanced.0, unadvanced.1, events)
+    });
     let angles_atom = cx.intern_folded("angles");
     // `.angles` is `r.currentAngles` itself (script field 16, offset 0x140).
     let before = match host.get_field(cx, id, angles_atom) {
@@ -693,6 +703,7 @@ pub fn spawn_sine(
             init_mover: true,
             use_static: false,
             reach_links: 0,
+            unreached: None,
         },
     );
     true
@@ -788,6 +799,7 @@ fn spawn_static(
             init_mover: true,
             use_static,
             reach_links: 0,
+            unreached: None,
         },
     );
     true
@@ -860,6 +872,22 @@ pub fn is_mover(host: &GameHost, id: EntId) -> bool {
 /// where it was, its fields and its clip, and every trajectory runs a frame
 /// later (movers doc, section 12).
 pub fn stall(host: &mut GameHost, cx: &mut vcod_gsc::Cx, step: &Step) {
+    let Some(m) = host.movers.rows.get_mut(&step.ent) else {
+        return;
+    };
+    if let Some((pos, apos, events)) = m.unreached.take() {
+        m.pos = pos;
+        m.apos = apos;
+        for e in events {
+            if let Some(i) = host
+                .engine_notifies
+                .iter()
+                .rposition(|(ent, ev, _)| *ent == step.ent && *ev == e)
+            {
+                host.engine_notifies.remove(i);
+            }
+        }
+    }
     let Some(m) = host.movers.rows.get_mut(&step.ent) else {
         return;
     };

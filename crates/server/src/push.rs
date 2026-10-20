@@ -7,7 +7,7 @@ use crate::game::host::GameHost;
 use crate::game::mover::Step;
 use crate::spectate::ClientSim;
 use glam::Vec3;
-use vcod_common::collision::{CollisionWorld, MASK_PLAYERSOLID};
+use vcod_common::collision::{CollisionWorld, MASK_PLAYERSOLID, Pusher};
 use vcod_common::movetrace::{Body, CONTENTS_BODY, MoveWorld};
 use vcod_common::patch::Arith;
 use vcod_gsc::Cx;
@@ -66,11 +66,12 @@ pub fn push(
         .filter_map(|&n| {
             let link = host.area.last_link(n);
             if let Some(i) = sims.iter().position(|(s, _)| *s as u32 == n) {
-                return listed_client(step, sims[i].1, link, world).then_some(Kept::Client(i));
+                return listed_client(host, step, n, sims[i].1, link, world)
+                    .then_some(Kept::Client(i));
             }
             let id = host.ents.handle(n)?;
             let body = crate::game::item::push_body(host, cx, id)?;
-            item_in_way(step, &body, link, world).then_some(Kept::Item(id, body))
+            item_in_way(host, step, n, &body, link, world).then_some(Kept::Item(id, body))
         })
         .collect();
     let number = |k: &Kept, sims: &[(usize, &mut ClientSim)]| match k {
@@ -200,26 +201,96 @@ fn overlaps_moved(step: &Step, link: Option<Link>) -> bool {
     (0..3).all(|i| l.absmin[i] < maxs[i] && l.absmax[i] > mins[i])
 }
 
+/// `G_MoverPush`'s candidate trace (game.mp 0x554ee): a `trap_Trace` of
+/// the entity's box at its `r.currentOrigin` that does not move, passing the
+/// entity itself, kept only when it names the pusher (0x55515). The world
+/// clips first and a box inside it ends the trace there (`cod_lnxded`
+/// 0x80916f4); past it the first entity in the walk's order whose clip the
+/// box is inside names the trace (movers doc 12, "The candidate trace").
+fn names_pusher(
+    host: &GameHost,
+    step: &Step,
+    me: u32,
+    at: Vec3,
+    (mins, maxs): (Vec3, Vec3),
+    mask: u32,
+    world: &CollisionWorld,
+) -> bool {
+    if world.world_box_position_test(at, mins, maxs, mask) {
+        return false;
+    }
+    let (lo, hi) = (at + mins, at + maxs);
+    for n in host.area.trace_order(lo.into(), hi.into(), mask as i32) {
+        if n == me {
+            continue;
+        }
+        let inside = match entity_clip(host, step, n) {
+            Some(pusher) => {
+                world
+                    .pusher_box_trace(pusher, at, at, mins, maxs, mask)
+                    .startsolid
+            }
+            // `CM_TempBoxModel` over `r.mins`/`r.maxs` at the entity's
+            // origin, the link box less its unit; a position test counts a
+            // face it touches (INFERRED, Q3's `CM_TestBoxInBrush`).
+            None => host.area.last_link(n).is_some_and(|l| {
+                (0..3).all(|k| lo[k] <= l.absmax[k] - 1.0 && hi[k] >= l.absmin[k] + 1.0)
+            }),
+        };
+        if inside {
+            return n == step.number;
+        }
+    }
+    false
+}
+
+/// What an entity clips a trace with when it is a brush model (`r.bmodel`,
+/// `SV_ClipMoveToEntity` 0x8090f18): the pusher, a submodel, a world copy
+/// or a UO vehicle's collmap. `None` for a box.
+fn entity_clip(host: &GameHost, step: &Step, n: u32) -> Option<Pusher> {
+    if n == step.number {
+        return Some(step.pusher);
+    }
+    let id = host.ents.handle(n)?;
+    match host.ents.get(id).and_then(|e| e.brush_model) {
+        Some(0) => Some(Pusher::Copy(n)),
+        Some(m) => Some(Pusher::Model(m as usize)),
+        None => host
+            .vehicles
+            .live
+            .get(&id)
+            .and_then(|v| v.collmap)
+            .map(|_| Pusher::Copy(n)),
+    }
+}
+
 /// Whether `G_MoverPush` keeps a listed player: one standing on the mover,
-/// or one whose box the mover's brushes now overlap (0x55405, 0x5540e,
-/// 0x554ee).
-fn listed_client(step: &Step, sim: &ClientSim, link: Option<Link>, world: &CollisionWorld) -> bool {
+/// or one whose box the mover's box now overlaps and whose candidate trace
+/// names the mover (0x55405, 0x5540e, 0x554ee).
+fn listed_client(
+    host: &GameHost,
+    step: &Step,
+    me: u32,
+    sim: &ClientSim,
+    link: Option<Link>,
+    world: &CollisionWorld,
+) -> bool {
     if !sim.linked() || sim.contents & CONTENTS_BODY == 0 || sim.link_to.is_some() {
         return false;
     }
-    let o = sim.ps.origin;
+    // `r.currentOrigin` is `ps.origin` again past the cmd's touch pass
+    // (0x405c7), unsnapped.
     sim.ps.ground_entity_num() == step.number
         || overlaps_moved(step, link)
-            && world
-                .pusher_box_trace(
-                    step.pusher,
-                    o,
-                    o,
-                    sim.ps.mins(),
-                    sim.ps.maxs(),
-                    MASK_PLAYERSOLID,
-                )
-                .startsolid
+            && names_pusher(
+                host,
+                step,
+                me,
+                sim.ps.origin,
+                (sim.ps.mins(), sim.ps.maxs()),
+                MASK_PLAYERSOLID,
+                world,
+            )
 }
 
 /// Where the mover's move and turn take a point: moved, then turned about the
@@ -271,15 +342,27 @@ pub enum ItemPush {
 }
 
 /// `G_MoverPush`'s test for one listed item: it stands on the mover, or its
-/// link box overlaps the mover's moved box and its box at its origin meets
-/// the mover's brushes under its own push mask.
-fn item_in_way(step: &Step, item: &ItemBody, link: Option<Link>, world: &CollisionWorld) -> bool {
-    let here = item.origin;
+/// link box overlaps the mover's moved box and its candidate trace under
+/// its own push mask names the mover.
+fn item_in_way(
+    host: &GameHost,
+    step: &Step,
+    me: u32,
+    item: &ItemBody,
+    link: Option<Link>,
+    world: &CollisionWorld,
+) -> bool {
     item.ground == step.number as i32
         || overlaps_moved(step, link)
-            && world
-                .pusher_box_trace(step.pusher, here, here, item.mins, item.maxs, item.mask)
-                .startsolid
+            && names_pusher(
+                host,
+                step,
+                me,
+                item.origin,
+                (item.mins, item.maxs),
+                item.mask,
+                world,
+            )
 }
 
 /// `G_TryPushingEntity` for an item in the way: `None` when it fits

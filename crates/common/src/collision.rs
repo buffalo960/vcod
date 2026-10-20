@@ -2192,12 +2192,15 @@ impl CollisionWorld {
         out
     }
 
-    /// Whether a box at `p` is inside anything under `mask`, as `trap_Trace`
-    /// with a box that does not move reads it: brushes (posed submodels and
-    /// world copies included) against the box, terrain and patches by their
-    /// capsule position tests. `G_TryPushingEntity`'s test of a spot
-    /// (game.mp 0x54b3b, docs/research/cod11-movers.md 20).
-    pub fn box_position_test(&self, p: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> bool {
+    /// [`Self::box_position_test`] against inline model 0 alone (brushes,
+    /// terrain and patches, no submodel, world copy or static model):
+    /// `SV_Trace`'s world clip, which ends the trace at fraction 0 before
+    /// any entity is walked (`cod_lnxded` 0x80916f4).
+    pub fn world_box_position_test(&self, p: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> bool {
+        self.position_walk(p, mins, maxs, mask, true).startsolid
+    }
+
+    fn position_walk(&self, p: Vec3, mins: Vec3, maxs: Vec3, mask: u32, world_only: bool) -> Trace {
         let mut trace = Trace {
             fraction: 1.0,
             endpos: p,
@@ -2220,12 +2223,22 @@ impl CollisionWorld {
                 mask,
                 statics: false,
                 skip: None,
-                world_only: false,
+                world_only,
                 boxed: true,
                 sphere: capsule.offset,
             },
             &mut trace,
         );
+        trace
+    }
+
+    /// Whether a box at `p` is inside anything under `mask`, as `trap_Trace`
+    /// with a box that does not move reads it: brushes (posed submodels and
+    /// world copies included) against the box, terrain and patches by their
+    /// capsule position tests. `G_TryPushingEntity`'s test of a spot
+    /// (game.mp 0x54b3b, docs/research/cod11-movers.md 20).
+    pub fn box_position_test(&self, p: Vec3, mins: Vec3, maxs: Vec3, mask: u32) -> bool {
+        let mut trace = self.position_walk(p, mins, maxs, mask, false);
         if trace.startsolid {
             return true;
         }

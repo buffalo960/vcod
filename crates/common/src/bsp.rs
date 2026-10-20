@@ -573,31 +573,30 @@ struct LeafWalk {
     last_leaf: usize,
 }
 
-/// `BoxOnPlaneSide`, as (front, back): an axial plane compares the box's
-/// extent on its axis, any other the box's nearest and farthest corners,
-/// a corner on the plane counting as in front.
+/// `BoxOnPlaneSide`, as (front, back): the box's farthest corner along the
+/// normal at or past the plane is in front, its nearest corner short of it
+/// behind. An axial plane takes the same test: the engines' routine is Q3's
+/// x87 assembly, which has no axial case, and no caller checks the plane's
+/// type first, so a box whose high side lies on an axial plane is on both
+/// sides (`cod_lnxded` 0x80c8634, `coduo_lnxded` 0x80cb294;
+/// protocol-1.1.md, "The clusters a link keeps"). The corners follow the
+/// plane's sign bits, set for a component below 0 (0x8067204). The sums run
+/// on the x87 stack, so they are taken in f64 here.
 fn box_on_plane_side(pl: &Plane, mins: [f32; 3], maxs: [f32; 3]) -> (bool, bool) {
-    if let Some(axis) = (0..3).find(|&a| pl.normal[a] == 1.0) {
-        return if pl.dist <= mins[axis] {
-            (true, false)
-        } else if pl.dist >= maxs[axis] {
-            (false, true)
-        } else {
-            (true, true)
-        };
-    }
-    let (mut near, mut far) = (0.0, 0.0);
+    let (mut near, mut far) = (0.0f64, 0.0f64);
     for axis in 0..3 {
-        let c = pl.normal[axis];
-        if c >= 0.0 {
-            near += c * mins[axis];
-            far += c * maxs[axis];
+        let c = f64::from(pl.normal[axis]);
+        let (lo, hi) = (f64::from(mins[axis]), f64::from(maxs[axis]));
+        if pl.normal[axis] < 0.0 {
+            near += c * hi;
+            far += c * lo;
         } else {
-            near += c * maxs[axis];
-            far += c * mins[axis];
+            near += c * lo;
+            far += c * hi;
         }
     }
-    (far >= pl.dist, near < pl.dist)
+    let dist = f64::from(pl.dist);
+    (far >= dist, near < dist)
 }
 
 /// Lump 28: `i32 cluster_count, row_bytes` then one row per cluster. An empty
@@ -1860,6 +1859,29 @@ mod tests {
 #[cfg(test)]
 mod pvs_tests {
     use super::*;
+
+    /// The engines' `BoxOnPlaneSide` has no axial case (`cod_lnxded`
+    /// 0x80c8634): a box whose high side lies on an axial plane is on both
+    /// sides, one whose low side lies on it in front only.
+    #[test]
+    fn a_box_touching_an_axial_plane_from_behind_is_on_both_sides() {
+        let x = Plane {
+            normal: [1.0, 0.0, 0.0],
+            dist: 100.0,
+        };
+        let side = |lo: f32, hi: f32| box_on_plane_side(&x, [lo, -1.0, -1.0], [hi, 1.0, 1.0]);
+        assert_eq!(side(90.0, 100.0), (true, true));
+        assert_eq!(side(100.0, 110.0), (true, false));
+        assert_eq!(side(80.0, 90.0), (false, true));
+        assert_eq!(side(100.0, 100.0), (true, false));
+        let back = Plane {
+            normal: [-1.0, 0.0, 0.0],
+            dist: -100.0,
+        };
+        let side = |lo: f32, hi: f32| box_on_plane_side(&back, [lo, -1.0, -1.0], [hi, 1.0, 1.0]);
+        assert_eq!(side(100.0, 110.0), (true, true));
+        assert_eq!(side(90.0, 100.0), (true, false));
+    }
 
     fn lump(cluster_count: i32, row_bytes: i32, rows: &[u8]) -> Vec<u8> {
         let mut b = cluster_count.to_le_bytes().to_vec();
