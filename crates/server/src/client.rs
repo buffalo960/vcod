@@ -35,10 +35,12 @@ pub struct QueuedCmd {
 /// A client command that runs in the move pass, ahead of its packet's
 /// usercmds and behind every earlier packet's, as `SV_ExecuteClientMessage`
 /// (0x80872ec) runs a packet's client commands before its usercmds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PacketCommand {
     /// `Cmd_Kill_f` (combat doc, section 8).
     Kill,
+    /// `Cmd_MenuResponse_f`'s notify: the menu and the response.
+    MenuResponse(crate::game::script::MenuRef, String),
     /// UO's `Cmd_NextVehSlot_f` / `Cmd_PrevVehSlot_f`, `back` for the
     /// latter (coduo-vehicles.md 11.3).
     CycleSeat { back: bool },
