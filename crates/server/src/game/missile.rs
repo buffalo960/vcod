@@ -2333,6 +2333,7 @@ mod tests {
             owner: None,
             takes_damage: false,
             body: false,
+            bounds: None,
         };
         for falls in [false, true] {
             let (mut vm, mut host) = crate::game::testing::fixture();
@@ -2390,6 +2391,7 @@ mod tests {
                 owner: None,
                 takes_damage: false,
                 body,
+                bounds: None,
             };
             let (mut vm, mut host) = crate::game::testing::fixture();
             let mut ms = Missiles {

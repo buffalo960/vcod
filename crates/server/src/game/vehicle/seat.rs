@@ -134,7 +134,7 @@ impl Posed {
     }
 }
 
-fn model_name(host: &mut GameHost, cx: &mut Cx, id: EntId) -> String {
+pub(super) fn model_name(host: &mut GameHost, cx: &mut Cx, id: EntId) -> String {
     let atom = cx.intern_folded("model");
     match host.get_field(cx, id, atom) {
         Value::String(s) => cx.resolve(s).to_string(),

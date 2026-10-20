@@ -1725,14 +1725,19 @@ face.
   the model's `+0x4c`/`+0x58`) added to the origin unrotated (VERIFIED
   disassembly; 0x805e387 is a slab test over `[0, fraction]`). The model
   bounds are read by 0x80c3ff0 off the DObj's first model's `+4` record,
-  `+0x4c..+0x60` (VERIFIED decompile); which of the file's bounds land
-  there is not read. vcod's body test takes the fixed box
+  `+0x4c..+0x60` (VERIFIED decompile), the descriptor's own `mins`/`maxs`
+  after its version, a cube about the origin (VERIFIED decompile of the
+  parser 0x80c3310 and the paks; `cod11-combat.md` 2.7, "The whole-model
+  bounds reject"). vcod's body test takes the fixed box
   (`combat::BODY_BROAD_MINS`), keeps the nearest bone any candidate
   scores, and passes the 1.1 combat gates unchanged; a seated passenger's
   feet under his origin now meet the profile's rays at -4 as retail's do
-  (VERIFIED, replay). The model reject is not ported: a ray that misses
-  the unrotated box yet meets the turned hull is rare at the stock
-  vehicles' proportions (INFERRED).
+  (VERIFIED, replay). vcod ports the model reject
+  (`PlacedModel::bounds`, the same for a script model); no UO
+  `mp_vehicle_*` or `mp_static_vehicle_*` model's collision leaves its cube
+  at rest (VERIFIED, the paks: the Panzer IV's reaches 172.3 of 201.7).
+  So on a hull it only saves work, a turned turret staying inside
+  (INFERRED).
 - **The silhouette.** Measured again with `probe_profile 1`, retail UO
   1.51b, 2026-10-15 (fixtures `*-silhouette-uo.txt`, recipe in their
   headers): every 2 s the probe traces a grid of level `bulletTrace`s
@@ -2257,8 +2262,7 @@ face.
   `vehicle_armor_ab` with the probe client's cmd stream), shell
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
 - **Not done.** The path methods; `closespeed` and
-  `harc` read 0; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13).
+  `harc` read 0.
 - **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
   clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
   and blend time 0, then sets each goal weight at the rate `1 / (10 |weight

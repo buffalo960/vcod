@@ -2050,6 +2050,45 @@ with its unlink (`game.mp.i386.so` 0x5da81; the slot's reuse waits); vcod
 kept clipping it until the slot freed. `scriptmodel_ab` replays both
 probe parts (the trace on 1.1d and UO, the rounds on UO).
 
+**The whole-model bounds reject.** VERIFIED, decompile: the bounds the
+entity clip tests come from the DObj's first model (DObj `+0x1c`), whose
+asset record's `+4` points at the loaded model; its `+0x4c..+0x60` are the
+six floats the header parser copies from the descriptor's bytes 2..26, the
+`mins`/`maxs` after the version (1.1d getter `0x80c4f6c` over `0x80c28e0`,
+parser `0x80c1164`, loader `0x80c13f8`; 1.5b
+`0x80d17a2` over `0x80cec5c`; UO `0x80c6b36` over `0x80c3ff0`, parser
+`0x80c3310`, loader `0x80c382c`). The test is the slab walk over `[0, fraction]` (1.1d
+`0x805a788`, 1.5b `0x805e553`, UO `0x805e387`) on those bounds added to
+`r.currentOrigin`, never turned, in the clip of all three (1.1d
+`0x809105c`, 1.5b `0x8099732`, UO `0x809a72a`). VERIFIED, off the paks:
+1002 of the 1012 1.1 descriptors store a cube centred on the origin, and
+the other 10 store all zeros, two of those with collision (`cow_dead2`,
+`vehicle_german_yacht_openingsequence_animrig`). 384 1.1 models carry
+collision; it pokes out of the cube on seven (`vehicle_car` by 17 units
+at the nose, `x` to 111.2 against 94.37;
+`static_turret_flak88_static_antitank` to 240.2 against 222.2; the two
+`vehicle_german_condor_lowpoly`s, the two T-34 wrecks, and `v2rocket` by
+under a hundredth), and UO adds many single-player rigs whose bounds are
+zero. INFERRED: on every other model the cube, whatever the
+yaw, holds the whole collision mesh, so the reject only saves work there.
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, mp_carentan, 2026-10-20,
+`client-probes/probe_modelbounds`, fixtures
+`mp_carentan-scriptmodel-bounds{,-1.5,-uo}.txt`, recipe in each header):
+level `bulletTrace`s across a `vehicle_car` 200 above the first tdm spawn
+stop on it at its nose's 94 and not at 95 or past, at yaw 0, 90 and 180;
+at yaw 45 they stop on it out to 98 along its forward (69 on each axis,
+inside the cube). No trace stops on `cow_dead2` at any yaw. The three
+servers log the same rows; 1.5b and UO match each other to the digit and
+1.1d one fraction in its last digit.
+
+vcod: `PlacedModel::bounds` holds the descriptor's bounds
+(`GameHost::model_bounds_of`, the cache the area tree links a script model
+with) for a script model and a UO vehicle, and `PlacedModel::clip` runs
+`collision::segment_misses_box` on them about the origin before any
+triangle. `model_bounds_ab` replays the probe on 1.1d, 1.5b and UO, every
+row to 1e-5.
+
 VERIFIED, live (retail 1.1d, mp_carentan, 2026-10-16, `probe_scriptmodel`'s
 pair parts, `+set probe_part rounds|grenade|blast`, fixtures
 `mp_carentan-scriptmodel-{rounds,grenade,blast}.txt`; recipe in each
