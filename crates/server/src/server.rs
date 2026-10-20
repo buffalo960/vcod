@@ -5669,6 +5669,10 @@ impl Server {
             .filter(|(i, _)| *i != slot && teams.get(*i).copied() == Some(my_team))
             .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
             .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            // A crew mate in the bot's own vehicle sits beside its gun.
+            .filter(|o| {
+                me.seat.is_none() || o.seat.map(|s| s.vehicle) != me.seat.map(|s| s.vehicle)
+            })
             .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
             .collect();
         let eye = crate::game::combat::muzzle_point(&me.ps);

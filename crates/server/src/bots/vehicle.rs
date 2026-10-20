@@ -41,6 +41,8 @@ const PASSED: f32 = 48.0;
 /// place past `TURN_IN_PLACE` before it drives on.
 const STEER_SLACK: f32 = 6.0;
 const TURN_IN_PLACE: f32 = 50.0;
+/// A driver waits this long at most for a teammate walking up to board.
+const CREW_WAIT_TICKS: u32 = 200;
 /// A seat's gun fires once laid this near the enemy in yaw, within range.
 const LAID_DEG: f32 = 4.0;
 const GUN_RANGE: f32 = 3000.0;
@@ -99,6 +101,8 @@ pub struct SeatView {
     pub gun_yaw: Option<f32>,
     /// Somebody sits in the driver's seat.
     pub driven: bool,
+    /// Another bot is walking up to board it.
+    pub boarding: bool,
 }
 
 /// The bot's own vehicle state, carried across ticks.
@@ -134,6 +138,13 @@ impl Rider {
     /// The vehicle the bot walks to, for [`Bot::goal`].
     pub(crate) fn heading_to(&self) -> Option<[f32; 3]> {
         self.target.map(|t| t.origin)
+    }
+}
+
+impl Bot {
+    /// The entity number of the vehicle the bot walks to board.
+    pub(crate) fn vehicle_target(&self) -> Option<u32> {
+        self.rider.target.map(|t| t.num)
     }
 }
 
@@ -308,7 +319,9 @@ impl Bot {
             .waypoint
             .filter(|w| (w[0] - seat.origin[0]).hypot(w[1] - seat.origin[1]) > PASSED);
         // A fight holds a tank still for the gun; a four-wheel drives on.
-        let hold = seat.tank && view.enemy.is_some();
+        // Both wait for a teammate on his way in.
+        let crew = seat.boarding && r.seated < CREW_WAIT_TICKS;
+        let hold = seat.tank && view.enemy.is_some() || crew;
         let Some(to) = to.filter(|_| !hold) else {
             r.stall = 0;
             r.idle = if hold { 0 } else { r.idle + 1 };

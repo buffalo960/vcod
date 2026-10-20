@@ -6,7 +6,7 @@ use super::*;
 use crate::bots::{SeatView, VehicleSpot};
 use crate::game::vehicle::info::KIND_TANK;
 
-/// `vc_bot_vehicles`: 0 keeps bots on foot.
+/// `vc_bot_vehicles`: 0 stops bots boarding; one seated rides on.
 pub(crate) const VEHICLES_CVAR: &str = "vc_bot_vehicles";
 
 impl Server {
@@ -14,20 +14,25 @@ impl Server {
     /// views. A level with no vehicle leaves them empty.
     pub(super) fn bot_vehicle_views(&mut self, views: &mut [(usize, crate::bots::BotView)]) {
         let on = crate::game::builtins::cvar::atoi(&self.live_cvar(VEHICLES_CVAR, "1")) != 0;
-        let Some(rt) = self.script.as_mut().filter(|_| on) else {
+        let Some(rt) = self.script.as_mut() else {
             return;
         };
         if rt.host.vehicles.live.is_empty() {
             return;
         }
+        let targets: Vec<(usize, u32)> = self
+            .bots
+            .iter()
+            .filter_map(|(s, b)| Some((*s, b.vehicle_target()?)))
+            .collect();
         rt.with_host(|host, cx| {
             let order = host.vehicles.in_slot_order();
             for (slot, view) in views.iter_mut() {
                 if !view.playing {
                     continue;
                 }
-                view.seat = seat_view(host, *slot);
-                if view.seat.is_some() {
+                view.seat = seat_view(host, *slot, &targets);
+                if view.seat.is_some() || !on {
                     continue;
                 }
                 let reach = crate::bots::VEHICLE_SEEK_RANGE;
@@ -81,7 +86,11 @@ impl Server {
 }
 
 /// The seat `slot` sits in, off the vehicle's record and wire fields.
-fn seat_view(host: &crate::game::host::GameHost, slot: usize) -> Option<SeatView> {
+fn seat_view(
+    host: &crate::game::host::GameHost,
+    slot: usize,
+    targets: &[(usize, u32)],
+) -> Option<SeatView> {
     let (id, seat) = host.vehicles.seat_of(slot)?;
     let v = host.vehicles.live.get(&id)?;
     let info = host.vehicles.info_of(v);
@@ -102,6 +111,7 @@ fn seat_view(host: &crate::game::host::GameHost, slot: usize) -> Option<SeatView
         speed: v.forward_speed,
         gun_yaw,
         driven: v.seats[1].is_some(),
+        boarding: targets.iter().any(|&(s, n)| s != slot && n == id.0),
     })
 }
 
