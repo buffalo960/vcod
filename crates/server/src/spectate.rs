@@ -1234,9 +1234,6 @@ impl ClientSim {
             }
     }
 
-    /// The entity's `eFlags`: `BG_PlayerStateToEntityState` copies
-    /// `ps.eFlags` whole (0x2cd8b), then sets 0x1 on `pm_type > 5`
-    /// (0x2cda6) and 0x200 on the sight flag, `pm_flags` 0x20 (0x2cdb6).
     /// The entity's `fTorsoHeight`, `fTorsoPitch` and `fWaistPitch`, off the
     /// same eye-leg stamp the playerstate carries.
     fn entity_prone_body(&self, command_time: i32) -> pmove::ProneBody {
@@ -1248,6 +1245,11 @@ impl ClientSim {
         self.ps.entity_prone_body(lerp_time, command_time)
     }
 
+    /// The entity's `eFlags`: `BG_PlayerStateToEntityState` copies
+    /// `ps.eFlags` whole (0x2cd8b), then sets 0x1 on `pm_type > 5`
+    /// (0x2cda6) and 0x200 on the sight flag, `pm_flags` 0x20 (0x2cdb6).
+    /// That copy also wipes `ClientEndFrame`'s quiet-client 0x1000, so a
+    /// lagging client never carries it (handshake doc, "A quiet client").
     fn entity_eflags(&self) -> i32 {
         let dead = if self.wire_pm_type() > PM_INTERMISSION {
             EF_DEAD
