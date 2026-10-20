@@ -918,7 +918,8 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   through `playerpose::pose_player`: the torso and legs clips blend per bone
   as two tree nodes, weighted 1 and 0.01 under a torso anim. A 1.5 or UO
   server samples a clip at the engine's node time, a float stepped by
-  50 ms frames (`Layer::time`, `PoseInputs::node_time`), not its seconds
+  50 ms frames (`Layer::time`, `PoseInputs::node_time`; a UO seat's leaves
+  each step their own, `SeatRamp::leaf_times`), not its seconds
   (combat doc 3.1, "The clip's float time").
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
