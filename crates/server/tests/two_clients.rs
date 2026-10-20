@@ -134,11 +134,13 @@ fn two_clients_are_sent_each_other_as_players() {
             "{who}'s clientNum is not its slot"
         );
         // The position the other client is shown is where the player is, not
-        // where it spawned: the entity is built from the sim every frame.
+        // where it spawned: the entity is built from the sim every frame,
+        // its base truncated to whole units (protocol doc, "A player's
+        // `pos.trBase` is whole units").
         let at = e.origin(p);
         for axis in 0..3 {
             assert!(
-                (at[axis] - origin[axis]).abs() < 0.01,
+                at[axis] == origin[axis].trunc(),
                 "{who} is at {origin:?} but is shown at {at:?}"
             );
         }
@@ -729,10 +731,11 @@ fn a_client_is_told_where_the_other_is_this_frame() {
             continue;
         }
         let told = sa.entities[&(nb as u32)].origin(p);
+        // Truncated to whole units on the wire.
         let actual = sb.ps.origin(p);
         for axis in 0..3 {
             assert!(
-                (told[axis] - actual[axis]).abs() < 0.01,
+                told[axis] == actual[axis].trunc(),
                 "frame {}: A told B is at {told:?}, B is at {actual:?}",
                 sa.server_time
             );
