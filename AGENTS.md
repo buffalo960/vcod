@@ -648,7 +648,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
-  (`pusher_box_trace`, `box_position_test`). A sine mover never stalls: it
+  (`pusher_box_trace`, `box_position_test`), and the candidate test is a
+  whole trace that must name the pusher: a body in the world, or met
+  first by another entity on the area walk, is passed through
+  (`push::names_pusher`, movers doc 12). A sine mover never stalls: it
   crushes a player it cannot place (movers doc 21).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
