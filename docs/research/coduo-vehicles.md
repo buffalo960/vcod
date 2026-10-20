@@ -1195,8 +1195,13 @@ pinned) and matches every field it compares up to the gsc's placement
 after the respawn, the landing event aside; before these fixes the death
 snapshot read `pm_type` 7, the corpse ran a frame linked, its view kept
 the pitch, the cone stayed 255 and the respawn kept the seat's fields.
-Past the placement retail's body slides beside the hull and ours stands:
-not measured.
+It now runs the whole capture: past the gsc's placement beside the hull
+(37050) retail's body slides 65 units down the slope and settles at
+37900, and ours slides with it to the bit (VERIFIED, replay). The
+placement lands a hair inside the terrain, so `PM_GroundTrace`'s start
+in solid lets the body off the ground (cod11-mantle.md, "A start in
+solid on the ground trace"); before that retrace vcod stood it on the
+face.
 
 ## 12. The drive step
 
@@ -1548,11 +1553,18 @@ not measured.
   contents meeting no trace (the entity clip skips one whose `r.contents`
   meet none of the mask, `coduo_lnxded` 0x809a72a, VERIFIED decompile;
   ours' posed hull still stopped the wreck's blast), and the hull's
-  clip a surface at a time (below). One shot keeps a gap:
-  mp_cassino's spot 300 ahead of the tank, (4376, -1979), where retail's
-  placed shooter slides 65 to 90 units toward -y before the press (two
-  runs, two slides) and ours stands at 1.12; a pmove or ground question,
-  the amount still matches (VERIFIED, replay and live).
+  clip a surface at a time (below). At mp_cassino's spot 300
+  ahead of the tank, (4376, -1979), the placed shooter slides 65 to 90
+  units down the slope before the press (two runs, two slides; VERIFIED,
+  live), off the ground by the ground trace's start in solid
+  (cod11-mantle.md, "A start in solid on the ground trace"). Where he
+  stops rides the split of his cmds: on the probe's even 16 ms cmds ours
+  stops 31 units from retail's spot, on retail's own cmd times (the
+  capture's `CMDS` lines, the clocks aligned) on it to the hundredth
+  (VERIFIED, replay). The gate flies each bazooka round on retail's
+  `trDelta`, rebuilt from its direct hit's direction and the
+  `projectileSpeed`, so the contacts sit within a unit of retail's
+  (INFERRED: the direction is logged to two decimals).
 - **The hull's clip, surface by surface.** The DObj clip (`coduo_lnxded`
   0x80c7be8 over each model, 0x80c4892 over its surfaces) moves the
   segment into each surface's bone frame and tries the surface only when

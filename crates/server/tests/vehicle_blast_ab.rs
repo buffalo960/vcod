@@ -50,15 +50,18 @@ struct Case {
     /// Shots whose aim is not compared (points, directions, the explode's
     /// position), each with why; every other field still is.
     gaps: &'static [(usize, &'static str)],
+    /// How long ours runs alone before the shooter connects: retail's
+    /// clock when its client joined, where the fixture carries that
+    /// client's `CMDS` lines and ours replays their cmd times.
+    join_ms: i64,
 }
 
-/// mp_cassino's spot 300 ahead of the Panzer IV, (4376, -1979): on retail
-/// the placed shooter slides 65 to 90 units down toward -y over the 1.5 s
-/// before the press (two runs, two slides; `VEH` lines of the recipe's
-/// client), on ours he stands at 1.12, so the round leaves from another
-/// spot and strikes the tank's front elsewhere. A pmove or ground
-/// question, not the blast's: docs/research/coduo-vehicles.md 13.
-const ROCKET_TANK_GAPS: &[(usize, &str)] = &[(1, "the shooter's slide off the placed spot")];
+/// mp_cassino's spot 300 ahead of the Panzer IV, (4376, -1979), is on a
+/// slope the placed shooter slides down for the 1.5 s before the press;
+/// where he stops rides the split of his cmds, so this capture carries
+/// the retail client's `CMDS` lines, replayed on retail's clock
+/// (docs/research/coduo-vehicles.md 13).
+const ROCKET_TANK_GAPS: &[(usize, &str)] = &[];
 
 const ROCKET_TANK: Case = Case {
     map: "mp_cassino",
@@ -66,6 +69,8 @@ const ROCKET_TANK: Case = Case {
     tag: "uo-blasttank",
     spread: true,
     gaps: ROCKET_TANK_GAPS,
+    // The recipe's client started 18 s in and its first cmd ran at 20500.
+    join_ms: 19450,
 };
 const FRAG_TANK: Case = Case {
     map: "mp_cassino",
@@ -73,6 +78,7 @@ const FRAG_TANK: Case = Case {
     tag: "uo-fragtank",
     spread: false,
     gaps: &[],
+    join_ms: common::PROBE_JOIN_MS,
 };
 const ROCKET_JEEP: Case = Case {
     map: "mp_peaks",
@@ -80,6 +86,7 @@ const ROCKET_JEEP: Case = Case {
     tag: "uo-blastjeep",
     spread: true,
     gaps: &[],
+    join_ms: common::PROBE_JOIN_MS,
 };
 const FRAG_JEEP: Case = Case {
     map: "mp_peaks",
@@ -87,7 +94,37 @@ const FRAG_JEEP: Case = Case {
     tag: "uo-fragjeep",
     spread: false,
     gaps: &[],
+    join_ms: common::PROBE_JOIN_MS,
 };
+
+/// Each retail round's `trDelta`, rebuilt from its direct hit's `vdamage`
+/// direction and the weapon's `projectileSpeed` as `fire_rocket`
+/// truncates it: the hip spread is a draw of each server's own, so ours
+/// flies retail's round. None unless every round struck the hull (a
+/// round that missed logs no direction).
+fn retail_deltas(c: &Case) -> Vec<[f32; 3]> {
+    let fs = vcod_common::testing::uo_fs().expect("a UO install");
+    let weapon = c
+        .fixture
+        .lines()
+        .filter(|l| l.starts_with('#'))
+        .find_map(|l| l.split("+set probe_weapon ").nth(1))
+        .and_then(|r| r.split_whitespace().next())
+        .expect("the recipe's probe_weapon");
+    let speed = vcod_common::weapon::load(&fs, weapon)
+        .expect("the weapon file")
+        .projectile_speed;
+    let log: Vec<String> = c.fixture.lines().map(str::to_string).collect();
+    let deltas: Vec<[f32; 3]> = notifies(&log)
+        .iter()
+        .filter(|n| n.2 == "MOD_PROJECTILE")
+        .map(|n| n.4.map(|d| (d * speed).trunc()))
+        .collect();
+    match deltas.len() == fires(&log).len() {
+        true => deltas,
+        false => Vec::new(),
+    }
+}
 
 /// Explodes with the server time of the snapshot that brought each.
 type Explodes = Vec<(i32, GameEvent)>;
@@ -124,6 +161,30 @@ fn print_missiles(side: &str, s: &vcod_common::net::snapshot::Snapshot) {
     }
 }
 
+/// `BLAST_PS=1`: the shooter's playerstate each snapshot, on stderr.
+fn print_ps(side: &str, s: &vcod_common::net::snapshot::Snapshot) {
+    if std::env::var_os("BLAST_PS").is_none() {
+        return;
+    }
+    let p = &PROTOCOL_V22;
+    let i = |n: &str| s.ps.field_i32(p, n);
+    let f = |n: &str| s.ps.field_f32(p, n);
+    eprintln!(
+        "{side} {} ps o {:.3} {:.3} {:.3} v {:.2} {:.2} {:.2} ground {} pmf {:#x} pmt {} ct {}",
+        s.server_time,
+        f("origin[0]"),
+        f("origin[1]"),
+        f("origin[2]"),
+        f("velocity[0]"),
+        f("velocity[1]"),
+        f("velocity[2]"),
+        i("groundEntityNum"),
+        i("pm_flags"),
+        i("pm_type"),
+        i("commandTime"),
+    );
+}
+
 /// The buttons of a `f "PROBE_IN ..."` command.
 fn direct_input(tokens: &[String]) -> Option<u8> {
     if tokens.first().map(String::as_str) != Some("f") {
@@ -157,7 +218,10 @@ fn ours(c: &Case) -> Option<(Vec<String>, Explodes)> {
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
+    if c.spread {
+        sv.pin_rocket_deltas(retail_deltas(c));
+    }
+    common::run_alone(&mut sv, &mut now, c.join_ms);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl =
         vcod_common::net::NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
@@ -167,6 +231,9 @@ fn ours(c: &Case) -> Option<(Vec<String>, Explodes)> {
         aim: true,
         ..Default::default()
     };
+    hold.times = common::cmds_times(c.fixture, "");
+    hold.ran = common::cmds_ran(c.fixture, "");
+    hold.framed = !hold.times.is_empty();
     let (mut buttons, mut selected) = (0u8, None::<u8>);
     let mut tracker = EventTracker::new();
     let mut explodes = Vec::new();
@@ -207,6 +274,7 @@ fn ours(c: &Case) -> Option<(Vec<String>, Explodes)> {
         {
             seen_time = s.server_time;
             print_missiles("ours  ", s);
+            print_ps("ours  ", s);
             for ev in tracker.drain(s, p) {
                 if is_explode(&ev) {
                     explodes.push((s.server_time, ev));
@@ -229,6 +297,7 @@ fn retail_explodes(tag: &str) -> Explodes {
     let mut out = Vec::new();
     for f in &frames {
         print_missiles("retail", &f.snapshot);
+        print_ps("retail", &f.snapshot);
         for ev in tracker.drain(&f.snapshot, p) {
             if is_explode(&ev) {
                 out.push((f.snapshot.server_time, ev));
