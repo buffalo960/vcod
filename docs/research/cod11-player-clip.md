@@ -119,7 +119,31 @@ vcod: `pmove::dead_linked_move`, which `cmd::dead_step` takes when
 `ps.linked` is set, on the server and in the predictor;
 `predictor_holds_retail_linked_corpse_1_1` matches 481 of 481 snapshots
 bit for bit (6 differed while vcod drew 7 off the snapshot, and the dead
-move would have stopped the velocity). 1.5b and UO are not captured.
+move would have stopped the velocity). VERIFIED live on 1.5b and UO the same
+way (2026-10-19, `probe_deadlink` with `COD_VERSION=1.5` and `uo`,
+ports 33571 and 33572, `mp_carentan-dm-slope-8ms-deadlink-1.5.txt` and
+`-uo.txt`): the corpse keeps (13, -157, 0) on 1.5b and (17, -199, 0) on
+UO, `groundEntityNum` 1023, for 24 s of `pm_type` 7, its eye 60 to 8.
+`predictor_holds_retail_linked_corpse_1_5` matches 479 of 479 snapshots
+and `_uo` 475 of 475 bit for bit, with no change to vcod's arm.
+
+VERIFIED, UO `PmoveSingle` (0x3d530, decompile): its head runs ahead of
+the `pm_type` dispatch for every type, a corpse included. It calls
+`PM_AdjustAimSpreadScale` (0x45dcb) on `ps.weapon`'s def ahead of
+`PM_UpdateViewAngles`, and a def whose `hipSpreadDecayRate` reads 0
+takes a decay of 1.0 with no frame scaling (combat doc 2.1), so once the
+dead `PM_Weapon` arm has left weapon 0 the cone empties on the next cmd.
+After `PM_UpdateViewAngles` it sets `pm_flags` 0x40 on a cmd whose
+`forwardmove` is under 0 and clears it on one whose `forwardmove` is
+over 0 or whose `rightmove` is not 0, and only then zeroes a dead body's
+move bytes (`pm_type > 5`). VERIFIED, captures: on all three servers a
+corpse whose client backs up carries 0x40 (`-deadlink-1.1.txt`,
+`-deadlink-1.5.txt` and `-deadlink-uo.txt` 20 dead snapshots each,
+`-states-1.5.txt` 70 of 80), and every dead snapshot's cone reads 255 or
+0. INFERRED: 1.1d's and 1.5b's heads are UO's in this, from those rows.
+vcod ran neither for a corpse; `cmd::dead_step` now runs both, on the
+server and in the predictor, and `retail_state_rows` compares the cone
+and the flag on dead rows (1 or 2 rows per capture failed before).
 
 VERIFIED, retail 1.5b through the predictor the same way (2026-10-19,
 `mp_carentan-dm-slope-8ms-states-1.5.txt`, `probe_states` with

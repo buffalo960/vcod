@@ -250,14 +250,35 @@ pub fn spectator_step(
 /// `PM_Weapon`'s `pm_type > 5` arm, which drops the weapon behind its
 /// `PMF_RESPAWNED` return (0x390ee..0x390fe). The server's dead arm and the
 /// client's prediction of its own corpse both run it
-/// (cod11-player-clip.md 1.1).
+/// (cod11-player-clip.md 1.1). `PmoveSingle`'s head runs ahead of the
+/// dispatch for every `pm_type`: `PM_AdjustAimSpreadScale` on the held
+/// weapon, which empties the cone once the weapon is 0, and the backpedal
+/// flag off the cmd's keys (UO 0x3d530, cod11-player-clip.md 1.1).
 pub fn dead_step(
     ps: &mut PlayerState,
     ring: &mut EventRing,
+    cmd: &UserCmd,
     dt: f32,
     world: &MoveWorld,
+    weapons: &[Option<WeaponDef>],
     respawned: bool,
 ) {
+    let input = pm_input(cmd);
+    // Its airborne test is `pm_type != 1`, which a linked corpse (7) passes.
+    let linked = std::mem::replace(&mut ps.linked, false);
+    weapon::adjust_aim_spread_scale(
+        ps,
+        &input,
+        weapons.get(ps.weapon as usize).and_then(Option::as_ref),
+        dt,
+    );
+    ps.linked = linked;
+    ps.last_cmd_angles = input.angles;
+    if input.forward < 0.0 {
+        ps.backwards_run = true;
+    } else if input.forward > 0.0 || input.right != 0.0 {
+        ps.backwards_run = false;
+    }
     if ps.linked {
         super::dead_linked_move(ps, world, dt);
     } else {

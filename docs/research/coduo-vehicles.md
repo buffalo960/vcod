@@ -794,11 +794,15 @@ into `eType` 13 `script_vehicle_corpse`; no stock MP script calls it
   snapshot's `commandTime` on the next frame's cmds lands on the next
   snapshots to 0.005 (jeep 93.11678 against 93.11677 at ct 37394, tank
   30.149006 against 30.149002 at ct 36991) (VERIFIED, capture and
-  replay). vcod holds a left seat's cmds linked until
+  replay). `ClientEndFrame` (0x52f59) writes `pm_type` again off the link
+  alone: 1 linked, 0 not, 7 and 6 for a dead client (VERIFIED decompile),
+  so a rider the vehicle think puts out after `G_RunClient`'s turn is
+  unlinked by his end frame and runs the next frame's cmds free (VERIFIED,
+  11.7's capture). vcod holds a left seat's cmds linked until
   `ClientSim::run_client`, which the frame runs after the entity pass and
-  before the vehicle thinks, so a rider the think puts out runs the next
-  frame's cmds linked, as `G_RunClient` has had its turn by then
-  (INFERRED, the same control flow).
+  before the vehicle thinks, or the client's end frame, whichever comes
+  first; it used to hold them to the next frame's `run_client`, and a
+  corpse the think put out ran a frame linked.
 - Forced exits (no refusal, no search, the body left at the seat): a seat
   change, the vehicle think's pass over dead riders, `ClientSpawn`,
   `ClientDisconnect`, a team change (VERIFIED decompile).
@@ -1077,6 +1081,56 @@ sounds as it strikes the Panzer past the victim, `EV_SOUND_ALIAS` parm 7
 ms after the jeep's first move in the standing run (VERIFIED, capture);
 the gate matches each one's time from that move, alias and snapped
 origin on ours (`compare_impacts`).
+
+### 11.7 A rider killed in his seat
+
+VERIFIED, retail capture (`crates/server/tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-die-uo.txt`,
+2026-10-19, `client-probes/probe_vehicle` on mp_peaks with
+`+set probe_vehicletype willyjeep_mp +set probe_side 75 +set probe_pitch
+15 +set probe_suicide 3.5` and a `--probe-vehicle drive --save-slope
+--slope-every-state` client, port 33573): the Willys' driver, 3.5 s after his seat
+(1.35 s into the drive script's full-throttle step), is killed with
+`suicide()` where he sits.
+
+- The death's snapshot (t 18700) is already out of the seat: `pm_type` 6,
+  `vehPos` 0, `viewlocked_entNum` 1023, the seat bits off, the origin
+  where the seat left it and the velocity 0, while `vehType` 1 and
+  `vehMotion` 2 stay until the respawn. `player_die` (0x5f972) touches no
+  seat; the driven jeep's think, `G_VehicleClientThink` (0x9b0ce) after
+  the entity pass, puts its dead riders out (`Scr_Vehicle_Think`
+  0x9c7cc, health under 1, `VEH_UnlinkPlayer(rider, 0)`), and the end
+  frame's write (11.2) reads no link (VERIFIED decompile).
+- The view's pitch drops: 24.999 seated, 0 on the death's snapshot, the
+  yaw kept. `player_die` copies the entity's angles into `ps.viewangles`
+  (combat doc 5.1 step 12, UO the same stores), and every cmd leaves them
+  (0, view yaw, 0) (`ClientThink_real` 0x50c91's tail) (VERIFIED
+  decompile and capture).
+- The corpse leaves the hull as 11.6's body does, a cmd held inside it
+  then a push off its origin: (-234, -218, 274) at t 18750 and (-189,
+  -355, 267) at 18800, then a fall onto the slope (VERIFIED, capture).
+  At ct 18793 retail's held cmd also lands on the hull: `EV_LANDING` on
+  surface 13 with parm 9, the height of a 274 rise from where it stands.
+  Its ground trace there found the hull's face, (-0.548, 0.101, 0.830)
+  on ours, where ours reads the trace all solid (INFERRED, ours at the
+  same origin to the bit, and the parm). That event is
+  `vehicle_ab`'s one gap.
+- The corpse's cone reads 255 on the death's snapshot and 0 after, and
+  the reverse step of the drive script sets `pm_flags` 0x40 on it
+  (cod11-player-clip.md 1.1).
+- The respawn (tdm's, at t 37000) reads `vehType` and `vehMotion` 0:
+  `ClientSpawn`'s rebuild clears them (VERIFIED, capture).
+
+vcod: the end frame clears `ClientSim::unseated`, `ClientSim::die` drops
+the pitch, `cmd::dead_step` runs the head, and the respawn clears the
+seat's two fields. `vehicle_ab`'s
+`the_jeep_driver_killed_in_his_seat_replays_on_ours` replays the capture
+on ours (server seed 2, retail's death clip; retail's respawn spot
+pinned) and matches every field it compares up to the gsc's placement
+after the respawn, the landing event aside; before these fixes the death
+snapshot read `pm_type` 7, the corpse ran a frame linked, its view kept
+the pitch, the cone stayed 255 and the respawn kept the seat's fields.
+Past the placement retail's body slides beside the hull and ours stands:
+not measured.
 
 ## 12. The drive step
 
