@@ -712,8 +712,28 @@ conditions.
   the 2026-10-17 capture: it went 3 to 0 on one frame and read 512.
   INFERRED: that frame's cmds still carried 8, the probe echoing a
   snapshot from before the take. vcod: `pm_weapon` puts `weapAnim` back after a
-  step whose cmd byte is 0 (UO's setters, 0x43f9c and 0x44024, carry the
-  same guard).
+  step whose cmd byte is 0.
+- VERIFIED, 1.5b's `game.mp.i386.so`: the setter at 0x2d9b8 returns
+  unless `pm->ps->pm_type` (`[pm]+0x4`) is at most 5 (0x2d9d1) and
+  `pm->cmd.weapon` (`pm+0xa`) is non-zero (0x2d9e1), then writes
+  `(weapAnim & 0x200) ^ 0x200 | anim` to `ps+0x3d4` (0x2d9fd..0x2da10);
+  the index-preserving setter at 0x2da19 tests the same cmd byte
+  (0x2da33) and compares `weapAnim & 0xfffffdff` (0x2da4b) before
+  calling it. The GOT slot both read (`0xe10(%ebx)`, 0x89ba8) is
+  `R_386_GLOB_DAT pm`. VERIFIED, UO's `game.mp.uo.i386.so` (Ghidra
+  0x43f9c and 0x44024, file 0x33f9c and 0x34024, slot 0xb4800 `pm`):
+  the same two guards, `weapAnim` at `ps+0x624`. So 1.1, 1.5b and UO
+  all refuse the write on a cmd byte of 0.
+- VERIFIED, UO only, 0x33fcd..0x33ff2: past the guards the setter
+  compares `[pml+0x88]+0x7c` against 4 and on equal stores the bare
+  index, the toggle cleared. `+0x7c` is UO's `weaponType` (above,
+  section 1.7) and 4 its `gas` (coduo-diff.md, the fire events' row);
+  the name table at `.data` file offset 0xab468 starts `bullet`,
+  `grenade`, `projectile`, `spotter`, `gas`. VERIFIED, `snapshots-uo-flame.bin`: the followed
+  flamethrower's `weapAnim` reads 2 in every burst and 0 between them,
+  never with 0x200, from 33050 to 35400. INFERRED: `pml+0x88` is the
+  held weapon's def. vcod clears the toggle after a UO step on a `gas`
+  weapon whose `weapAnim` changed (`pm_weapon`).
 
 VERIFIED, off the grenade capture, whose `to_frag` step is the first
 uncorrupted putaway anyone has measured: the putaway stores `WEAP_DROP` and
@@ -2807,9 +2827,17 @@ beside it).
   clock and the next off a snapshot's time as it arrives, which can read
   a ms under the first or the same; the target's 29301 went out before
   his 29300, which carried the crouch. Snapshot 29300 read `commandTime`
-  29301 and no `PMF_DUCKED`, 29350 had it: the server skipped 29300, as
-  Q3's `SV_UserMove` skips a cmd no newer than the last it ran
-  (INFERRED: 1.1d's skip is not read out of the binary here).
+  29301 and no `PMF_DUCKED`, 29350 had it: the server skipped 29300.
+  VERIFIED, `cod_lnxded` 1.1d `SV_UserMove` (0x8086fa4), the per-cmd
+  loop at 0x8087264: a cmd whose `serverTime` is above the message's last
+  cmd's is skipped (`jg` at 0x808727b), so is one at or below
+  `cl->lastUsercmd.serverTime` (`cl+0x10624`, `jle` at 0x8087286); the
+  rest are copied over `lastUsercmd` (six words, 0x808729c) and, with
+  the client at state 4, handed to the game's `ClientThink` (0x80872cb).
+  VERIFIED, 1.5b (0x808cade, the loop at 0x808cd38): the same two
+  compares (0x808cd75 `jle` to run, 0x808cd96 `jg` to run) ahead of the
+  copy-and-think at 0x808ca58, which copies the cmd's six words to
+  `cl+0x10624` (0x808ca64..0x808ca93) and tests state 4 (0x808ca9c).
 - VERIFIED, vcod measurement: `ProbeHold::ran` takes a frame's
   `commandTime` off the newest snapshot logged at or before it, so the
   stalled frames send nothing and the frame after sends the held cmds,
@@ -7189,10 +7217,19 @@ contents (cod11-movers.md 12). VERIFIED, `cod_lnxded` `SV_LinkEntity`: a
 brush model whose `r.currentAngles` are all zero takes `r.absmin`/`r.absmax`
 as origin plus `r.mins`/`r.maxs`, and one with any angle set a cube of
 `RadiusFromBounds` (0x8066e54, called at 0x8090b20) about the origin;
-either is then grown one unit. INFERRED: `0x80c4f6c`, the bounds a
-`script_model` is filed under, reads its model's `+0x4c..+0x60`, which the
-descriptor loader (0x80c1164) fills from the six floats after the version;
-that they are the same words is not traced.
+either is then grown one unit. VERIFIED, `cod_lnxded` 1.1d, the bounds a
+`script_model` is filed under, traced word for word: `SV_LinkEntity`
+hands `0x80c4f6c` the server DObj (0x8090ea2); `0x80c4f6c` passes the
+DObj's first model, `+0x18` (the model array whose count byte is `+0x16`,
+as `0x80c53d0` walks it), to `0x80c28e0`, which copies that model's
+`[+0x4]+0x4c..+0x60` out as mins and maxs. The xmodel loader `0x80c13f8`
+hands its file to `0x80c1164`, which checks version 14 (0x80c1176) and
+stores the six floats after it at `buf+0xc0c..+0xc20` (0x80c119d..
+0x80c11d4, `buf` the loader's `ebp-0xc28`); the loader copies
+`ebp-0x1c..-0x8`, those six, to the new record's `+0x4c..+0x60`
+(0x80c1781..0x80c17a2) and stores the record at the model's `+0x4`
+(0x80c17b2). So the box is the `.xmodel` descriptor's own mins and maxs,
+the base model's only (vcod: `xmodel::descriptor_bounds`).
 
 VERIFIED, the entity lumps of every `maps/mp/*.bsp` in the stock paks: no
 `trigger_multiple` or `trigger_once` carries `spawnflags & 8`; the values

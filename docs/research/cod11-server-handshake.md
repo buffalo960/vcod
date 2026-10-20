@@ -1270,9 +1270,19 @@ cod_lnxded 1.5b, read from the asm.
 
 ### 1.5 permanent bans (`banUser` 0x8087f73, `banClient` 0x8087fc7, `unbanUser` 0x808801b)
 
-cod_lnxded 1.5b, read from the asm; UO 1.51b carries the same strings
-(`ban.txt`, both `rejected connection` lines, `unbanned %i user(s) named
-%s`) at file 0x9bf26..0x9c127. VERIFIED strings; the UO code is not read.
+cod_lnxded 1.5b, read from the asm. VERIFIED, `coduo_lnxded` 1.51b: UO's
+code is 1.5b's instruction for instruction. Its `banUser` 0x8088d74,
+`banClient` 0x8088dc8 and `unbanUser` 0x8088e1c match 1.5b's three
+(70 instructions), and the file check 0x8089dfc, the ban 0x8089f25 and the
+unban 0x808a021 match 0x8088ff8..0x80893d0 (275 instructions), with jump
+targets taken relative and absolute addresses masked. The only operands
+that differ are the `client_t` offsets: the guid at `cl+0xab080` (1.5b
+`cl+0x5a980`) and the address type at `cl+0x9b048` (1.5b `cl+0x52948`).
+The authorize `accept` calls the file check at 0x808a4c0 (1.5b
+0x80896bc), and the strings sit at `.rodata` 0x80e3f28 (`ban.txt`),
+0x80e3f66 and 0x80e3f84 (the two unban replies) and 0x80e4060 (the
+refusal print). INFERRED from the match: what is measured on 1.5b below
+holds on UO.
 
 - 1.5 drops 1.1's authorize detour: neither command sends `banUser <ip>`
   and the binary has no `was banned from coming back` string. VERIFIED.

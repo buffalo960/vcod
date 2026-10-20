@@ -1605,7 +1605,8 @@ impl GameHost {
         crate::game::link::prune(self);
     }
 
-    /// `G_FreeEntity`'s sweep (game.mp 0x66ad1..0x66b13): every entity in
+    /// `G_FreeEntity`'s sweep (game.mp 0x66ad1..0x66b13; 1.5b's and UO's
+    /// `G_FreeEntityRefs`, turrets doc 8): every entity in
     /// use whose `s.groundEntityNum` names the freed number reads 1023 from
     /// then on. A script model or a turret holds `G_Spawn`'s 0, entity 0,
     /// so the first client's disconnect turns them all (protocol doc,
