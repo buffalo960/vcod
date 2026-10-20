@@ -164,6 +164,8 @@ pub struct Save {
     pub slope: bool,
     /// `--slope-every-state`: [`SlopeCapture`] keeps every `pm_type`.
     pub slope_every_state: bool,
+    /// `--slope-from-spawn`: [`SlopeCapture`] starts at the spawn.
+    pub slope_from_spawn: bool,
     /// `--probe-prone <yaw>`: the slope capture's walk is [`ProneScript`]
     /// instead of the route, facing up the grade along that world yaw.
     pub prone: Option<f32>,
@@ -372,6 +374,7 @@ pub fn probe(
         motion: save_motion,
         slope: save_slope,
         slope_every_state,
+        slope_from_spawn,
         prone: prone_uphill,
         moves: probe_moves,
         turns: probe_turns,
@@ -1296,6 +1299,8 @@ pub fn probe(
                 if save_slope && (!prone_crawl || prone.recording()) {
                     slope_capture.observe(s);
                 }
+            } else if save_slope && slope_from_spawn {
+                slope_capture.observe(s);
             }
             if probe_follow {
                 follow.observe(now, s);

@@ -567,6 +567,11 @@ struct Args {
     /// `predict_ab`'s state changes beside `client-probes/probe_uostates`.
     #[arg(long, requires = "save_slope")]
     slope_every_state: bool,
+    /// With --save-slope: log from the first playing snapshot, not 3 s
+    /// past the weapon pick, so a `--probe-vehicle` capture holds the
+    /// spawn, the placement and the boarding.
+    #[arg(long, requires = "save_slope")]
+    slope_from_spawn: bool,
     /// With --save-slope or --probe-slope: a prone crawl instead of the
     /// route, from where `client-probes/probe_prone` puts the player on
     /// mp_carentan (`+set probe_teleport 1`, `probe_spot` street or mound),
@@ -1204,6 +1209,7 @@ fn main() -> Result<()> {
                 motion: args.save_motion,
                 slope: args.save_slope,
                 slope_every_state: args.slope_every_state,
+                slope_from_spawn: args.slope_from_spawn,
                 prone: args.probe_prone,
                 moves: args.probe_moves,
                 turns: args.probe_turns,
