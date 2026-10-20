@@ -487,8 +487,8 @@ impl ScriptRuntime {
     /// went off is handed over, still alive for as long as its explode event
     /// rides the wire. A hit on a slot with no entity, or from one, is
     /// dropped: there is nobody to call and nobody to name. An attacker of
-    /// `ENTITYNUM_NONE` with an inflictor is a missile's whose thrower left,
-    /// delivered with an undefined attacker. So is one on a
+    /// `ENTITYNUM_NONE` is a missile's whose thrower left, delivered with an
+    /// undefined attacker (and on UO an undefined inflictor). So is one on a
     /// victim without `takedamage`, `G_Damage`'s first test (4.2 step 1),
     /// and one a vehicle seat shuts out ([`crate::game::vehicle::Vehicles::occupant_damage`]).
     pub fn deliver_hits(&mut self, hits: Vec<crate::game::combat::Hit>) {
@@ -501,19 +501,20 @@ impl ScriptRuntime {
             };
             // A missile whose thrower left hands `G_Damage` a NULL attacker,
             // which `Scr_PlayerDamage` passes as undefined (combat doc 13.7).
+            // UO's drops the inflictor too, which `GScr_AddEntity` pushes as
+            // undefined.
             let (attacker, inflictor) = match (self.client_entity(hit.attacker), hit.inflictor) {
-                (Some(a), i) => (Value::Entity(a), i.unwrap_or(a)),
-                (None, Some(i)) if hit.attacker == crate::game::host::ENTITYNUM_NONE as usize => {
+                (Some(a), i) => (Value::Entity(a), Some(i.unwrap_or(a))),
+                (None, i) if hit.attacker == crate::game::host::ENTITYNUM_NONE as usize => {
                     (Value::Undefined, i)
                 }
                 _ => continue,
             };
-            let Some(damage) = self.host.vehicles.occupant_damage(
-                hit.victim,
-                Some(inflictor),
-                hit.damage,
-                hit.dflags,
-            ) else {
+            let Some(damage) = self
+                .host
+                .vehicles
+                .occupant_damage(hit.victim, inflictor, hit.damage, hit.dflags)
+            else {
                 continue;
             };
             hit.damage = damage;
@@ -525,7 +526,7 @@ impl ScriptRuntime {
                 )
             });
             let args = vec![
-                Value::Entity(inflictor),
+                inflictor.map_or(Value::Undefined, Value::Entity),
                 attacker,
                 Value::Int(hit.damage),
                 Value::Int(hit.dflags),
@@ -2542,6 +2543,11 @@ impl ScriptRuntime {
                 // (`ClientDisconnect` 0x42bfc).
                 self.host.area.unlink(slot as u32);
                 self.host.missiles.free_owner_refs(slot);
+                for b in &mut self.host.barrages {
+                    if b.owner == Some(slot) {
+                        b.owner = None;
+                    }
+                }
                 self.host.free_ground_refs(slot as u32);
                 self.host.ents.free_client(slot);
                 // `CalculateRanks` closes it on all three (1.1d 0x42c1f).
@@ -3188,6 +3194,13 @@ impl ScriptRuntime {
             &mut host.dobj_posed,
             vcod_common::patch::Arith::for_protocol(host.defs.proto),
         );
+        // `G_RunMissile` ends in `G_RunThink`: a free set on the missile's
+        // entity replaces its fuse (combat doc 13.8).
+        if host.missiles.contains(id)
+            && let Some(at) = host.ents.take_free_think(id)
+        {
+            host.missiles.schedule_free(id, at);
+        }
         let grenade = host.missiles.grenade_at(id);
         let turn = host
             .missiles
@@ -4615,6 +4628,165 @@ mod tests {
             rt.run_frame(f * 50);
         }
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+    }
+
+    /// The missile `fire_grenade` just spawned.
+    fn live_missile(rt: &ScriptRuntime) -> EntId {
+        rt.host
+            .ents
+            .iter_inuse()
+            .map(|(id, _)| id)
+            .find(|&id| rt.host.missiles.contains(id))
+            .expect("a missile in the pool")
+    }
+
+    /// A script `delete` on a grenade in flight arms `G_FreeEntity` 100 ms
+    /// out, which `G_RunMissile`'s closing `G_RunThink` runs in place of
+    /// the fuse: it flies on until then and goes without exploding
+    /// (combat doc 13.8).
+    #[test]
+    fn a_deleted_grenade_flies_on_and_goes_unexploded() {
+        let mut rt = ScriptRuntime::for_test("main() {}\ndel() { self delete(); }\n");
+        let v = glam::Vec3::new(100.0, 0.0, 0.0);
+        rt.fire_grenade(0, 1, 0, glam::Vec3::Z * 100.0, v, glam::Vec3::ZERO, 3000, 0);
+        let g = live_missile(&rt);
+        rt.run_frame(50);
+        rt.start_thread_for_test(g, "del");
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+        rt.run_frame(100);
+        assert!(rt.host.missiles.contains(g), "it flies on until the free");
+        rt.run_frame(150);
+        assert!(!rt.host.missiles.contains(g), "the free took it out");
+        assert!(rt.host.ents.get(g).is_none());
+    }
+
+    /// 1.1's drop ring holds numbers: a grenade that took a held drop's
+    /// number is what a full ring's next drop evicts, and the eviction's
+    /// free a frame on replaces its fuse (items doc 8, combat doc 13.8).
+    #[test]
+    fn on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() {}\n\
+             CodeCallback_PlayerConnect() {}\n",
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "vcod".into(),
+        });
+        rt.run_frame(50);
+        let health = 68;
+        rt.host.precache_items_for_test(&["item_health"]);
+        let host = &mut rt.host;
+        let drops: Vec<EntId> = rt.vm.with_cx(|cx| {
+            (0..crate::game::item::DROP_RING)
+                .map(|_| crate::game::item::drop_item(host, cx, 0, health).unwrap())
+                .collect()
+        });
+        rt.host.free_entity(drops[0]);
+        let v = glam::Vec3::new(100.0, 0.0, 0.0);
+        rt.fire_grenade(
+            0,
+            1,
+            0,
+            glam::Vec3::Z * 100.0,
+            v,
+            glam::Vec3::ZERO,
+            3000,
+            50,
+        );
+        let g = live_missile(&rt);
+        assert_eq!(
+            g.0, drops[0].0,
+            "the grenade took the picked-up drop's number"
+        );
+        let host = &mut rt.host;
+        rt.vm
+            .with_cx(|cx| crate::game::item::drop_item(host, cx, 0, health))
+            .unwrap();
+        rt.run_frame(100);
+        assert!(!rt.host.missiles.contains(g), "the eviction freed it");
+        assert!(rt.host.ents.get(g).is_none());
+    }
+
+    /// `G_FreeEntityRefs` sweeps a barrage's `r.ownerNum` with the rest: a
+    /// strike whose caller left hangs shells nobody owns, and so charges
+    /// no one (UO `fire_artillery` 0x6002d, combat doc 13.7).
+    #[test]
+    fn a_barrage_whose_caller_left_hangs_shells_nobody_owns() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() {}\n\
+             CodeCallback_PlayerConnect() {}\n\
+             CodeCallback_PlayerDisconnect() {}\n",
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 3,
+            name: "vcod".into(),
+        });
+        rt.run_frame(50);
+        let def = vcod_common::weapon::WeaponDef {
+            projectile_count: 4,
+            projectile_radius: 100,
+            projectile_delay: 100,
+            projectile_spacing: (100, 100),
+            projectile_speed: 10_000.0,
+            damage: 2000,
+            proj_explosion_type: "artillery".into(),
+            ..Default::default()
+        };
+        let host = &mut rt.host;
+        let id = rt.vm.with_cx(|cx| host.ents.spawn(cx)).unwrap();
+        let strike = crate::game::artillery::Barrage::new(id, 3, 6, glam::Vec3::ZERO, &def, 50);
+        rt.host.barrages.push(strike);
+        rt.push_client_event(ClientEvent::Disconnect(3));
+        for f in 2..12 {
+            rt.run_frame(f * 50);
+        }
+        let shells: Vec<Option<usize>> = rt
+            .host
+            .ents
+            .iter_inuse()
+            .filter_map(|(id, _)| rt.host.missiles.owner_of(id))
+            .collect();
+        assert!(!shells.is_empty(), "no shell was hung");
+        assert!(shells.iter().all(Option::is_none), "{shells:?}");
+    }
+
+    /// UO's `G_MissileImpact` with no owner hands `G_Damage` NULL for both
+    /// inflictor and attacker, and `Scr_PlayerDamage` pushes each as
+    /// undefined (combat doc 13.7).
+    #[test]
+    fn a_hit_with_no_inflictor_and_no_attacker_reaches_the_callback_undefined() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() {}\n\
+             CodeCallback_PlayerConnect() {}\n\
+             CodeCallback_PlayerDamage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc) {\n\
+                 self.seen = isDefined(eInflictor) + \" \" + isDefined(eAttacker) + \" \" + sWeapon;\n\
+             }\n",
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "vcod".into(),
+        });
+        rt.run_frame(0);
+        rt.host.client_vitals[0].takedamage = true;
+        rt.deliver_hits(vec![crate::game::combat::Hit {
+            victim: 0,
+            attacker: crate::game::host::ENTITYNUM_NONE as usize,
+            inflictor: None,
+            damage: 300,
+            dflags: 0,
+            mod_: "MOD_ARTILLERY",
+            weapon: "none".into(),
+            point: [0.0; 3],
+            dir: [0.0, 0.0, -1.0],
+            hitloc: "none",
+        }]);
+        rt.run_frame(50);
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+        assert_eq!(rt.client_field(0, "seen").as_deref(), Some("0 0 none"));
     }
 
     /// The object table has to survive past map load, so the runtime owns the

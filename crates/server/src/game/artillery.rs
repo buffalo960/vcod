@@ -24,7 +24,9 @@ pub const DROP_DELAY_MS: i32 = 1750;
 #[derive(Clone, Debug)]
 pub struct Barrage {
     pub id: EntId,
-    pub owner: usize,
+    /// The caller's slot, `r.ownerNum`, which his shells take; `None` once
+    /// he left (`G_FreeEntityRefs`' sweep, combat doc 13.7).
+    pub owner: Option<usize>,
     pub weapon: u8,
     pub at: Vec3,
     /// The weapon file's `projectileCount`, `projectileRadius`,
@@ -69,7 +71,7 @@ impl Barrage {
     ) -> Barrage {
         Barrage {
             id,
-            owner,
+            owner: Some(owner),
             weapon,
             at,
             count: def.projectile_count,

@@ -6440,18 +6440,71 @@ before he connected.
 
 VERIFIED, UO `fire_artillery` (0x5ff4a): a shell fired by a barrage
 (`eType` 0) takes the barrage's `r.ownerNum` and `&g_entities[ownerNum]` as
-`parent` (0x6002d..0x60055). INFERRED: a barrage whose caller left (its
-`ownerNum` swept to 0x3ff) fires shells whose `parent` is entity 1023, not
-NULL, so their splash still walks. vcod does not model that: a barrage keeps
-its caller's slot (`artillery::Barrage::owner`).
+`parent` (0x6002d..0x60055). VERIFIED: `G_FreeEntityRefs` (0x79a06) sweeps
+every entity in use, the barrage among them (0x79a7c..0x79a8a). INFERRED: a
+barrage whose caller left hangs shells with `r.ownerNum` 0x3ff and `parent`
+`&g_entities[1023]`, and the shells already hanging were swept with him. A
+shell goes off on contact through `G_MissileImpact`, whose 0x3ff test
+(0x5dccc) leaves inflictor and attacker NULL: no splash, and a direct hit
+with both undefined. Only `G_DropArtillery`'s 15 s fallback,
+`G_ExplodeMissile`, reads `parent`, and so would walk its splash with entity
+1023 as the attacker; vcod does not model that path for a disowned shell.
+
+VERIFIED, UO `fire_rocket` (0x5fc74): from a vehicle (`eType` 12) the
+rocket's `+0x330` takes the vehicle's own `r.ownerNum` (0x5fd3f, 0x5fd45),
+else 0x3ff (0x5fd50); its `r.ownerNum` and `parent` are the vehicle
+(0x5fd62, 0x5fd6e). INFERRED: the vehicle's `r.ownerNum` is its driver. VERIFIED: `G_MissileImpact` reads `+0x330`
+as the attacker when the owner's `eType` is 12 and it is not 0x3ff
+(0x5dcff..0x5dd1d), and `G_FreeEntityRefs` makes no store into `+0x330`
+(0x79a06..0x79b40). INFERRED: a driver who leaves keeps the credit for a
+shell already fired, and the client who next takes his slot is charged
+with it, as vcod charges the slot (`Missile::owner`, kept by
+`free_owner_refs` for a vehicle's shell). A vehicle freed under its shell
+sweeps the shell's `r.ownerNum` to 0x3ff, which drops the `+0x330` read:
+vcod's `Missiles::free_vehicle_refs`, from `GameHost::free_entity`.
+INFERRED, not modelled: with the slot empty retail charges the freed
+entity, whose number `G_FreeEntity`'s memset zeroed; vcod drops the hit.
+
+VERIFIED, UO: with the owner 0x3ff `G_MissileImpact` keeps the inflictor
+NULL too (0x5dc8e), `G_Damage` hands a client victim to `G_DamageClient`
+(0x4fd4b), which with both NULL reads weapon 0 and passes both on to
+`Scr_PlayerDamage`, whose `GScr_AddEntity` (0x6e92d) pushes NULL as
+undefined. INFERRED: weapon 0's name is `"none"`, as 1.1 measured for a
+fall (`cod11-player-clip.md` 8.8). 1.1's `G_MissileImpact` hands the missile
+as the inflictor whatever the owner. vcod: a UO disowned shell's direct
+hit goes to `deliver_hits` with no inflictor and weapon `"none"`.
 
 vcod: `Missiles::free_owner_refs`, called from `ClientDisconnect`, makes the
 missile's owner `None`; the explode's `Explosion::owner` then skips the
 blast walk and `ScriptRuntime::deliver_hits` hands a direct hit an undefined
 attacker. A UO vehicle's shell is owned by the vehicle in retail
 (`fire_rocket`'s `self`), so it keeps its driver in vcod. Pinned by
-`a_frag_whose_thrower_left_charges_no_one` (`crates/server/tests/combat.rs`)
-and `a_leaver_s_grenade_loses_its_owner_and_a_vehicle_s_shell_does_not`.
+`a_frag_whose_thrower_left_charges_no_one` (`crates/server/tests/combat.rs`),
+`a_leaver_s_grenade_loses_its_owner_and_a_vehicle_s_shell_does_not`,
+`a_shell_whose_vehicle_was_freed_charges_no_one`,
+`a_barrage_whose_caller_left_hangs_shells_nobody_owns` and
+`a_hit_with_no_inflictor_and_no_attacker_reaches_the_callback_undefined`.
+
+### 13.8 A free set on a missile
+
+VERIFIED: 1.1d's `G_RunMissile` ends in `G_RunThink` (0x54050, 0x54398),
+UO's too (0x5f03b, 0x5f5db), and a missile's fuse is its think
+(`G_ExplodeMissile` at `nextthink`, section 11). VERIFIED: the `delete`
+method arms `G_FreeEntity` 100 ms out (1.1d 0x5da14,
+`cod11-gsc-object-model.md` 14; UO 0x68bda, its `nextthink` store at
+0x68c86), and 1.1d's drop ring eviction arms it at `level.time + 1` on
+whatever entity holds the evicted number (`cod11-items.md` 8). INFERRED:
+either replaces the fuse; the grenade flies on until the think is due, then
+goes without an explode, a blast or an event. A shell that strikes on the
+way still goes off in `G_MissileImpact`. INFERRED, from Q3's `G_RunFrame`:
+an exploded missile riding out its event runs no think, so a free set then
+changes nothing. vcod: `ScriptRuntime::run_entity` hands a `ThinkFn::Free`
+armed on a missile's entity to `Missiles::schedule_free` before its turn,
+and the pool frees it on the turn the think is due. Not modelled: a shell
+that strikes on the same turn its free is due is freed by retail before its
+event goes out, and vcod sends the explode. Pinned by
+`a_deleted_grenade_flies_on_and_goes_unexploded` and
+`on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded`.
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 
