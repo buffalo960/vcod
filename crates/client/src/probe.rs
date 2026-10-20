@@ -179,6 +179,9 @@ pub struct Save {
     /// `--probe-autofire`: the slope capture's walk is [`autofire_script`]
     /// from the street placement, on United Offensive.
     pub autofire: bool,
+    /// `--probe-talk`: the slope capture's walk is [`talk_script`] from the
+    /// street placement.
+    pub talk: bool,
     /// `--probe-moveshot <part>`: the slope capture's walk is
     /// [`moveshot_script`] from a `client-probes/probe_moveshot` placement.
     pub moveshot: Option<MoveShot>,
@@ -374,6 +377,7 @@ pub fn probe(
         turns: probe_turns,
         sprint: probe_sprint,
         autofire: probe_autofire,
+        talk: probe_talk,
         moveshot: probe_moveshot,
         uofoot: probe_uofoot,
         uoturret: probe_uoturret,
@@ -448,6 +452,7 @@ pub fn probe(
         || probe_turns
         || probe_sprint
         || probe_autofire
+        || probe_talk
         || probe_moveshot.is_some()
         || probe_uofoot.is_some()
         || probe_uoturret.is_some()
@@ -464,6 +469,8 @@ pub fn probe(
         ProneScript::new(0.0, sprint_script())
     } else if probe_autofire {
         ProneScript::new(0.0, autofire_script())
+    } else if probe_talk {
+        ProneScript::new(0.0, talk_script())
     } else if let Some(part) = probe_moveshot {
         ProneScript::new(0.0, moveshot_script(part))
     } else if let Some(yaw) = probe_uofoot {
@@ -1684,6 +1691,8 @@ pub fn probe(
                                 SlopeWalk::Sprint
                             } else if probe_autofire {
                                 SlopeWalk::Autofire
+                            } else if probe_talk {
+                                SlopeWalk::Talk
                             } else if let Some(part) = probe_moveshot {
                                 SlopeWalk::MoveShot(part)
                             } else if probe_uofoot.is_some() {
@@ -1781,6 +1790,8 @@ pub fn probe(
                 SlopeWalk::Sprint
             } else if probe_autofire {
                 SlopeWalk::Autofire
+            } else if probe_talk {
+                SlopeWalk::Talk
             } else if let Some(part) = probe_moveshot {
                 SlopeWalk::MoveShot(part)
             } else if probe_uofoot.is_some() {
@@ -7406,6 +7417,7 @@ enum SlopeWalk {
     Turns,
     Sprint,
     Autofire,
+    Talk,
     MoveShot(MoveShot),
     Vehicle,
     UoFoot,
@@ -7500,7 +7512,11 @@ fn write_slope_fixture(
         ));
     } else if matches!(
         walk,
-        SlopeWalk::Moves | SlopeWalk::Turns | SlopeWalk::Sprint | SlopeWalk::Autofire
+        SlopeWalk::Moves
+            | SlopeWalk::Turns
+            | SlopeWalk::Sprint
+            | SlopeWalk::Autofire
+            | SlopeWalk::Talk
     ) {
         let env = match protocol.version {
             6 => "COD_VERSION=1.5 ",
@@ -7511,6 +7527,7 @@ fn write_slope_fixture(
             SlopeWalk::Moves => ("--probe-moves", "moves_script", 0),
             SlopeWalk::Sprint => ("--probe-sprint", "sprint_script", 0),
             SlopeWalk::Autofire => ("--probe-autofire", "autofire_script", 0),
+            SlopeWalk::Talk => ("--probe-talk", "talk_script", 0),
             _ => ("--probe-turns", "turns_script", 90),
         };
         out.push_str(&format!(
@@ -7955,6 +7972,66 @@ fn autofire_script() -> Vec<ProneStep> {
         step(10200, A),
         step(10250, 0),
         step(12000, 0),
+    ]
+}
+
+/// `--probe-talk`, from the street placement facing world yaw 0: the talk
+/// bit (`BUTTON_TALK`, the console or the chat line up) held over the
+/// sight, a run, a lean, a shot, a jump, a crouch and a prone crawl, each
+/// with the bit released after. `PmoveSingle` masks a talking cmd's
+/// buttons to the talk bit on 1.1 and keeps the sight beside it on 1.5 and
+/// UO (docs/research/cod15-movement.md 5). A stance key holds `up` at -127.
+fn talk_script() -> Vec<ProneStep> {
+    use net::msg::{
+        BUTTON_ADS, BUTTON_ATTACK, BUTTON_TALK, WBUTTON_CROUCH, WBUTTON_LEAN_LEFT, WBUTTON_PRONE,
+    };
+    const P: u8 = WBUTTON_PRONE;
+    const C: u8 = WBUTTON_CROUCH;
+    const L: u8 = WBUTTON_LEAN_LEFT;
+    const A: u8 = BUTTON_ATTACK;
+    const S: u8 = BUTTON_ADS;
+    const T: u8 = BUTTON_TALK;
+    let step = |at_ms, buttons, wbuttons, forward, up: i8| ProneStep {
+        at_ms,
+        buttons,
+        wbuttons,
+        forward,
+        right: 0,
+        up: if wbuttons & (P | C) != 0 { -127 } else { up },
+        yaw: 0.0,
+        pitch: 0.0,
+    };
+    vec![
+        step(0, 0, 0, 0, 0),
+        // The sight up, then the talk bit over it, then off again.
+        step(1000, S, 0, 0, 0),
+        step(2000, S | T, 0, 0, 0),
+        step(3500, S, 0, 0, 0),
+        step(4500, 0, 0, 0, 0),
+        // A run and a lean pressed while talking, then the run alone and
+        // the talk bit pressed mid-run.
+        step(5500, T, L, 127, 0),
+        step(7000, 0, 0, 127, 0),
+        step(8000, T, 0, 127, 0),
+        step(9000, 0, 0, 0, 0),
+        // A shot and a jump while talking.
+        step(10000, T | A, 0, 0, 0),
+        step(11000, 0, 0, 0, 0),
+        step(12000, T, 0, 0, 127),
+        step(12500, 0, 0, 0, 0),
+        // Crouched: the stance key survives the mask; the sight over it.
+        step(13500, T, C, 0, 0),
+        step(14500, S | T, C, 0, 0),
+        step(15500, S, C, 0, 0),
+        step(16500, 0, 0, 0, 0),
+        // Prone, sighted, then talking with the crawl key held.
+        step(17500, 0, P, 0, 0),
+        step(19000, S, P, 0, 0),
+        step(20000, S | T, P, 127, 0),
+        step(21500, S, P, 127, 0),
+        step(22500, 0, P, 0, 0),
+        step(23500, 0, 0, 0, 0),
+        step(25500, 0, 0, 0, 0),
     ]
 }
 

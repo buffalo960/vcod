@@ -484,6 +484,16 @@ const CAPTURES: &[Capture] = &[
         protocol: &PROTOCOL_V6,
         rules: MoveRules::V1_5,
     },
+    Capture {
+        file: TALK_1_1,
+        protocol: &PROTOCOL_V1,
+        rules: MoveRules::V1_1,
+    },
+    Capture {
+        file: TALK_1_5,
+        protocol: &PROTOCOL_V6,
+        rules: MoveRules::V1_5,
+    },
 ];
 
 const MOVES_1_1: &str = "mp_carentan-dm-slope-8ms-moves-1.1.txt";
@@ -506,6 +516,13 @@ const SPRINGFIELD_HELD_1_1: &str = "mp_carentan-dm-slope-8ms-springfield-held-1.
 const SPEEDGRAV_1_1: &str = "mp_carentan-dm-slope-8ms-speedgrav-1.1.txt";
 const SPEEDGRAV_1_5: &str = "mp_carentan-dm-slope-8ms-speedgrav-1.5.txt";
 const SPEEDGRAV_UO: &str = "mp_carentan-dm-slope-8ms-speedgrav-uo.txt";
+/// The talk script (`--probe-talk`, `talk_script` in
+/// `crates/client/src/probe.rs`): the talk bit over the sight, a run, a
+/// shot, a jump, a crouch and a prone crawl. 1.1 drops the sight under it,
+/// 1.5 and UO keep it (cod15-movement.md 5, "The talk button").
+const TALK_1_1: &str = "mp_carentan-dm-slope-8ms-talk-1.1.txt";
+const TALK_1_5: &str = "mp_carentan-dm-slope-8ms-talk-1.5.txt";
+const TALK_UO: &str = "mp_carentan-dm-slope-8ms-talk-uo.txt";
 
 /// Fields a capture's replay may miss, with how many snapshots and why.
 /// The 1.5 captures replay under 1.5b's stored arithmetic
@@ -612,6 +629,46 @@ fn the_1_5_capture_fails_under_1_1_rules() {
     print("1.5 turns under 1.1 rules", &r);
     let off = r.count("proneDirection") + r.count("delta_angles[1]");
     assert!(off > 20, "{off}");
+}
+
+/// Each talk capture under the other patch's rules: the sight under the
+/// talk bit is the one thing the scripts tell apart, so the ADS fraction
+/// and `pm_flags` miss on every talking snapshot of a sighted phase.
+#[test]
+fn the_talk_captures_fail_under_the_other_rules() {
+    let Some((world, weapons)) = setup() else {
+        return;
+    };
+    let install_11 = vcod_common::testing::game_fs_11().is_some();
+    for (file, protocol, rules) in [
+        (TALK_1_1, &PROTOCOL_V1, MoveRules::V1_5),
+        (TALK_1_5, &PROTOCOL_V6, MoveRules::V1_1),
+    ] {
+        if protocol.version == 1 && !install_11 {
+            continue;
+        }
+        let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{file}")).unwrap();
+        let r = replay(protocol, rules, &parse(protocol, &text), &world, &weapons);
+        print(&format!("{file} under {rules:?}"), &r);
+        let off = r.count("fWeaponPosFrac") + r.count("pm_flags");
+        assert!(off > 20, "{file}: {off}");
+    }
+}
+
+/// United Offensive's talk mask (`TALK_UO`), which keeps the sight as
+/// 1.5's does. Needs `COD_DIR` at a UO install.
+#[test]
+fn the_predictor_replays_uo_talk() {
+    let text = std::fs::read_to_string(format!("{FIXTURE_DIR}/{TALK_UO}")).unwrap();
+    let Some((world, weapons)) = uo_setup(&text, "mp_carentan") else {
+        return;
+    };
+    let lines = parse(&PROTOCOL_V22, &text);
+    let r = replay(&PROTOCOL_V22, MoveRules::Uo, &lines, &world, &weapons);
+    print(TALK_UO, &r);
+    assert!(r.compared > 400, "only {} snapshots", r.compared);
+    let failures = over(&r, &[]);
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 const SPRINT_UO: &str = "mp_carentan-dm-slope-8ms-sprint-uo.txt";
