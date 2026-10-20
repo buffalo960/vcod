@@ -708,6 +708,7 @@ fn vehicle_fire(
                 pass,
                 shot.muzzle,
                 shot.dir,
+                crate::game::combat::bullet_range(rt.host.defs.proto),
                 shot.damage,
                 shot.rifle_bullet,
                 falloff,
@@ -8488,6 +8489,7 @@ impl Server {
                     shot.pass(),
                     shot.muzzle,
                     shot.dir,
+                    crate::game::combat::bullet_range(self.proto),
                     shot.damage,
                     shot.rifle_bullet,
                     None,
@@ -9325,6 +9327,7 @@ impl Server {
             shot.ads,
             &shot.stance,
             shot.aim,
+            crate::game::combat::BULLET_RANGE,
             None,
             &mut self.rng,
         );
@@ -9385,6 +9388,7 @@ impl Server {
             shot.ads,
             &shot.stance,
             shot.aim,
+            crate::game::combat::UO_BULLET_RANGE,
             None,
             &mut self.rng,
         );

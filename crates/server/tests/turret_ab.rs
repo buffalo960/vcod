@@ -2338,16 +2338,18 @@ fn hitfine<'a>(log: impl Iterator<Item = &'a str>) -> Vec<(String, [f64; 3], [f6
         .collect()
 }
 
-/// How far a hit's point may sit from retail's, units: what is left on a
-/// knockback's first frame (`cod11-turrets.md` 13.6).
+/// How far a hit's point a gate names in its gaps may sit from retail's,
+/// units: what is left on a knockback's first frame (`cod11-turrets.md`
+/// 13.6). Every other hit is retail's to the bit.
 const HIT_NEAR: f64 = 0.02;
 /// How far a hit-grid cell may sit from retail's along its ray, units.
 const GRID_NEAR: f64 = 0.1;
 
 /// The captures that log `probe_hitlog`: every hit at retail's time, on the
-/// same victim, location and damage, its point within [`HIT_NEAR`]. How far
-/// each point sits from retail's prints under `TURRET_REPORT=1` (turrets
-/// doc 13.5).
+/// same victim, location and damage, its point retail's as `fine1` prints
+/// it. A row off it reads `[hit] <time> ...` for a gap to name and
+/// `[hit-far]` past [`HIT_NEAR`], which no gap covers. How far each point
+/// sits from retail's prints under `TURRET_REPORT=1` (turrets doc 13.5).
 fn hitfine_rows<'a>(
     theirs: impl Iterator<Item = &'a str>,
     mine: impl Iterator<Item = &'a str>,
@@ -2364,7 +2366,10 @@ fn hitfine_rows<'a>(
                 if report() {
                     eprintln!("hitfine {key}: ours - retail = {d:?}");
                 }
-                if d.iter().map(|x| x * x).sum::<f64>().sqrt() > HIT_NEAR {
+                let off = d.iter().map(|x| x * x).sum::<f64>().sqrt();
+                if off > HIT_NEAR {
+                    rows.push(format!("[hit-far] {key}: ours - retail = {d:?}"));
+                } else if off > 0.0 {
                     rows.push(format!("[hit] {key}: ours - retail = {d:?}"));
                 }
             }
@@ -2469,9 +2474,22 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
         "hitfine-uo",
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
-        &[],
+        &[
+            ("[hit] 30150 0 ", MUZZLE_GAP),
+            ("[hit] 30200 0 ", KNOCKBACK_GAP),
+        ],
     );
 }
+
+/// A wound a float step off retail's: the round's muzzle. Ours reaches
+/// `tag_flash`'s bind-pose distance along the aim from `tag_player` turned
+/// about `tag_aim`; retail poses `tag_flash` on its own chain, which puts it
+/// up to 0.006 nearer (`cod11-turrets.md` 13.8).
+const MUZZLE_GAP: &str = "the muzzle's reach off the bind pose (turrets doc 13.8)";
+/// A kill on the knockback's first frame: the body turned about a
+/// hundredth of a degree off retail's, cause not found (`cod11-turrets.md`
+/// 13.6).
+const KNOCKBACK_GAP: &str = "the knockback's first frame's pose (turrets doc 13.6)";
 
 /// The 1.1d hit-grid capture's head: the capture predates the gsc's
 /// `PROBE models` line, and its head cells read the boxes of the `a` axis
@@ -2489,7 +2507,10 @@ fn the_hitgrid_capture_matches_retail_on_mp_carentan() {
         vcod_common::testing::game_fs_11,
         &PROTOCOL_V1,
         HEAD_HITGRID,
-        &[],
+        &[
+            ("[hit] 30400 0 ", MUZZLE_GAP),
+            ("[hit] 30450 0 ", KNOCKBACK_GAP),
+        ],
     );
 }
 
@@ -2504,7 +2525,7 @@ fn the_hitgrid_capture_matches_15b_on_mp_carentan() {
         },
         &PROTOCOL_V6,
         HITGRID,
-        &[],
+        &[("[hit] 30500 0 ", KNOCKBACK_GAP)],
     );
 }
 
@@ -2515,7 +2536,7 @@ fn the_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID,
-        &[],
+        &[("[hit] 30450 0 ", KNOCKBACK_GAP)],
     );
 }
 
@@ -2536,7 +2557,7 @@ fn the_spawnlog_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID_SPAWNLOG,
-        &[],
+        &[("[hit] 30300 0 ", KNOCKBACK_GAP)],
     );
 }
 
@@ -2547,7 +2568,10 @@ fn the_grounded_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID_GROUND,
-        &[],
+        &[
+            ("[hit] 30350 0 ", MUZZLE_GAP),
+            ("[hit] 30400 0 ", KNOCKBACK_GAP),
+        ],
     );
 }
 

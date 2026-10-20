@@ -1085,7 +1085,11 @@ impl ScriptRuntime {
             if rule.locks_view() {
                 sim.viewlocked = 2;
             }
-            let forward = crate::game::spawn::angle_forward(sim.view_angles());
+            let forward = crate::game::spawn::angle_forward(rule.fire_angles(
+                sim.view_angles(),
+                rec.angles2,
+                angles,
+            ));
             // A missing tag skips the round and its event, not the flags.
             if let Some(tags) = &rec.tags {
                 shot = Some(TurretShot {
