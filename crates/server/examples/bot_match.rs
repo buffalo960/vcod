@@ -95,6 +95,7 @@ struct Match {
     actions: BTreeMap<String, u32>,
     stalled: u32,
     log: Vec<String>,
+    dm: bool,
 }
 
 fn main() {
@@ -267,6 +268,7 @@ fn run(o: &Opts, seed: u64) -> Option<Match> {
 
     let mut m = Match {
         seed,
+        dm: o.gametype == "dm",
         ..Default::default()
     };
     let mut seen = 0;
@@ -300,6 +302,9 @@ fn run(o: &Opts, seed: u64) -> Option<Match> {
                 "D" if f.len() >= 11 => {
                     let g = usize::from(f.len() >= 13);
                     let (vnum, anum, ateam) = (f[1 + g], f[4 + 2 * g], f[5 + 2 * g]);
+                    if anum == "-1" {
+                        continue;
+                    }
                     let att = tally(&mut m, anum, ateam, &skill);
                     let dmg: u64 = f[8 + 2 * g].parse().unwrap_or(0);
                     if anum != vnum {
@@ -326,11 +331,14 @@ fn run(o: &Opts, seed: u64) -> Option<Match> {
                         .map_or(0, |t| (tick - t) as u64 * TICK_MS);
                     let dmg: u64 = f[8 + 2 * g].parse().unwrap_or(0);
                     first_hit.retain(|(_, victim), _| victim != vnum);
-                    let a = tally(&mut m, anum, ateam, &skill);
                     if anum == vnum || anum == "-1" {
-                        a.0.suicides += 1;
-                        a.1.suicides += 1;
-                    } else if !ateam.is_empty() && ateam == vteam && o.gametype != "dm" {
+                        let v = tally(&mut m, vnum, vteam, &skill);
+                        v.0.suicides += 1;
+                        v.1.suicides += 1;
+                        continue;
+                    }
+                    let a = tally(&mut m, anum, ateam, &skill);
+                    if !ateam.is_empty() && ateam == vteam && o.gametype != "dm" {
                         a.0.team_kills += 1;
                         a.1.team_kills += 1;
                     } else {
@@ -395,7 +403,12 @@ fn tally<'a>(
     team: &str,
     skill: &HashMap<String, String>,
 ) -> (&'a mut Tally, &'a mut Tally) {
-    let team = if team.is_empty() { "none" } else { team };
+    // `dm`'s `D;` lines carry the menu's team, its `K;` lines none.
+    let team = if team.is_empty() || m.dm {
+        "none"
+    } else {
+        team
+    };
     let skill = skill.get(num).cloned().unwrap_or_else(|| "-".into());
     (
         m.by_team.entry(team.to_string()).or_default(),

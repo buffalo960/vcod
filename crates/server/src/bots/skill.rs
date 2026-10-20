@@ -16,17 +16,19 @@ impl Skill {
     pub fn level(level: u8) -> Skill {
         match level {
             0 => Skill {
-                reaction_min: 10,
-                reaction_spread: 8,
-                forget_ticks: 14,
-                turn_deg: 8.0,
-                error_start: 80.0,
-                error_floor: 10.0,
-                error_decay: 0.93,
-                error_range: 700.0,
-                error_moving: 2.25,
-                memory_ticks: 60,
-                noise_ticks: 120,
+                reaction_min: 8,
+                reaction_spread: 6,
+                forget_ticks: 16,
+                turn_deg: 10.0,
+                error_start: 64.0,
+                // Under `HIT_RADIUS` standing: a floor at or past it holds
+                // the trigger off for good.
+                error_floor: 5.0,
+                error_decay: 0.91,
+                error_range: 900.0,
+                error_moving: 1.9,
+                memory_ticks: 70,
+                noise_ticks: 140,
                 hearing: 0.75,
                 ..Skill::default()
             },
