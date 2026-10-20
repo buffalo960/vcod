@@ -354,6 +354,9 @@ pub struct Missiles {
     /// Water entry splashes raised since the caller last took them
     /// ([`Missiles::take_splashes`]).
     splashes: Vec<crate::game::temp_entity::TempEntity>,
+    /// Test-facing: the `trDelta` the next rockets leave with, a retail
+    /// capture's, in place of the spread's ([`Missiles::pin_rocket_deltas`]).
+    rocket_deltas: std::collections::VecDeque<Vec3>,
 }
 
 /// Section 11.3: where a throw starts and how fast it leaves, from the
@@ -1469,7 +1472,10 @@ impl Missiles {
             e.engine[slot] = Value::String(cx.intern_exact("rocket"));
         }
         set_script_origin(ents, id, start);
-        let delta = (dir * shell.speed).trunc();
+        let delta = self
+            .rocket_deltas
+            .pop_front()
+            .unwrap_or_else(|| (dir * shell.speed).trunc());
         let (tr_type, life_ms, eflags) = if self.uo {
             (
                 if arc { TR_GRAVITY } else { TR_LINEAR },
@@ -1702,6 +1708,13 @@ impl Missiles {
     /// wall's the whole degrees added to it ([`Missile::land_angles`]).
     pub fn pin_draws(&mut self, draws: impl IntoIterator<Item = f64>) {
         self.draws.pinned = draws.into_iter().collect();
+    }
+
+    /// Test-facing: the next rockets' `trDelta`, in order, before the
+    /// launch spread takes over again: each server draws its own spread, so
+    /// a gate flies retail's rocket by pinning the delta its capture shows.
+    pub fn pin_rocket_deltas(&mut self, deltas: impl IntoIterator<Item = Vec3>) {
+        self.rocket_deltas = deltas.into_iter().collect();
     }
 }
 

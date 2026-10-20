@@ -3647,6 +3647,16 @@ impl Server {
         }
     }
 
+    /// Test-facing: the next rockets' `trDelta`, a retail capture's
+    /// (`Missiles::pin_rocket_deltas`).
+    pub fn pin_rocket_deltas(&mut self, deltas: Vec<[f32; 3]>) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.host
+                .missiles
+                .pin_rocket_deltas(deltas.into_iter().map(glam::Vec3::from));
+        }
+    }
+
     /// Test-facing: the outcomes of the next UO turret rounds' tracer rolls,
     /// one per player hit, as a retail capture drew them.
     pub fn pin_tracer_rolls(&mut self, rolls: Vec<bool>) {

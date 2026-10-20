@@ -1,0 +1,32 @@
+# Retail CoD 1.5b dedicated server, mp_harbor tdm, client-probes/probe_skyshot spot part on the south sea wall looking 45 degrees down over the harbor, panzerfaust_mp, captured 2026-10-20:
+#   COD_VERSION=1.5 COD_DIR=<stock 1.5 main/> PORT=33871 PROBE_SECS=45 tools/run_probe.sh client-probes/probe_skyshot mp_harbor +set probe_part spot +set probe_weapon panzerfaust_mp +set probe_x -12640 +set probe_y -7036 +set probe_z 152 +set probe_yaw 90 +set probe_pitch 45
+#   vcod --game-dir <stock 1.5 install> --net-probe 127.0.0.1:33871 --probe-team allies --probe-uo-weapon aim --probe-secs 30
+# 1.5b's splash is 1.1's EV_BULLET_HIT_SMALL (173) off the same arm (1.5b 0x54ccb, 0x54d8d), then the explode on the harbor floor (combat doc 12.1).
+# Retail server PROBE lines, then the shooter probe's VEH missile and temp lines (vehicle_probe.rs report).
+PROBE spot 1050 (-12640.00, -7036.00, 152.12) 90 45
+PROBE miss 14300 263 rocket (-12640.00, -7036.00, 212.12)
+PROBE miss 14350 263 rocket (-12632.40, -6844.00, 8.52)
+PROBE miss 14400 263 rocket (-12628.60, -6748.00, -93.28)
+PROBE miss 14450 263 rocket (-12625.00, -6656.00, -191.00)
+PROBE miss 14500 263 rocket (-12625.00, -6656.00, -191.00)
+PROBE miss 14550 263 rocket (-12625.00, -6656.00, -191.00)
+PROBE miss 14600 263 rocket (-12625.00, -6656.00, -191.00)
+PROBE miss 14650 263 rocket (-12625.00, -6656.00, -191.00)
+PROBE miss 14700 263 rocket (-12625.00, -6656.00, -191.00)
+PROBE miss 14750 263 rocket (-12625.00, -6656.00, -191.00)
+VEH 14300 missile 263 type 2 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 14200 76 1920 -2036
+VEH 14350 missile 263 type 2 base -12640.000 -7036.000 212.125 bits 0xc6458000 0xc5dbe000 0x43542000 ground 1023 weapon 23 etype 4 evseq 0 ev 0 parm 0 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 14200 76 1920 -2036
+VEH 14400 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14400 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 14450 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14450 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 14500 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14500 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 14550 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14550 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 14600 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14600 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 14650 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14650 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
+VEH 14700 temp 74 ev 173 parm 5 other 263 pos -12628.0 -6748.0 -93.0 surf 20 scale 8 weapon 0
+VEH 14700 missile 263 type 0 base -12625.000 -6656.000 -191.000 bits 0xc6454400 0xc5d00000 0xc33f0000 ground 1023 weapon 23 etype 0 evseq 1 ev 179 parm 5 apos 46.65719 87.73322 0 atraj 0 0 0 0 0 traj 0 0 0 0
