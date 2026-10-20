@@ -8030,10 +8030,11 @@ impl Server {
                     continue;
                 };
                 // A thrower who left is `r.ownerNum` 0x3ff: the direct hit's
-                // `G_Damage` gets a NULL attacker (combat doc 13.7).
-                let attacker = x
-                    .owner
-                    .unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
+                // `G_Damage` gets a NULL attacker. A UO vehicle shell keeps
+                // its driver's slot (`+0x330`) after he left, and the freed
+                // entity there reads number 0 (combat doc 13.7).
+                let owner = rt.charged_owner(x.owner);
+                let attacker = owner.unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
                 // A shell's direct hit lands before its splash, which skips
                 // the client it struck (`G_MissileImpact`, coduo-diff.md 21).
                 // UO's `G_MissileImpact` drops the inflictor with the owner
@@ -8111,7 +8112,7 @@ impl Server {
                 }
                 // `G_RadiusDamage` returns before its walk when `parent`, its
                 // attacker, is NULL: the thrower left (combat doc 13.7).
-                let Some(owner) = x.owner else {
+                let Some(owner) = owner else {
                     if x.concussive {
                         rt.spawn_concussive();
                     }
