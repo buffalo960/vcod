@@ -1858,7 +1858,11 @@ impl CollisionWorld {
     }
 
     /// Clips a sweep against one model's brushes, moved by `pose` when there
-    /// is one and where the build left them otherwise.
+    /// is one and where the build left them otherwise. As the leaf trace a
+    /// submodel's sweep goes to (1.1d 0x8055608, UO 0x8059875), the brushes
+    /// clip in lump order and a brush that brings the fraction to 0 ends the
+    /// model: a box it meets at 0 never reads a later brush all solid
+    /// (bsp-ibsp59-format.md, "The leaf walk").
     #[allow(clippy::too_many_arguments)]
     fn clip_model(
         &self,
@@ -1877,10 +1881,14 @@ impl CollisionWorld {
             self.clip_turned_model(model, pose, start, end, shape, mask, trace, scratch);
             return;
         }
+        let moving = trace.fraction > 0.0;
         for b in span.brushes.0..span.brushes.1 {
             let brush = &self.brushes[b as usize];
             if brush.content_flags & mask == 0 {
                 continue;
+            }
+            if moving && trace.fraction <= 0.0 {
+                break;
             }
             let planes = match pose {
                 Some(pose) => {
@@ -1939,10 +1947,14 @@ impl CollisionWorld {
             pose.to_local(start + mid, span.origin) - mid,
             pose.to_local(end + mid, span.origin) - mid,
         );
+        let moving = trace.fraction > 0.0;
         for b in span.brushes.0..span.brushes.1 {
             let brush = &self.brushes[b as usize];
             if brush.content_flags & mask == 0 {
                 continue;
+            }
+            if moving && trace.fraction <= 0.0 {
+                break;
             }
             match shape {
                 Shape::Capsule(c, _, _) => {
@@ -5055,6 +5067,51 @@ mod tests {
         world.set_model_instance(301, 1, None);
         world.set_model_instance(300, 1, None);
         assert_eq!(ray(&world, None).1, ENTITYNUM_NONE);
+    }
+
+    /// A turned instance's brushes clip in lump order and a contact at
+    /// fraction 0 ends the model, as the leaf trace's loop does (UO
+    /// 0x8059875): a later brush holding the whole sweep never reads it all
+    /// solid. The jeep's collmap under a corpse its hull drove into
+    /// (coduo-vehicles.md 11.7).
+    #[test]
+    fn a_contact_at_zero_ends_a_turned_instance_s_brushes() {
+        let mut bsp = two_model_world("script_brushmodel");
+        for (lo, hi) in [(-6.0f32, 6.0), (-6.0, 6.0), (60.0, 90.0)] {
+            for v in [lo, hi] {
+                bsp.brush_sides.push(bsp::BrushSide {
+                    plane_or_dist: v.to_bits(),
+                    material: 0,
+                });
+            }
+        }
+        bsp.brushes.push(bsp::Brush {
+            first_side: 12,
+            num_sides: 6,
+            material: 0,
+        });
+        bsp.models[1].num_brushes = 2;
+        let world = CollisionWorld::build(&bsp, &[]);
+        world.set_model_linked(1, false);
+        let at = Vec3::new(500.0, 0.0, 0.0);
+        world.set_model_instance(300, 1, Some((at, Vec3::new(0.0, 90.0, 0.0), 1)));
+        // A capsule resting a twentieth over the first brush's top, inside
+        // the second from start to end.
+        let (mins, maxs) = (Vec3::new(-4.0, -4.0, 0.0), Vec3::new(4.0, 4.0, 16.0));
+        let start = at + Vec3::new(0.0, 0.0, 64.05);
+        let t = world.trace_with_mask(
+            start,
+            start - Vec3::Z * 0.5,
+            mins,
+            maxs,
+            TRACE_MASK_MOVE,
+            false,
+            None,
+        );
+        assert!(!t.allsolid && !t.startsolid, "{t:?}");
+        assert_eq!(t.fraction, 0.0);
+        assert!((t.normal - Vec3::Z).length() < 1e-5, "{:?}", t.normal);
+        assert_eq!(world.entity_num(&t), 300);
     }
 
     /// An unlinked instance clips nothing until it is put back where it

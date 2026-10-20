@@ -663,6 +663,14 @@ const PS_FIELDS: &[(&str, Kind)] = &[
     ("weaponTime", Kind::Int),
     ("weaponDelay", Kind::Int),
     ("eventSequence", Kind::Int),
+    ("events[0]", Kind::Int),
+    ("events[1]", Kind::Int),
+    ("events[2]", Kind::Int),
+    ("events[3]", Kind::Int),
+    ("eventParms[0]", Kind::Int),
+    ("eventParms[1]", Kind::Int),
+    ("eventParms[2]", Kind::Int),
+    ("eventParms[3]", Kind::Int),
     ("damageEvent", Kind::Int),
     ("damageCount", Kind::Int),
     ("velocity[0]", Kind::Float(0.0)),
@@ -845,14 +853,7 @@ fn the_jeep_driver_killed_in_his_seat_replays_on_ours() {
     let Some(ours) = replay_with("mp_peaks", "willyjeep_mp", &cvars, &lines, &setup, |_| {}) else {
         return;
     };
-    tally(&lines, &ours.samples).assert_within(&[Gap {
-        field: "eventSequence",
-        snaps: 54..=417,
-        why: "retail's corpse lands on the hull (EV_LANDING, surface 13, parm 9) on the \
-              cmd it is held inside it at ct 18793: its ground trace there is not all \
-              solid, ours is (the capsule against the turned collmap, \
-              coduo-vehicles.md 11.7); the trajectory matches either way",
-    }]);
+    tally(&lines, &ours.samples).assert_within(&[]);
 }
 
 const JEEP_BONES: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-bones-uo.txt";

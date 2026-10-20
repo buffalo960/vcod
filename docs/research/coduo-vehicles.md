@@ -1176,10 +1176,16 @@ VERIFIED, retail capture (`crates/server/tests/fixtures/playerstate/mp_peaks-tdm
   -355, 267) at 18800, then a fall onto the slope (VERIFIED, capture).
   At ct 18793 retail's held cmd also lands on the hull: `EV_LANDING` on
   surface 13 with parm 9, the height of a 274 rise from where it stands.
-  Its ground trace there found the hull's face, (-0.548, 0.101, 0.830)
-  on ours, where ours reads the trace all solid (INFERRED, ours at the
-  same origin to the bit, and the parm). That event is
-  `vehicle_ab`'s one gap.
+  Its ground trace there meets the collmap's brushes in lump order: the
+  sixth of the Willys' nine (vcod's brush 6989 on mp_peaks) at fraction 0 on
+  the face that turns to (-0.548, 0.101, 0.830), and the seventh, an axial
+  box, holds the whole sweep. The submodel's leaf trace (UO `coduo_lnxded`
+  0x8059875; the box trace 0x805a9d5 sends a moving submodel sweep there)
+  stops its brush loop once the fraction reaches 0, so the box is never
+  clipped and the trace stands the corpse on the face (VERIFIED
+  decompile; the event and its parm VERIFIED, capture and replay).
+  vcod clipped every brush and read the trace all solid until
+  `CollisionWorld::clip_model` stopped at 0 the same way.
 - The corpse's cone reads 255 on the death's snapshot and 0 after, and
   the reverse step of the drive script sets `pm_flags` 0x40 on it
   (cod11-player-clip.md 1.1).
@@ -1192,7 +1198,7 @@ seat's two fields. `vehicle_ab`'s
 `the_jeep_driver_killed_in_his_seat_replays_on_ours` replays the capture
 on ours (server seed 2, retail's death clip; retail's respawn spot
 pinned) and matches every field it compares up to the gsc's placement
-after the respawn, the landing event aside; before these fixes the death
+after the respawn, the landing's event and parm included; before these fixes the death
 snapshot read `pm_type` 7, the corpse ran a frame linked, its view kept
 the pitch, the cone stayed 255 and the respawn kept the seat's fields.
 It now runs the whole capture: past the gsc's placement beside the hull
