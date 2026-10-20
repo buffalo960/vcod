@@ -4630,7 +4630,7 @@ mod tests {
         let mut ui = Ui::new(fs, "0");
         assert!(ui.load_script_menus(fs, &[menu.into()], "0").is_empty());
         let shell = Shell::new();
-        ui.set_server_cvars(cvars.all(&cs));
+        ui.set_server_cvars(cvars.all(&cs, &shell));
         assert!(ui.open_script_popup(menu, false, &shell, &mut Vec::new()));
         let m = ui.find(menu).unwrap();
         let i = (ui.menus[m].items.iter())

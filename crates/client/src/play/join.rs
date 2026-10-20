@@ -4,6 +4,7 @@
 //! minus the socket.
 
 use super::cvars::ClientCvars;
+use crate::console::shell::Shell;
 use vcod_common::net::protocol::{CS_LAYOUT_V1, CsLayout, CsRange};
 
 /// The 32 script menu configstrings a `t <index>` opens: 1180..=1211 on
@@ -141,15 +142,14 @@ impl Join {
     /// `t <idx>` opens the script menu `configstrings[1180 + idx]` names,
     /// answered at once if it is a `team_`/`weapon_` menu covered by
     /// `Join::new`'s arguments and not already auto-answered since the last
-    /// rearm; `u` closes it and drops a waiting one. Everything else,
-    /// including `v`, which `self.cvars` already consumed, is ignored.
+    /// rearm; `u` closes it and drops a waiting one. Everything else is
+    /// ignored; `v` goes through `self.cvars` before this.
     pub fn on_server_command(
         &mut self,
         tokens: &[String],
         configstrings: &[String],
         server_id: i32,
     ) -> Option<MenuCommand> {
-        self.cvars.on_server_command(tokens);
         match tokens.first().map(String::as_str) {
             Some("t") => {
                 let idx = tokens.get(1).and_then(|t| t.parse::<i32>().ok())?;
@@ -195,9 +195,9 @@ impl Join {
     }
 
     /// `g_scriptMainMenu`, the menu Esc opens in a live game.
-    pub fn main_menu(&self, configstrings: &[String]) -> Option<String> {
+    pub fn main_menu(&self, configstrings: &[String], shell: &Shell) -> Option<String> {
         self.cvars
-            .get("g_scriptMainMenu", configstrings)
+            .get("g_scriptMainMenu", configstrings, shell)
             .filter(|n| !n.is_empty())
     }
 
@@ -265,10 +265,9 @@ impl Join {
 
     /// `n`: under `dm`, a round restart reopens the team menu under the
     /// index it last used; under `sd`, whose `pers[]` survives, nothing
-    /// reopens and this is inert (`JoinProbe::reopen_menus`). The client
-    /// cvars take `CG_MapRestart`'s resets.
+    /// reopens and this is inert (`JoinProbe::reopen_menus`). The caller
+    /// runs `CG_MapRestart`'s cvar resets (`ClientCvars::on_map_restart`).
     pub fn on_restart(&mut self) {
-        self.cvars.on_map_restart();
         self.rearm();
     }
 
@@ -308,15 +307,20 @@ mod tests {
     #[test]
     fn t_opens_the_menu_its_configstring_names() {
         let mut j = Join::new(None, None);
-        assert_eq!(
-            j.on_server_command(&toks("v g_scriptMainMenu team_russiangerman"), &cs(), 7),
-            None
+        let mut shell = Shell::new();
+        assert!(
+            j.cvars
+                .on_server_command(&toks("v g_scriptMainMenu team_russiangerman"), &mut shell)
+                .is_some()
         );
         assert_eq!(
             j.on_server_command(&toks("t 0"), &cs(), 7),
             popup("team_russiangerman", 0, false)
         );
-        assert_eq!(j.main_menu(&cs()).as_deref(), Some("team_russiangerman"));
+        assert_eq!(
+            j.main_menu(&cs(), &shell).as_deref(),
+            Some("team_russiangerman")
+        );
         assert_eq!(
             script_menu_response("team_russiangerman", "allies", &cs(), &CS_LAYOUT_V1, 7),
             "mr 7 0 allies"
@@ -438,14 +442,6 @@ mod tests {
         assert!(is_map_restart(&toks("B")));
         assert!(!is_map_restart(&toks("b 0 0")));
         assert!(!is_map_restart(&[]));
-    }
-
-    #[test]
-    fn a_restart_empties_the_objective_text() {
-        let mut j = Join::new(Some("allies".into()), None);
-        j.on_server_command(&toks("v cg_objectiveText DM_KILL_OTHER_PLAYERS"), &cs(), 3);
-        j.on_restart();
-        assert_eq!(j.cvars.get("cg_objectiveText", &cs()).as_deref(), Some(""));
     }
 
     #[test]
