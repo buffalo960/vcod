@@ -334,10 +334,9 @@ impl Movers {
         base
     }
 
-    /// `rotateto` and the three axis verbs. The delta is taken per component
-    /// rather than along the shortest arc: every measured case is a single
-    /// axis, where the two agree, and a multi-axis `rotateto` is UNVERIFIED.
-    /// Started like [`Self::move_to`], which is INFERRED for the angles: no
+    /// `rotateto` and the three axis verbs, per component from `from` to
+    /// `dest` (`rotateto`'s caller folds `dest` within 180 of `from`, movers
+    /// doc 23). Started like [`Self::move_to`], which is INFERRED for the angles: no
     /// capture holds a rotate called on an entity already turning.
     ///
     /// A stationary group starts from `from`, `r.currentAngles`, not from

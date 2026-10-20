@@ -18,7 +18,7 @@
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
 //! beside a turned submodel as it lifts.
 //!
-//! Each capture but `-sinecrush.txt` and `-tiltslab.txt` holds its
+//! Each capture but `-sinecrush.txt` holds its
 //! client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
 //! cmds split it (movers doc 21, "The slide down the slope").
@@ -72,9 +72,10 @@ const PRECISE_TOL: f32 = 0.0003;
 /// on a tilted face sits off retail's along its normal.
 const TILT_TOL: f32 = 0.005;
 
-/// How far a landing on `probe_tiltslab`'s tilted faces slides down them is
-/// the cmd split's (retail 13.3 and 5.7, ours 10.5 and 5.9).
-const TILT_SLIDE: f32 = 3.0;
+/// How far a rest on `probe_tiltslab`'s tilted faces sits along them from
+/// retail's: with retail's cmds replayed, the same 0.003 as [`TILT_TOL`]
+/// off the face, carried down it over the slide (cod11-movers.md 22).
+const TILT_SLIDE: f32 = 0.015;
 
 /// `probe_tiltslab`'s two tilted faces off C: the upward normal and a point
 /// on the face (the probe's header).
@@ -779,14 +780,16 @@ fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
     let mut bad = Vec::new();
     for (r, o) in retail.iter().zip(&ours) {
         assert_eq!(r.0, o.0, "pose order");
-        // The fall's rows ride on when each client's cmds started after the
-        // `setOrigin`; only a player at rest on the slab is compared.
-        if !(r.2 && o.2) {
+        if r.2 != o.2 {
+            bad.push(format!("ground: retail {r:?}\nours   {o:?}"));
             continue;
         }
-        let off = match TILT_PLANES.iter().find(|p| p.0 == r.0) {
-            // A tilted face: the lower sphere's distance from it. How far
-            // the landing slid down it is a cmd split (cod11-movers.md 21).
+        // With retail's cmds replayed every fall lands on retail's frame
+        // and place, to the print's ten-thousandth.
+        let tilted = TILT_PLANES.iter().find(|p| p.0 == r.0);
+        let off = match tilted.filter(|_| r.2) {
+            // At rest on a tilted face: the lower sphere's distance from it,
+            // and how far the landing slid down it.
             Some(&(_, n, p)) => {
                 let d = |v: [f32; 3]| {
                     (0..3)
@@ -801,7 +804,12 @@ fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
             }
             None => diff(r.1, o.1),
         };
-        if off > TILT_TOL {
+        let tol = if tilted.is_some() && r.2 {
+            TILT_TOL
+        } else {
+            PRECISE_TOL
+        };
+        if off > tol {
             bad.push(format!("off {off}: retail {r:?}\nours   {o:?}"));
         }
     }

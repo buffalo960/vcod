@@ -92,10 +92,14 @@ reading -2600.00 at t = 3. So the vector is an initial velocity in units per
 second and gravity is 800 u/s², the `DEFAULT_GRAVITY` the trajectory code
 already carries (`crates/common/src/net/trajectory.rs`).
 
-The time argument is when `movedone` fires, not when the motion stops: the
-entity was still accelerating downward on the frame the notify came. Whether
-it stops there or keeps falling is UNVERIFIED; the probe's sampler ran out on
-the same frame.
+The time argument is when `movedone` fires and when the motion stops: the
+entity was still accelerating downward on the frame its time ran out, and
+holds there after. VERIFIED, `probe_moverreads` (section 23): a
+`movegravity((0, -10, 0), 1)` started at level time 2000 read z -336 at
+3000 and on every frame after. VERIFIED, game.mp `0x5f93b`: the segment
+setup `Reached_ScriptMover` calls (0x5f7b0) evaluates a `TR_GRAVITY` (5)
+`pos` at `level.time` into its own `trBase` and makes it stationary; every
+other type takes the target.
 
 ## 6. `rotatevelocity`
 
@@ -120,9 +124,13 @@ called. `.angles` is normalized: after `rotatevelocity` turned a full 360 it
 read `(0, 0, 0)` while the wire carried 360 (section 9). INFERRED, off
 section 12's "The residual yaw": that is `Reached_ScriptMover`'s
 `AngleNormalize360` at the end of a rotate; while it runs `.angles` is raw.
+VERIFIED, `probe_moverreads` (section 23): `rotateyaw(-90, 1)` from 0 read
+-4.5, -9, ... -85.5 a frame, then 270 once it ended; `rotateroll(-400, 1)`
+read down to -380 and then -39.9957.
 
-Whether `.origin` is written back the same way is UNVERIFIED; the probe read
-`getorigin()`.
+`.origin` is written back the same way. VERIFIED, `probe_moverreads`
+(section 23): `.origin` read every frame of a `movez` and a `movegravity`
+moves on each, `r.currentOrigin` plus the frame's stored `move`.
 
 **Script sees the trajectory one server frame late.** VERIFIED, from both
 halves of the capture at once. `moveto((600,0,100), 1)` called at level time
@@ -170,9 +178,8 @@ the entity kind changes when it starts or stops moving.
 
 ## 10. What is not measured here
 
-- What `movegravity` leaves the entity doing after its `movedone`.
-- Whether `.origin` is written back per frame.
-- A rotation of more than one axis at once, and a brush model with an
+- A rotation of more than one axis at once (section 23 has a `rotateto`
+  and a `rotatevelocity` on three, read through `.angles` only), and a brush model with an
   origin brush, so a pivot other than the world origin.
 
 A second verb on an entity already moving was measured in section 12: it
@@ -2576,16 +2583,78 @@ into `flat` and `edge` (12.12, 37.13) and the 30-degree faces let the
 capsule through to the floor or 20 into the face. With `|sphere| + r`
 every rest on `flat` and `edge` matches to 0.0002, and on the tilted faces
 the lower sphere sits within 0.003 of retail's distance off the face.
-Ours slid 10.5 and 5.9: how far a landing slides down a face is the cmd
-split's (section 21). Each pose's fall also starts about 0.15 s later on
-retail than on ours, the first sample 15 under the drop against ours' 49:
-the cmds the retail client sent after the `setOrigin`, which the capture
-does not record.
+How far a landing slides down a face is the cmd split's (section 21): the
+first capture logged no cmds, and ours slid 10.5 and 5.9 to retail's 13.3
+and 5.7, its falls starting about 0.15 s off retail's. VERIFIED, the
+2026-10-20 recapture with a `--probe-ride` client, whose `CMDS` lines the
+replay sends: every fall row and every rest on `flat` and `edge` matches
+to the print's ten-thousandth, and the rests on the tilted faces sit
+within 0.003 of retail's off the face and 0.011 along it.
 
 vcod: `clip_brush_capsule` takes the axial sides' half extents off the
 sphere offset it is handed. `worldcopy_ab.rs`'s
 `a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail` replays
-the capture, holding every grounded row on `flat` and `edge` and the
-distance off the face on the other two to 0.005, the slide to 3.
+the capture with its cmds, holding every row to 0.0003 but the rests on
+the tilted faces: 0.005 off the face, 0.015 along it.
 Not measured: a rolled submodel's non-axial sides, where the turned
 sphere offset's `-l.z` sign picks the sphere; the slab has none.
+
+## 23. Mover script reads: `.speed`, `.dmg`, `movegravity`, `.angles`
+
+One capture on the retail 1.1d Linux server, mp_carentan, no client,
+2026-10-20: `crates/server/tests/fixtures/movers/mp_carentan-dm-moverreads.txt`,
+off `client-probes/probe_moverreads.gsc`. `ride_ab.rs`'s
+`mover_script_reads_match_retail` replays it and holds every line exact.
+
+**`.speed` and `.dmg` after a spawn.** VERIFIED, the capture: a
+script-spawned `func_bobbing` reads `.speed` 4 and `.dmg` 2, a
+`func_pendulum` 100 and 2 (its speed key goes to a local, so `InitMover`
+finds `ent->speed` 0 and makes it 100, section 18), a `script_model` 0
+and 0.
+
+**`movegravity` on a moving mover.** VERIFIED, the capture: called on a
+`movez(100, 1)` at the frame whose `.origin` read z 85, it starts from 85
+(`getorigin` reads 85 straight after the call and a frame on), not from
+the 90 the running move had reached at `level.time`, as `moveto` would
+(section 12, "A blocked mover"). VERIFIED, game.mp 0x60667..0x6067f:
+the verb loads `r.currentOrigin` into `trBase` without evaluating the old
+trajectory, then evaluates the new arc into `r.currentOrigin` (0x606a9)
+and links (0x606b2). A second `movegravity` on a running arc starts the
+same way.
+
+**`r.currentOrigin` while a mover moves.** VERIFIED, the capture: the
+second arc crossed z 0 at 2400 and read -9.53674e-06, where the arc itself
+evaluates to -9.89437e-06 (base 63.9999962, `400 * dt * dt` on the x87
+stack). VERIFIED, game.mp: `G_MoverTeam` (0x65684) stores `move` as the
+trajectory at `level.time` less `r.currentOrigin`, a float per component,
+and `G_MoverPush` (0x650f0) adds it back (`r.currentOrigin += move`), so a
+frame's origin is `prev + (eval - prev)` with two float roundings, as
+`amove` and `r.currentAngles` are (section 12, "The residual yaw"). On the
+frame a segment ends, `Reached_ScriptMover` evaluates the new trajectory
+straight into `r.currentOrigin` (0x5fa0e) and `r.currentAngles`
+(0x5fab1). VERIFIED: the gravity arm of `BG_EvaluateTrajectory`
+(0x2c6c0) keeps `base + delta * dt - 400 * dt * dt` on the stack and
+rounds once.
+
+**`.angles` mid-rotate.** VERIFIED, the capture: raw while a rotate runs,
+negative below 0 and past 360 above it (`rotateyaw(500, 1)` from 270 read
+up to 745 before settling at 49.9988), then `Reached_ScriptMover`'s
+normalize (section 12). A `rotatevelocity((-40, -120, 0), 1)` likewise.
+
+**`rotateto` takes the near way round.** VERIFIED, the capture: from
+(-69.9994, 290.001, -39.9957), `rotateto((10, -170, -20), 1)` turned yaw
+down 100 to 190, not 460 to -170. VERIFIED, game.mp 0x60ad0..0x60afb:
+each target component is `AngleSubtract(target, r.currentAngles) +
+r.currentAngles`, on the x87 stack. The axis verbs and `rotatevelocity`
+take their delta as given.
+
+**`rotatevelocity`'s ramps are optional.** VERIFIED, the capture (a
+two-argument call ran) and game.mp 0x60e4d: accel and decel are read only
+when there are more than two and three arguments, as on every other verb.
+
+vcod: `builtins::mover::rotate_to` folds the target, `rotate_velocity`
+takes two arguments, `mover::run_one` writes a moving group's
+`prev + (eval - prev)` unless its segment ended that frame, the plan's
+`finish` stops a `movegravity` at the frame's evaluation, and
+`bg_evaluate` takes a gravity arc through `Trajectory::evaluate_kept`
+(`evaluate_stored` on 1.5 and UO, not measured there).

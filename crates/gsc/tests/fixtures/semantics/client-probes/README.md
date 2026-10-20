@@ -1978,15 +1978,35 @@ stood at z 110 over it and falls onto its upward face. A `PROBE f` and a
 `PROBE g` line per frame.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PORT=30632 SECS=45 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33882 SECS=45 \
     tools/run_probe.sh client-probes/probe_tiltslab mp_harbor
 # second shell, about 8 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:30632 --probe-team allies --probe-secs 32
+cargo run -p vcod -- --net-probe 127.0.0.1:33882 --probe-team allies --probe-ride --probe-secs 32
 ```
 
-The 2026-10-12 run is
-`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt`;
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt`, the `PROBE` lines and then the
+client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
+
+## probe_moverreads
+
+Mover script reads, for `docs/research/cod11-movers.md` 23, no client:
+`.speed` and `.dmg` on a script-spawned `func_bobbing` and
+`func_pendulum` (deleted in the frame they spawn, before their period
+drops the level) and on a `script_model`; `.origin` around a
+`movegravity` started on a running `movez`, on a running arc and at rest;
+`.angles` through rotates that cross 0 and 360, a `rotatevelocity` and a
+`rotateto` the near way round.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33881 SECS=20 \
+    tools/run_probe.sh client-probes/probe_moverreads mp_carentan
+```
+
+The 2026-10-20 run is
+`crates/server/tests/fixtures/movers/mp_carentan-dm-moverreads.txt`;
+`crates/server/tests/ride_ab.rs` replays it.
 
 ## probe_sinecrush
 
