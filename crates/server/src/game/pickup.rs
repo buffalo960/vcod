@@ -114,34 +114,17 @@ pub fn touches(player: [f32; 3], item: [f32; 3]) -> bool {
 /// takes the empty slot its class allows, if any, and every weapon on its
 /// alt-fire chain is held beside it without a slot.
 fn give(inv: &mut Inventory, table: &WeaponTable, weapon: usize) {
-    if inv.weapons.holds(weapon) {
-        return;
-    }
     let slot = empty_slot_for(&inv.weapons, table.slot(weapon)).unwrap_or(0);
-    inv.weapons.give(weapon, slot);
-    if let Some(alt) = crate::items::alt_weapon_index(table.list(), weapon) {
-        inv.weapons.give(alt, 0);
-    }
-}
-
-/// `BG_TakePlayerWeapon` (section 8), alt-fire chain included.
-fn take(inv: &mut Inventory, table: &WeaponTable, weapon: usize) {
-    if !inv.weapons.holds(weapon) {
-        return;
-    }
-    inv.weapons.take(weapon);
-    if let Some(alt) = crate::items::alt_weapon_index(table.list(), weapon) {
-        inv.weapons.take(alt);
-    }
+    inv.weapons.give_chain(table, weapon, slot);
 }
 
 /// `BG_IsPlayerWeaponInSlot` with `followAlt` set (section 5): the weapon or
-/// its alt-fire partner sits in a slot.
+/// any weapon on its alt-fire chain sits in a slot.
 fn in_a_slot(weapons: &PlayerWeapons, table: &WeaponTable, weapon: usize) -> bool {
-    let alt = crate::items::alt_weapon_index(table.list(), weapon);
+    let chain = table.alt_chain(weapon);
     weapons.slots[1..=5]
         .iter()
-        .any(|&s| s != 0 && (s as usize == weapon || Some(s as usize) == alt))
+        .any(|&s| s != 0 && chain.contains(&(s as usize)))
 }
 
 /// `BG_GetMaxPickupableAmmo` (section 3). Negative once a shared cap is
@@ -216,7 +199,7 @@ pub fn add_ammo(
                 let left = i32::from(inv.clip[c]) + over;
                 if left <= 0 {
                     inv.clip[c] = 0;
-                    take(inv, table, weapon);
+                    inv.weapons.take_chain(table, weapon);
                     return 0;
                 }
                 inv.clip[c] = left as i16;
@@ -268,11 +251,11 @@ pub fn drop_weapon(inv: &mut Inventory, table: &WeaponTable, weapon: u8) -> Opti
         return None;
     }
     let Some(def) = table.get(w) else {
-        take(inv, table, w);
+        inv.weapons.take_chain(table, w);
         return None;
     };
     if def.clip_only && inv.clip[def.clip_index] == 0 {
-        take(inv, table, w);
+        inv.weapons.take_chain(table, w);
         return None;
     }
     let or_empty = |v: i16| if v == 0 { -1 } else { i32::from(v) };
@@ -283,7 +266,7 @@ pub fn drop_weapon(inv: &mut Inventory, table: &WeaponTable, weapon: u8) -> Opti
     };
     inv.ammo[def.ammo_index] = 0;
     inv.clip[def.clip_index] = 0;
-    take(inv, table, w);
+    inv.weapons.take_chain(table, w);
     Some(dropped)
 }
 
@@ -577,6 +560,18 @@ pub(crate) fn tests_table() -> WeaponTable {
             ("ammoName", "fg42"),
             ("clipName", "fg42"),
             ("displayName", "WEAPON_FG42"),
+            ("altWeapon", "fg42_semi_mp"),
+        ],
+    );
+    put(
+        "fg42_semi_mp",
+        &[
+            ("weaponSlot", "primary"),
+            ("clipSize", "20"),
+            ("maxAmmo", "320"),
+            ("ammoName", "fg42"),
+            ("clipName", "fg42"),
+            ("altWeapon", "fg42_mp"),
         ],
     );
     put(
@@ -631,6 +626,7 @@ pub(crate) fn tests_table() -> WeaponTable {
             ("clipName", "germangrenade"),
         ],
     );
+    vcod_common::weapon_table::link_alts(&mut defs, crate::defs::V1.weapons.split(' '));
     WeaponTable::from_defs(defs)
 }
 

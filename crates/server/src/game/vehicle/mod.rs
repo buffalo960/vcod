@@ -14,7 +14,7 @@ use crate::configstrings::CsRange;
 use crate::game::host::GameHost;
 use info::{VehicleInfo, VehicleInfos};
 use std::collections::HashMap;
-use vcod_gsc::{Cx, EntId, Host, Value};
+use vcod_gsc::{Cx, EntId, ErrorKind, Host, Value};
 
 /// The pool `G_SpawnVehicle` (0x8abfd) takes a slot of; past it retail's
 /// `Com_Error "Hit max vehicle count"`.
@@ -396,7 +396,7 @@ pub fn spawn(
     id: EntId,
     spawn_vars: Vec<(String, String)>,
     loading: bool,
-) {
+) -> Result<(), ErrorKind> {
     let has_delay = spawn_vars
         .iter()
         .any(|(k, _)| k.eq_ignore_ascii_case("delay"));
@@ -407,12 +407,12 @@ pub fn spawn(
     let vehicletype = field_string(host, cx, id, "vehicletype");
     let Some(slot) = host.vehicles.slots.iter().position(Option::is_none) else {
         log::error!("Hit max vehicle count [{MAX_VEHICLES}]");
-        return;
+        return Ok(());
     };
     let Some(info_index) = host.vehicles.infos.find(&vehicletype) else {
         let targetname = field_string(host, cx, id, "targetname");
         log::error!("Can't find info for script vehicle [{targetname}]");
-        return;
+        return Ok(());
     };
     let info = host.vehicles.infos.list[info_index].clone();
     let spawnflags = spawn_vars
@@ -437,7 +437,7 @@ pub fn spawn(
         &info.gunner_weapon,
     ] {
         if !w.is_empty() {
-            host.register_item(&w.to_ascii_lowercase());
+            host.register_item(&w.to_ascii_lowercase())?;
         }
     }
     let hint_string = crate::configstrings::hint_string_alloc(
@@ -536,6 +536,7 @@ pub fn spawn(
         pair_collmap(host, cx, id);
     }
     link(host, cx, id);
+    Ok(())
 }
 
 /// The wheel and gun tags the step reads off the vehicle's model.

@@ -696,6 +696,21 @@ fn weapon_argument(host: &GameHost, cx: &Cx, args: &[Value]) -> Result<(String, 
     Ok((name, index))
 }
 
+/// `BG_GivePlayerWeapon`'s `RegisterItem(weapon, 1)` (0x36a38): a weapon
+/// the player does not hold yet is registered, which past
+/// `level.initializing` is a script error unless it was precached.
+fn register_given(
+    host: &mut GameHost,
+    slot: usize,
+    name: &str,
+    index: usize,
+) -> Result<(), ErrorKind> {
+    if host.client_weapons[slot].holds(index) {
+        return Ok(());
+    }
+    host.register_item(name)
+}
+
 /// `self giveWeapon(name)` (`PlayerCmd_giveWeapon` 0x43020): hold the weapon,
 /// fill the slot its weapon file's `weaponSlot` names, and load it with a
 /// full clip and its `startAmmo` in reserve. Object model doc, section 20;
@@ -713,7 +728,8 @@ pub fn give_weapon(
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
-    let (_, index) = weapon_argument(host, cx, args)?;
+    let (name, index) = weapon_argument(host, cx, args)?;
+    register_given(host, slot, &name, index)?;
     let weapons = host.weapons.clone();
     host.client_weapons[slot].give_chain(&weapons, index, weapons.slot(index));
     if let Some(def) = weapons.get(index) {
@@ -919,6 +935,8 @@ pub fn set_weapon_slot_weapon(
     if index == 0 {
         return Ok(Value::Undefined);
     }
+    let name = host.defs.weapon_name(index).unwrap_or_default();
+    register_given(host, client, name, index)?;
     host.client_weapons[client].give_chain(&weapons, index, slot);
     if let Some(def) = weapons.get(index) {
         host.weapon_op(
@@ -1868,6 +1886,33 @@ mod tests {
         host.weapons = std::rc::Rc::new(crate::weapons::WeaponTable::load(&fs, &crate::defs::V1));
         host.fs = Some(fs);
         Some((vm, host))
+    }
+
+    /// `BG_GivePlayerWeapon` registers what it gives: past
+    /// `level.initializing` a weapon nobody precached is `RegisterItem`'s
+    /// script error and is not given, while one already registered (or
+    /// already held) goes through.
+    #[test]
+    fn giving_an_unregistered_weapon_past_initialization_is_an_error() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn_client(cx, 0, None).unwrap();
+            let t = Some(Target::Entity(e));
+            let colt = Value::String(cx.intern_exact("colt_mp"));
+            give_weapon(&mut host, cx, t, &[colt]).unwrap();
+            host.initializing = false;
+            host.client_weapons[0] = Default::default();
+            give_weapon(&mut host, cx, t, &[colt]).unwrap();
+            let mp40 = Value::String(cx.intern_exact("mp40_mp"));
+            assert_eq!(
+                give_weapon(&mut host, cx, t, &[mp40]).err(),
+                Some(ErrorKind::Custom(
+                    "game tried to register the item 'mp40_mp' after initialization finished"
+                        .into()
+                ))
+            );
+            assert!(!host.client_weapons[0].holds(weapon_index("mp40_mp").unwrap()));
+        });
     }
 
     /// The stock allies loadout on client 0, with the ops it pushed dropped:
