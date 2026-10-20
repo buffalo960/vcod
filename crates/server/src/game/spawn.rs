@@ -107,7 +107,7 @@ pub fn spawn_entities_from_string(
         // contents 0: it never links, and the vehicle takes its `*N` below.
         if classname == "script_vehicle" && !host.vehicles.infos.list.is_empty() {
             let vars = block.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            crate::game::vehicle::spawn(host, cx, id, vars, true);
+            crate::game::vehicle::spawn(host, cx, id, vars, true)?;
         }
         if classname == "trigger_hurt" {
             register_sound_alias(host, trigger_hurt_sound(&block));
@@ -139,7 +139,7 @@ pub fn spawn_entities_from_string(
         link_script_entity(host, cx, &block, id, &classname);
         crate::game::mover::spawn_sine(host, cx, id, &classname, Some(&block));
         if let Some(item) = spawn_item_name(host, cx, id, &classname) {
-            host.register_item(&item.name);
+            host.register_item(&item.name)?;
             match item.row {
                 Some(row) => {
                     crate::game::item::attach(host, id, row);
@@ -219,7 +219,7 @@ pub fn spawn_from_vars(
     for (k, v) in vars {
         parse_field(host, cx, id, k, v);
     }
-    crate::game::vehicle::spawn(host, cx, id, vars.to_vec(), false);
+    crate::game::vehicle::spawn(host, cx, id, vars.to_vec(), false)?;
     Ok(id)
 }
 
@@ -507,7 +507,7 @@ fn register_sound_alias(host: &mut GameHost, name: String) {
 /// are deliberately absent: five alt-fire files (`bar_slow_mp`,
 /// `fg42_semi_mp`, `mp44_semi_mp`, `ppsh_semi_mp`, `thompson_semi_mp`) carry
 /// an empty `radiantName`, since they are never placed directly and reach
-/// `Items::register` only through the alt-fire link (`alt_weapon_index`);
+/// `Items::register` only through the alt-fire link (`WeaponTable::alt_chain`);
 /// the three `mg42_bipod_*` files carry no `radiantName` key at all, since
 /// a mounted mg42 is placed as `misc_mg42` with its item named by the
 /// `weaponinfo` key instead (see `spawn_item_name`); `ptrs41_antitank_rifle_mp`
@@ -1269,6 +1269,7 @@ mod tests {
     #[test]
     fn a_placed_fg42_sets_its_own_bit_and_its_alt_fires() {
         let (mut vm, mut host) = fixture();
+        host.weapons = std::rc::Rc::new(crate::game::pickup::tests_table());
         let lump = "{\n\"classname\" \"worldspawn\"\n}\n\
                     {\n\"classname\" \"mpweapon_fg42\"\n\"origin\" \"0 0 0\"\n}\n";
         vm.with_cx(|cx| super::spawn_entities_from_string(&mut host, cx, lump))
@@ -1310,10 +1311,34 @@ mod tests {
             .unwrap();
 
         let mut expected = Items::default();
-        expected.register("mosin_nagant_mp");
-        expected.register("mosin_nagant_sniper_mp");
-        expected.register("kar98k_sniper_mp");
-        expected.register("rgd-33russianfrag_mp");
+        expected
+            .register(
+                "mosin_nagant_mp",
+                &crate::weapons::WeaponTable::empty(),
+                true,
+            )
+            .unwrap();
+        expected
+            .register(
+                "mosin_nagant_sniper_mp",
+                &crate::weapons::WeaponTable::empty(),
+                true,
+            )
+            .unwrap();
+        expected
+            .register(
+                "kar98k_sniper_mp",
+                &crate::weapons::WeaponTable::empty(),
+                true,
+            )
+            .unwrap();
+        expected
+            .register(
+                "rgd-33russianfrag_mp",
+                &crate::weapons::WeaponTable::empty(),
+                true,
+            )
+            .unwrap();
         assert_eq!(host.items.bitstring(), expected.bitstring());
     }
 
@@ -1409,7 +1434,7 @@ mod tests {
         let name = def.projectile_model.expect("the frag names a projectile");
         let (_vm, mut host) = fixture();
         host.fs = Some(std::rc::Rc::new(fs));
-        host.register_item("stielhandgranate_mp");
+        host.register_item("stielhandgranate_mp").unwrap();
         assert_ne!(
             crate::configstrings::weapon_model_index(
                 &host.configstrings,

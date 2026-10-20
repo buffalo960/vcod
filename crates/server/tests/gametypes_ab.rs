@@ -919,6 +919,47 @@ fn log_view(lines: &[String]) -> Vec<String> {
     }))
 }
 
+/// The `getTime()` of each `PROBE spawned` pick of client `slot` (a probe
+/// that logs them, `probe_bel`), the first against the role's first
+/// playing snapshot, then each against its `PROBE placed`. Retail runs the
+/// thread a menu answer wakes on the new frame's clock, so the first pick
+/// reads that snapshot's time, and its placing `wait 0.05` wakes on the
+/// same one; a pick off `respawn`'s thread is placed 50 later
+/// (cod11-gametypes-re-bel.md 8.7).
+fn spawn_clock(log: &[String], slot: usize, role: &[String]) -> Vec<String> {
+    let probe = |l: &str, tag: &str| -> Option<i64> {
+        let w: Vec<&str> = l.strip_prefix(tag)?.split(' ').collect();
+        (w.first()? == &slot.to_string()).then_some(())?;
+        w.get(2)?.parse().ok()
+    };
+    let first_play = role.iter().find_map(|l| {
+        let l = l.strip_prefix("!trace ")?;
+        l.contains(" pm_type=0 ").then_some(())?;
+        l.split(' ')
+            .find_map(|w| w.strip_prefix("serverTime="))?
+            .parse::<i64>()
+            .ok()
+    });
+    let mut out = Vec::new();
+    for (i, l) in log.iter().enumerate() {
+        let Some(t) = probe(l, "PROBE spawned ") else {
+            continue;
+        };
+        if out.is_empty() {
+            out.push(match first_play {
+                Some(p) => format!("first pick {:+} of the first playing snapshot", t - p),
+                None => "never playing".to_string(),
+            });
+        }
+        let placed = log[i + 1..].iter().find_map(|l| probe(l, "PROBE placed "));
+        out.push(match placed {
+            Some(p) => format!("placed {:+}", p - t),
+            None => "unplaced".to_string(),
+        });
+    }
+    out
+}
+
 fn read_lines(path: &str) -> Vec<String> {
     std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("read {path}: {e}"))
@@ -937,6 +978,11 @@ fn compare(
     log: Vec<String>,
     end_ms: i64,
 ) {
+    let retail_log = read_lines(&format!(
+        "{FIXTURES}/{}-{gametype}-log{}.txt",
+        setup.map,
+        setup.tag()
+    ));
     let mut failures = Vec::new();
     let mut check = |role: &str, view: &str, retail: &[String], ours: &[String]| {
         if report() {
@@ -983,6 +1029,12 @@ fn compare(
         for ((name, r), (_, o)) in rv.iter().zip(&ov) {
             check(role, name, r, o);
         }
+        check(
+            role,
+            "spawn clock",
+            &spawn_clock(&retail_log, i, &retail),
+            &spawn_clock(&log, i, &ours),
+        );
     }
     // Two probe threads that wake on one frame log in an order that
     // alternates with the frame's parity, so the state lines are their own

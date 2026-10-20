@@ -2230,8 +2230,23 @@ carriers against the section 19 captures.
   on a fraction under 1 (0xa17d4) sets the origin to the trace's end
   before the blast's lift trace, surface 20 (VERIFIED decompile and
   constants). 1.1's has no such move (VERIFIED decompile, game.mp
-  0x53d6c; cod11-combat.md 13.2). vcod ports
-  it (`a_uo_explode_in_water_comes_up_to_the_surface`; no capture).
+  0x53d6c; cod11-combat.md 13.2). A frag whose fuse runs out on
+  mp_harbor's floor at z -190.4, 70 under the water, goes out at z
+  -119.875 on UO 1.51b and at -190 on 1.1d and 1.5b (VERIFIED, live,
+  `fixtures/missiles/mp_harbor-water-frag{,-15,-uo}.txt`). vcod ports
+  it (`a_uo_explode_in_water_comes_up_to_the_surface`), and
+  `missile_edge_ab`'s `a_frag_into_water_splashes` holds the explode's
+  frame and origin to the three captures.
+- **After the explode.** `G_ExplodeMissile` (0x5e2b5) sets `eType` 0,
+  zeroes `r.contents` (`+0x120`) and sets `freeAfterEvent` (`+0x194`),
+  and leaves `takedamage` (`+0x17d`), `health`, `think` and `nextthink`
+  as they were (VERIFIED decompile). The entity pass (0x59a35, unnamed in
+  the export) frees an entity with `freeAfterEvent` once its event is
+  300 ms old and before that runs nothing for it: no `G_RunMissile`, no
+  `G_RunThink` (VERIFIED decompile). So a `G_GrenadeDie` from a blast
+  inside those 300 ms only sets a `nextthink` that never runs, and a
+  round passes the zero contents (INFERRED, control flow; the chain
+  capture below shows no second explode).
 - **Smoke.** `fire_grenade` (0x5f7ad) arms `G_ExplodeSmokeGrenade`
   (0x5eb72) for type 1: 185 with the normal of a trace 16 down, type 1 in
   `es.scale`, the surface type, then `G_FreeEntity` 15000 ms on, with
@@ -2263,6 +2278,26 @@ carriers against the section 19 captures.
   `a_shot_satchel_blows_100_ms_on`,
   `a_round_stops_on_a_satchel_its_shooter_does_not_own`). The bounce
   sound is the client's (`cloth`, section 19).
+- **Satchel shot off, satchel chain** (`client-probes/probe_satchelshot`,
+  mp_cassino tdm, 2026-10-20, `fixtures/missiles/mp_cassino-satchel{shot,chain}-uo.txt`
+  and `*-uo-satchel{shot,chain}.bin`). Two satchels thrown 2.4 s apart.
+  A sighted kar98k round into the second, 4.5 s after the first throw:
+  `EV_BULLET_HIT` (178) on it, and its 185 (type 2, surface 21,
+  `eFlags` 0x90) on the snapshot 100 ms after the shot's. Its blast
+  leaves the first satchel, 225 units off, alone (the thrower, 380 off,
+  takes 31), and that one goes off on its own fuse, 6 s after its throw
+  (VERIFIED, live). With no shot and the second thrown 10 degrees over,
+  137 units from the first: the first goes off on its fuse, the second
+  100 ms later, and the first, inside the 300 ms its explode rides the
+  wire when the second's blast reaches it, never goes off again (VERIFIED,
+  live; two explodes in all, the thrower hit 48 then 193). vcod matches
+  both runs explode for explode, field for field and frame for frame
+  (`uo_weapons_ab`'s `a_shot_satchel_goes_off_100_ms_on`,
+  `a_satchel_blast_sets_off_the_next_and_none_goes_off_twice`); the shot
+  satchel's rest moves a tenth of a unit with the client's cmd timing
+  between two retail runs, so its explode origin is held to a unit. vcod
+  keeps a gone-off missile out of the blast and round targets, and its
+  pool never runs a think for one (`a_satchel_gone_off_never_goes_off_again`).
 - **Satchel capture** (`*-uo-satchel.bin`, mp_cassino dm, 2026-10-14,
   `probe_weapon satchelcharge_mp`, which `probe_uofx` hands over through the
   `satchel` slot with one charge, shooter on `--probe-uo-weapon smoke`):
@@ -2402,8 +2437,16 @@ carriers against the section 19 captures.
   used to fire it as a bullet (3 damage, `MOD_PISTOL_BULLET` a pulse);
   its fire event now starts nothing (`a_flamethrower_pulse_deals_no_bullet_damage`).
   `fdc <n>`
-  (`Cmd_FlameDamageClient_f` 0x4ee2c, one argument, 0 to
-  `level.num_entities`) stores `n` and the time; `G_CheckFlameDamage`
+  (`Cmd_FlameDamageClient_f` 0x4ee2c) stores `n` and the time when it
+  has exactly one argument, read through a 4-byte `trap_Argv` buffer (its
+  first three characters) and `atoi`, and `0 <= n <= level+0x1e4`;
+  anything else prints `bad arg count` or `bad inflictor num` and keeps
+  the last report (VERIFIED decompile). `level+0x1e4` is `maxclients`,
+  not `num_entities`: `G_InitGame` (0x586cf) copies `g_maxclients`'s
+  integer there and `G_Spawn` counts entities at `level+0xc` (VERIFIED
+  decompile). So `fdc 1000` reads as 100, `fdc x`
+  as 0, and `n == maxclients` passes (INFERRED, off the compare);
+  `server::fdc_inflictor` reads it the same way; `G_CheckFlameDamage`
   (0x3f4d4) runs in `ClientEndFrame` (0x42f59) after the cursor hints: with
   `wbuttons` bit 1 in the client's last cmd and the report inside 3000 ms,
   the reporter takes the flamethrower's `damage` (2), four times over when
@@ -2430,10 +2473,7 @@ carriers against the section 19 captures.
 
 A swing now strikes a satchel's box as a round does, and the other
 missiles' every-frame links are unlinks, their `r.contents` being 0
-(cod11-combat.md 2.5, 14.7). A live capture of a satchel shot off (the decompile and unit tests only);
-a satchel shot in the 300 ms its explode rides the wire (retail's
-`takedamage` survives the explode, so a second `G_GrenadeDie` there would
-explode it again; INFERRED, not ported); a live run of a retail UO client burning on vcod-server; the
+(cod11-combat.md 2.5, 14.7). A live run of a retail UO client burning on vcod-server; the
 flamethrower's stray bullets on vcod-server. The bipod deploy's entity
 bit is not a gap: `BG_PlayerStateToEntityState` (game.mp.uo 0x2cd8b) ORs
 0x100 (1.1's 0x200) into the entity's `eFlags` whenever `pm_flags` 0x20,

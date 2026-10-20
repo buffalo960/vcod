@@ -97,7 +97,7 @@ fn precache_vehicle(
         info.gunner_weapon.clone(),
     ];
     for g in guns.iter().filter(|g| !g.is_empty()) {
-        host.register_item(&g.to_ascii_lowercase());
+        host.register_item(&g.to_ascii_lowercase())?;
     }
     Ok(Value::Undefined)
 }
