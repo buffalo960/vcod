@@ -823,6 +823,12 @@ raised in every cmd reaches a waiter once a frame.
 - VERIFIED: `G_TouchTriggers` notifies `"touch"` on the spot (0x3fa4d,
   0x3fa6f; `cod11-combat.md` 14.7), and so does `Cmd_Activate_f` its
   `trigger_use`'s `"trigger"` (0x48547; `cod11-gametypes-re-bel.md` 4).
+- VERIFIED, `client-probes/probe_bel` on retail 1.1d (2026-10-20,
+  `cod11-gametypes-re-bel.md` 8.7): the menu thread `Cmd_MenuResponse_f`'s
+  `menuresponse` wakes reads the new frame's `getTime()` and runs ahead
+  of a `wait 0.05` due on that frame, so it too waits for the frame's
+  first round. vcod still runs it in the packet pass on the last frame's
+  clock; that section says why it is open.
 - VERIFIED: `Touch_Multi` (0x65a18), `hurt_touch` (0x64dc4),
   `Activate_trigger_damage` (0x650c0) and `G_Trigger` (0x656f0, the
   `trigger_lookat` path) do not notify `"trigger"`. Each appends (entity

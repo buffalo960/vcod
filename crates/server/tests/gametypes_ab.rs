@@ -104,7 +104,15 @@ const SCORE_PERIOD_MS: i64 = 2000;
 /// Views a run is known to differ from retail in, as `(gametype, role, view,
 /// why)`. An entry suppresses that view's comparison and asserts it still
 /// differs, so a gap that starts matching fails and has to be deleted.
-const GAPS: &[(&str, &str, &str, &str)] = &[];
+const GAPS: &[(&str, &str, &str, &str)] = &[
+    // The marker's fifth mean reads y -900 for retail's -901: a truncation
+    // edge a tenth of a unit wide. The allied body slides off the probe's
+    // `setOrigin` onto a grade a frame later on ours, where the gate's
+    // client sends one cmd a frame and retail's three
+    // (cod11-gametypes-re-bel.md 8.7).
+    ("bel", "first", "marker", "the slide's cmd split"),
+    ("bel", "second", "marker", "the slide's cmd split"),
+];
 
 fn report() -> bool {
     std::env::var("GAMETYPES_REPORT").is_ok_and(|v| v == "1")
@@ -273,8 +281,10 @@ fn run_ours(
     let gametype = probe.strip_prefix("probe_").unwrap_or(probe);
     sv.pin_spawns(
         roles
-            .map(|r| retail_spawns(setup, gametype, r, &fs))
-            .to_vec(),
+            .iter()
+            .enumerate()
+            .map(|(slot, r)| retail_spawns(setup, gametype, r, slot, &fs))
+            .collect(),
     );
     if setup.uo {
         sv.set_protocol(&PROTOCOL_V22);
@@ -367,33 +377,117 @@ const SEED: u64 = 0x5eed_d0c1;
 /// A spawn point's `(origin, angles)`, `None` for ours' own pick.
 type SpawnPin = Option<([f32; 3], [f32; 3])>;
 
-/// Where retail spawned a role's player into play, each time, in order: the
-/// map's spawn point under the first playing snapshot (`pm_type` 0, or 1
-/// linked) of each life, after a non-playing snapshot or a gamestate or
-/// restart, with that point's angles; a killcam's run is not a life. `None`
-/// where no point is under it: the probe moved the body before any snapshot
-/// showed the pick, so retail never sent it and ours' own stands. Retail's
-/// script draws come from a wall-clock seed (map-cycle doc 4.8), so ours
-/// replays the picks rather than its own draws.
+/// Every gametype's spawn points on `map`, each as `placeSpawnpoint` drops
+/// it (`placed_origin`, the server's own drop under the install's build),
+/// beside its entity-lump origin and angles.
+fn placed_points(
+    fs: &vcod_common::pk3::Pk3Fs,
+    map: &str,
+    uo: bool,
+) -> Vec<([f32; 3], [f32; 3], [f32; 3])> {
+    let path = fs.resolve_map(map).expect("map in the mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&path).unwrap()).unwrap();
+    let world = vcod_server::world::World::from_bsp(&bsp, Some(fs));
+    let proto = if uo {
+        &PROTOCOL_V22
+    } else {
+        &vcod_common::net::protocol::PROTOCOL_V1
+    };
+    world
+        .collision
+        .set_arith(vcod_common::patch::Arith::for_protocol(proto));
+    common::spawn_points(fs, map)
+        .into_iter()
+        .map(|(origin, angles)| {
+            let (placed, _) =
+                vcod_server::game::builtins::entity::placed_origin(&world.collision, origin);
+            (placed, origin, angles)
+        })
+        .collect()
+}
+
+/// The point a body at `at` stands on, placed: one within two units across
+/// and four up or down of where it dropped. Two gametypes' points can share
+/// a spot at different heights and drop to the same floor; the lowest one
+/// in the lump is taken, as a pick off the lump's origins was.
+fn point_under(points: &[([f32; 3], [f32; 3], [f32; 3])], at: [f32; 3]) -> SpawnPin {
+    points
+        .iter()
+        .filter(|(p, ..)| (p[0] - at[0]).hypot(p[1] - at[1]) < 2.0 && (p[2] - at[2]).abs() < 4.0)
+        .min_by(|a, b| a.1[2].total_cmp(&b.1[2]))
+        .map(|&(placed, _, angles)| (placed, angles))
+}
+
+/// `(x, y, z)` as gsc prints a vector, or a trace's `x,y,z`.
+fn parse_vec(v: &str) -> [f32; 3] {
+    let v: Vec<f32> = v
+        .trim_matches(|c| c == '(' || c == ')')
+        .split(',')
+        .map(|t| t.trim().parse().expect("a coordinate"))
+        .collect();
+    [v[0], v[1], v[2]]
+}
+
+/// Where retail spawned a role's player (client `slot`) into play, each
+/// time, in order. Retail's script draws come from a wall-clock seed
+/// (map-cycle doc 4.8), so ours replays the picks rather than its own
+/// draws, each at the point as `placeSpawnpoint` dropped it.
+///
+/// A probe that moves every spawn before a snapshot can show it
+/// (`probe_bel`) logs each pick itself, `PROBE spawned <slot> <team> <time>
+/// <origin>`, and those lines are the picks. Otherwise each life's pick is
+/// the point under its first playing snapshot (`pm_type` 0, or 1 linked)
+/// after a non-playing one, a gamestate, a restart or a killcam; a
+/// killcam's run, whose playerstate is the killer's archived one, is not a
+/// life. Every pick has to resolve: one that does not is a spawn retail
+/// never showed, which this gate cannot replay.
 fn retail_spawns(
     setup: &Setup,
     gametype: &str,
     role: &str,
+    slot: usize,
     fs: &vcod_common::pk3::Pk3Fs,
 ) -> Vec<SpawnPin> {
-    let lines = read_lines(&format!(
-        "{FIXTURES}/{}-{gametype}-{role}{}.txt",
-        setup.map,
-        setup.tag()
-    ));
+    let fixture = |what: &str| {
+        read_lines(&format!(
+            "{FIXTURES}/{}-{gametype}-{what}{}.txt",
+            setup.map,
+            setup.tag()
+        ))
+    };
+    let logged: Vec<[f32; 3]> = fixture("log")
+        .iter()
+        .filter_map(|l| {
+            let rest = l.strip_prefix("PROBE spawned ")?;
+            let mut w = rest.splitn(4, ' ');
+            (w.next()?.parse::<usize>().ok()? == slot).then_some(())?;
+            Some(parse_vec(w.nth(2)?))
+        })
+        .collect();
+    if !logged.is_empty() {
+        let points = placed_points(fs, setup.map, setup.uo);
+        return logged
+            .into_iter()
+            .map(|at| {
+                let pin = point_under(&points, at);
+                assert!(
+                    pin.is_some(),
+                    "{gametype} {role}: no spawn point under {at:?}"
+                );
+                pin
+            })
+            .collect();
+    }
+    let lines = fixture(role);
     // Each life: its first playing trace's spawn point, and whether any of
-    // its traces is a killcam, whose playerstate is the killer's archived one.
-    let mut lives: Vec<(SpawnPin, bool)> = Vec::new();
+    // its traces is a killcam.
+    let mut lives: Vec<(SpawnPin, bool, String)> = Vec::new();
     let mut points = Vec::new();
     let mut playing = false;
     for line in &lines {
         if line.starts_with("!gamestate") {
-            points = common::spawn_points(fs, field(line, "mapname").expect("a mapname"));
+            let map = field(line, "mapname").expect("a mapname");
+            points = placed_points(fs, map, setup.uo);
         }
         if line.starts_with("!gamestate") || matches!(cmd_text(line), Some("n" | "B")) {
             playing = false;
@@ -403,33 +497,32 @@ fn retail_spawns(
             continue;
         }
         let now = matches!(field(line, "pm_type"), Some("0" | "1"));
-        if now && !playing {
-            let at: Vec<f32> = field(line, "origin")
-                .expect("a trace origin")
-                .split(',')
-                .map(|v| v.parse().expect("a coordinate"))
-                .collect();
-            // A spawn point sits over the floor the body falls to, and two
-            // gametypes' points can share a spot at different heights: the
-            // lowest one over the body is its own.
-            let pick = points
-                .iter()
-                .filter(|(p, _)| {
-                    (p[0] - at[0]).hypot(p[1] - at[1]) < 2.0
-                        && (-2.0..128.0).contains(&(p[2] - at[2]))
-                })
-                .min_by(|a, b| a.0[2].total_cmp(&b.0[2]));
-            lives.push((pick.copied(), false));
-        }
+        // A killcam's first snapshot can come before its HUD does: the
+        // run it opened is marked, and the snapshot after the killcam
+        // starts the next life.
         if now && field(line, "hud").is_some_and(|h| h.contains("MPSCRIPT_KILLCAM")) {
-            lives.last_mut().expect("a life").1 = true;
+            if playing {
+                lives.last_mut().expect("a life").1 = true;
+            }
+            playing = false;
+            continue;
+        }
+        if now && !playing {
+            let at = parse_vec(field(line, "origin").expect("a trace origin"));
+            lives.push((point_under(&points, at), false, line.clone()));
         }
         playing = now;
     }
     lives
         .into_iter()
-        .filter(|(.., killcam)| !killcam)
-        .map(|(pick, ..)| pick)
+        .filter(|(_, killcam, _)| !killcam)
+        .map(|(pick, _, line)| {
+            assert!(
+                pick.is_some(),
+                "{gametype} {role}: no spawn point under {line}"
+            );
+            pick
+        })
         .collect()
 }
 
@@ -590,9 +683,8 @@ fn normalize_hud(h: &str) -> String {
         .join(";")
 }
 
-/// An objective slot without its origin: bel's compass marker starts where
-/// the random spawn pick put the allied player and follows a running mean of
-/// where it stood, and hq's radio is a random pick of the map's seven.
+/// An objective slot without its origin: hq's radio is a random pick of the
+/// map's seven, and bel's compass marker has its own view (`marker`).
 fn objectives_without_origin(o: &str) -> String {
     o.split(',')
         .filter(|w| w.contains(':'))
@@ -618,7 +710,7 @@ fn objectives_without_entnum(o: &str) -> String {
 }
 
 /// Every view of one recording, by name. `bel` and `hq` drop the objective
-/// origins ([`objectives_without_origin`]); a UO run drops the entity
+/// origins (bel's go to `marker`) ([`objectives_without_origin`]); a UO run drops the entity
 /// numbers its unspawned vehicles shift ([`objectives_without_entnum`]).
 fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<String>)> {
     let cmds = || lines.iter().filter_map(|l| cmd_text(l));
@@ -713,6 +805,16 @@ fn views(lines: &[String], gametype: &str, uo: bool) -> Vec<(&'static str, Vec<S
                     o
                 }
             })),
+        ),
+        // bel's compass marker with its origin: where the replayed spawn
+        // pick put the allied player, then a running mean of where he stood.
+        (
+            "marker",
+            if gametype == "bel" {
+                tf("objectives")
+            } else {
+                Vec::new()
+            },
         ),
         // Per client: when the second one shows up against the first one's
         // spawn is the two probes' launch race, not the server.

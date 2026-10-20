@@ -567,6 +567,9 @@ impl Diff {
     }
 }
 
+/// A move between two snapshots this long is a teleport, not a walk.
+const TELEPORT: f32 = 64.0;
+
 /// Retail trace `t` in `phase`, against our sample at the trace's offset
 /// from the window's first cmd.
 fn diff_phase(diff: &mut Diff, rig: &Rig, fx: &SdFixture, phase: &str, ours: &[Ours], t0: i32) {
@@ -575,9 +578,33 @@ fn diff_phase(diff: &mut Diff, rig: &Rig, fx: &SdFixture, phase: &str, ours: &[O
     // Where ours stood when retail's link began: the origin a linked client
     // is held at, since absolute origins differ (retail slid into its link).
     let mut anchor: Option<[f32; 3]> = None;
+    let mut last: Option<[f32; 3]> = None;
     for t in &ph.traces {
         let rel = i64::from(t.server_time - t0);
         let o = paired(ours, rel);
+        // A script teleport (the probe's post-plant `setOrigin` back to the
+        // spawn) lands on an absolute spot, so ours has to stand there on
+        // the same frame and not the one before.
+        if last.is_some_and(|l| dist(l, t.origin) > TELEPORT) {
+            let before = paired(ours, rel - FRAME_MS);
+            let landed = ours
+                .iter()
+                .position(|s| dist(s.ps.origin(p), t.origin) < 1.0)
+                .map(|i| (i as i64 + 1) * FRAME_MS - rel);
+            if dist(o.ps.origin(p), t.origin) >= 1.0
+                || dist(before.ps.origin(p), t.origin) < TELEPORT
+            {
+                let ms = rel - i64::from(ph.traces[0].server_time - t0);
+                diff.row(
+                    phase,
+                    ms,
+                    "teleport lands (ms off retail's frame)",
+                    0,
+                    landed.map_or("never".to_string(), |d| d.to_string()),
+                );
+            }
+        }
+        last = Some(t.origin);
         let a = if t.pm_type == 1 {
             *anchor.get_or_insert_with(|| o.ps.origin(p))
         } else {

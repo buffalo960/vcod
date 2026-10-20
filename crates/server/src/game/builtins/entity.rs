@@ -661,15 +661,36 @@ pub fn place_spawnpoint(
     let Some(world) = host.world.clone() else {
         return Ok(Value::Undefined);
     };
+    let (placed, solid) = placed_origin(&world.collision, origin);
+    if solid {
+        log::warn!(
+            "gsc: spawn point entity {} is in solid at ({}, {}, {})",
+            id.0,
+            placed[0] as i32,
+            placed[1] as i32,
+            placed[2] as i32
+        );
+    }
+    host.set_field(cx, id, origin_field, Value::Vector(placed))?;
+    Ok(Value::Undefined)
+}
+
+/// Where [`place_spawnpoint`] puts a spawnpoint at `origin`, and whether the
+/// spot is in solid. A gate that pins a retail spawn pick
+/// (`Server::pin_spawns`) places the map's point with it.
+pub fn placed_origin(
+    collision: &vcod_common::collision::CollisionWorld,
+    origin: [f32; 3],
+) -> ([f32; 3], bool) {
     let start = Vec3::from(origin);
     let (mins, maxs) = (Vec3::from(PLAYER_MINS), Vec3::from(PLAYER_MAXS));
-    let up = world.collision.box_trace(
+    let up = collision.box_trace(
         start,
         start + Vec3::new(0.0, 0.0, CEILING_CHECK),
         mins,
         maxs,
     );
-    let down = world.collision.box_trace(
+    let down = collision.box_trace(
         up.endpos,
         up.endpos - Vec3::new(0.0, 0.0, DROP_DISTANCE),
         mins,
@@ -677,21 +698,8 @@ pub fn place_spawnpoint(
     );
     // The third trace tests where the spawnpoint ended up, and it shares
     // the drop's result buffer: `G_SetOrigin` (0x5c086) reads its endpoint.
-    let test = world
-        .collision
-        .box_trace(down.endpos, down.endpos, mins, maxs);
-    if test.startsolid {
-        log::warn!(
-            "gsc: spawn point entity {} is in solid at ({}, {}, {})",
-            id.0,
-            down.endpos.x as i32,
-            down.endpos.y as i32,
-            down.endpos.z as i32
-        );
-    }
-    let placed = Value::Vector(test.endpos.into());
-    host.set_field(cx, id, origin_field, placed)?;
-    Ok(Value::Undefined)
+    let test = collision.box_trace(down.endpos, down.endpos, mins, maxs);
+    (test.endpos.into(), test.startsolid)
 }
 
 /// How far above its origin `placeSpawnpoint` looks for a ceiling, and how
