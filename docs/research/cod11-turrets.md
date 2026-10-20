@@ -1477,9 +1477,9 @@ may carry 0xC000; no capture covers it.
   and roll 0. INFERRED, from the `AxisToAngles` call 7.1 reads on the gun's
   axis times the body's: retail carries a tilted gun's pitch and roll there
   too.
-- INFERRED: the muzzle takes `tag_flash`'s distance from `tag_player` off the
-  model's bind pose, where 0x51488 reads both tags off the animated model
-  (section 6.3).
+- The muzzle takes `tag_flash`'s distance from `tag_player` with both tags
+  turned by the barrel about their own pivots, `tag_aim` and
+  `tag_aim_animated` (13.8).
 - The round is traced and its hits handed to the damage callback in the frame
   it was fired (12.5), after that frame's script frame. What the callback
   leaves (sim ops, weapon ops, health) is applied a second time there. A
@@ -2251,21 +2251,33 @@ module, after the fire's muzzle stores (0x5aa90).
   bones: `tag_player` hangs off `tag_aim` (under `tag_dummy`), and
   `tag_flash` off `tag_aim_animated`, `mg01`, `bi_base` and `tag_pivot`.
   The two chains pivot on different points, so the reach changes with
-  the aim. INFERRED: retail poses `tag_flash` on its own chain under the
-  barrel's controllers, and 1.1d does too. vcod turns `tag_player` about
-  `tag_aim` and reaches the bind distance.
+  the aim. VERIFIED, `turret_controller` (1.1d `game.mp.i386.so` 0x63348,
+  UO 0x6c5e9): `G_DObjSetControlTagAngles` on `tag_aim` and
+  `tag_aim_animated` with (`angles2[0]`, `angles2[1]`, 0), then on
+  `tag_flash` with (`angles2[2]`, 0, 0). INFERRED: the server's DObj plays
+  no anim on the gun, so both chains sit at their bind and a control
+  replaces the bone's local turn in model space (cod11-combat.md 16.3);
+  `tag_aim_animated`'s bind world turn is 0.001 degrees of pitch, so
+  `tag_flash` lands on `tag_aim_animated + R(flash - tag_aim_animated)` and
+  `tag_player` on `tag_aim + R(player - tag_aim)`, one barrel turn `R`
+  about two pivots 0.04 apart. VERIFIED (vcod, `mg42_bipod` from the paks):
+  that pose gives 53.803272 at the gdb aim (9.997559, 30.002686) and the
+  bind's 53.80957 at (0, 0), so retail's 53.80326 is that aim's reach to
+  1.2e-5 (`turret::muzzle`, unit test
+  `the_muzzle_reach_moves_with_the_barrel`).
 - vcod measurement (`turret_ab`, `TURRET_REPORT=1`): with the range and
   the aim, every first-frame wound of the 1.5b and UO captures but two
-  lands on retail's bits. The two (`-hitfine-uo` 30150 and
-  `-hitgrid-uo-ground` 30350) and 1.1d's `-hitgrid` 30400 are a float step
-  off, which is the muzzle's reach above. Most of that offset lies along
-  the round, so only the last bit of the point moves. Each knockback kill
-  stays as 13.6 leaves it (0.0005 to 0.013).
+  landed on retail's bits. The two (`-hitfine-uo` 30150 and
+  `-hitgrid-uo-ground` 30350) and 1.1d's `-hitgrid` 30400 were a float
+  step off, along the round, from the bind reach. With `tag_flash` posed
+  about `tag_aim_animated` (above) all three land on retail's bits, and
+  every other first-frame wound of the 1.1d, 1.5b and UO captures stays
+  on them. Each knockback kill stays as 13.6 leaves it (0.0005 to 0.013).
 
 vcod: `combat::bullet_range` (`UO_BULLET_RANGE` on UO), `combat::bullet_end`,
-`turret::AimRule::fire_angles`. `turret_ab`'s hit rows must be retail's
-to the bit. Each gate names the rows it tolerates (`MUZZLE_GAP`,
-`KNOCKBACK_GAP`), and those stay within `HIT_NEAR` (0.02).
+`turret::AimRule::fire_angles`, `turret::muzzle`. `turret_ab`'s hit rows
+must be retail's to the bit. Each gate names the rows it tolerates
+(`KNOCKBACK_GAP`), and those stay within `HIT_NEAR` (0.02).
 
 ## 14. The client
 
