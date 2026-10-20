@@ -451,6 +451,32 @@ Against ours: `vcod-server mp_carentan --gametype-script
 crates/gsc/tests/fixtures/semantics/client-probes/probe_pronedrop.gsc --set
 probe_teleport=1`.
 
+## probe_rise
+
+The stance refusals' server half, any 1.1 map it knows (mp_carentan,
+mp_ship). It drives one `--probe-uo-weapon direct` client through `PROBE_IN`
+lines: on mp_carentan it lies him down in the street, moves him prone under
+two attic ceilings (one a crouch does not fit, one a stand does not) and
+tries each rise with and without `wbuttons` 0x2, then kills him twice with
+the trigger held, through dm's killed callback and through one that keeps
+his weapon; on mp_ship it hangs him on the hold ladder and holds each stance
+key. It logs `PROBE phase <time> <name>`, `PROBE place`, `PROBE killed` and
+`PROBE done`. The client's `--save-slope --slope-every-state` capture, with
+the `PROBE` lines appended, is the fixture `crates/server/tests/rise_ab.rs`
+replays; `docs/research/cod11-mantle.md`, "The forced-stance events", and
+`cod11-combat.md` 16.5 have the readings.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=55 \
+    tools/run_probe.sh client-probes/probe_rise mp_carentan
+# second shell, about 6 s later (mp_ship: --probe-weapon enfield_mp, --probe-secs 25):
+cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team allies \
+    --probe-weapon m1carbine_mp --probe-uo-weapon direct --save-slope \
+    --slope-every-state --capture-tag rise-1.1 --probe-cmd-ms 50 --probe-secs 45
+```
+
+Then append the server's `PROBE` lines to the fixture.
+
 ## probe_freeze
 
 `freezeControls`' server half. It calls `freezecontrols(true)` on each

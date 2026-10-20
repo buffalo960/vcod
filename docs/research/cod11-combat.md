@@ -8840,7 +8840,20 @@ but the intermission, `PMF_RESPAWNED` clear), on `ClientSim::attacking`;
 `eflags()` ORs it with the gunner's own `firing`. A dead body (`pm_type` 6)
 passes the `pm_type` test, so its first cmd, which still holds the weapon,
 can set the bit; the dead arm then zeroes the weapon and the next cmd
-clears it. Not measured live.
+clears it.
+
+VERIFIED live, 2026-10-20: `client-probes/probe_rise` on
+`tools/run_probe.sh mp_carentan` with a `--probe-uo-weapon direct
+--probe-cmd-ms 50` client (one cmd a frame) holding the carbine's trigger
+through two `suicide()`s (fixture
+`crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-50ms-rise-1.1.txt`).
+Through a killed callback that only sets the session `dead`, the death's
+snapshot (30000) read `pm_type` 6, `weapon` 12 and `eFlags` 0x410, the
+first dead cmd's (30050) `weapon` 0 and still 0x410, the second's 0x10.
+Through dm's own callback, whose `dropItem` takes the carbine and its clip
+in the death's frame (the 25950 snapshot already lacks clip slot 10), the
+first dead cmd's snapshot read 0x10: the ammo test fails. `rise_ab` holds
+ours to both.
 
 ---
 
