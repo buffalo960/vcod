@@ -1381,24 +1381,41 @@ impl ScriptRuntime {
     }
 
     /// Every weapon item lying in the world to be picked up, as `(weapon
-    /// index, origin, clip empty)`: placed `mpweapon_*` entities while
-    /// shown and drops.
+    /// index, origin, empty)`: placed `mpweapon_*` entities while shown and
+    /// drops. Empty is no round in the clip or the reserve: a drop writes
+    /// -1 into each count it found empty (`cod11-items.md` 8), and 0 is
+    /// unset, which the pickup fills.
     /// A taken one waits on its respawn off every snapshot and is left out.
     pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3], bool)> {
+        use vcod_gsc::Host;
         let defs = self.host.defs;
-        let items: Vec<(EntId, u8, bool)> = self
+        let items: Vec<(EntId, u8, i32)> = self
             .host
             .ents
             .iter_inuse()
             .filter_map(|(id, e)| {
                 let item = e.item?;
                 let weapon = !item.taken && defs.weapon_name(item.index as usize).is_some();
-                weapon.then_some((id, item.index, item.clip == -1))
+                weapon.then_some((id, item.index, item.clip))
             })
             .collect();
+        let host = &mut self.host;
+        let counts: Vec<i32> = self.vm.with_cx(|cx| {
+            let count = cx.intern_folded("count");
+            items
+                .iter()
+                .map(|&(id, ..)| match host.get_field(cx, id, count) {
+                    Value::Int(n) => n,
+                    _ => 0,
+                })
+                .collect()
+        });
         items
             .into_iter()
-            .filter_map(|(id, w, empty)| Some((w, self.entity_origin_of(id)?, empty)))
+            .zip(counts)
+            .filter_map(|((id, w, clip), count)| {
+                Some((w, self.entity_origin_of(id)?, clip < 0 && count < 0))
+            })
             .collect()
     }
 
@@ -5322,6 +5339,31 @@ mod tests {
     /// The swap with the use key: the carbine lands on the panzerfaust's own
     /// origin, carries its rounds and its dropper, and the `"trigger"` notify
     /// names the player and the carbine, in that order.
+    /// A drop with an empty clip and a reserve still has rounds to take;
+    /// only a count and a clip both written empty (-1) read as empty.
+    #[test]
+    fn a_weapon_item_with_a_reserve_behind_an_empty_clip_is_not_empty() {
+        let mut rt = pickup_rig();
+        let placed = rt.place_item("mpweapon_m1carbine", [0.0, 0.0, 30.0], 0);
+        let reserve = rt.place_item("mpweapon_m1carbine", [100.0, 0.0, 30.0], 30);
+        let empty = rt.place_item("mpweapon_m1carbine", [200.0, 0.0, 30.0], -1);
+        for id in [reserve, empty] {
+            rt.host
+                .ents
+                .get_mut(id)
+                .unwrap()
+                .item
+                .as_mut()
+                .unwrap()
+                .clip = -1;
+        }
+        let items = rt.weapon_items();
+        let at = |x: f32| items.iter().find(|i| i.1[0] == x).unwrap().2;
+        assert!(!at(0.0), "{placed:?} unset counts are filled at the pickup");
+        assert!(!at(100.0), "a reserve behind an empty clip");
+        assert!(at(200.0));
+    }
+
     #[test]
     fn the_use_key_swaps_and_the_trigger_notify_names_the_drop() {
         let mut rt = pickup_rig();
