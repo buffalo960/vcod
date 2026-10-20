@@ -1259,7 +1259,12 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   the run has to land from 2 units either side of the body across its
   pace too, unless the body stands within 12 of the node and, turned
   round with no key held, would coast off a lip anyway
-  (`nav::coasts_off`, 16 ticks) (2026-10-18, below).
+  (`nav::coasts_off`, 16 ticks) (2026-10-18, below). A run on that is
+  neither a jump nor down a step, comes down off the ground under where
+  it set off and lands where a miss can hurt holds only if neither walk
+  2 units aside falls deeper than a jump; a jump edge whose walk on from
+  the body arrives without the jump is run without it (2026-10-20, "The
+  crest run and the stringer's jump").
   Where that walk fails the bot heads on at the waypoint, and within 12
   units of it flat takes the edge out of its plans as a stuck one, unless
   the plan took the edge while it was out of its plans (no way round it):
@@ -3533,6 +3538,74 @@ settings, release; ours only):
   starts. The walk's jump and the bot's are not the same rule: the walk
   jumps after two pinned ticks and only where `jump_clear` passes, the
   bot whenever it closes under `PINNED`.
+
+### The crest run and the stringer's jump
+
+The 2026-10-20 round took the two `mp_ship` edge follow-ups of 10-18d
+(seed 4231's dome crest, seed 2553's crate-top jumps). Neither seed
+shows them on master 296bed66, so both were traced on 1080e30d, where
+they reproduce, and checked on both. VERIFIED (measured, same detector
+and settings, release, seeds 1-4607 odd; ours only):
+
+| | stalled bot-ticks | falls | deaths |
+|---|---|---|---|
+| master 296bed66 | 230 | 6 | 0 |
+| aside test on every run on that left the ground | 283 | 11 | 5 |
+| and the walked jump, the aside test on a dip only (kept) | 151 | 2 | 1 |
+
+`mp_depot` and `mp_hurtgen` (seeds 1-191 odd): 0 / 0 / 0 and 0 / 2 / 1
+on master and the kept row alike, the same events. United Offensive
+(`UO=1`, `tdm`, 2400 ticks, seeds 1-63 odd), stalled / falls / deaths,
+master against the kept row: `mp_cassino` 25 / 3 / 0 both, `mp_foy`
+0 / 0 / 0 both, `mp_italy` 179 / 0 / 0 both, `mp_uo_stanjel` 26 / 1 / 0
+against 0 / 3 / 0 (two unstick spells off (276, 3388, -390)).
+
+- The dome crest (seed 4231 on 1080e30d, traced, `edge_holds` logged):
+  the bot passed the node (3615.5, -344.7, 635.3) at (3636.6, -336.8,
+  628.8) climbing at (-122, -124, 31) units/s for (3584, -349, 640).
+  The walk on from there lands, dipping 7 under its start onto the
+  south face; the same walk 2 units either side across the pace falls
+  214. Now a run on along an edge that is neither a jump nor down more
+  than a step, that comes down off the ground under where it set off
+  and onto a node where a miss can hurt (`a_miss_hurts`), holds only if
+  neither walk 2 units aside falls deeper than a jump
+  (`Follower::edge_holds`, `nav::tests::a_run_on_that_leaves_the_ground_over_a_fall_lands_from_either_side`).
+- Asked of every run on that left the ground (the second row), it
+  turned down mp_ship's 32-unit step-downs at (3315, 508, 352) and
+  (3359, -384, 352), the jump onto the crow's nest top from the rim at
+  (4964, 36, 1219), and the level walk to the crow's nest ladder's foot
+  at (4959, 64, 692), whose runs aside hop a lip and never arrive
+  without falling (lowest 1.4 over the start). The routes that changed
+  put bots on the crow's nest top in seeds 421, 525, 2369 and 2879,
+  which ran off it (below). Hence the dip and the depth.
+- The stringer (seed 2553 on 1080e30d, traced): the crate-top nodes
+  are the stair stringer's end at (5812-5824, 567, 92), not a crate.
+  The bot came onto the jump edge 7487 (5829, 544, 92) -> 6850 (5792,
+  576, 76) at (5823.4, 567.1, 92.1), pace (22, 0); the walk on from
+  there arrives without a jump, sliding off the stringer's end, where
+  the graph proved the edge from its node with one. The bot, pinned on
+  the stringer, jumped on its cue (`jump_cue`) and fell back: 155 of
+  210 ticks near the stringer in the air. Now a jump edge whose walk on
+  from the body arrives without the jump is run without it
+  (`Follower::jump_cued`, `nav::tests::a_jump_edge_walked_on_without_its_jump_cues_no_jump`):
+  on 1080e30d seed 2553 goes from 49 stalled bot-ticks to 0 and 45 of
+  115 ticks in the air; the bot stood 16 ticks pinned at (5814.4,
+  567.1) and an unstick spell took it off. The 7289 -> 7291 jump to the
+  stair at 132 from the stringer's top still needs its jump and keeps
+  it. The bot's own pin there (the walk slides, the bot stands) is not
+  traced.
+- Left on the kept row: the death is seed 111, the crow's nest top.
+  The drop off (4928.5, 60.8, 1254) to the spar at (4888, 65, 1212)
+  fails `edge_holds` from a bot coming onto the node off the turn at
+  196 units/s; within `ON_NODE` the follower avoids it and replans, the
+  body coasts off the top onto the spar and walks off it heading back
+  for the rim. Tried and dropped: holding the edge so the bot comes to
+  rest on the node first. The body is already 6 units past the node and
+  coasts off before it stops (seed 525, traced), and held on every
+  failing edge the bots stopped on `mp_hurtgen`'s slope at (292, 2785,
+  -52) and replanned into its crease (4 deaths in 96 seeds); held only
+  where the body would coast off (`coasts_off`), the crow's nest deaths
+  stayed.
 
 ## 4. Memory and hearing
 
