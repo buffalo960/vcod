@@ -701,6 +701,47 @@ VERIFIED live, the street capture's forward press at `commandTime` 69991:
 still press's 550. The backward press dives the same way; the sideways press
 does not.
 
+### The prone box while the eye goes down
+
+VERIFIED, `game.mp.i386.so` 1.1d `PM_CheckDuck` (0x316f4), the prone
+arm's sizing at 0x31c1d-0x31c9b: it writes `proneViewHeight` (ps+0x33c)
+into `viewHeightTarget` (ps+0xcc), compares that int with
+`viewHeightCurrent` (ps+0xd0), compares the result of a call to 0x308cc
+with (-1, -1) against 0.5 (rodata 0x70be4), and stores either 30.0
+(rodata 0x70bdc) or 50.0 (rodata 0x70be0) to `pm->maxs[2]` (pm+0xd4).
+INFERRED, from the branches: an eye already at the prone height, or a
+result above 0.5, takes 30; a result at or below 0.5 takes 50. VERIFIED,
+0x308cc divides `cmd.serverTime - viewHeightLerpTime` (ps+0xd4) by the
+running leg's `PM_GetViewHeightLerpTime` duration on the x87 stack
+(0x30938-0x309a8) and clamps it to 0..1 (0x309aa-0x309c9). INFERRED,
+from the branch at 0x308e3: with `viewHeightLerpTime` 0 it returns 0
+(0x309d0). INFERRED, from the call order: the sizing reads the eye before
+`PM_ViewHeightAdjust` (call at 0x31fd3) advances it, so a body that has
+just gone prone, or is diving, keeps the crouch's 50-unit box until its
+eye is down or more than half way through its leg. vcod:
+`PlayerState::prone_box_crouch`, set in `update_stance`, read by
+`PlayerState::maxs` on 1.1.
+
+VERIFIED, the same function's lie-down (reached when `esi`, the old
+`pm_flags & 1`, is 0 at 0x31ca1): two calls of `pm->trace` (pm+0xec) with
+the pm's box, one from the origin to the origin plus 10.0 in z (rodata
+0x70bf4, 0x31d35-0x31d8b), one from the first's end point to the origin
+(0x31dab-0x31dd4), and a store of the second's end point to the origin
+(0x31ddc-0x31df1). INFERRED, from the instruction order: the traces run
+after the dive (0x31cd5-0x31d2f) and the sizing, so lying down re-places
+the body by the end point's rounding even on flat ground. vcod:
+`enter_prone`, which 1.1's `update_stance` runs after the sizing.
+
+VERIFIED, vcod measurement (`predict_ab`'s
+`predictor_replays_retail_slope_runs` over every 1.1d slope capture that
+logs `wire=`, 2026-10-20): before the two, the moves capture's prone dive
+at `commandTime` 48443-48485 came out 1-4 ulps off retail's z in the air
+(a C model of the fall with the end point off a 30-unit box reproduces
+ours, with a box of half height 22-34.5 retail's bits), the moves,
+speedgrav, springfield and deadlink runs held 4, 2, 2 and 1 such snapshots,
+and the kerb run's lie-down from a crouch at 30541 kept -7.875002 where
+retail lands on -7.875. With both, all 16 captures replay to the bit.
+
 ### Prone Blocked, `pm_flags` 0x8000
 
 VERIFIED, `game.mp.i386.so`: the bit's only clear is `PmoveSingle`'s
