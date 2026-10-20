@@ -376,7 +376,9 @@ header of the fixture it produced.
   `mp_carentan-dm-turret-uo.txt` committed, as 1.5's `-15.txt`, and
   `-victim-uo.txt`, which logs the target's entity),
   `--probe-flame` beside
-  `probe_flame` (`coduo-diff.md` 19, "The flame report") and
+  `probe_flame` (`coduo-diff.md` 19, "The flame report"), `--probe-items`
+  beside `probe_itemdrop` and `probe_fragcount` (`cod11-items.md` 4.1,
+  14.7) and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
   `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
   `probe_hqtime`, `probe_bastime`, `probe_domtime` and `probe_menuclock`,
