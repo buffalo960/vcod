@@ -7,7 +7,8 @@
 #
 # Three shells, the gsc probe first:
 #   COD_VERSION=uo COD_LNXDED_HOME=<absolute, no '+'> PORT=32563 PROBE_SECS=230 \
-#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1
+#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 \
+#       +set probe_spawnlog 1
 #   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32563 --probe-team axis --probe-fall --probe-secs 200
 #   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32563 --save-turret --capture-tag spawn-uo --probe-secs 190
 # The axis client started 10 s after the server and the gunner 5 s after it.
@@ -15,6 +16,8 @@
 # PROBE turret <num> <origin> <angles>: a misc_mg42 at the startup census.
 # PROBE place <clientNum> <team> <origin> <yaw> <time>: a probe_teleport move,
 # made on the first script frame the player reads "playing", at getTime().
+# PROBE spawned <clientNum> <time> and PROBE spawnat <clientNum> <origin> <angles>
+# (probe_spawnlog 1): the spawn's notify time and where the stock spawn put him.
 # J; Q; D; K; are the engine's and the stock dm script's own.
 # Lines are copied from games_mp.log with the engine's m:ss stamp, leading
 # padding trimmed; every line past InitGame is here.

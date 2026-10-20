@@ -1468,6 +1468,8 @@ fn the_first_locked_snapshot_is_already_placed() {
 // cmd goes out as the view retail's server built from it, its wire angles
 // plus retail's `delta_angles` of snapshot `T - 50`, which is the view ours
 // builds too whatever `delta_angles` the join left us.
+// Where the capture logs each snapshot's `commandTime` (`ct=`), a cmd pairs
+// with the first snapshot whose `ct=` reached its stamp instead ([`frame_of`]).
 
 const FIXTURE_FULL: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -2437,12 +2439,7 @@ fn hitgrid_rows<'a>(
 
 #[test]
 fn the_spawn_capture_matches_retail_on_mp_carentan() {
-    spawn_gate(
-        "spawn",
-        vcod_common::testing::game_fs_11,
-        &PROTOCOL_V1,
-        &[],
-    );
+    spawn_gate("spawn", vcod_common::testing::game_fs_11, &PROTOCOL_V1, &[]);
 }
 
 #[test]
@@ -2461,12 +2458,7 @@ fn the_spawn_capture_matches_15b_on_mp_carentan() {
 
 #[test]
 fn the_spawn_capture_matches_uo_on_mp_carentan() {
-    spawn_gate(
-        "spawn-uo",
-        vcod_common::testing::uo_fs,
-        &PROTOCOL_V22,
-        &[],
-    );
+    spawn_gate("spawn-uo", vcod_common::testing::uo_fs, &PROTOCOL_V22, &[]);
 }
 
 /// The `-spawn-uo` recipe rerun with `probe_hitlog`, whose hits the gate
