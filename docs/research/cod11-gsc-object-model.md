@@ -2935,6 +2935,13 @@ Still different:
   the queue's rounds as retail does now (`cod11-gsc-language.md`, "Engine
   notifies and the trigger queue"); no run of this recipe has been taken
   against ours since.
+  VERIFIED, `crates/server/tests/sd_plant_ab.rs` on 2026-10-20 (the
+  plant fixture's cmds replayed on ours with `probe_teleport 1`): the
+  teleport now lands on retail's frame, `serverTime` 91800, at `-512.0,
+  2688.0, -15.0` with ours at the plant spot the frame before, and the
+  next frame reads z -15.75 where retail's trace reads -15.8. The gate's
+  `teleport lands` row holds it. The `looking` beside the defuse's last
+  fire is not re-measured: the gate counts fires per station only.
 - VERIFIED, off retail run 9's defender probe log (not kept in the repo):
   retail interleaves `d` and `s` in the order the script made them (`d 531`,
   `d 532`, `s 8`, `d 533` at the plant). VERIFIED, vcod measurement (run 3):

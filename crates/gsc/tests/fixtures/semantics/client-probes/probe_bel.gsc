@@ -82,9 +82,25 @@ place_players()
 			{
 				players[i].probe_watch = true;
 				players[i] thread place_on_spawn();
+				players[i] thread log_spawns();
 			}
 		}
 		wait 0.05;
+	}
+}
+
+//	The waiter runs once spawnPlayer's step has spawned the body, so this is
+//	bel.gsc's random pick, which place_on_spawn hides from every snapshot;
+//	the gate replays it (gametypes_ab.rs). Its own thread, which never waits
+//	on anything else: a spectator spawn and the player spawn that follows
+//	it inside place_on_spawn's frame would otherwise go unseen.
+log_spawns()
+{
+	for (;;)
+	{
+		self waittill("spawned");
+		if (self.sessionstate == "playing")
+			logPrint("PROBE spawned " + self getEntityNumber() + " " + self.pers["team"] + " " + getTime() + " " + self.origin + "\n");
 	}
 }
 

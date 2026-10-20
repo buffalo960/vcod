@@ -664,6 +664,9 @@ pub struct GameHost {
     /// `f(level_time, floor)` instead of the random half unit
     /// (`Server::test_item_lifts`).
     pub test_item_lift: Option<ItemLift>,
+    /// Test-facing: the outcomes of the next UO turret tracer rolls, a retail
+    /// capture's, taken in place of the drawn ones (`Server::pin_tracer_rolls`).
+    pub tracer_pins: std::collections::VecDeque<bool>,
 }
 
 /// A `mins`, `maxs` pair.
@@ -1296,6 +1299,7 @@ impl GameHost {
                 origin: vec(self.get_field(cx, id, origin)),
                 axis: vcod_common::props::rotation(vec(self.get_field(cx, id, angles))),
                 tris,
+                surfs: Default::default(),
                 owner: None,
                 takes_damage: self.script_takedamage.contains(&id),
                 body: self
@@ -1479,6 +1483,7 @@ impl GameHost {
             anims: None,
             hit_rigs: Default::default(),
             test_item_lift: None,
+            tracer_pins: Default::default(),
         }
     }
 

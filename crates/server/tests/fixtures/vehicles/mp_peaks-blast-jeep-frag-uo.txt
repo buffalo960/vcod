@@ -1,0 +1,37 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-20: the PROBE lines of
+# client-probes/probe_vehblast on mp_peaks.
+# COD_VERSION=uo PORT=33751 PROBE_SECS=90 tools/run_probe.sh client-probes/probe_vehblast mp_peaks
+#   +set probe_vehicletype willyjeep_mp +set probe_weapon fraggrenade_mp +set probe_slot grenade
+#   +set probe_shots 5 +set probe_hold 300 +set probe_gap 6000 +set probe_dist 80
+#   +set probe_side 47 +set probe_z 4 +set probe_dir_1 90 +set probe_side_1 0
+#   +set probe_along_1 50 +set probe_dist_2 200 +set probe_side_2 0 +set probe_z_2 100
+#   +set probe_dist_3 70 +set probe_side_3 40 +set probe_z_3 -20 +set probe_dir_4 270
+# The run passed two more cvars after the last, the fifth shot's side 0 and along -50. The
+# engine takes 32 command lines (run_probe.sh's own twelve and twenty here) and leaves the rest
+# of the line in the 32nd: probe_dir_4 read "270 ..." (getcvarint 270) and the fifth shot kept
+# the shared side 47 and along 0.
+# then, 18 s in, the shooter: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:33751
+#   --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon direct --probe-secs 65
+#   --save-snapshots --capture-tag uo-fragjeep (crates/common/tests/fixtures/net/*-uo-fragjeep.bin).
+# Five frags thrown at the empty Willys: the first goes off under its body (120: 120 times the
+# under scale 2 and the frag's vehiclescale 0.5), the second and fourth by it (51, 60).
+PROBE vehicle 110 willyjeep_mp (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85) health 2900
+PROBE place 22000 0 (-4082.74, 141.29, -102.52) 164.998
+PROBE fire 23500 0 (-4082.71, 141.29, -111.71) (58.93, 165.01, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 28100 0 dmg 98 mod MOD_GRENADE_SPLASH loc none
+PROBE vdamage 28150 120 MOD_GRENADE_SPLASH (-4145.00, 159.00, -98.00) (-0.78, 0.16, 0.60) 0 91 2780
+PROBE place 29500 1 (-4139.29, 239.26, -102.52) 254.998
+PROBE fire 31000 1 (-4120.45, 306.50, -111.02) (29.07, 254.54, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 35600 0 dmg 115 mod MOD_GRENADE_SPLASH loc none
+PROBE vdamage 35650 51 MOD_GRENADE_SPLASH (-4122.00, 303.00, -99.00) (-0.26, -0.96, 0.09) 0 92 2729
+PROBE place 37000 2 (-3966.84, 110.24, -102.52) 164.998
+PROBE fire 38500 2 (-3966.73, 110.23, -111.44) (348.44, 165.01, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 43100 0 dmg 66 mod MOD_GRENADE_SPLASH loc none
+PROBE place 44500 3 (-4092.39, 143.88, -102.52) 164.998
+PROBE fire 46000 3 (-4092.35, 143.88, -111.40) (69.21, 165.02, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 50600 0 dmg 106 mod MOD_GRENADE_SPLASH loc none
+PROBE vdamage 50650 60 MOD_GRENADE_SPLASH (-4130.00, 155.00, -98.00) (-0.91, 0.21, 0.35) 0 94 2669
+PROBE place 52000 4 (-4180.71, 84.74, -102.52) 74.9983
+PROBE fire 53500 4 (-4196.35, 28.55, -111.46) (20.63, 56.02, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 58100 0 dmg 100 mod MOD_GRENADE_SPLASH loc none
+PROBE done 65500

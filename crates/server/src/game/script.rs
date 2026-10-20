@@ -1142,7 +1142,9 @@ impl ScriptRuntime {
             "g_tracerChance"
         }));
         for &at in hits {
-            if self.host.rand_unit() < chance {
+            // A pinned outcome still takes its draw, so later draws stay put.
+            let drawn = self.host.rand_unit() < chance;
+            if self.host.tracer_pins.pop_front().unwrap_or(drawn) {
                 self.push_temp_entity(crate::game::temp_entity::TempEntity {
                     event: vcod_common::net::event_ids::EV_BULLET_TRACER,
                     parm: weapon,
