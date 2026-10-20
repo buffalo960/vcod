@@ -946,7 +946,7 @@ fn vehicle_player_damage(
             };
             rt.deliver_hits(vec![hit]);
         }
-        None => rt.deliver_unowned_hit(slot, [veh, veh], damage, 0, mod_, &weapon, at.into()),
+        None => rt.deliver_unowned_hit(slot, [veh, veh], damage, 0, mod_, &weapon, Some(at.into())),
     }
 }
 
