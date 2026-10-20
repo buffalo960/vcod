@@ -2538,6 +2538,28 @@ impl ScriptRuntime {
             .map(|(id, _)| id.0)
     }
 
+    /// The snapshot builder's clear of a passed `r.broadcastTime`
+    /// (coduo_lnxded 0x8096d53, 1.5b 0x8095dc6), which is what
+    /// `SV_inSnapshot` reads until then ([`Self::in_snapshot_broadcast`]).
+    pub fn expire_broadcast_times(&mut self, svs_time: i32) {
+        for e in self.host.ents.iter_inuse_mut() {
+            if e.broadcast_time > 0 && e.broadcast_time.wrapping_sub(svs_time) < 0 {
+                e.broadcast_time = 0;
+            }
+        }
+    }
+
+    /// What `SV_inSnapshot` reads as sent past the cull: `SVF_BROADCAST`, or
+    /// any `r.broadcastTime` the builder has not cleared.
+    pub fn in_snapshot_broadcast(&self, n: u32) -> bool {
+        let e = self
+            .host
+            .ents
+            .handle(n)
+            .and_then(|id| self.host.ents.get(id));
+        e.is_some_and(|e| e.broadcast || e.broadcast_time != 0)
+    }
+
     /// What the baseline pass writes (`crate::game::wire::baseline_entities`).
     pub fn baseline_entities(
         &mut self,

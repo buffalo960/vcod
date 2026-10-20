@@ -155,6 +155,9 @@ pub struct BotView {
     pub deploy_yaw: f32,
     /// `ps.fWeaponPosFrac`: 1 once the sights are fully up.
     pub ads_frac: f32,
+    /// `ps.aimSpreadScale`, 0 to 255: what the cone has opened past the
+    /// weapon's floor (`spread_deg`).
+    pub spread_scale: f32,
     /// Horizontal speed, units/s.
     pub speed: f32,
     /// `ps.velocity`, units/s.
@@ -676,7 +679,12 @@ pub struct Bot {
     answered: Vec<i32>,
     /// The tick's usercmd is stamped with the server's own clock; the driver
     /// stamps it, so the brain carries only the input state below.
-    rng: u64,
+    /// The bot's own generator: its brain's draws and its path's
+    /// (`nav::Follower::waypoint`), never the server's shared `rand()`
+    /// the spread, the recoil and the melee roll take, so one bot's
+    /// choices never move another's (bot-objectives.md, "One generator
+    /// per bot").
+    pub(crate) rng: u64,
     /// Wander heading, degrees, wire convention.
     heading: f32,
     /// Ticks left on the current heading.
@@ -1099,7 +1107,7 @@ impl Bot {
         }
     }
 
-    /// xorshift64* masked to 31 bits, the server's own generator.
+    /// xorshift64* masked to 31 bits off the bot's own state.
     fn rand(&mut self) -> i32 {
         crate::game::host::rand_int(&mut self.rng)
     }
@@ -1962,8 +1970,10 @@ impl Bot {
         }
         // A rocket leaves along the spread aim (`Weapon_RocketLauncher_Fire`):
         // up to 12 degrees off from the hip, 4 sighted. From the hip a
-        // breach rocket struck the stand's own walls.
-        let sighted = !view.has_ads || view.ads_frac >= 1.0;
+        // breach rocket struck the stand's own walls, and so did one fired
+        // sighted with the cone a turn opened on the way up still wide:
+        // the stand's checks clear the sighted floor only.
+        let sighted = (!view.has_ads || view.ads_frac >= 1.0) && view.spread_scale == 0.0;
         if view.clip == 0 {
             cmd.wbuttons |= msg::WBUTTON_RELOAD;
         } else if view.has_ads {
@@ -3655,6 +3665,7 @@ mod tests {
             deployed: false,
             deploy_yaw: 0.0,
             ads_frac: 0.0,
+            spread_scale: 0.0,
             speed: 0.0,
             velocity: [0.0; 3],
             dead: false,
@@ -6098,6 +6109,12 @@ mod tests {
         assert_ne!(cmd.buttons & BUTTON_ADS, 0, "sights up for the shot");
         assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "not from the hip");
         v.ads_frac = 1.0;
+        // Sighted, but the cone a turn on the way up opened is still wide:
+        // mp_kursk's stand took one such rocket on its own wall.
+        v.spread_scale = 40.0;
+        let early = (0..4).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
+        assert!(!early, "a round through the opened cone");
+        v.spread_scale = 0.0;
         let fired = (0..4).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0);
         assert!(fired, "no round at the base");
 

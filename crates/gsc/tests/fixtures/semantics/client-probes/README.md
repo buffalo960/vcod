@@ -1578,6 +1578,32 @@ The retail run of 2026-10-16 is `crates/server/tests/fixtures/vehicles/
 uocull-berlin.txt`; `crates/server/tests/uocull_ab.rs` runs the probe on ours
 and compares each step's lists.
 
+## probe_snapcull
+
+What the snapshot builder sends an eye in a solid leaf, and what the
+compass's `SV_inSnapshot` makes of a teammate in no cluster and of a
+sounded one (`docs/protocol-1.1.md`, "Which entities a client is sent";
+`docs/research/cod11-hud-protocol.md` 9). 1.1 and UO, mp_carentan, own
+gametype. Slot 0, the compass viewer, at (976, -864); slot 1, the subject,
+at (-992, 2328), out of its PVS, both allies. The script holds the subject
+1000 units under the map for three seconds, puts him back and sounds him:
+
+```
+[COD_VERSION=uo] COD_DIR=<install> SECS=45 \
+  tools/run_probe.sh client-probes/probe_snapcull mp_carentan
+# second shell, once the map is up (UO: add --mod-dir uo):
+cargo run -p vcod -- --game-dir <install> --net-probe 127.0.0.1:28970 \
+  --probe-compass --probe-team allies --probe-secs 32
+# third shell, two seconds later:
+cargo run -p vcod -- --game-dir <install> --net-probe 127.0.0.1:28970 \
+  --probe-edge watch --probe-secs 30
+```
+
+The retail runs of 2026-10-20 are `crates/server/tests/fixtures/entities/
+snapcull-carentan-11.txt` and `-uo.txt`; `crates/server/tests/uocull_ab.rs`
+runs the probe on ours and compares the compass word and the subject's
+lists from the `quiet` step on.
+
 ## probe_cull15
 
 `probe_uocull`'s 1.5 twin, on script models instead of a vehicle, for

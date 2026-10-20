@@ -1858,11 +1858,14 @@ fn fog_cull_of(p: &Protocol, configstrings: &[String]) -> Option<f32> {
 /// slot and its ping bit, or `Some(None)` for nobody. The viewer needs a
 /// team other than none or spectator; a candidate is a playing client on
 /// it whose entity is not in a snapshot from the viewer's leaned eye.
+/// `broadcast` is [`script::ScriptRuntime::in_snapshot_broadcast`] by slot.
+#[allow(clippy::too_many_arguments)]
 fn compass_friend(
     clients: &[Option<Client>],
     slot: usize,
     sessions: &[Option<follow::SessionState>],
     teams: &[i32],
+    broadcast: &[bool],
     cull: Option<(&vcod_common::bsp::Visibility, Option<f32>)>,
     time: i32,
     p: &Protocol,
@@ -1887,7 +1890,7 @@ fn compass_friend(
         // No map: nothing to cull against, so everything is in view.
         let (vis, fog) = cull?;
         let e = other.to_entity(p, n, c.last_processed_st);
-        if crate::world::in_snapshot(vis, eye, &e, time, p, fog) {
+        if crate::world::in_snapshot(vis, eye, &e, broadcast[n], time, p, fog) {
             return None;
         }
         pinged = other.ping;
@@ -3695,8 +3698,10 @@ impl Server {
 
     /// Test-facing: the seed the spread and the melee rolls draw from, so a
     /// gate that needs a shot to land where it did once can have it again.
+    /// The bots added after it draw their own streams off `seed` too.
     pub fn test_seed_rng(&mut self, seed: u64) {
         self.rng = seed | 1;
+        self.bot_admin.seed_rng = bot_admin::seed_stream(seed);
     }
 
     /// Whether a shot fired from eye height at `origin` along `yaw_deg`
@@ -4546,9 +4551,10 @@ impl Server {
                     on_ladder: ps.as_ref().is_some_and(|ps| ps.on_ladder),
                     velocity: ps.as_ref().map_or(glam::Vec3::ZERO, |ps| ps.velocity),
                 };
-                // The generator alone, so the world stays readable.
-                let rng = &mut self.rng;
-                let mut rand = || rand_from(rng);
+                // The bot's own generator, copied out so the world stays
+                // readable and written back below.
+                let mut rng = self.bots.get(&slot).map_or(1, |b| b.rng);
+                let mut rand = || rand_from(&mut rng);
                 let at = view.origin;
                 let world = self.world.as_ref().map(|w| &w.collision);
                 let others =
@@ -4635,6 +4641,9 @@ impl Server {
                         ),
                         _ => None,
                     };
+                }
+                if let Some(b) = self.bots.get_mut(&slot) {
+                    b.rng = rng;
                 }
                 self.bot_paths.insert(slot, follower);
             }
@@ -5117,6 +5126,7 @@ impl Server {
             deployed: sim.ps.deployed(),
             deploy_yaw: sim.ps.prone_direction,
             ads_frac: sim.ps.weapon_pos_frac,
+            spread_scale: sim.ps.aim_spread_scale,
             speed: sim.ps.velocity.truncate().length(),
             velocity: sim.ps.velocity.into(),
             dead: sim.dead,
@@ -8197,6 +8207,9 @@ impl Server {
                 .map(|slot| rt.client_team(slot))
                 .collect();
             let fog = fog_cull_of(self.proto, rt.configstrings());
+            let broadcast: Vec<bool> = (0..self.clients.len())
+                .map(|slot| rt.in_snapshot_broadcast(slot as u32))
+                .collect();
             for slot in 0..self.clients.len() {
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
@@ -8208,6 +8221,7 @@ impl Server {
                     slot,
                     &sessions,
                     &teams,
+                    &broadcast,
                     self.world.as_ref().map(|w| (&w.vis, fog)),
                     self.sv_time_ms,
                     self.proto,
@@ -9856,6 +9870,10 @@ impl Server {
     /// and written per client.
     fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
         let live = self.build_world_frame();
+        let svs_ms = self.svs_time_ms();
+        if let Some(rt) = self.script.as_mut() {
+            rt.expire_broadcast_times(svs_ms);
+        }
         let collision_vis = self.world.as_ref().map(|w| &w.vis);
         let teams: Vec<i32> = (0..self.clients.len())
             .map(|slot| {

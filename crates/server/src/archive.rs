@@ -40,8 +40,9 @@ impl WorldFrame {
     /// The entity list of a snapshot whose `ps.clientNum` is `client_num` and
     /// whose eye is `eye`: that client's own entity left out, the
     /// single-client scopes tested against it, the rest culled from the eye
-    /// unless broadcast. `shift` is added to every non-zero time a replayed
-    /// entity carries (0x808f130's archive arm).
+    /// unless broadcast; nothing at all from an eye in a solid leaf. `shift`
+    /// is added to every non-zero time a replayed entity carries
+    /// (0x808f130's archive arm).
     pub fn entities_for(
         &self,
         client_num: usize,
@@ -50,11 +51,12 @@ impl WorldFrame {
         shift: i32,
         p: &Protocol,
     ) -> BTreeMap<u32, msg::EntityState> {
-        let from = vis.map(|v| v.cluster_at(eye));
-        let culled_seen = |e: &msg::EntityState| match (vis, from) {
-            (Some(v), Some(from)) => {
-                crate::world::entity_seen(v, from, eye, e, self.time, p, self.fog)
-            }
+        let viewer = vis.map(|v| crate::world::Viewer::at(v, eye));
+        if viewer.is_some_and(|v| v.sees_nothing()) {
+            return BTreeMap::new();
+        }
+        let culled_seen = |e: &msg::EntityState| match (vis, &viewer) {
+            (Some(v), Some(from)) => crate::world::entity_seen(v, from, e, self.time, p, self.fog),
             _ => true,
         };
         // A UO sound blend goes wherever its vehicle would.
