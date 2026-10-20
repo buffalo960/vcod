@@ -1290,10 +1290,21 @@ swung by 0.15 with nothing changed but the other side's brain.
 | 117-132 | allies | 0.99 | 1.01 | 73% | 85% |
 | 117-132 | axis | 0.96 | 1.04 | 81% | 77% |
 
+United Offensive (`UO=1`), mp_cassino and mp_kursk, seeds 1-8, 16 matches
+a row:
+
+| Retreat on | allies K/D | axis K/D | allies wounds dead in 5 s | axis wounds dead in 5 s |
+|---|---|---|---|---|
+| none | 1.08 | 0.91 | 83% | 86% |
+| allies | 1.00 | 0.99 | 73% | 78% |
+| axis | 1.03 | 0.97 | 72% | 77% |
+
 - A wounded bot running the retreat dies within 5 s 5 to 10 points less
-  often, on all four runs.
+  often, on all six runs. (On UO the untreated side moved too: the
+  matches diverge whole.)
 - K/D: the treated side's ratio against `none`, both sides and both seed
-  sets in one geometric mean, is 1.02: no change within the noise.
+  sets in one geometric mean, is 1.02 on 1.1 and 0.99 on UO: no change
+  within the noise.
 - Variants, seeds 101-116, the treated side's K/D against `none`: the
   sights dropped while backing off, allies 1.03 and axis 0.93 (geometric
   mean 0.98; the default keeps them up); a hurt retreat only past 400
