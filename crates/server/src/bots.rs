@@ -672,7 +672,8 @@ pub struct BotBody {
     /// Tracking an enemy it saw within the last second: a scoped or
     /// sighted shot at range stands still on purpose.
     pub engaged: bool,
-    /// Breaking contact (`bots/retreat.rs`): 1 hurt, 2 dry, 0 not.
+    /// Breaking contact (`bots/retreat.rs`): 1 hurt, 2 dry, 3 at the
+    /// cover, 0 not.
     pub retreating: u8,
 }
 

@@ -24,6 +24,11 @@ struct Side {
     /// Retreats started, hurt and dry.
     hurt: usize,
     dry: usize,
+    covered: usize,
+    /// Wounds (health first under 50 in a fight this life) and those the
+    /// bot died of within 5 s.
+    wounds: usize,
+    wound_deaths: usize,
 }
 
 fn main() {
@@ -79,6 +84,8 @@ fn main() {
             let mut side: [Side; 2] = Default::default();
             let mut alive = [0usize; 64];
             let mut was = [0u8; 64];
+            // Ticks since this life's wound, if any.
+            let mut wound: [Option<usize>; 64] = [None; 64];
             for _ in 0..ticks {
                 now += Duration::from_millis(50);
                 sv.tick(now);
@@ -100,15 +107,27 @@ fn main() {
                     sv.test_bot_retreat(slot, on);
                     let body = sv.bot_body(slot);
                     let r = body.as_ref().map_or(0, |b| b.retreating);
-                    if r != 0 && was[slot] == 0 {
-                        if r == 1 {
-                            side[k].hurt += 1;
-                        } else {
-                            side[k].dry += 1;
-                        }
+                    match (was[slot], r) {
+                        (0, 1) => side[k].hurt += 1,
+                        (0, 2) => side[k].dry += 1,
+                        (1 | 2, 3) => side[k].covered += 1,
+                        _ => {}
                     }
                     was[slot] = r;
-                    let playing = body.is_some_and(|b| b.playing);
+                    let playing = body.as_ref().is_some_and(|b| b.playing);
+                    if let Some(b) = body.as_ref().filter(|b| b.playing) {
+                        if wound[slot].is_none() && b.engaged && b.health < 50 {
+                            wound[slot] = Some(0);
+                            side[k].wounds += 1;
+                        } else if let Some(t) = wound[slot].as_mut() {
+                            *t += 1;
+                        }
+                    } else if body.as_ref().is_some_and(|b| b.dead) {
+                        if wound[slot].is_some_and(|t| t < 100) {
+                            side[k].wound_deaths += 1;
+                        }
+                        wound[slot] = None;
+                    }
                     if playing {
                         alive[slot] += 1;
                     } else if alive[slot] > 0 {
@@ -119,7 +138,8 @@ fn main() {
                 }
             }
             // `K;` victim num, team, name, attacker num, team, name, weapon,
-            // damage, means of death, hit location
+            // damage, means of death, hit location; 1.5 and UO put a guid
+            // ahead of each num.
             for l in sv.script_log() {
                 let Some((_, k)) = l.trim_end().split_once("K;") else {
                     continue;
@@ -130,11 +150,12 @@ fn main() {
                     "axis" => Some(1),
                     _ => None,
                 };
-                let Some(v) = team(f[1]) else {
+                let g = usize::from(f.len() >= 12);
+                let Some(v) = team(f[1 + g]) else {
                     continue;
                 };
                 side[v].deaths += 1;
-                match team(f[4]) {
+                match team(f[4 + 2 * g]) {
                     Some(a) if a != v => side[a].kills += 1,
                     _ => side[v].selfs += 1,
                 }
@@ -175,19 +196,25 @@ fn add(t: &mut Side, s: &Side) {
     t.lives += s.lives;
     t.hurt += s.hurt;
     t.dry += s.dry;
+    t.covered += s.covered;
+    t.wounds += s.wounds;
+    t.wound_deaths += s.wound_deaths;
 }
 
 fn report(what: &str, s: &[Side; 2]) {
     for (name, s) in ["allies", "axis"].iter().zip(s) {
         println!(
-            "{what} {name}: kills {} deaths {} self {} k/d {:.2} mean life {:.1}s retreats hurt {} dry {}",
+            "{what} {name}: kills {} deaths {} self {} k/d {:.2} mean life {:.1}s retreats hurt {} dry {} covered {} wounds {} dead in 5 s {:.0}%",
             s.kills,
             s.deaths,
             s.selfs,
             s.kills as f32 / s.deaths.max(1) as f32,
             s.life_ticks as f32 / 20.0 / s.lives.max(1) as f32,
             s.hurt,
-            s.dry
+            s.dry,
+            s.covered,
+            s.wounds,
+            100.0 * s.wound_deaths as f32 / s.wounds.max(1) as f32
         );
     }
 }

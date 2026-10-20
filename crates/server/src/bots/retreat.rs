@@ -17,9 +17,9 @@ use vcod_common::collision::CollisionWorld;
 /// contact: one more round from most guns kills it.
 pub(crate) const HURT_PCT: i32 = 50;
 /// Cover is looked for along the graph this far from the body, units.
-const COVER_REACH: f32 = 900.0;
+const COVER_REACH: f32 = 1200.0;
 /// At most this many nodes are tested for cover, nearest first.
-const COVER_TESTS: usize = 48;
+const COVER_TESTS: usize = 300;
 /// A cover node nearer the threat than this is no cover: the threat walks
 /// round it in a second.
 const COVER_MIN: f32 = 200.0;
@@ -121,10 +121,11 @@ impl Bot {
 
     /// Breaking contact ([`BotBody::retreating`]).
     pub fn retreating(&self) -> u8 {
-        match self.retreat.map(|r| r.why) {
+        match self.retreat {
             None => 0,
-            Some(Why::Hurt) => 1,
-            Some(Why::Dry) => 2,
+            Some(r) if r.held > 0 => 3,
+            Some(r) if r.why == Why::Hurt => 1,
+            Some(_) => 2,
         }
     }
 
@@ -202,7 +203,11 @@ impl Bot {
         let Some(c) = view.survive.cover else {
             return look;
         };
-        cmd.buttons &= !msg::BUTTON_ADS;
+        // Backing off, the sights stay up on an enemy in sight; dropped, the
+        // retreating side scored fewer kills (bot-objectives.md 9).
+        if view.enemy.is_none() {
+            cmd.buttons &= !msg::BUTTON_ADS;
+        }
         if !at_cover(view.origin, c) {
             (cmd.forward, cmd.right) = rekey(path.0, path.1, path_yaw, look[1]);
             (cmd.up, cmd.wbuttons) = (path.2, path.3);
@@ -361,7 +366,7 @@ pub(crate) fn cover_spot(
 mod tests {
     use super::super::tests::{engaged, re_view};
     use super::*;
-    use vcod_common::net::msg::{BUTTON_ADS, WBUTTON_CROUCH, WBUTTON_RELOAD};
+    use vcod_common::net::msg::{WBUTTON_CROUCH, WBUTTON_RELOAD};
 
     /// An engaged bot at 30 health, the enemy's eye 20 over his chest.
     fn hurt(seed: u64) -> (Bot, BotView) {
@@ -383,11 +388,10 @@ mod tests {
         v.survive.cover = Some(cover);
         assert_eq!(bot.goal(&v), Goal::To(cover));
         // Backing off along the path with the aim on the enemy: the path
-        // runs -x, the view +x, so the keys pull back, off the sights.
+        // runs -x, the view +x, so the keys pull back.
         v.waypoint = Some(cover);
         let cmd = bot.think(&v);
         assert!(cmd.forward < 0, "{cmd:?}");
-        assert_eq!(cmd.buttons & BUTTON_ADS, 0);
         // At the cover with nothing in sight: still, crouched, the clip
         // topped up.
         v.origin = cover;

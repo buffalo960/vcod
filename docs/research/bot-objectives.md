@@ -116,8 +116,9 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
 
 ## 3. The brain
 
-Goal order: a plant or defuse in progress (use held, or linked), a visible
-enemy, objective travel, then the rest. Use is pressed only at the
+Goal order: a plant or defuse in progress (use held, or linked), a live
+frag, a retreat's cover (section 9), a visible enemy, a health pack for a
+hurt bot (section 9), objective travel, then the rest. Use is pressed only at the
 objective, since its rising edge also picks up weapons and mounts turrets.
 
 - Sites are dealt out by rank: a bot's place among its team's bots by slot
@@ -1224,3 +1225,83 @@ tick (every 500 ms, or the tick after an `addbot` or `removebot`).
 - Leaving. A removed bot goes through `SV_DropClient` with
   `EXE_PLAYERKICKED`, so the game's `ClientDisconnect` and the drop notice
   run as for a kick, and the slot frees at once (a bot leaves no zombie).
+
+## 9. Retreat
+
+A bot in a fight breaks contact when it is hurt or its clip runs dry, then
+reloads, waits and plays on (`crates/server/src/bots/retreat.rs`). Retail
+has no bots, so none of this is measured against retail; the numbers are
+from `--example bot_fights` (below).
+
+- Hurt: health under 50% of the most (`HURT_PCT`) with an enemy in
+  sight, once per wound (`Bot::hurt_at`): a bot that held its cover fights
+  on at that health until it is hit again, or healed past it. 1.1, 1.5 and
+  UO have no health regeneration; a health pack is the only way back up.
+- Dry: the clip at 0 with rounds in the reserve, an enemy in sight and no
+  switch under way at the end of the think, so a pistol draw
+  (`Bot::sidearm`) comes first. It ends once the clip holds a round and the
+  weapon is idle, or the reserve is gone.
+- Cover (`cover_spot`): the nearest graph node by path from the body,
+  within 1200 units of path and 300 nodes tested (the graph's nodes sit a
+  few tens of units apart: on mp_carentan, mp_harbor and mp_depot the
+  first hidden node took a median 7 tests and at most 205), whose standing
+  eye and chest the threat's eye cannot see by `shot_trace` (props
+  included), nearer the bot than the threat and over 200 units from it.
+  The threat's eye is the enemy's `ps.view().eye` as last seen. The cover
+  found is kept while it stays hidden from the threat's eye; otherwise it
+  is searched again. No cover found ends the retreat: the bot fights on.
+- On the way the keys follow the path (`rekey` off the path's yaw) while
+  the view and the trigger stay on the enemy, sights up. At the cover the
+  body stands still (no unstick spell), crouches with nothing in sight,
+  tops the clip up and turns to where the threat was. A hurt bot holds 3 s
+  (`HOLD_TICKS`), less with a health pack near; no retreat runs past 10 s.
+- Health packs: a bot under 70% (`HEAL_PCT`) with nothing in sight walks
+  to the nearest `item_health*` lying within 1200 units across and 200 up
+  or down (`ScriptRuntime::health_items`; stock `dm`, `tdm` and `sd` drop
+  one on every death, `dropHealth`, cod11-items.md).
+- Duties a retreat or a health detour never breaks (`duty_bound`): a plant
+  or defuse under way, an `re` objective carried, a UO `ctf` flag carried,
+  a defuse against the clock (S&D's planted bomb, a charge on a `bas`
+  defender's base), and a body inside the `dom` flag zone or `hq` radio
+  zone it is taking. Everything else retreats: an S&D attacker on its way
+  to a site, a guard, an `re` defender chasing, a `bas` breacher, both
+  `bel` sides. On a ladder or with an LMG's bipod down nothing starts.
+- `BotBody::retreating` reads 1 (hurt), 2 (dry), 3 (at the cover) or 0;
+  `Server::test_bot_retreat` turns it off per bot.
+
+### Measured (2026-10-20)
+
+`cargo run --release -p vcod-server --example bot_fights`: 8 bots, `tdm`,
+3000 ticks (2.5 min) a match, mp_carentan, mp_harbor, mp_depot and
+mp_brecourt, 16 seeds each (64 matches a row), 1.1. In a symmetric match
+every kill is someone's death, so one side runs the retreat and the other
+does not; `none` is master's brain (the retreat off is the old code path).
+"Wounds" counts a life's first tick under 50 health while engaged, and
+the share of those dead within 5 s. A changed brain moves every later
+draw, so each match diverges whole: across seed sets the same side's K/D
+swung by 0.15 with nothing changed but the other side's brain.
+
+| Seeds | Retreat on | allies K/D | axis K/D | allies wounds dead in 5 s | axis wounds dead in 5 s |
+|---|---|---|---|---|---|
+| 101-116 | none | 1.06 | 0.94 | 80% | 87% |
+| 101-116 | allies | 1.13 | 0.88 | 71% | 86% |
+| 101-116 | axis | 1.07 | 0.93 | 79% | 77% |
+| 117-132 | none | 1.13 | 0.88 | 78% | 85% |
+| 117-132 | allies | 0.99 | 1.01 | 73% | 85% |
+| 117-132 | axis | 0.96 | 1.04 | 81% | 77% |
+
+- A wounded bot running the retreat dies within 5 s 5 to 10 points less
+  often, on all four runs.
+- K/D: the treated side's ratio against `none`, both sides and both seed
+  sets in one geometric mean, is 1.02: no change within the noise.
+- Variants, seeds 101-116, the treated side's K/D against `none`: the
+  sights dropped while backing off, allies 1.03 and axis 0.93 (geometric
+  mean 0.98; the default keeps them up); a hurt retreat only past 400
+  units, 1.02 and 0.92 (0.97); the dry retreat and the health packs with no
+  hurt retreat, 1.07 and 0.95 (1.01, wounds dead in 5 s unchanged at 78%
+  and 86%).
+- Retreats in 64 matches with one side on: 1150 to 1440 hurt and 40 to
+  100 dry starts, of which 28 to 32% reach the cover; the rest die on the
+  way, or the retreat ends first (a dry clip refilled, or no cover left
+  from a threat that moved).
+

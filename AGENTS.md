@@ -129,7 +129,10 @@ check.
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
   `digest` matches across two builds only when they built the same graph,
-  the check for a collision change meant to move no trace.
+  the check for a collision change meant to move no trace. `--example
+  bot_fights` runs seeded shooting matches and prints each team's kills,
+  deaths and wounds survived, with the retreat on for one side
+  (`RETREAT=allies|axis|all|none`, `bot-objectives.md` 9).
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
   is not a regression.
