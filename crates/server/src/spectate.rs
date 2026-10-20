@@ -1652,15 +1652,19 @@ impl ClientSim {
     /// Whether the moves just run reach `PM_Footsteps`' selection, which
     /// writes the `movetype` condition: off the ground it returns first
     /// unless climbing, mounted or seated, and 1.1's linked arm never calls
-    /// it (`update_anims`).
+    /// it (`update_anims`). 1.5's and UO's also go on for an airborne body
+    /// whose eye target is not its flags' stance (1.5 0x24e51), so a
+    /// lie-down pressed mid-fall selects on its first cmd.
     fn footsteps_select(&self) -> bool {
         let linked = self.ps.linked;
-        linked && self.ps.rules.v15()
+        let v15 = self.ps.rules.v15();
+        linked && v15
             || !linked
                 && (self.ps.on_ground
                     || self.ps.on_ladder
                     || self.mounted_on.is_some()
-                    || self.seat.is_some())
+                    || self.seat.is_some()
+                    || v15 && self.ps.effective_stance() != self.ps.stance)
     }
 
     /// After one pmove of `cmd`: the `movetype` condition its `PM_Footsteps`
@@ -1720,7 +1724,6 @@ impl ClientSim {
         // takes the idle arm), which is how a rider leaves a seat standing
         // (coduo-vehicles.md 11.2).
         let linked = self.ps.linked;
-        let linked_idle = linked && self.ps.rules.v15();
         // Retail's condition 8 (@0x32504): any forward component clears the
         // strafe, diagonals included; a cmd that is sideways only sets the
         // side; a cmd asking for neither leaves the condition as it was.
@@ -1845,13 +1848,7 @@ impl ClientSim {
         // ground (`ps.mounted` clears `on_ground` in pmove) but the 0x322c8
         // mounted arm runs ahead of that early-out (turrets doc, section 10).
         let mut continuous_torso = false;
-        if linked_idle
-            || !linked
-                && (self.ps.on_ground
-                    || self.ps.on_ladder
-                    || self.mounted_on.is_some()
-                    || self.seat.is_some())
-        {
+        if self.footsteps_select() {
             let mut sel = script.select("combat", &conditions);
             // Retail leaves `torsoAnim` 0 in every settled pose of both
             // captures, although the clauses reached here are `both`. That 0

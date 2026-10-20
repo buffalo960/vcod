@@ -828,12 +828,16 @@ pub fn bullet_trace(
             .flatten();
         (t.fraction, t.normal, ent, t.surface_flags)
     });
+    // The world trace's own end point, unless the entity pass lowers the
+    // fraction (1.5b 0x809a44d; cod11-combat.md 2.7).
+    let arith = vcod_common::patch::Arith::for_protocol(host.defs.proto);
+    let mut point = t.map_or(end, |(t, _)| t.endpos);
     if let Some(e) = script_model_hit(host, cx, start, end, ignore, hit.map_or(1.0, |h| h.0)) {
+        point = crate::game::combat::trace_point(start, end, e.0, arith);
         hit = Some(e);
     }
     // `hitCharacters` keeps `CONTENTS_BODY` in the mask (0x5abfd): a body
     // the segment scores a bone of stops it, with no surface (3.2).
-    let mut point = hit.map_or(end, |h| start + (end - start) * h.0);
     if hit_characters.as_bool()? {
         let limit = hit.map_or(1.0, |h| h.0);
         if let Some((slot, f)) = body_hit(host, start, end, ignore, limit) {
@@ -841,7 +845,6 @@ pub fn bullet_trace(
             hit = Some((f, (start - end).normalize_or_zero(), ent, 0));
             // The entity pass's own end point (3.1, "The arithmetic on 1.5
             // and UO").
-            let arith = vcod_common::patch::Arith::for_protocol(host.defs.proto);
             point = crate::game::combat::trace_point(start, end, f, arith);
         }
     }

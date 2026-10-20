@@ -2817,8 +2817,11 @@ pub fn check_prone(world: &MoveWorld, q: ProneQuery) -> Option<ProneBody> {
     if line(chest, hips).fraction < 1.0 || line(hips, feet).fraction < 1.0 {
         return missed();
     }
+    // One x87 expression, stored once (1.1d 0x2e14c, 1.5b 0x1e589, UO
+    // 0x22ed5): the difference is never rounded to a float on its own.
+    let torso_height = (f64::from(chest.z) - f64::from(o.z)) - f64::from(PRONE_BODY_HALF_BOX);
     Some(ProneBody {
-        torso_height: (chest.z - o.z) - PRONE_BODY_HALF_BOX,
+        torso_height: torso_height as f32,
         torso_pitch: angle_normalize180(vectopitch(chest - hips)),
         waist_pitch: angle_normalize180(vectopitch(hips - feet)),
     })
