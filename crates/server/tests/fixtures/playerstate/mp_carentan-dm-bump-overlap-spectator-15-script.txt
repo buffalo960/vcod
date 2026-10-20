@@ -1,0 +1,410 @@
+# Retail CoD 1.5b dedicated server log lines under the player-clip captures.
+# map mp_carentan, g_gametype probe_bump (whose main() calls
+# maps\mp\gametypes\dm::main()), probe_teleport 1, probe_overlap 1, dedicated 1,
+# sv_pure 0, stock 1.5 paks. Captured 2026-10-20.
+# Clients: 0 a plain --net-probe that never joins (a spectator), 1 the target, 2 the walker.
+# The evidence is the server's own games_mp.log, logged by
+# crates/gsc/tests/fixtures/semantics/client-probes/probe_bump.gsc; the client
+# half of the same run is mp_carentan-dm-bump-overlap-spectator-15-walker.txt beside this file.
+#
+# PROBE lines as in mp_carentan-dm-bump-overlap-script.txt.
+#
+# Recipe: mp_carentan-dm-bump-overlap-spectator-script.txt's on COD_VERSION=1.5
+# tools/run_probe.sh, the walker tagged overlap-spectator-15. Unlike 1.1d, 1.5b
+# pushes the pair apart beside the spectator (docs/research/cod11-player-clip.md 13.4).
+#
+# The target client's own playerstate on every snapshot where it moved or
+# carried pm_time or pm_flags 0x100, from --probe-bump-target's stdout:
+# BUMPT schedule starts at t=23850 (walker placed)
+# BUMPT stand at t=23850
+# BUMPT !snap msg=445 t=35900 ct=35882 origin=932,-376,-150.875 vel=-133.40303,135.29092,0 ground=1022 pm_flags=262400 pm_time=300
+# BUMPT !snap msg=446 t=35950 ct=35932 origin=925.3428,-369.24475,-151.86539 vel=-118.81112,148.26973,-40 ground=1022 pm_flags=262400 pm_time=300
+# BUMPT !snap msg=447 t=36000 ct=35982 origin=919.59265,-362.08087,-151.875 vel=-112,139,0 ground=1022 pm_flags=262400 pm_time=250
+# BUMPT !snap msg=448 t=36050 ct=36032 origin=914.28735,-355.50952,-151.875 vel=-103,128,0 ground=1022 pm_flags=262400 pm_time=200
+# BUMPT !snap msg=449 t=36100 ct=36082 origin=909.4196,-349.45746,-151.875 vel=-94,118,0 ground=1022 pm_flags=262400 pm_time=150
+# BUMPT !snap msg=450 t=36150 ct=36132 origin=904.97394,-343.89157,-151.875 vel=-87,108,0 ground=1022 pm_flags=262400 pm_time=100
+# BUMPT !snap msg=451 t=36200 ct=36182 origin=900.8686,-338.78073,-151.875 vel=-80,99,0 ground=1022 pm_flags=262400 pm_time=50
+# BUMPT !snap msg=452 t=36250 ct=36232 origin=897.14734,-334.19916,-151.875 vel=-69,85,0 ground=1022 pm_flags=262144 pm_time=0
+# BUMPT !snap msg=453 t=36300 ct=36282 origin=894.3166,-330.68823,-151.875 vel=-51,63,0 ground=1022 pm_flags=262144 pm_time=0
+# BUMPT !snap msg=454 t=36350 ct=36332 origin=892.34467,-328.263,-151.875 vel=-33,41,0 ground=1022 pm_flags=262144 pm_time=0
+# BUMPT !snap msg=455 t=36400 ct=36382 origin=891.27203,-326.93832,-151.875 vel=-15,19,0 ground=1022 pm_flags=262144 pm_time=0
+# BUMPT !snap msg=805 t=53900 ct=53884 origin=1139.3832,-419.7399,-150.875 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=300
+# BUMPT !snap msg=806 t=53950 ct=53932 origin=1139.3832,-419.7399,-151.8062 vel=0,0,-39 ground=1022 pm_flags=262400 pm_time=300
+# BUMPT !snap msg=807 t=54000 ct=53984 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=300
+# BUMPT !snap msg=808 t=54050 ct=54034 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=300
+# BUMPT !snap msg=809 t=54100 ct=54083 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=251
+# BUMPT !snap msg=810 t=54150 ct=54132 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=202
+# BUMPT !snap msg=811 t=54200 ct=54183 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=151
+# BUMPT !snap msg=812 t=54250 ct=54232 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=102
+# BUMPT !snap msg=813 t=54300 ct=54282 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=52
+# BUMPT !snap msg=814 t=54350 ct=54332 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=262400 pm_time=2
+# BUMPT crouch at t=58850
+# BUMPT stand at t=83850
+# BUMPT prone at t=85350
+# BUMPT !snap msg=1440 t=85650 ct=85632 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1754
+# BUMPT !snap msg=1441 t=85700 ct=85668 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1718
+# BUMPT !snap msg=1442 t=85750 ct=85750 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1636
+# BUMPT !snap msg=1443 t=85800 ct=85766 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1620
+# BUMPT !snap msg=1444 t=85850 ct=85832 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1554
+# BUMPT !snap msg=1445 t=85900 ct=85882 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1504
+# BUMPT !snap msg=1446 t=85950 ct=85934 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1452
+# BUMPT !snap msg=1447 t=86000 ct=85985 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1401
+# BUMPT !snap msg=1448 t=86050 ct=86033 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1353
+# BUMPT !snap msg=1449 t=86100 ct=86086 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1300
+# BUMPT !snap msg=1450 t=86150 ct=86134 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1252
+# BUMPT !snap msg=1451 t=86200 ct=86185 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1201
+# BUMPT !snap msg=1452 t=86250 ct=86218 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1168
+# BUMPT !snap msg=1453 t=86300 ct=86286 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1100
+# BUMPT !snap msg=1454 t=86350 ct=86334 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1052
+# BUMPT !snap msg=1455 t=86400 ct=86382 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=1004
+# BUMPT !snap msg=1456 t=86450 ct=86434 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=952
+# BUMPT !snap msg=1457 t=86500 ct=86483 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=903
+# BUMPT !snap msg=1458 t=86550 ct=86535 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=851
+# BUMPT !snap msg=1459 t=86600 ct=86582 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=804
+# BUMPT !snap msg=1460 t=86650 ct=86632 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=754
+# BUMPT !snap msg=1461 t=86700 ct=86684 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=702
+# BUMPT !snap msg=1462 t=86750 ct=86734 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=652
+# BUMPT !snap msg=1463 t=86800 ct=86782 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=604
+# BUMPT !snap msg=1464 t=86850 ct=86836 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=550
+# BUMPT !snap msg=1465 t=86900 ct=86883 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=503
+# BUMPT !snap msg=1466 t=86950 ct=86932 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=454
+# BUMPT !snap msg=1467 t=87000 ct=86984 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=402
+# BUMPT !snap msg=1468 t=87050 ct=87035 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=351
+# BUMPT !snap msg=1469 t=87100 ct=87082 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=304
+# BUMPT !snap msg=1470 t=87150 ct=87135 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=251
+# BUMPT !snap msg=1471 t=87200 ct=87168 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=218
+# BUMPT !snap msg=1472 t=87250 ct=87232 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=154
+# BUMPT !snap msg=1473 t=87300 ct=87282 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=104
+# BUMPT !snap msg=1474 t=87350 ct=87337 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=49
+# BUMPT !snap msg=1475 t=87400 ct=87384 origin=1139.3832,-419.7399,-151.8062 vel=0,0,0 ground=1022 pm_flags=270337 pm_time=2
+# BUMPT stand at t=110350
+PROBE place 13900 1 axis (1132.00, -376.00, -151.88) 0
+PROBE place 23850 2 allies (932.00, -376.00, -151.88) 0
+PROBE both_placed 23900
+PROBE at log_states
+PROBE state 34900 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 34900 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 34950 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 34950 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35000 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35000 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35050 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35050 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35100 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35100 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35150 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35150 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35200 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35200 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35250 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35250 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35300 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35300 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35350 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35350 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35400 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35400 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35450 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35450 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35500 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35500 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35550 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35550 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35600 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35600 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35650 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35650 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35700 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35700 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35750 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35750 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35800 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35800 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35850 1 axis (1132.00, -376.00, -151.88) 1
+PROBE state 35850 2 allies (932.00, -376.00, -151.88) 1
+PROBE at overlap_setorigin
+PROBE overlap 35900 1 2 (932.00, -376.00, -151.88)
+PROBE state 35900 1 axis (932.00, -376.00, -150.88) 1
+PROBE state 35900 2 allies (932.00, -376.00, -151.88) 1
+PROBE state 35950 1 axis (925.34, -369.24, -151.87) 1
+PROBE state 35950 2 allies (934.21, -378.24, -151.88) 1
+PROBE state 36000 1 axis (919.59, -362.08, -151.88) 1
+PROBE state 36000 2 allies (941.56, -387.36, -151.88) 1
+PROBE state 36050 1 axis (914.29, -355.51, -151.88) 1
+PROBE state 36050 2 allies (946.62, -393.61, -151.88) 1
+PROBE state 36100 1 axis (909.42, -349.46, -151.88) 1
+PROBE state 36100 2 allies (951.24, -399.37, -151.88) 1
+PROBE state 36150 1 axis (904.97, -343.89, -151.88) 1
+PROBE state 36150 2 allies (955.81, -405.07, -151.88) 1
+PROBE state 36200 1 axis (900.87, -338.78, -151.88) 1
+PROBE state 36200 2 allies (959.39, -409.53, -151.88) 1
+PROBE state 36250 1 axis (897.15, -334.20, -151.88) 1
+PROBE state 36250 2 allies (962.77, -413.71, -151.88) 1
+PROBE state 36300 1 axis (894.32, -330.69, -151.88) 1
+PROBE state 36300 2 allies (964.59, -415.97, -151.88) 1
+PROBE state 36350 1 axis (892.34, -328.26, -151.88) 1
+PROBE state 36350 2 allies (966.80, -418.72, -151.88) 1
+PROBE state 36400 1 axis (891.27, -326.94, -151.88) 1
+PROBE state 36400 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36450 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36450 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36500 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36500 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36550 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36550 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36600 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36600 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36650 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36650 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36700 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36700 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36750 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36750 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36800 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36800 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36850 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36850 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36900 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36900 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 36950 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 36950 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37000 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37000 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37050 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37050 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37100 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37100 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37150 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37150 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37200 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37200 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37250 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37250 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37300 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37300 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37350 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37350 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37400 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37400 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37450 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37450 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37500 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37500 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37550 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37550 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37600 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37600 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37650 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37650 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37700 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37700 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37750 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37750 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37800 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37800 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37850 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37850 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37900 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37900 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 37950 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 37950 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38000 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38000 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38050 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38050 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38100 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38100 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38150 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38150 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38200 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38200 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38250 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38250 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38300 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38300 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38350 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38350 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38400 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38400 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38450 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38450 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38500 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38500 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38550 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38550 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38600 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38600 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38650 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38650 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38700 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38700 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38750 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38750 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38800 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38800 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 38850 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 38850 2 allies (967.60, -419.74, -151.88) 1
+PROBE at log_states
+PROBE state 52900 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 52900 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 52950 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 52950 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 53000 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53000 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 53050 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53050 2 allies (967.60, -419.74, -151.88) 1
+PROBE state 53100 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53100 2 allies (969.01, -419.74, -151.88) 1
+PROBE state 53150 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53150 2 allies (974.81, -419.74, -151.88) 1
+PROBE state 53200 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53200 2 allies (982.64, -419.74, -151.88) 1
+PROBE state 53250 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53250 2 allies (993.65, -419.74, -151.88) 1
+PROBE state 53300 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53300 2 allies (1004.64, -419.74, -151.88) 1
+PROBE state 53350 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53350 2 allies (1016.07, -419.74, -151.88) 1
+PROBE state 53400 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53400 2 allies (1023.47, -419.74, -151.88) 1
+PROBE state 53450 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53450 2 allies (1034.68, -419.74, -151.88) 1
+PROBE state 53500 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53500 2 allies (1049.70, -419.74, -151.88) 1
+PROBE state 53550 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53550 2 allies (1057.55, -419.74, -151.88) 1
+PROBE state 53600 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53600 2 allies (1071.90, -419.74, -151.88) 1
+PROBE state 53650 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53650 2 allies (1086.92, -419.74, -151.88) 1
+PROBE state 53700 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53700 2 allies (1094.54, -419.74, -151.88) 1
+PROBE state 53750 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53750 2 allies (1105.75, -419.74, -151.88) 1
+PROBE state 53800 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53800 2 allies (1116.74, -419.74, -151.88) 1
+PROBE state 53850 1 axis (891.06, -326.67, -151.88) 1
+PROBE state 53850 2 allies (1127.95, -419.74, -151.88) 1
+PROBE at overlap_setorigin
+PROBE overlap 53900 1 2 (1139.38, -419.74, -151.88)
+PROBE state 53900 1 axis (1139.38, -419.74, -150.88) 1
+PROBE state 53900 2 allies (1139.38, -419.74, -151.88) 1
+PROBE state 53950 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 53950 2 allies (1131.45, -422.27, -151.88) 1
+PROBE state 54000 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54000 2 allies (1123.52, -424.27, -151.88) 1
+PROBE state 54050 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54050 2 allies (1116.00, -427.22, -151.88) 1
+PROBE state 54100 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54100 2 allies (1108.41, -429.98, -151.88) 1
+PROBE state 54150 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54150 2 allies (1102.47, -432.57, -151.88) 1
+PROBE state 54200 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54200 2 allies (1098.23, -434.97, -151.88) 1
+PROBE state 54250 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54250 2 allies (1095.61, -437.15, -151.88) 1
+PROBE state 54300 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54300 2 allies (1094.53, -439.03, -151.88) 1
+PROBE state 54350 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54350 2 allies (1094.82, -440.47, -151.88) 1
+PROBE state 54400 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54400 2 allies (1098.26, -441.20, -151.88) 1
+PROBE state 54450 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54450 2 allies (1105.50, -441.71, -151.88) 1
+PROBE state 54500 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54500 2 allies (1115.22, -442.06, -151.88) 1
+PROBE state 54550 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54550 2 allies (1123.63, -445.64, -151.88) 1
+PROBE state 54600 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54600 2 allies (1132.88, -449.95, -151.88) 1
+PROBE state 54650 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54650 2 allies (1143.99, -453.17, -151.88) 1
+PROBE state 54700 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54700 2 allies (1155.20, -455.55, -151.88) 1
+PROBE state 54750 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54750 2 allies (1166.41, -457.35, -151.88) 1
+PROBE state 54800 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54800 2 allies (1181.21, -459.08, -151.88) 1
+PROBE state 54850 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54850 2 allies (1185.24, -459.46, -151.88) 1
+PROBE state 54900 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54900 2 allies (1201.98, -460.75, -151.88) 1
+PROBE state 54950 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 54950 2 allies (1206.83, -461.16, -151.88) 1
+PROBE state 55000 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55000 2 allies (1212.61, -461.66, -151.88) 1
+PROBE state 55050 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55050 2 allies (1216.93, -462.02, -151.88) 1
+PROBE state 55100 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55100 2 allies (1219.90, -462.25, -151.88) 1
+PROBE state 55150 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55150 2 allies (1221.43, -462.33, -151.88) 1
+PROBE state 55200 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55200 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55250 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55250 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55300 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55300 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55350 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55350 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55400 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55400 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55450 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55450 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55500 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55500 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55550 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55550 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55600 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55600 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55650 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55650 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55700 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55700 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55750 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55750 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55800 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55800 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55850 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55850 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55900 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55900 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 55950 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 55950 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56000 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56000 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56050 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56050 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56100 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56100 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56150 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56150 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56200 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56200 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56250 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56250 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56300 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56300 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56350 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56350 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56400 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56400 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56450 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56450 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56500 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56500 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56550 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56550 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56600 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56600 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56650 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56650 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56700 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56700 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56750 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56750 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56800 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56800 2 allies (1221.70, -462.35, -151.88) 1
+PROBE state 56850 1 axis (1139.38, -419.74, -151.81) 1
+PROBE state 56850 2 allies (1221.70, -462.35, -151.88) 1
+PROBE overlap_done 56900

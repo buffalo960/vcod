@@ -8223,8 +8223,10 @@ impl Server {
                 if live {
                     let views: Vec<Option<StuckView>> =
                         self.clients.iter().map(Self::stuck_view).collect();
+                    // 1.5's and UO's scan and jitter (player-clip doc 13.4).
+                    let later = self.proto.version != PROTOCOL_V1.version;
                     let rand = || (vcod_common::rng::xorshift(&mut self.rng) >> 33) as u32;
-                    if let Some(push) = stuck_in_client(slot, &views, rand) {
+                    if let Some(push) = stuck_in_client(slot, &views, later, rand) {
                         let me = self.clients[slot]
                             .as_mut()
                             .and_then(|c| c.sim.as_mut())
