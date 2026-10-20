@@ -332,3 +332,30 @@ fn vc_bot_names_off_numbers_the_bots() {
     let slot = sv.bot_slots()[0];
     assert_eq!(sv.bot_name(slot), Some(format!("bot{}", slot + 1).as_str()));
 }
+
+/// `addbot ... skill N` pins a bot's level, auto-side bots included;
+/// `vc_bot_skill` moves every other bot live, and clamps.
+#[test]
+fn vc_bot_skill_and_addbot_skill_set_the_level() {
+    let Some((mut sv, mut now)) = server("tdm", 8) else {
+        return;
+    };
+    let mut none: Vec<Human> = Vec::new();
+    rcon(&mut sv, &mut now, "addbot axis 1 skill 3");
+    rcon(&mut sv, &mut now, "addbot skill 0 1");
+    rcon(&mut sv, &mut now, "addbot 1");
+    run(&mut sv, &mut none, &mut now, 2);
+    let levels = |sv: &Server| -> Vec<Option<u8>> {
+        sv.bot_slots().iter().map(|&s| sv.bot_skill(s)).collect()
+    };
+    assert_eq!(levels(&sv), [Some(3), Some(0), Some(1)]);
+    rcon(&mut sv, &mut now, "set vc_bot_skill 9");
+    run(&mut sv, &mut none, &mut now, 1);
+    assert_eq!(levels(&sv), [Some(3), Some(0), Some(3)]);
+    rcon(&mut sv, &mut now, "set vc_bot_skill 2");
+    run(&mut sv, &mut none, &mut now, 1);
+    assert_eq!(levels(&sv), [Some(3), Some(0), Some(2)]);
+    let list = rcon(&mut sv, &mut now, "listbots");
+    assert!(list.contains("vc_bot_skill 2"), "{list}");
+    assert!(rcon(&mut sv, &mut now, "addbot skill").contains("usage: addbot"));
+}

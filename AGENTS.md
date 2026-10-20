@@ -64,7 +64,7 @@ instead of leaving the fact in a commit message.
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
-| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md` |
+| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness) |
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
 | Shader scripts, light grid, prop and entity lighting | `cod11-shader-scripts.md`, `cod11-light-grid-and-leaf-lights.md` |
 | Gamma, overbright, `r_intensity` | `cod11-gamma.md` |
@@ -224,6 +224,13 @@ check.
 - To reproduce a screenshot spot in fly mode, add a temporary
   `VCOD_POS="x y z yaw"` override to the `FlyCamera::new` spawn in `main.rs`
   and remove it before committing.
+- Bot play is measured, not eyeballed: `cargo run --release -p vcod-server
+  --example bot_match [seed...]` runs seeded bot-vs-bot matches (`MAP=`,
+  `GAMETYPE=`, `BOTS=`, `TICKS=`, `JOBS=`, `SET=`, `UO=1`) and prints
+  kills, deaths, damage, time-to-kill, wins, objective actions and stalls
+  per team. A bot behaviour change reports its before and after on the
+  same seeds in `docs/research/bot-combat.md`, whose section 1 says what
+  each number means. Retail has no bots, so this is the only yardstick.
 - Pixel and by-ear checks (aim sign, lean direction, shading, sound) belong to
   the human. Report them as pending.
 
