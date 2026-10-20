@@ -7511,7 +7511,7 @@ impl Server {
                 return;
             }
         }
-        self.end_frames(&moved, wall_ms);
+        self.end_frames(&moved, (wall_ms, frames));
     }
 
     /// How far this frame moves the game clock. 1.1's `SV_Frame` steps
@@ -8544,10 +8544,10 @@ impl Server {
     }
 
     /// `SV_Frame`'s steps past its game frames.
-    fn end_frames(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    fn end_frames(&mut self, moved: &[MoveSummary], wall: (Option<f32>, u32)) {
         self.check_timeouts();
         // Every entity built once, then culled and written per client.
-        self.send_snapshots(moved, wall_ms);
+        self.send_snapshots(moved, wall);
         self.send_unentered();
         self.send_zombies();
         // `SV_Frame`'s last step (0x808d258).
@@ -9862,7 +9862,9 @@ impl Server {
     /// still in its ring, uncompressed otherwise. Every entity state is built
     /// once from the world the moves and the script frame left, then culled
     /// and written per client.
-    fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    /// `wall` is `--trace`'s: the wall gap since the last tick and the
+    /// frames this tick ran, so a catch-up tick's gap reads against them.
+    fn send_snapshots(&mut self, moved: &[MoveSummary], wall: (Option<f32>, u32)) {
         let live = self.build_world_frame();
         let svs_ms = self.svs_time_ms();
         if let Some(rt) = self.script.as_mut() {
@@ -10125,9 +10127,10 @@ impl Server {
                     )
                 });
                 log::info!(
-                    "trace c{slot} msg {message_num} wall {} sv {} ct {} lead {} \
+                    "trace c{slot} msg {message_num} wall {} frames {} sv {} ct {} lead {} \
 cmds {processed} span {span} queued {queued} ack {} behind {ack_behind} {base_desc} {} B{walk}",
-                    wall_ms.map_or("-".into(), |w| format!("{w:.1}")),
+                    wall.0.map_or("-".into(), |w| format!("{w:.1}")),
+                    wall.1,
                     self.sv_time_ms,
                     command_time,
                     lead,

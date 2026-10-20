@@ -329,7 +329,7 @@ fn main() -> Result<()> {
         let frames = schedule.owed(Instant::now());
         server.tick_frames(now, frames);
         if trace {
-            stats.add(now.elapsed(), late);
+            stats.add(now.elapsed(), late, frames);
         }
         // A level load that failed with the level already torn down: there is
         // no script to end the level and no table for a client to pull, which
@@ -346,7 +346,7 @@ fn main() -> Result<()> {
             return Ok(());
         }
         schedule.ran(frames);
-        if trace && stats.ticks == 20 {
+        if trace && stats.due() {
             stats.log_and_reset();
         }
         // Between frames the loop waits on the socket, as `Com_EventLoop`
@@ -453,27 +453,38 @@ fn protocol(sets: &[String], fs: &Pk3Fs) -> Result<&'static Protocol> {
     Ok(vcod_server::server::install_protocol(fs))
 }
 
-/// `--trace`'s per-second tick summary: the slowest `Server::tick` and the
-/// worst lag of a tick's start behind its slot on the fixed schedule.
+/// `--trace`'s per-second tick summary, logged once 20 frames have run: the
+/// loop's ticks and the frames they ran (a catch-up tick runs several), the
+/// slowest tick and the worst lag of a tick's start behind its slot on the
+/// fixed schedule.
 #[derive(Default)]
 struct TickStats {
     ticks: u32,
+    frames: u32,
     sum: Duration,
     max: Duration,
     late: Duration,
 }
 
 impl TickStats {
-    fn add(&mut self, took: Duration, late: Duration) {
+    fn add(&mut self, took: Duration, late: Duration, frames: u32) {
         self.ticks += 1;
+        self.frames += frames;
         self.sum += took;
         self.max = self.max.max(took);
         self.late = self.late.max(late);
     }
 
+    /// A second of frames has run, however many ticks it took.
+    fn due(&self) -> bool {
+        self.frames >= 1000 / FRAME.as_millis() as u32
+    }
+
     fn log_and_reset(&mut self) {
         log::info!(
-            "tick: mean {:.2} ms max {:.2} ms late {:.2} ms",
+            "tick: {} ticks {} frames mean {:.2} ms max {:.2} ms late {:.2} ms",
+            self.ticks,
+            self.frames,
             self.sum.as_secs_f64() * 1000.0 / f64::from(self.ticks.max(1)),
             self.max.as_secs_f64() * 1000.0,
             self.late.as_secs_f64() * 1000.0
@@ -486,6 +497,22 @@ impl TickStats {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
+
+    /// A catch-up tick counts every frame it ran: ten ticks of two frames
+    /// are the second's summary, as twenty ticks of one are.
+    #[test]
+    fn tick_stats_count_frames_not_ticks() {
+        let mut stats = TickStats::default();
+        for _ in 0..9 {
+            stats.add(Duration::from_millis(3), Duration::ZERO, 2);
+        }
+        assert!(!stats.due());
+        stats.add(Duration::from_millis(5), Duration::ZERO, 2);
+        assert!(stats.due());
+        assert_eq!((stats.ticks, stats.frames), (10, 20));
+        stats.log_and_reset();
+        assert!(!stats.due());
+    }
 
     /// The loop on a simulated clock: each wake overshoots its slot by up
     /// to 4 ms and each tick takes up to 8 ms. Every snapshot goes out within
