@@ -316,17 +316,11 @@ impl DobjStamps {
             .map_or_else(|| body.frame(), vcod_common::turretpose::angles_quat)
     }
 
-    /// [`Self::frame`]'s axes for the stored arithmetic: the yaw-only
-    /// body's as 1.5b and UO round them, a tilt's turned in `f32` (its
-    /// stores are not read).
+    /// [`Self::frame`]'s axes as 1.5b's and UO's `AnglesToAxis` rounds
+    /// them.
     pub fn axis_stored(&self, body: &HitBody) -> [Vec3; 3] {
-        match self.angles {
-            None => body.axis_stored(),
-            Some(a) => {
-                let q = vcod_common::turretpose::angles_quat(a);
-                [q * Vec3::X, q * Vec3::Y, q * Vec3::Z]
-            }
-        }
+        self.angles
+            .map_or_else(|| body.axis_stored(), angles_to_axis_stored)
     }
 
     /// The controls the last build eased to, which the end frame's record
@@ -1168,6 +1162,33 @@ impl HitBody {
     }
 }
 
+/// `AnglesToAxis` as 1.5b's and UO's engines run it (UO 0x806a46e over
+/// `AngleVectors` 0x80674ad): each angle's float radians, its sine and
+/// cosine stored, each component rounded once off the x87 stack, the
+/// left the right negated.
+pub fn angles_to_axis_stored(a: [f32; 3]) -> [Vec3; 3] {
+    let st = |x: f64| x as f32;
+    let sc = |deg: f32| {
+        let r = f64::from(st(f64::from(deg) * (std::f64::consts::PI / 180.0)));
+        (f64::from(st(r.sin())), f64::from(st(r.cos())))
+    };
+    let ((sp, cp), (sy, cy), (sr, cr)) = (sc(a[0]), sc(a[1]), sc(a[2]));
+    let right = [
+        st(-sr * sp * cy + -cr * -sy),
+        st(-sr * sp * sy + -cr * cy),
+        st(-sr * cp),
+    ];
+    [
+        Vec3::new(st(cp * cy), st(cp * sy), st(-sp)),
+        Vec3::new(-right[0], -right[1], -right[2]),
+        Vec3::new(
+            st(cr * sp * cy + -sr * -sy),
+            st(cr * sp * sy + -sr * cy),
+            st(cr * cp),
+        ),
+    ]
+}
+
 /// What `ClientEndFrame`'s `BG_PlayerAnimation` hands the DObj: its models,
 /// both anim channels and the controllers' inputs.
 #[derive(Clone, Default, Debug)]
@@ -1319,13 +1340,16 @@ fn trace_attack(
     }
 }
 
-/// A locational trace's end point at `fraction` of `start..end`. 1.5b's
-/// and UO's last step stores the move and rounds each `start + move *
-/// fraction` once (UO 0x809b457, 1.5b 0x809a45f).
+/// A locational trace's end point on a body or model at `fraction` of
+/// `start..end`. 1.5b's and UO's `SV_ClipMoveToEntity` (1.5b 0x8099b18,
+/// UO 0x809ab10) rounds each `start + (end - start) * fraction` once off
+/// the x87 stack: `trap_LocationalTrace` is a point trace, which skips
+/// the box path's stored move (cod11-combat.md 3.1).
 pub fn trace_point(start: Vec3, end: Vec3, fraction: f32, arith: Arith) -> Vec3 {
     match arith {
         Arith::Stored => {
-            (start.as_dvec3() + (end - start).as_dvec3() * f64::from(fraction)).as_vec3()
+            let s = start.as_dvec3();
+            (s + (end.as_dvec3() - s) * f64::from(fraction)).as_vec3()
         }
         Arith::Kept | Arith::Msvc => start + (end - start) * fraction,
     }
@@ -2165,6 +2189,36 @@ mod tests {
         let mut ps = PlayerState::spawn(origin, 45.0);
         ps.rules = rules;
         ps
+    }
+
+    /// The prone frag strike on mp_carentan, read under gdb on 1.5b
+    /// (cod11-combat.md 3.1, "The prone strike on mp_carentan"): a body
+    /// `setPlayerAngles` turned to (0, 225, 0) traces in `AnglesToAxis`'s
+    /// rounding, forward x `0xbf3504f4`, and the hit point rounds `start +
+    /// (end - start) * fraction` once, z `0xc12aabc1`.
+    #[test]
+    fn a_strike_on_a_turned_body_lands_on_retails_bits() {
+        let b = |h: u32| f32::from_bits(h);
+        let mut stamps = DobjStamps::default();
+        stamps.set_angles(Some([0.0, 225.0, 0.0]));
+        let body = HitBody {
+            slot: 0,
+            origin: Vec3::ZERO,
+            yaw: b(0x407b53d1),
+            mins: Vec3::ZERO,
+            maxs: Vec3::ZERO,
+            pose: BodyPose::default(),
+        };
+        let axis = stamps.axis_stored(&body);
+        assert_eq!(axis, body.axis_stored());
+        assert_eq!(axis[0].x.to_bits(), 0xbf3504f4);
+        let start = Vec3::new(b(0x44b2bde3), b(0x4526e093), b(0x409d9b68));
+        let end = Vec3::new(b(0x44b69c49), b(0x4528cfc7), b(0xc15acbe7));
+        let p = trace_point(start, end, b(0x3f569a06), Arith::Stored);
+        assert_eq!(
+            p.to_array().map(f32::to_bits),
+            [0x44b5fc20, 0x45287fb2, 0xc12aabc1]
+        );
     }
 
     /// Each build eases the controls a step on from the last build's, in

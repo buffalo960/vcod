@@ -667,6 +667,9 @@ pub struct GameHost {
     /// Test-facing: the outcomes of the next UO turret tracer rolls, a retail
     /// capture's, taken in place of the drawn ones (`Server::pin_tracer_rolls`).
     pub tracer_pins: std::collections::VecDeque<bool>,
+    /// Test-facing: the next `rand()` values the item draws (launch climb,
+    /// spin, respawn, lift) take, a retail capture's (`Server::pin_item_draws`).
+    pub item_draw_pins: std::collections::VecDeque<i32>,
 }
 
 /// A `mins`, `maxs` pair.
@@ -1486,6 +1489,7 @@ impl GameHost {
             hit_rigs: Default::default(),
             test_item_lift: None,
             tracer_pins: Default::default(),
+            item_draw_pins: Default::default(),
         }
     }
 
