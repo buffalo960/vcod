@@ -23,6 +23,7 @@ pub type Builtin = fn(&mut GameHost, &mut Cx, Option<Target>, &[Value]) -> Resul
 pub const NAMES: &[(&str, Builtin)] = &[
     ("setclientcvar", set_client_cvar),
     ("openmenu", open_menu),
+    ("openmenunomouse", open_menu_no_mouse),
     ("giveweapon", give_weapon),
     ("givemaxammo", give_max_ammo),
     ("setspawnweapon", set_spawn_weapon),
@@ -641,6 +642,27 @@ pub fn open_menu(
     recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
+    send_menu(host, cx, recv, args, "")
+}
+
+/// `self openMenuNoMouse(menu)` (0x454b4): `openMenu` with `t %i 1`, which
+/// the cgame opens as `UIMENU_SCRIPT_POPUP_NO_MOUSE` (front-end doc 13).
+pub fn open_menu_no_mouse(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    send_menu(host, cx, recv, args, " 1")
+}
+
+fn send_menu(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+    tail: &str,
+) -> Result<Value, ErrorKind> {
     let slot = client_receiver(host, recv)?;
     let Some(Value::String(menu)) = args.first() else {
         return Err(ErrorKind::BadType("openMenu takes a menu name"));
@@ -648,7 +670,8 @@ pub fn open_menu(
     let menu = cx.resolve(*menu).to_string();
     let index = script_menu_index(&host.configstrings, host.allocators.layout(), &menu)
         .ok_or(ErrorKind::BadType("that menu was not precached"))?;
-    host.client_commands.push((slot, format!("t {index}")));
+    host.client_commands
+        .push((slot, format!("t {index}{tail}")));
     Ok(Value::Int(1))
 }
 
@@ -1482,6 +1505,23 @@ mod tests {
         });
     }
 
+    /// `openMenuNoMouse` sends the slot with a third argument, `t %i 1`
+    /// (0x454b4), which the cgame reads as the no-mouse popup.
+    #[test]
+    fn open_menu_no_mouse_sends_the_slot_and_a_one() {
+        let (mut vm, mut host) = fixture();
+        vm.with_cx(|cx| {
+            let e = host.ents.spawn_client(cx, 2, None).unwrap();
+            host.allocators
+                .index(&mut host.configstrings, CsRange::Menu, "weapon_russian")
+                .unwrap();
+            let menu = Value::String(cx.intern_exact("weapon_russian"));
+            let r = open_menu_no_mouse(&mut host, cx, Some(Target::Entity(e)), &[menu]);
+            assert!(matches!(r, Ok(Value::Int(1))));
+            assert_eq!(host.client_commands, vec![(2, "t 0 1".to_string())]);
+        });
+    }
+
     /// A localized value takes its substitution arguments with it, which is
     /// what names the winner in the map-end banner: retail's capture reads
     /// `v cg_objectiveText "MPSCRIPT_WINS\x15vcod^7"` for
@@ -2200,6 +2240,49 @@ mod tests {
         assert_eq!(ProneCone::of(&sim.ps), Some(cone));
         sim.set_view_angle([60.0, 100.0, 0.0]);
         assert_eq!(sim.view_angles(), held);
+    }
+
+    /// `SetClientViewAngle` reads the live playerstate's prone flag and
+    /// cone (1.1 0x41e30), so a `spawn` earlier in the same thread, whose
+    /// `ClientSpawn` stands the body up, leaves the next `setPlayerAngles`
+    /// unheld. `spawn` is the only builtin that moves the cone, and it
+    /// rewrites the host's mirror from its own think.
+    #[test]
+    fn setplayerangles_after_a_spawn_in_the_same_thread_reads_the_new_stance() {
+        use crate::game::host::ClientEvent;
+        use crate::game::script::ScriptRuntime;
+        use vcod_common::pmove::{MoveRules, ProneCone};
+        let mut rt = ScriptRuntime::for_test(
+            r#"
+            main() {}
+            look() {
+                self spawn((0, 0, 0), (0, 0, 0));
+                self setPlayerAngles((60, 100, 0));
+                self.pitch = self.angles[0];
+                self.yaw = self.angles[1];
+            }
+        "#,
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "p".into(),
+        });
+        rt.run_frame(0);
+        rt.set_client_prone_cone(
+            0,
+            Some(ProneCone {
+                direction: 10.0,
+                torso_pitch: 0.0,
+                rules: MoveRules::default(),
+            }),
+        );
+        let e = rt.client_entity(0).unwrap();
+        rt.start_thread_for_test(e, "look");
+        rt.run_frame(50);
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+        let mut read = |f: &str| rt.client_field(0, f).unwrap().parse::<f32>().unwrap();
+        assert!((read("yaw") - 100.0).abs() < 1e-3);
+        assert!((read("pitch") - 60.0).abs() < 1e-3);
     }
 
     /// `freezeControls` checks its receiver, reads its bool and stores it

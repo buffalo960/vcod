@@ -722,7 +722,27 @@ probe listening, `g_deadChat 1` set over rcon between the two dead says
 
 and only `dead2`, said after `g_deadChat 1`, reached the living allied
 probe. No stock 1.5 script sets `sessionsquad` (`pak9`..`pakb`,
-VERIFIED); vcod has no such field, so every squad say is a team say.
+VERIFIED).
+
+The field (1.5b setter 0x3b515, getter 0x3b5e4; UO's hooks 0x43803 and 0x438d2, `dump_script_fields.py`, carry the same error string and were not decompiled):
+
+- VERIFIED (decompile): a `u16` at `gclient+0x217c` holding 0, 1 or 2;
+  the setter takes a const string, stores 1 or 2 for two of them and 0 for
+  a third, and anything else is the script error `'%s' is an illegal
+  sessionsquad string. Must be squad_alpha, squad_bravo, or none.`, then
+  calls `ClientUserinfoChanged`. `ClientConnect` (0x4c680) stores 0.
+- INFERRED, off the error's wording and `sessionteam`'s use of the same
+  `scr_const` slot for `none`: 1 is `squad_alpha`, 2 `squad_bravo`, 0
+  `none`, which the getter reads back.
+- VERIFIED (decompile and the format at 0x787d0): a squad say from a
+  speaker in squad 1 or 2 is `%s(\x14<side>\x15 \x14PATCH_1_5_SQUAD<ALPHA|
+  BRAVO>\x15)%s%s: ` in colour 5, an `h` line (`G_SayTo` 0x42c8b picks `i`
+  for mode 1 only), to clients `InSameSquad` (0x69987) finds: on the
+  speaker's team (`OnSameTeam`) and in his squad, which is not 0. UO's
+  strings and `InSameSquad` are the same.
+
+vcod-server keeps the field on protocols 6 and 22 (`GameHost::client_squad`,
+since 2026-10-20); on 1.1 the name is a plain script variable.
 
 ### PunkBuster on the Linux server
 
@@ -771,7 +791,6 @@ and so does vcod-server's on protocol 6 and 22.
 
 - The vote kinds the new `g_allowVote*` rows gate: vcod-server has no
   `callvote` or `vote` on either protocol.
-- The `sessionsquad` client field (squad say above).
 - The parts of 1.5's movement `cod15-movement.md` leaves out. The rest
   runs on a protocol 6 server for every client, bots included, as the 1.5
   game module's one pmove does (`MoveRules::V1_5`, set at `enter_world`);
