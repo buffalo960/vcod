@@ -2550,6 +2550,20 @@ the torso has at weight, or a torso restart of a node the legs set this
 frame, would read the shared node's weight and time. vcod's two lerp
 frames keep separate clocks.
 
+VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20, `probe_legs` with
+a `--save-legs --capture-tag stopgo-*` client, fixtures
+`movers/mp_carentan-dm-legs{,-client}-stopgo-{1.5,uo}.txt`, recipe in
+each header): the legs leave a run some 350 ms after its keys let go
+(the body has to slow under 10 units/s), and a go 400-500 ms after the
+release takes the run back 100-200 ms into its blend to the idle. On
+both servers the run's bones then go on from the run's own time:
+`legs_ab`'s `a_body_stopping_and_going_is_posed_like_retail_on_15` /
+`_on_uo` match every row from the first stop on to 0.05 units and 0.3
+degrees, and with `animclock::restart_weighted_nodes` forcing 1.1's
+restart the same replays miss 83 (1.5b) and 78 (UO) rows from the first
+go on, up to 29 units and 97 degrees. A strafe swap (right, 150 ms
+left, right) takes the right strafe back the same way.
+
 #### The prone strike on mp_carentan
 
 VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20,
