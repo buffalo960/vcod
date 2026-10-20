@@ -788,6 +788,12 @@ pub fn entity_contact(host: &mut GameHost, cx: &mut Cx, a: EntId, b: EntId) -> b
         _ => {
             let ba = abs_bounds_with_atom(host, cx, a, origin_atom);
             let bb = abs_bounds_with_atom(host, cx, b, origin_atom);
+            let is_client = |id: EntId| host.ents.get(id).is_some_and(|e| e.client.is_some());
+            if is_client(a) && is_client(b) {
+                // The other's temp capsule model carries its `r.contents`,
+                // tested against the contact's mask of -1 first.
+                return host.area.contents(b.0) != 0 && capsules_overlap(ba, bb);
+            }
             return boxes_overlap(ba, bb);
         }
     };
@@ -807,6 +813,41 @@ pub fn entity_contact(host: &mut GameHost, cx: &mut Cx, a: EntId, b: EntId) -> b
         at,
         &host.model_brushes[model],
     )
+}
+
+/// `CM_TestCapsuleInCapsule` (`cod_lnxded` 0x805475c): the capsules made of
+/// two absolute boxes, each of radius `min(half x, half z)` with its sphere
+/// centres `half z - radius` above and below the box centre, overlap when any
+/// pair of sphere centres sits nearer than the two radii or the centres' z
+/// gap is within both offsets and their xy gap nearer than the radii
+/// (docs/research/cod11-gsc-object-model.md 22.2).
+pub fn capsules_overlap(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> bool {
+    let shape = |(lo, hi): ([f32; 3], [f32; 3])| {
+        let (lo, hi) = (Vec3::from_array(lo), Vec3::from_array(hi));
+        let c = (lo + hi) * 0.5;
+        let half = hi - c;
+        let r = half.x.min(half.z);
+        (c, r, half.z - r)
+    };
+    let ((ca, ra, oa), (cb, rb, ob)) = (shape(a), shape(b));
+    let reach = (ra + rb) * (ra + rb);
+    let up = Vec3::Z;
+    let spheres = [
+        (cb + up * ob, ca + up * oa),
+        (cb + up * ob, ca - up * oa),
+        (cb - up * ob, ca + up * oa),
+        (cb - up * ob, ca - up * oa),
+    ];
+    if spheres
+        .iter()
+        .any(|&(p, q)| (p - q).length_squared() < reach)
+    {
+        return true;
+    }
+    let dz = ca.z - cb.z;
+    let span = ob + oa;
+    let xy = (ca - cb).truncate();
+    dz <= span && -span <= dz && xy.length_squared() < reach
 }
 
 /// Do two absolute boxes overlap, the test `trap_EntitiesInBox` performs.

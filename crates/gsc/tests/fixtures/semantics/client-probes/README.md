@@ -656,18 +656,19 @@ model `*5`'s plank slab and moves it one verb per phase (up, down, across, a
 2-degree yaw, a push, the slab lowered onto the player's head), then links
 the player to a `script_origin` and moves and turns that. Every server frame
 of a phase logs `PROBE f <phase> <time> <player origin> <mover origin> <mover
-angles>`. The client half prints a `RIDE` line per snapshot. Neither half
-writes a file; the 2026-10-05 run is in
+angles>`. The client half prints a `RIDE` line per snapshot and `--probe-fall`'s
+`CMDS` lines. Neither half writes a file; the 2026-10-20 run is in
 `crates/server/tests/fixtures/movers/mp_carentan-dm-ride.txt` (the server's
-`PROBE` lines) and `-ride-wire.txt` (the client's `RIDE` and trajectory lines
-in the phase window), which `crates/server/tests/ride_ab.rs` replays and
-`docs/research/cod11-movers.md` 11 to 13 reads.
+`PROBE` lines, then the client's `CMDS` lines) and `-ride-wire.txt` (the
+client's `RIDE*` and trajectory lines), which `crates/server/tests/ride_ab.rs`
+replays on the client's cmds and `docs/research/cod11-movers.md` 11 to 14
+reads.
 
 ```
-COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=115 \
+COD_LNXDED_HOME=<absolute, no '+'> PORT=33801 SECS=135 \
     tools/run_probe.sh client-probes/probe_ride mp_carentan +set probe_teleport 1
 # second shell, about 6 s later:
-cargo run -p vcod -- --net-probe 127.0.0.1:28970 --probe-team allies --probe-ride --probe-secs 104
+cargo run -p vcod -- --net-probe 127.0.0.1:33801 --probe-team allies --probe-ride --probe-secs 122
 ```
 
 ## probe_cull
@@ -1664,6 +1665,9 @@ goes there too, as `mp_brecourt-<gametype>-log.txt`.
 Recipe, timeline and findings: `docs/research/cod11-gametypes-re-bel.md`,
 sections 7 (re: allies `attacker` first, axis `defender` 3 s later, 150 s)
 and 8 (bel: both `--probe-team axis`, `first` then `second`, 130 s).
+`probe_bel` logs every spawn into play's origin (`PROBE spawned`) before it
+moves the player, which is how the gate replays `bel.gsc`'s random picks
+(section 8.7).
 
 ## probe_linkto
 

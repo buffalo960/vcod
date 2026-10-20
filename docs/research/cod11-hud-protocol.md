@@ -1185,6 +1185,13 @@ VERIFIED, the caller: the client frame calls 0x405440 at 0x412762 (UO
 0x405cb0 at 0x4138bf, in 0x413870), so the colours follow the cvars
 every frame.
 
+INFERRED, off that caller and the renderer: the codes belong to the
+exe, not to the server, so a 1.5 or UO client's front end takes `^8`/`^9`
+before any game, in white while neither cvar exists. Whether a mirrored
+value outlives the disconnect is not measured; vcod draws the front end
+white on a 1.5 or UO install and literal on a 1.1 one
+(`hud::font::set_front_end_colours`).
+
 VERIFIED, where the cvars come from: no cgame registers them (1.1, 1.5
 and UO only read them, `trap_Cvar_VariableStringBuffer` at cgame
 0x3002a85d, 1.5 0x3002bced, UO 0x30036f66). The game module registers

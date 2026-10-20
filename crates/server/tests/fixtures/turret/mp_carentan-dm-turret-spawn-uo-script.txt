@@ -1,5 +1,5 @@
 # Retail CoD United Offensive 1.51b dedicated server log lines under the --save-turret client of
-# mp_carentan-dm-turret-spawn-uo.txt beside this file. Captured 2026-10-17.
+# mp_carentan-dm-turret-spawn-uo.txt beside this file. Captured 2026-10-20.
 # map mp_carentan, g_gametype probe_turret, probe_teleport 1, dedicated 1,
 # sv_maxclients 8, sv_pure 0, stock scr_* defaults, a homepath holding no pak.
 # Client 0 is a --probe-team axis net-probe standing as the target, client 1
@@ -7,7 +7,8 @@
 #
 # Three shells, the gsc probe first:
 #   COD_VERSION=uo COD_LNXDED_HOME=<absolute, no '+'> PORT=32563 PROBE_SECS=230 \
-#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1
+#       tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 \
+#       +set probe_spawnlog 1
 #   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32563 --probe-team axis --probe-fall --probe-secs 200
 #   cargo run -p vcod -- --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:32563 --save-turret --capture-tag spawn-uo --probe-secs 190
 # The axis client started 10 s after the server and the gunner 5 s after it.
@@ -15,16 +16,23 @@
 # PROBE turret <num> <origin> <angles>: a misc_mg42 at the startup census.
 # PROBE place <clientNum> <team> <origin> <yaw> <time>: a probe_teleport move,
 # made on the first script frame the player reads "playing", at getTime().
+# PROBE spawned <clientNum> <time> and PROBE spawnat <clientNum> <origin> <angles>
+# (probe_spawnlog 1): the spawn's notify time and where the stock spawn put him.
 # J; Q; D; K; are the engine's and the stock dm script's own.
 # Lines are copied from games_mp.log with the engine's m:ss stamp, leading
 # padding trimmed; every line past InitGame is here.
 0:01 PROBE turret 297 (-500.00, 1896.00, 175.00) (0.00, 295.00, 0.00)
 0:01 PROBE turret 298 (1712.00, 1830.00, 8.00) (0.00, 229.00, 0.00)
 0:11 J;0;0;vcod
-0:11 PROBE place 0 axis (1515.18, 1603.59, 8.00) 409 11850
+0:11 PROBE spawned 0 11950
+0:11 PROBE spawnat 0 (192.00, 1280.00, 0.13) (0.00, -135.00, 0.00)
+0:11 PROBE models 0 xmodel/basehead_axis_a_05 xmodel/gear_german_helmet_falshrm_blk xmodel/gear_german_load2_falshrm xmodel/gear_german_bandolier
+0:11 PROBE place 0 axis (1515.18, 1603.59, 8.00) 409 11950
 0:17 J;0;1;vcod
-0:17 PROBE place 1 allies (1738.24, 1860.19, 8.00) 229 17600
+0:17 PROBE spawned 1 17500
+0:17 PROBE spawnat 1 (776.00, 3488.00, -23.87) (0.00, 90.00, 0.00)
+0:17 PROBE place 1 allies (1738.24, 1860.19, 8.00) 229 17500
 0:31 D;0;0;axis;vcod;0;1;allies;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
 0:31 K;0;0;;vcod;0;1;;vcod;mg42_bipod_stand_mp;53;MOD_RIFLE_BULLET;torso_upper
 0:37 Q;0;1;vcod
-3:30 Q;0;0;vcod
+3:31 Q;0;0;vcod

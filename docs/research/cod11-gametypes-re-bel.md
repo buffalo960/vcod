@@ -395,6 +395,15 @@ the axis player kills the allied one, kill 2 the same the other way round,
 kill 3 the allied player kills the axis one. Fixtures:
 `mp_brecourt-bel-first.txt`, `-second.txt`, `-bel-log.txt`.
 
+Retaken on 2026-10-20 with the same recipe on port 33741, after the probe
+gained `log_spawns`: one `PROBE spawned <slot> <team> <time> <origin>` line
+per spawn into play, logged by a thread that wakes on `"spawned"` and
+never waits on anything else, so it reads the origin `spawnPlayer` left
+before the move hides it. The first version logged from the moving thread
+and missed four of seven spawns: a spectator spawn's notify put that thread
+in its `wait 0.05`, and the player spawn after it notified nobody. Every
+view the gate compares matched the new run as it had the old one.
+
 ### 8.2 What retail does
 
 - Join. VERIFIED: the first probe, alone, answers `team_germanonly` with
@@ -448,11 +457,11 @@ listed it with `pers["team"]` undefined. `cod11-items.md`'s
 VERIFIED, the gate before these two fixes: the swap itself, the menus, the
 HUD, the roster, the scores and the log already matched retail.
 
-Left out of the comparison: the marker's origin. INFERRED, off `bel.gsc`'s
+The marker's origin is its own view (`marker`). INFERRED, off `bel.gsc`'s
 `make_obj_marker`: it reads the allied player's origin inside
 `spawnPlayer`, before the probe moves it, and follows a running mean of
-where the player stood, so it carries the random spawn pick; the gate
-compares the slot's state, icon, entity and team.
+where the player stood, so it carries the random spawn pick. The gate
+replays every pick off the log's `PROBE spawned` lines (8.7).
 
 ### 8.5 The rest of a client before its first spawn
 
@@ -552,3 +561,47 @@ vcod: the `spawn` builtin runs the think on a fresh sim
 (`game/builtins/entity.rs`, `spawn_think`) and writes the origin it leaves
 and, for a playing client, (0, the think's view yaw, 0); a spectator or an
 intermission camera keeps the angles the script passed.
+
+### 8.7 The spawn picks and the menu answer's clock
+
+The gate (`crates/server/tests/gametypes_ab.rs`, `retail_spawns`) pins each
+of retail's spawns into play on ours (`Server::pin_spawns`), at the map's
+spawn point as `placeSpawnpoint` dropped it
+(`game::builtins::entity::placed_origin`, cod11-gsc-object-model.md 16).
+A capture whose probe hides the pick logs it (`PROBE spawned`); otherwise
+the pick is the point under each life's first playing snapshot. The old
+capture showed none of bel's seven picks: the allied spot `(1432, -988)` is
+itself an `mp_teamdeathmatch_spawn`, so two lives were pinned to the
+probe's spot, two were `None`, and three respawns that follow a killcam
+or a swap without a non-playing snapshot were never counted.
+
+- VERIFIED, the 2026-10-20 capture: the first probe's `t 2`
+  (`weapon_american`) rides snapshot 8000, its first playing snapshot is
+  8050, and the log reads `PROBE spawned 0 allies 8050` and `PROBE placed 0
+  allies 8050`. Every spawn off a menu answer logs its `spawned` and
+  `placed` on one `getTime()`; the three off a script thread (`respawn`'s
+  `wait`) log `placed` 50 ms after `spawned`. INFERRED: `Cmd_MenuResponse_f`'s
+  `Scr_Notify` (gsc language doc 6) only wakes the gametype's menu thread,
+  which runs in `G_RunFrame`'s first `Scr_RunCurrentThreads` on the new
+  `level.time`, ahead of the probe's `wait 0.05` due that frame (gsc
+  language doc, "Engine notifies and the trigger queue").
+- VERIFIED, vcod measurement: ours runs the menu thread in the packet pass
+  on the last frame's clock (`ScriptRuntime::run_threads`' `run_runnable`
+  ahead of the clock), so ours logs `spawned` 6700 and `placed` 6750 for
+  the same answer, and the body thinks a frame at the pick before the move.
+  Queuing the notify in `GameHost::engine_notifies` instead makes ours log
+  both on one time, as retail does, but moves eleven `vcod-server` tests,
+  `turret_ab`'s spawn, hitgrid and victim captures among them (their
+  bodies settle a unit or two off retail's), so it is not in; the menu
+  answer's clock is open.
+- VERIFIED, the gate: ours' seven `PROBE spawned` origins equal retail's to
+  the hundredth, and the marker matches retail's but for one mean, y -900
+  where retail reads -901 (a truncation edge, `objective_position`'s
+  vector is stored truncated, 23.3 of the object-model doc). VERIFIED, the
+  second capture: retail's allied body leaves the probe's spot at
+  `(1432, -988)` on the frame after the move (-987, then -986); ours holds
+  one frame more. INFERRED: the gate's client sends one cmd a frame where
+  the net probe sends about three, and a slide off a `setOrigin` onto the
+  grade moves only on a cmd's own time (AGENTS.md, "A fall onto a slope").
+  With the menu thread on the new clock the same row still differs. The
+  two `marker` rows are `GAPS`.

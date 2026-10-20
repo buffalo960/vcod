@@ -5,19 +5,23 @@ InitGame: \g_gametype\probe_bel\gamename\main\mapname\mp_brecourt\protocol\1\sho
 J;0;vcod
 PROBE state | 0 spectator spectator spectator st= hi= ht=none sc=0 d=0
 PROBE state | 0 allies allies spectator st= hi= ht=none sc=0 d=0
-PROBE placed 0 allies 7600
+PROBE spawned 0 allies 8050 (1432.00, -987.96, -37.66)
+PROBE placed 0 allies 8050
 PROBE state | 0 allies allies playing st= hi= ht=none sc=1 d=0 w=m1carbine_mp
 J;1;vcod
 PROBE state | 0 allies allies playing st= hi= ht=none sc=1 d=0 w=m1carbine_mp | 1 spectator spectator spectator st= hi= ht=none sc=0 d=0
 PROBE state | 0 allies allies playing st= hi= ht=none sc=1 d=0 w=m1carbine_mp | 1 axis axis spectator st= hi= ht=none sc=0 d=0
+PROBE spawned 1 axis 9300 (-1372.00, -659.00, -15.78)
 PROBE state | 0 allies allies playing st= hi= ht=none sc=1 d=0 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=0 d=0 w=kar98k_mp
-PROBE placed 1 axis 8300
-PROBE kill 1 11300 0 by 1
+PROBE placed 1 axis 9300
+PROBE kill 1 12300 0 by 1
 K;0;allies;vcod;1;axis;vcod;kar98k_mp;1000;MOD_RIFLE_BULLET;torso_upper
 PROBE state | 0 axis axis dead st=gfx/hud/hud@status_dead.tga hi= ht=none sc=1 d=1 | 1 allies allies playing st= hi= ht=none sc=0 d=0 w=kar98k_mp
-PROBE placed 1 allies 13350
+PROBE spawned 1 allies 14350 (2804.92, 376.36, -111.05)
+PROBE placed 1 allies 14350
 PROBE state | 0 axis axis spectator st=gfx/hud/hud@status_dead.tga hi= ht=none sc=1 d=1 | 1 allies allies playing st= hi= ht=none sc=1 d=0 w=m1carbine_mp
-PROBE placed 0 axis 18350
+PROBE spawned 0 axis 19350 (3462.85, -1277.09, 19.36)
+PROBE placed 0 axis 19350
 PROBE state | 0 axis axis playing st= hi= ht=none sc=1 d=1 w=kar98k_mp | 1 allies allies playing st= hi= ht=none sc=1 d=0 w=m1carbine_mp
 A;1;allies;vcod;bel_alive_tick
 PROBE state | 0 axis axis playing st= hi= ht=none sc=1 d=1 w=kar98k_mp | 1 allies allies playing st= hi= ht=none sc=2 d=0 w=m1carbine_mp
@@ -25,12 +29,14 @@ A;1;allies;vcod;bel_alive_tick
 PROBE state | 0 axis axis playing st= hi= ht=none sc=1 d=1 w=kar98k_mp | 1 allies allies playing st= hi= ht=none sc=3 d=0 w=m1carbine_mp
 A;1;allies;vcod;bel_alive_tick
 PROBE state | 0 axis axis playing st= hi= ht=none sc=1 d=1 w=kar98k_mp | 1 allies allies playing st= hi= ht=none sc=4 d=0 w=m1carbine_mp
-PROBE kill 2 44300 1 by 0
+PROBE kill 2 45300 1 by 0
 K;1;allies;vcod;0;axis;vcod;kar98k_mp;1000;MOD_RIFLE_BULLET;torso_upper
 PROBE state | 0 allies allies playing st= hi= ht=none sc=1 d=1 w=kar98k_mp | 1 axis axis dead st=gfx/hud/hud@status_dead.tga hi= ht=none sc=4 d=1
-PROBE placed 0 allies 46350
+PROBE spawned 0 allies 47300 (2706.94, 520.07, -125.08)
+PROBE placed 0 allies 47350
 PROBE state | 0 allies allies playing st= hi= ht=none sc=2 d=1 w=m1carbine_mp | 1 axis axis spectator st=gfx/hud/hud@status_dead.tga hi= ht=none sc=4 d=1
-PROBE placed 1 axis 55350
+PROBE spawned 1 axis 56300 (2706.94, 520.07, -125.08)
+PROBE placed 1 axis 56350
 PROBE state | 0 allies allies playing st= hi= ht=none sc=2 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=1 w=kar98k_mp
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=3 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=1 w=kar98k_mp
@@ -38,24 +44,25 @@ A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=4 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=1 w=kar98k_mp
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=5 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=1 w=kar98k_mp
-PROBE kill 3 77300 1 by 0
+PROBE kill 3 78300 1 by 0
 K;1;axis;vcod;0;allies;vcod;m1carbine_mp;1000;MOD_RIFLE_BULLET;torso_upper
 PROBE state | 0 allies allies playing st= hi= ht=none sc=6 d=1 w=m1carbine_mp | 1 axis axis dead st=gfx/hud/hud@status_dead.tga hi= ht=none sc=4 d=2
 PROBE state | 0 allies allies playing st= hi= ht=none sc=6 d=1 w=m1carbine_mp | 1 axis axis spectator st=gfx/hud/hud@status_dead.tga hi= ht=none sc=4 d=2
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=7 d=1 w=m1carbine_mp | 1 axis axis spectator st=gfx/hud/hud@status_dead.tga hi= ht=none sc=4 d=2
-PROBE placed 1 axis 88350
+PROBE spawned 1 axis 89300 (-198.06, -2737.94, 48.49)
+PROBE placed 1 axis 89350
 PROBE state | 0 allies allies playing st= hi= ht=none sc=7 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=2 w=kar98k_mp
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=8 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=2 w=kar98k_mp
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=9 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=2 w=kar98k_mp
-PROBE done 107300
+PROBE done 108300
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=10 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=2 w=kar98k_mp
 A;0;allies;vcod;bel_alive_tick
 PROBE state | 0 allies allies playing st= hi= ht=none sc=11 d=1 w=m1carbine_mp | 1 axis axis playing st= hi= ht=none sc=4 d=2 w=kar98k_mp
-Q;1;vcod
-PROBE state | 0 allies allies playing st= hi= ht=none sc=11 d=1 w=m1carbine_mp
 Q;0;vcod
+PROBE state | 1 allies allies playing st= hi= ht=none sc=4 d=2 w=kar98k_mp
+Q;1;vcod
 PROBE state

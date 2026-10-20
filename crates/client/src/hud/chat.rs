@@ -7,7 +7,7 @@ use super::font::{Slot, UiFonts};
 use super::hudelem::Virtual;
 use super::player::{menu_text_rgba, text_width};
 
-/// `cg_chatHeight`'s default; the ring never holds more.
+/// The ring's size; `cg_chatHeight` (default 8) only lowers it.
 pub const CHAT_LINES: usize = 8;
 /// `cg_chatTime`'s default, ms.
 pub const CHAT_TIME_MS: i32 = 12000;
@@ -20,10 +20,63 @@ const MAX_LINE: usize = 149;
 /// Text scale of font 0 (0x3e555555).
 const SCALE: f32 = 0.208_333_33;
 
+/// The cgame's chat cvars, archived in every cgame's table (1.1 rows at
+/// 0x30074ed4 and 0x30074ec4, 1.5 0x30076e94/0x30076e84, UO
+/// 0x30085734/0x30085724), and whether the wrap is UO's
+/// (cod11-chat.md 3.2). The HUD refreshes them each frame, as
+/// `CG_UpdateCvars` does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rules {
+    /// `cg_chatHeight`: below 1 the chat is off and its ring empties.
+    pub height: i32,
+    /// `cg_chatTime`, ms: below 1 the same.
+    pub time_ms: i32,
+    /// UO's continuation opens with the message's first code too.
+    pub uo: bool,
+}
+
+impl Default for Rules {
+    fn default() -> Rules {
+        Rules {
+            height: CHAT_LINES as i32,
+            time_ms: CHAT_TIME_MS,
+            uo: false,
+        }
+    }
+}
+
+impl Rules {
+    /// The cvars as their vmCvars' integers; an unset one keeps its default.
+    pub fn read<'a>(cvar: impl Fn(&str) -> Option<&'a str>, uo: bool) -> Rules {
+        let int = |name: &str, default: i32| cvar(name).map_or(default, super::vote::atol);
+        Rules {
+            height: int("cg_chatHeight", CHAT_LINES as i32),
+            time_ms: int("cg_chatTime", CHAT_TIME_MS),
+            uo,
+        }
+    }
+
+    /// Lines the ring holds: `min(cg_chatHeight, 8)`, 0 while it is off.
+    fn lines(&self) -> usize {
+        if self.time_ms < 1 {
+            return 0;
+        }
+        self.height.clamp(0, CHAT_LINES as i32) as usize
+    }
+}
+
+/// Whether `CG_ServerCommand` takes a chat line at all: a nonzero
+/// `cg_teamChatsOnly` drops every `h` before it is localized, heard, kept
+/// or printed, never an `i` (cod11-chat.md 3).
+pub fn takes(team: bool, team_chats_only: Option<&str>) -> bool {
+    team || team_chats_only.is_none_or(|v| super::vote::atol(v) == 0)
+}
+
 /// The chat ring, newest last, each line with the ms it arrived.
 #[derive(Default)]
 pub struct Chat {
     lines: Vec<(String, i32)>,
+    rules: Rules,
 }
 
 impl Chat {
@@ -31,10 +84,21 @@ impl Chat {
         Chat::default()
     }
 
+    /// This frame's cvars and protocol.
+    pub fn set_rules(&mut self, rules: Rules) {
+        self.rules = rules;
+    }
+
     /// One localized chat line: cut to 149 bytes, the `\x19`s out, wrapped
     /// at 90 visible characters on the last space, each continuation opened
-    /// with the colour the line had reached.
+    /// with the colour the line had reached. With the chat off the ring
+    /// empties instead (CG_AddToTeamChat's early return).
     pub fn push(&mut self, text: &str, now_ms: i32) {
+        let cap = self.rules.lines();
+        if cap == 0 {
+            self.lines.clear();
+            return;
+        }
         let mut text: String = text.chars().filter(|&c| c != '\u{19}').collect();
         if text.len() > MAX_LINE {
             let mut end = MAX_LINE;
@@ -43,10 +107,10 @@ impl Chat {
             }
             text.truncate(end);
         }
-        for line in wrap(&text) {
+        for line in wrap(&text, self.rules.uo) {
             self.lines.push((line, now_ms));
         }
-        let excess = self.lines.len().saturating_sub(CHAT_LINES);
+        let excess = self.lines.len().saturating_sub(cap);
         self.lines.drain(..excess);
     }
 
@@ -68,17 +132,18 @@ impl Chat {
         v: &Virtual,
         out: &mut Vec<HudQuad>,
     ) {
+        let time = self.rules.time_ms;
+        let cap = self.rules.lines();
+        if cap == 0 {
+            return;
+        }
         // Retail drops one expired line a frame, oldest first.
-        if self
-            .lines
-            .first()
-            .is_some_and(|&(_, t)| now_ms - t > CHAT_TIME_MS)
-        {
+        if self.lines.first().is_some_and(|&(_, t)| now_ms - t > time) {
             self.lines.remove(0);
         }
         let font = fonts.pick(Slot::Default, SCALE, 480.0 * v.scale);
-        for (k, (line, t)) in self.lines.iter().rev().enumerate() {
-            let left = CHAT_TIME_MS - (now_ms - t);
+        for (k, (line, t)) in self.lines.iter().rev().take(cap).enumerate() {
+            let left = time - (now_ms - t);
             let alpha = if left > FADE_MS {
                 1.0
             } else {
@@ -146,13 +211,16 @@ pub fn field(
 
 /// `CG_AddToTeamChat`'s line breaking. 1.5's (cgame 0x3002de50) and UO's
 /// (0x30039390) take `^8`/`^9` as codes too
-/// ([`super::font::is_colour_code`]).
-fn wrap(text: &str) -> Vec<String> {
+/// ([`super::font::is_colour_code`]). UO's continuation opens with `^` and
+/// the message's first code ahead of the last one; with no code read yet
+/// that first is byte 0xff, which no renderer reads as a code (`uo`).
+fn wrap(text: &str, uo: bool) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut lines = Vec::new();
     let mut line = String::new();
     let mut visible = 0;
     let mut colour = '7';
+    let mut first = '\u{ff}';
     // Where in `line` and `chars` the last space was.
     let mut last_space: Option<(usize, usize)> = None;
     let mut i = 0;
@@ -163,6 +231,10 @@ fn wrap(text: &str) -> Vec<String> {
                 i = from + 1;
             }
             lines.push(std::mem::take(&mut line));
+            if uo {
+                line.push('^');
+                line.push(first);
+            }
             line.push('^');
             line.push(colour);
             visible = 0;
@@ -177,6 +249,9 @@ fn wrap(text: &str) -> Vec<String> {
                 line.push(c);
                 line.push(d);
                 colour = d;
+                if first == '\u{ff}' {
+                    first = d;
+                }
                 i += 2;
             }
             _ => {
@@ -202,7 +277,7 @@ mod tests {
     #[test]
     fn a_long_line_breaks_on_its_last_space_and_keeps_its_colour() {
         let x88 = "x".repeat(88);
-        let lines = wrap(&format!("Bob^7: ^3{x88} tail"));
+        let lines = wrap(&format!("Bob^7: ^3{x88} tail"), false);
         assert_eq!(
             lines,
             [
@@ -211,6 +286,81 @@ mod tests {
                 "^3tail".to_string()
             ]
         );
+    }
+
+    /// UO opens a continuation with the message's first code, then the
+    /// last; byte 0xff while none was read (cod11-chat.md 3.2).
+    #[test]
+    fn a_uo_continuation_opens_with_the_first_and_the_last_code() {
+        let x88 = "x".repeat(88);
+        let lines = wrap(&format!("^1Bob^7: ^3{x88} tail"), true);
+        assert_eq!(lines[1], format!("^1^3^3{x88}"));
+        assert_eq!(lines[2], "^1^3tail");
+        let x95 = "x".repeat(95);
+        let lines = wrap(&x95, true);
+        assert_eq!(lines, [x95[..90].to_string(), "^\u{ff}^7xxxxx".into()]);
+        assert_eq!(wrap(&x95, false)[1], "^7xxxxx");
+    }
+
+    #[test]
+    fn team_chats_only_drops_the_public_lines() {
+        assert!(takes(false, None));
+        assert!(takes(false, Some("0")));
+        assert!(!takes(false, Some("1")));
+        assert!(takes(true, Some("1")));
+    }
+
+    #[test]
+    fn chat_height_and_time_cap_and_switch_off_the_ring() {
+        let mut c = Chat::new();
+        let cvars = |h: &'static str, t: &'static str| {
+            move |n: &str| match n {
+                "cg_chatHeight" => Some(h),
+                "cg_chatTime" => Some(t),
+                _ => None,
+            }
+        };
+        assert_eq!(Rules::read(|_| None, false), Rules::default());
+        c.set_rules(Rules::read(cvars("3", "12000"), false));
+        for i in 0..5 {
+            c.push(&format!("m{i}"), 0);
+        }
+        assert_eq!(c.lines.len(), 3);
+        assert_eq!(c.lines[0].0, "m2");
+        // Above 8 the ring still holds 8.
+        c.set_rules(Rules::read(cvars("20", "12000"), false));
+        for i in 0..10 {
+            c.push(&format!("m{i}"), 0);
+        }
+        assert_eq!(c.lines.len(), CHAT_LINES);
+        // Off: the next line empties the ring and is not kept.
+        c.set_rules(Rules::read(cvars("8", "0"), false));
+        c.push("gone", 0);
+        assert!(c.is_empty());
+        c.set_rules(Rules::read(cvars("0", "12000"), false));
+        c.push("gone", 0);
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn chat_time_sets_the_fade() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let fonts = UiFonts::load(&fs).unwrap();
+        let v = Virtual::new((640.0, 480.0));
+        let mut c = Chat::new();
+        c.set_rules(Rules {
+            time_ms: 1000,
+            ..Rules::default()
+        });
+        c.push("hi", 0);
+        let mut out = Vec::new();
+        c.build(&fonts, [1.0; 3], 900, &v, &mut out);
+        assert!((out[0].rgba[3] - 0.3).abs() < 1e-4);
+        out.clear();
+        c.build(&fonts, [1.0; 3], 1001, &v, &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]

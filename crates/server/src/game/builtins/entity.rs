@@ -661,15 +661,36 @@ pub fn place_spawnpoint(
     let Some(world) = host.world.clone() else {
         return Ok(Value::Undefined);
     };
+    let (placed, solid) = placed_origin(&world.collision, origin);
+    if solid {
+        log::warn!(
+            "gsc: spawn point entity {} is in solid at ({}, {}, {})",
+            id.0,
+            placed[0] as i32,
+            placed[1] as i32,
+            placed[2] as i32
+        );
+    }
+    host.set_field(cx, id, origin_field, Value::Vector(placed))?;
+    Ok(Value::Undefined)
+}
+
+/// Where [`place_spawnpoint`] puts a spawnpoint at `origin`, and whether the
+/// spot is in solid. A gate that pins a retail spawn pick
+/// (`Server::pin_spawns`) places the map's point with it.
+pub fn placed_origin(
+    collision: &vcod_common::collision::CollisionWorld,
+    origin: [f32; 3],
+) -> ([f32; 3], bool) {
     let start = Vec3::from(origin);
     let (mins, maxs) = (Vec3::from(PLAYER_MINS), Vec3::from(PLAYER_MAXS));
-    let up = world.collision.box_trace(
+    let up = collision.box_trace(
         start,
         start + Vec3::new(0.0, 0.0, CEILING_CHECK),
         mins,
         maxs,
     );
-    let down = world.collision.box_trace(
+    let down = collision.box_trace(
         up.endpos,
         up.endpos - Vec3::new(0.0, 0.0, DROP_DISTANCE),
         mins,
@@ -677,21 +698,8 @@ pub fn place_spawnpoint(
     );
     // The third trace tests where the spawnpoint ended up, and it shares
     // the drop's result buffer: `G_SetOrigin` (0x5c086) reads its endpoint.
-    let test = world
-        .collision
-        .box_trace(down.endpos, down.endpos, mins, maxs);
-    if test.startsolid {
-        log::warn!(
-            "gsc: spawn point entity {} is in solid at ({}, {}, {})",
-            id.0,
-            down.endpos.x as i32,
-            down.endpos.y as i32,
-            down.endpos.z as i32
-        );
-    }
-    let placed = Value::Vector(test.endpos.into());
-    host.set_field(cx, id, origin_field, placed)?;
-    Ok(Value::Undefined)
+    let test = collision.box_trace(down.endpos, down.endpos, mins, maxs);
+    (test.endpos.into(), test.startsolid)
 }
 
 /// How far above its origin `placeSpawnpoint` looks for a ceiling, and how
@@ -1736,6 +1744,47 @@ mod tests {
                 Ok(Value::Int(1)),
                 "12 from the face is inside the radius"
             );
+        });
+    }
+
+    /// Client against client is capsule against capsule
+    /// (`CM_TestCapsuleInCapsule`, object-model doc 22.2): two players 22
+    /// apart on each axis overlap as boxes but their radius 15 capsules sit
+    /// 31.1 apart. A side whose `r.contents` is 0 is never touched.
+    #[test]
+    fn is_touching_one_client_against_another_is_capsule_against_capsule() {
+        let (mut vm, mut host) = crate::game::testing_world_fixture();
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let a = host.ents.spawn_client(cx, 0, None).unwrap();
+            let b = host.ents.spawn_client(cx, 1, None).unwrap();
+            let place = |host: &mut GameHost, cx: &mut Cx, id: EntId, at: [f32; 3]| {
+                host.set_field(cx, id, origin, Value::Vector(at)).unwrap();
+                let slot = id.0 as usize;
+                host.link_client(slot, at, host.client_box(slot), 0x0200_0000, true);
+            };
+            let touching = |host: &mut GameHost, cx: &mut Cx| {
+                is_touching(host, cx, Some(Target::Entity(a)), &[Value::Entity(b)])
+            };
+            place(&mut host, cx, a, [0.0; 3]);
+            place(&mut host, cx, b, [22.0, 22.0, 0.0]);
+            assert_eq!(
+                touching(&mut host, cx),
+                Ok(Value::Int(0)),
+                "the corners clear"
+            );
+            place(&mut host, cx, b, [21.0, 21.0, 0.0]);
+            assert_eq!(
+                touching(&mut host, cx),
+                Ok(Value::Int(1)),
+                "29.7 is inside 30"
+            );
+            // Stacked: the lower top sphere at 55, the upper bottom one at 84.
+            place(&mut host, cx, b, [0.0, 0.0, 69.0]);
+            assert_eq!(touching(&mut host, cx), Ok(Value::Int(1)));
+            place(&mut host, cx, b, [10.0, 0.0, 0.0]);
+            host.area.set_contents(1, 0);
+            assert_eq!(touching(&mut host, cx), Ok(Value::Int(0)), "no contents");
         });
     }
 

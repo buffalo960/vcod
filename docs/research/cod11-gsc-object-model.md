@@ -1984,12 +1984,33 @@ The capsule variant, `game.mp.i386.so` and `cod_lnxded` (1.1d):
   another client is capsule against capsule.
 
 vcod tests a client's side as a capsule against a trigger's brushes
-(`trigger::capsule_contacts_hulls`). Two sides that are not brush models
-stay a box overlap, which matches retail for a capsule against a box (all
-axial sides) but not for client against client, the capsule pair, which
-vcod does not model. VERIFIED, a grep of the stock paks' `maps/MP`
-scripts: their `istouching` calls are a player against a trigger
-(`sd.gsc`, `re.gsc`, `_minefields.gsc`), never a player against a player.
+(`trigger::capsule_contacts_hulls`), and a client against a client as
+capsule against capsule (`trigger::capsules_overlap`, since 2026-10-20).
+Two other sides that are not brush models stay a box overlap, which
+matches retail for a capsule against a box (all axial sides). VERIFIED, a
+grep of the stock paks' `maps/MP` scripts: their `istouching` calls are a
+player against a trigger (`sd.gsc`, `re.gsc`, `_minefields.gsc`), never a
+player against a player.
+
+The capsule pair, `cod_lnxded` (1.1d):
+
+- VERIFIED: `CM_TempBoxModel` (0x804baf8) stores the bounds and the
+  contents and answers handle 0x1fe for a capsule, 0x1ff for a box.
+  The trace's position test (0x8056310) sends handle 0x1fe, when the
+  stored contents meet the mask, to 0x805475c if the trace is a capsule
+  and to 0x8054a38 if it is a box (decompile). So a side whose
+  `r.contents` is 0, a dead or spectating client, is never touched.
+- VERIFIED (decompile of 0x805475c): the model's capsule is its box's
+  centre, radius `min(half x, half z)` and sphere offset `half z -
+  radius`; the hit is any of the four sphere-centre pairs nearer than the
+  two radii squared (strict), or the z gap of the two centres within the
+  sum of the two offsets (both ends inclusive) with the xy gap squared
+  under the radii squared. Unlike Q3's `CM_TestCapsuleInCapsule`, whose
+  cylinder test compares the top against `p1 <= z <= p2` and so never
+  passes, this one tests the centres' gap.
+- INFERRED: the trace's own capsule is built from the receiver's box as
+  Q3's `CM_Trace` does (0x8056310's `local_f4` / `local_1c` setup has
+  that shape).
 
 ## 23. The aim trace, linking, objectives and the HUD tweens
 
@@ -2914,6 +2935,13 @@ Still different:
   the queue's rounds as retail does now (`cod11-gsc-language.md`, "Engine
   notifies and the trigger queue"); no run of this recipe has been taken
   against ours since.
+  VERIFIED, `crates/server/tests/sd_plant_ab.rs` on 2026-10-20 (the
+  plant fixture's cmds replayed on ours with `probe_teleport 1`): the
+  teleport now lands on retail's frame, `serverTime` 91800, at `-512.0,
+  2688.0, -15.0` with ours at the plant spot the frame before, and the
+  next frame reads z -15.75 where retail's trace reads -15.8. The gate's
+  `teleport lands` row holds it. The `looking` beside the defuse's last
+  fire is not re-measured: the gate counts fires per station only.
 - VERIFIED, off retail run 9's defender probe log (not kept in the repo):
   retail interleaves `d` and `s` in the order the script made them (`d 531`,
   `d 532`, `s 8`, `d 533` at the plant). VERIFIED, vcod measurement (run 3):

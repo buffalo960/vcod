@@ -10572,17 +10572,19 @@ fn turret_strafe_stop(bearing: f32, dist: f32) -> StrafeStop {
     }
 }
 
-/// The gunner's playerstate as one `!trace` line; `exact=` and `velocity=`
-/// carry the origin and velocity at full precision.
+/// The gunner's playerstate as one `!trace` line; `ct=` is its
+/// `commandTime`, which places each cmd on the frame that ran it, and
+/// `exact=` and `velocity=` carry the origin and velocity at full precision.
 fn turret_trace_line(ms: u128, snap: &net::snapshot::Snapshot) -> String {
     let p = wire();
     let f = |n: &str| snap.ps.field_i32(p, n);
     format!(
-        "!trace ms={ms} serverTime={} pm_type={} pm_flags={} eFlags={} groundEntityNum={} \
+        "!trace ms={ms} serverTime={} ct={} pm_type={} pm_flags={} eFlags={} groundEntityNum={} \
 origin={} viewangles={} delta_angles={},{},{} viewlocked={} viewlocked_entNum={} gunfx={} \
 hint={}:{}:{} weapon={} legsAnim={} torsoAnim={} eventSequence={} events={},{},{},{} \
 eventParms={},{},{},{} exact={} velocity={}",
         snap.server_time,
+        f("commandTime"),
         f("pm_type"),
         f("pm_flags"),
         f("eFlags"),
@@ -11179,7 +11181,10 @@ fn write_turret_fixture(
     out.push_str("# !station is where the phase started; one per phase.\n");
     out.push_str("# !cmd view= is the absolute view asked for (wire shorts, before delta_angles); angles= went on the wire.\n");
     out.push_str(
-        "# !trace is the gunner's playerstate per snapshot; hint is serverCursorHint:Val:String.\n",
+        "# !trace is the gunner's playerstate per snapshot; hint is serverCursorHint:Val:String;\n",
+    );
+    out.push_str(
+        "# ct= is its commandTime, the stamp of the last cmd the server ran before that frame.\n",
     );
     out.push_str(
         "# !turret is the gun's entity, on every snapshot where one of its fields moved.\n",
@@ -14417,6 +14422,7 @@ mod tests {
             "{line}"
         );
         assert!(line.contains(&format!("eFlags={}", 0xC000)), "{line}");
+        assert!(line.contains(" ct="), "{line}");
     }
 
     /// The whole script on fake snapshots: use rises once per mount or

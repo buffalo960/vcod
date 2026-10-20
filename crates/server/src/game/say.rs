@@ -33,12 +33,12 @@ impl GameHost {
     ) {
         let team = self.client_field(cx, speaker, "sessionteam");
         let team = team.as_deref().unwrap_or("");
+        let squad = self.client_squad.get(speaker).copied().unwrap_or(0);
         let mode = match mode {
             SayMode::Team if !matches!(team, "axis" | "allies") => SayMode::All,
             // 1.5's `G_Say` (0x42dc9) sends a squad say from a speaker in
-            // no squad to the team, without the plain-say fallback above;
-            // vcod has no `sessionsquad`, so every speaker is in none.
-            SayMode::Squad => SayMode::Team,
+            // no squad to the team, without the plain-say fallback above.
+            SayMode::Squad if squad == 0 => SayMode::Team,
             m => m,
         };
         let name = clean_name(self.client_names.get(speaker).map_or("", String::as_str));
@@ -73,7 +73,18 @@ impl GameHost {
                 } else {
                     "GAME_ALLIES"
                 };
-                (format!("{status}(\u{14}{side}\u{15}){name}^7: "), '5')
+                if mode == SayMode::Squad {
+                    let label = if squad == 1 {
+                        "PATCH_1_5_SQUADALPHA"
+                    } else {
+                        "PATCH_1_5_SQUADBRAVO"
+                    };
+                    let head =
+                        format!("{status}(\u{14}{side}\u{15} \u{14}{label}\u{15}){name}^7: ");
+                    (head, '5')
+                } else {
+                    (format!("{status}(\u{14}{side}\u{15}){name}^7: "), '5')
+                }
             }
             SayMode::All => (format!("{status}{name}^7: "), '7'),
             SayMode::Tell => (format!("{status}[{name}]^7: "), '3'),
@@ -100,6 +111,13 @@ impl GameHost {
                 continue;
             }
             if mode == SayMode::Team && !self.same_team(cx, speaker, slot) {
+                continue;
+            }
+            // `InSameSquad` (1.5b 0x69987): the same team and the same squad.
+            if mode == SayMode::Squad
+                && !(self.same_team(cx, speaker, slot)
+                    && self.client_squad.get(slot).copied() == Some(squad))
+            {
                 continue;
             }
             // A dead or spectating speaker reaches only the other clients
@@ -334,6 +352,48 @@ mod tests {
         say(&mut vm, &mut host, 1, SayMode::Squad, "go");
         let team = "i \"\u{15}\u{15}^8(\u{14}GAME_ALLIES\u{15})p1^7: ^5go\"".to_string();
         assert_eq!(std::mem::take(&mut host.client_commands), [(1, team)]);
+    }
+
+    /// A speaker in a squad (`sessionsquad`, 1.5b 0x3b515) says to his
+    /// squad on his side only, as an `h` line with the squad after the side
+    /// (`G_Say` 0x42dc9, format 0x787d0; `InSameSquad` 0x69987). On 1.1 the
+    /// field is a plain script variable.
+    #[test]
+    fn a_15_squad_say_reaches_the_squad_on_the_side() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut host = host(&mut vm, &["axis", "axis", "axis", "allies"]);
+        host.patch_1_5 = true;
+        host.defs = crate::defs::Defs::of(&vcod_common::net::protocol::PROTOCOL_V6);
+        vm.with_cx(|cx| {
+            for (slot, squad) in [(0, "squad_bravo"), (1, "squad_alpha"), (2, "squad_bravo")] {
+                set(&mut host, cx, slot, "sessionsquad", squad);
+            }
+            set(&mut host, cx, 3, "sessionsquad", "squad_bravo");
+            let field = cx.intern_folded("sessionsquad");
+            let ent = host.ents.handle(1).unwrap();
+            assert_eq!(
+                host.get_field(cx, ent, field),
+                Value::String(cx.intern_exact("squad_alpha"))
+            );
+            let bad = Value::String(cx.intern_exact("squad_charlie"));
+            assert!(host.set_field(cx, ent, field, bad).is_err());
+        });
+        say(&mut vm, &mut host, 0, SayMode::Squad, "go");
+        let line = "h \"\u{15}\u{15}^9(\u{14}GAME_AXIS\u{15} \u{14}PATCH_1_5_SQUADBRAVO\u{15})p0^7: ^5go\""
+            .to_string();
+        assert_eq!(
+            std::mem::take(&mut host.client_commands),
+            [(0, line.clone()), (2, line)]
+        );
+        // `ClientConnect` clears it (1.5b 0x4c680).
+        vm.with_cx(|cx| {
+            let ent = host.connect_client(cx, 0, "p0").unwrap();
+            let field = cx.intern_folded("sessionsquad");
+            assert_eq!(
+                host.get_field(cx, ent, field),
+                Value::String(cx.intern_exact("none"))
+            );
+        });
     }
 
     /// 1.5 reads death off the session state, and `g_deadChat` lets the dead
