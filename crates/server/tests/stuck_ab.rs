@@ -135,14 +135,19 @@ fn overlaps(tag: &str) -> Vec<i32> {
 
 // -------------------------------------------------------------- properties
 
-/// Whether some positive multiple of `dir` less `sep` lands in [1, 3) on
-/// both axes: `dir` is then `normalize(sep + j)` for a jitter `j` retail's
-/// `-1 - rand() / 2^30` can draw, negated. `tol` absorbs float noise.
-fn in_jitter_band(dir: Vec2, sep: Vec2) -> bool {
+/// The negated jitter's range per axis: 1.1d's `-1 - rand() / 2^30`, and
+/// 1.5b's and UO's `2 rand() / 2^31 - 1` (cod11-player-clip.md 13.4).
+const BAND_11: (f32, f32) = (1.0, 3.0);
+const BAND_15: (f32, f32) = (-1.0, 1.0);
+
+/// Whether some positive multiple of `dir` less `sep` lands in `band` on
+/// both axes: `dir` is then `normalize(sep + j)` for a jitter `j` retail
+/// can draw, negated. `tol` absorbs float noise.
+fn in_jitter_band(dir: Vec2, sep: Vec2, band: (f32, f32)) -> bool {
     let tol = 0.01;
     let (mut lo, mut hi) = (1e-6f32, f32::MAX);
     for (d, s) in [(dir.x, sep.x), (dir.y, sep.y)] {
-        let (a, b) = (s + 1.0 - tol, s + 3.0 + tol);
+        let (a, b) = (s + band.0 - tol, s + band.1 + tol);
         if d.abs() < 1e-6 {
             if !(a..=b).contains(&0.0) {
                 return false;
@@ -169,7 +174,7 @@ enum Case {
 
 /// The five properties over the frames from an overlap on; returns the number
 /// of push frames. `who` names the side in a failure.
-fn check_overlap(who: &str, frames: &[Frame], case: Case) -> usize {
+fn check_overlap(who: &str, frames: &[Frame], case: Case, band: (f32, f32)) -> usize {
     if std::env::var_os("STUCK_REPORT").is_some() {
         for f in frames.iter().take(12) {
             println!("{who} {f:?}");
@@ -213,7 +218,7 @@ fn check_overlap(who: &str, frames: &[Frame], case: Case) -> usize {
         };
         let sep = (f.walker.origin - t.origin).truncate();
         assert!(
-            in_jitter_band(w.normalize(), sep),
+            in_jitter_band(w.normalize(), sep, band),
             "{who} t={}: walker {w:?} off the jitter band from {sep:?}",
             f.t
         );
@@ -250,11 +255,17 @@ fn retail_pushes() -> (usize, usize) {
     let at = overlaps("overlap");
     assert_eq!(at.len(), 2, "two overlaps in the capture");
     (
-        check_overlap("retail still", &window(&frames, at[0]), Case::BothStill),
+        check_overlap(
+            "retail still",
+            &window(&frames, at[0]),
+            Case::BothStill,
+            BAND_11,
+        ),
         check_overlap(
             "retail walking",
             &window(&frames, at[1]),
             Case::WalkerWalking,
+            BAND_11,
         ),
     )
 }
@@ -279,6 +290,28 @@ fn retail_does_not_push_beside_a_spectator_in_slot_0() {
             f.t
         );
     }
+}
+
+/// 1.5b skips a slot without the own-view flag where 1.1d's scan ends, so
+/// a spectator in slot 0 leaves the push on, and its jitter draws from
+/// [-1, 1): the first push's direction from a zero separation, (-0.702,
+/// 0.712) on the walker, is one 1.1d's cannot draw (cod11-player-clip.md
+/// 13.4).
+#[test]
+fn retail_15_pushes_beside_a_spectator_in_slot_0() {
+    let frames = retail_frames("overlap-spectator-15");
+    let at = overlaps("overlap-spectator-15");
+    assert_eq!(at.len(), 2, "two overlaps in the capture");
+    let still = window(&frames, at[0]);
+    let walking = window(&frames, at[1]);
+    let pushes = (
+        check_overlap("retail 1.5 still", &still, Case::BothStill, BAND_15),
+        check_overlap("retail 1.5 walking", &walking, Case::WalkerWalking, BAND_15),
+    );
+    assert!(pushes.0 >= 1 && pushes.1 >= 1, "{pushes:?}");
+    let first = still[0];
+    let sep = (first.walker.origin - first.target.unwrap().origin).truncate();
+    assert!(!in_jitter_band(first.walker.vel.normalize(), sep, BAND_11));
 }
 
 /// Our `StuckInClient` at every snapshot of the bump capture, with retail's
@@ -341,7 +374,7 @@ fn our_stuck_test_fires_where_retail_pushed_in_the_bump_capture() {
             let sep = (w.origin - spot).truncate();
             assert!(
                 (w.vel.length() - PUSH_SPEED).abs() < 0.01
-                    && in_jitter_band(w.vel.normalize(), sep)
+                    && in_jitter_band(w.vel.normalize(), sep, BAND_11)
                     && solid_next == 0,
                 "ct={ct}: {w:?} from {sep:?}, next solid {solid_next}"
             );
@@ -585,7 +618,7 @@ fn ours_pushes_the_still_pair_the_way_retail_does() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    let ours = check_overlap("ours still", &frames, Case::BothStill);
+    let ours = check_overlap("ours still", &frames, Case::BothStill, BAND_11);
     let (retail, _) = retail_pushes();
     assert_eq!(ours, retail, "push frames, ours against retail");
 }
@@ -596,7 +629,7 @@ fn ours_pushes_only_the_walker_when_it_walks_in() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    let ours = check_overlap("ours walking", &frames, Case::WalkerWalking);
+    let ours = check_overlap("ours walking", &frames, Case::WalkerWalking, BAND_11);
     let (_, retail) = retail_pushes();
     println!("walking overlap: ours {ours} push frames, retail {retail}");
     assert_eq!(ours, retail, "push frames, ours against retail");
