@@ -5109,7 +5109,11 @@ ordering, and every "when" and "otherwise" in it, which are branch conditions.
   slots are `damage`, `splashDamage`, a second splash number, `splashRadius`,
   `methodOfDeath` and `splashMethodOfDeath`, read off how `G_MissileImpact`
   and `G_ExplodeMissile` hand them on (13).
-- `clipmask` (`+0x190`) takes `0x02802091`. VERIFIED: the bullet's mask (2.3)
+- `clipmask` (`+0x190`) takes `0x02802091`. VERIFIED, the disassembly:
+  1.1d `fire_grenade` stores it at 0x544a0 and `fire_rocket` at 0x546ef;
+  1.5b's store it at `+0x198` (0x5539d, 0x556bd); `G_RunMissile` loads
+  `+0x190` at 0x5409a and 0x540ac with no fallback, so every 1.1 missile
+  moves under it (vcod's `MASK_MISSILE_MOVE`). VERIFIED: the bullet's mask (2.3)
   is `0x02802031`, so the two differ in exactly two bits: the grenade drops
   `0x20` and adds `0x80`. VERIFIED: `0x20` is `CONTENTS_WATER`
   (`bsp-ibsp59-format.md`, "Content flags"), and `G_RunMissile` ORs it back in
@@ -6175,7 +6179,7 @@ see it; vcod holds it for a fixed window instead.
 VERIFIED: the lone capture's second throw comes to rest at `z` 179.3 while its
 thrower stands at 144.1, on a stack of `crate_misc1` xmodels at (1193, 1653)
 whose `clip_nosight` brushes (contents 0x28031640, tops at 178 and 205) are
-outside a 0x11 mask. VERIFIED: the move trace is `trap_LocationalTrace`
+outside the 0x2802091 move mask (11.1). VERIFIED: the move trace is `trap_LocationalTrace`
 (12.1), the one syscall whose `SV_Trace` walks the static models
 (`cod11-mantle.md`, "Static models are clipped as a segment"), so the frag
 rests on the crate's own collision mesh, and the bounce parm it carries

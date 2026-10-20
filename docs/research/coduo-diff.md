@@ -2197,11 +2197,12 @@ carriers against the section 19 captures.
 - **Clipmask.** `G_RunMissile` (0x5ee7d) traces every move with the
   entity's clipmask (`+0x1a0`), which `fire_grenade` (0x5f7ad),
   `fire_rocket` (0x5fc74) and `fire_artillery` (0x5ff4a) all set to
-  0x2802091 (VERIFIED decompile); 1.1's grenade falls back to 0x11
-  (cod11-combat.md 12.1). The 0x2080 kerb and floor brushes stop a UO
+  0x2802091 (VERIFIED decompile), as 1.1d's and 1.5b's do
+  (cod11-combat.md 11.1). The 0x2080 kerb and floor brushes stop a UO
   missile: one of the strike capture's shells reports concrete (5) off a
   0x2080 caulk brush's top side at (3229 -2877 408) (VERIFIED, the capture
-  against our collision). vcod's UO missiles trace with 0x2802091.
+  against our collision). vcod's missiles trace with 0x2802091 on every
+  protocol.
 - **Explode.** `G_ExplodeMissile` (0x5e2b5) writes `projExplosionType`
   (weapon def +0x390, the 0xab540 enum) into `es.scale` (+0xdc), keeps
   1.1's `eType` 0, `eFlags` 0x80 (1.1's 0x100) and downward-trace normal,
