@@ -1,0 +1,41 @@
+PROBE begin 0
+PROBE w1.0 a t 14850 tick 14800
+PROBE w1.0z a t 14850 tick 14800
+PROBE w2.0 a t 14850 tick 14800
+PROBE w2.0z a t 14850 tick 14800
+PROBE w4.0 a t 14850 tick 14800
+PROBE w4.0z a t 14850 tick 14800
+PROBE killed.0 t 17800 tick 17800
+PROBE kt.0 t 17800 tick 17800
+PROBE killed_after.0 t 17800 tick 17800
+PROBE killedz.0 t 17850 tick 17800
+PROBE ktz.0 t 17850 tick 17800
+PROBE w3.0 t 17850 tick 17800
+PROBE w3.0z t 17850 tick 17800
+PROBE w1.0 b t 17850 tick 17800
+PROBE w1.0z b t 17850 tick 17800
+PROBE w2.0 b t 17850 tick 17800
+PROBE w2.0z b t 17850 tick 17800
+PROBE w4.0 b t 17850 tick 17800
+PROBE w4.0z b t 17850 tick 17800
+PROBE respawn.0 t 18350 tick 18350
+PROBE killed.0 t 20800 tick 20800
+PROBE kt.0 t 20800 tick 20800
+PROBE killed_after.0 t 20800 tick 20800
+PROBE w1.0 c t 20850 tick 20800
+PROBE w1.0z c t 20850 tick 20800
+PROBE w2.0 c t 20850 tick 20800
+PROBE w2.0z c t 20850 tick 20800
+PROBE w4.0 c t 20850 tick 20800
+PROBE w4.0z c t 20850 tick 20800
+PROBE killedz.0 t 20850 tick 20800
+PROBE ktz.0 t 20850 tick 20800
+PROBE w3.0 t 20850 tick 20800
+PROBE w3.0z t 20850 tick 20800
+PROBE respawn.0 t 21350 tick 21350
+PROBE w1.0 d t 23850 tick 23800
+PROBE w1.0z d t 23850 tick 23800
+PROBE w2.0 d t 23850 tick 23800
+PROBE w2.0z d t 23850 tick 23800
+PROBE w4.0 d t 23850 tick 23800
+PROBE w4.0z d t 23850 tick 23800

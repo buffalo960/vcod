@@ -1798,6 +1798,19 @@ The area-tree order a mover's push leaves two players in, for
 players go down in the slab's path, slot 0 then slot 1, and a flat
 `radiusDamage` after each `movey` reads the walk off the `cb` lines.
 
+## probe_pushcand
+
+What `G_MoverPush`'s candidate trace lets through besides the pusher, for
+`docs/research/cod11-movers.md` 12 ("The candidate trace"). mp_carentan
+under dm rules with a `--probe-team spectator` client first, then two
+`--probe-team allies` ones; the spectator keeps `StuckInClient` off so a
+stacked pair stays stacked. The recipe is in the header of
+`crates/server/tests/fixtures/movers/mp_carentan-dm-pushcand.txt`, the
+2026-10-20 run, which `crates/server/tests/push_candidate_ab.rs` replays.
+The slab runs a one-frame `movey` into one player, two stacked, two half
+overlapped and one sunk into the street, logging its origin and both
+players' every frame.
+
 ## probe_sine
 
 Whether script reaches a `TR_SINE` mover, for
@@ -2502,3 +2515,36 @@ script on any 1.1d map and blasts at it twice.
 
 Retail's lines are in `crates/server/tests/dmgtrig_ab.rs` (the
 belltower's, the touch walks') and `cod11-combat.md` 14.8 (the spawn).
+
+## probe_threadorder
+
+Which order a frame runs the threads one client packet woke
+(`docs/research/cod11-gsc-language.md`, "The packet pass"). One plain
+probe spawns from the script and sends its client commands in pairs; two
+commands with one `--probe-say` time ride one packet.
+
+```
+COD_DIR=<1.1 install> COD_LNXDED_HOME=<absolute, no '+'> PORT=33681 PROBE_SECS=45 \
+    tools/run_probe.sh client-probes/probe_threadorder mp_pavlov
+# second shell, 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:33681 --probe-secs 24 \
+    --probe-say "6:mr {sid} 0 a" --probe-say "9:mr {sid} 0 b" --probe-say "9:kill" \
+    --probe-say "12:kill" --probe-say "12:mr {sid} 0 c" \
+    --probe-say "15:mr {sid} 0 d" --probe-say "15:mr {sid} 0 e"
+```
+
+The two-client run (server as above with `PORT=33683 PROBE_SECS=70`)
+starts two probes at the same moment with only `kill`s, at 6, 9, ... 48 s on one and the same plus 17 ms more each round
+on the other, so some rounds put both packets in one frame:
+
+```
+for k in $(seq 0 14); do A="$A --probe-say $((6+3*k)):kill"; \
+    B="$B --probe-say $(python3 -c "print(f'{6+3.017*$k:.3f}')"):kill"; done
+cargo run -p vcod -- --net-probe 127.0.0.1:33683 --probe-secs 53 $A &
+cargo run -p vcod -- --net-probe 127.0.0.1:33683 --probe-secs 53 $B
+```
+
+Retail's lines, 2026-10-20, are
+`crates/server/tests/fixtures/threadorder/mp_pavlov.txt` and
+`mp_pavlov-pair.txt`, which `threadorder_ab.rs` replays on ours. It needs a client, so
+`capture_probes.sh` and `semantics_ab.rs` cannot run it.

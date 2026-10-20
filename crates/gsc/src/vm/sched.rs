@@ -181,28 +181,6 @@ impl Vm {
         self.notify_from(None, target, event, args);
     }
 
-    /// [`Vm::notify`] for an engine notify raised outside any frame, whose
-    /// waiters wait for the next frame's pass rather than run in the
-    /// packet pass ([`Vm::run_runnable`]): each is parked due on the
-    /// current clock. `ClientDisconnect`'s `menuresponse` wakes a level
-    /// thread that then runs on the next frame's `level.time`
-    /// (`client-probes/probe_dropclient`).
-    pub fn notify_for_frame(&mut self, target: impl Into<Target>, event: Atom, args: &[Value]) {
-        let woken: Vec<ThreadId> = self
-            .threads
-            .iter()
-            .filter(|t| matches!(t.state, ThreadState::Runnable))
-            .map(|t| t.id)
-            .collect();
-        self.notify_from(None, target, event, args);
-        let now = self.now_ms;
-        for t in &mut self.threads {
-            if matches!(t.state, ThreadState::Runnable) && !woken.contains(&t.id) {
-                t.state = ThreadState::WaitingUntil(now);
-            }
-        }
-    }
-
     /// [`Vm::notify`] knowing which thread executed the `notify`, which its
     /// own endons do not kill: a thread that notifies an event it is itself
     /// registered against runs on and resumes past its next `wait`
@@ -420,7 +398,7 @@ impl Vm {
     /// current millisecond's threads run: one due in the gap waits until a
     /// later walk crosses its due time, hours on, as on retail.
     pub fn run_frame(&mut self, host: &mut dyn Host, level_ms: i32) -> Vec<ScriptError> {
-        let errors = self.step_runnable(host, Some(level_ms & CLOCK_MASK));
+        let errors = self.step_runnable(host, level_ms & CLOCK_MASK);
         // `Scr_SetTime` leaves the clock on `level.time` whether or not it
         // walked forward.
         self.now_ms = level_ms & CLOCK_MASK;
@@ -431,27 +409,7 @@ impl Vm {
     /// threads due on the clock itself and any a notify woke, before the
     /// clock walks.
     pub fn run_current(&mut self, host: &mut dyn Host) -> Vec<ScriptError> {
-        self.step_runnable(host, Some(self.now_ms))
-    }
-
-    /// [`Vm::run_frame`] without the waits: steps the threads a notify woke
-    /// and nothing else, so a `wait`, a `wait 0` included, stays parked for
-    /// the frame proper.
-    ///
-    /// This is the caller's packet pass -- the host has just started or
-    /// notified something outside the frame and wants those threads run to
-    /// their next suspend on the script clock, which is what retail's
-    /// `SV_ExecuteClientMessage` callbacks get
-    /// (docs/research/cod11-map-cycle.md, 8.3).
-    pub fn run_runnable(&mut self, host: &mut dyn Host) -> Vec<ScriptError> {
-        if !self
-            .threads
-            .iter()
-            .any(|t| matches!(t.state, ThreadState::Runnable))
-        {
-            return Vec::new();
-        }
-        self.step_runnable(host, None)
+        self.step_runnable(host, self.now_ms)
     }
 
     /// The pick both passes share, measured against retail by
@@ -461,14 +419,15 @@ impl Vm {
     /// is due now and queued last, so it resumes at once, ahead of every
     /// other thread due this frame; a notify's waiters are queued newest
     /// first, so they resume in start order after the notifier's step.
-    /// `frame` is the frame's own pass and its `level.time`. The packet
-    /// pass takes woken threads
-    /// only, in start order: the callbacks of several clients' packets and
-    /// the waiters their notifies woke are all woken before it runs, where
-    /// retail runs each packet's to completion in arrival order, so no pick
-    /// among them is retail's, and start order is the one the connect and
-    /// menu gates were taken with.
-    fn step_runnable(&mut self, host: &mut dyn Host, frame: Option<i32>) -> Vec<ScriptError> {
+    /// `level` is the frame's `level.time`, the end of the clock's walk.
+    ///
+    /// Nothing runs between frames: a thread a client packet's callback or
+    /// command woke waits, `Runnable` under its wake stamp, for the frame's
+    /// first pass, and a `wait 0` the callback took is due there too, so
+    /// both join that pass's pick with the threads due on the clock
+    /// (`client-probes/probe_threadorder`, cod11-gsc-language.md, "The
+    /// packet pass").
+    fn step_runnable(&mut self, host: &mut dyn Host, level: i32) -> Vec<ScriptError> {
         let mut errors = Vec::new();
         let mut steps = 0;
         while steps < Self::MAX_THREADS_PER_FRAME {
@@ -476,16 +435,12 @@ impl Vm {
             let next = self
                 .threads
                 .iter()
-                .filter_map(|t| match (&t.state, frame) {
-                    (ThreadState::Runnable, Some(_)) => Some((now, Reverse(t.seq), t.id)),
-                    // The packet pass keeps start order (see the doc comment).
-                    (ThreadState::Runnable, None) => Some((now, Reverse(0), t.id)),
+                .filter_map(|t| match t.state {
+                    ThreadState::Runnable => Some((now, Reverse(t.seq), t.id)),
                     // Due on the clock or between it and `level.time`; one
                     // due on `level.time` itself waits a frame, and one
                     // behind the clock waits for it to come round again.
-                    (&ThreadState::WaitingUntil(d), Some(level))
-                        if d == now || (now < d && d < level) =>
-                    {
+                    ThreadState::WaitingUntil(d) if d == now || (now < d && d < level) => {
                         Some((d, Reverse(t.seq), t.id))
                     }
                     _ => None,
@@ -983,7 +938,7 @@ mod tests {
     }
 
     /// A `wait 0` reached inside a frame's pass resumes before the frame is
-    /// over (`probe_wait0_yield`); the packet pass leaves one for the frame.
+    /// over (`probe_wait0_yield`); one taken between frames waits for the next.
     #[test]
     fn a_wait_0_inside_the_frame_resumes_in_the_same_frame() {
         let mut vm = vm_with(r#"f() { wait 1; wait 0; seen(); }"#);
@@ -998,8 +953,7 @@ mod tests {
         let g = vm.func_ref("test/script", "g");
         vm.set_time(1000);
         vm.start_thread(&mut host, g, None, vec![]);
-        vm.run_runnable(&mut host);
-        assert!(host.calls.is_empty(), "the packet pass ran the wait 0");
+        assert!(host.calls.is_empty(), "the wait 0 ran between frames");
         vm.run_frame(&mut host, 1050);
         assert!(host.calls.iter().any(|(n, _)| n == "seen"));
     }

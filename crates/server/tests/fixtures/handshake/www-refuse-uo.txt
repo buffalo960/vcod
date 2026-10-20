@@ -1,0 +1,46 @@
+# The www redirect refused in connected mode on retail UO 1.51b,
+# 2026-10-20: the same setup as www-chkfail-15.txt under COD_VERSION=uo
+# (sv_wwwDlDisconnected 0 on the command line; the homepath config's 1 is
+# overridden). One HTTP GET. After `wwwdl chkfail` the server resent the
+# gamestate and redirected the re-request again (one message with nothing,
+# then the redirect: the two `begining` lines); vcod's client acked it and
+# refused it with `wwwdl fail` (the name on its bad-checksum list), the
+# server resent the gamestate, redirected the next request again, and the
+# client left. No block went over UDP. Gate: www_download.rs
+# a_refused_redirect_on_uo_is_redirected_again_until_the_client_leaves.
+
+## server console
+Going from CS_FREE to CS_CONNECTED for vcod (num 0 guid 0)
+SV_SendClientGameState() for vcod
+Going from CS_CONNECTED to CS_PRIMED for vcod
+Sending 11542 bytes in gamestate to client: 0
+clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"
+Redirecting client 'vcod' to http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3
+WARNING: client 'vcod' reports that the redirect download for 'main/nsf_mp_j5outpost.pk3' had wrong checksum.
+         you should check your download redirect configuration.
+SV_SendClientGameState() for vcod
+Going from CS_CONNECTED to CS_PRIMED for vcod
+Sending 11542 bytes in gamestate to client: 0
+clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"
+clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"
+Redirecting client 'vcod' to http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3
+SV_SendClientGameState() for vcod
+Going from CS_CONNECTED to CS_PRIMED for vcod
+Sending 11542 bytes in gamestate to client: 0
+clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"
+clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"
+Redirecting client 'vcod' to http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3
+clientDownload: 0 : begining "main/nsf_mp_j5outpost.pk3"
+Redirecting client 'vcod' to http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3
+
+## client
+DOWNLOAD: 11 referenced, 1 to fetch into <scratch-uo-conn>
+DOWNLOAD: requesting main/nsf_mp_j5outpost.pk3
+gamestate ready: clientNum 0, serverId 16, 420 configstrings, 8 baselines
+server redirected download: http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3 (953499 bytes)
+file main/nsf_mp_j5outpost.pk3 obtained through download redirect has wrong checksum (main/nsf_mp_j5outpost.pk3 has checksum 1506095530, the server lists -212687374); this likely means the server configuration is broken
+server redirected download: http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3 (953499 bytes)
+refusing redirect to http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3 by server (bad checksum)
+server redirected download: http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3 (953499 bytes)
+DOWNLOAD: failed: server keeps redirecting main/nsf_mp_j5outpost.pk3, whose redirect had the wrong checksum
+dropped: server keeps redirecting main/nsf_mp_j5outpost.pk3, whose redirect had the wrong checksum

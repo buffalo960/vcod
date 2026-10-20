@@ -235,13 +235,6 @@ enum ClientOp {
     Move(Vec<UserCmd>),
 }
 
-/// A client command whose whole effect is to release a script thread.
-/// `client_command` parses it out of the packet and `tick` runs it, so it
-/// lands on the frame the rest of the script frame runs on.
-enum ScriptCommand {
-    MenuResponse(MenuRef, String),
-}
-
 /// One shot a client's weapon step took this tick: the queue between the
 /// move that pulled the trigger and the trace `tick` answers it with.
 #[derive(Clone, Copy, Debug)]
@@ -1611,13 +1604,6 @@ pub struct Server {
     /// cvar table last read, what every move lands with and systeminfo
     /// carries.
     fall_heights: FallHeights,
-    /// The client commands that start a script thread, in arrival order.
-    /// `client_command` runs during `handle_packet`, a frame before `tick`
-    /// advances `sv_time_ms`, so a thread started there would run on the
-    /// previous frame's clock and every `cloneplayer` and `wait` in it would
-    /// land a frame in the past. These queue instead and are drained in the
-    /// tick's script slot.
-    pending_script_commands: Vec<(usize, ScriptCommand)>,
     /// The hit-location damage multipliers out of the paks
     /// (`crate::game::combat::HitLocTable`); the default until `load_scripts`.
     hitlocs: crate::game::combat::HitLocTable,
@@ -2088,7 +2074,6 @@ impl Server {
             pending_explosions: Vec::new(),
             cvar_overrides: Vec::new(),
             fall_heights: fall,
-            pending_script_commands: Vec::new(),
             hitlocs: crate::game::combat::HitLocTable::default(),
             fs: None,
             paks: Default::default(),
@@ -3218,8 +3203,8 @@ impl Server {
             // opened, or giving one up (`noop`, `bad`). Unlike the entry
             // notify this fires straight through: nothing is armed by it,
             // and a notify no thread is parked on is simply lost, which is
-            // what retail does too. Queued, since the notify releases
-            // threads.
+            // what retail does too. It runs in the move pass, in packet
+            // order with `kill` (`client-probes/probe_threadorder`).
             // 1.5's `ClientCommand` (0x46341) runs both past its
             // intermission test (cod15-protocol-diff.md, section 12).
             "matchtimeout" | "matchtimein" if self.v15() => {
@@ -3262,8 +3247,11 @@ impl Server {
                 if let Some((menu, response)) =
                     parse_menu_response(trimmed, i32::from(self.server_id))
                 {
-                    self.pending_script_commands
-                        .push((slot, ScriptCommand::MenuResponse(menu, response)));
+                    let packet = self.packet_seq;
+                    if let Some(c) = self.clients[slot].as_mut() {
+                        c.commands_at
+                            .push((packet, PacketCommand::MenuResponse(menu, response)));
+                    }
                 }
             }
             other => log::debug!("client {slot}: command {other:?} ignored"),
@@ -4067,6 +4055,7 @@ impl Server {
             crate::download::WwwConfig {
                 base_url: self.live_cvar("sv_wwwBaseURL", ""),
                 disconnected: self.live_int_cvar("sv_wwwDlDisconnected") != 0,
+                udp_fallback: self.proto.version != PROTOCOL_V22.version,
             }
         })
     }
@@ -5804,14 +5793,23 @@ impl Server {
         vcod_common::pmove::MoveRules::for_protocol(self.proto)
     }
 
+    /// Test seam: the paks a download is served from, with no level load.
+    /// Every pak in `fs` is listed in the systeminfo as if the level had
+    /// read it, so a client checks a transfer against its checksum.
+    pub fn test_mount_paks(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) {
+        self.paks = configstrings::PakLists::of(
+            false,
+            fs.paks_read().map(|(p, _)| (p, true)),
+            self.proto,
+            "",
+        );
+        self.fs = Some(fs);
+        self.set_protocol(self.proto);
+    }
+
     /// The protocol this server speaks: one per process, as each retail
     /// binary speaks one (docs/research/cod15-protocol-diff.md, "Server
     /// side"). Set before the first level loads.
-    /// Test seam: the paks a download is served from, with no level load.
-    pub fn test_mount_paks(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) {
-        self.fs = Some(fs);
-    }
-
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
         if let Some(w) = &self.world {
@@ -6303,7 +6301,6 @@ impl Server {
         // step 8's `memset(&sv, 0, ...)` takes everything the level queued.
         self.script = None;
         self.pending_explosions.clear();
-        self.pending_script_commands.clear();
         self.weapon_changes.clear();
         // Step 9.
         self.checksum_feed = (self.rand() << 16) ^ self.rand() ^ self.sv_time_ms;
@@ -6436,7 +6433,6 @@ impl Server {
         // Step 4's six counters: what this level queued and nothing else,
         // since a restart keeps the map and its collision.
         self.pending_explosions.clear();
-        self.pending_script_commands.clear();
         self.weapon_changes.clear();
         self.snap_flag_server_bit ^= console::SNAPFLAG_SERVERCOUNT;
         // Step 5: only the low nibble moves.
@@ -7138,7 +7134,6 @@ impl Server {
         self.challenges.clear();
         self.bots.clear();
         self.pending_explosions.clear();
-        self.pending_script_commands.clear();
         self.weapon_changes.clear();
         self.killed = true;
     }
@@ -7559,13 +7554,7 @@ impl Server {
         let mut client_commands = Vec::new();
         let mut console_lines: Vec<String> = Vec::new();
         let mut ranks_dirty = false;
-        // A client that dropped between the packet and here has nothing left
-        // to run its command against.
         let svs_now = self.svs_time_ms();
-        let queued: Vec<(usize, ScriptCommand)> = std::mem::take(&mut self.pending_script_commands)
-            .into_iter()
-            .filter(|(slot, _)| self.clients[*slot].is_some())
-            .collect();
         if let Some(rt) = self.script.as_mut() {
             for (slot, c) in self.clients.iter().enumerate() {
                 if let Some(c) = c {
@@ -7574,16 +7563,6 @@ impl Server {
                         moved[slot].last_buttons.unwrap_or(c.last_cmd.buttons),
                     );
                     rt.set_client_last_cmd(slot, c.last_cmd);
-                }
-            }
-            // The client commands the packet pass queued, on this frame's
-            // clock: a thread started here sees `level.time` already
-            // advanced, which is what a `cloneplayer` in it needs.
-            for (slot, cmd) in queued {
-                match cmd {
-                    ScriptCommand::MenuResponse(menu, response) => {
-                        rt.menu_response(slot, &menu, &response)
-                    }
                 }
             }
             // `addTestClient` can run on any script entry (a load's settle
@@ -8651,7 +8630,14 @@ impl Server {
                     continue;
                 };
                 if c.sim.is_none() {
-                    c.commands_at.clear();
+                    // A primed client's menu answer still reaches the game.
+                    for (_, command) in c.commands_at.drain(..) {
+                        if let PacketCommand::MenuResponse(menu, response) = command
+                            && let Some(rt) = self.script.as_mut()
+                        {
+                            rt.menu_response(slot, &menu, &response);
+                        }
+                    }
                     continue;
                 }
                 let kill = c.commands_at.first().map(|(p, _)| (*p, false));
@@ -8686,6 +8672,11 @@ impl Server {
                         self.run_kill(slot, &weapons);
                     }
                     PacketCommand::CycleSeat { back } => self.cycle_seat(slot, back),
+                    PacketCommand::MenuResponse(menu, response) => {
+                        if let Some(rt) = self.script.as_mut() {
+                            rt.menu_response(slot, &menu, &response);
+                        }
+                    }
                 }
                 relink(&mut bodies, &self.clients, slot);
                 continue;

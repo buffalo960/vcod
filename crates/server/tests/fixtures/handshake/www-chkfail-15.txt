@@ -1,0 +1,45 @@
+# The www redirect's chkfail on retail 1.5b, connected, 2026-10-20: map
+# mp_j5outpost (third-party nsf_mp_j5outpost.pk3 in the server's main/),
+# `COD_VERSION=1.5 PORT=... tools/run_server.sh mp_j5outpost +set developer 1
+# +set sv_wwwDownload 1 +set sv_wwwBaseURL '"http://127.0.0.1:<port>"' +set
+# sv_wwwDlDisconnected 0`, another 129-byte pk3 under the map pak's name
+# behind `python3 -m http.server`, and `vcod --net-probe ... --probe-download
+# <scratch>` on an install without the map pak. One HTTP GET. The server
+# streamed the re-request over UDP (only the first two block lines kept
+# below; 467 block lines in all) and the pak landed with the listed
+# checksum. Gate: www_download.rs a_chkfail_on_1_5_falls_back_to_udp.
+
+## server console
+Going from CS_FREE to CS_CONNECTED for vcod (num 0 guid 0)
+SV_SendClientGameState() for vcod
+Going from CS_CONNECTED to CS_PRIMED for vcod
+Sending 7300 bytes in gamestate to client: 0
+clientDownload: 0 : beginning "main/nsf_mp_j5outpost.pk3"
+Redirecting client 'vcod' to http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3
+WARNING: client 'vcod' reports that the redirect download for '' had wrong checksum.
+         you should check your download redirect configuration.
+SV_SendClientGameState() for vcod
+Going from CS_CONNECTED to CS_PRIMED for vcod
+Sending 7300 bytes in gamestate to client: 0
+clientDownload: 0 : beginning "main/nsf_mp_j5outpost.pk3"
+clientDownload: 0 : writing block 0
+clientDownload: 0 : writing block 1
+clientDownload: 0 : file "main/nsf_mp_j5outpost.pk3" completed
+clientDownload: vcod Done
+SV_SendClientGameState() for vcod
+Going from CS_CONNECTED to CS_PRIMED for vcod
+Sending 7300 bytes in gamestate to client: 0
+Going from CS_PRIMED to CS_ACTIVE for vcod
+Going to CS_ZOMBIE for vcod
+
+## client
+DOWNLOAD: 7 referenced, 1 to fetch into <scratch-15-conn>
+DOWNLOAD: requesting main/nsf_mp_j5outpost.pk3
+gamestate ready: clientNum 0, serverId 16, 249 configstrings, 8 baselines
+server redirected download: http://127.0.0.1:33724/main/nsf_mp_j5outpost.pk3 (953499 bytes)
+file main/nsf_mp_j5outpost.pk3 obtained through download redirect has wrong checksum (main/nsf_mp_j5outpost.pk3 has checksum 1506095530, the server lists -212687374); this likely means the server configuration is broken
+DOWNLOAD: main/nsf_mp_j5outpost.pk3 -> <scratch-15-conn>/main/nsf_mp_j5outpost.pk3 953499 bytes, checksum -212687374, server Some(-212687374): match
+downloaded main/nsf_mp_j5outpost.pk3
+DOWNLOAD: donedl
+DOWNLOAD: done, gamestate in hand
+gamestate ready: clientNum 0, serverId 16, 249 configstrings, 8 baselines

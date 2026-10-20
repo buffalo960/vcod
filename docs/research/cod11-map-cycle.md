@@ -1442,8 +1442,9 @@ an event no thread was parked on and was lost. INFERRED, from 4.4's
 pass; vcod dispatched the event at the top of `G_RunFrame`'s counterpart
 instead, which put the `waittill` one frame late. Fixed:
 `ScriptRuntime::run_frame` opens with a packet pass that dispatches the
-netcode's events on the previous frame's clock and then steps whatever is
-`Runnable`: the callbacks and their notifies. The callback is therefore
+netcode's events on the previous frame's clock, each callback running to
+its first suspend; what they woke runs in the frame's first pass
+(`cod11-gsc-language.md`, "The packet pass"). The callback is therefore
 parked on `menuresponse` before the `t 0` it queued can be answered, and the
 `sd` gates now answer the menu the instant it opens instead of a frame later.
 A waiter a later-started thread woke used to be left `Runnable` by the frame's

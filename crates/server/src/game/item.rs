@@ -87,14 +87,36 @@ impl Default for DropRing {
 
 impl DropRing {
     /// Puts `new` in the first slot whose item is gone; with all 32 live,
-    /// in slot 0, returning the item it evicts. Slot 0 every time: the
+    /// in slot 0, returning the entity it evicts. Slot 0 every time: the
     /// distance score counts only intermission clients (section 8).
-    pub fn claim(&mut self, live: impl Fn(EntId) -> bool, new: EntId) -> Option<EntId> {
-        if let Some(s) = self.slots.iter_mut().find(|s| s.is_none_or(|id| !live(id))) {
+    ///
+    /// `by_number` is 1.1d's ring, which holds entity numbers and tests only
+    /// `inuse`: a number another entity took since still holds its slot,
+    /// and the eviction frees that entity. 1.5b's and UO's
+    /// `G_FreeEntityRefs` clears a slot when its entity is freed, so there a
+    /// reused number is never held (items doc 8).
+    pub fn claim(
+        &mut self,
+        ents: &crate::game::entity::ObjectTable,
+        by_number: bool,
+        new: EntId,
+    ) -> Option<EntId> {
+        let holder = |id: EntId| {
+            if by_number {
+                ents.handle(id.0)
+            } else {
+                ents.get(id).map(|_| id)
+            }
+        };
+        if let Some(s) = self
+            .slots
+            .iter_mut()
+            .find(|s| s.is_none_or(|id| holder(id).is_none()))
+        {
             *s = Some(new);
             return None;
         }
-        self.slots[0].replace(new)
+        self.slots[0].replace(new).and_then(holder)
     }
 }
 
@@ -535,8 +557,8 @@ fn launch(
     link(host, cx, id, CONTENTS_ITEM);
     host.ents
         .schedule(id, ThinkFn::ClearOwner, now + OWNER_LOCKOUT_MS);
-    let ents = &host.ents;
-    if let Some(old) = host.drop_ring.claim(|i| ents.get(i).is_some(), id) {
+    let by_number = host.speaks_1_1();
+    if let Some(old) = host.drop_ring.claim(&host.ents, by_number, id) {
         host.ents.schedule(old, ThinkFn::Free, now + 1);
     }
     Ok(id)
@@ -1015,36 +1037,58 @@ mod tests {
             .map(|_| vm.with_cx(|cx| ents.spawn(cx).unwrap()))
             .collect();
         for id in &ids[..32] {
-            assert_eq!(ring.claim(|i| ents.get(i).is_some(), *id), None);
+            assert_eq!(ring.claim(&ents, false, *id), None);
         }
-        assert_eq!(ring.claim(|i| ents.get(i).is_some(), ids[32]), Some(ids[0]));
+        assert_eq!(ring.claim(&ents, false, ids[32]), Some(ids[0]));
         ents.free(ids[5]);
         let next = vm.with_cx(|cx| ents.spawn(cx).unwrap());
-        assert_eq!(ring.claim(|i| ents.get(i).is_some(), next), None);
+        assert_eq!(ring.claim(&ents, false, next), None);
     }
 
-    /// A full ring whose slot-0 drop the script deleted: the next drop takes
-    /// that slot, and the entity that reused the deleted number, a different
-    /// generation, is never the one evicted. The drop after that finds the
-    /// ring full again and evicts slot 0 once more, the newest drop.
+    /// 1.5b and UO: a full ring whose slot-0 drop the script deleted. The
+    /// next drop takes that slot, and the entity that reused the deleted
+    /// number is never the one evicted (`G_FreeEntityRefs` cleared the slot
+    /// at the free). The drop after that finds the ring full again and
+    /// evicts slot 0 once more, the newest drop.
     #[test]
     fn a_deleted_drop_frees_its_ring_slot_and_a_reused_number_is_never_evicted() {
         let mut vm = vcod_gsc::Vm::new();
         let mut ents = crate::game::entity::ObjectTable::new();
         let mut ring = DropRing::default();
         let first = vm.with_cx(|cx| ents.spawn(cx).unwrap());
-        assert_eq!(ring.claim(|i| ents.get(i).is_some(), first), None);
+        assert_eq!(ring.claim(&ents, false, first), None);
         for _ in 0..31 {
             let id = vm.with_cx(|cx| ents.spawn(cx).unwrap());
-            assert_eq!(ring.claim(|i| ents.get(i).is_some(), id), None);
+            assert_eq!(ring.claim(&ents, false, id), None);
         }
         ents.free(first);
         let reuse = vm.with_cx(|cx| ents.spawn(cx).unwrap());
         assert_eq!(reuse.0, first.0);
         let a = vm.with_cx(|cx| ents.spawn(cx).unwrap());
-        assert_eq!(ring.claim(|i| ents.get(i).is_some(), a), None);
+        assert_eq!(ring.claim(&ents, false, a), None);
         let b = vm.with_cx(|cx| ents.spawn(cx).unwrap());
-        assert_eq!(ring.claim(|i| ents.get(i).is_some(), b), Some(a));
+        assert_eq!(ring.claim(&ents, false, b), Some(a));
+    }
+
+    /// 1.1d: the ring holds numbers and `GetFreeCueSpot` tests only `inuse`
+    /// (0x4da8c), so a deleted slot-0 drop whose number another entity
+    /// took still holds the slot, and the next drop evicts that entity.
+    #[test]
+    fn on_1_1_a_reused_ring_number_is_held_and_evicted() {
+        let mut vm = vcod_gsc::Vm::new();
+        let mut ents = crate::game::entity::ObjectTable::new();
+        let mut ring = DropRing::default();
+        let first = vm.with_cx(|cx| ents.spawn(cx).unwrap());
+        assert_eq!(ring.claim(&ents, true, first), None);
+        for _ in 0..31 {
+            let id = vm.with_cx(|cx| ents.spawn(cx).unwrap());
+            assert_eq!(ring.claim(&ents, true, id), None);
+        }
+        ents.free(first);
+        let reuse = vm.with_cx(|cx| ents.spawn(cx).unwrap());
+        assert_eq!(reuse.0, first.0);
+        let a = vm.with_cx(|cx| ents.spawn(cx).unwrap());
+        assert_eq!(ring.claim(&ents, true, a), Some(reuse));
     }
 
     /// A placed fg42 carries its item index, on the wire as `index` with

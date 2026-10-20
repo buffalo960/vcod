@@ -2343,16 +2343,13 @@ impl ScriptRuntime {
     /// `SV_DropClient`'s `ClientDisconnect`, run inside the drop as retail
     /// runs it, not queued for the next frame's packet pass. The events the
     /// netcode queued ahead of it go first, in order, so a slot's `Connect`
-    /// never lands after its own drop. Then the threads its notifies woke,
-    /// as the packet pass would run them.
+    /// never lands after its own drop. The threads its notifies woke wait
+    /// for the next frame's first pass.
     pub fn client_disconnect(&mut self, slot: usize) {
         for ev in std::mem::take(&mut self.host.client_events) {
             self.dispatch_client_event(ev);
         }
         self.dispatch_client_event(ClientEvent::Disconnect(slot));
-        for e in self.vm.run_runnable(&mut self.host) {
-            log::warn!("script error: {e:?}");
-        }
     }
 
     /// `SV_SpawnServer`'s client pass (docs/research/cod11-map-cycle.md,
@@ -2453,7 +2450,7 @@ impl ScriptRuntime {
                 // hears a drop").
                 self.host.ranks_dirty = true;
                 let event = self.vm.with_cx(|cx| cx.intern_folded(BEGIN_NOTIFY));
-                self.vm.notify_for_frame(id, event, &[]);
+                self.vm.notify(id, event, &[]);
             }
             ClientEvent::Disconnect(slot) => {
                 // `ClientDisconnect` opens with `menuresponse` ("-1",
@@ -2469,11 +2466,8 @@ impl ScriptRuntime {
                             cx.intern_exact("disconnect"),
                         )
                     });
-                    self.vm.notify_for_frame(
-                        id,
-                        event,
-                        &[Value::String(menu), Value::String(response)],
-                    );
+                    self.vm
+                        .notify(id, event, &[Value::String(menu), Value::String(response)]);
                 }
                 self.host.complaints_about_gone(slot);
                 // `ClientDisconnect` lets go of a vehicle seat first (0x45433).
@@ -2977,26 +2971,21 @@ impl ScriptRuntime {
         // The packet pass, on the clock the netcode raised its events with:
         // retail runs `ClientBegin`, `ClientCommand` and `ClientDisconnect`
         // from `SV_ExecuteClientMessage` (map-cycle doc, 4.4), before
-        // `G_RunFrame` advances `level.time`. So a thread one of them wakes
-        // runs to its next suspend here, and a `wait 0` it takes is due in
-        // *this* frame's thread pass rather than the next one. That is what
-        // parks `sd.gsc`'s connect callback on its `waittill("menuresponse")`
+        // `G_RunFrame` advances `level.time`. A callback runs to its first
+        // suspend inside its event; what it or a command woke, and a `wait 0`
+        // it took, run in this frame's first pass below, picked with the
+        // threads due on the clock (`client-probes/probe_threadorder`,
+        // cod11-gsc-language.md, "The packet pass"). That is what parks
+        // `sd.gsc`'s connect callback on its `waittill("menuresponse")`
         // before the `openMenu` it just queued can be answered; one frame
         // later and the answer notifies nothing and the client never leaves
         // the team menu.
-        //
-        // `run_runnable`, not `run_frame`: this pass is the callbacks and
-        // whatever they notified, never a second deadline wake. Retail's is
-        // one `VM_Call` per event, not a `Scr_RunThreads`.
         //
         // Client events in the order the netcode raised them: a `Begin`
         // drained ahead of its own `Connect` finds no thread parked on the
         // notify and strands the client silently.
         for ev in std::mem::take(&mut self.host.client_events) {
             self.dispatch_client_event(ev);
-        }
-        for e in self.vm.run_runnable(&mut self.host) {
-            log::warn!("script error: {e:?}");
         }
         // `G_RunFrame` starts under a new skeleton stamp, with the DObjs
         // where the last frame left them.
@@ -3960,27 +3949,6 @@ mod tests {
         rt.set_client_ammo(0, [0; NUM_AMMO], clip);
         assert_eq!(rt.host.client_ammo[0].ammo[10], 400);
         assert_eq!(rt.host.client_ammo[0].clip[3], 2, "slot 1's op leaked");
-    }
-
-    /// The packet pass runs the threads the netcode's events woke and
-    /// nothing else: it carries no deadline wake of its own, so a `wait 0`
-    /// waits for the frame's pass. There it comes due at once and resumes
-    /// before the frame is over (`vcod-gsc`'s `step_runnable`), so a loop on
-    /// `wait 0` runs until the pass's thread cap, every frame.
-    #[test]
-    fn a_wait_zero_loop_runs_in_the_frame_pass_and_not_the_packet_pass() {
-        let mut rt = ScriptRuntime::for_test(
-            "main() { level.n = 0; for(;;) { wait 0; level.n = level.n + 1; } }",
-        );
-        let n = |rt: &mut ScriptRuntime| match rt.level_field("n") {
-            Value::Int(n) => n,
-            other => panic!("{other:?}"),
-        };
-        rt.run_frame(50);
-        let after_one = n(&mut rt);
-        assert!(after_one > 1, "{after_one}");
-        rt.vm.run_runnable(&mut rt.host);
-        assert_eq!(n(&mut rt), after_one, "the packet pass stepped the loop");
     }
 
     /// `probe_delete`'s measurement: an entity deleted in one frame is out of

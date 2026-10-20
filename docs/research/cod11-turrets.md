@@ -928,6 +928,35 @@ unowned and free without any of the release body: no `rec+0x28` clear, so
 the loop sound plays out under `turret_think`'s unowned branch (section 9),
 and no stance event or teleport, since the player is gone.
 
+VERIFIED, 1.5b and UO `game.mp*.so`: the sweep is its own exported
+`G_FreeEntityRefs` (1.5b 0x6d1cc, UO 0x79a06), which `G_FreeEntity` calls
+after the DObj free (1.5b 0x6d396, UO 0x79bdb). Its first loop runs to
+`level.num_entities` (`[level]+0xc`; GOT slots 1.5b 0x89a1c and UO 0xb4640
+are `R_386_GLOB_DAT level`, 0x89a40 and 0xb4670 `g_entities`) over the
+entities in use (`+0x164` 1.5b, `+0x16c` UO; stride 0x31c, 0x34c) and
+stores 0 into a pointer at `+0x1a0` (UO `+0x1a8`) equal to the freed
+entity, 0x3ff into `r.ownerNum` (`+0x150`, UO `+0x154`) equal to its
+number, then on `s.eType` 11 0 into the busy byte (`+0x176`, UO `+0x17e`),
+and 0x3ff into `s.groundEntityNum` (`+0x7c`) equal to its number (1.5b
+0x6d224..0x6d27b, UO 0x79a53..0x79ab5). The second clears a client's
+`+0x2268` (UO `+0x46b8`) pointer to the freed entity over the 64 client
+entities in use. The third, which 1.1d has no part of, zeroes any of the
+32 words at `level+0x2180` (UO `+0x2184`, 1.5b 0x6d2f4..0x6d31a) equal to
+the freed entity: the dropped-item ring `LaunchItem` writes (1.5b 0x4bd87,
+UO 0x54f77; cod11-items.md 8). 1.1d's `G_FreeEntity` inlines the first two
+loops (0x66ad1..0x66b5c, the `+0x198` pointer, `r.ownerNum`, the busy
+byte, `groundEntityNum`, then `client+0x2260`), and its own exported
+`G_FreeEntityRefs` (0x68670) holds the same two. INFERRED, off 1.1's
+offsets one word down: the `+0x1a0` word is `parent` (cod11-combat.md
+11.1's `fire_grenade`) and the client word the lookat trigger
+`G_CheckForPreventFriendlyFire` stores (cod11-gsc-object-model.md).
+
+vcod: a gunner's disconnect drops his turret's owner and busy byte
+(`ScriptRuntime::client_disconnect`), and `GameHost::free_ground_refs` runs the
+`groundEntityNum` part on every protocol. A missile's `r.ownerNum` and
+`parent` are not cleared when its thrower leaves: `Missile::owner` keeps
+the slot.
+
 VERIFIED: `StopFollowing` (0x46b8c) clears `eFlags` 0xC000, `viewlocked`,
 `viewlocked_entNum` and `gunfx` on a spectator's playerstate. INFERRED: a
 spectator following a gunner inherits those fields through the follow copy
