@@ -429,7 +429,9 @@ something, the bullet links it.
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
   (fetch a bazooka or panzerschreck lying about and breach a base with
   rockets from a spot with a shot at it, plant on a breached base and
-  defuse; they ignore vehicles). The nav graph is rebuilt when the script
+  defuse), and board UO vehicles with the use key: a driver steers along
+  the graph over ground its hull fits, a tank's driver stops to lay the
+  turret on an enemy and fire, a gunner fires the MG. The nav graph is rebuilt when the script
   deletes walls, as `bas` does to a breached base. A bot jumps through a
   window too low for a standing body with crouch held in the air, as
   out of mp_cassino's axis room and two rooms on mp_streets.

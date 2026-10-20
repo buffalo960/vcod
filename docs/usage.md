@@ -128,6 +128,7 @@ as `--set`:
 | `vc_bot_autobalance` | 1 | In team gametypes (all but `dm` and `bel`) bots join the smaller team and move so the teams differ by at most one. A bot moves only while dead or spectating; humans and pinned bots never move. |
 | `vc_bot_shoot` | 1 | 0 leaves the bots walking the map without fighting. |
 | `vc_bot_names` | 1 | 0 names new bots `bot<slot>`. |
+| `vc_bot_vehicles` | 1 | United Offensive: 0 stops bots getting into vehicles. |
 
 Bots never take a private slot (`sv_privateClients`). `addbot` can fill
 the public slots; the floor leaves one free for a joining human.

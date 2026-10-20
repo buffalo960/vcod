@@ -70,6 +70,7 @@ startup. A change takes effect within half a second, with no restart.
 | `vc_bot_autobalance` | 1 | Keeps the teams even in team gametypes. |
 | `vc_bot_shoot` | 1 | 0 stops bots from firing. `--bots` without `--bots-shoot` sets it to 0. |
 | `vc_bot_names` | 1 | 0 names new bots `bot<slot>` instead of drawing a funny name. |
+| `vc_bot_vehicles` | 1 | United Offensive only. 0 stops bots getting into vehicles; a bot already in one rides on until it gets out. |
 
 ## How the minimum player count works
 
@@ -134,10 +135,19 @@ changes how a seeded server plays.
 Bots play on 1.1, 1.5 and United Offensive servers, in every stock gametype:
 `dm`, `tdm`, `sd`, `re` and `bel`, and UO's `ctf`, `dom`, `hq` and `bas`.
 They are not very good. They find their way around stock maps, play each
-gametype's objectives, and fight when `vc_bot_shoot` is on.
+gametype's objectives, and fight when `vc_bot_shoot` is on. On a United
+Offensive map with vehicles, a bot with no fight and no objective close by
+walks to a vehicle near it and gets in with the use key, like a player. A
+driver drives toward its objective or an enemy, waits a moment for a
+teammate walking up to board, and in a tank stops to lay the turret on an
+enemy and fire. A gunner fires the vehicle's machine gun. Bots get out when
+they arrive, when stuck, or after 90 seconds.
 
 ## Known limits
 
 - `status` shows a bot's address as `127.0.0.1:-1`.
-- Bots don't use UO vehicles.
+- In UO, bots drive vehicles along the infantry graph over ground the hull
+  fits, so a tank can still wedge itself; a driver backs off and gets out
+  after four stalls. They never change seats, use the hatch or drive a
+  vehicle at an enemy to run him over.
 - Bot skill has no cvar; aim, reaction and memory are fixed in `bots.rs` (`Skill`).

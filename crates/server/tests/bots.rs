@@ -869,7 +869,11 @@ fn uo_bots_fight_and_sprint_in_tdm() {
                 && h.iter().all(|p| {
                     (0..3).map(|i| (p[i] - first[i]).powi(2)).sum::<f32>() < 150.0 * 150.0
                 });
-            assert!(!still, "tick {tick}: bot {slot} 12 s at {first:?}");
+            assert!(
+                !still,
+                "tick {tick}: bot {slot} 12 s at {first:?} seat {:?}",
+                b.seat
+            );
         }
     }
     let kills: Vec<Vec<String>> = sv

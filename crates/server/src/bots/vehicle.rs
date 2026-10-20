@@ -12,6 +12,10 @@ use vcod_common::net::msg::{self, UserCmd};
 
 /// A vehicle this near across is worth walking to.
 pub(crate) const SEEK_RANGE: f32 = 900.0;
+/// With an objective, a vehicle is boarded only this near, on the way to
+/// one this far off.
+const DETOUR_RANGE: f32 = 400.0;
+const OBJECTIVE_FAR: f32 = 1500.0;
 /// The use press goes in this near the hull, and the walk stops this near.
 const PRESS_REACH: f32 = 90.0;
 const STAND_OFF: f32 = 30.0;
@@ -122,6 +126,8 @@ pub(crate) struct Rider {
     pressed: bool,
     /// The seat is being left.
     leaving: bool,
+    /// An enemy in the seat's gun range this tick.
+    fighting: bool,
     /// Stall bookkeeping: ticks stalling, back-off ticks left and the way
     /// it steers, back-offs since the ride last made [`PROGRESS`], from
     /// where.
@@ -192,6 +198,12 @@ impl Bot {
         };
     }
 
+    /// In a seat with an enemy in its gun's range: a tank holds still
+    /// for the shot on purpose.
+    pub(crate) fn seated_fight(&self) -> bool {
+        self.rider.seated > 0 && self.rider.fighting
+    }
+
     /// Times the bot got into a seat.
     pub fn boardings(&self) -> u32 {
         self.rider.boarded
@@ -204,13 +216,22 @@ impl Bot {
             && view.frag_near.is_none()
             && !self.objective_busy(view)
             && self.forced.is_none();
-        if !free {
+        // A vehicle is a ride to an objective far off, near the way; with
+        // the objective close the bot walks on.
+        let reach = match self.objective_goal(view) {
+            None | Some(Goal::Roam) => SEEK_RANGE,
+            Some(Goal::To(p)) if super::dist_sq(view.origin, p) > OBJECTIVE_FAR * OBJECTIVE_FAR => {
+                DETOUR_RANGE
+            }
+            _ => 0.0,
+        };
+        if !free || reach == 0.0 {
             self.rider.target = None;
             return None;
         }
         // The pick is refreshed off this tick's list: a vehicle somebody
         // else took, or one driven off, drops out of it.
-        let near = |s: &VehicleSpot| s.gap(view.origin) < SEEK_RANGE;
+        let near = |s: &VehicleSpot| s.gap(view.origin) < reach;
         let target = match self.rider.target {
             Some(t) => view.vehicles.iter().find(|s| s.num == t.num).copied(),
             None if self.rider.rest == 0 => view
@@ -267,6 +288,7 @@ impl Bot {
         let enemy = view
             .enemy
             .filter(|e| super::dist_sq(seat.origin, e.origin) < GUN_RANGE * GUN_RANGE);
+        self.rider.fighting = enemy.is_some();
         if seat.seat == 1 {
             self.drive(view, seat, &mut cmd);
         } else if seat.driven || enemy.is_some() {

@@ -3191,9 +3191,9 @@ impl Bot {
         self.sprint_leg
     }
 
-    /// Tracking an enemy ([`BotBody::engaged`]).
+    /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
-        self.target.is_some()
+        self.target.is_some() || self.seated_fight()
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
