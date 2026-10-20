@@ -637,7 +637,13 @@ that the capsule tie fixes merged between (fix/smalls-4) closed it.
 - `PM_UpdateAimDownSightLerp` (0x2d1a9): `rechamberWhileAds 0` with
   `weaponstate` 4 lowers the sight (cmp at 0x2d2f2). Stock 1.5 sets 0 on
   the springfield, kar98k_sniper and mosin_nagant_sniper and 1 on every
-  other gun; a missing key parses as 0. VERIFIED.
+  other gun; a missing key parses as 0. VERIFIED. vcod reads a missing key
+  as 0 too (`WeaponDef::rechamber_drops_ads`). Every stock 1.5 and UO file
+  that omits it (the grenades, the binoculars, the satchel, the
+  flamethrower, the PTRS41, the bipod, tank and turret guns) has no
+  `boltAction 1`, and only a bolt action rechambers, so the reading moves
+  only a third-party file. VERIFIED, the `weapons/mp/` files of the stock
+  `pak*.pk3` and `pakuo*.pk3`.
 - Reload start with a spent case (0x2dd15, asm 0x2deee): the delay is the
   bolt time when under the reload's own delay, else the reload's own (1.1:
   else 1), and never 0. VERIFIED.

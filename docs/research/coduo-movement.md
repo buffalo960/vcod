@@ -725,7 +725,13 @@ retail. VERIFIED, `mp_carentan-dm-slope-8ms-moveshot-walk-uo.txt`
 (`cod11-combat.md` 2.1, "Measured moving"). vcod under 1.5's rule ticked
 14 on the same cmds. VERIFIED (the gate before the fix). vcod's `pmove::footsteps`
 takes the lean out of the cadence under `MoveRules::Uo` only
-(`a_uo_lean_bobs_at_the_run_s_rate`).
+(`a_uo_lean_bobs_at_the_run_s_rate`). A one-step start left after that
+fix (ours 3, retail 0 on the first snapshot of a lean strafe) is gone:
+every snapshot of the UO and 1.5 walk captures carries retail's
+`bobCycle`, and `moveshot_ab` asserts it on each. VERIFIED, the gate. It
+went with the replay's cmd timing (`moveshot_ab` now waits on the probe's
+8 ms cmds), not with a cadence change. INFERRED, from the history: no
+footstep code changed between the report and the gate's fix.
 
 ## 17. The prone check
 

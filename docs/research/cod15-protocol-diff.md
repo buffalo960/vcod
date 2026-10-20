@@ -676,9 +676,22 @@ entity method 1.1 lacks; the player method table is at 0x82ca0, 54 entries
   at `gentity+0x17a` (decompile, VERIFIED). `_utility::saveModel` and
   `loadModel` carry it across the killcam. `G_DObjUpdate` (0x6b71c) and
   `BG_UpdatePlayerDObj` (0x1afc9) hand the bit to the engine beside each
-  attached model (VERIFIED); that the engine's trace then skips that
-  model's boxes is INFERRED from the name. No stock 1.5 script passes
-  true. vcod's hit rig zeroes such a model's boxes
+  attached model (VERIFIED), as the fourth word of each 16-byte model
+  record `trap_DObjCreate` takes (UO's `G_DObjUpdate` 0x87df9, VERIFIED
+  decompile). The engine's `DObjCreate` (1.5b `cod_lnxded` 0x80d12e6, UO
+  `coduo_lnxded` 0x80c667a) ORs `1 << i` into the DObj's `+0x18` mask for
+  each flagged record i (1.5b 0x80d146c, UO 0x80c6800), and the hit-box
+  walk (1.5b 0x80d2000, UO 0x80c7394, the walk of `cod11-combat.md` 3.1)
+  ANDs its model index into that mask (1.5b 0x80d215d, UO 0x80c74f1)
+  (VERIFIED decompile and disassembly). INFERRED, off the branch on that
+  AND: a flagged model's boxes are never tested, while its bones are still
+  walked, so the models after it keep their parents. INFERRED: the mask is
+  set by record index and read by the index the model was stored at, which
+  differ only after a record
+  `DObjCreate` drops for a missing tag. The mask's one-bit accessor (1.5b
+  0x80d01ce, UO 0x80c5562) has no direct call in either server binary
+  (VERIFIED disassembly). No stock 1.5
+  script passes true. vcod's hit rig zeroes such a model's boxes
   (`hitrig::Assembly::ignore_collision`).
 - `takeWeapon` (1.1 0x4493c, 1.5 0x3d749) is in both modules: the
   weapon's reserve and clip zeroed, then `BG_TakePlayerWeapon` (decompile,
@@ -1042,8 +1055,10 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
 ## 15. What the snapshot builder culls
 
 1.5b's and United Offensive's `SV_AddEntitiesVisibleFromPoint`
-(`cod_lnxded` 1.5b 0x8095c30, `coduo_lnxded` 0x8096b97) and UO's
-`SV_inSnapshot` (0x808e3a9) add two tests to 1.1's. 1.1d's builder makes
+(`cod_lnxded` 1.5b 0x8095c30, `coduo_lnxded` 0x8096b97) and their
+`SV_inSnapshot` (1.5b 0x808d5d2, UO 0x808e3a9) add two tests to 1.1's;
+the compass's side, measured live on all three, is
+`cod11-hud-protocol.md` 9. 1.1d's builder makes
 no game call (VERIFIED: no `vmMain` 0x17 call in the 1.1d decompile, and
 1.1d's `vmMain` has no case past 0x14).
 

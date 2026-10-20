@@ -516,10 +516,9 @@ pub struct WeaponDef {
     pub bolt_action: bool,
     /// Patch 1.5's `rechamberWhileAds 0`: the sight comes down while the
     /// bolt works (1.5 `PM_UpdateAimDownSightLerp` 0x2d2f2,
-    /// docs/research/cod15-movement.md, "Weapons"). 1.5 reads a missing key
-    /// as 0 too, but 1.1's files never spell it, so only an explicit 0
-    /// counts here; the stock 1.5 files spell it on every gun that
-    /// rechambers. Only 1.5's movement rules read it.
+    /// docs/research/cod15-movement.md, "Weapons"). A missing key reads as
+    /// 0, as off retail's zeroed struct; 1.1's files never spell it, and
+    /// only 1.5's and UO's movement rules read it.
     pub rechamber_drops_ads: bool,
     /// Dropped-weapon xmodel, `xmodel/` prefix stripped.
     pub world_model: Option<String>,
@@ -967,9 +966,7 @@ impl WeaponDef {
             semi_auto: parse_bool(map, "semiAuto", false),
             start_ammo: parse_num(map, "startAmmo", 0),
             bolt_action: parse_bool(map, "boltAction", false),
-            rechamber_drops_ads: map
-                .get("rechamberWhileAds")
-                .is_some_and(|v| v.trim() == "0"),
+            rechamber_drops_ads: !parse_bool(map, "rechamberWhileAds", false),
             world_model: map
                 .get("worldModel")
                 .map(|v| v.strip_prefix("xmodel/").unwrap_or(v).to_string()),
@@ -1363,6 +1360,22 @@ mod tests {
         assert_eq!(stored_ms(4.0), 4000);
     }
     use crate::xmodel;
+
+    /// 1.5 and UO read a missing `rechamberWhileAds` as 0, which lowers the
+    /// sight through a rechamber (cod15-movement.md 6).
+    #[test]
+    fn a_missing_rechamber_while_ads_reads_as_zero() {
+        let def = |v: Option<&str>| {
+            let mut map = HashMap::new();
+            if let Some(v) = v {
+                map.insert("rechamberWhileAds".to_string(), v.to_string());
+            }
+            WeaponDef::from_map(&map).rechamber_drops_ads
+        };
+        assert!(def(None));
+        assert!(def(Some("0")));
+        assert!(!def(Some("1")));
+    }
 
     #[test]
     fn sound_keys_blank_means_absent() {
