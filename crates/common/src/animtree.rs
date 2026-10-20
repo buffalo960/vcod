@@ -279,6 +279,8 @@ pub struct PlayerAnims {
 pub struct AnimMotion {
     /// The loop period in seconds.
     pub duration: f32,
+    /// `XAnimGetLength`, [`crate::xanim::RootMotion::length_ms`].
+    pub length_ms: i32,
     pub looping: bool,
     /// [`crate::xanim::RootMotion::frequency`].
     pub frequency: f32,
@@ -350,6 +352,7 @@ impl PlayerAnims {
                 let move_speed = if death { 0 } else { move_speed };
                 Some(AnimMotion {
                     duration: m.duration,
+                    length_ms: m.length_ms,
                     looping: m.looping,
                     frequency: m.frequency,
                     move_speed,
