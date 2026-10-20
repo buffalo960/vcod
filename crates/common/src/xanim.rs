@@ -218,8 +218,9 @@ pub fn root_motion(name: &str, data: &[u8]) -> Result<RootMotion> {
     };
     Ok(RootMotion {
         // `cod_lnxded` 0x80bed5c: frames over framerate, times 1000.0 under a
-        // truncating control word (syscall 0x5d's case, 0x8088b32).
-        length_ms: ((h.frame_count - 1) as f64 / h.framerate as f64 * 1000.0) as i32,
+        // truncating control word (syscall 0x5d's case, 0x8088b32; 1.5b's
+        // and UO's syscall 0x61, 0x808f584 and 0x8090396).
+        length_ms: x87_length_ms(h.frame_count - 1, h.framerate as u32) as i32,
         duration,
         looping: h.looping,
         frequency: match h.frame_count - 1 {

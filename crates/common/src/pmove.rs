@@ -607,6 +607,12 @@ pub struct PlayerState {
     /// raises it only below [`LAND_ANIM_SPEED`] (docs/research/cod11-sound-system.md,
     /// "Landing"). Cleared at the top of every move, like `jumped`.
     pub land_anim: bool,
+    /// The horizontal speed the last `PM_Footsteps` read, ahead of the
+    /// move clamp and the velocity snap (`PmoveSingle` calls it at 1.1d
+    /// 0x34336 and 1.5b 0x28889, `trap_SnapVector` after): the movetype selects by it, not
+    /// by the snapped velocity (player-model-anim-system.md, "How retail
+    /// picks the movetype").
+    pub footsteps_xyspeed: f32,
     /// The `jump`/`jumpbk` anim event this move raised, if any. Cleared at
     /// the top of every move, like `jumped`.
     pub takeoff: Option<Takeoff>,
@@ -883,6 +889,7 @@ impl PlayerState {
             backwards_run: false,
             jumped: false,
             land_anim: false,
+            footsteps_xyspeed: 0.0,
             takeoff: None,
             breakdown_continue: false,
             weapon: 0,
@@ -1843,6 +1850,8 @@ fn footsteps(
     let v15 = ps.rules.v15();
     let walking = ps.walking || input.walk_slow || v15 && ps.lean != 0.0;
     let stance = ps.effective_stance();
+    let speed = (ps.velocity.x * ps.velocity.x + ps.velocity.y * ps.velocity.y).sqrt();
+    ps.footsteps_xyspeed = speed;
     if !ps.on_ground {
         // quiet for 299 ms after a jump (0x323b9; 1.5 `pm_ladderJumpTime`
         // 300 at 0x75630)
@@ -1863,7 +1872,6 @@ fn footsteps(
             return;
         }
     }
-    let speed = (ps.velocity.x * ps.velocity.x + ps.velocity.y * ps.velocity.y).sqrt();
     if speed < 10.0 {
         // a stop puts the phase at zero; a creep keeps it (0x324af-0x324ba)
         if speed < 1.0 {
