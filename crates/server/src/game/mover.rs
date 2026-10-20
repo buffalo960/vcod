@@ -80,7 +80,9 @@ impl Plan {
                         ..*next
                     };
                 }
-                None if cur.tr_type == TR_GRAVITY => return bg_evaluate(self.stored, &cur, t),
+                None if cur.tr_type == TR_GRAVITY => {
+                    return bg_evaluate(self.stored, &cur, t.min(gravity_stop(end)));
+                }
                 None => return bg_evaluate(self.stored, &cur, end),
             }
         }
@@ -131,41 +133,58 @@ impl Plan {
                     next.base = bg_evaluate(self.stored, &self.current, end);
                     self.current = next;
                 }
-                None => return self.finish(end),
+                None => return self.finish(end, now_ms),
             }
         }
         None
     }
 
-    /// The last segment ended at `end`. A bounded move settles to stationary
-    /// at the point it reached, which is what the capture shows; a
-    /// `movegravity` does not, because retail's own entity was still
-    /// accelerating downward on the frame its notify came (movers doc,
-    /// section 5).
-    fn finish(&mut self, end: i32) -> Option<&'static str> {
-        if self.current.tr_type != TR_GRAVITY {
-            self.current = Trajectory {
-                tr_type: TR_STATIONARY,
-                tr_time: end,
-                base: self
-                    .dest
-                    .unwrap_or_else(|| bg_evaluate(self.stored, &self.current, end)),
-                ..self.current
-            };
-        }
+    /// The last segment ended at `end`, seen on the frame at `now_ms`. A
+    /// bounded move settles to stationary at the point it reached, which is
+    /// what the capture shows; a `movegravity` settles where it is at
+    /// `now_ms`, the first frame past its time (0x5f93b, movers doc 5).
+    fn finish(&mut self, end: i32, now_ms: i32) -> Option<&'static str> {
+        let base = if self.current.tr_type == TR_GRAVITY {
+            bg_evaluate(self.stored, &self.current, now_ms)
+        } else {
+            self.dest
+                .unwrap_or_else(|| bg_evaluate(self.stored, &self.current, end))
+        };
+        self.current = Trajectory {
+            tr_type: TR_STATIONARY,
+            tr_time: end,
+            base,
+            ..self.current
+        };
         self.notify.take()
     }
+}
+
+/// The level time a `movegravity` ending at `end` stops on: the first
+/// frame at or past it, whose `Reached_ScriptMover` evaluates the arc there
+/// (0x5f93b).
+fn gravity_stop(end: i32) -> i32 {
+    let f = crate::server::FRAME_MS;
+    end.div_euclid(f) * f + if end.rem_euclid(f) == 0 { 0 } else { f }
 }
 
 /// `BG_EvaluateTrajectory` (game.mp 0x2c600) as the 1.1d build runs it:
 /// a linear trajectory's `delta * dt + base` stays on the x87 stack until
 /// the store, `dt` the milliseconds times `0.001f`, so the turn a frame
 /// lands a float step off an `f32` evaluation (movers doc 12, "The
-/// residual yaw"). Every other type is `Trajectory::evaluate`.
+/// residual yaw"). A gravity arc is `Trajectory::evaluate_kept` (0x2c6c0),
+/// every other type `Trajectory::evaluate`.
 ///
 /// 1.5b and UO store `dt` to a float before the mul-add (1.5b
 /// `0x1b8f5`), `stored`.
 fn bg_evaluate(stored: bool, tr: &Trajectory, t: i32) -> Vec3 {
+    if tr.tr_type == TR_GRAVITY {
+        return if stored {
+            tr.evaluate_stored(t)
+        } else {
+            tr.evaluate_kept(t)
+        };
+    }
     let dt = |t: i32| {
         let dt = f64::from(t - tr.tr_time) * f64::from(0.001_f32);
         if stored { f64::from(dt as f32) } else { dt }
@@ -419,6 +438,11 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
             done.push(Done { ent: id, event: e });
         }
     }
+    // Groups whose running segment ended this frame.
+    let (pos_reached, apos_reached) = (
+        m.pos.current != unadvanced.0.current,
+        m.apos.current != unadvanced.1.current,
+    );
     m.unreached = (m.pos != unadvanced.0 || m.apos != unadvanced.1).then(|| {
         let events = done.iter().map(|d| d.event).collect();
         (unadvanced.0, unadvanced.1, events)
@@ -429,17 +453,33 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
         vcod_gsc::Value::Vector(v) => Vec3::from(v),
         _ => Vec3::ZERO,
     };
+    let origin_atom = cx.intern_folded("origin");
+    let before_origin = match host.get_field(cx, id, origin_atom) {
+        vcod_gsc::Value::Vector(v) => Vec3::from(v),
+        _ => Vec3::ZERO,
+    };
+    // `G_MoverTeam`: `move` and `amove` are the trajectories less
+    // `r.currentOrigin` and `r.currentAngles`, each stored as a float, which
+    // `G_MoverPush` adds back (0x650f0) and the link snaps (movers doc 12,
+    // "The residual yaw"; 23). A group whose segment ended this frame is
+    // then evaluated into place by `Reached_ScriptMover` (0x5fa0e, 0x5fab1).
     let origin = bg_evaluate(m.pos.stored, &m.pos.current, level_ms);
-    // `G_MoverTeam`: `amove` is the trajectory less `r.currentAngles`,
-    // which `G_MoverPush` adds back and the link snaps (movers doc 12,
-    // "The residual yaw").
+    let origin = if moving && !pos_reached {
+        before_origin + (origin - before_origin)
+    } else {
+        origin
+    };
     let (turned, angles) = if moving {
         let target = if m.apos.started {
             bg_evaluate(m.apos.stored, &m.apos.current, level_ms)
         } else {
             before
         };
-        let turned = before + (target - before);
+        let turned = if apos_reached {
+            target
+        } else {
+            before + (target - before)
+        };
         (turned, snap_angles(turned))
     } else {
         (before, before)
@@ -1225,11 +1265,10 @@ mod tests {
         assert_eq!(plan.advance(3050), Some(MOVEDONE));
     }
 
-    /// `movegravity` is the one verb that does not settle: retail's entity
-    /// was still accelerating downward on the frame its notify came, so the
-    /// trajectory stays gravity and the position keeps running.
+    /// `movegravity` notifies on the frame its time runs out and stops there,
+    /// the arc evaluated at that frame (`probe_moverreads`, movers doc 5).
     #[test]
-    fn movegravity_notifies_without_stopping() {
+    fn movegravity_stops_where_its_time_runs_out() {
         let mut movers = Movers::default();
         let id = EntId(72, 0);
         movers.move_gravity(
@@ -1244,10 +1283,11 @@ mod tests {
         assert!((pos.evaluate(375).z - 156.25).abs() < 0.01);
         assert!((pos.evaluate(3000).z + 2600.0).abs() < 0.01);
 
+        // It stops where it is on the frame its time runs out (0x5f93b).
         let row = movers.rows.get_mut(&id).unwrap();
         assert_eq!(row.pos.advance(3000), Some(MOVEDONE));
-        assert_eq!(row.pos.current.tr_type, TR_GRAVITY);
-        assert!((row.pos.current.evaluate(3500).z + 3750.0).abs() < 0.01);
+        assert_eq!(row.pos.current.tr_type, TR_STATIONARY);
+        assert!((row.pos.current.evaluate(3500).z + 2600.0).abs() < 0.01);
     }
 
     /// `G_MoverPush`'s boxes for an unrotated pusher: the list box grows

@@ -812,3 +812,65 @@ fn every_link_snaps_angles_like_retail() {
     let retail = rows(text.lines().collect());
     assert_eq!(retail, ours);
 }
+
+const MOVERREADS: &str = "tests/fixtures/movers/mp_carentan-dm-moverreads.txt";
+
+/// Mover script reads (movers doc 23): `.speed` and `.dmg` after a sine
+/// mover's spawn, `.origin` across a `moveGravity` started on a moving
+/// mover and `.angles` through rotates that cross 0 and 360. Server alone,
+/// every line exact. `MOVERREADS_REPORT=1` prints both sides.
+#[test]
+fn mover_script_reads_match_retail() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let bsp_path = fs.resolve_map(MAP).expect("map in mounted paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_moverreads"), now);
+    sv.overlay_script(
+        "maps/mp/gametypes/probe_moverreads",
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_moverreads.gsc"),
+    );
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load scripts");
+    for _ in 0..400 {
+        common::run_alone(&mut sv, &mut now, FRAME_MS);
+        if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
+            break;
+        }
+    }
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    let rows = |lines: Vec<&str>| -> Vec<String> {
+        lines
+            .into_iter()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.find("PROBE ").map(|i| l[i..].trim().to_string()))
+            .collect()
+    };
+    let ours = rows(sv.script_log().iter().map(String::as_str).collect());
+    let text = std::fs::read_to_string(MOVERREADS).unwrap();
+    let retail = rows(text.lines().collect());
+    if std::env::var("MOVERREADS_REPORT").is_ok_and(|v| v == "1") {
+        for (r, o) in retail.iter().zip(&ours) {
+            println!(
+                "{} retail {r}\n  ours   {o}",
+                if r == o { " " } else { "!" }
+            );
+        }
+    }
+    let bad: Vec<String> = retail
+        .iter()
+        .zip(&ours)
+        .filter(|(r, o)| r != o)
+        .map(|(r, o)| format!("retail {r}\nours   {o}"))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+    assert_eq!(retail.len(), ours.len(), "row count");
+}
