@@ -17,7 +17,7 @@ use crate::game::host::{ClientEvent, SpawnMode};
 use crate::game::say::SayMode;
 use crate::game::script;
 use crate::game::script::MenuRef;
-use crate::game::stuck::{StuckView, stuck_in_client};
+use crate::game::stuck::{StuckRules, StuckView, stuck_in_client};
 use crate::game::temp_entity;
 use crate::spectate::{ClientSim, PmType};
 use crate::world::{TestEntities, World};
@@ -947,7 +947,16 @@ fn vehicle_player_damage(
             };
             rt.deliver_hits(vec![hit]);
         }
-        None => rt.deliver_unowned_hit(slot, [veh, veh], damage, 0, mod_, &weapon, at.into()),
+        None => rt.deliver_unowned_hit(
+            slot,
+            [veh, veh],
+            damage,
+            0,
+            mod_,
+            &weapon,
+            Some(at.into()),
+            Some([0.0; 3]),
+        ),
     }
 }
 
@@ -1552,6 +1561,8 @@ pub struct Server {
     level_seed: u64,
     /// [`Server::pin_spawns`]'s queues, handed to every level's script.
     spawn_pins: Option<crate::game::host::SpawnPins>,
+    /// [`Server::pin_stuck_velocities`]'s pins.
+    stuck_pins: HashMap<(i32, usize), glam::Vec2>,
     /// The map's collision and spawn, loaded by the binary; tests run
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
@@ -2035,6 +2046,17 @@ impl Server {
         self.spawn_pins = Some(pins);
     }
 
+    /// Test-facing: a `StuckInClient` push in the end frame at level time
+    /// `t` leaves slot `s` with the horizontal velocity pinned at `(t, s)`
+    /// instead of its `rand()` jitter's. A gate replays a retail capture's
+    /// pushes with it: retail seeds `rand()` from the wall clock.
+    pub fn pin_stuck_velocities(&mut self, pins: HashMap<(i32, usize), [f32; 2]>) {
+        self.stuck_pins = pins
+            .into_iter()
+            .map(|(k, v)| (k, glam::Vec2::from(v)))
+            .collect();
+    }
+
     /// `new` with the generator seeded from `seed`; the binary passes the
     /// wall clock.
     pub fn with_seed(mut cfg: ServerConfig, now: Instant, seed: u64) -> Self {
@@ -2075,6 +2097,7 @@ impl Server {
             rng: seed,
             level_seed: seed,
             spawn_pins: None,
+            stuck_pins: HashMap::new(),
             world: None,
             sv_time_ms: 0,
             paused_ms: 0,
@@ -4833,6 +4856,7 @@ impl Server {
                 maxs: glam::Vec3::ZERO,
                 vel_xy: glam::Vec2::ZERO,
                 speed: 0.0,
+                seated: false,
             });
         };
         Some(StuckView {
@@ -4845,6 +4869,7 @@ impl Server {
             maxs: sim.ps.maxs(),
             vel_xy: sim.ps.velocity.truncate(),
             speed: sim.ps.speed,
+            seated: sim.seat.is_some(),
         })
     }
 
@@ -8215,8 +8240,20 @@ impl Server {
                 if live {
                     let views: Vec<Option<StuckView>> =
                         self.clients.iter().map(Self::stuck_view).collect();
+                    let rules = if self.proto.version == PROTOCOL_V1.version {
+                        StuckRules::V1_1
+                    } else {
+                        StuckRules::V1_5
+                    };
                     let rand = || (vcod_common::rng::xorshift(&mut self.rng) >> 33) as u32;
-                    if let Some(push) = stuck_in_client(slot, &views, rand) {
+                    if let Some(mut push) = stuck_in_client(slot, &views, rules, rand) {
+                        let t = self.sv_time_ms;
+                        if let Some(v) = self.stuck_pins.get(&(t, slot)) {
+                            push.self_vel = *v;
+                        }
+                        if let Some(v) = self.stuck_pins.get(&(t, push.other)) {
+                            push.other_vel = *v;
+                        }
                         let me = self.clients[slot]
                             .as_mut()
                             .and_then(|c| c.sim.as_mut())

@@ -20,6 +20,17 @@ pub struct StuckView {
     pub maxs: Vec3,
     pub vel_xy: Vec2,
     pub speed: f32,
+    /// UO's `EF_IN_VEHICLE`: a seated player is no partner (game.mp.uo
+    /// 0x5258c).
+    pub seated: bool,
+}
+
+/// Which module's scan: 1.1's gives up on any slot without its own view,
+/// 1.5's and UO's pass over it (cod11-player-clip.md 6.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StuckRules {
+    V1_1,
+    V1_5,
 }
 
 pub struct Push {
@@ -28,9 +39,14 @@ pub struct Push {
     pub other_vel: Vec2,
 }
 
-/// `-1 - rand()/2^30`, retail's jitter term; `rand` is the caller's 31-bit `rand()`.
-fn jitter(rand: &mut impl FnMut() -> u32) -> f32 {
-    -1.0 - rand() as f32 / (1u32 << 30) as f32
+/// Retail's jitter term off the caller's 31-bit `rand()`: 1.1's `-1 -
+/// r/2^30`, 1.5's and UO's `r/2^31 + r/2^31 - 1` (cod11-player-clip.md 6.4).
+/// The 1.5 term is exact in an `f64`, as on the x87 stack.
+fn jitter(rules: StuckRules, rand: &mut impl FnMut() -> u32) -> f64 {
+    match rules {
+        StuckRules::V1_1 => (-1.0 - rand() as f32 / (1u32 << 30) as f32) as f64,
+        StuckRules::V1_5 => rand() as f64 / 2147483648.0 * 2.0 - 1.0,
+    }
 }
 
 /// Inclusive AABB overlap on the absolute boxes, then the capsule radius
@@ -57,6 +73,7 @@ fn overlaps(me: &StuckView, other: &StuckView) -> bool {
 pub fn stuck_in_client(
     me: usize,
     views: &[Option<StuckView>],
+    rules: StuckRules,
     mut rand: impl FnMut() -> u32,
 ) -> Option<Push> {
     let my = views.get(me).copied().flatten()?;
@@ -67,17 +84,28 @@ pub fn stuck_in_client(
     for (i, slot) in views.iter().enumerate() {
         let Some(other) = slot else { continue };
         if !other.own_view {
-            return None;
+            if rules == StuckRules::V1_1 {
+                return None;
+            }
+            continue;
         }
         let other_body = other.contents == CONTENTS_BODY || other.contents == CONTENTS_CORPSE;
-        if !other.playing || i == me || other.health <= 0 || !other_body {
+        if !other.playing || i == me || other.health <= 0 || !other_body || other.seated {
             continue;
         }
         if !overlaps(&my, other) {
             continue;
         }
-        let j = Vec2::new(jitter(&mut rand), jitter(&mut rand));
-        let dir = ((other.origin - my.origin).truncate() + j).normalize_or_zero();
+        let d = (other.origin - my.origin).truncate();
+        let jx = jitter(rules, &mut rand);
+        let jy = jitter(rules, &mut rand);
+        let dir = match rules {
+            StuckRules::V1_1 => (d + Vec2::new(jx as f32, jy as f32)).normalize_or_zero(),
+            // The sum stays on the x87 stack until its store.
+            StuckRules::V1_5 => {
+                Vec2::new((d.x as f64 + jx) as f32, (d.y as f64 + jy) as f32).normalize_or_zero()
+            }
+        };
         let mut s_me = if my.vel_xy.length_squared() > 0.0 {
             my.speed
         } else {
@@ -116,6 +144,7 @@ mod tests {
             maxs: Vec3::new(15.0, 15.0, 70.0),
             vel_xy: Vec2::new(vx, 0.0),
             speed: 190.0,
+            seated: false,
         }
     }
     const MID: u32 = 1 << 30; // j = -1 - 2^30 / 2^30 = -2
@@ -123,7 +152,7 @@ mod tests {
     #[test]
     fn both_still_both_take_speed() {
         let views = [Some(view(0.0, 0.0)), Some(view(10.0, 0.0))];
-        let p = stuck_in_client(0, &views, || MID).unwrap();
+        let p = stuck_in_client(0, &views, StuckRules::V1_1, || MID).unwrap();
         assert_eq!(p.other, 1);
         // dir = normalize((10, 0) + (-2, -2)) = normalize(8, -2)
         let d = Vec2::new(8.0, -2.0).normalize();
@@ -135,7 +164,7 @@ mod tests {
     #[test]
     fn only_the_mover_is_pushed() {
         let views = [Some(view(0.0, 100.0)), Some(view(10.0, 0.0))];
-        let p = stuck_in_client(0, &views, || MID).unwrap();
+        let p = stuck_in_client(0, &views, StuckRules::V1_1, || MID).unwrap();
         assert_eq!(p.other_vel, Vec2::ZERO);
         assert!((p.self_vel.length() - 190.0).abs() < 1e-3);
     }
@@ -143,7 +172,7 @@ mod tests {
     #[test]
     fn apart_is_not_stuck() {
         let views = [Some(view(0.0, 0.0)), Some(view(31.0, 0.0))];
-        assert!(stuck_in_client(0, &views, || MID).is_none());
+        assert!(stuck_in_client(0, &views, StuckRules::V1_1, || MID).is_none());
     }
 
     #[test]
@@ -153,12 +182,32 @@ mod tests {
             ..view(500.0, 0.0)
         };
         let views = [Some(spec), Some(view(0.0, 0.0)), Some(view(10.0, 0.0))];
-        assert!(stuck_in_client(1, &views, || MID).is_none());
+        assert!(stuck_in_client(1, &views, StuckRules::V1_1, || MID).is_none());
         let views = [Some(view(0.0, 0.0)), Some(view(10.0, 0.0)), Some(spec)];
         assert!(
-            stuck_in_client(0, &views, || MID).is_some(),
+            stuck_in_client(0, &views, StuckRules::V1_1, || MID).is_some(),
             "the hit in slot 1 returns before slot 2"
         );
+    }
+
+    #[test]
+    fn on_15_a_slot_without_own_view_is_passed_over() {
+        let spec = StuckView {
+            own_view: false,
+            ..view(500.0, 0.0)
+        };
+        let views = [Some(spec), Some(view(0.0, 0.0)), Some(view(0.0, 0.0))];
+        // r = 2^30 is a jitter of 0 on 1.5; r = 2^30 * 3/2 is 0.5.
+        let mut r = [1u32 << 30, 3 << 29].into_iter();
+        let p = stuck_in_client(1, &views, StuckRules::V1_5, || r.next().unwrap()).unwrap();
+        assert_eq!(p.other, 2);
+        assert_eq!(p.other_vel, Vec2::new(0.0, 190.0));
+        let seated = StuckView {
+            seated: true,
+            ..view(0.0, 0.0)
+        };
+        let views = [Some(view(0.0, 0.0)), Some(seated)];
+        assert!(stuck_in_client(0, &views, StuckRules::V1_5, || MID).is_none());
     }
 
     #[test]
@@ -170,6 +219,6 @@ mod tests {
                 ..view(10.0, 0.0)
             }),
         ];
-        assert!(stuck_in_client(0, &views, || MID).is_some());
+        assert!(stuck_in_client(0, &views, StuckRules::V1_1, || MID).is_some());
     }
 }

@@ -601,27 +601,39 @@ descends.
 
 VERIFIED, `client-probes/probe_crush.gsc` against the retail 1.1d Linux
 server, mp_carentan, 2026-10-17, the client on a jittered link
-(`VCOD_NETSIM="ping=40,jitter=70"`):
-`crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`, the slab
-held on the player for 8 s. It slips 2 units five times (72 to 62), each on
-the frame after a snapshot whose `commandTime` repeats the one before it,
-and on no other frame: those five frames ran with no cmd from the player.
-The `moveto` called in the frame of the teleport, the slab still stalled at
-62, reads `getorigin()` 60 straight after the call. INFERRED, off the push
+(`VCOD_NETSIM="ping=40,jitter=70"`), since replaced: the slab held on the
+player for 8 s slipped 2 units five times (72 to 62), each on the frame
+after a snapshot whose `commandTime` repeats the one before it, and on no
+other frame: those five frames ran with no cmd from the player. The
+`moveto` called in the frame of the teleport, the slab still stalled at
+62, read `getorigin()` 60 straight after the call. INFERRED, off the push
 listing above: the blocked push leaves the player unlinked; only his next
 `ClientThink` links him, so a frame that runs before one reaches the server
 finds nobody under the slab. The `-ents` run's client logged no
 `commandTime`, so its 36950 pass is read as one such frame, not measured.
 
+VERIFIED, the same probe and link, 2026-10-20, the `--probe-ride` client
+logging its cmds and the `commandTime` of every snapshot it parsed
+(`crates/server/tests/fixtures/movers/mp_carentan-dm-crush.txt`): the slab
+slips nine times in the 8 s (72 to 54), and the `moveto` at the teleport
+reads 52. The client logs every snapshot because two that land in one
+pass of its loop used to log only the newer: the first 2026-10-20 run lost
+25 of 240 between lift and done, and a replay reads a lost snapshot's
+frame as one with no cmd.
+
 vcod: the move verbs write the start into `origin` and link
 (`builtins::mover::linked`, `mover::verb_linked`), and a blocked push
 leaves the blocker unlinked as retail does. `ride_ab.rs`'s
 `a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail` replays the
-crush capture, holding the cmd back from each frame that ran without one,
-and matches every slab sample. In the 2026-10-20 ride capture (section 11)
-every frame of `crush` had a cmd, and the slab holds at 72 for all 75
-stalled samples, as on ours; `ride_ab.rs`'s wire gate replays its cmds
-and the slab's trajectory matches with no tolerance on `trTime`.
+crush capture's cmds (`ProbeHold::framed`), the frames that ran none
+included, on a client that joins so its lift starts on retail's frame
+(the probe's phases run off the spawn), and holds every frame of every
+phase, the player's fall after the teleport too, to the log's two
+decimals. VERIFIED, vcod measurement 2026-10-20: every one of the 240
+frames matches. In the 2026-10-20 ride capture (section 11) every frame of
+`crush` had a cmd, and the slab holds at 72 for all 75 stalled samples, as
+on ours; `ride_ab.rs`'s wire gate replays its cmds and the slab's
+trajectory matches with no tolerance on `trTime`.
 
 ### The box test
 
@@ -746,6 +758,31 @@ times, slab and all three coordinates of every player: the street's
 `setOrigin` rests (section 21) and the stalled pairs' sinking included.
 Clipping against every playing client instead keeps both pairs at -30
 and fails eight rows.
+
+VERIFIED, the same recipe on the retail 1.5b and UO 1.51b Linux servers,
+2026-10-20: `mp_carentan-dm-pushcand-1.5.txt` and `-uo.txt` (PROBE lines,
+both allied clients' `CMDS` lines, and the `RIDE` lines of the snapshots
+a `StuckInClient` push left on them). The alone and sunk phases are
+1.1's: the lone player moved 8 on the slab's moving frame, the sunk one
+left at z -33.00. The stacked and half pairs are not: the spectator does
+not keep `StuckInClient` off there (`cod11-player-clip.md` 6.2), so on the
+first end frame after the `setOrigin`s the pair is shoved apart, both
+velocities 190 long (1.5 stacked: slot 1 (-170.53, -83.78) at 17750, pushed
+again at 17800; UO: slot 1 (179.16, 63.25) at 18100 and 18150), and comes
+to rest 95 to 107 units apart before the slab moves (1.5:
+(-274.58, 2397.78) and (-190.04, 2449.83)). The half pair takes one push,
+its direction mostly the 15 units between them (1.5 slot 1
+(-189.88, -6.76) at 20950). In both phases the slab still holds at 0
+through the four logged frames and the half second after, and neither
+player moves. Which body blocks it this far apart is not traced; ours
+stalls on the same frames.
+
+vcod: `push_candidate_ab` replays both captures as it does 1.1's, and pins
+each push's velocities from the `RIDE` lines (`Server::pin_stuck_velocities`):
+retail seeds `rand()` from the clock, so the jitter cannot be replayed.
+Every row matches, level times, slab and all three coordinates of both
+players. Before `StuckInClient` took 1.5's scan the pairs stayed stacked
+on ours and 48 rows failed across the two.
 
 ### `TR_SINE` and the crush arm
 
@@ -2485,32 +2522,52 @@ never reached.
 
 ### The sine crush
 
-VERIFIED, the crush capture: the player stood at 2400 (the `setOrigin` reads
-z one up, -6.75) is crushed on that frame's entity pass, the copy at -18.81
-pressing a box corner of its sloped ceiling into the head: the damage
-callback reads inflictor and attacker the bobbing (299), damage 99999,
-`dflags` 0, `MOD_CRUSH`, weapon and hit location `none`, health 100, then
-the killed callback with the same. The bobbing goes on and drops the level
-at 4000 as in section 18. The corpse settles at -7.16 and then -7.99, 0.12
-under a live player's rest.
+VERIFIED, the crush capture (2026-10-12, since replaced): the player stood
+at 2400 (the `setOrigin` reads z one up, -6.75) is crushed on that frame's
+entity pass, the copy at -18.81 pressing a box corner of its sloped ceiling
+into the head: the damage callback reads inflictor and attacker the bobbing
+(299), damage 99999, `dflags` 0, `MOD_CRUSH`, weapon and hit location
+`none`, health 100, then the killed callback with the same. The bobbing
+goes on and drops the level at 4000 as in section 18. The corpse settled
+at -7.16 and then -7.99, 0.12 under a live player's rest.
 
-INFERRED: the 0.12 is the flat-terrain sink of `cod11-player-clip.md` 8.12.
-A corpse falls on every cmd and lands again; on a flat partition a fall
-whose end stays over the face is not stopped at the 0.125 pad, so the first
-cmd after the landing sinks it `0.5 * 800 * dt^2`, 0.116 for a 17 ms cmd
-(-7.875 to -7.991), and every later fall would cross the face and is stopped
-where it starts. A 50 ms cmd falls a unit, never ends over the face, and
-leaves the body at the pad. VERIFIED, vcod measurement 2026-10-12: with one
-cmd a frame ours rested at -7.875; sending the probe client's cmds (16, 17
-and 17 ms a frame) ours rests at -7.99 from 2550 on, as retail. The first
-two rows after the death, 0.41 then a landing on retail, are the length of
-the cmds retail's client sent across the death, which ours cannot replay.
+VERIFIED, the 2026-10-20 recapture with a `--probe-ride` client
+(`crates/server/tests/fixtures/movers/mp_carentan-dm-sinecrush.txt`, its
+`CMDS` lines the client's cmds): the same callbacks, and the corpse reads
+-7.78 at 2450 and -7.98 from 2500 on. The cmds in the frame after the death
+are 2400, 2416 and 2433 (`ct` 2433 at 2450), and 2450, 2468 and 2484 in the
+next.
+
+INFERRED: the sink under the 0.125 pad is the flat-terrain fall of
+`cod11-player-clip.md` 8.12. A corpse falls on every cmd and lands again;
+on a flat partition a fall whose end stays over the face is not stopped at
+the pad. From -7.78 at 41 down, the 17 ms cmd at 2450 ends under the face
+and stops on the pad, at -7.875; the 18 ms one at 2468 would end under the
+face again and stops where it starts; the 16 ms one at 2484 ends 0.1024
+down, over the face, and falls it in full, to -7.977, with the velocity
+cut back to the move (`-6` after the snap, the `RIDE` line's `vel`).
+
+VERIFIED, the gsc and the binary, why no landing timer holds the corpse on
+the ground: `G_TryPushingEntity`'s crush calls `G_Damage` with a null
+direction and point (the two `push 0` at `0x5560d`, `0x5560f`, ahead of
+the call at `0x55617`); `Scr_PlayerDamage` (`0x5ca18`) passes a null
+pointer to the callback as undefined (`cod11-combat.md` 4.4); and stock
+`dm.gsc`'s `Callback_PlayerDamage` adds `level.iDFLAGS_NO_KNOCKBACK` to an
+undefined `vDir` before `finishPlayerDamage`, whose knockback block, the
+`pm_time` store included, is skipped on that flag (`test $0x4,%esi` at
+`0x43952`). With the knockback's 120 ms `pm_time` running,
+`PM_CheckLadderMove` returns before it drops the ground (`0x336f6`) and
+the corpse would stay at -7.78 for those cmds.
 
 vcod: `crate::push::push` returns the players a sine mover could not place
 instead of stalling it, `ScriptRuntime::push_mover` hands each `G_Damage`
 through `deliver_world_hit` before the end-of-period test, and the mover
-moves on. `a_sine_mover_crushes_what_it_cannot_push_like_retail` sends three
-cmds a frame and holds every line exact past the corpse's first two rows.
+moves on. `deliver_world_hit` passed the callback a zero point and
+direction, defined, until 2026-10-20: the gametype then kept the
+knockback, and the corpse held at -7.78 for one frame and sank 0.13 on an
+18 ms cmd a frame late. It passes both undefined now.
+`a_sine_mover_crushes_what_it_cannot_push_like_retail` replays the
+capture's cmds (dead included) and holds every line exact.
 
 ## 22. A turned submodel is traced in its own frame
 

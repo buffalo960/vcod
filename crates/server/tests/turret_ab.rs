@@ -105,6 +105,9 @@ struct Rig {
     /// frame without a plan sends the ones before its time, on a server
     /// whose clock runs on retail's ([`rig_aligned`]).
     target_cmds: Vec<i32>,
+    /// The server's clock runs on retail's ([`rig_aligned`]), so each
+    /// gunner cmd keeps its own stamp.
+    aligned: bool,
 }
 
 /// One drained event: the id, its parm and whose it was (see [`who`]).
@@ -285,6 +288,7 @@ fn build_on(
         target_plan: None,
         target_last: 0,
         target_cmds: target_cmds.to_vec(),
+        aligned: false,
     };
     if !target_cmds.is_empty() {
         let snap = rig.target.snapshots().newest().expect("a target snapshot");
@@ -338,7 +342,7 @@ impl Rig {
         for &(ms, cmd) in cmds {
             self.now = start + Duration::from_millis(ms as u64);
             self.gunner.pump_at(self.now);
-            if self.target_cmds.is_empty() {
+            if !self.aligned {
                 self.gunner.send_frame(&cmd);
             } else {
                 // On retail's clock (`rig_aligned`) a cmd keeps its own
@@ -1477,15 +1481,22 @@ const FIXTURE_FULL: &str = concat!(
 );
 const FIXTURE_VICTIM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-ct.txt"
 );
 const FIXTURE_VICTIM_SCRIPT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim-ct-script.txt"
+);
+/// The 2026-10-19 run of the same recipe, from before `ct=`: its gunner
+/// stood where the strafe's step reads parm 142 (turrets doc 13.3).
+const FIXTURE_VICTIM_19: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/turret/mp_carentan-dm-turret-victim.txt"
+);
+const FIXTURE_VICTIM_19_SCRIPT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/turret/mp_carentan-dm-turret-victim-script.txt"
 );
-/// The first of two cmds stamped 16450 (sent at probe ms 1571), whose yaw
-/// -157 the snapshot at 16450 already reads (turrets doc 13.3).
-const EARLY_VICTIM: &[i32] = &[1571];
 /// When in a frame the target's cmds go out: the net probe sends one every
 /// 16 ms of its own clock, three a frame.
 const TARGET_CMD_MS: [u64; 3] = [16, 33, FRAME_MS as u64];
@@ -1541,16 +1552,11 @@ fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 struct RetailCmd {
     st: i32,
-    /// The probe's clock when it sent the cmd; unlike `st`, never repeats.
-    ms: i32,
     /// With the wire angles, as retail's server received them.
     cmd: UserCmd,
 }
 
 struct Capture {
-    /// The cmds, by send `ms`, that reached the server a frame early (see
-    /// [`EARLY_VICTIM`]), on a capture that predates `ct=`.
-    early: &'static [i32],
     weapon: String,
     gun: u32,
     cmds: Vec<RetailCmd>,
@@ -1599,7 +1605,6 @@ fn parse(text: &str) -> Capture {
             let i = |k: &str| m[k].parse::<i32>().unwrap();
             cmds.push(RetailCmd {
                 st: i("st"),
-                ms: i("ms"),
                 cmd: UserCmd {
                     buttons: i("buttons") as u8,
                     wbuttons: i("wbuttons") as u8,
@@ -1689,7 +1694,6 @@ fn parse(text: &str) -> Capture {
         }
     }
     Capture {
-        early: &[],
         target_cmds: Vec::new(),
         cvars: &[],
         target_spawn: None,
@@ -1808,6 +1812,7 @@ fn rig_aligned(
             first - FRAME_MS as i32,
             "our clock against retail's before the replay"
         );
+        rig.aligned = true;
         return Some(rig);
     }
     panic!("the target's placement never landed on retail's {place}");
@@ -1841,12 +1846,7 @@ fn frame_of(cap: &Capture, c: &RetailCmd) -> Option<i32> {
             .find(|(_, s)| s.ct.is_some_and(|ct| ct >= c.st))
             .map(|(_, s)| s.t);
     }
-    let t = cap.traces.iter().map(|(_, s)| s.t).find(|&t| c.st < t)?;
-    Some(if cap.early.contains(&c.ms) {
-        t - FRAME_MS as i32
-    } else {
-        t
-    })
+    cap.traces.iter().map(|(_, s)| s.t).find(|&t| c.st < t)
 }
 
 /// Every snapshot from `aim` on, each paired with our frame that ran the
@@ -2149,17 +2149,15 @@ fn finish(rows: Vec<String>, gaps: &[(&str, &str)]) {
 /// clock and its trajectory, anims and `solid` are diffed, with every
 /// other phase. Ours starts at the gunner's `exact=` origin and runs on
 /// retail's level clock off the `-script` half's `PROBE place`, so the
-/// target's run clip meets the kill round at retail's phase
-/// (`docs/research/cod11-turrets.md` 13.1, 13.3).
+/// target's run clip meets the kill round at retail's phase, each gunner
+/// cmd on the frame its `ct=` names (`docs/research/cod11-turrets.md` 13.1,
+/// 13.3).
 #[test]
 fn the_victim_capture_matches_retail_on_mp_carentan() {
     if vcod_common::testing::game_fs_11().is_none() {
         return;
     }
-    let cap = Capture {
-        early: EARLY_VICTIM,
-        ..parse(&read(FIXTURE_VICTIM))
-    };
+    let cap = parse(&read(FIXTURE_VICTIM));
     let place = place_ms(read(FIXTURE_VICTIM_SCRIPT).lines(), 0).expect("retail's PROBE place");
     let Some(mut rig) = rig_aligned(
         &cap,
@@ -2173,6 +2171,43 @@ fn the_victim_capture_matches_retail_on_mp_carentan() {
     let ours = replay(&mut rig, &cap);
     let fs = vcod_common::testing::game_fs_11().unwrap();
     finish(diff(&cap, &ours, &fs), &[]);
+}
+
+/// The phases after the 2026-10-19 run's dismount, which puts the gunner
+/// back on his spot: the 142 step off the sandbags and the slide down the
+/// face (turrets doc 13.3). Its sweep logs no `ct=`, so which frame ran a
+/// cmd stamped at a snapshot's own time is unknown there; the `-victim-ct`
+/// gate above holds every phase.
+const AFTER_DISMOUNT: [&str; 5] = ["dismount", "crouch", "uncrouch", "strafe", "refused"];
+
+#[test]
+fn the_142_step_off_the_sandbags_matches_retail() {
+    if vcod_common::testing::game_fs_11().is_none() {
+        return;
+    }
+    let cap = parse(&read(FIXTURE_VICTIM_19));
+    assert!(cap.traces.iter().all(|(_, s)| s.ct.is_none()));
+    let place = place_ms(read(FIXTURE_VICTIM_19_SCRIPT).lines(), 0).expect("retail's PROBE place");
+    let Some(mut rig) = rig_aligned(
+        &cap,
+        &vcod_common::testing::game_fs_11,
+        &PROTOCOL_V1,
+        REBASE_MAX_VICTIM,
+        place,
+    ) else {
+        return;
+    };
+    let ours = replay(&mut rig, &cap);
+    let fs = vcod_common::testing::game_fs_11().unwrap();
+    let rows = diff(&cap, &ours, &fs)
+        .into_iter()
+        .filter(|r| {
+            AFTER_DISMOUNT
+                .iter()
+                .any(|p| r.starts_with(&format!("[{p}]")))
+        })
+        .collect();
+    finish(rows, &[]);
 }
 
 /// The recipe rerun once more with the gsc logging each placement's level

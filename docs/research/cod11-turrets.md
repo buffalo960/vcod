@@ -1899,7 +1899,32 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
     (`animclock`), so the pose the round meets needs retail's clock, as
     the `-spawn` gates (13.4) already replay. The sweep's 16450 (line
     194) reads yaw -157, the first of two cmds stamped 16450 (sent at
-    probe ms 1571); listed as `EARLY_VICTIM`, every row matches.
+    probe ms 1571); listed as `EARLY_VICTIM`, every row matched. Without
+    `ct=` nothing else tells that cmd's frame (see the next item), so
+    since 2026-10-20 the gate on this run diffs only the phases from the
+    dismount on (`AFTER_DISMOUNT`), which hold the 142 step and the fall.
+  - VERIFIED, live (retail 1.1d, 2026-10-20, port 34201, the recipe rerun
+    with `ct=` on every `!trace`: `-victim-ct.txt` and its server log
+    `-victim-ct-script.txt`): the placement landed on the spot,
+    `exact=` (1738.2423, 1860.1884, -23.874968) on line 47 (the spot
+    the gsc prints, (1738.24, 1860.19)), the target at 9500 and the
+    gunner at 12750 (`PROBE place`, script lines 26 and 28). Its strafe
+    steps 139 (parm 139 on line 1532) and falls down the face. The two cmds
+    stamped 24950 (sent at probe ms 9237 and 9253, lines 847-848) both
+    ran in frame 24950 (`ct=` 24950, line 849), as 16450 did on the
+    2026-10-19 run. Of the cmds stamped at a snapshot's own time that
+    `ct=` shows, a repeated stamp ran there 7 times out of 8 in this run
+    and none of the 328 single stamps did; 1.1d's `-spawn.txt` ran both
+    of its 2 pairs there, 1.5b's `-spawn-15.txt` neither of its 2 and
+    UO's `-spawn-uo.txt` 6 of 10 (and one single), so the stamp alone
+    cannot place one (a count over the `ct=` captures' `!cmd` and
+    `!trace` lines).
+  - vcod: `the_victim_capture_matches_retail_on_mp_carentan` replays
+    `-victim-ct.txt` with every cmd on the frame `ct=` names
+    (`frame_of`) and each one sent at its own stamp (`Rig::aligned`; the
+    gate first sent the gunner's cmds on our clock, which stamped those
+    two 24949), and lists no gap: every phase matches, the `ct` row
+    included.
 
 ### 13.4 The target's spawn and cmds
 
@@ -1957,9 +1982,10 @@ snapshots that carry its entity.
   `-spawn` capture, so since 2026-10-18 `turret_ab` no longer replays
   `-turret.txt`, `-turret-15.txt`, `-turret-uo.txt`, `-victim-15.txt` or
   `-victim-uo.txt`; they stay committed as the evidence 12, 13.1 and 13.3
-  cite. `-victim.txt` keeps its gate for the 1.1d fall of 13.3; since
+  cite. `-victim.txt` keeps a gate for the 1.1d fall of 13.3; since
   2026-10-19 it is a third run, with its server log, replayed on retail's
-  level clock from its exact start with no gap. Before the target's
+  level clock from its exact start, and `-victim-ct.txt` (2026-10-20)
+  holds the whole recipe with `ct=` (13.3). Before the target's
   stamps were replayed the 1.1d kill was (1516, 1612) against retail's (1516, 1611); our entry point was 1612.054
   in y.
 - vcod measurement: on UO the wound matches and the kill enters at x

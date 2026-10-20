@@ -104,15 +104,7 @@ const SCORE_PERIOD_MS: i64 = 2000;
 /// Views a run is known to differ from retail in, as `(gametype, role, view,
 /// why)`. An entry suppresses that view's comparison and asserts it still
 /// differs, so a gap that starts matching fails and has to be deleted.
-const GAPS: &[(&str, &str, &str, &str)] = &[
-    // The marker's fifth mean reads y -900 for retail's -901: a truncation
-    // edge a tenth of a unit wide. The allied body slides off the probe's
-    // `setOrigin` onto a grade a frame later on ours, where the gate's
-    // client sends one cmd a frame and retail's three
-    // (cod11-gametypes-re-bel.md 8.7).
-    ("bel", "first", "marker", "the slide's cmd split"),
-    ("bel", "second", "marker", "the slide's cmd split"),
-];
+const GAPS: &[(&str, &str, &str, &str)] = &[];
 
 fn report() -> bool {
     std::env::var("GAMETYPES_REPORT").is_ok_and(|v| v == "1")
@@ -153,6 +145,10 @@ struct Probe {
     start: Instant,
     seen: Option<u32>,
     next_score: i64,
+    /// The net probe's cmd cadence: about three a frame (`ProbeHold::framed`)
+    /// at the newest snapshot's view (`ProbeHold::aim`), as `ScriptedCapture::cmd`
+    /// aims them.
+    hold: common::ProbeHold,
 }
 
 impl Probe {
@@ -170,6 +166,15 @@ impl Probe {
             start: now,
             seen: None,
             next_score: 0,
+            hold: Self::hold(),
+        }
+    }
+
+    fn hold() -> common::ProbeHold {
+        common::ProbeHold {
+            aim: true,
+            framed: true,
+            ..Default::default()
         }
     }
 
@@ -184,7 +189,12 @@ impl Probe {
             self.next_score = ms + SCORE_PERIOD_MS;
         }
         let cmd = self.cap.cmd(ms, self.cl.snapshots().newest());
-        self.cl.send_frame(&cmd);
+        if self.cl.snapshots().newest().is_some() {
+            let cmds = self.hold.cmds(&self.cl, cmd.buttons);
+            self.cl.send_cmds(&cmds);
+        } else if let Some(c) = self.cl.send_frame(&cmd) {
+            self.hold.last = c.server_time;
+        }
     }
 
     fn receive(&mut self, now: Instant) {
@@ -192,6 +202,7 @@ impl Probe {
         for e in self.cl.pump_at(now) {
             match e {
                 NetEvent::GamestateReady => {
+                    self.hold = Self::hold();
                     self.main_menu.clear();
                     self.answered.clear();
                     let map =
