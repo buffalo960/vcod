@@ -386,6 +386,56 @@ impl AreaTree {
         }
     }
 
+    /// The order a box `trap_Trace` that does not move meets entities in
+    /// (`cod_lnxded` 0x80599c8, `SV_ClipMoveToEntities`' walk): the side
+    /// above a split, then the side below (only the side the box lies
+    /// wholly on, its half extents grown a unit), then the node's own list
+    /// from its head, each entity whose contents meet `mask`. The first one
+    /// the box is inside names the trace (0x8091005, replaced only on a
+    /// nearer fraction).
+    pub fn trace_order(&self, mins: [f32; 3], maxs: [f32; 3], mask: i32) -> Vec<u32> {
+        let centre = [(mins[0] + maxs[0]) * 0.5, (mins[1] + maxs[1]) * 0.5];
+        let ext = [
+            (maxs[0] - mins[0]) * 0.5 + 1.0,
+            (maxs[1] - mins[1]) * 0.5 + 1.0,
+        ];
+        let mut out = Vec::new();
+        self.trace_walk(Some(ROOT), &centre, &ext, mask, &mut out);
+        out
+    }
+
+    fn trace_walk(
+        &self,
+        n: Option<NodeId>,
+        centre: &[f32; 2],
+        ext: &[f32; 2],
+        mask: i32,
+        out: &mut Vec<u32>,
+    ) {
+        let Some(n) = n else { return };
+        let nd = &self.nodes[n as usize];
+        if nd.mask & mask == 0 {
+            return;
+        }
+        let d = centre[nd.axis] - nd.dist;
+        if ext[nd.axis] <= d {
+            self.trace_walk(nd.above, centre, ext, mask, out);
+        } else if d <= -ext[nd.axis] {
+            self.trace_walk(nd.below, centre, ext, mask, out);
+        } else {
+            self.trace_walk(nd.above, centre, ext, mask, out);
+            self.trace_walk(nd.below, centre, ext, mask, out);
+        }
+        let mut at = nd.ents;
+        while let Some(i) = at {
+            let e = &self.ents[i as usize];
+            if e.contents & mask != 0 {
+                out.push(i);
+            }
+            at = e.next;
+        }
+    }
+
     /// `SV_AreaEntities` (`0x805a540` through `0x8059590`): a node's own
     /// list from its head, then the side above its split, then the side
     /// below, each entity whose contents meet `mask` and whose world box
@@ -634,6 +684,21 @@ mod tests {
         assert_eq!(below, [0]);
         // Contents outside the mask are skipped.
         assert!(t.entities_in_box([-1e5; 3], [1e5; 3], CORPSE).is_empty());
+    }
+
+    #[test]
+    fn a_trace_walks_the_children_before_the_node() {
+        let mut t = square();
+        t.link(0, &player(0.0, -500.0));
+        t.link(1, &player(0.0, 500.0));
+        t.link(2, &player(0.0, 0.0));
+        // A box across the split: above, below, then the root's own list.
+        let across = t.trace_order([-15.0, -100.0, 0.0], [15.0, 100.0, 70.0], -1);
+        assert_eq!(across, [1, 0, 2]);
+        // One wholly below it skips the side above.
+        let below = t.trace_order([-15.0, -515.0, 0.0], [15.0, -485.0, 70.0], -1);
+        assert_eq!(below, [0, 2]);
+        assert!(t.trace_order([-1e5; 3], [1e5; 3], CORPSE).is_empty());
     }
 
     #[test]
