@@ -687,17 +687,24 @@ pusher, is not kept, and the mover passes through him.
 VERIFIED, off a capture against the retail 1.1d Linux server, mp_carentan
 under a `dm`-shaped probe, a spectator then two `allies` clients,
 2026-10-20: `crates/server/tests/fixtures/movers/mp_carentan-dm-pushcand.txt`
-(the server's `PROBE` lines from `client-probes/probe_pushcand.gsc`). The
-spectator keeps `StuckInClient` off (`cod11-player-clip.md` 6.2), so two
-players set down on one spot stay stacked at z -30. Each phase is a
-one-frame `movey(-8, 0.05)` of the `*5` slab into players at y 2430:
+(the server's `PROBE` lines from `client-probes/probe_pushcand.gsc`, then
+both allied clients' `--probe-ride` `CMDS` lines, each cmd's send stamped
+with the wall clock, `w=`). The spectator keeps `StuckInClient` off
+(`cod11-player-clip.md` 6.2), so two players set down on one spot stay
+stacked at z -30. Each phase is a one-frame `movey(-8, 0.05)` of the `*5`
+slab into players at y 2430:
 
 - **Alone.** The player is moved 8 on the slab's moving frame.
 - **Sunk.** A player `setOrigin`ed to z -33, 1.1 into the street, stays at
   (-215, 2430, -33.00) while the slab moves its 8 through him.
 - **Stacked** and **half** (the second player 15 to the side). The slab
   holds at 0 for all four logged frames and the half second after, its
-  move never ending, and neither player moves.
+  move never ending, and neither player moves in x or y. Both sink: the
+  stacked pair one cmd's fall (0.13) at a time, slot 2 at 20200, slot 1
+  at 20250, to -30.78 and -30.72 half a second on; in the half pair slot 2
+  drops 0.46 at 23400 and is on the street (-31.81) by the end. An earlier
+  run of the same probe, its cmds unlogged, sank them by other amounts
+  (-30.10 to -30.46).
 
 INFERRED, off the walk and the capture: in the last two the slab, relinked
 at its node's head ahead of the filter (0x553ae), is met before the
@@ -719,15 +726,26 @@ touching another's face counts as inside (INFERRED, Q3's
 back to `r.currentOrigin` past the touch pass (0x405c7). `mover::run_one`
 keeps the plans as they stood before a frame retired a segment, and
 `mover::stall` puts them back and takes back the notifies they owed.
-`crates/server/tests/push_candidate_ab.rs` replays the capture: the slab and
-every player's x and y match retail's on every row. Its `Z_GAPS` names the
-heights it does not compare: a `setOrigin` drop's rest on the street rides
-the client's cmd times (section 21), and once the slab stalls on the pair
-retail lets one fall a cmd's worth into the other (-30.10 to -30.46, and
-the half pair's second to the street), where ours stays at -30. INFERRED:
-the stall leaves the pair unlinked until each one's next cmd, and ours
-clips a moving body against every playing sim whether or not it is in the
-area tree.
+INFERRED, off the listing (section 12, "A blocked mover") and the capture:
+the sinking is the blocked push's unlink. A blocked push leaves the player
+it could not place out of the tree until his next `ClientThink` links him,
+so a cmd of his partner that the server reads first falls free of him for
+one `Pmove`, and the next cmd of either is stuck inside the other again.
+Which one sinks, and how often, rides the order the two clients' packets
+reach the server.
+
+vcod: the packet pass clips each `Pmove` against the bodies of the
+clients linked in the area tree (`Server::replay_moves`), so a player a
+blocked push left unlinked is out of every other client's move until his
+own cmd relinks him. `crates/server/tests/push_candidate_ab.rs` replays
+the capture: both allied clients join so their first snapshots fall on
+retail's, send the captured cmds on retail's side of each frame
+(`ProbeHold::framed`), one packet a cmd, and the two clients' packets go
+in the order of their `w=` stamps. Every row matches retail's, level
+times, slab and all three coordinates of every player: the street's
+`setOrigin` rests (section 21) and the stalled pairs' sinking included.
+Clipping against every playing client instead keeps both pairs at -30
+and fails eight rows.
 
 ### `TR_SINE` and the crush arm
 

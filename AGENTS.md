@@ -668,7 +668,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   whole trace that must name the pusher: a body in the world, or met
   first by another entity on the area walk, is passed through
   (`push::names_pusher`, movers doc 12). A sine mover never stalls: it
-  crushes a player it cannot place (movers doc 21).
+  crushes a player it cannot place (movers doc 21). A `Pmove` clips only
+  clients linked in the area tree: a blocked push leaves its player out
+  until his own next cmd, and a two-client gate on that orders the
+  clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat
