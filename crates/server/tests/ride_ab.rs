@@ -1,18 +1,17 @@
 //! A brush model mover carrying, pushing and stalling against a player, and
 //! a player linked to a moving `script_origin`, against the retail capture.
 //!
-//! Two fixtures from one retail run (their headers carry the recipe):
-//! `movers/mp_carentan-dm-ride.txt` is the server's `games_mp.log` under
-//! `client-probes/probe_ride.gsc`, one `PROBE f` line per server frame of a
-//! phase; `-ride-wire.txt` is the `--probe-ride` client's playerstate per
-//! snapshot. Ours runs the same probe as its gametype with one client
-//! joined, and both halves are compared phase by phase, each sample at the
-//! same offset from its phase's start. `docs/research/cod11-movers.md`,
-//! sections 11 to 13, is what the run measured.
-//!
-//! A third, `-ride-ents.txt`, is a later run of the same probe with the
-//! `bm_*` phases added: the brush model's own entity as the client was sent
-//! it, diffed per snapshot against the entity ours sends (section 14).
+//! Two fixtures from one retail run (the first one's header carries the
+//! recipe): `movers/mp_carentan-dm-ride.txt` is the server's `games_mp.log`
+//! under `client-probes/probe_ride.gsc`, one `PROBE f` line per server frame
+//! of a phase, then the `--probe-ride` client's `CMDS` lines;
+//! `-ride-wire.txt` is that client's playerstate per snapshot, the slab's
+//! entity changes and every trajectory change. Ours runs the same probe as
+//! its gametype with one client joined on the capture's cmds, and both
+//! halves are compared phase by phase, each sample at the same offset from
+//! its phase's start, and every snapshot from the first placement on.
+//! `docs/research/cod11-movers.md`, sections 11 to 14, is what the run
+//! measured.
 //!
 //! `RIDE_REPORT=1` prints every compared row.
 //!
@@ -32,26 +31,14 @@ use vcod_common::net::{NetClient, NetEvent};
 const MAP: &str = "mp_carentan";
 const SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-ride.txt";
 const WIRE: &str = "tests/fixtures/movers/mp_carentan-dm-ride-wire.txt";
-const ENTS: &str = "tests/fixtures/movers/mp_carentan-dm-ride-ents.txt";
 /// The slab's brush model, `*5`; retail numbers its entity 177.
 const SLAB_MODEL: i32 = 5;
 
-/// What both halves agree to: float formatting and the resting height.
-/// Ours rests on the courtyard terrain at z -31.87 where retail rests at
-/// -31.84 (the lift, over and crush phases); that is the terrain clip's, not
-/// the push's.
-const TOL: f32 = 0.05;
+/// The script log's two decimals.
+const TOL: f32 = 0.006;
 
-/// Known divergences, `(phase, what, tolerance)`; `what` is `player`,
-/// `mover` or `wire`. Each names the movers doc section that explains it.
-const GAPS: &[(&str, &str, f32)] = &[];
-
-/// The player's height where it rests, `(phase, tolerance)`. The probe sets
-/// it a unit over the courtyard terrain and it lands within the ground
-/// trace's quarter unit, where the retail client's cmd lengths left it:
-/// -31.82 before the push, -31.84 under the lift, ours -31.87 at both
-/// (AGENTS.md, "The ground trace runs origin ±0.25"). Only `z`.
-const REST_GAPS: &[(&str, f32)] = &[("push_y", 0.06), ("push_y_back", 0.06)];
+/// The `RIDE` line's three decimals.
+const WIRE_TOL: f32 = 0.0006;
 
 fn report() -> bool {
     std::env::var("RIDE_REPORT").is_ok_and(|v| v == "1")
@@ -148,17 +135,35 @@ struct Ours {
     log: Vec<String>,
     wire: Wire,
     slab: BTreeMap<i32, SlabEnt>,
+    /// The client's first snapshot's time.
+    first_snap: Option<i32>,
 }
 
 /// Both tests read the one run; it takes most of the gate's time.
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(run_ours).as_ref()
+    RUN.get_or_init(|| {
+        let ours = run_once(0)?;
+        let text = std::fs::read_to_string(SERVER).unwrap();
+        let first = common::cmds_ran(&text, "").first()?.0;
+        match ours.first_snap {
+            Some(t) if t != first => run_once((t - first) as i64),
+            _ => Some(ours),
+        }
+    })
+    .as_ref()
 }
 
+/// How long before its first snapshot the capture's client starts joining.
+const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
+
 /// The probe on ours with one allied client standing still, run to its
-/// `PROBE done`.
-fn run_ours() -> Option<Ours> {
+/// `PROBE done`. The client joins so its first snapshot falls on retail's
+/// and replays the capture's cmds, each on retail's side of a frame
+/// (`ProbeHold::framed`): where a fall lands, and whether a frame ran with
+/// no cmd from the player, rides on them (movers doc 12, "A blocked
+/// mover", and 21). `late_ms` starts the client that much earlier.
+fn run_once(late_ms: i64) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -171,14 +176,39 @@ fn run_ours() -> Option<Ours> {
     sv.set_cvar("probe_teleport", "1");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let retail_text = std::fs::read_to_string(SERVER).unwrap();
+    let mut hold = common::ProbeHold {
+        base: Some([0.0; 3]),
+        framed: true,
+        times: common::cmds_times(&retail_text, ""),
+        ran: common::cmds_ran(&retail_text, ""),
+        ..Default::default()
+    };
+    let first = hold.ran.first().expect("the capture's CMDS lines").0;
+    while (sv.game_time_ms() as i64) < first as i64 - FIRST_SNAP_AFTER_JOIN_MS - late_ms {
+        now += Duration::from_millis(FRAME_MS as u64);
+        sv.tick(now);
+        sv.take_outgoing();
+    }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "m1carbine_mp");
     let mut seen = BTreeMap::new();
     let mut slab = BTreeMap::new();
+    let mut first_snap = None;
     for _ in 0..3000 {
         now += Duration::from_millis(FRAME_MS as u64);
-        cl.send_frame(&holding(&cl));
+        // Playing, linked (`pm_type` 1) or not.
+        let live = cl
+            .snapshots()
+            .newest()
+            .is_some_and(|s| s.ps.field_i32(&PROTOCOL_V1, "pm_type") <= 1);
+        if live {
+            let cmds = hold.cmds(&cl, 0);
+            cl.send_cmds(&cmds);
+        } else if let Some(c) = cl.send_frame(&holding(&cl)) {
+            hold.last = c.server_time;
+        }
         for e in step_at(&mut sv, ADDR, &q, &mut cl, now) {
             match e {
                 NetEvent::ServerCommand(tokens) => join.on_server_command(&tokens, &mut cl, now),
@@ -187,6 +217,7 @@ fn run_ours() -> Option<Ours> {
             }
         }
         if let Some(s) = cl.snapshots().newest() {
+            first_snap.get_or_insert(s.server_time);
             let p = &PROTOCOL_V1;
             seen.insert(s.server_time, s.ps.origin(p));
             let ent = s
@@ -213,7 +244,40 @@ fn run_ours() -> Option<Ours> {
         log: sv.script_log().to_vec(),
         wire: seen,
         slab,
+        first_snap,
     })
+}
+
+/// Every snapshot of the run, falls between phases included, against
+/// retail's to its 3-decimal print: replayed on the capture's cmds, a fall
+/// lands where retail's did (movers doc 21, "The slide down the slope").
+#[test]
+fn every_snapshot_matches_retail() {
+    let Some(Ours { wire: ours, .. }) = ours() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let retail = wire(&std::fs::read_to_string(WIRE).unwrap());
+    // The spawn is a random draw; the probe places the player a second
+    // before its first phase.
+    let text = std::fs::read_to_string(SERVER).unwrap();
+    let from = phases(text.lines())["ride_up"].start.unwrap() - 1000;
+    let mut bad = Vec::new();
+    let mut compared = 0;
+    for (t, r) in retail.range(from..) {
+        let Some(o) = ours.get(t) else { continue };
+        compared += 1;
+        if diff(*r, *o) > WIRE_TOL {
+            bad.push(format!("t={t}: retail {r:?} ours {o:?}"));
+        }
+    }
+    assert!(compared > 900, "only {compared} snapshots compared");
+    assert!(
+        bad.is_empty(),
+        "{} snapshots differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 #[test]
@@ -236,17 +300,6 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
     let ours = phases(log.iter().map(String::as_str));
     let ours_wire = ours_wire.clone();
     let retail_wire = wire(&std::fs::read_to_string(WIRE).unwrap());
-    let tol = |phase: &str, what: &str| {
-        GAPS.iter()
-            .find(|g| g.0 == phase && g.1 == what)
-            .map_or(TOL, |g| g.2)
-    };
-    // A player row off by more than its tolerance, `z` widened by REST_GAPS.
-    let off = |phase: &str, what: &str, r: [f32; 3], o: [f32; 3]| {
-        let rest = REST_GAPS.iter().find(|g| g.0 == phase).map_or(0.0, |g| g.1);
-        diff([r[0], r[1], 0.0], [o[0], o[1], 0.0]) > tol(phase, what)
-            || (r[2] - o[2]).abs() > tol(phase, what).max(rest)
-    };
 
     let mut bad = Vec::new();
     for (name, r) in &retail {
@@ -262,13 +315,13 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
                     rf[0], of[0], rf[1], of[1]
                 );
             }
-            if off(name, "player", rf[0], of[0]) {
+            if diff(rf[0], of[0]) > TOL {
                 bad.push(format!(
                     "{name} frame {k}: player retail {:?} ours {:?}",
                     rf[0], of[0]
                 ));
             }
-            if mover > tol(name, "mover") {
+            if mover > TOL {
                 bad.push(format!(
                     "{name} frame {k}: mover retail {:?} {:?} ours {:?} {:?}",
                     rf[1], rf[2], of[1], of[2]
@@ -290,7 +343,7 @@ fn a_brush_model_mover_carries_and_pushes_players_like_retail() {
             if report() {
                 println!("{name} {k} wire {rw:?} {ow:?}");
             }
-            if off(name, "wire", *rw, *ow) {
+            if diff(*rw, *ow) > WIRE_TOL {
                 bad.push(format!("{name} snapshot {k}: retail {rw:?} ours {ow:?}"));
             }
         }
@@ -408,16 +461,7 @@ fn shifted(t: i32, shift: i32) -> i32 {
     if t == 0 { 0 } else { t + shift }
 }
 
-/// How far ours may sit from retail: a trajectory's `trTime` in ms, its
-/// `trBase` and `trDelta` in units.
-#[derive(Clone, Copy)]
-struct SlabTol {
-    time: i32,
-    base: f32,
-    delta: f32,
-}
-
-fn slab_diff(retail: &SlabState, ours: &SlabState, shift: i32, tol: SlabTol) -> Option<String> {
+fn slab_diff(retail: &SlabState, ours: &SlabState, shift: i32) -> Option<String> {
     let mut out = Vec::new();
     for (name, r, o) in [
         ("solid", retail.solid, ours.solid),
@@ -433,10 +477,10 @@ fn slab_diff(retail: &SlabState, ours: &SlabState, shift: i32, tol: SlabTol) -> 
         ("apos", retail.apos, ours.apos),
     ] {
         let same = r.tr_type == o.tr_type
-            && (shifted(r.tr_time, shift) - o.tr_time).abs() <= tol.time
+            && shifted(r.tr_time, shift) == o.tr_time
             && r.tr_duration == o.tr_duration
-            && (r.base - o.base).abs().max_element() < TOL.max(tol.base)
-            && (r.delta - o.delta).abs().max_element() < TOL.max(tol.delta);
+            && (r.base - o.base).abs().max_element() < TOL
+            && (r.delta - o.delta).abs().max_element() < TOL;
         if !same {
             out.push(format!("{group} retail {r:?} (time +{shift}) ours {o:?}"));
         }
@@ -444,39 +488,14 @@ fn slab_diff(retail: &SlabState, ours: &SlabState, shift: i32, tol: SlabTol) -> 
     (!out.is_empty()).then(|| out.join("; "))
 }
 
-/// Known divergences of the slab's entity, `(phase, tolerance)`, each from
-/// that phase to the end of the run: a stationary trajectory keeps its
-/// `trTime` and `trDelta` until the next verb, so a difference outlives the
-/// phase that made it.
-const SLAB_GAPS: &[(&str, SlabTol)] = &[
-    // Retail's slab, stalled from 36700, moves 72 to 70 on the 36950 pass
-    // (no trajectory change is logged for that snapshot) and stalls again;
-    // ours holds at 72. From there every `trTime` the stall shifts is a
-    // frame apart, and the `moveto` that resets it starts 2 units higher, in
-    // its `trBase` and its `trDelta`. That pass ran with no cmd from the
-    // player, whom the blocked push before it left unlinked: the crush
-    // capture slips on exactly those frames and
-    // `a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail` replays it.
-    // This run's client logged no `ct`, so which frame went without a cmd is
-    // not on the capture and the replay sends one every frame (section 12,
-    // "A blocked mover").
-    (
-        "crush",
-        SlabTol {
-            time: 50,
-            base: 2.05,
-            delta: 2.05,
-        },
-    ),
-];
-
 #[test]
 fn a_brush_model_mover_goes_on_the_wire_like_retail() {
     let Some(Ours { log, slab, .. }) = ours() else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    let retail = RetailSlab::parse(&std::fs::read_to_string(ENTS).unwrap());
+    let text = [SERVER, WIRE].map(|f| std::fs::read_to_string(f).unwrap());
+    let retail = RetailSlab::parse(&text.concat());
     let mut ours_starts = BTreeMap::new();
     for l in log {
         if let Some(rest) = l.split("PROBE at ").nth(1) {
@@ -510,21 +529,11 @@ fn a_brush_model_mover_goes_on_the_wire_like_retail() {
             println!("slab {phase} {t} retail {r:?} ours {o:?}");
         }
         compared += 1;
-        let tol = SLAB_GAPS
-            .iter()
-            .filter(|(from, _)| retail.starts[*from] <= t)
-            .map(|(_, tol)| *tol)
-            .next_back()
-            .unwrap_or(SlabTol {
-                time: 0,
-                base: 0.0,
-                delta: 0.0,
-            });
         let row = match (r, o) {
             (None, None) => None,
             (Some(_), None) => Some("retail sends it, ours does not".to_string()),
             (None, Some(_)) => Some("ours sends it, retail does not".to_string()),
-            (Some(r), Some(o)) => slab_diff(&r, o, shift, tol),
+            (Some(r), Some(o)) => slab_diff(&r, o, shift),
         };
         if let Some(row) = row {
             bad.push(format!("{phase} t={t}: {row}"));
@@ -613,6 +622,11 @@ fn a_rotated_brush_model_keeps_retails_quantized_angles() {
 }
 
 const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-crush.txt";
+
+/// The crush capture logs no cmds, so the player rests where its client's
+/// cmd split left him: -31.875 there, which prints -31.88, and -31.874992
+/// on ours, which prints -31.87 (movers doc 21). One print step.
+const CRUSH_TOL: f32 = 0.011;
 
 /// `probe_crush`'s retail run: per phase the start and every frame's
 /// `(level time, player origin, slab origin)`, and the frames that ran with
@@ -738,7 +752,7 @@ fn a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail() {
             }
         };
         let row = match o {
-            Some((p, _, op, os)) if p == phase && off(op).max(diff(*slab, *os)) < TOL => {
+            Some((p, _, op, os)) if p == phase && off(op).max(diff(*slab, *os)) < CRUSH_TOL => {
                 continue;
             }
             Some((_, _, op, os)) => format!("player {op:?} slab {os:?}"),
