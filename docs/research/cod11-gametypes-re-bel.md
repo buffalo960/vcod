@@ -596,6 +596,16 @@ or a swap without a non-playing snapshot were never counted.
   +50 off `respawn`'s thread, the same seven on both). Stepping the woken
   threads inside `menu_response` on the last frame's clock reads the
   first pick -50 and fails both rows.
+- VERIFIED, retail 1.1d, 1.5b and UO 1.51b on mp_pavlov (2026-10-20,
+  `client-probes/probe_menuclock`, no stock gametype): a spectator whose
+  `mr` wakes the connect thread, which spawns him, logs `PROBE spawned` on
+  his first playing snapshot's `serverTime` on all three (1.1d and 1.5b
+  17000, UO 17200), and the two respawns `Callback_PlayerKilled` runs
+  after its `wait 0.5` do too. Each `PROBE placed` reads 50 past its
+  `spawned`: that probe's placing thread starts its `wait 0.05` at the
+  "spawned" notify, where `probe_bel`'s was already due from the
+  spectator spawn before it. Ours reads the same six rows at each
+  protocol (`crates/server/tests/menuclock_ab.rs`), with no code change.
 - VERIFIED, vcod measurement, why the first attempt at the new clock
   (queuing the notify in `GameHost::engine_notifies`, before the packet
   pass change) moved eleven tests: the in-process join harness answers

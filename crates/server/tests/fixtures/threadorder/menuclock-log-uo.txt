@@ -1,0 +1,9 @@
+PROBE begin 0 11200
+PROBE spawned 0 allies 17200 (-8952.00, 9109.00, 32.99)
+PROBE placed 0 allies 17250
+PROBE killed 0 20150
+PROBE spawned 0 allies 20700 (-8952.00, 9109.00, 32.99)
+PROBE placed 0 allies 20750
+PROBE killed 0 23150
+PROBE spawned 0 allies 23700 (-8952.00, 9109.00, 32.99)
+PROBE placed 0 allies 23750

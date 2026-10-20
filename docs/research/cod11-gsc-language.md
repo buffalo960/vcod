@@ -657,6 +657,12 @@ the frame the packet landed after:
   the first kill woke, in start order. The second kill's notify found
   them already woken.
 
+VERIFIED, the same two runs on retail 1.5b and UO 1.51b (mp_pavlov,
+2026-10-20, `crates/server/tests/fixtures/threadorder/*-1.5.txt`,
+`*-uo.txt`): every line in 1.1d's order, on the same frames past the packet's. On UO's
+two-client run the second probe to connect began first, so its level
+waiter ran first; the order follows who began, not the slot.
+
 INFERRED, from those lines and the `G_RunFrame` order in "The script
 clock": a notify from a command or a callback only wakes its waiters, a
 `wait 0` taken there is due on the clock, and both wait for `G_RunFrame`'s
@@ -671,7 +677,8 @@ woken threads before `level.time` advanced, in start order, so they read
 T and ran ahead of the callback's `wait 0`s. Now `mr` is a
 `PacketCommand` run in packet order with `kill`, nothing steps between
 frames, and the frame's first pass takes the woken threads with the rest.
-Gate: `crates/server/tests/threadorder_ab.rs`, both runs. A test harness
+Gate: `crates/server/tests/threadorder_ab.rs`, both runs at each
+protocol. A test harness
 that joins two clients in one frame therefore spawns the later packet's
 first: `common::join_pair_stamped` hands the second client's packets to the
 server first once both are in, so the first spawns first, as a retail

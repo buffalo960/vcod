@@ -13,8 +13,11 @@
 //!
 //! The second gate is two clients each sending `kill` (`-pair.txt`): on the
 //! rounds where both packets landed in one frame, client 1's first, retail
-//! ran client 0's threads first. `TO_REPORT=1` prints both logs. Needs
-//! `COD_DIR` at a 1.1 install.
+//! ran client 0's threads first. `TO_REPORT=1` prints both logs.
+//!
+//! Retail 1.5b and UO 1.51b ran both on 2026-10-20 (`*-1.5.txt`,
+//! `*-uo.txt`) and logged 1.1d's order. Each test runs at its own
+//! install's `COD_DIR`: 1.1, 1.5 (a UO install's `main/` counts) or UO.
 
 mod common;
 
@@ -22,6 +25,7 @@ use common::{Join, Queues, step, step_pair_b_first};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::{NetClient, NetEvent};
 
 const SCRIPT: &str =
@@ -71,11 +75,16 @@ fn groups(lines: &[String]) -> Vec<Vec<String>> {
     out
 }
 
-fn server(fs: vcod_common::pk3::Pk3Fs, now: &mut Instant) -> vcod_server::Server {
+fn server(
+    fs: vcod_common::pk3::Pk3Fs,
+    proto: &'static Protocol,
+    now: &mut Instant,
+) -> vcod_server::Server {
     let map = "mp_pavlov";
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut sv = vcod_server::Server::new(common::cfg(map, "probe_threadorder"), *now);
+    sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_threadorder", SCRIPT);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -83,9 +92,9 @@ fn server(fs: vcod_common::pk3::Pk3Fs, now: &mut Instant) -> vcod_server::Server
     sv
 }
 
-fn ours(fs: vcod_common::pk3::Pk3Fs) -> Vec<String> {
+fn ours(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
     let mut now = Instant::now();
-    let mut sv = server(fs, &mut now);
+    let mut sv = server(fs, proto, &mut now);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "mosin_nagant_mp");
@@ -119,22 +128,82 @@ fn ours(fs: vcod_common::pk3::Pk3Fs) -> Vec<String> {
     sv.script_log().to_vec()
 }
 
-#[test]
-fn one_packets_threads_run_in_retails_order() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        return;
-    };
-    let retail: Vec<String> = include_str!("fixtures/threadorder/mp_pavlov.txt")
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let ours = ours(fs);
+/// Ours against one retail log of the one-client run.
+fn check(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol, retail: &str) {
+    let retail: Vec<String> = retail.lines().map(str::to_string).collect();
+    let ours = ours(fs, proto);
     if std::env::var_os("TO_REPORT").is_some() {
         eprintln!("retail:\n{}\nours:\n{}", retail.join("\n"), ours.join("\n"));
     }
     let r = groups(&retail);
     assert_eq!(r.len(), PAIRS.len(), "retail's groups: {r:#?}");
     assert_eq!(groups(&ours), r, "ours:\n{}", ours.join("\n"));
+}
+
+#[test]
+fn one_packets_threads_run_in_retails_order() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check(
+        fs,
+        &PROTOCOL_V1,
+        include_str!("fixtures/threadorder/mp_pavlov.txt"),
+    );
+}
+
+/// Retail 1.5b's run: 1.1d's lines.
+#[test]
+fn one_packets_threads_run_in_retails_order_on_1_5() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    check(
+        fs,
+        &PROTOCOL_V6,
+        include_str!("fixtures/threadorder/mp_pavlov-1.5.txt"),
+    );
+}
+
+/// Retail UO 1.51b's run: 1.1d's lines.
+#[test]
+fn one_packets_threads_run_in_retails_order_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check(
+        fs,
+        &PROTOCOL_V22,
+        include_str!("fixtures/threadorder/mp_pavlov-uo.txt"),
+    );
+}
+
+/// The log with each client's tags (`killed.1`, `w3.0z`) renumbered in
+/// the order the clients began: on UO's run the second probe to connect
+/// began first, and the level waiters run in start order.
+fn by_begin_order(lines: &[String]) -> Vec<String> {
+    let begun: Vec<String> = lines
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE begin ").map(str::to_string))
+        .collect();
+    lines
+        .iter()
+        .map(|l| {
+            let mut w: Vec<String> = l.trim().split(' ').map(str::to_string).collect();
+            if let Some(tag) = w.get_mut(1)
+                && let Some((name, rest)) = tag.rsplit_once('.')
+            {
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                if let Some(i) = begun.iter().position(|n| *n == digits) {
+                    *tag = format!("{name}.{i}{}", &rest[digits.len()..]);
+                }
+            }
+            w.join(" ")
+        })
+        .collect()
 }
 
 /// The first frame both clients' `kill` callbacks ran in, client 1's
@@ -165,9 +234,9 @@ fn same_frame_kills(lines: &[String]) -> Vec<String> {
     .remove(0)
 }
 
-fn ours_pair(fs: vcod_common::pk3::Pk3Fs) -> Vec<String> {
+fn ours_pair(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
     let mut now = Instant::now();
-    let mut sv = server(fs, &mut now);
+    let mut sv = server(fs, proto, &mut now);
     let qa = Rc::new(RefCell::new(Queues::default()));
     let qb = Rc::new(RefCell::new(Queues::default()));
     let mut ca = NetClient::start_with_qport(common::ClientEnd(qa.clone()), now, 0x2001);
@@ -209,23 +278,56 @@ fn ours_pair(fs: vcod_common::pk3::Pk3Fs) -> Vec<String> {
     sv.script_log().to_vec()
 }
 
+/// Ours against one retail log of the two-client run.
+fn check_pair(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol, retail: &str) {
+    let retail: Vec<String> = retail.lines().map(str::to_string).collect();
+    let ours = ours_pair(fs, proto);
+    if std::env::var_os("TO_REPORT").is_some() {
+        eprintln!("ours:\n{}", ours.join("\n"));
+    }
+    assert_eq!(
+        same_frame_kills(&by_begin_order(&ours)),
+        same_frame_kills(&by_begin_order(&retail)),
+        "ours:\n{}",
+        ours.join("\n")
+    );
+}
+
 #[test]
 fn two_packets_in_one_frame_run_the_later_ones_threads_first() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
-    let retail: Vec<String> = include_str!("fixtures/threadorder/mp_pavlov-pair.txt")
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let ours = ours_pair(fs);
-    if std::env::var_os("TO_REPORT").is_some() {
-        eprintln!("ours:\n{}", ours.join("\n"));
+    check_pair(
+        fs,
+        &PROTOCOL_V1,
+        include_str!("fixtures/threadorder/mp_pavlov-pair.txt"),
+    );
+}
+
+#[test]
+fn two_packets_in_one_frame_run_the_later_ones_threads_first_on_1_5() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
     }
-    assert_eq!(
-        same_frame_kills(&ours),
-        same_frame_kills(&retail),
-        "ours:\n{}",
-        ours.join("\n")
+    check_pair(
+        fs,
+        &PROTOCOL_V6,
+        include_str!("fixtures/threadorder/mp_pavlov-pair-1.5.txt"),
+    );
+}
+
+#[test]
+fn two_packets_in_one_frame_run_the_later_ones_threads_first_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check_pair(
+        fs,
+        &PROTOCOL_V22,
+        include_str!("fixtures/threadorder/mp_pavlov-pair-uo.txt"),
     );
 }
