@@ -1227,6 +1227,7 @@ impl BodyPose {
                     .into_iter()
                     .collect(),
             },
+            node_time: self.rules.v15(),
         }
     }
 

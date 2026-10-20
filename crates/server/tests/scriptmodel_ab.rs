@@ -1027,10 +1027,10 @@ const LEVEL_SPAWN_UO: [f32; 3] = [1800.0, 2696.0, -23.875];
 /// and UO"); the contacts after it land a float step or three off in z
 /// (on 1.5b the rest at -16.427534 against -16.427536, on UO the second
 /// strike 3 steps off). The pose is the engine's (3.1, "The pose on 1.5
-/// and UO"), but these captures logged no cmds, and a prone body rides
-/// where its drop settled (the brecourt `-cmds` gate replays one to the
-/// bit); 1.5b's prone idle also moves on the clip's float time, which vcod
-/// keeps in seconds (`pronepose_ab::RAY_STEPS_15`).
+/// and UO") and its clips run on the engine's float node time ("The
+/// clip's float time"), which left the 1.5b rest where it was: these
+/// captures logged no cmds, and a prone body rides where its drop settled
+/// (the brecourt `-cmds` gate replays one to the bit).
 const BACK_NEAR: f32 = 0.0001;
 
 /// mp_carentan on 1.5b, the target lying still with the body his drop

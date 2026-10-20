@@ -506,6 +506,7 @@ fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
             turret_leaves: None,
             seat_leaves: Vec::new(),
             controllers: None,
+            node_time: false,
         };
         let pose = pose_player(&skel, &inputs, |n| {
             clips

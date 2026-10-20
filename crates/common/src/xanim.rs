@@ -192,6 +192,10 @@ pub struct RootMotion {
     /// Seconds from first to last key, [`XAnim::duration`].
     pub duration: f32,
     pub looping: bool,
+    /// The parts' `+0x8`: the clip's time fraction a second, the frame rate
+    /// over `numframes` (`frame_count - 1`), 0 for a single frame (UO
+    /// `coduo_lnxded` loader 0x80b816e, the division at 0x80b83e9).
+    pub frequency: f32,
     /// How far the root moves over the whole clip, `XAnimGetRelDelta` from
     /// time 0 to 1; 0 without a root track.
     pub distance: f32,
@@ -218,6 +222,10 @@ pub fn root_motion(name: &str, data: &[u8]) -> Result<RootMotion> {
         length_ms: ((h.frame_count - 1) as f64 / h.framerate as f64 * 1000.0) as i32,
         duration,
         looping: h.looping,
+        frequency: match h.frame_count - 1 {
+            0 => 0.0,
+            n => h.framerate / n as f32,
+        },
         distance,
     })
 }
