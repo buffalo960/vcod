@@ -369,11 +369,13 @@ configstring `0x14 + n`.
   `0x30207158` is 0 (0x30027331..0x3002734e). INFERRED: that hides every
   sprite of the body the camera sits in; vcod never draws that body, so
   it never builds its sprites.
-- VERIFIED, game.mp `ClientEndFrame` (0x50e98): a playing client's
-  `s.eFlags` gets 0x1000 when `level.time` minus `gclient+0x21e4` is
-  over 1000 and loses it otherwise. INFERRED, off Q3's `EF_CONNECTION`
-  of the same shape: that field is the last cmd's time. vcod-server does
-  not set the bit, so the disconnected icon shows only against retail.
+- VERIFIED, game.mp.i386.so `ClientEndFrame` (0x40e98): a client's
+  `s.eFlags` gets 0x1000 when `level.time` minus `gclient+0x21e4` (the
+  last cmd's `level.time`, stored by `ClientThink` at 0x41592) is over
+  1000, and the playerstate copy that follows overwrites it. VERIFIED by
+  capture on 1.1d and UO: a player 5 s without a cmd is never sent the
+  bit, so arm 2 never fires for a lagging player on a stock server
+  (handshake doc, "A quiet client"). vcod-server does not set it either.
 
 #### 1.5 and UO
 
