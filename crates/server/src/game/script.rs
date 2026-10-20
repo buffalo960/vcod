@@ -775,6 +775,11 @@ impl ScriptRuntime {
         self.touch_triggers_at(slot, now_ms, origin);
     }
 
+    /// `ClientImpacts` for `slot`'s cmd: [`GameHost::client_impacts`].
+    pub fn client_impacts(&mut self, slot: usize, touched: &[u32]) {
+        self.host.client_impacts(slot, touched);
+    }
+
     /// `G_TouchTriggers` with its boxes on `origin`, `ps.origin`, while the
     /// client's `origin` field holds the snapped `r.currentOrigin` a hurt's
     /// callbacks read (`docs/research/cod11-combat.md` 5.5).
