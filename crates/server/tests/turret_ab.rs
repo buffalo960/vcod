@@ -2477,6 +2477,102 @@ fn hitgrid_rows<'a>(
     rows
 }
 
+/// Every `probe_gungrid` line on a frame retail's gunner was mounted
+/// (`eFlags & 0xc000`) against ours, cell by cell along its ray: the
+/// gunner's own pose, his fire leaves included (`cod11-turrets.md` 13.9).
+/// A row reads `[gungrid] <phase> t=<time> ...`; a cell past
+/// [`GRID_NEAR`] or met by one side only is a row.
+fn gungrid_rows<'a>(
+    cap: &Capture,
+    theirs: impl Iterator<Item = &'a str>,
+    mine: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    let lines = |log: &mut dyn Iterator<Item = &'a str>| -> BTreeMap<i32, Vec<Option<f64>>> {
+        log.filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.split_once("PROBE gungrid ").map(|(_, r)| r))
+            .map(|r| {
+                let f: Vec<&str> = r.split_whitespace().collect();
+                let cells = f[2..]
+                    .iter()
+                    .map(|c| (*c != "-").then(|| fine(c)))
+                    .collect();
+                (f[0].parse().unwrap(), cells)
+            })
+            .collect()
+    };
+    let (theirs, mine) = (lines(&mut { theirs }), lines(&mut { mine }));
+    let mut rows = Vec::new();
+    for (t, cells) in &theirs {
+        let Some((phase, _)) = cap
+            .traces
+            .iter()
+            .find(|(_, s)| s.t == *t && s.e_flags & 0xc000 != 0)
+        else {
+            continue;
+        };
+        let Some(ours) = mine.get(t) else {
+            rows.push(format!("[gungrid] {phase} t={t}: retail only"));
+            continue;
+        };
+        for (j, (r, o)) in cells.iter().zip(ours).enumerate() {
+            let off = match (r, o) {
+                (None, None) => continue,
+                (Some(r), Some(o)) => Some(o - r),
+                _ => None,
+            };
+            if report() {
+                eprintln!("gungrid t={t} cell {j}: {off:?}");
+            }
+            if off.is_none_or(|d| d.abs() > GRID_NEAR) {
+                rows.push(format!(
+                    "[gungrid] {phase} t={t} cell {j}: retail {r:?} ours {o:?}"
+                ));
+            }
+        }
+    }
+    rows
+}
+
+/// The gunner-grid captures (`-gungrid-*`): the hit-grid recipe with
+/// `probe_gungrid`, replayed as [`hit_gate`] does and held to the gunner's
+/// own grid alone; the target's rows are the hit-grid gates'.
+fn gungrid_gate(
+    tag: &str,
+    fs: impl Fn() -> Option<Pk3Fs>,
+    p: &'static Protocol,
+    cvars: &'static [(&'static str, &'static str)],
+    gaps: &[(&str, &str)],
+) {
+    if fs().is_none() {
+        return;
+    }
+    let path = |half: &str| {
+        format!(
+            "{}/tests/fixtures/turret/mp_carentan-dm-turret-{tag}{half}.txt",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    };
+    let script = read(&path("-script"));
+    let cap = Capture {
+        target_cmds: target_cmds(&read(&path("-target"))),
+        cvars,
+        target_spawn: spawn_at(&script),
+        ..parse(&read(&path("")))
+    };
+    let place = place_ms(script.lines(), 0).expect("retail's PROBE place");
+    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
+        return;
+    };
+    replay(&mut rig, &cap);
+    let log = rig.sv.script_log();
+    let rows = gungrid_rows(&cap, script.lines(), log.iter().map(String::as_str));
+    assert!(
+        script.contains("PROBE gungrid ") && log.iter().any(|l| l.contains("PROBE gungrid ")),
+        "no gunner grid on one side"
+    );
+    finish(rows, gaps);
+}
+
 #[test]
 fn the_spawn_capture_matches_retail_on_mp_carentan() {
     spawn_gate("spawn", vcod_common::testing::game_fs_11, &PROTOCOL_V1, &[]);
@@ -2534,6 +2630,73 @@ const HEAD_HITGRID: &[(&str, &str)] =
     &[("probe_hitgrid", "1"), ("probe_head", "basehead_axis_a_01")];
 /// The other hit-grid captures' cvars.
 const HITGRID: &[(&str, &str)] = &[("probe_hitgrid", "1")];
+/// The gunner-grid captures' cvars: the hit-grid recipe with
+/// `probe_gungrid`, the target wearing the head retail drew him.
+const GUNGRID_UO: &[(&str, &str)] = &[
+    ("probe_hitgrid", "1"),
+    ("probe_gungrid", "1"),
+    ("probe_head", "basehead_axis_a_02"),
+];
+const GUNGRID_15: &[(&str, &str)] = &[
+    ("probe_hitgrid", "1"),
+    ("probe_gungrid", "1"),
+    ("probe_head", "basehead_axis_a_09"),
+];
+
+/// The eight frames after a mount (from standing, or from a crouch in the
+/// `crouch` phase), while the legs blend from the idle into the aim group:
+/// every cell 1 to 10 units off (cod11-turrets.md 13.9, "What is left").
+const GUNGRID_MOUNT_GAP: &str = "the mount's blend into the aim group (turrets doc 13.9)";
+/// One cell (row 42, 12 right) 2.45 nearer on ours on every frame the
+/// barrel rests at the yaw sweep's right arc (2.6 on UO's first), the same on 1.5b and UO
+/// (turrets doc 13.9, "What is left").
+const GUNGRID_ARC_GAP: &str = "one edge cell at the right arc (turrets doc 13.9)";
+/// A single cell on one frame of the yaw or pitch sweep, 0.1 to 1.6 off
+/// (turrets doc 13.9, "What is left").
+const GUNGRID_SWEEP_GAP: &str = "one edge cell mid-sweep (turrets doc 13.9)";
+
+/// A firing gunner's own pose on UO, every frame he mans the gun: his fire
+/// leaves on their sync group's node time, and the aim group blending out
+/// on its own leaves (cod11-turrets.md 13.9).
+#[test]
+fn the_gunner_grid_capture_matches_uo_on_mp_carentan() {
+    gungrid_gate(
+        "gungrid-uo",
+        vcod_common::testing::uo_fs,
+        &PROTOCOL_V22,
+        GUNGRID_UO,
+        &[
+            ("[gungrid] mount ", GUNGRID_MOUNT_GAP),
+            ("[gungrid] crouch ", GUNGRID_MOUNT_GAP),
+            ("cell 10: retail Some(37.2635", GUNGRID_ARC_GAP),
+            ("t=22050 cell 10:", GUNGRID_ARC_GAP),
+            ("t=21100 cell 17:", GUNGRID_SWEEP_GAP),
+            ("t=24850 cell 23:", GUNGRID_SWEEP_GAP),
+            ("t=24950 cell 18:", GUNGRID_SWEEP_GAP),
+        ],
+    );
+}
+
+#[test]
+fn the_gunner_grid_capture_matches_15b_on_mp_carentan() {
+    gungrid_gate(
+        "gungrid-15",
+        || {
+            vcod_common::testing::game_fs().filter(|fs| {
+                vcod_server::server::install_protocol(fs).version == PROTOCOL_V6.version
+            })
+        },
+        &PROTOCOL_V6,
+        GUNGRID_15,
+        &[
+            ("[gungrid] mount ", GUNGRID_MOUNT_GAP),
+            ("[gungrid] crouch ", GUNGRID_MOUNT_GAP),
+            ("cell 10: retail Some(37.2635", GUNGRID_ARC_GAP),
+            ("t=20200 cell 5:", GUNGRID_SWEEP_GAP),
+            ("t=20450 cell 15:", GUNGRID_SWEEP_GAP),
+        ],
+    );
+}
 
 #[test]
 fn the_hitgrid_capture_matches_retail_on_mp_carentan() {

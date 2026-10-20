@@ -39,6 +39,14 @@ pub struct GunnerPlacement {
     /// The turret anim's leaves (animtree node ids) and the goal weights the
     /// placement gives them, summing to 1.
     pub leaves: Vec<(usize, f32)>,
+    /// The turret anim's group node the leaves sit under.
+    pub node: usize,
+    /// The group's node time step a second at rate 1 those weights give:
+    /// the sync node's weighted mean of its rows' and their leaves'
+    /// frequencies (1.5b 0x80c639e, UO 0x80bb732; cod11-turrets.md 13.9).
+    pub frequency: f32,
+    /// The group is `loopsync`: its node time wraps.
+    pub looping: bool,
 }
 
 impl GunnerPlacement {
@@ -111,27 +119,49 @@ pub fn place_gunner(
 
     // The rows are searched for the first whose delta sits at or above the
     // gun's height and blended with the one before it (turrets doc 7.1).
+    // Each weighted row: its weight and its leaves' (engine child order).
+    type Row = (f32, Vec<(usize, f32)>);
     let mut below: Option<(Vec<(usize, f32)>, f32)> = None;
-    let mut weights = None;
+    let mut rows: Option<Vec<Row>> = None;
     for row in children(node) {
         let w = row_weights(row)?;
         let z = delta(&w)?.0.z;
         if z >= target {
-            weights = Some(match below.take() {
-                None => w,
+            rows = Some(match below.take() {
+                None => vec![(1.0, w)],
                 Some((bw, bz)) => {
                     let t = (target - bz) / (z - bz);
-                    let mut mix: Vec<_> = w.into_iter().map(|(l, x)| (l, x * t)).collect();
-                    mix.extend(bw.into_iter().map(|(l, x)| (l, x * (1.0 - t))));
-                    mix
+                    vec![(1.0 - t, bw), (t, w)]
                 }
             });
             break;
         }
         below = Some((w, z));
     }
-    let weights = weights.or(below.map(|(w, _)| w))?;
+    let rows = rows.or(below.map(|(w, _)| vec![(1.0, w)]))?;
+    // The flattened blend, the row above first.
+    let weights: Vec<(usize, f32)> = rows
+        .iter()
+        .rev()
+        .flat_map(|(rw, w)| w.iter().map(move |&(l, x)| (l, x * rw)))
+        .collect();
     let (trans, rot_yaw) = delta(&weights)?;
+    let mut leaf_frequency = |leaf: usize| -> Option<f32> {
+        let anim = clip(&tree.nodes[leaf].name)?;
+        Some(match anim.frame_count.saturating_sub(1) {
+            0 => 0.0,
+            n => anim.framerate / n as f32,
+        })
+    };
+    let mut row_means = Vec::new();
+    for (rw, w) in &rows {
+        let mut leaves = Vec::new();
+        for &(leaf, x) in w {
+            leaves.push((x, leaf_frequency(leaf)?));
+        }
+        row_means.push((*rw, sync_mean(&leaves)));
+    }
+    let frequency = sync_mean(&row_means);
 
     let local = Quat::from_rotation_z(gun_yaw.to_radians()) * trans + tag_weapon.0;
     let local = Vec3::new(local.x, local.y, height);
@@ -139,12 +169,49 @@ pub fn place_gunner(
         origin: turret.0 + turret.1 * local,
         rot: turret.1 * Quat::from_rotation_z((rot_yaw + gun_yaw).to_radians()),
         leaves: weights,
+        node,
+        frequency,
+        looping: tree.nodes[node].loopsync,
     })
+}
+
+/// 1.5b 0x80c639e (UO 0x80bb732) over one node's children, each `(weight,
+/// frequency)` in child order at rate 1: the weights and the weighted
+/// frequencies summed as stored floats, a child with no weight or no
+/// frequency skipped, and their quotient stored; 0 with no child counted.
+pub fn sync_mean(children: &[(f32, f32)]) -> f32 {
+    let (mut num, mut den) = (0.0f32, 0.0f32);
+    for &(w, f) in children {
+        if w == 0.0 || f == 0.0 {
+            continue;
+        }
+        den = (f64::from(den) + f64::from(w)) as f32;
+        num = (f64::from(num) + f64::from(f) * f64::from(w)) as f32;
+    }
+    if den == 0.0 {
+        0.0
+    } else {
+        (f64::from(num) / f64::from(den)) as f32
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sync_mean_sums_stored_floats_and_skips_idle_children() {
+        // Two five-frame fire leaves at 30 fps (6 a second): the stored
+        // sums land a float step under 6.
+        let w2 = 1.0f32 / 2000.0;
+        let w1 = 1.0 - w2;
+        assert_eq!(sync_mean(&[(w1, 6.0), (w2, 6.0)]), 5.9999995);
+        assert_eq!(sync_mean(&[(0.5, 6.0), (0.5, 6.0)]), 6.0);
+        // A child with no weight or no frequency (a one-frame aim leaf)
+        // counts for nothing; with none counted the mean is 0.
+        assert_eq!(sync_mean(&[(0.25, 6.0), (0.0, 3.0), (0.75, 0.0)]), 6.0);
+        assert_eq!(sync_mean(&[(1.0, 0.0)]), 0.0);
+    }
 
     #[test]
     fn quat_angles_inverts_angles_quat() {

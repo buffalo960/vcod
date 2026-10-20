@@ -108,7 +108,7 @@ impl Sight<'_> {
 /// [`REACH`] along level edges (no jump, no risky edge, no step past
 /// `STEPSIZE`), that [`Sight::peek`] passes: a [`Peek::Stand`] anywhere
 /// in reach before a lean. In seeded `tdm` runs the crouch-and-stand
-/// spots won fights and the lean spots only broke even (bot-combat.md 1.5).
+/// spots won fights and the lean spots only broke even (bot-combat.md 4.5).
 pub fn find(g: &NavGraph, from: Vec3, sight: &Sight) -> Option<Spot> {
     let start = g.nearest(from.into())?;
     let level = |a: u32, b: u32| {
