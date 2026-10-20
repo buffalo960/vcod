@@ -397,6 +397,50 @@ Where it is not retail's:
   the spectator's `Pmove` writes into `pm_flags` after the stop is not
   measured, and ours writes nothing there.
 
+### 11.1 The client: the 1.1 follow capture and the ring across a switch
+
+`net/snapshots-follow-1.1.bin` (with its gamestate) is a retail 1.1d
+spectator following a firefight, 2026-10-20: `tools/run_probe.sh
+client-probes/probe_passthru mp_carentan +set probe_teleport 1`, an axis
+`--probe-target`, 1 s later a `--probe-team spectator --probe-follow
+--save-snapshots --capture-tag follow-1.1 --probe-secs 50` (client 1),
+5 s after it an allied `--save-hit` (client 2, `m1carbine_mp`); the two
+players' own fixtures were discarded. The client's replay
+(`crates/client/src/play/replay.rs`,
+`a_1_1_follow_capture_plays_each_shot_once`) plays it through the frame's
+event path.
+
+- VERIFIED, the capture (`event_dump`): the spectator follows client 2
+  from 21900 to 39900 and from 45900 to 58000, then client 0. On client
+  2's playerstate ring: 17 `EV_FIRE_WEAPON` (159) from 22500 to 32850 and
+  `EV_FIRE_WEAPON_LASTSHOT` (161) at 29000, then `EV_RELOAD_FROM_EMPTY`
+  (152) at 29150. 21 `EV_BULLET_HIT_LARGE` temp entities: three
+  `surfType` 7 (flesh) on the target's torso at 22500, 24550 and 24700,
+  18 `surfType` 10 (grass) past him. `EV_PAIN` (187) on entity 0 at 22500
+  and 24550, the obituary (`eType` 213) at 24700.
+- VERIFIED, the capture: from 39900 to 45900 the frames read `clientNum`
+  1, the spectator's own, still carrying client 2's ring (`eventSequence`
+  19, events 159, 159, 159, 152); the switch onto client 0 at 58000 reads
+  `eventSequence` 0 and four empty slots (he respawned, and a respawn
+  clears the ring).
+- VERIFIED, cgame `0x30028be0` (the ring half of
+  `CG_TransitionPlayerState`): slot `i` from the new playerstate's
+  `eventSequence - 4` up to it plays when `i >= ` the old one's
+  `eventSequence`, or when `i > old - 4` and the slot's event differs
+  from the old playerstate's same slot. INFERRED, that compare and
+  `cod11-hud-protocol.md`'s note that the follow arm (`0x3002fc6c`) tests
+  no `clientNum` first: at the 58000 switch (19 to 0) retail plays
+  nothing.
+- VERIFIED, `crates/common/src/net/events.rs` (`EventTracker`, the
+  playerstate arm): vcod plays `(cur - prev) & 0xff` slots, at most four,
+  so it plays the four empty slots there, and a switch onto any player
+  whose sequence is lower than the last one's replays up to four of his
+  old events, shots included. The replay leaves `EV_NONE` out of its
+  pinned counts until the tracker takes `0x30028be0`'s compare. INFERRED,
+  the 8-bit wire field (`fields_v1.rs`) and the raw compare: retail's
+  own ring plays nothing across its 255 to 0 wrap either; no run has
+  measured that.
+
 ## 12. The killcam
 
 A killcam is a forced follow whose copy comes out of the engine's frame

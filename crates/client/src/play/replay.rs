@@ -11,7 +11,8 @@
 //! capture the UO install's (`COD_DIR` at it), else 1.1's mp_carentan and
 //! mp44, whose fire and kick keys are UO's (coduo-movement.md 15); the 1.1
 //! moves capture a 1.1 install. The follow replays decode the committed
-//! snapshot captures and need nothing.
+//! snapshot captures and need nothing; the 1.1 one resolves its flashes
+//! and fire sounds only with a 1.1 install's weapon files.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -54,6 +55,8 @@ struct Tally {
     doubled: usize,
     /// Events no effect handler knows, by id.
     unknown: BTreeMap<i32, usize>,
+    /// Sound cues started, by the event id that started them.
+    cues: BTreeMap<i32, usize>,
     /// Hits fed to the kick, the flash and the icons, and those taken on
     /// a mounted gun.
     hits: usize,
@@ -205,6 +208,10 @@ fn dispatch(t: &mut Tally, ev: &GameEvent, ctx: &ResolveCtx, cue_ctx: &CueCtx) {
     if resolved.iter().any(|r| matches!(r, Resolved::Unknown)) {
         *t.unknown.entry(ev.event).or_default() += 1;
     }
+    let sounds = cues::resolve(ev, cue_ctx).len();
+    if sounds > 0 {
+        *t.cues.entry(ev.event).or_default() += sounds;
+    }
     if !cues::fires_weapon(ev.event) {
         return;
     }
@@ -217,7 +224,6 @@ fn dispatch(t: &mut Tally, ev: &GameEvent, ctx: &ResolveCtx, cue_ctx: &CueCtx) {
             _ => false,
         })
         .count();
-    let sounds = cues::resolve(ev, cue_ctx).len();
     let calls = super::recoil::fire_calls(ev.event).max(1);
     t.fires += 1;
     t.flashes += flashes;
@@ -719,6 +725,49 @@ fn a_seated_drivers_hits_each_feed_the_damage_once() {
 fn a_mounted_gunners_hit_feeds_the_damage_once() {
     let t = replay_capture(&PROTOCOL_V1, "-turret-hit", &[]);
     assert_eq!((t.hits, t.mounted_hits), (1, 1));
+}
+
+/// `*-follow-1.1.bin` (1.1d, mp_carentan dm under
+/// `client-probes/probe_passthru` with `probe_teleport 1`): a spectator
+/// following an allied `--save-hit` shooter whose `m1carbine_mp` puts three
+/// rounds into an axis `--probe-target` 200 units ahead and kills him, then
+/// following the target through his respawn (recipe in
+/// cod11-spectator-follow.md 11.1). Each followed round
+/// plays, flashes, sounds and kicks once; with the paks the weapon file's
+/// flash and fire sound resolve for every one.
+#[test]
+fn a_1_1_follow_capture_plays_each_shot_once() {
+    let tag = "-follow-1.1";
+    let weapons = v1_fs()
+        .map(|fs| {
+            let gs = vcod_common::testing::fixture_gamestate(
+                &PROTOCOL_V1,
+                &format!("net/gamestate{tag}.bin"),
+            );
+            vcod_common::weapon_table::from_configstring(&fs, &gs.configstrings[7])
+        })
+        .unwrap_or_default();
+    let t = replay_capture(&PROTOCOL_V1, tag, &weapons);
+    assert!(t.unknown.is_empty(), "unknown events {:?}", t.unknown);
+    assert_eq!(t.doubled, 0, "fire events flashed or sounded twice");
+    // 17 rounds and the clip's last (161), a reload (152), 21 impacts (three
+    // on the target's torso, 18 on the grass past him), two pains with no
+    // sound (cod11-sound-system.md's `EV_PAIN` row) and the kill's
+    // obituary. The switch onto the respawned target (sequence 19 to 0)
+    // also plays his four empty slots, where retail's compare plays none
+    // (cod11-spectator-follow.md 11.1); 0 is left out until that matches.
+    let mut played = t.played.clone();
+    played.remove(&0);
+    let expected = BTreeMap::from([(152, 1), (159, 17), (161, 1), (174, 21), (187, 2), (201, 1)]);
+    assert_eq!(played, expected);
+    assert_eq!((t.fires, t.kicks), (18, 18));
+    if weapons.is_empty() {
+        assert_eq!(t.cues, BTreeMap::from([(174, 21)]));
+    } else {
+        assert_eq!((t.flashes, t.fire_sounds), (18, 18));
+        let cues = BTreeMap::from([(152, 1), (159, 17), (161, 1), (174, 21)]);
+        assert_eq!(t.cues, cues);
+    }
 }
 
 /// The followed gunner of `*-15-turret.bin` (1.5b, mp_carentan's MG42,
