@@ -1834,7 +1834,21 @@ not measured.
       hands and head move as retail's did 50 to 150 ms earlier (16050 to
       18150, worst 0.83 at 16250; feet within 0.06) (VERIFIED, replay);
       the turret's ramp matches frame for frame, so the lag is in the
-      body, and it is not traced. The jeep's offsets are all zero and its links read
+      body, and it is not traced. The relink after the write links
+      at `r.currentOrigin` as written, unsnapped, where `ClientThink_real`'s
+      own link takes the snapped origin (INFERRED, read of `G_RunClient`
+      0x41dfc: no snap between `G_SetFixedLink` and `SV_LinkEntity`), so
+      through the first stint `r.absmin` sits 20 above the seat's
+      `ps.origin` less the box's unit and, once a `nextvehslot` asked for
+      the slot, level with it. vcod linked the rider at the truncated
+      origin until 2026-10-20 (0.08 low in the first stint, 0.63 back in
+      the driver's seat on mp_cassino); `vehicle_ab`'s
+      `a_tank_driver_boarded_by_use_sits_in_the_area_tree_at_his_link`
+      pins it. Every entity-pass trace (a missile's move, a blast's walk)
+      builds its bodies off the sims after his turn, so its broad box and
+      bones sit at the link too (INFERRED, read of `server.rs`'s entity
+      pass); a script trace or a turret round, before the pass or after
+      the end frame, finds him on the seat. The jeep's offsets are all zero and its links read
       level in every stint (VERIFIED, `jeep` run). vcod runs the refresh
       on the rider's turn of the entity pass, his vehicle first
       (`run_rider_link` in `server.rs`, 2026-10-18): `r.currentOrigin` and
