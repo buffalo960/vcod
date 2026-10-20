@@ -18,9 +18,10 @@
 //! and cook, its tank and jeep seats, a mounted MG, 1.5's moves and turns). The UO one runs
 //! at a UO install, the 1.5 one at a 1.5 or UO install.
 //!
-//! `predictor_replays_retail_slope_runs` is `playerstate_slope_ab.rs`'s
-//! rebased replay with the predictor in place of the bare mover: retail's
-//! snapshot rebuilt through `from_wire`, retail's cmds run through `run_cmd`.
+//! `predictor_replays_retail_slope_runs` replays every 1.1d slope capture
+//! that logs the whole playerstate through the predictor: each retail
+//! snapshot rebuilt through `from_wire`, retail's cmds run through
+//! `run_cmd`, the next snapshot's origin matched to the bit.
 //!
 //! `predictor_rides_retail_movers` predicts the ride capture's player from
 //! one snapshot to the next while the slab under him moves: the slab clipped
@@ -1485,8 +1486,8 @@ fn predictor_holds_retail_intermission_1_5() {
 }
 
 // ---------------------------------------------------------------------------
-// Retail's slope runs through the predictor. Parser, gameobject rule and
-// tolerances are `playerstate_slope_ab.rs`'s.
+// Retail's slope runs through the predictor, and the playerstate fields a
+// `RIDE` line logs (`wire_from`).
 
 #[derive(Clone, Debug)]
 struct Snap {
@@ -1505,69 +1506,9 @@ struct Snap {
     gravity: i32,
 }
 
-enum Line {
-    Cmd(UserCmd),
-    Snap(Snap),
-}
-
 fn parse_vec3(s: &str) -> Vec3 {
     let v: Vec<f32> = s.split(',').map(|x| x.parse().expect("a float")).collect();
     Vec3::new(v[0], v[1], v[2])
-}
-
-fn parse_fixture(text: &str) -> Vec<Line> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let Some((kind, rest)) = line.split_once(' ') else {
-            continue;
-        };
-        let kv: BTreeMap<&str, &str> = rest
-            .split_whitespace()
-            .filter_map(|kv| kv.split_once('='))
-            .collect();
-        let int = |k: &str| -> i32 { kv[k].parse().unwrap_or_else(|_| panic!("{k} in {line}")) };
-        let ints = |k: &str| -> Vec<i32> { kv[k].split(',').map(|x| x.parse().unwrap()).collect() };
-        match kind {
-            "!cmd" => {
-                let a = ints("angles");
-                out.push(Line::Cmd(UserCmd {
-                    server_time: int("st"),
-                    buttons: int("buttons") as u8,
-                    wbuttons: int("wbuttons") as u8,
-                    weapon: int("weapon") as u8,
-                    angles: [a[0], a[1], a[2]],
-                    forward: int("forward") as i8,
-                    right: int("right") as i8,
-                    up: int("up") as i8,
-                    ..NULL_USERCMD
-                }));
-            }
-            "!snap" => {
-                let view: Vec<f32> = kv["view"].split(',').map(|x| x.parse().unwrap()).collect();
-                let da = ints("da");
-                out.push(Line::Snap(Snap {
-                    ct: int("ct"),
-                    origin: parse_vec3(kv["origin"]),
-                    velocity: parse_vec3(kv["vel"]),
-                    ground: int("ground"),
-                    view: [view[0], view[1], view[2]],
-                    delta_angles: [da[0], da[1], da[2]],
-                    frac: kv["frac"].parse().unwrap(),
-                    pm_flags: int("pm_flags"),
-                    speed: kv["wire"]
-                        .split(',')
-                        .find_map(|f| f.strip_prefix("speed:"))
-                        .map_or(0, |v| v.parse().unwrap()),
-                    gravity: kv["wire"]
-                        .split(',')
-                        .find_map(|f| f.strip_prefix("gravity:"))
-                        .map_or(0, |v| v.parse().unwrap()),
-                }));
-            }
-            _ => {}
-        }
-    }
-    out
 }
 
 /// Retail's snapshot as a wire playerstate: the fields the fixture carries,
@@ -1602,55 +1543,119 @@ struct Delta {
     ct: i32,
     d: Vec3,
     ground_disagrees: bool,
+    /// Moved by the server between snapshots, which no prediction follows:
+    /// a spawn's or teleport's `eFlags` 0x8 flip, or the probe gsc's
+    /// `setOrigin` (its `PROBE place <time>` line at the snapshot's time).
+    relocated: bool,
 }
 
-/// Each snapshot rebuilt through `from_wire` and the cmds up to the next
-/// snapshot's `commandTime` run through `run_cmd`, as a predicting client
-/// does; one row per snapshot, the predicted origin against retail's.
-fn replay(lines: &[Line], world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> Vec<Delta> {
+/// The serverTimes of the gsc's `PROBE place <time> (x, y, z)` lines.
+fn placements(text: &str) -> Vec<i32> {
+    text.lines()
+        .filter_map(|l| {
+            l.strip_prefix("PROBE place ")?
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .collect()
+}
+
+/// The serverTime (`t=`) of each `!snap` line, in order.
+fn snap_times(text: &str) -> Vec<i32> {
+    text.lines()
+        .filter(|l| l.starts_with("!snap "))
+        .map(|l| {
+            let t = l.split_whitespace().find_map(|kv| kv.strip_prefix("t="));
+            t.expect("a t= field").parse().unwrap()
+        })
+        .collect()
+}
+
+/// Each snapshot rebuilt through `from_wire` from the whole playerstate it
+/// logs and the cmds up to the next snapshot's `commandTime` run through
+/// `run_cmd`, as a predicting client does; one row per snapshot, the
+/// predicted origin against retail's. `PREDICT_TRACE=<commandTime>` prints
+/// that snapshot's prediction cmd by cmd.
+fn replay(text: &str, world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> Vec<Delta> {
+    let lines = parse_capture(P, text);
     let cmds: Vec<UserCmd> = lines
         .iter()
         .filter_map(|l| match l {
-            Line::Cmd(c) => Some(*c),
-            _ => None,
+            CaptureLine::Cmd(c) => Some(*c),
+            CaptureLine::Snap(..) => None,
         })
         .collect();
-    let weapon = cmds.first().map_or(0, |c| c.weapon);
     // Of two cmds stamped alike the server runs the first (`SV_UserMove`).
     let mut by_time: HashMap<i32, UserCmd> = HashMap::new();
     for c in &cmds {
         by_time.entry(c.server_time).or_insert(*c);
     }
-    let mut snaps = lines.iter().filter_map(|l| match l {
-        Line::Snap(s) => Some(s),
-        _ => None,
-    });
-    let first = snaps.next().expect("a snapshot before the first cmd");
-    let rebuild = |s: &Snap| predict::from_wire(P, &wire_from(s, weapon), by_time.get(&s.ct));
+    let places = placements(text);
+    let mut snaps = lines
+        .iter()
+        .filter_map(|l| match l {
+            CaptureLine::Snap(w, _) => Some(&**w),
+            CaptureLine::Cmd(_) => None,
+        })
+        .zip(snap_times(text));
+    let ct = |w: &msg::PlayerState| w.field_i32(P, "commandTime");
+    let eflags = |w: &msg::PlayerState| w.field_i32(P, "eFlags");
+    let (first, _) = snaps.next().expect("a snapshot before the first cmd");
+    let rebuild = |w: &msg::PlayerState| predict::from_wire(P, w, by_time.get(&ct(w)));
     let mut pred = rebuild(first);
-    let mut last_ct = first.ct;
+    let (mut last_ct, mut last_eflags) = (ct(first), eflags(first));
     let mut next_cmd = 0usize;
     let mut rows = Vec::new();
     let mw = MoveWorld::bare(world);
-    for s in snaps {
-        if s.ct <= last_ct {
+    let trace = std::env::var("PREDICT_TRACE")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok());
+    for (w, t) in snaps {
+        let s_ct = ct(w);
+        if s_ct <= last_ct {
             continue;
         }
-        while next_cmd < cmds.len() && cmds[next_cmd].server_time <= s.ct {
-            predict::run_cmd(&mut pred, &cmds[next_cmd], &mw, weapons);
+        while next_cmd < cmds.len() && cmds[next_cmd].server_time <= s_ct {
+            // The cmds the capture logged before its first snapshot ran
+            // before it.
+            if cmds[next_cmd].server_time > last_ct {
+                predict::run_cmd(&mut pred, &cmds[next_cmd], &mw, weapons);
+                if trace == Some(s_ct) {
+                    let ps = &pred.ps;
+                    println!(
+                        "st {} origin {:?} z {:#x} vel {:?} ground {} maxs {:?}",
+                        cmds[next_cmd].server_time,
+                        ps.origin,
+                        ps.origin.z.to_bits(),
+                        ps.velocity,
+                        ps.on_ground,
+                        ps.maxs()
+                    );
+                }
+            }
             next_cmd += 1;
         }
         rows.push(Delta {
-            ct: s.ct,
-            d: pred.ps.origin - s.origin,
-            ground_disagrees: pred.ps.on_ground != (s.ground == ENTITYNUM_WORLD as i32),
+            ct: s_ct,
+            d: pred.ps.origin - Vec3::from(w.origin(P)),
+            ground_disagrees: pred.ps.on_ground
+                != (w.field_i32(P, "groundEntityNum") == ENTITYNUM_WORLD as i32),
+            relocated: (eflags(w) ^ last_eflags) & 0x8 != 0 || places.contains(&t),
         });
-        pred = rebuild(s);
-        last_ct = s.ct;
+        pred = rebuild(w);
+        (last_ct, last_eflags) = (s_ct, eflags(w));
     }
     rows
 }
 
+/// Every slope capture off the retail 1.1d server whose `!snap` lines log
+/// the whole playerstate (`wire=`), replayed exactly: a snapshot off
+/// retail's origin by any amount, or on the other side of the ground, fails
+/// unless the server moved the body ([`Delta::relocated`]).
+/// `mp_carentan-dm-slope-8ms-prone-{mound,street}.txt` predate the `wire=`
+/// field: their lines carry no eye leg, speed or gravity to rebuild from.
 #[test]
 fn predictor_replays_retail_slope_runs() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
@@ -1658,21 +1663,28 @@ fn predictor_replays_retail_slope_runs() {
     };
     let weapons = vcod_common::weapon_table::from_configstring(&fs, retail_cs7());
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/playerstate");
-    let mut paths: Vec<_> = std::fs::read_dir(dir)
+    let mut runs: Vec<(String, String)> = std::fs::read_dir(dir)
         .expect("the fixture directory")
         .map(|e| e.unwrap().path())
-        .filter(|p| {
-            let name = p.file_name().unwrap().to_string_lossy();
-            name.contains("-slope-") && name.ends_with("ms.txt")
+        .filter(|p| p.file_name().unwrap().to_string_lossy().contains("-slope-"))
+        .map(|p| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read_to_string(&p).unwrap())
+        })
+        .filter(|(_, text)| {
+            text.lines().next().is_some_and(|l| l.contains("CoD 1.1d")) && text.contains(" wire=")
         })
         .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no slope fixtures in {dir}");
+    runs.sort();
+    assert!(
+        runs.len() >= 15,
+        "only {} 1.1 slope fixtures in {dir}",
+        runs.len()
+    );
     let mut worlds: HashMap<(String, String), CollisionWorld> = HashMap::new();
     let mut failures = Vec::new();
-    for path in &paths {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        // `<map>-<gametype>-slope-<ms>ms.txt`; map names carry no hyphen.
+    for (name, text) in &runs {
+        // `<map>-<gametype>-slope-...`; map names carry no hyphen.
         let mut parts = name.split('-');
         let (map, gametype) = (parts.next().unwrap(), parts.next().unwrap());
         let world = worlds
@@ -1682,15 +1694,18 @@ fn predictor_replays_retail_slope_runs() {
                 world.unlink_script_brushes(&entities, gametype);
                 world
             });
-        let text = std::fs::read_to_string(path).unwrap();
-        let rows = replay(&parse_fixture(&text), world, &weapons);
+        let rows = replay(text, world, &weapons);
         assert!(rows.len() > 100, "{name}: only {} snapshots", rows.len());
-        // Both runs replay exactly: a snapshot off retail by any amount fails.
+        let relocated = rows.iter().filter(|r| r.relocated).count();
         let off: Vec<_> = rows
             .iter()
-            .filter(|r| r.d != Vec3::ZERO || r.ground_disagrees)
+            .filter(|r| !r.relocated && (r.d != Vec3::ZERO || r.ground_disagrees))
             .collect();
-        println!("{name}: {} snapshots, {} off retail", rows.len(), off.len());
+        println!(
+            "{name}: {} snapshots, {relocated} moved by the server, {} off retail",
+            rows.len(),
+            off.len()
+        );
         for r in off.iter().take(5) {
             failures.push(format!(
                 "{name}: ct {} off by {:?}, ground disagrees {}",
