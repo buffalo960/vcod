@@ -1,5 +1,6 @@
 //! The stance refusals, the ladder's stance strip and a dead body's fire
-//! bit, ours against retail 1.1d's. `client-probes/probe_rise` drives one
+//! bit, ours against retail 1.1d's, 1.5b's and UO 1.51b's (one fixture
+//! pair per server). `client-probes/probe_rise` drives one
 //! `--probe-uo-weapon direct` client through `PROBE_IN` lines: on
 //! mp_carentan it lies him down, moves him prone under a ceiling a crouch
 //! does not fit and then one a stand does not, tries each rise with and
@@ -28,13 +29,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{self, PlayerState, UserCmd};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::Protocol;
 use vcod_common::net::{NetClient, NetEvent};
 
 const SCRIPT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_rise.gsc");
 const CARENTAN: &str = include_str!("fixtures/playerstate/mp_carentan-dm-slope-50ms-rise-1.1.txt");
 const SHIP: &str = include_str!("fixtures/playerstate/mp_ship-dm-slope-50ms-rise-1.1.txt");
+const CARENTAN_15: &str =
+    include_str!("fixtures/playerstate/mp_carentan-dm-slope-50ms-rise-1.5.txt");
+const SHIP_15: &str = include_str!("fixtures/playerstate/mp_ship-dm-slope-50ms-rise-1.5.txt");
+const CARENTAN_UO: &str =
+    include_str!("fixtures/playerstate/mp_carentan-dm-slope-50ms-rise-uo.txt");
+const SHIP_UO: &str = include_str!("fixtures/playerstate/mp_ship-dm-slope-50ms-rise-uo.txt");
 
 /// Phases whose death snapshots the row reads.
 const DEATHS: &[&str] = &["dead", "dead_keep"];
@@ -66,8 +73,7 @@ fn phases(lines: &[String]) -> Vec<(i32, String)> {
 }
 
 /// The capture's `!snap` lines as `(serverTime, playerstate)`.
-fn retail_snaps(text: &str) -> Vec<(i32, PlayerState)> {
-    let p = &PROTOCOL_V1;
+fn retail_snaps(text: &str, p: &Protocol) -> Vec<(i32, PlayerState)> {
     let mut out = Vec::new();
     for line in text.lines().filter(|l| l.starts_with("!snap ")) {
         let kv: BTreeMap<&str, &str> = line
@@ -88,8 +94,11 @@ fn retail_snaps(text: &str) -> Vec<(i32, PlayerState)> {
 /// Each phase's row off one side's snapshots. A phase's own cmds reach the
 /// snapshots past its first two (the `PROBE_IN` rides the first, the cmd
 /// that reads it runs before the next frame), up to the next phase's first.
-fn rows(snaps: &[(i32, PlayerState)], phases: &[(i32, String)]) -> BTreeMap<String, Row> {
-    let p = &PROTOCOL_V1;
+fn rows(
+    snaps: &[(i32, PlayerState)],
+    phases: &[(i32, String)],
+    p: &Protocol,
+) -> BTreeMap<String, Row> {
     let at = |t: i32| snaps.iter().find(|s| s.0 == t).map(|s| &s.1);
     let mut out = BTreeMap::new();
     for w in phases.windows(2) {
@@ -152,11 +161,12 @@ fn ours(
     map: &str,
     weapon: &str,
 ) -> (Vec<(i32, PlayerState)>, Vec<String>) {
-    let p = &PROTOCOL_V1;
+    let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(map, "probe_rise"), now);
+    sv.set_protocol(p);
     sv.overlay_script("maps/mp/gametypes/probe_rise", SCRIPT);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -230,22 +240,23 @@ fn ours(
     (snaps, sv.script_log().to_vec())
 }
 
-fn check(fixture: &str, map: &str, weapon: &str) {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
+fn check(fs: Option<vcod_common::pk3::Pk3Fs>, fixture: &str, map: &str, weapon: &str) {
+    let Some(fs) = fs else {
         return;
     };
+    let p = vcod_server::server::install_protocol(&fs);
     let retail_log: Vec<String> = fixture
         .lines()
         .filter(|l| l.starts_with("PROBE "))
         .map(str::to_string)
         .collect();
-    let theirs = rows(&retail_snaps(fixture), &phases(&retail_log));
+    let theirs = rows(&retail_snaps(fixture, p), &phases(&retail_log), p);
     let (snaps, log) = ours(fs, map, weapon);
     let log: Vec<String> = log
         .iter()
         .filter_map(|l| l.find("PROBE ").map(|i| l[i..].trim_end().to_string()))
         .collect();
-    let mine = rows(&snaps, &phases(&log));
+    let mine = rows(&snaps, &phases(&log), p);
     let report = std::env::var_os("RISE_REPORT").is_some();
     let mut bad = Vec::new();
     for (name, want) in &theirs {
@@ -264,12 +275,44 @@ fn check(fixture: &str, map: &str, weapon: &str) {
     );
 }
 
+/// The 1.5b install's paks, `None` elsewhere (a UO install's `main/` is
+/// 1.5's, so this runs there too).
+fn fs_15() -> Option<vcod_common::pk3::Pk3Fs> {
+    let fs = vcod_common::testing::game_fs()?;
+    let v6 = vcod_common::net::protocol::PROTOCOL_V6.version;
+    (vcod_server::server::install_protocol(&fs).version == v6).then_some(fs)
+}
+
 #[test]
 fn a_rise_under_a_low_ceiling_is_refused_as_on_retail() {
-    check(CARENTAN, "mp_carentan", "m1carbine_mp");
+    let fs = vcod_common::testing::game_fs_11();
+    check(fs, CARENTAN, "mp_carentan", "m1carbine_mp");
 }
 
 #[test]
 fn a_climber_s_stance_keys_are_stripped_as_on_retail() {
-    check(SHIP, "mp_ship", "enfield_mp");
+    let fs = vcod_common::testing::game_fs_11();
+    check(fs, SHIP, "mp_ship", "enfield_mp");
+}
+
+#[test]
+fn a_rise_under_a_low_ceiling_is_refused_as_on_15() {
+    check(fs_15(), CARENTAN_15, "mp_carentan", "m1carbine_mp");
+}
+
+#[test]
+fn a_climber_s_stance_keys_are_stripped_as_on_15() {
+    check(fs_15(), SHIP_15, "mp_ship", "enfield_mp");
+}
+
+#[test]
+fn a_rise_under_a_low_ceiling_is_refused_as_on_uo() {
+    let fs = vcod_common::testing::uo_fs();
+    check(fs, CARENTAN_UO, "mp_carentan", "m1carbine_mp");
+}
+
+#[test]
+fn a_climber_s_stance_keys_are_stripped_as_on_uo() {
+    let fs = vcod_common::testing::uo_fs();
+    check(fs, SHIP_UO, "mp_ship", "enfield_mp");
 }

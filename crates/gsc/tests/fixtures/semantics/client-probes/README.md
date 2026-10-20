@@ -453,8 +453,8 @@ probe_teleport=1`.
 
 ## probe_rise
 
-The stance refusals' server half, any 1.1 map it knows (mp_carentan,
-mp_ship). It drives one `--probe-uo-weapon direct` client through `PROBE_IN`
+The stance refusals' server half, on 1.1d, 1.5b and UO, any map it knows
+(mp_carentan, mp_ship). It drives one `--probe-uo-weapon direct` client through `PROBE_IN`
 lines: on mp_carentan it lies him down in the street, moves him prone under
 two attic ceilings (one a crouch does not fit, one a stand does not) and
 tries each rise with and without `wbuttons` 0x2, then kills him twice with
@@ -475,7 +475,10 @@ cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team allies \
     --slope-every-state --capture-tag rise-1.1 --probe-cmd-ms 50 --probe-secs 45
 ```
 
-Then append the server's `PROBE` lines to the fixture.
+Then append the server's `PROBE` lines to the fixture. The 1.5b and UO
+captures run the same with `COD_VERSION=1.5` or `uo` on the server, the
+client given that install (`--game-dir`, plus `--mod-dir uo` for UO) and
+`--capture-tag rise-1.5` or `rise-uo`.
 
 ## probe_freeze
 
