@@ -404,6 +404,6 @@ fn tally<'a>(
 }
 
 /// The `vc_bot_skill` level a bot plays at, as text.
-fn skill_of(_sv: &vcod_server::Server, _slot: usize) -> String {
-    "-".into()
+fn skill_of(sv: &vcod_server::Server, slot: usize) -> String {
+    sv.bot_skill(slot).map_or("-".into(), |l| l.to_string())
 }

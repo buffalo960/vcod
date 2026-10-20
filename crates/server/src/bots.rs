@@ -11,6 +11,9 @@
 use crate::server::FRAME_MS;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 
+mod skill;
+pub use skill::{DEFAULT_LEVEL, MAX_LEVEL};
+
 /// Hip-shot range; beyond it a tap is noise anyway.
 pub(crate) const SHOOT_RANGE: f32 = 1500.0;
 /// A frag goes at a target this close and no further, and no nearer than
@@ -62,7 +65,7 @@ const MEMORY_LEAD_S: f32 = 0.5;
 
 /// How well a bot fights. Ticks are 50 ms; the aim error is a miss distance
 /// at the target, in units, so its angle shrinks with range on its own.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Skill {
     /// Ticks from first sight of a target to the first turn toward it:
     /// `reaction_min + rand(reaction_spread)`.
@@ -89,6 +92,8 @@ pub struct Skill {
     /// Ticks a heard noise stays a goal; long enough to walk most of
     /// [`HEAR_GUNFIRE`] at run speed.
     pub noise_ticks: u32,
+    /// Scales how far a noise carries to this bot ([`loudest`]).
+    pub hearing: f32,
 }
 
 impl Default for Skill {
@@ -106,6 +111,7 @@ impl Default for Skill {
             ads_range: 400.0,
             memory_ticks: 100,
             noise_ticks: 200,
+            hearing: 1.0,
         }
     }
 }
@@ -634,13 +640,19 @@ pub struct Noise {
 }
 
 /// The noise `listener` hears loudest from `at`: the one nearest relative
-/// to its range, first in recorded order on a tie. Teammates' fights count
-/// too: a friend shooting means an enemy close to him.
-pub(crate) fn loudest(noises: &[Noise], listener: usize, at: [f32; 3]) -> Option<[f32; 3]> {
+/// to its range scaled by `hearing` ([`Skill::hearing`]), first in recorded
+/// order on a tie. Teammates' fights count too: a friend shooting means an
+/// enemy close to him.
+pub(crate) fn loudest(
+    noises: &[Noise],
+    listener: usize,
+    at: [f32; 3],
+    hearing: f32,
+) -> Option<[f32; 3]> {
     noises
         .iter()
         .filter(|n| n.source != listener)
-        .map(|n| (dist_sq(at, n.at).sqrt() / n.radius, n.at))
+        .map(|n| (dist_sq(at, n.at).sqrt() / (n.radius * hearing), n.at))
         .filter(|(f, _)| *f < 1.0)
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, p)| p)
@@ -4403,7 +4415,7 @@ mod tests {
             source,
             radius,
         };
-        let heard = |n: &[Noise]| loudest(n, 1, at);
+        let heard = |n: &[Noise]| loudest(n, 1, at, 1.0);
         assert_eq!(heard(&[noise(10.0, 1, HEAR_GUNFIRE)]), None, "own shot");
         assert_eq!(heard(&[noise(HEAR_BLAST + 1.0, 2, HEAR_BLAST)]), None);
         // 1800 of 2000 (0.90) is louder than 1400 of 1500 (0.93).

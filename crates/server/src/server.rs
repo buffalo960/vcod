@@ -4406,7 +4406,8 @@ impl Server {
                 let enemy =
                     enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
-                view.noise = crate::bots::loudest(&noises, *slot, view.origin);
+                let hearing = self.bots.get(slot).map_or(1.0, |b| b.skill.hearing);
+                view.noise = crate::bots::loudest(&noises, *slot, view.origin, hearing);
                 let held = self.bot_sidesteps.remove(slot);
                 if let Some(e) = enemy {
                     (view.friend_in_line, view.sidestep) =
