@@ -4055,6 +4055,7 @@ impl Server {
             crate::download::WwwConfig {
                 base_url: self.live_cvar("sv_wwwBaseURL", ""),
                 disconnected: self.live_int_cvar("sv_wwwDlDisconnected") != 0,
+                udp_fallback: self.proto.version != PROTOCOL_V22.version,
             }
         })
     }
@@ -5792,14 +5793,23 @@ impl Server {
         vcod_common::pmove::MoveRules::for_protocol(self.proto)
     }
 
+    /// Test seam: the paks a download is served from, with no level load.
+    /// Every pak in `fs` is listed in the systeminfo as if the level had
+    /// read it, so a client checks a transfer against its checksum.
+    pub fn test_mount_paks(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) {
+        self.paks = configstrings::PakLists::of(
+            false,
+            fs.paks_read().map(|(p, _)| (p, true)),
+            self.proto,
+            "",
+        );
+        self.fs = Some(fs);
+        self.set_protocol(self.proto);
+    }
+
     /// The protocol this server speaks: one per process, as each retail
     /// binary speaks one (docs/research/cod15-protocol-diff.md, "Server
     /// side"). Set before the first level loads.
-    /// Test seam: the paks a download is served from, with no level load.
-    pub fn test_mount_paks(&mut self, fs: Rc<vcod_common::pk3::Pk3Fs>) {
-        self.fs = Some(fs);
-    }
-
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
         if let Some(w) = &self.world {

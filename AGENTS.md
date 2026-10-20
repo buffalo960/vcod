@@ -321,7 +321,9 @@ header of the fixture it produced.
   on 1.5b under `client-probes/probe_turret` (`cod11-turrets.md` 14.3),
   the `*-turret-hit.bin` pair a 1.1d `--save-turret` gunner's own
   snapshots while a `--save-hit` probe shoots him off the gun (same
-  section).
+  section), the `*-follow-1.1.bin` pair a 1.1d spectator following a
+  `--save-hit` shooter under `client-probes/probe_passthru`
+  (`cod11-spectator-follow.md` 11.1).
   `cargo run -p vcod-common --example event_dump`
   prints a capture's events in the wire's numbering.
 - `--probe-uo-weapon` and `--probe-vehicle` send cmds at 60 Hz (0, 16
@@ -648,7 +650,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
-  (`pusher_box_trace`, `box_position_test`). A sine mover never stalls: it
+  (`pusher_box_trace`, `box_position_test`), and the candidate test is a
+  whole trace that must name the pusher: a body in the world, or met
+  first by another entity on the area walk, is passed through
+  (`push::names_pusher`, movers doc 12). A sine mover never stalls: it
   crushes a player it cannot place (movers doc 21).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.

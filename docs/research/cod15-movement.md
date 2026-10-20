@@ -575,9 +575,23 @@ takes `framed`, which lands him on retail's float after the script's
   the jump step's cap (0x355f2) `fildl 0x3c(...)` off `pm->ps`. 1.5b's
   and UO's builds have the same eight loads (1.5b 0x1f8de..0x2a3e8, UO
   0x243dc..0x2fcdc, each the same function in order). VERIFIED,
-  disassembly. 1.1's cgame loads `ps+0x3c` at seven sites in its pmove
-  range (0x30007bd1..0x3000da2a), so the predictor reads the same field
-  (INFERRED, address range and load shape; the cgame has no symbols).
+  disassembly. 1.1's cgame (`cgame_mp_x86.dll`, no symbols) has a `fild`
+  of `ps+0x3c` at seven sites, each feeding the expression the `.so`
+  builds at one of those loads. VERIFIED, disassembly and the Ghidra
+  export: 0x30007bd1 (function 0x30007b60), `velocity[2] = sqrt(gravity
+  * k)`; 0x3000832b (0x30008070), `velocity[2] - gravity * frametime`;
+  0x30008b54 (0x30008ac0), the int into a local as the crash land takes
+  it; 0x3000a4d5 (0x30009de0), `velocity[2] = sqrt(2 * h * gravity)` with
+  `h` 34.0 or 24.0 (0x3000a4c3..0x3000a4cd), the pair the `.so` reads off
+  `.rodata` 0x70be8 and 0x70bec for the same store at 0x31cf9;
+  0x3000c1e7 (0x3000c060), `velocity[2] +/- gravity * frametime`, which
+  the `.so`'s ladder loads twice (0x33bb2, 0x33bd2); 0x3000cbf2
+  (0x3000cbc0), `velocity[2] - gravity * frametime` into the slide's end
+  velocity; 0x3000da2a (0x3000d460), `sqrt(2 * h * gravity)`. INFERRED,
+  off those expressions and the shared order: the seven are the jump,
+  the slick walk, the crash land, the dive, the ladder, `PM_SlideMove`
+  and the step cap, so the predictor reads `ps.gravity` wherever the
+  server does.
 - `ClientEndFrame` stores `(int)g_gravity.value` there, truncated
   (`fistp` under `| 0xc00`), every frame, on all three: 1.1d
   0x410aa-0x410c3 (then copied to `ps+0x3c`), 1.5b 0x3ad81-0x3ad96, UO

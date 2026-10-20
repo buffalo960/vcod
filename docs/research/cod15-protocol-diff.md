@@ -857,7 +857,12 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   `0:vcod GMI_EXE_DOWNLOADDISCONNECTED` and a zombie (VERIFIED).
 - UO's fallback branch clears the flag and returns through the same
   stub, so the next frame redirects again: on UO a failed www download
-  never falls back to UDP (decompile, INFERRED).
+  never falls back to UDP (decompile, INFERRED). VERIFIED live
+  2026-10-20, connected (`sv_wwwDlDisconnected 0`), the wrong pak behind
+  the URL (`crates/server/tests/fixtures/handshake/www-refuse-uo.txt`):
+  after `chkfail` the server resent the gamestate, logged `clientDownload:
+  0 : begining` on two messages and redirected on the second; after the
+  client's `wwwdl fail` the same again; no block went over UDP.
 - `wwwdl` is the last row of UO's ucmd table, after `retransdl`
   (0x80f4fc8, string 0x80e4c1b, handler 0x808c298; VERIFIED). The
   subcommands compare case-blind (`Q_stricmp`, 0x8086a5a; VERIFIED). A
@@ -953,7 +958,7 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   that download. A disconnected transfer reconnects and asks again the
   same way. A redirect of a listed name is acked and refused with `wwwdl
   fail`, retail's order (above), and its repeats are eaten until the next
-  gamestate. On a 1.5b server (and vcod-server) the fallback flag sends
+  gamestate. On a 1.5b server (and vcod-server on protocol 6) the fallback flag sends
   the second request over UDP; that transfer is checked too and a second
   mismatch drops. A UO server redirects again after the refusal, which
   would loop forever, so a second redirect of a refused name drops
@@ -968,7 +973,13 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   checksum and the probe went Active (VERIFIED). On the UO server with
   `sv_wwwDlDisconnected 1`: the wrong pak, the reconnect, a redirect the
   probe refused with `wwwdl fail`, and a second redirect at once, after
-  which it left (VERIFIED: UO does not fall back to UDP). Retail's
+  which it left (VERIFIED: UO does not fall back to UDP). Rerun
+  2026-10-20 connected on both: 1.5b took `chkfail` and streamed the
+  re-request over UDP, 467 block lines, one HTTP GET
+  (`crates/server/tests/fixtures/handshake/www-chkfail-15.txt`); UO
+  redirected again, the probe acked and refused it with `wwwdl fail`, UO
+  redirected the next request again and the probe left, one HTTP GET
+  (`www-refuse-uo.txt` beside it; VERIFIED, captures). Retail's
   1.5 client reaches the same UDP transfer by a longer road: it keeps the
   wrong pak, deletes it at the next gamestate's `FS_ComparePaks` and asks
   again (INFERRED, above).
@@ -990,11 +1001,18 @@ paks plus `nsf_mp_j5outpost.pk3` (a third-party map, run as
   resend the gamestate; `bbl8r` drops with
   `GMI_EXE_DOWNLOADDISCONNECTED`, which a live run logged as
   `0:vcod GMI_EXE_DOWNLOADDISCONNECTED`, as retail's does.
-- Two choices differ from UO's server, both 1.5b's behaviour: a client
-  without `cl_wwwDownload` gets the pak over UDP rather than nothing, and
-  the request after a failed www transfer goes over UDP rather than to
-  the same URL. Neither changes what a retail UO client sees, since it
-  sends `cl_wwwDownload 1` and drops on its own failures.
+- One choice differs from UO's server, 1.5b's behaviour: a client
+  without `cl_wwwDownload` gets the pak over UDP rather than nothing.
+  It changes nothing a retail UO client sees, since it sends
+  `cl_wwwDownload 1`. The request after a failed www transfer goes over
+  UDP on protocol 6 and, on 22, waits a message and is redirected again,
+  as each retail server does (`WwwConfig::udp_fallback`). `www_download`
+  gates both against the captures above
+  (`a_chkfail_on_1_5_falls_back_to_udp`,
+  `a_refused_redirect_on_uo_is_redirected_again_until_the_client_leaves`).
+  Live on loopback (2026-10-20), vcod-server on the UO install, connected,
+  the wrong pak at the URL: the probe saw retail's sequence, one GET,
+  three redirects, `fail` and the leave (VERIFIED).
 - Live on loopback (2026-10-15): vcod-server on the UO install with
   `mp_j5outpost`, `sv_pure 1` and the pak behind `python3 -m http.server`;
   the probe was redirected, fetched it, passed `cp` and stayed in; with

@@ -1,0 +1,104 @@
+# client-probes/probe_primedprint on mp_carentan, 2026-10-20, on retail
+# 1.1d, 1.5b and UO 1.51b (`tools/run_probe.sh client-probes/probe_primedprint
+# mp_carentan`, PROBE_SECS 25), one plain `vcod --net-probe` client behind a
+# UDP relay that dropped the client's sequenced packets for 3 s from the
+# first server message over 100 bytes (the gamestate's first fragment), so
+# the client sat CS_PRIMED. Each `sent n` queued `self iprintln("pp self
+# n")`, `iprintln("pp all n")` and `self setClientCvar("pp_n", n)`. No
+# `pp self` or `pp all` print reached the client; every `v pp_n` did,
+# pp_0 (queued while connected) inside the gamestate message. Gate:
+# connect.rs prints_sent_while_primed_are_dropped_and_cvars_kept.
+
+## 1.1d: server log, then the client
+PROBE 3850 connect
+PROBE 3850 sent 0
+PROBE 4150 sent 1
+PROBE 4400 sent 2
+PROBE 4650 sent 3
+PROBE 4900 sent 4
+PROBE 5150 sent 5
+PROBE 5400 sent 6
+PROBE 5650 sent 7
+PROBE 5900 sent 8
+PROBE 6150 sent 9
+PROBE 6400 sent 10
+PROBE 6650 sent 11
+PROBE 6900 sent 12
+PROBE 6950 begin
+serverCommand: ["v", "pp_0", "0"]
+gamestate ready: clientNum 0, serverId 16, 116 configstrings, 36 baselines
+serverCommand: ["v", "pp_1", "1"]
+serverCommand: ["v", "pp_2", "2"]
+serverCommand: ["v", "pp_3", "3"]
+serverCommand: ["v", "pp_4", "4"]
+serverCommand: ["v", "pp_5", "5"]
+serverCommand: ["v", "pp_6", "6"]
+serverCommand: ["v", "pp_7", "7"]
+serverCommand: ["v", "pp_8", "8"]
+serverCommand: ["v", "pp_9", "9"]
+serverCommand: ["v", "pp_10", "10"]
+serverCommand: ["v", "pp_11", "11"]
+serverCommand: ["v", "pp_12", "12"]
+serverCommand: ["f", "pp entered"]
+
+## 1.5b: server log, then the client
+PROBE 4000 connect
+PROBE 4000 sent 0
+PROBE 4300 sent 1
+PROBE 4550 sent 2
+PROBE 4800 sent 3
+PROBE 5050 sent 4
+PROBE 5300 sent 5
+PROBE 5550 sent 6
+PROBE 5800 sent 7
+PROBE 6050 sent 8
+PROBE 6300 sent 9
+PROBE 6550 sent 10
+PROBE 6800 sent 11
+PROBE 7050 sent 12
+PROBE 7100 begin
+serverCommand: ["v", "pp_0", "0"]
+gamestate ready: clientNum 0, serverId 16, 120 configstrings, 36 baselines
+serverCommand: ["v", "pp_1", "1"]
+serverCommand: ["v", "pp_2", "2"]
+serverCommand: ["v", "pp_3", "3"]
+serverCommand: ["v", "pp_4", "4"]
+serverCommand: ["v", "pp_5", "5"]
+serverCommand: ["v", "pp_6", "6"]
+serverCommand: ["v", "pp_7", "7"]
+serverCommand: ["v", "pp_8", "8"]
+serverCommand: ["v", "pp_9", "9"]
+serverCommand: ["v", "pp_10", "10"]
+serverCommand: ["v", "pp_11", "11"]
+serverCommand: ["v", "pp_12", "12"]
+serverCommand: ["f", "pp entered"]
+
+## UO 1.51b: server log, then the client
+PROBE 4900 connect
+PROBE 4900 sent 0
+PROBE 5200 sent 1
+PROBE 5450 sent 2
+PROBE 5700 sent 3
+PROBE 5950 sent 4
+PROBE 6200 sent 5
+PROBE 6450 sent 6
+PROBE 6700 sent 7
+PROBE 6950 sent 8
+PROBE 7200 sent 9
+PROBE 7450 sent 10
+PROBE 7700 sent 11
+PROBE 7950 begin
+serverCommand: ["v", "pp_0", "0"]
+gamestate ready: clientNum 0, serverId 16, 195 configstrings, 36 baselines
+serverCommand: ["v", "pp_1", "1"]
+serverCommand: ["v", "pp_2", "2"]
+serverCommand: ["v", "pp_3", "3"]
+serverCommand: ["v", "pp_4", "4"]
+serverCommand: ["v", "pp_5", "5"]
+serverCommand: ["v", "pp_6", "6"]
+serverCommand: ["v", "pp_7", "7"]
+serverCommand: ["v", "pp_8", "8"]
+serverCommand: ["v", "pp_9", "9"]
+serverCommand: ["v", "pp_10", "10"]
+serverCommand: ["v", "pp_11", "11"]
+serverCommand: ["f", "pp entered"]

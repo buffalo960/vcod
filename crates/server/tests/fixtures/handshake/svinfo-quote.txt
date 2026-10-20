@@ -1,0 +1,76 @@
+# client-probes/probe_svinfoquote on mp_carentan, 2026-10-20, on retail
+# 1.1d, 1.5b and UO 1.51b: `PORT=... PROBE_SECS=30 tools/run_probe.sh
+# client-probes/probe_svinfoquote mp_carentan` (COD_VERSION for 1.5 and uo),
+# one plain `vcod --net-probe` client joined 3 s in, and getinfo/getstatus
+# from a socket at 1, 7, 10, 13 and 17 s after the client started.
+# `cs 0` lines are configstring 0 as the client held it (the gamestate, then
+# each `d 0`); `<t> s:` lines are the hostname key of the reply (getinfo's
+# `hostname`, getstatus's `sv_hostname`); PROBE lines are the server log,
+# the cvar as the script reads it back. Gate:
+# connect.rs a_quote_in_a_serverinfo_value_is_stripped_like_retail.
+
+## 1.1d
+cs 0 sv_hostname [qhsb e]
+cs 0 sv_hostname [lead]
+cs 0 sv_hostname absent
+cs 0 sv_hostname [tail]
+at 1.0 s, getinfo xxx: hostname [qhsb e]
+at 1.0 s, getstatus: sv_hostname [qhsb e]
+at 7.0 s, getinfo xxx: hostname [lead]
+at 7.0 s, getstatus: sv_hostname [lead]
+at 10.0 s, getinfo xxx: no hostname key
+at 10.0 s, getstatus: no hostname key
+at 13.0 s, getinfo xxx: hostname [tail]
+at 13.0 s, getstatus: sv_hostname [tail]
+at 17.0 s, getinfo xxx: hostname [tail]
+at 17.0 s, getstatus: sv_hostname [tail]
+PROBE 0 hostname [q"h;s\b e]
+PROBE 3700 connect
+PROBE 8050 hostname ["lead]
+PROBE 11050 hostname ["]
+PROBE 14050 hostname [tail"]
+PROBE done
+
+## 1.5b
+cs 0 sv_hostname [qhsb e]
+cs 0 sv_hostname [lead]
+cs 0 sv_hostname absent
+cs 0 sv_hostname [tail]
+at 1.0 s, getinfo xxx: hostname [qhsb e]
+at 1.0 s, getstatus: sv_hostname [qhsb e]
+at 7.0 s, getinfo xxx: hostname [lead]
+at 7.0 s, getstatus: sv_hostname [lead]
+at 10.0 s, getinfo xxx: no hostname key
+at 10.0 s, getstatus: no hostname key
+at 13.0 s, getinfo xxx: hostname [tail]
+at 13.0 s, getstatus: sv_hostname [tail]
+at 17.0 s, getinfo xxx: hostname [tail]
+at 17.0 s, getstatus: sv_hostname [tail]
+PROBE 0 hostname [q"h;s\b e]
+PROBE 4000 connect
+PROBE 8050 hostname ["lead]
+PROBE 11050 hostname ["]
+PROBE 14050 hostname [tail"]
+PROBE done
+
+## UO 1.51b
+cs 0 sv_hostname [qhsb e]
+cs 0 sv_hostname [lead]
+cs 0 sv_hostname absent
+cs 0 sv_hostname [tail]
+at 1.0 s, getinfo xxx: hostname [qhsb e]
+at 1.0 s, getstatus: sv_hostname [qhsb e]
+at 7.0 s, getinfo xxx: hostname [lead]
+at 7.0 s, getstatus: sv_hostname [lead]
+at 10.0 s, getinfo xxx: no hostname key
+at 10.0 s, getstatus: no hostname key
+at 13.0 s, getinfo xxx: hostname [tail]
+at 13.0 s, getstatus: sv_hostname [tail]
+at 17.0 s, getinfo xxx: hostname [tail]
+at 17.0 s, getstatus: sv_hostname [tail]
+PROBE 0 hostname [q"h;s\b e]
+PROBE 5200 connect
+PROBE 8050 hostname ["lead]
+PROBE 11050 hostname ["]
+PROBE 14050 hostname [tail"]
+PROBE done

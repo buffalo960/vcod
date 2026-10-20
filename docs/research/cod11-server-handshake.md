@@ -1270,9 +1270,19 @@ cod_lnxded 1.5b, read from the asm.
 
 ### 1.5 permanent bans (`banUser` 0x8087f73, `banClient` 0x8087fc7, `unbanUser` 0x808801b)
 
-cod_lnxded 1.5b, read from the asm; UO 1.51b carries the same strings
-(`ban.txt`, both `rejected connection` lines, `unbanned %i user(s) named
-%s`) at file 0x9bf26..0x9c127. VERIFIED strings; the UO code is not read.
+cod_lnxded 1.5b, read from the asm. VERIFIED, `coduo_lnxded` 1.51b: UO's
+code is 1.5b's instruction for instruction. Its `banUser` 0x8088d74,
+`banClient` 0x8088dc8 and `unbanUser` 0x8088e1c match 1.5b's three
+(70 instructions), and the file check 0x8089dfc, the ban 0x8089f25 and the
+unban 0x808a021 match 0x8088ff8..0x80893d0 (275 instructions), with jump
+targets taken relative and absolute addresses masked. The only operands
+that differ are the `client_t` offsets: the guid at `cl+0xab080` (1.5b
+`cl+0x5a980`) and the address type at `cl+0x9b048` (1.5b `cl+0x52948`).
+The authorize `accept` calls the file check at 0x808a4c0 (1.5b
+0x80896bc), and the strings sit at `.rodata` 0x80e3f28 (`ban.txt`),
+0x80e3f66 and 0x80e3f84 (the two unban replies) and 0x80e4060 (the
+refusal print). INFERRED from the match: what is measured on 1.5b below
+holds on UO.
 
 - 1.5 drops 1.1's authorize detour: neither command sends `banUser <ip>`
   and the binary has no `was banned from coming back` string. VERIFIED.
@@ -1404,6 +1414,17 @@ VERIFIED (captures).
   1.5b's and UO 1.51b's `getinfo`, and `sv_hostname "x y;z"` as
   `\hostname\x yz` in 1.1d's `getinfo`. vcod's `Info::set`
   strips the same way (it used to refuse a value with a `\`).
+- A `"` reaches a cvar only from a script; no rcon or `+set` line carries
+  one. VERIFIED live 2026-10-20 on 1.1d, 1.5b and UO 1.51b,
+  `client-probes/probe_svinfoquote` on mp_carentan with one client and
+  getinfo/getstatus from a socket
+  (`crates/server/tests/fixtures/handshake/svinfo-quote.txt`): after
+  `setCvar("sv_hostname", "q\"h;s\\b e")` the cvar reads back whole and
+  configstring 0, `getinfo` and `getstatus` all carry `qhsb e`; set to
+  `"lead` the `d 0` update carries `lead`; set to a lone `"` the key is gone
+  from configstring 0 and both replies; `tail"` brings it back as `tail`.
+  All three servers sent the same. vcod's does too (`connect.rs`,
+  `a_quote_in_a_serverinfo_value_is_stripped_like_retail`).
 - The string's limit is 1024 bytes (`> 0x400` at the end of 0x80827d4).
   1.1d's `infoResponse` on mp_carentan holds 123 bytes beside
   `\challenge\`, so an 890-byte challenge (exactly 1024) was answered and

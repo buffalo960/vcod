@@ -139,7 +139,8 @@ pub struct EventTracker {
     /// Fired event entities: number to (eType, eventParm), so a reused slot
     /// with new content refires and a lingering entity does not.
     fired: HashMap<u32, (i32, i32)>,
-    ps_seq: Option<i32>,
+    /// The playerstate's `eventSequence` and `events[]` at the last drain.
+    ps_prev: Option<(i32, [i32; 4])>,
     last_message: Option<u32>,
 }
 
@@ -170,12 +171,22 @@ fn replays_on_reset(etype: i32, eflags: i32) -> bool {
     }
 }
 
+/// Whether the playerstate ring's slot at sequence `i` plays: the ring half
+/// of `CG_TransitionPlayerState` (cgame 1.1 0x30028be0, 1.5 0x30029f50, UO
+/// 0x30034ec0) plays a slot at or past the old `eventSequence`, or one
+/// within the old ring whose event differs from the old playerstate's.
+/// Compared raw on the 8-bit wire values, so a follow switch onto a lower
+/// sequence plays nothing old (cod11-spectator-follow.md 11.1).
+fn ps_slot_plays(i: i32, prev: i32, event: i32, old_event: i32) -> bool {
+    i >= prev || (i > prev - EVENT_RING && event != old_event)
+}
+
 impl EventTracker {
     pub fn new() -> EventTracker {
         EventTracker {
             seq: HashMap::new(),
             fired: HashMap::new(),
-            ps_seq: None,
+            ps_prev: None,
             last_message: None,
         }
     }
@@ -191,7 +202,7 @@ impl EventTracker {
 
     /// The playerstate ring's `eventSequence` at the last drain.
     pub fn ps_sequence(&self) -> Option<i32> {
-        self.ps_seq
+        self.ps_prev.map(|(seq, _)| seq)
     }
 
     /// [`Self::drain`], each playerstate-ring event with the 8-bit sequence
@@ -236,33 +247,32 @@ impl EventTracker {
 
         // playerState ring; entity_num u32::MAX marks the view.
         let cur = snap.ps.field_i32(p, "eventSequence");
-        match self.ps_seq.replace(cur) {
-            None => {}
-            Some(prev) => {
-                let diff = seq_diff(cur, prev).min(EVENT_RING);
-                for i in (cur - diff)..cur {
-                    let slot = (i & 3) as usize;
-                    out.push((
-                        Some(i & 0xff),
-                        GameEvent {
-                            event: (p.event_to_v1)(
-                                snap.ps.field_i32(p, &format!("events[{slot}]")),
-                            ),
-                            parm: snap.ps.field_i32(p, &format!("eventParms[{slot}]")),
-                            entity_num: u32::MAX,
-                            client_num: snap.ps.field_i32(p, "clientNum"),
-                            weapon: snap.ps.field_i32(p, "weapon"),
-                            surf_type: 0,
-                            pos: snap.ps.origin(p),
-                            dir: [0.0; 3],
-                            scale: 0,
-                            other_entity_num: u32::MAX,
-                            attacker_entity_num: -1,
-                            e_type: crate::net::flags::ET_PLAYER,
-                            eflags: snap.ps.field_i32(p, "eFlags"),
-                        },
-                    ));
+        let events: [i32; 4] =
+            std::array::from_fn(|slot| snap.ps.field_i32(p, &format!("events[{slot}]")));
+        if let Some((prev, old)) = self.ps_prev.replace((cur, events)) {
+            for i in (cur - EVENT_RING)..cur {
+                let slot = (i & 3) as usize;
+                if !ps_slot_plays(i, prev, events[slot], old[slot]) {
+                    continue;
                 }
+                out.push((
+                    Some(i & 0xff),
+                    GameEvent {
+                        event: (p.event_to_v1)(events[slot]),
+                        parm: snap.ps.field_i32(p, &format!("eventParms[{slot}]")),
+                        entity_num: u32::MAX,
+                        client_num: snap.ps.field_i32(p, "clientNum"),
+                        weapon: snap.ps.field_i32(p, "weapon"),
+                        surf_type: 0,
+                        pos: snap.ps.origin(p),
+                        dir: [0.0; 3],
+                        scale: 0,
+                        other_entity_num: u32::MAX,
+                        attacker_entity_num: -1,
+                        e_type: crate::net::flags::ET_PLAYER,
+                        eflags: snap.ps.field_i32(p, "eFlags"),
+                    },
+                ));
             }
         }
         out
@@ -598,6 +608,7 @@ mod tests {
         assert!(t.drain(&s1, p).is_empty());
         let mut s2 = snap(p, 2, 1050, vec![]);
         s2.ps.fields[fi("eventSequence")] = 3;
+        s2.ps.fields[fi("events[0]")] = 9;
         s2.ps.fields[fi("events[2]")] = 5;
         s2.ps.fields[fi("eventParms[2]")] = 1;
         let evs = t.drain(&s2, p);
@@ -627,26 +638,80 @@ mod tests {
         assert_eq!(evs.iter().map(|e| e.event).collect::<Vec<_>>(), [189, 155]);
     }
 
-    /// The sequence each playerstate-ring event was written at, kept in 8
-    /// bits across the wrap; entity events carry none.
+    /// The sequence each playerstate-ring event was written at; entity
+    /// events carry none.
     #[test]
     fn drain_seq_names_the_ring_sequence() {
         let p = &PROTOCOL_V1;
         let mut t = EventTracker::new();
         let fi = |n| PlayerState::field_index(p, n).unwrap();
         let mut s1 = snap(p, 1, 1000, vec![ent(p, 5, &[("eventSequence", 0)])]);
-        s1.ps.fields[fi("eventSequence")] = 254;
+        s1.ps.fields[fi("eventSequence")] = 253;
         t.drain_seq(&s1, p);
-        assert_eq!(t.ps_sequence(), Some(254));
+        assert_eq!(t.ps_sequence(), Some(253));
         let mut s2 = snap(
             p,
             2,
             1050,
             vec![ent(p, 5, &[("eventSequence", 1), ("events[0]", 7)])],
         );
-        s2.ps.fields[fi("eventSequence")] = 1;
+        s2.ps.fields[fi("eventSequence")] = 255;
         let seqs: Vec<_> = t.drain_seq(&s2, p).into_iter().map(|(s, _)| s).collect();
-        assert_eq!(seqs, [None, Some(254), Some(255), Some(0)]);
+        assert_eq!(seqs, [None, Some(253), Some(254)]);
+    }
+
+    /// Retail compares the 8-bit wire sequences raw (cgame 0x30028be0), so
+    /// the frame that wraps the playerstate ring from 254 to 1 plays nothing.
+    #[test]
+    fn the_playerstate_ring_plays_nothing_across_the_wire_wrap() {
+        let p = &PROTOCOL_V1;
+        let mut t = EventTracker::new();
+        let fi = |n| PlayerState::field_index(p, n).unwrap();
+        let mut s1 = snap(p, 1, 1000, vec![]);
+        s1.ps.fields[fi("eventSequence")] = 254;
+        t.drain(&s1, p);
+        let mut s2 = snap(p, 2, 1050, vec![]);
+        s2.ps.fields[fi("eventSequence")] = 1;
+        s2.ps.fields[fi("events[2]")] = 159;
+        s2.ps.fields[fi("events[0]")] = 159;
+        assert!(t.drain(&s2, p).is_empty());
+    }
+
+    /// A follow switch onto a player whose sequence is lower plays none of
+    /// his old events: the retail 1.1d follow capture's switch from client
+    /// 2's ring (sequence 19) onto client 0's (cod11-spectator-follow.md
+    /// 11.1), here with shots left in the new ring. A slot of the old window
+    /// that changed still plays, as `CG_TransitionPlayerState` plays it.
+    #[test]
+    fn a_switch_onto_a_lower_sequence_plays_nothing_old() {
+        let p = &PROTOCOL_V1;
+        let mut t = EventTracker::new();
+        let fi = |n| PlayerState::field_index(p, n).unwrap();
+        let ring = |s: &mut Snapshot, seq: i32, events: [i32; 4]| {
+            s.ps.fields[fi("eventSequence")] = seq;
+            for (i, e) in events.into_iter().enumerate() {
+                let name = format!("events[{i}]");
+                s.ps.fields[PlayerState::field_index(p, &name).unwrap()] = e;
+            }
+        };
+        let mut s1 = snap(p, 1, 1000, vec![]);
+        ring(&mut s1, 19, [159, 159, 152, 159]);
+        t.drain(&s1, p);
+        let mut s2 = snap(p, 2, 1050, vec![]);
+        ring(&mut s2, 2, [159, 159, 0, 0]);
+        assert!(t.drain(&s2, p).is_empty(), "his shots at 0 and 1");
+        let mut s3 = snap(p, 3, 1100, vec![]);
+        ring(&mut s3, 0, [0; 4]);
+        assert!(t.drain(&s3, p).is_empty(), "a respawn's empty ring");
+
+        // Same sequence, one slot inside the old window changed.
+        let mut s4 = snap(p, 4, 1150, vec![]);
+        ring(&mut s4, 0, [0, 0, 0, 152]);
+        let evs = t.drain_seq(&s4, p);
+        assert_eq!(
+            evs.iter().map(|(s, e)| (*s, e.event)).collect::<Vec<_>>(),
+            [(Some(255), 152)]
+        );
     }
 
     /// The same shape on an entity ring, which shares the walk.
