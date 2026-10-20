@@ -140,8 +140,10 @@ fn ours(pitch: f32, secs: i64) -> Vec<Seen> {
     for i in 0..(secs * 1000 / common::FRAME_MS) {
         now += frame;
         let since = |at: Option<i64>| at.map(|a| (i - a) * common::FRAME_MS);
+        // Retail's `PROBE activated` is 2050 past its `PROBE place`
+        // (coduo-vehicles.md 13, "The driver's idle").
         let tap =
-            since(placed_at).is_some_and(|ms| (2000..2150).contains(&ms)) && seated_at.is_none();
+            since(placed_at).is_some_and(|ms| (2050..2200).contains(&ms)) && seated_at.is_none();
         let seated = since(seated_at);
         let held = |from, to| seated.is_some_and(|ms| (from..to).contains(&ms));
         let buttons = if tap { BUTTON_USE } else { 0 }

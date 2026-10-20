@@ -2075,12 +2075,16 @@ round on a curved patch at different points of its facet seams, because
 The `position` on a world hit or a miss is the world trace's own end
 point, not a lerp the builtin makes. VERIFIED, 1.5b game.mp
 `GScr_BulletTrace` (0x5f456): it passes `trap_LocationalTrace`'s result
-straight to `Scr_AddVector` (0x5f559). VERIFIED, 1.5b `cod_lnxded`: the
-locational trace's last step compares the entity pass's fraction with
-the world's (0x809a44d..0x809a45b) and rewrites the end point (0x809a45f
-on, the stored move above) only when the entity pass lowered it;
-otherwise the end point stays `CM_BoxTrace`'s (`collision::cm_endpos`,
-`cod15-movement.md` 7). VERIFIED, live (retail 1.5b and UO 1.51b,
+straight to `Scr_AddVector` (0x5f559). INFERRED, off the control flow
+of 1.5b `cod_lnxded`'s `SV_Trace` (0x8099fd1, reached for
+`trap_LocationalTrace` through syscall 0x2e with no `mins` or `maxs`):
+a point trace walks the entities (0x805f48a) and keeps the trace they
+leave, and `SV_ClipMoveToEntity` (0x8099732) writes the end point only
+when a body or model lowers the fraction (0x8099b18, 3.1, "The
+arithmetic on 1.5 and UO"); otherwise the end point stays
+`CM_BoxTrace`'s (`collision::cm_endpos`, `cod15-movement.md` 7). The
+box path's own rewrite (0x809a44d..0x809a4d4) is never reached by a
+locational trace. VERIFIED, live (retail 1.5b and UO 1.51b,
 2026-10-20, gdb on `BG_CheckProneValid`'s `fTorsoHeight` store,
 1.5b game.mp 0x1e589, UO 0x22ecf): `probe_scriptmodel`'s prone target,
 put on `ground_at` + 0.125 by `setorigin`, starts his drop at z
@@ -2279,9 +2283,12 @@ sequence apart from addresses and struct offsets in each pair:
 
 - VERIFIED, the body's frame: `AnglesToAxis` (UO 0x806a46e, 1.5b
   0x806a55e) over `AngleVectors` (UO 0x80674ad): each angle times the
-  double `pi / 180` stored as a float, its `fsincos` (UO 0x806b4de) stored,
-  every product stored. A player's `(0, yaw, 0)` gives forward `(cos,
-  sin, 0)`, left `(-sin, cos, 0)` and up `(0, 0, 1)`.
+  double `pi / 180` stored as a float, its `fsincos` (UO 0x806b4de)
+  stored, each component's products and sum on the x87 stack and the
+  component stored once. A player's `(0, yaw, 0)` gives forward `(cos,
+  sin, 0)`, left `(-sin, cos, 0)` and up `(0, 0, 1)`. The angles are
+  `r.currentAngles`, so a body a `setPlayerAngles` turned (3.7) traces
+  in the same arithmetic of the angles it set.
 - VERIFIED, `start` and `end` into the body's frame (UO 0x8069416, 1.5b
   0x8069506): each `p - origin` stored, then each axis's dot product
   rounded once.
@@ -2300,14 +2307,24 @@ sequence apart from addresses and struct offsets in each pair:
   den` run on the stack.
 - VERIFIED, the world normal (UO 0x8069154, 1.5b 0x8069244): the bone row
   times its sign, turned by the body's axes, each component rounded once.
-- VERIFIED, the end point: the locational trace's last step (UO 0x809b457
-  in 0x809afc9, 1.5b 0x809a45f in 0x8099fd1), whenever the entity pass
-  lowered the fraction, stores `end - start` and rounds each `start + move
-  * fraction` once.
+- VERIFIED, the end point on a body or a model: `SV_ClipMoveToEntity`
+  (1.5b 0x8099b18 in 0x8099732, UO 0x809ab10), once the bone trace
+  lowered the fraction, rounds each `start + (end - start) * fraction`
+  once, the difference and the product on the x87 stack. A box trace's
+  last step in `SV_Trace` (1.5b 0x809a45f, UO 0x809b457) stores `end -
+  start` first, but `trap_LocationalTrace` is a point trace and never
+  reaches it. VERIFIED, gdb on retail 1.5b (2026-10-20, a breakpoint on
+  0x809a4da, which both arms of that step reach): it does not fire
+  between the frag's strike on a prone body and its next trace. VERIFIED,
+  the strike's start, end and fraction from the same run (1.5b
+  0x80d2000's caller, `-0x98(%ebp)` after the call) give retail's next
+  start, z 0xc12aabc1, in the kept form and 0xc12aabc2 in the stored one.
 
 vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
-matrix, the slab), `HitBody::axis_stored`, `combat::trace_point` for a
-round, a swing, a missile and a `bulletTrace` that stops on a body. The
+matrix, the slab), `HitBody::axis_stored` (`DobjStamps::axis_stored`
+through `combat::angles_to_axis_stored` while a `setPlayerAngles` holds),
+`combat::trace_point` for a round, a swing, a missile and a
+`bulletTrace` that stops on a body. The
 bone's quaternion and origin come from the engine's own pose (next
 section).
 
@@ -2317,7 +2334,9 @@ float steps off retail's z on both 1.5b captures and on UO
 (-10.666936 against -10.666932); the frame, slab and end point alone
 brought it to 1 step and left the rest on him 10 off; with the stored
 matrix the strike is retail's bit on all three and the contacts after it
-sit 1 to 3 steps off in z.
+sit 1 to 3 steps off in z. That bit was two errors cancelling: the end
+point's stored move against a turned body's frame, next section's
+"The prone strike on mp_carentan".
 
 #### The pose on 1.5 and UO
 
@@ -2451,14 +2470,35 @@ VERIFIED, vcod measurement (`scriptmodel_ab`'s `..._like_retail_on_15`
 and `..._on_uo`): with them the thrower's site offset, the target's
 origin at every cmd of his drop, his body and his legs clips match the
 captures and the gdb reads, and every frag snapshot carries retail's
-`trType` and ground. The first strike on him still lands 2 float steps
-off retail's z on 1.5b (-10.992799 against -10.992797, the hold on him
-too; every base after it is retail's bits) and 1 on UO, UO's second
-strike 3 (-18.95676 against -18.956766). INFERRED: with every input
-above retail's, the miss lies in the posed bones or the bone trace at
-this pose; a skeleton dump at the strike (the gdb method above) would
-name it. Before the site fix the UO first strike read as retail's bit
-and 1.5b's old capture's too: two errors that cancelled.
+`trType` and ground. With them alone the first strike on him still
+landed 2 float steps off retail's z on 1.5b (-10.992799 against
+-10.992797) and 1 on UO, UO's second strike 3.
+
+VERIFIED, live (retail 1.5b and UO 1.51b under gdb, 2026-10-20, the same
+recipe on ports 34181 and 34183, both clients' cmds logged; scripts and
+dumps in the gitignored `tmp/strikebones/`): breakpoints on the locational trace (1.5b
+0x80d2000, UO 0x80c7394; the DObj's skeleton, the body-frame start and
+end, the caller's world start and end), on the skeleton build (1.5b
+0x80d0902, UO 0x80c5c96; the records) and after the call (1.5b
+0x8099a80, UO 0x809aa78; the fraction and normal), with each run's cmds
+replayed on ours. Ours' records, world quaternions, origins and
+matrices at the strike matched the dump on all 101 bones (113 on retail
+with the head and helmet parts' repeats), and so did the strike's
+fraction and normal. Two things did not:
+
+- VERIFIED, the body's frame. The probe turns the target with `setPlayerAngles`
+  to (0, 225, 0), which `r.currentAngles` holds until his next cmd
+  (3.7). vcod turned that frame through an `f32` quaternion, forward x
+  0xbf3504f5; retail's `AnglesToAxis` gives 0xbf3504f4, the stored
+  sine and cosine above. Every start and end in the body's frame was 1
+  step off in x and further in the near-zero y.
+- VERIFIED, the end point: the kept form above, not the stored one.
+
+VERIFIED, vcod measurement: with both, every one of the runs' 19 (1.5b)
+and 37 (UO) traces against the target starts and ends on retail's bits,
+and `scriptmodel_ab`'s mp_carentan prone gates hold every base and rest
+to the bit on all five captures (three 1.5b, two UO, the cmd-less ones
+included); the 3-step `STRIKE_STEPS` is gone.
 
 VERIFIED, vcod measurement (`scriptmodel_ab`, the UO mp_brecourt roll):
 the first frag strikes the prone target's legs and rests on the grade

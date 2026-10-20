@@ -1,0 +1,135 @@
+# Retail United Offensive 1.51b dedicated server, mp_carentan, gametype probe_itemdrop (dm), 2026-10-20.
+# Server: crates/gsc/tests/fixtures/semantics/client-probes/probe_itemdrop.gsc under
+# COD_VERSION=uo tools/run_probe.sh, COD_DIR at a stock install (uo/ beside 1.5's main/); its PROBE lines,
+# unedited, come first.
+# Client: --net-probe --probe-team allies --probe-items (--mod-dir uo); every ITEM and ITEM_GONE
+# line it printed, unedited, the trajectories as shortest round-trip floats. The
+# client holds its view at world yaw 0, so every drop runs along +x.
+# Read in docs/research/cod11-items.md section 14.7 and gated by
+# crates/server/tests/itemdrop_ab.rs.
+PROBE start 14600
+PROBE spawned randomhealth 15600 170 (838.00, 2222.00, -22.87)
+PROBE trigger randomhealth 15650 0
+PROBE at randomhealth 15700 (838.00, 2222.00, -23.87) (0.00, 0.00, 0.00)
+PROBE at randomhealth 15750 (838.00, 2222.00, -23.16) (0.00, 0.00, 0.00)
+PROBE rest randomhealth 18750 (838.00, 2222.00, -23.16) (0.00, 0.00, 0.00)
+PROBE spawned respawncolt 20600 171 (838.00, 2222.00, -22.68)
+PROBE trigger respawncolt 20650 0
+PROBE at respawncolt 20700 (838.00, 2222.00, -22.13) (0.00, 0.00, 90.00)
+PROBE rest respawncolt 23700 (838.00, 2222.00, -22.13) (0.00, 0.00, 90.00)
+PROBE trigger respawncolt 28650 0
+PROBE drop flat 29600 172 mpweapon_m1carbine player (838.00, 2222.00, -23.68) (0.00, 0.00, 0.00) item (844.22, 2217.06, 24.43) (0.00, 0.00, 0.00)
+PROBE at flat 29700 (851.72, 2217.06, 34.00) (0.00, 0.00, 0.00)
+PROBE at flat 29750 (859.22, 2217.06, 41.57) (0.00, 0.00, 0.00)
+PROBE at flat 29800 (866.72, 2217.06, 47.14) (0.00, 0.00, 0.00)
+PROBE at flat 29850 (874.22, 2217.06, 50.71) (0.00, 0.00, 0.00)
+PROBE at flat 29900 (881.72, 2217.06, 52.28) (0.00, 0.00, 0.00)
+PROBE at flat 29950 (889.22, 2217.06, 51.85) (0.00, 0.00, 0.00)
+PROBE at flat 30000 (896.72, 2217.06, 49.42) (0.00, 0.00, 0.00)
+PROBE at flat 30050 (904.22, 2217.06, 44.99) (0.00, 0.00, 0.00)
+PROBE at flat 30100 (911.72, 2217.06, 38.56) (0.00, 0.00, 0.00)
+PROBE at flat 30150 (919.22, 2217.06, 30.13) (0.00, 0.00, 0.00)
+PROBE at flat 30200 (926.72, 2217.06, 19.70) (0.00, 0.00, 0.00)
+PROBE at flat 30250 (934.22, 2217.06, 7.28) (0.00, 0.00, 0.00)
+PROBE at flat 30300 (941.72, 2217.06, -7.15) (0.00, 0.00, 0.00)
+PROBE at flat 30350 (949.22, 2217.06, -23.58) (0.00, 0.00, 0.00)
+PROBE at flat 30400 (952.19, 2217.06, -30.04) (0.00, 0.00, 90.00)
+PROBE rest flat 33400 (952.19, 2217.06, -30.04) (0.00, 0.00, 90.00)
+PROBE drop wall 33600 173 mpweapon_colt player (836.23, -645.95, 5.22) (0.00, 0.00, 0.00) item (840.32, -653.85, 51.54) (0.00, 0.00, 0.00)
+PROBE at wall 33700 (847.82, -653.85, 60.86) (0.00, 0.00, 0.00)
+PROBE at wall 33750 (855.32, -653.85, 68.18) (0.00, 0.00, 0.00)
+PROBE at wall 33800 (862.82, -653.85, 73.50) (0.00, 0.00, 0.00)
+PROBE at wall 33850 (870.32, -653.85, 76.82) (0.00, 0.00, 0.00)
+PROBE at wall 33900 (877.82, -653.85, 78.14) (0.00, 0.00, 0.00)
+PROBE at wall 33950 (885.32, -653.85, 77.46) (0.00, 0.00, 0.00)
+PROBE at wall 34000 (892.82, -653.85, 74.78) (0.00, 0.00, 0.00)
+PROBE at wall 34050 (900.32, -653.85, 70.10) (0.00, 0.00, 0.00)
+PROBE at wall 34100 (905.58, -653.85, 66.33) (336.37, 0.00, 90.00)
+PROBE rest wall 37100 (905.58, -653.85, 66.33) (336.37, 0.00, 90.00)
+PROBE drop slope 37600 174 mpweapon_fraggrenade player (468.00, -822.00, 31.59) (0.00, 0.00, 0.00) item (472.08, -826.76, 78.90) (0.00, 0.00, 0.00)
+PROBE at slope 37700 (479.58, -826.76, 88.28) (0.00, 0.00, 0.00)
+PROBE at slope 37750 (487.08, -826.76, 95.67) (0.00, 0.00, 0.00)
+PROBE at slope 37800 (494.58, -826.76, 101.05) (0.00, 0.00, 0.00)
+PROBE at slope 37850 (502.08, -826.76, 104.43) (0.00, 0.00, 0.00)
+PROBE at slope 37900 (509.58, -826.76, 105.81) (0.00, 0.00, 0.00)
+PROBE at slope 37950 (517.08, -826.76, 105.20) (0.00, 0.00, 0.00)
+PROBE at slope 38000 (524.58, -826.76, 102.58) (0.00, 0.00, 0.00)
+PROBE at slope 38050 (532.08, -826.76, 97.96) (0.00, 0.00, 0.00)
+PROBE at slope 38100 (539.58, -826.76, 91.34) (0.00, 0.00, 0.00)
+PROBE at slope 38150 (547.08, -826.76, 82.73) (0.00, 0.00, 0.00)
+PROBE at slope 38200 (554.58, -826.76, 72.11) (0.00, 0.00, 0.00)
+PROBE at slope 38250 (562.08, -826.76, 59.49) (0.00, 0.00, 0.00)
+PROBE at slope 38300 (569.58, -826.76, 44.87) (0.00, 0.00, 0.00)
+PROBE at slope 38350 (577.08, -826.76, 28.26) (0.00, 0.00, 0.00)
+PROBE at slope 38400 (579.22, -826.76, 23.75) (6.95, 1.08, 98.86)
+PROBE rest slope 41400 (579.22, -826.76, 23.75) (6.95, 1.08, 98.86)
+PROBE drop health 41600 175 item_health player (838.00, 2222.00, -23.68) (0.00, 0.00, 0.00) item (838.00, 2222.00, 11.32) (0.00, 0.00, 0.00)
+PROBE at health 41700 (845.50, 2222.00, 20.54) (0.00, 0.00, 0.00)
+PROBE at health 41750 (853.00, 2222.00, 27.76) (0.00, 0.00, 0.00)
+PROBE at health 41800 (860.50, 2222.00, 32.98) (0.00, 0.00, 0.00)
+PROBE at health 41850 (868.00, 2222.00, 36.20) (0.00, 0.00, 0.00)
+PROBE at health 41900 (875.50, 2222.00, 37.42) (0.00, 0.00, 0.00)
+PROBE at health 41950 (883.00, 2222.00, 36.64) (0.00, 0.00, 0.00)
+PROBE at health 42000 (890.50, 2222.00, 33.86) (0.00, 0.00, 0.00)
+PROBE at health 42050 (898.00, 2222.00, 29.09) (0.00, 0.00, 0.00)
+PROBE at health 42100 (905.50, 2222.00, 22.31) (0.00, 0.00, 0.00)
+PROBE at health 42150 (913.00, 2222.00, 13.53) (0.00, 0.00, 0.00)
+PROBE at health 42200 (920.50, 2222.00, 2.75) (0.00, 0.00, 0.00)
+PROBE at health 42250 (928.00, 2222.00, -10.03) (0.00, 0.00, 0.00)
+PROBE at health 42300 (935.50, 2222.00, -24.81) (0.00, 0.00, 0.00)
+PROBE at health 42350 (938.66, 2222.00, -31.03) (0.00, 0.00, 0.00)
+PROBE rest health 45350 (938.66, 2222.00, -31.03) (0.00, 0.00, 0.00)
+PROBE spawned air 45600 176 (838.00, 2282.00, 49.00) (0.00, 45.00, 0.00)
+PROBE at air 45700 (838.00, 2282.00, 48.00) (0.00, 45.00, 0.00)
+PROBE at air 45750 (838.00, 2282.00, 45.00) (0.00, 45.00, 0.00)
+PROBE at air 45800 (838.00, 2282.00, 40.00) (0.00, 45.00, 0.00)
+PROBE at air 45850 (838.00, 2282.00, 33.00) (0.00, 45.00, 0.00)
+PROBE at air 45900 (838.00, 2282.00, 24.00) (0.00, 45.00, 0.00)
+PROBE at air 45950 (838.00, 2282.00, 13.00) (0.00, 45.00, 0.00)
+PROBE at air 46000 (838.00, 2282.00, -0.00) (0.00, 45.00, 0.00)
+PROBE at air 46050 (838.00, 2282.00, -15.00) (0.00, 45.00, 0.00)
+PROBE at air 46100 (838.00, 2282.00, -22.23) (0.00, 45.00, 90.00)
+PROBE spawned feet 46100 177 (468.00, -822.00, 33.00) (0.00, 123.00, 0.00)
+PROBE at feet 46200 (468.00, -822.00, 32.00) (0.00, 123.00, 0.00)
+PROBE at feet 46250 (468.00, -822.00, 32.37) (359.42, 123.01, -0.79)
+PROBE spawned hang 46600 178 (898.00, 2222.00, 17.00) (0.00, 0.00, 0.00)
+PROBE rest air 49100 (838.00, 2282.00, -22.23) (0.00, 45.00, 90.00)
+PROBE rest feet 49250 (468.00, -822.00, 32.37) (359.42, 123.01, -0.79)
+PROBE rest hang 49600 (898.00, 2222.00, 17.00) (0.00, 0.00, 0.00)
+PROBE done 50600
+ITEM t=11450 num=247 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,388,-792,32.52393,0,0,0 apos=0,0,-0.9173584,90.00549,89.64844,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=248 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,393,-792,32.55436,0,0,0 apos=0,0,0.91186523,-89.99451,90.34607,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=249 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,404,-792,32.6213,0,0,0 apos=0,0,0.91186523,-89.99451,90.34607,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=250 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,399,-792,32.590874,0,0,0 apos=0,0,-0.9173584,90.00549,89.64844,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=253 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,810,2274,-22.83404,0,0,0 apos=0,0,0.000000000000000000000000000000000000000000001,90,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=254 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,815,2274,-22.83404,0,0,0 apos=0,0,0,-90,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=255 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,826,2274,-22.83404,0,0,0 apos=0,0,0,-90,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=11450 num=256 index=41 clientNum=254 eFlags=16 ground=1022 pos=0,0,821,2274,-22.83404,0,0,0 apos=0,0,0.000000000000000000000000000000000000000000001,90,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=15600 num=170 index=132 clientNum=254 eFlags=16 ground=1023 pos=5,15600,838,2222,-22.874992,0,0,0 apos=0,0,0,0,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM_GONE t=15650 num=170
+ITEM t=16600 num=170 index=132 clientNum=254 eFlags=272 ground=1022 pos=0,0,838,2222,-23.163258,0,0,0 apos=0,0,0,0,0,0,0,0 seq=1 events=197,0,0,0 parms=0,0,0,0
+ITEM t=16650 num=170 index=132 clientNum=254 eFlags=16 ground=1022 pos=0,0,838,2222,-23.163258,0,0,0 apos=0,0,0,0,0,0,0,0 seq=1 events=197,0,0,0 parms=0,0,0,0
+ITEM t=20600 num=171 index=9 clientNum=254 eFlags=16 ground=1023 pos=5,20600,838,2222,-22.6772,0,0,0 apos=0,0,0,0,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM_GONE t=20650 num=171
+ITEM t=25600 num=171 index=9 clientNum=254 eFlags=272 ground=1022 pos=0,0,838,2222,-22.134321,0,0,0 apos=0,0,0,0,90,0,0,0 seq=1 events=197,0,0,0 parms=0,0,0,0
+ITEM t=25650 num=171 index=9 clientNum=254 eFlags=16 ground=1022 pos=0,0,838,2222,-22.134321,0,0,0 apos=0,0,0,0,90,0,0,0 seq=1 events=197,0,0,0 parms=0,0,0,0
+ITEM_GONE t=28650 num=171
+ITEM t=29600 num=172 index=23 clientNum=0 eFlags=16 ground=0 pos=5,29600,844.2245,2217.0613,24.427105,150,0,211.41328 apos=2,29600,0,0,0,16.85374,21.3618,-27.165337 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=30350 num=172 index=23 clientNum=0 eFlags=16 ground=1022 pos=0,0,952.1917,2217.0613,-30.040419,0,0,0 apos=0,0,0,0,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=30600 num=172 index=23 clientNum=254 eFlags=16 ground=1022 pos=0,0,952.1917,2217.0613,-30.040419,0,0,0 apos=0,0,0,0,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=33600 num=171 index=9 clientNum=254 eFlags=272 ground=1022 pos=0,0,838,2222,-22.134321,0,0,0 apos=0,0,0,0,90,0,0,0 seq=2 events=197,197,0,0 parms=0,0,0,0
+ITEM t=33600 num=173 index=9 clientNum=0 eFlags=16 ground=0 pos=5,33600,840.31683,-653.85443,51.535625,150,0,206.41843 apos=2,33600,0,0,0,-34.39918,19.032156,34.267292 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=33650 num=171 index=9 clientNum=254 eFlags=16 ground=1022 pos=0,0,838,2222,-22.134321,0,0,0 apos=0,0,0,0,90,0,0,0 seq=2 events=197,197,0,0 parms=0,0,0,0
+ITEM t=34050 num=173 index=9 clientNum=0 eFlags=16 ground=1022 pos=0,0,905.5775,-653.85443,66.326454,0,0,0 apos=0,0,-23.631592,0,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=34600 num=173 index=9 clientNum=254 eFlags=16 ground=1022 pos=0,0,905.5775,-653.85443,66.326454,0,0,0 apos=0,0,-23.631592,0,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=37600 num=174 index=18 clientNum=0 eFlags=16 ground=0 pos=5,37600,472.0833,-826.76025,78.89996,150,0,207.65346 apos=2,37600,0,0,0,-29.92154,16.73203,-3.6636806 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=38350 num=174 index=18 clientNum=0 eFlags=16 ground=1022 pos=0,0,579.2209,-826.76025,23.749039,0,0,0 apos=0,0,6.9433594,1.0766602,98.86047,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=38600 num=174 index=18 clientNum=254 eFlags=16 ground=1022 pos=0,0,579.2209,-826.76025,23.749039,0,0,0 apos=0,0,6.9433594,1.0766602,98.86047,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=41600 num=175 index=132 clientNum=0 eFlags=16 ground=0 pos=5,41600,838,2222,11.316799,150,0,204.42061 apos=0,0,0,0,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=42300 num=175 index=132 clientNum=0 eFlags=16 ground=1022 pos=0,0,938.65796,2222,-31.034792,0,0,0 apos=0,0,0,0,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=42600 num=175 index=132 clientNum=254 eFlags=16 ground=1022 pos=0,0,938.65796,2222,-31.034792,0,0,0 apos=0,0,0,0,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=45600 num=176 index=23 clientNum=254 eFlags=16 ground=1023 pos=5,45600,838,2282,49,0,0,0 apos=0,0,0,45,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=46050 num=176 index=23 clientNum=254 eFlags=16 ground=1022 pos=0,0,838,2282,-22.233717,0,0,0 apos=0,0,0.000000000000000000000000000000000000000000001,45,90,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=46100 num=177 index=132 clientNum=254 eFlags=16 ground=1023 pos=5,46100,468,-822,33,0,0,0 apos=0,0,0,122.99744,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=46200 num=177 index=132 clientNum=254 eFlags=16 ground=1022 pos=0,0,468,-822,32.3659,0,0,0 apos=0,0,-0.5767822,123.00293,-0.78552246,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
+ITEM t=46600 num=178 index=9 clientNum=254 eFlags=16 ground=0 pos=0,0,898,2222,17,0,0,0 apos=0,0,0,0,0,0,0,0 seq=0 events=0,0,0,0 parms=0,0,0,0
