@@ -192,24 +192,30 @@ pub fn bounds(weapon: bool) -> (Vec3, Vec3) {
 /// `rand() / 2^31` as each module divides it, the draw every item constant
 /// multiplies: 1.1d multiplies by -2^-31 (0x74d50, 0x74e50), a uniform in
 /// (-1, 0]; 1.5b and UO divide by +2^31 (game15 0x8a0ec, game.mp.uo
-/// 0xb056c), [0, 1) (items doc 14.2).
-fn unit_draw(host: &mut GameHost) -> f32 {
-    let u = host.rand_int() as f32 / 2_147_483_648.0;
+/// 0xb056c), [0, 1) (items doc 14.2). Exact in f64, as on the x87 stack;
+/// a pinned draw (`Server::pin_item_draws`) goes first.
+fn unit_draw(host: &mut GameHost) -> f64 {
+    let r = match host.item_draw_pins.pop_front() {
+        Some(r) => r,
+        None => host.rand_int(),
+    };
+    let u = f64::from(r) / 2_147_483_648.0;
     if host.speaks_1_1() { -u } else { u }
 }
 
 /// The module's `crandom()` as compiled, `2 * unit_draw() - 1`: on 1.1d it
 /// reads (-3, -1] rather than Q3's (-1, 1), so a launch climbs at 50 to 150
 /// units a second and every spin runs negative (section 8); on 1.5b and UO
-/// it reads [-1, 1).
-pub fn crandom(host: &mut GameHost) -> f32 {
+/// it reads [-1, 1). Every caller keeps it on the stack through its
+/// constants and rounds to a float once (items doc 14.7).
+pub fn crandom(host: &mut GameHost) -> f64 {
     2.0 * unit_draw(host) - 1.0
 }
 
 /// `G_BounceItem`'s lift over the floor, `0.5 + 0.5 * unit_draw()`:
 /// (0, 0.5] on 1.1d, [0.5, 1) on 1.5b and UO (items doc 14.2).
 fn landing_lift(host: &mut GameHost) -> f32 {
-    0.5 + 0.5 * unit_draw(host)
+    (0.5 + 0.5 * unit_draw(host)) as f32
 }
 
 /// What one `G_RunItem` did to an item in the air.
@@ -588,7 +594,7 @@ fn launch_off(
         .handle(slot as u32)
         .ok_or(ErrorKind::BadType("no such player"))?;
     let yaw = angles_of(host, cx, player)[1].to_radians();
-    let up = LAUNCH_UP + LAUNCH_UP_SPREAD * crandom(host);
+    let up = (f64::from(LAUNCH_UP) + f64::from(LAUNCH_UP_SPREAD) * crandom(host)) as f32;
     let velocity = Vec3::new(yaw.cos() * LAUNCH_SPEED, yaw.sin() * LAUNCH_SPEED, up);
     let mut origin = Vec3::from(origin_of(host, cx, player));
     origin.z += host.client_height.get(slot).copied().unwrap_or(0.0) * 0.5;
@@ -644,11 +650,8 @@ pub fn launch_weapon(
             let angles = angles_of(host, cx, player);
             let atom = cx.intern_folded("angles");
             host.set_field(cx, id, atom, Value::Vector(angles))?;
-            let spin = Vec3::new(
-                SPIN[0] * crandom(host),
-                SPIN[1] * crandom(host),
-                SPIN[2] * crandom(host),
-            );
+            let spin = SPIN.map(|k| (f64::from(k) * crandom(host)) as f32);
+            let spin = Vec3::from(spin);
             let now = host.level_time_ms;
             if let Some(i) = host.ents.get_mut(id).and_then(|e| e.item.as_mut()) {
                 i.apos = Some(Trajectory {
@@ -1016,7 +1019,7 @@ fn respawn_secs(host: &mut GameHost, cx: &mut Cx, id: EntId, index: usize) -> Op
         secs = wait as i32;
     }
     if random != 0.0 {
-        secs += (crandom(host) * random) as i32;
+        secs += (crandom(host) * f64::from(random)) as i32;
         secs = secs.max(1);
     }
     (secs > 0).then_some(secs)

@@ -285,10 +285,12 @@ pub fn pickup_health(inv: &mut Inventory, quantity: i32, count: i32) -> i32 {
 }
 
 /// `Pickup_Weapon`'s reading of the item's counts (section 4.1), which it
-/// writes back: returns `(reserve, clip)`, both at least 0.
+/// writes back: returns `(reserve, clip)`, both at least 0. `v11` picks
+/// 1.1d's draw for a weapon with no drop range over 1.5b's and UO's.
 fn resolve_counts(
     def: &WeaponDef,
     it: &mut ItemCounts,
+    v11: bool,
     rand: &mut dyn FnMut() -> i32,
 ) -> (i32, i32) {
     let reserve = if it.count < 0 {
@@ -301,8 +303,18 @@ fn resolve_counts(
                 (def.drop_ammo_min, def.drop_ammo_max)
             };
             it.count = if lo == 0 && hi == 0 {
-                let u = 1.0 - f64::from(rand()) / 2_147_483_648.0;
-                (u * 0.5 * (f64::from(def.clip_size) - 1.0) + 0.5) as i32 + 1
+                let u = f64::from(rand()) / 2_147_483_648.0;
+                let spare = f64::from(def.clip_size) - 1.0;
+                if v11 {
+                    // 1.1d keeps the chain on the stack: (0, 0.5] of the spare.
+                    ((1.0 - u) * 0.5 * spare + 0.5) as i32 + 1
+                } else {
+                    // 1.5b and UO store the factor and the product as floats
+                    // and add the half in the rounding helper: [0.5, 1).
+                    let f = (0.5 * (1.0 + u)) as f32;
+                    let x = (spare * f64::from(f)) as f32;
+                    (f64::from(x) + 0.5) as i32 + 1
+                }
             } else if hi < 0 {
                 0
             } else if hi == lo {
@@ -372,7 +384,8 @@ fn pickup_weapon(
     let Some(def) = table.get(wi) else {
         return false;
     };
-    let (reserve, clip) = resolve_counts(def, it, rand);
+    let v11 = table.list().proto.version == vcod_common::net::protocol::PROTOCOL_V1.version;
+    let (reserve, clip) = resolve_counts(def, it, v11, rand);
     if inv.weapons.holds(wi) {
         let offered = reserve + clip;
         let gain = add_ammo(inv, table, wi, offered, false);
@@ -669,6 +682,43 @@ mod tests {
 
     fn no_rand() -> impl FnMut() -> i32 {
         || 0
+    }
+
+    /// A frag with no `count` (drop range 0..0, clip 3) hands out 1 or 2 on
+    /// 1.1d and 2 or 3 on 1.5b and UO: `fixtures/items/mp_carentan-dm-fragcount-*`
+    /// logged nothing else over twenty pickups each (section 4.1).
+    #[test]
+    fn a_countless_frag_draws_each_patchs_range() {
+        let t = table();
+        let def = t.get(idx("stielhandgranate_mp") as usize).unwrap();
+        let fixture = |tag: &str| {
+            let path = format!(
+                "{}/tests/fixtures/items/mp_carentan-dm-fragcount-{tag}.txt",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let text = std::fs::read_to_string(path).unwrap();
+            let seen: std::collections::BTreeSet<i32> = text
+                .lines()
+                .filter(|l| l.starts_with("PROBE frag "))
+                .map(|l| l.rsplit(' ').next().unwrap().parse().unwrap())
+                .collect();
+            seen.into_iter().collect::<Vec<_>>()
+        };
+        for (v11, tags) in [(true, &["11"][..]), (false, &["15", "uo"][..])] {
+            // Just under a half: 1.5b's stored factor rounds up to 0.75.
+            let drawn: Vec<i32> = [0, (1 << 30) - 1, 1 << 30, i32::MAX]
+                .map(|r| {
+                    let mut it = ItemCounts { count: 0, clip: 0 };
+                    let (reserve, clip) = resolve_counts(def, &mut it, v11, &mut || r);
+                    reserve + clip
+                })
+                .to_vec();
+            let want = if v11 { [2, 2, 2, 1] } else { [2, 3, 3, 3] };
+            assert_eq!(drawn, want, "v11 {v11}");
+            for tag in tags {
+                assert_eq!(fixture(tag), if v11 { vec![1, 2] } else { vec![2, 3] });
+            }
+        }
     }
 
     fn view(index: u8) -> ItemView<'static> {

@@ -3648,6 +3648,15 @@ impl Server {
         }
     }
 
+    /// Test-facing: the `rand()` values the next item draws take in place of
+    /// the server's own (`game::item`'s `unit_draw`), so a gate can launch a
+    /// drop with the climb and spin a retail capture shows.
+    pub fn pin_item_draws(&mut self, draws: Vec<i32>) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.item_draw_pins = draws.into();
+        }
+    }
+
     /// Test-facing: the missile pool's next draws, a retail capture's
     /// tumble rates and bounce factors (`Missiles::pin_draws`).
     pub fn pin_missile_draws(&mut self, draws: Vec<f64>) {

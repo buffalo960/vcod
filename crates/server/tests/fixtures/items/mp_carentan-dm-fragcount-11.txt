@@ -1,0 +1,28 @@
+# Retail CoD 1.1d dedicated server, mp_carentan, gametype probe_fragcount (dm), 2026-10-20.
+# Server: crates/gsc/tests/fixtures/semantics/client-probes/probe_fragcount.gsc under
+# COD_VERSION=1.1 tools/run_probe.sh with a --net-probe --probe-team allies
+# --probe-items client; its PROBE lines, unedited: the grenade clip each
+# walk-on pickup of a count-less frag left. Read in docs/research/cod11-items.md
+# section 4.1 and gated by crates/server/src/game/pickup.rs.
+PROBE start 10150 fraggrenade_mp
+PROBE frag 0 10750 1
+PROBE frag 1 11350 2
+PROBE frag 2 11950 2
+PROBE frag 3 12550 1
+PROBE frag 4 13150 1
+PROBE frag 5 13750 1
+PROBE frag 6 14350 2
+PROBE frag 7 14950 2
+PROBE frag 8 15550 1
+PROBE frag 9 16150 1
+PROBE frag 10 16750 2
+PROBE frag 11 17350 1
+PROBE frag 12 17950 2
+PROBE frag 13 18550 1
+PROBE frag 14 19150 2
+PROBE frag 15 19750 2
+PROBE frag 16 20350 2
+PROBE frag 17 20950 1
+PROBE frag 18 21550 2
+PROBE frag 19 22150 2
+PROBE done 22150

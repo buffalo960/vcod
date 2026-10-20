@@ -12380,8 +12380,9 @@ impl ItemsProbe {
             let i = |n: &str| e.field_i32(p, n);
             let tr = |g: &str| {
                 let t = Trajectory::read(e, p, g);
+                // Shortest round-trip floats: a gate reads the wire's bits back.
                 format!(
-                    "{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
+                    "{},{},{},{},{},{},{},{}",
                     t.tr_type,
                     t.tr_time,
                     t.base.x,
