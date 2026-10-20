@@ -1810,10 +1810,12 @@ players go down in the slab's path, slot 0 then slot 1, and a flat
 What `G_MoverPush`'s candidate trace lets through besides the pusher, for
 `docs/research/cod11-movers.md` 12 ("The candidate trace"). mp_carentan
 under dm rules with a `--probe-team spectator` client first, then two
-`--probe-team allies` ones; the spectator keeps `StuckInClient` off so a
-stacked pair stays stacked. The recipe is in the header of
-`crates/server/tests/fixtures/movers/mp_carentan-dm-pushcand.txt`, the
-2026-10-20 run, which `crates/server/tests/push_candidate_ab.rs` replays.
+`--probe-team allies --probe-ride` ones; the spectator keeps
+`StuckInClient` off so a stacked pair stays stacked, and the allies log
+their `CMDS` lines with each send's wall clock (`w=`). The recipe is in the
+header of `crates/server/tests/fixtures/movers/mp_carentan-dm-pushcand.txt`,
+the 2026-10-20 run, which `crates/server/tests/push_candidate_ab.rs`
+replays on those cmds in that packet order.
 The slab runs a one-frame `movey` into one player, two stacked, two half
 overlapped and one sunk into the street, logging its origin and both
 players' every frame.

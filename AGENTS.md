@@ -376,7 +376,9 @@ header of the fixture it produced.
   `mp_carentan-dm-turret-uo.txt` committed, as 1.5's `-15.txt`, and
   `-victim-uo.txt`, which logs the target's entity),
   `--probe-flame` beside
-  `probe_flame` (`coduo-diff.md` 19, "The flame report") and
+  `probe_flame` (`coduo-diff.md` 19, "The flame report"), `--probe-items`
+  beside `probe_itemdrop` and `probe_fragcount` (`cod11-items.md` 4.1,
+  14.7) and
   `--save-scripted` beside `probe_ctf`, `probe_dom`, `probe_hq`,
   `probe_bas`, their `*end` endings, `probe_ctftime`, `probe_tdmend`,
   `probe_hqtime`, `probe_bastime`, `probe_domtime` and `probe_menuclock`,
@@ -639,7 +641,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   its tail and the trace's end point, and `PM_ClipVelocity`,
   `VectorNormalize` and `PM_Friction` store theirs (`cod15-movement.md` 7), and
 so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
-  locational bone trace and its hit point (`BoneTraceCtx::arith`, 3.1). A 1.5 or
+  locational bone trace (`BoneTraceCtx::arith`, 3.1; its hit point on a
+  body keeps the stack, `combat::trace_point`). A 1.5 or
   UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
   a replay world in a test sets it too. A 1.5 or UO body's bones for a
   trace or a tag link come from the engine's own unnormalized anim
@@ -669,7 +672,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   whole trace that must name the pusher: a body in the world, or met
   first by another entity on the area walk, is passed through
   (`push::names_pusher`, movers doc 12). A sine mover never stalls: it
-  crushes a player it cannot place (movers doc 21).
+  crushes a player it cannot place (movers doc 21). A `Pmove` clips only
+  clients linked in the area tree: a blocked push leaves its player out
+  until his own next cmd, and a two-client gate on that orders the
+  clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat

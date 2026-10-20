@@ -829,7 +829,7 @@ pub fn bullet_trace(
         (t.fraction, t.normal, ent, t.surface_flags)
     });
     // The world trace's own end point, unless the entity pass lowers the
-    // fraction (1.5b 0x809a44d; cod11-combat.md 2.7).
+    // fraction (1.5b 0x8099b18; cod11-combat.md 2.7).
     let arith = vcod_common::patch::Arith::for_protocol(host.defs.proto);
     let mut point = t.map_or(end, |(t, _)| t.endpos);
     if let Some(e) = script_model_hit(host, cx, start, end, ignore, hit.map_or(1.0, |h| h.0)) {

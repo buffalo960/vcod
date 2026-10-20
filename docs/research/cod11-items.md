@@ -294,6 +294,30 @@ every stock BSP that places them, `mpweapon_panzerfaust` carries no `count`;
 retail run (section 12.1): a stock server sets `scr_allow_fg42 0` and has no
 placed fg42 left after the map load.
 
+VERIFIED, 1.5b's `Pickup_Weapon` count read (game15 0x5a86b, the zero-count
+draw 0x5a912..0x5a962): `fild rand()`, `fdivp` by 0x89e4c (2^31), `faddp`
+0x89e50 (1.0), `fmulp` 0x89e54 (0.5) and `fstps` into a local, then
+`(clipSize - 1)` `fild`ed and `fmuls` by that local, `fstps` as the
+argument of the helper at 0x5d844, which adds 0x8a0fc (0.5) and `fistp`s
+under a control word `| 0xc00`, and `inc` the result. United Offensive's
+(game.mp.uo 0x638e7, 0x63991..0x639e1) is the same sequence over 0xb02cc,
+0xb02d0 and 0xb02d4 (2^31, 1.0, 0.5) and the helper at 0x66a7d (0.5 at
+0xb057c). INFERRED: on both, `count = 1 + trunc(f32((clipSize - 1) *
+f32(0.5 * (1 + rand() / 2^31))) + 0.5)`, the factor in [0.5, 1) where
+1.1d's `0.5 * (1 - rand() / 2^31)` is in (0, 0.5]; a factor just under 0.75
+rounds up to it in the store. The min/max ordering, the `rand() % (max -
+min) + min` arm and the clip read are 1.1d's (0x5a8a1..0x5ab2e). VERIFIED,
+`fixtures/items/mp_carentan-dm-fragcount-11.txt`, `-15.txt` and `-uo.txt`,
+`client-probes/probe_fragcount` on each retail server: a frag
+(`fraggrenade_mp`, clip 3, drop range 0..0 in all three patches' files)
+spawned with no `count` and walked onto with an empty clip left 1 or 2
+grenades twenty times out of twenty on 1.1d, 2 or 3 on 1.5b and on UO.
+INFERRED: the stock weapons this draw reaches are the grenades (UO's smoke
+and flash too) and UO's binoculars (clip 10), and only when placed or
+spawned without a `count`; a drop always writes one. vcod:
+`pickup::resolve_counts` takes the patch, gated by
+`a_countless_frag_draws_each_patchs_range`.
+
 ### 4.2 `Add_Ammo(ent, weapon, count, fillClip)` (0x4ca10)
 
 VERIFIED, the stores and calls in address order: `ps.ammo[a] += count`
@@ -599,6 +623,16 @@ the reserve is not split with other held weapons that share the ammo index,
 which lose it with the dropped one. INFERRED: 0x4df20..0x4e073 is the branch
 for an entity without a client, which draws the counts from
 `dropAmmoMin`/`dropAmmoMax`; no stock path reaches it.
+
+VERIFIED, 1.5b's `Drop_Weapon` (game15 0x5c0f6) and UO's (game.mp.uo
+0x652e6): the launch is a call to `Drop_Item(ent, item, 0, 0)` (game15
+0x5c202), and a client's drop reads the whole reserve and clip and stores 0
+into both before `BG_TakePlayerWeapon` (0x5c283), as 1.1d's does. The
+`0.5 * (1 + rand() / 2^31)` and `0.25 + 0.5 * rand() / 2^31` draws
+(0x5c2eb..0x5c369, constants 0x89ff0..0x89ffc) sit in the arm taken when
+`ent->client` (`ent+0x15c`) is NULL. INFERRED: as on 1.1d, a player's drop
+never draws its counts, so no stock drop reaches them; the draw a stock
+item can reach is `Pickup_Weapon`'s (4.1).
 
 VERIFIED, `BG_TakePlayerWeapon` (0x36b78): it clears the slot byte in
 `ps.weaponslots` (0x36c51, 0x36c63), clears the weapon's bit (0x36c73) and
@@ -1393,8 +1427,8 @@ and UO's lift [0.5, 1). VERIFIED, the same divide in both modules'
 `Touch_Item` respawn draw (game15 0x89fb4, game.mp.uo 0xb0434), `Drop_Item`'s
 climb (0x89fdc, 0xb045c) and `Drop_Weapon`'s spin (0x89ff0, 0xb0470).
 INFERRED: their `crandom()` reads [-1, 1), so a 1.5b or UO drop climbs at 150
-to 250 units a second and spins either way; no committed capture measures
-one. VERIFIED, `crates/server/tests/fixtures/touchorder/`, three
+to 250 units a second and spins either way, which the captures of 14.7
+show. VERIFIED, `crates/server/tests/fixtures/touchorder/`, three
 `item_health` spawned 16 over mp_pavlov's floor at (-10928.5, 12051), (-10936.5,
 12059) and (-10944.5, 12051): ours' sweeps end at z -29.635, -30.173 and
 -29.880 on all three patches, and retail rests them 0.045, 0.113 and 0.130
@@ -1542,5 +1576,45 @@ replayed through `run_flight` from its own wire trajectory (each nudge on the
 same frame to the hundredth, each landing on the same frame and spot, up to
 the half unit of lift, and to 0.05 degrees), and the probe on our server
 with a client that holds the carbine and a zero view, held to retail's lines
-per item: what is sent and when, from `PROBE start`, with the drops' climb,
-spin and tag start held to their ranges.
+per item: what is sent and when, from `PROBE start`, with retail's draws
+pinned so each climb and spin is retail's (14.7), and the tag start held
+against the dropper. It runs each patch's capture at its install.
+
+### 14.7 The launch on 1.5b and UO
+
+Two runs on 2026-10-20 of `client-probes/probe_itemdrop` with the same
+`--probe-items` client, against the retail 1.5b and United Offensive 1.51b
+servers on mp_carentan, wrote `fixtures/items/mp_carentan-dm-itemdrop-15.txt`
+and `-uo.txt`. The client printed every trajectory as a round-trip float,
+so the files carry the wire's bits; 1.1d's fixture has the thousandth.
+
+VERIFIED, the two fixtures: the four drops climb at 163.80312, 242.07518,
+221.2234 and 224.06235 on 1.5b and 211.41328, 206.41843, 207.65346 and
+204.42061 on UO, all inside [150, 250); the three weapon drops spin at
+rates of both signs inside (50, 40, 60) each way, for example (36.441257,
+-18.519897, -19.410183) for 1.5b's carbine. Every drop leaves at 150 in x,
+0 in y, as on 1.1d. The 1.5b and UO wall drops land on the wall's top
+(z 71.3 and 66.3), where 1.1d's slower climb met its face.
+
+VERIFIED, 1.5b's `Drop_Item` climb (game15 0x5c04f..0x5c085): `fild rand()`,
+`fdivp` 2^31, a doubling, `fsubp` 1.0, `fmulp` 50, `faddp` 200 and the
+forward z times 150, one `fstps`. VERIFIED, its `Drop_Weapon` spin
+(0x5c6c9..0x5c74a): the same chain per component times 50, 40 and 60, one
+`fstps` each. VERIFIED, 1.1d's climb (0x4de55..0x4de78): `fild`, `fmuls`
+-2^-31, doubling, `fsubrp` 1, `fmuls` 50, `fadds` 200 and the forward z, one
+`fstps`. INFERRED: each value rounds to a float once, from a chain exact in
+a double, where vcod rounded `rand()` and each step to floats. VERIFIED,
+`itemdrop_ab`: with the draws read back from retail's values and the old
+float steps, the spins came out a float step off retail's (36.441254
+against 36.441257); computed in doubles and rounded once, every climb and
+spin of both captures is retail's to the bit, and 1.1d's to its printed
+thousandth.
+
+VERIFIED, vcod measurement 2026-10-20, `itemdrop_ab` with retail's draws
+pinned (`Server::pin_item_draws`) and each landing's lift taken off
+retail's rest: every drop on all three patches lands on retail's frame.
+Each rests 0.0001 to 0.09 off retail's, under half again its start's offset;
+the start is off by where the player rests and the hand sways (13.4,
+14.1), up to 0.19 for 1.1d's and UO's health drops, whose dropper ours
+rests that much lower after the probe's `setorigin`. Against the dropper's origin each start is within 0.2
+of retail's.
