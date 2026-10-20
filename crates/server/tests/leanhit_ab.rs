@@ -41,10 +41,6 @@ const POINT_NEAR: f32 = 0.5;
 /// retail logs six figures.
 const DIR_NEAR: f32 = 0.00002;
 
-/// Cells `(view, height, column)` per phase where ours may sit more than
-/// [`CELL_NEAR`] off retail's, or hit where retail misses or the other way.
-type Gaps = &'static [(&'static str, &'static [(char, u32, usize)])];
-
 /// One retail capture of the probe and the join times its recipe gave.
 struct Case {
     fixture: &'static str,
@@ -54,21 +50,10 @@ struct Case {
     /// and the setup's prone and stand wait for the shooter.
     join_ms: i64,
     late_ms: i64,
-    /// Retail's origin z less ours, on every phase: the body's own
-    /// offset, carried by every bone of a standing or crouched body and by
-    /// none of a prone one, which rests on its own ground trace.
-    stand_dz: f32,
-    gaps: Gaps,
     /// Phases whose round (point and direction) may part from retail's.
     round_gaps: &'static [&'static str],
     /// Phases whose round's direction alone may part from retail's.
     dir_gaps: &'static [&'static str],
-}
-
-fn gap(gaps: Gaps, phase: &str, view: &str, height: &str, column: usize) -> bool {
-    let (v, h) = (view.chars().next().unwrap(), height.parse::<u32>().unwrap());
-    gaps.iter()
-        .any(|(p, cells)| *p == phase && cells.contains(&(v, h, column)))
 }
 
 /// The join times of the `probe_bones` captures.
@@ -87,25 +72,6 @@ const CMDS_LATE_UO: i64 = 2950;
 /// The second 1.1d `-cmds` run's (`-cmds-ct`), joined the same way.
 const CT_JOIN_11: i64 = 8100;
 const CT_LATE_11: i64 = 3050;
-
-/// The first 1.5b capture's target stands 0.0402 under ours after the
-/// hold's `setOrigin` drop. Where that drop of a unit and a bit stops rides
-/// the cmd times: retail's target lands anywhere from 0.125 under the spot
-/// to 0.024 over it from one run to the next on every server, and ours,
-/// replaying a `-cmds` capture's own cmds, lands on retail's height to the
-/// bit (fall rows and bones of [`cmds_case`]). This capture logged no
-/// cmd times, so its split cannot be replayed (docs/research/cod11-combat.md
-/// 3.6).
-const STAND_DZ_15: f32 = -0.0402;
-/// The cells 1.5b's standing height moves past [`CELL_NEAR`]: rays grazing
-/// a box edge 0.04 units lower (with [`STAND_DZ_15`] every bone matches).
-const CELL_GAPS_15: Gaps = &[
-    ("s_left", &[('s', 40, 4)]),
-    ("s_left_t_right", &[('s', 40, 2)]),
-    ("s_right", &[('s', 58, 4)]),
-    ("t_crouch_left", &[('s', 22, 5)]),
-    ("t_crouch_right", &[('f', 22, 1)]),
-];
 
 /// The buttons, `wbuttons` and `up` of a `f "PROBE_IN ..."` command
 /// (`vehicle_probe::direct_input`).
@@ -457,10 +423,7 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
         "the bone rows"
     );
     for (k, r) in &rb {
-        let mut o = ob[k];
-        if k.1 != "eye" && (k.1 == "origin" || !k.0.contains("prone")) {
-            o[2] += c.stand_dz;
-        }
+        let o = ob[k];
         if (0..3).any(|i| (r[i] - o[i]).abs() > BONE_NEAR) {
             bad.push(format!("bone {k:?}: retail {r:?} ours {o:?}"));
         }
@@ -482,13 +445,10 @@ fn check(fs: vcod_common::pk3::Pk3Fs, c: &Case) {
     report_cells(&rg, &og);
     for (k, r) in &rg {
         let o = &og[k];
-        let off = r.iter().zip(o).enumerate().any(|(i, (r, o))| {
-            !gap(c.gaps, &k.0, &k.1, &k.2, i)
-                && match (r, o) {
-                    (Some(r), Some(o)) => (r - o).abs() > CELL_NEAR,
-                    (None, None) => false,
-                    _ => true,
-                }
+        let off = r.iter().zip(o).any(|(r, o)| match (r, o) {
+            (Some(r), Some(o)) => (r - o).abs() > CELL_NEAR,
+            (None, None) => false,
+            _ => true,
         });
         if off {
             bad.push(format!("cells {k:?}:\n  retail {r:?}\n  ours   {o:?}"));
@@ -539,8 +499,6 @@ fn a_leaning_body_and_a_leaning_shooters_rounds_land_as_on_retail() {
             fixture: include_str!("fixtures/leanhit/mp_carentan-leanhit.txt"),
             join_ms: 8550,
             late_ms: 3450,
-            stand_dz: 0.0,
-            gaps: &[],
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -558,8 +516,6 @@ fn a_leaning_bodys_bones_sit_as_on_retail() {
             fixture: include_str!("fixtures/leanhit/mp_carentan-leanhit-bones.txt"),
             join_ms: JOIN_11,
             late_ms: LATE_11,
-            stand_dz: 0.0,
-            gaps: &[],
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -574,6 +530,9 @@ fn fs_15() -> Option<vcod_common::pk3::Pk3Fs> {
     (vcod_server::server::install_protocol(&fs).version == v6).then_some(fs)
 }
 
+/// The 1.5b `probe_bones` capture logs both clients' cmds and `ct=`, so
+/// the hold's `setOrigin` drop lands where retail's did (`ProbeHold::ran`;
+/// docs/research/cod11-combat.md 3.6).
 #[test]
 fn a_leaning_body_on_15_poses_as_on_retail() {
     let Some(fs) = fs_15() else {
@@ -583,10 +542,8 @@ fn a_leaning_body_on_15_poses_as_on_retail() {
         fs,
         &Case {
             fixture: include_str!("fixtures/leanhit/mp_carentan-leanhit-1.5.txt"),
-            join_ms: 8200,
-            late_ms: 2800,
-            stand_dz: STAND_DZ_15,
-            gaps: CELL_GAPS_15,
+            join_ms: 9450,
+            late_ms: 2750,
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -604,8 +561,6 @@ fn a_leaning_body_on_uo_poses_as_on_retail() {
             fixture: include_str!("fixtures/leanhit/mp_carentan-leanhit-uo.txt"),
             join_ms: JOIN_UO,
             late_ms: LATE_UO,
-            stand_dz: 0.0,
-            gaps: &[],
             round_gaps: &[],
             dir_gaps: &[],
         },
@@ -623,8 +578,6 @@ fn cmds_case(fixture: &'static str, join_ms: i64, late_ms: i64) -> Case {
         fixture,
         join_ms,
         late_ms,
-        stand_dz: 0.0,
-        gaps: &[],
         round_gaps: &[],
         dir_gaps: &[],
     }

@@ -329,7 +329,10 @@ logs `PROBE seat` / `PROBE seatnext <time> <num> <origin> <angles>` straight
 after the `spawn` and a frame later. `probe_vehicle`'s `probe_respawn N`
 does the same for a seated player N seconds after the seat, 200 units off
 the vehicle's starting left. Recipes in the headers of
-`crates/server/tests/fixtures/seatspawn/`.
+`crates/server/tests/fixtures/seatspawn/`. Its `probe_suicide S` kills a
+seated player with `suicide()` S seconds after his first seat and logs
+`PROBE dead` lines for 3 s; `mp_peaks-tdm-slope-8ms-jeep-die-uo.txt`'s
+header has the recipe (`coduo-vehicles.md` 11.7).
 
 ## probe_prone
 
@@ -1297,7 +1300,7 @@ a stance change's `pm_time`, the timer 1.5's corpse ladder test reads
 
 ## probe_deadlink
 
-A linked corpse (`pm_type` 7) on 1.1d: the placed allied player is linked
+A linked corpse (`pm_type` 7) on 1.1d, 1.5b and UO: the placed allied player is linked
 to a `script_origin` inside the moves script's diagonal runs, killed half a
 second later, and stays a linked corpse to the end of the run.
 `docs/research/cod11-player-clip.md` 1.1. The link wait is timed against
@@ -1311,7 +1314,11 @@ cargo run -p vcod -- --game-dir <1.1 install> --net-probe 127.0.0.1:<p> --save-s
 ```
 
 The capture is `crates/server/tests/fixtures/playerstate/mp_carentan-dm-slope-8ms-deadlink-1.1.txt`,
-which `predict_ab` replays.
+which `predict_ab` replays. The same two shells with `COD_VERSION=1.5`
+(`COD_DIR` and the client's `--game-dir` at a stock 1.5 `main/`,
+`--capture-tag deadlink-1.5`) and `COD_VERSION=uo` (`--game-dir <UO
+install> --mod-dir uo`, `--capture-tag deadlink-uo`) took the `-1.5.txt`
+and `-uo.txt` captures with the same link wait.
 
 ## probe_menuresponse
 

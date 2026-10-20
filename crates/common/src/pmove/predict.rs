@@ -240,8 +240,16 @@ pub fn run_cmd(
         // nothing.
     } else if matches!(pred.pm_type, PM_DEAD | PM_DEAD_LINKED) {
         pred.ps.linked = pred.pm_type == PM_DEAD_LINKED;
-        cmd::chop(pred.command_time, cmd, |_, dt| {
-            cmd::dead_step(&mut pred.ps, &mut pred.ring, dt, world, pred.respawned);
+        cmd::chop(pred.command_time, cmd, |step, dt| {
+            cmd::dead_step(
+                &mut pred.ps,
+                &mut pred.ring,
+                step,
+                dt,
+                world,
+                weapons,
+                pred.respawned,
+            );
             pred.ps.jump_latched
         });
     } else if pred.pm_type == PM_SPECTATOR {
