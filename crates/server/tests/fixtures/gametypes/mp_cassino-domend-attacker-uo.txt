@@ -1,11 +1,11 @@
-# Retail CoD UO 1.51b dedicated server running stock domend.gsc under the gsc probe
+# Retail CoD UO 1.51b dedicated server running the gsc probe
 # client-probes/probe_domend.gsc on mp_cassino; this probe joined allies, weapon m1carbine_mp, role attacker.
 # Three shells, the server first, then the two probes, the order the roles join in:
 #   COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=<s> \
 #       tools/run_probe.sh client-probes/<probe> <map>
 #   cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team <team> \
 #       --save-scripted <role> --probe-secs <s>
-# docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.
+# The gsc probe's header has the teams, roles and times.
 # One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after
 # each `s` (and UO's announcer `S`) with the alias it names, and one !trace per snapshot whose rendering
 # moved plus one a second (vcod_common::net::capture::trace_body has the format).

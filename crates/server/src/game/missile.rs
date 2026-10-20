@@ -77,7 +77,7 @@ const EXPLODE_TRACE_DOWN: f32 = 16.0;
 /// The clipmask `fire_grenade` gives a missile (combat doc 11.1), as UO's
 /// `fire_grenade` and `fire_rocket` do (game.mp.uo 0x5fc74): what a script
 /// model's 0x2080 and a vehicle's collision surfaces meet.
-pub(crate) const MISSILE_MODEL_MASK: u32 = 0x0280_2091;
+pub(crate) const MISSILE_MODEL_MASK: u32 = vcod_common::collision::MASK_MISSILE_MOVE;
 /// `0x14`, the surface type the water branches of 12.1 and 13.2 both use.
 const WATER_SURF_TYPE: i32 = 0x14;
 /// 12.1: a move whose `trDelta[2]` is past this (`.rodata 0x75B50`) and
@@ -354,6 +354,9 @@ pub struct Missiles {
     /// Water entry splashes raised since the caller last took them
     /// ([`Missiles::take_splashes`]).
     splashes: Vec<crate::game::temp_entity::TempEntity>,
+    /// Test-facing: the `trDelta` the next rockets leave with, a retail
+    /// capture's, in place of the spread's ([`Missiles::pin_rocket_deltas`]).
+    rocket_deltas: std::collections::VecDeque<Vec3>,
 }
 
 /// Section 11.3: where a throw starts and how fast it leaves, from the
@@ -457,22 +460,18 @@ impl Missile {
         s.leave_owner = false;
     }
 
-    /// `G_RunMissile`'s move trace: 1.1's falls back to 0x11 (12.1), UO's
-    /// `fire_grenade`, `fire_rocket` and `fire_artillery` store a clipmask
-    /// of 0x2802091 (game.mp.uo 0x5f7ad, read at 0x5ee7d), which meets the
-    /// 0x2080 kerb brushes too.
+    /// `G_RunMissile`'s move trace under the clipmask every protocol's
+    /// `fire_grenade` and `fire_rocket` store, 0x2802091 (1.1d 0x544a0,
+    /// read at 0x5409a; UO 0x5f7ad, read at 0x5ee7d; combat doc 11.1),
+    /// which meets the 0x2080 kerb brushes too.
     fn trace(&self, world: &CollisionWorld, from: Vec3, to: Vec3) -> vcod_common::collision::Trace {
-        if self.uo {
-            let tr = world.point_trace(from, to, vcod_common::collision::MASK_BLAST, true);
-            // `G_MissileTrace`: start-solid in a sky brush is a clean miss,
-            // which is how a UO missile pushed into the sky flies on above it.
-            if tr.startsolid && world.point_contents(from) & CONTENTS_SKY != 0 {
-                return vcod_common::collision::Trace::clear(to);
-            }
-            tr
-        } else {
-            world.missile_trace(from, to)
+        let tr = world.missile_trace(from, to);
+        // UO's `G_MissileTrace`: start-solid in a sky brush is a clean miss,
+        // which is how a UO missile pushed into the sky flies on above it.
+        if self.uo && tr.startsolid && world.point_contents(from) & CONTENTS_SKY != 0 {
+            return vcod_common::collision::Trace::clear(to);
         }
+        tr
     }
 
     /// `G_RunMissile`'s `trap_LocationalTrace` from `from` to `to`: the
@@ -1473,7 +1472,10 @@ impl Missiles {
             e.engine[slot] = Value::String(cx.intern_exact("rocket"));
         }
         set_script_origin(ents, id, start);
-        let delta = (dir * shell.speed).trunc();
+        let delta = self
+            .rocket_deltas
+            .pop_front()
+            .unwrap_or_else(|| (dir * shell.speed).trunc());
         let (tr_type, life_ms, eflags) = if self.uo {
             (
                 if arc { TR_GRAVITY } else { TR_LINEAR },
@@ -1706,6 +1708,13 @@ impl Missiles {
     /// wall's the whole degrees added to it ([`Missile::land_angles`]).
     pub fn pin_draws(&mut self, draws: impl IntoIterator<Item = f64>) {
         self.draws.pinned = draws.into_iter().collect();
+    }
+
+    /// Test-facing: the next rockets' `trDelta`, in order, before the
+    /// launch spread takes over again: each server draws its own spread, so
+    /// a gate flies retail's rocket by pinning the delta its capture shows.
+    pub fn pin_rocket_deltas(&mut self, deltas: impl IntoIterator<Item = Vec3>) {
+        self.rocket_deltas = deltas.into_iter().collect();
     }
 }
 
@@ -2636,6 +2645,34 @@ mod tests {
             if falls {
                 assert_eq!(hit.tr.normal, -Vec3::Y);
             }
+        }
+    }
+
+    /// Every protocol's move trace runs under `fire_grenade`'s clipmask
+    /// 0x2802091, so a 1.1 missile stops on a 0x2080 kerb brush as a UO
+    /// one does (combat doc 11.1).
+    #[test]
+    fn a_kerb_brush_stops_a_missile_on_every_protocol() {
+        use vcod_common::collision::synthetic_world;
+        let world = synthetic_world(
+            &[("textures/test/kerb", 0x2080, 0)],
+            &[(0, [-64.0, 64.0, -64.0], [64.0, 128.0, 64.0])],
+        );
+        for uo in [false, true] {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let mut ms = Missiles {
+                uo,
+                ..Missiles::default()
+            };
+            let from = Vec3::new(0.0, 0.0, 32.0);
+            let to = Vec3::new(0.0, 200.0, 32.0);
+            armed(&mut ms, &mut host, &mut vm, from, Vec3::ZERO, 0);
+            let hit = ms.missiles()[0].full_trace(&world, &[], &[], None, from, to);
+            assert!(
+                (hit.tr.endpos.y - 64.0).abs() < 0.2,
+                "uo {uo}: {:?}",
+                hit.tr
+            );
         }
     }
 

@@ -8,10 +8,13 @@
 //! in front of a UO shooter: a rocket's direct hit and a swing both run
 //! `G_Damage` on it (13.1, 2.5). `probe_skyshot`'s spot part stands the shooter on
 //! mp_harbor's sea wall: a rocket, a frag and UO's smoke grenade into the
-//! water raise retail's splash (12.1).
+//! water raise retail's splash (12.1). A rocket fired with the shooter's eye
+//! inside mp_carentan's 0x2080 kerb brush starts solid and goes off at
+//! the end of its first move (11.1, 12.3).
 //!
 //! `ME_REPORT=1` prints both logs. The 1.1d tests need `COD_DIR` at a 1.1
-//! install, the UO ones at a UO one; each returns early without.
+//! install, the 1.5b rows a 1.5 or UO one, the UO ones a UO one; each
+//! returns early without.
 
 mod common;
 
@@ -68,11 +71,22 @@ fn ours(
     run: Script,
     ms: i64,
 ) -> Vec<String> {
-    ours_pinned(fs, map, name, script, cvars, run, ms, Vec::new())
+    ours_pinned(
+        fs,
+        map,
+        name,
+        script,
+        cvars,
+        run,
+        ms,
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 /// [`ours`] with the missile pool's first draws pinned
-/// (`Server::pin_missile_draws`).
+/// (`Server::pin_missile_draws`), and the first rockets' `trDelta`
+/// (`Server::pin_rocket_deltas`).
 #[allow(clippy::too_many_arguments)]
 fn ours_pinned(
     fs: vcod_common::pk3::Pk3Fs,
@@ -83,6 +97,7 @@ fn ours_pinned(
     run: Script,
     ms: i64,
     draws: Vec<f64>,
+    rocket_deltas: Vec<[f32; 3]>,
 ) -> Vec<String> {
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -96,6 +111,7 @@ fn ours_pinned(
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     sv.pin_missile_draws(draws);
+    sv.pin_rocket_deltas(rocket_deltas);
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
@@ -182,7 +198,11 @@ fn ours_pinned(
                     i("_union.scale"),
                     i("weapon"),
                 ));
-            } else if i("eType") == 4 || missiles.contains(num) {
+            } else if i("eType") == 4
+                || missiles.contains(num)
+                // Exploded on its first move: on the wire as `eType` 0.
+                || (i("eType") == 0 && i("weapon") != 0 && i("eventSequence") != 0)
+            {
                 missiles.insert(*num);
                 let slot = (i("eventSequence") - 1) & 3;
                 lines.push(format!(
@@ -574,10 +594,26 @@ fn a_swing_at_the_floor_raises_the_miss() {
     }
 }
 
+/// The install's `main/` when it is 1.5's (a UO install's is): the 1.5b
+/// fixtures' paks.
+fn fs_15() -> Option<vcod_common::pk3::Pk3Fs> {
+    vcod_common::testing::game_fs().filter(|fs| {
+        vcod_server::server::install_protocol(fs).version
+            == vcod_common::net::protocol::PROTOCOL_V6.version
+    })
+}
+
 /// The shooter on mp_harbor's south sea wall over open water, looking
-/// along yaw 90 and `pitch` degrees down (`probe_skyshot`'s spot part).
-fn harbor(fs: vcod_common::pk3::Pk3Fs, weapon: &str, pitch: &str, run: Script) -> Vec<String> {
-    ours(
+/// along yaw 90 and `pitch` degrees down (`probe_skyshot`'s spot part),
+/// his rockets leaving with `rocket_deltas`.
+fn harbor(
+    fs: vcod_common::pk3::Pk3Fs,
+    weapon: &str,
+    pitch: &str,
+    run: Script,
+    rocket_deltas: Vec<[f32; 3]>,
+) -> Vec<String> {
+    ours_pinned(
         fs,
         "mp_harbor",
         "probe_skyshot",
@@ -593,7 +629,18 @@ fn harbor(fs: vcod_common::pk3::Pk3Fs, weapon: &str, pitch: &str, run: Script) -
         ],
         run,
         20_000,
+        Vec::new(),
+        rocket_deltas,
     )
+}
+
+/// The `trDelta` retail's first rocket left with, off its script's first
+/// two positions: the launch is a frame behind, so the second is 100 ms
+/// of flight past the first, and the delta is whole units (`fire_rocket`
+/// truncates it).
+fn retail_rocket_delta(fixture: &[String]) -> [f32; 3] {
+    let r = first_rocket(fixture);
+    [0, 1, 2].map(|k| ((r[1].1[k] - r[0].1[k]) * 10.0).round())
 }
 
 /// The first temp entity's first snapshot: (time, number, the line from
@@ -623,14 +670,6 @@ fn explode(lines: &[String]) -> Option<(i32, [f32; 3])> {
         })
 }
 
-/// A splash's tokens past the position: `ev`, `parm`, `other` and then
-/// `surf`, `scale`, `weapon`.
-fn splash_fields(t: &[String]) -> Vec<String> {
-    let mut out = t[..6].to_vec();
-    out.extend_from_slice(&t[10..]);
-    out
-}
-
 /// A frag thrown flat off the wall: its `trDelta` z (the throw's 120)
 /// passes 30, so the move that enters the water raises the splash at the
 /// missile's origin before it, and the whole flight matches retail's to
@@ -643,6 +682,10 @@ fn a_frag_into_water_splashes() {
             include_str!("fixtures/missiles/mp_harbor-water-frag.txt"),
         ),
         (
+            fs_15(),
+            include_str!("fixtures/missiles/mp_harbor-water-frag-15.txt"),
+        ),
+        (
             vcod_common::testing::uo_fs(),
             include_str!("fixtures/missiles/mp_harbor-water-frag-uo.txt"),
         ),
@@ -651,7 +694,7 @@ fn a_frag_into_water_splashes() {
             continue;
         };
         let fixture = retail(fixture);
-        let log = harbor(fs, "fraggrenade_mp", "0", Script::Throw);
+        let log = harbor(fs, "fraggrenade_mp", "0", Script::Throw, Vec::new());
         report(&fixture, &log);
         let (r, o) = (first_rocket(&fixture), first_rocket(&log));
         assert!(r.len() > 30, "{fixture:?}");
@@ -674,14 +717,21 @@ fn a_frag_into_water_splashes() {
 /// A rocket 45 degrees down into the water: the splash on the move that
 /// enters it, then the explode on the harbor floor, its origin snapped
 /// toward the launch by `floor` and `ceil` (combat doc 12.1, 13.1). Each
-/// server takes its own launch spread, so x is left out and the rest are
-/// held to the height the spread can move them.
+/// server draws its own launch spread, so ours flies retail's `trDelta`
+/// (`retail_rocket_delta`) and the splash and the explode are held
+/// exactly: on 1.5b's flight the move that enters the water reaches the
+/// floor too, and both go out in one snapshot.
 #[test]
 fn a_rocket_into_water_splashes() {
     for (fs, fixture, weapon) in [
         (
             vcod_common::testing::game_fs_11(),
             include_str!("fixtures/missiles/mp_harbor-water-rocket.txt"),
+            "panzerfaust_mp",
+        ),
+        (
+            fs_15(),
+            include_str!("fixtures/missiles/mp_harbor-water-rocket-15.txt"),
             "panzerfaust_mp",
         ),
         (
@@ -694,41 +744,133 @@ fn a_rocket_into_water_splashes() {
             continue;
         };
         let fixture = retail(fixture);
-        let log = harbor(fs, weapon, "45", Script::Aim);
+        let log = harbor(
+            fs,
+            weapon,
+            "45",
+            Script::Aim,
+            vec![retail_rocket_delta(&fixture)],
+        );
         report(&fixture, &log);
         let (r, o) = (first_rocket(&fixture), first_rocket(&log));
         assert!(!o.is_empty(), "ours fired nothing: {log:?}");
+        for k in 0..r.len().min(o.len()).min(4) {
+            assert!(
+                dist(r[k].1, o[k].1) < 0.01,
+                "frame {k}: retail {r:?}\nours {o:?}"
+            );
+        }
         let (rs, os) = (splash(&fixture), splash(&log));
         assert_eq!(os.1, rs.1, "retail {rs:?}, ours {os:?}");
-        // `scale` packs the flight, which the spread turns: each server's
-        // packs its own round's first step, z made positive.
-        let without_scale = |t: &[String]| {
-            let mut f = splash_fields(t);
-            f.drain(8..10);
-            f
-        };
-        assert_eq!(
-            without_scale(&os.2),
-            without_scale(&rs.2),
-            "retail {rs:?}, ours {os:?}"
-        );
-        for (m, sp) in [(&r, &rs), (&o, &os)] {
-            let d = [0, 1, 2].map(|k| (m[1].1[k] - m[0].1[k]) / dist(m[1].1, m[0].1));
-            let byte = vcod_common::net::events::dir_to_byte([d[0], d[1], d[2].abs()]);
-            assert_eq!(sp.2[13], byte.to_string(), "{sp:?} flew {d:?}");
-        }
+        assert_eq!(os.2, rs.2, "retail {rs:?}, ours {os:?}");
         assert_eq!(os.0 - o[0].0, rs.0 - r[0].0, "retail {rs:?}, ours {os:?}");
-        let z = |t: &[String]| t[9].parse::<f32>().unwrap();
-        assert!(
-            (z(&os.2) - z(&rs.2)).abs() < 10.0,
-            "retail {rs:?}, ours {os:?}"
-        );
         let (rx, ox) = (
             explode(&fixture).expect("retail's exploded"),
             explode(&log).unwrap_or_else(|| panic!("ours did not explode: {log:?}")),
         );
         assert_eq!(ox.0 - o[0].0, rx.0 - r[0].0, "retail {rx:?}, ours {ox:?}");
-        assert_eq!(ox.1[2], rx.1[2], "retail {rx:?}, ours {ox:?}");
+        assert_eq!(ox.1, rx.1, "retail {rx:?}, ours {ox:?}");
+    }
+}
+
+/// The integer `trDelta` whose `vectoangles` is the `apos` retail's
+/// missile line shows (`fire_rocket` truncates the delta and takes its
+/// angles off it), near `speed` along those angles; `None` unless exactly
+/// one fits.
+fn delta_for_apos(lines: &[String], speed: f32) -> Option<[f32; 3]> {
+    let l = lines.iter().find(|l| l.contains(" missile "))?;
+    let t: Vec<&str> = l.split(' ').collect();
+    let at = t.iter().position(|w| *w == "apos")? + 1;
+    let apos = [t[at].parse::<f32>().ok()?, t[at + 1].parse::<f32>().ok()?];
+    let (p, y) = (apos[0].to_radians(), apos[1].to_radians());
+    let near = glam::Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin()) * speed;
+    let mut fits = Vec::new();
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            for dz in -2..=2 {
+                let d = [
+                    near.x.trunc() + dx as f32,
+                    near.y.trunc() + dy as f32,
+                    near.z.trunc() + dz as f32,
+                ];
+                let a = vcod_server::game::builtins::math::vectoangles(d);
+                if a[0] == apos[0] && a[1] == apos[1] {
+                    fits.push(d);
+                }
+            }
+        }
+    }
+    (fits.len() == 1).then(|| fits[0])
+}
+
+/// A rocket fired with the shooter's eye inside mp_carentan's 0x2080 caulk
+/// brush over a window: `fire_rocket`'s clipmask 0x2802091 meets the
+/// brush, so the first move starts solid, and every protocol reads that as
+/// a contact at the move's end, where the rocket goes off in mid-air on
+/// the launch snapshot. 1.1d keeps the trace's zero normal (parm 0), 1.5b
+/// packs the reversed flight (combat doc 11.1, 12.3). Ours flies retail's
+/// `trDelta`, recovered off its launch angles.
+#[test]
+fn a_rocket_fired_inside_a_kerb_brush_goes_off_at_once() {
+    for (fs, fixture) in [
+        (
+            vcod_common::testing::game_fs_11(),
+            include_str!("fixtures/missiles/mp_carentan-kerb-rocket.txt"),
+        ),
+        (
+            fs_15(),
+            include_str!("fixtures/missiles/mp_carentan-kerb-rocket-15.txt"),
+        ),
+    ] {
+        let Some(fs) = fs else {
+            continue;
+        };
+        let fixture = retail(fixture);
+        let delta = delta_for_apos(&fixture, 2800.0).expect("one delta fits retail's apos");
+        let log = ours_pinned(
+            fs,
+            "mp_carentan",
+            "probe_skyshot",
+            SKYSHOT,
+            &[
+                ("probe_part", "spot"),
+                ("probe_weapon", "panzerfaust_mp"),
+                ("probe_x", "1192"),
+                ("probe_y", "-536"),
+                ("probe_z", "340"),
+                ("probe_yaw", "90"),
+                ("probe_pitch", "0"),
+            ],
+            Script::Aim,
+            20_000,
+            Vec::new(),
+            vec![delta],
+        );
+        report(&fixture, &log);
+        let (r, o) = (first_rocket(&fixture), first_rocket(&log));
+        assert!(!o.is_empty(), "ours fired nothing: {log:?}");
+        let at = |m: &[(i32, [f32; 3])]| {
+            m[..2]
+                .iter()
+                .map(|(t, p)| (t - m[0].0, *p))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(at(&o), at(&r), "retail {r:?}\nours {o:?}");
+        // From `ev` on: event, parm, apos and the rest.
+        let line = |lines: &[String]| {
+            let l = lines
+                .iter()
+                .find(|l| l.contains(" missile "))
+                .unwrap_or_else(|| panic!("no missile on the wire: {lines:?}"));
+            let t: Vec<String> = l.split(' ').map(str::to_string).collect();
+            let ev = t.iter().position(|w| w == "ev").unwrap();
+            let base = t.iter().position(|w| w == "base").unwrap();
+            let time: i32 = t[1].parse().unwrap();
+            (time, t[base..base + 4].to_vec(), t[ev..ev + 4].to_vec())
+        };
+        let (rl, ol) = (line(&fixture), line(&log));
+        assert_eq!(ol.0 - o[0].0, rl.0 - r[0].0, "retail {rl:?}, ours {ol:?}");
+        assert_eq!((&ol.1, &ol.2), (&rl.1, &rl.2), "retail {rl:?}, ours {ol:?}");
     }
 }
 
@@ -743,7 +885,7 @@ fn a_uo_smoke_grenade_into_water_is_freed() {
     let fixture = retail(include_str!(
         "fixtures/missiles/mp_harbor-water-smoke-uo.txt"
     ));
-    let log = harbor(fs, "smokegrenade_mp", "0", Script::Throw);
+    let log = harbor(fs, "smokegrenade_mp", "0", Script::Throw, Vec::new());
     report(&fixture, &log);
     let gone = |lines: &[String]| {
         let (at, num, tail) = splash(lines);
@@ -952,6 +1094,7 @@ fn bounce_angles_match_retail_on_1_1() {
         Script::Throw,
         15_000,
         draws.clone(),
+        Vec::new(),
     );
     report(&[], &log);
     let ours = our_apos(&log);

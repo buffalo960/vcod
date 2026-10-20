@@ -101,7 +101,7 @@ pub fn vector_to_angles(
 /// `vectoangles` on the x87: the atans in double, each angle stored as a
 /// float and then wrapped into [0, 360). The engine's own callers use it
 /// too: a missile's launch angles and the damage feedback's two bytes.
-pub(crate) fn vectoangles(v: [f32; 3]) -> [f32; 3] {
+pub fn vectoangles(v: [f32; 3]) -> [f32; 3] {
     if v[0] == 0.0 && v[1] == 0.0 {
         let pitch = if v[2] > 0.0 { 270.0 } else { 90.0 };
         return [pitch, 0.0, 0.0];

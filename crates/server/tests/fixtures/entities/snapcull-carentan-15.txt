@@ -1,0 +1,41 @@
+# Retail 1.5b, 2026-10-20, run on this machine:
+#   COD_VERSION=1.5 SECS=60 tools/run_probe.sh client-probes/probe_snapcull mp_carentan
+#   viewer:  vcod --game-dir <stock 1.5 install> --net-probe <addr> --probe-compass --probe-team allies --probe-secs 45
+#   subject, 2 s later: vcod --game-dir <stock 1.5 install> --net-probe <addr> --probe-edge watch --probe-secs 43
+# The server's PROBE lines, the viewer's (slot 0) COMPASS lines and the
+# subject's (slot 1) EDGE ents lines, as printed.
+PROBE begin 0
+PROBE begin 1
+PROBE step quiet 14000
+PROBE step solid 17000
+PROBE step back 20000
+PROBE step sound 23000
+PROBE step near 26000
+PROBE step fog 29000
+PROBE step fog_sound 32000
+PROBE step exp_fog 35000
+PROBE step done 38000
+COMPASS t=8300 num=0 pm=0 o=976.000,-864.000,-4.007 vh=60.000 leanf=0.000 yaw=90.000 ef=0x18 info=0x00000000 - players=[]
+COMPASS t=8350 num=0 pm=0 o=976.000,-864.000,-5.482 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[]
+COMPASS t=8400 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[]
+COMPASS t=10000 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x40ff9881 c1 dx=-628 dy=1024 yaw=90.00 players=[]
+COMPASS t=10050 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00ff9881 c1 dx=-628 dy=1024 yaw=0.00 players=[]
+COMPASS t=23000 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@-992.0,2328.0,-22.0 ef=0x10]
+COMPASS t=23350 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[]
+COMPASS t=23400 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00ff9881 c1 dx=-628 dy=1024 yaw=0.00 players=[]
+COMPASS t=26000 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@1120.0,432.0,1.0 ef=0x18]
+COMPASS t=26050 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@1120.0,432.0,0.0 ef=0x18]
+COMPASS t=26100 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@1120.0,432.0,-2.0 ef=0x18]
+COMPASS t=26150 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@1120.0,432.0,-7.0 ef=0x18]
+COMPASS t=29000 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00ffc6c1 c1 dx=112 dy=1024 yaw=0.00 players=[]
+COMPASS t=32000 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@1120.0,432.0,-7.0 ef=0x18]
+COMPASS t=32350 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[]
+COMPASS t=32400 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00ffc6c1 c1 dx=112 dy=1024 yaw=0.00 players=[]
+COMPASS t=35000 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[1@1120.0,432.0,-7.0 ef=0x18]
+COMPASS t=52800 num=0 pm=0 o=976.037,-863.863,-5.894 vh=60.000 leanf=0.000 yaw=0.000 ef=0x18 info=0x00000000 - players=[]
+EDGE ents serverTime=10000 [0:1 172:8 173:8 174:8 175:8 177:8 178:8 247:3 248:3 249:3 250:3 251:8 252:3 253:3 254:3 255:3 256:3 257:8 258:3 297:11 298:11]
+EDGE ents serverTime=17000 []
+EDGE ents serverTime=20000 [0:1 172:8 173:8 174:8 175:8 177:8 178:8 247:3 248:3 249:3 250:3 251:8 252:3 253:3 254:3 255:3 256:3 257:8 258:3 297:11 298:11]
+EDGE ents serverTime=26000 [0:1 172:8 173:8 174:8 175:8 177:8 178:8 182:8 247:3 248:3 249:3 250:3 251:8 252:3 253:3 254:3 255:3 256:3 257:8 258:3 297:11 298:11]
+EDGE ents serverTime=29000 []
+EDGE ents serverTime=35000 [0:1 172:8 173:8 174:8 175:8 177:8 178:8 182:8 247:3 248:3 249:3 250:3 251:8 252:3 253:3 254:3 255:3 256:3 257:8 258:3 297:11 298:11]

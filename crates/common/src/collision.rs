@@ -51,10 +51,15 @@ pub const MASK_SHOT: u32 = 0x2802031;
 /// `CanDamage`'s (0x5a098) mask for a blast's five probes: the shot mask
 /// with 0x80 for 0x20.
 pub const MASK_BLAST: u32 = 0x2802091;
-/// What a grenade flies against: `G_RunMissile` (game.mp 0x63fcc) traces
-/// with the entity's `clipmask` and falls back to 0x11, SOLID and GLASS,
-/// and no store into `fire_grenade`'s entity (0x643ac) was found.
+/// SOLID and GLASS: the `trap_Trace` mask of a missile's explode trace
+/// down, its ground snap and `grenadeExplosionEffect` (combat doc 12.6,
+/// 13.2). Not the move trace's: that is [`MASK_MISSILE_MOVE`].
 pub const MASK_MISSILE: u32 = CONTENTS_SOLID | CONTENTS_GLASS;
+/// The clipmask `fire_grenade` and `fire_rocket` store and `G_RunMissile`'s
+/// move trace reads (1.1d 0x544a0, 0x546ef, read at 0x5409a; 1.5b 0x5539d,
+/// 0x556bd; UO 0x5f7ad), the blast mask's value: it meets the 0x2080 kerb
+/// brushes too (combat doc 11.1, 12.1).
+pub const MASK_MISSILE_MOVE: u32 = MASK_BLAST;
 /// The brush contents that enter the clip as brushes: every bit a trace
 /// mask meets, the item masks' 0x80 and 0x400 included (cod11-items.md,
 /// section 14.2), but water, which stays a volume. Glass carries no SOLID
@@ -2427,16 +2432,20 @@ impl CollisionWorld {
         self.trace_with_mask(start, end, Vec3::ZERO, Vec3::ZERO, mask, statics, skip)
     }
 
-    /// A missile's segment: [`MASK_MISSILE`] and the static models. The
-    /// syscall `G_RunMissile`'s `trap_Trace` reaches (`cod_lnxded` 0x8088333,
-    /// case 0x22) passes `SV_Trace` no static-model flag, yet the retail
-    /// capture rests a frag on a crate stack whose only geometry in that
-    /// mask is the crates' own mesh (`crates/server/tests/missile_ab.rs`,
-    /// z 179.3; the `clip_nosight` around them is 0x28031640, outside
-    /// 0x11). The capture wins; how retail gets there is open
-    /// (docs/research/cod11-combat.md, section 12).
+    /// A missile's segment, `G_RunMissile`'s `trap_LocationalTrace`:
+    /// [`MASK_MISSILE_MOVE`] and the static models, which that syscall's
+    /// `SV_Trace` walks (cod11-mantle.md, "Static models are clipped as a
+    /// segment"; combat doc 12.3: a frag rests on a crate's mesh).
     pub fn missile_trace(&self, start: Vec3, end: Vec3) -> Trace {
-        self.trace_with_mask(start, end, Vec3::ZERO, Vec3::ZERO, MASK_MISSILE, true, None)
+        self.trace_with_mask(
+            start,
+            end,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            MASK_MISSILE_MOVE,
+            true,
+            None,
+        )
     }
 
     /// An item's sweep, `G_RunItem`'s and `G_BounceItem`'s: the item's own
@@ -3909,8 +3918,8 @@ mod tests {
         assert_eq!(world.hit_contents(&inside), 0);
     }
 
-    /// A 0x2080 kerb brush stops a shot, a blast probe and a falling item,
-    /// and a player walks through it.
+    /// A 0x2080 kerb brush stops a shot, a blast probe, a missile and a
+    /// falling item, and a player walks through it.
     #[test]
     fn a_kerb_brush_clips_every_mask_but_the_players() {
         let kerb = 0x2080;
@@ -3928,8 +3937,8 @@ mod tests {
         assert_eq!(world.point_contents(Vec3::new(0.0, 0.0, -8.0)), kerb);
 
         let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+        assert!(world.missile_trace(above, below).fraction < 1.0);
         assert_eq!(world.box_trace(above, below, mins, maxs).fraction, 1.0);
-        assert_eq!(world.missile_trace(above, below).fraction, 1.0);
     }
 
     /// A prop's triangles stop a shot through them, front face only,
