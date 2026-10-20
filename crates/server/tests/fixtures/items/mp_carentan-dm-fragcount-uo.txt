@@ -1,0 +1,28 @@
+# Retail United Offensive 1.51b dedicated server, mp_carentan, gametype probe_fragcount (dm), 2026-10-20.
+# Server: crates/gsc/tests/fixtures/semantics/client-probes/probe_fragcount.gsc under
+# COD_VERSION=uo tools/run_probe.sh with a --net-probe --probe-team allies
+# --probe-items client; its PROBE lines, unedited: the grenade clip each
+# walk-on pickup of a count-less frag left. Read in docs/research/cod11-items.md
+# section 4.1 and gated by crates/server/src/game/pickup.rs.
+PROBE start 14450 fraggrenade_mp
+PROBE frag 0 15050 3
+PROBE frag 1 15650 2
+PROBE frag 2 16250 2
+PROBE frag 3 16850 3
+PROBE frag 4 17450 3
+PROBE frag 5 18050 3
+PROBE frag 6 18650 2
+PROBE frag 7 19250 2
+PROBE frag 8 19850 3
+PROBE frag 9 20450 3
+PROBE frag 10 21050 2
+PROBE frag 11 21650 3
+PROBE frag 12 22250 2
+PROBE frag 13 22850 3
+PROBE frag 14 23450 2
+PROBE frag 15 24050 2
+PROBE frag 16 24650 2
+PROBE frag 17 25250 3
+PROBE frag 18 25850 2
+PROBE frag 19 26450 2
+PROBE done 26450
