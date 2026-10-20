@@ -988,3 +988,199 @@ fn the_bazooka_rocket_flies_and_explodes_as_on_uo() {
         t.hit.map(|h| world.describe(h)).unwrap_or_default()
     );
 }
+
+/// `client-probes/probe_satchelshot` on ours, its client driven as the
+/// retail capture's `--probe-uo-weapon direct` probe was: every cmd at the
+/// newest snapshot's view (the gsc's), its buttons from the `PROBE_IN`
+/// lines. The script's log and every event the probe's snapshots carried.
+fn ours_direct(probe: &str, src: &str, fixture: &str, secs: i64) -> (Vec<String>, Run) {
+    let fs = vcod_common::testing::uo_fs().unwrap();
+    let p: &'static Protocol = &PROTOCOL_V22;
+    let bsp_path = fs.resolve_map(MAP).expect("the map in the UO paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, probe), now);
+    sv.set_protocol(p);
+    sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), src);
+    // The recipe's `+set`s.
+    for l in fixture.lines().filter(|l| l.starts_with('#')) {
+        let mut t = l.split_whitespace();
+        while let Some(w) = t.next() {
+            if w == "+set"
+                && let (Some(name), Some(value)) = (t.next(), t.next())
+            {
+                sv.set_cvar(name, value);
+            }
+        }
+    }
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
+    let q = Rc::new(RefCell::new(common::Queues::default()));
+    let mut cl =
+        vcod_common::net::NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
+    let mut join = common::Join::new("allies", "thompson_mp");
+    let mut hold = common::ProbeHold {
+        aim: true,
+        ..Default::default()
+    };
+    let (mut buttons, mut selected) = (0u8, None::<u8>);
+    let mut tracker = EventTracker::new();
+    let mut out = Run::default();
+    let mut seen_time = 0;
+    for _ in 0..secs * 1000 / common::FRAME_MS {
+        if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
+            break;
+        }
+        now += Duration::from_millis(common::FRAME_MS as u64);
+        let live = cl
+            .snapshots()
+            .newest()
+            .is_some_and(|s| s.ps.field_i32(p, "pm_type") == 0);
+        if live {
+            let mut cmds = hold.cmds(&cl, buttons);
+            if let Some(w) = selected {
+                for c in &mut cmds {
+                    c.weapon = w;
+                }
+            }
+            cl.send_cmds(&cmds);
+        } else if let Some(c) = cl.send_frame(&vcod_common::net::msg::UserCmd::default()) {
+            hold.last = c.server_time;
+        }
+        for e in common::step(&mut sv, &q, &mut cl, now) {
+            if let NetEvent::ServerCommand(tokens) = e {
+                match tokens.first().map(String::as_str) {
+                    Some("a") => selected = tokens.get(1).and_then(|w| w.parse().ok()),
+                    Some("f") => {
+                        if let Some(b) = tokens
+                            .get(1)
+                            .and_then(|l| l.strip_prefix("PROBE_IN "))
+                            .and_then(|l| l.split_whitespace().next())
+                            .and_then(|b| b.parse().ok())
+                        {
+                            buttons = b;
+                        }
+                    }
+                    _ => {}
+                }
+                join.on_server_command(&tokens, &mut cl, now);
+            }
+        }
+        if let Some(s) = cl.snapshots().newest()
+            && s.server_time != seen_time
+        {
+            seen_time = s.server_time;
+            out.record(&mut tracker, s, p);
+        }
+    }
+    (sv.script_log().to_vec(), out)
+}
+
+/// The first `PROBE <what> <time> ...` line's time.
+fn probe_time(log: &[String], what: &str) -> Option<i32> {
+    let tag = format!("PROBE {what} ");
+    log.iter()
+        .find_map(|l| l.trim().strip_prefix(tag.as_str()))
+        .and_then(|l| l.split(' ').next())
+        .and_then(|t| t.parse().ok())
+}
+
+/// One `probe_satchelshot` capture against ours: every explode's time
+/// after the shot (when there is one) and after the first throw, its
+/// carrier's `eType`, parm, type, `eFlags`, surface and origin.
+#[allow(clippy::type_complexity)]
+fn satchel_explodes(
+    tag: &str,
+    fixture: &str,
+) -> (
+    Vec<(Option<i32>, i32, i32, i32, i32, i32, i32, [i32; 3])>,
+    Vec<(Option<i32>, i32, i32, i32, i32, i32, i32, [i32; 3])>,
+) {
+    let log: Vec<String> = fixture.lines().map(str::to_string).collect();
+    let (retail, ..) = retail(tag);
+    let src =
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_satchelshot.gsc");
+    let (ours_log, ours) = ours_direct("probe_satchelshot", src, fixture, 60);
+    report("retail", &retail);
+    report("ours", &ours);
+    if std::env::var_os("UOWEAP_REPORT").is_some() {
+        for l in ours_log.iter().filter(|l| !l.contains("PROBE miss")) {
+            print!("ours log {l}");
+        }
+    }
+    let shape = |log: &[String], run: &Run| {
+        let throw = probe_time(log, "throw").expect("a throw");
+        let fire = probe_time(log, "fire");
+        run.of(EV_EXPLODE)
+            .iter()
+            .map(|x| {
+                (
+                    fire.map(|f| x.t - f),
+                    x.t - throw,
+                    x.ev.e_type,
+                    x.ev.parm,
+                    x.ev.scale,
+                    x.ev.eflags,
+                    x.ev.surf_type,
+                    x.ev.pos.map(|v| v.round() as i32),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    (shape(&log, &retail), shape(&ours_log, &ours))
+}
+
+/// Two satchels on mp_cassino and a kar98k round into the second
+/// (`*-uo-satchelshot.bin`, `client-probes/probe_satchelshot`, recipe in
+/// `fixtures/missiles/mp_cassino-satchelshot-uo.txt`): the round's
+/// `G_Damage` takes the satchel's 1 health and `G_GrenadeDie` brings its
+/// explode 100 ms on, the snapshot after the shot's. Its blast leaves the
+/// first satchel, 225 units off, alone: that one goes off on its own fuse,
+/// 6 s after its throw (coduo-diff.md 21).
+#[test]
+fn a_shot_satchel_goes_off_100_ms_on() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    let (r, o) = satchel_explodes(
+        "satchelshot",
+        include_str!("fixtures/missiles/mp_cassino-satchelshot-uo.txt"),
+    );
+    assert_eq!(r.len(), 2, "retail {r:?}");
+    assert_eq!(r[0].0, Some(100), "retail: the shot one goes off 100 ms on");
+    // The second throw's view rides the cmd timing: two retail runs rested
+    // the shot satchel at y -169.92 and -170.02, which truncate apart.
+    let near = |a: [i32; 3], b: [i32; 3]| (0..3).all(|k| (a[k] - b[k]).abs() <= 1);
+    assert_eq!(r.len(), o.len(), "retail {r:?}\nours {o:?}");
+    for (a, b) in r.iter().zip(&o) {
+        assert_eq!(
+            (a.0, a.1, a.2, a.3, a.4, a.5, a.6),
+            (b.0, b.1, b.2, b.3, b.4, b.5, b.6),
+            "(since the shot, since the first throw, eType, parm, type, eFlags, surface)"
+        );
+        assert!(near(a.7, b.7), "retail {r:?}\nours {o:?}");
+    }
+}
+
+/// Two satchels 137 units apart, no shot (`*-uo-satchelchain.bin`): the
+/// first goes off on its fuse and its blast sets the second off 100 ms on;
+/// the second's blast reaches the first inside the 300 ms its explode rides
+/// the wire, and the first does not go off again (`freeAfterEvent` keeps
+/// its think from running, coduo-diff.md 21).
+#[test]
+fn a_satchel_blast_sets_off_the_next_and_none_goes_off_twice() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    let (r, o) = satchel_explodes(
+        "satchelchain",
+        include_str!("fixtures/missiles/mp_cassino-satchelchain-uo.txt"),
+    );
+    assert_eq!(r.len(), 2, "retail {r:?}");
+    assert_eq!(r[1].1 - r[0].1, 100, "retail: the chain's 100 ms");
+    assert_eq!(
+        r, o,
+        "(since the shot, since the first throw, eType, parm, type, eFlags, surface, origin)"
+    );
+}
