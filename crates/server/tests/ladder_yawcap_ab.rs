@@ -282,10 +282,20 @@ fn a_climber_looking_away_is_capped_where_retail_caps_him() {
     // A 1.1 capture replays on 1.1's paks only (a UO install's `main/` is
     // 1.5's).
     let install_11 = vcod_common::testing::game_fs_11().is_some();
+    // UO numbers its weapons its own way (`defs::UO`).
+    let uo_weapons = vcod_common::testing::uo_fs()
+        .map(|fs| vcod_server::weapons::WeaponTable::load(&fs, &vcod_server::defs::UO));
     for (name, rules) in FIXTURES {
         if *rules == MoveRules::V1_1 && !install_11 {
             continue;
         }
+        let weapons = match rules {
+            MoveRules::Uo => match &uo_weapons {
+                Some(w) => w,
+                None => continue,
+            },
+            _ => &weapons,
+        };
         println!("{name}");
         world.set_arith(if rules.v15() {
             Arith::Stored
