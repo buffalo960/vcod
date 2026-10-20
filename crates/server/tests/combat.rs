@@ -214,6 +214,16 @@ fn a_shot_takes_health_and_a_second_one_kills() {
         !legs_name.contains("pain"),
         "B's legs play {legs_name}; retail plays no pain anim on the server"
     );
+    // Nor a hold: no game module raises `PAIN` (cod11-combat.md 16.4), so
+    // the hit, inside A's cmd, leaves B's timers at 0.
+    assert_eq!(
+        (
+            sb.ps.field_i32(p, "legsTimer"),
+            sb.ps.field_i32(p, "torsoTimer")
+        ),
+        (0, 0),
+        "a surviving hit sets no anim timer"
+    );
     assert_eq!(sa.ps.health(), 100, "A is untouched");
 
     // Release, wait out fireTime and the knockback, then tap again.
@@ -234,6 +244,7 @@ fn a_shot_takes_health_and_a_second_one_kills() {
         0.0,
         "the knockback has decayed"
     );
+    let ct_before = sb.ps.field_i32(p, "commandTime");
 
     ca.send_frame(&crate::common::echo_weapon(&ca, &fire));
     cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
@@ -263,6 +274,19 @@ fn a_shot_takes_health_and_a_second_one_kills() {
     assert!(
         death_name.starts_with("pb_stand_death_"),
         "B's legs play {death_name}, not a standing death"
+    );
+    // The death's hold, the clip + 50, is set inside A's cmd on B's last
+    // cmd, and B's cmd behind the shot runs it down (combat doc 16.4).
+    let hold = anims.length_ms(death_name).unwrap() as i32 + 50;
+    let ran = sb.ps.field_i32(p, "commandTime") - ct_before;
+    assert!(ran > 0, "B's cmd ran behind the shot");
+    assert_eq!(
+        (
+            sb.ps.field_i32(p, "legsTimer"),
+            sb.ps.field_i32(p, "torsoTimer")
+        ),
+        (hold - ran, hold - ran),
+        "the death's timers"
     );
     let obituary = |snap: &vcod_common::net::snapshot::Snapshot| {
         snap.entities
@@ -2781,4 +2805,53 @@ fn a_rocket_that_strikes_a_player_hits_him_directly() {
         "the splash skips the struck body: {hits:?}"
     );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// What a shot does to the victim's anim timers on retail 1.1d: the
+/// `paintimers` capture's two surviving hits on a standing target leave
+/// `legsTimer` and `torsoTimer` at 0 (no game module raises `PAIN`), and
+/// its bullet death, inside the shooter's cmd, sets both to the clip's
+/// length + 50 on the victim's last cmd, which the victim's cmds behind it
+/// run down (cod11-combat.md 16.4, "The dying body"). Ours is held to the
+/// same in [`a_shot_takes_health_and_a_second_one_kills`].
+#[test]
+fn a_shot_sets_the_victims_timers_as_retail_does() {
+    let text = include_str!("fixtures/playerstate/mp_carentan-dm-hit-target-paintimers.txt");
+    let traces: Vec<std::collections::BTreeMap<&str, &str>> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("!trace "))
+        .map(|l| {
+            l.split_whitespace()
+                .filter_map(|kv| kv.split_once('='))
+                .collect()
+        })
+        .collect();
+    let int =
+        |t: &std::collections::BTreeMap<&str, &str>, k: &str| -> i32 { t[k].parse().unwrap() };
+    let mut hits = 0;
+    for w in traces.windows(2) {
+        if int(&w[1], "damageEvent") > int(&w[0], "damageEvent") && int(&w[1], "health") > 0 {
+            hits += 1;
+            assert_eq!(
+                (int(&w[1], "legsTimer"), int(&w[1], "torsoTimer")),
+                (0, 0),
+                "a surviving hit at ms={}",
+                w[1]["ms"]
+            );
+        }
+    }
+    assert_eq!(hits, 2, "the capture's surviving hits");
+    // The bullet death: `pb_stand_death_*` index 21, a 900 ms clip.
+    let death = traces
+        .windows(2)
+        .find(|w| int(&w[0], "damageEvent") > 0 && int(&w[1], "pm_type") == 6)
+        .expect("the bullet death");
+    let (before, dead) = (&death[0], &death[1]);
+    assert_eq!(dead["legsAnim"], "21");
+    let stamped = int(dead, "ct") + int(dead, "legsTimer") - 950;
+    assert_eq!(int(dead, "torsoTimer"), int(dead, "legsTimer"));
+    assert!(
+        int(before, "ct") < stamped && stamped < int(dead, "ct"),
+        "stamped on a cmd between the two snapshots: {stamped}"
+    );
 }

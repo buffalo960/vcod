@@ -9099,13 +9099,47 @@ truncated: 1.1d's 92 frames at 30 read 3066, where a rounded 3067 was
 vcod's before 2026-10-19. INFERRED: 1.5b and UO store it the same way
 (their clips here are exact or round down either way).
 
+VERIFIED (capture), 2026-10-20, a death raised inside the packet pass on
+all three servers (`mp_carentan-dm-hit-target-killtimers{,-1.5,-uo}.txt`,
+the `--probe-kill-cmds 1,3` target with `ct`, `legsTimer` and `torsoTimer`
+on each `!trace`): the `kill` runs ahead of its message's cmd, and the
+probe's cmds behind it are 1 ms apart, so the death frame reads the
+clip's length + 50 less 1 or less 3 (949 and 947 for a 900 ms clip; 27
+deaths, each read against its own clip). The hold is set on the last cmd
+ahead of the `kill`, and every cmd behind it runs it down, alive or dead.
+VERIFIED (capture), 1.1d, a bullet death inside the shooter's cmd
+(`mp_carentan-dm-hit-target-paintimers.txt`, ms 26759, index 21, 900 ms):
+`ct + timer` reads 304200, so the hold was set at 303250, between the
+victim's snapshot cmds 303233 and 303284; that is the frame's
+`level.time` too, so this one capture does not split the two clocks; the
+`kill` captures do. VERIFIED (capture), same file: its two surviving
+hits (ms 26200, health 60; ms 26557, health 24) leave both timers at 0
+and `legsAnim` on the idle or the knockback's run.
+
+VERIFIED (disassembly), the event argument at every `BG_AnimScriptEvent`
+call site: 1.1d `game.mp.i386.so` (13 `.rel.text` relocations, 0x2ee1a ..
+0x49b85) passes 1, 2, 3, 4, 5, 6, 7, 10 or 13; 1.5b (16 PLT calls, 0x1fcb8
+.. 0x46f5d) and UO (19, 0x247f7 .. 0x4fb93) the same set, UO adding 14 and
+15. VERIFIED (data), the event name table (8-byte rows: 1.1d 0x7b478,
+1.5b 0x80120, UO 0xa9120) starts `PAIN`, `DEATH`, `FIREWEAPON`, `JUMP`,
+`JUMPBK`, `LAND`, `DROPWEAPON`, `RAISEWEAPON`, `CLIMBMOUNT`,
+`CLIMBDISMOUNT`, `RELOAD`, `CROUCH_TO_PRONE`, `PRONE_TO_CROUCH`,
+`MELEEATTACK` (UO then `LMG_DEPLOY`, `LMG_BREAKDOWN`). So no server game
+module raises `PAIN` (0): a surviving hit sets no anim and no timer, and
+`DEATH` (1) is raised only from `player_die` (1.1d 0x49b85, 1.5b 0x46f5d,
+UO 0x4fb93).
+
 Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
 and UO like any other; `dyingpose_ab::a_dying_body_poses_like_{retail,15,uo}`
 hold every bone of all 60 frames within 0.015 of retail's (the logs'
 rounding). `AnimState::timers` writes `legsTimer` and `torsoTimer` off each
 event's hold, `take_damage` stamps the death's on the client's last cmd
-(`dyingpose_ab::a_death_runs_its_timers_down_like_*`), and
-`xanim::duration_ms` truncates in extended precision.
+(`dyingpose_ab::a_death_runs_its_timers_down_like_*`, and inside the
+packet pass `kill_cmds_ab::a_kills_death_timers_match_*_by_its_cmds`, which
+fail with the frame clock), a surviving hit returns before the anim, and
+`combat.rs::a_shot_takes_health_and_a_second_one_kills` holds a hit's and a
+bullet death's timers on ours, `a_shot_sets_the_victims_timers_as_retail_does`
+on the capture. `xanim::duration_ms` truncates in extended precision.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 
