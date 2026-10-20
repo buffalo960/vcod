@@ -1317,7 +1317,7 @@ fn main() -> Result<()> {
 
     let net_client = match &args.connect {
         Some(addr) => {
-            let mut net = net::NetClient::connect(addr)
+            let mut net = net::NetClient::connect_from(addr, net::protocol::install_protocol(&fs))
                 .with_context(|| format!("cannot open a socket to {addr}"))?;
             net.set_userinfo(shell.userinfo());
             Some(net)
@@ -3275,7 +3275,8 @@ impl App {
         {
             self.server_process = None;
         }
-        let mut net = match net::NetClient::connect(&addr) {
+        let install = net::protocol::install_protocol(&self.fs);
+        let mut net = match net::NetClient::connect_from(&addr, install) {
             Ok(net) => net,
             Err(e) => {
                 log::error!("cannot open a socket to {addr}: {e:#}");
@@ -4404,14 +4405,6 @@ impl ApplicationHandler for App {
                                     }
                                 }
                                 net::NetEvent::GamestateReady => {
-                                    if net.protocol().version == net::protocol::PROTOCOL_V22.version
-                                        && self.mod_dir.eq_ignore_ascii_case("main")
-                                    {
-                                        log::warn!(
-                                            "a United Offensive server: its maps and models \
-                                             are in uo/, run with --mod-dir uo"
-                                        );
-                                    }
                                     join.set_layout(net.protocol().cs);
                                     join.on_gamestate();
                                     // The UI catcher goes down with it, so an

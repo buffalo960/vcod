@@ -306,6 +306,14 @@ impl Protocol {
     pub fn by_short_version(v: &str) -> Option<&'static Protocol> {
         Self::ALL.into_iter().find(|p| p.short_version == v)
     }
+
+    /// Whether a client on one's install can play the other's server. 1.1
+    /// and 1.5 share `pak1`-`pak4` and cross over; United Offensive's
+    /// `uo/` paks override `main/`'s weapons and menus, so it plays only
+    /// itself.
+    pub fn same_game(&self, other: &Protocol) -> bool {
+        (self.version == PROTOCOL_V22.version) == (other.version == PROTOCOL_V22.version)
+    }
 }
 
 /// Model paths sit at `CS_MODELS_V1 + index`, index 1..=255 (`G_ModelIndex`,

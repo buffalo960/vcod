@@ -34,7 +34,7 @@ use msg::{
     UserCmd, write_delta_usercmd_in,
 };
 use netchan::Netchan;
-use protocol::{PROTOCOL_V1, Protocol};
+use protocol::{PROTOCOL_V1, PROTOCOL_V22, Protocol};
 use snapshot::SnapshotRing;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
@@ -242,6 +242,14 @@ impl Default for Userinfo {
     }
 }
 
+/// One client per process, so the process id is a fine qport. A test
+/// harness running two on one process is not, and says so with
+/// `start_with_qport`: a server keys a peer by ip and qport, and two
+/// clients sharing one look to it like a single client reconnecting.
+fn process_qport() -> u16 {
+    0x2000 | (std::process::id() as u16 & 0x0fff)
+}
+
 /// The protocol an `error` refusing the connect for its version names:
 /// `\nEXE_SERVER_IS_DIFFERENT_VER\x15<shortversion>\n`.
 fn other_version(rest: &[u8]) -> Option<&'static Protocol> {
@@ -260,6 +268,10 @@ pub struct NetClient<T: Transport> {
     proto: &'static Protocol,
     /// The handshake already switched protocol once; a second refusal ends it.
     proto_switched: bool,
+    /// The install's protocol ([`NetClient::connect_from`]): a server of
+    /// another game ([`Protocol::same_game`]) ends the handshake instead of
+    /// switching. `None` switches to any.
+    install: Option<&'static Protocol>,
 
     state: NetState,
     challenge: i32,
@@ -390,23 +402,29 @@ impl NetClient<UdpTransport> {
         let transport = UdpTransport::connect(addr)?;
         Ok(Self::start(transport, Instant::now()))
     }
+
+    /// Connects speaking the install's protocol, and refuses a server of
+    /// another game rather than playing it on the wrong assets.
+    pub fn connect_from(addr: &str, install: &'static Protocol) -> anyhow::Result<Self> {
+        let transport = UdpTransport::connect(addr)?;
+        Ok(Self::start_from(transport, Instant::now(), install))
+    }
 }
 
 impl<T: Transport> NetClient<T> {
     pub fn start(transport: T, now: Instant) -> Self {
-        // One client per process, so the process id is a fine qport. A test
-        // harness running two on one process is not, and says so with
-        // `start_with_qport`: a server keys a peer by ip and qport, and two
-        // clients sharing one look to it like a single client reconnecting.
-        Self::start_with_qport(
-            transport,
-            now,
-            0x2000 | (std::process::id() as u16 & 0x0fff),
-        )
+        Self::start_with_qport(transport, now, process_qport())
     }
 
     pub fn start_with_qport(transport: T, now: Instant, qport: u16) -> Self {
         Self::start_with_protocol(transport, now, qport, &PROTOCOL_V1)
+    }
+
+    /// [`NetClient::connect_from`] over any transport.
+    pub fn start_from(transport: T, now: Instant, install: &'static Protocol) -> Self {
+        let mut c = Self::start_with_protocol(transport, now, process_qport(), install);
+        c.install = Some(install);
+        c
     }
 
     /// Connects speaking `proto` first. A server of the other version
@@ -442,6 +460,7 @@ impl<T: Transport> NetClient<T> {
             huff: Huffman::new(),
             proto,
             proto_switched: false,
+            install: None,
             state: NetState::Disconnected,
             challenge: 0,
             qport,
@@ -1087,6 +1106,22 @@ impl<T: Transport> NetClient<T> {
                 self.drop("EXE_SERVER_DISCONNECTED")
             }
             "disconnect" => log::debug!("oob disconnect inside the 3 s guard, ignored"),
+            // A server of another game, refused before it plays on the
+            // wrong install's assets.
+            "error"
+                if self.state == NetState::Connecting
+                    && let (Some(install), Some(proto)) = (self.install, other_version(rest))
+                    && !proto.same_game(install) =>
+            {
+                self.drop(&if proto.version == PROTOCOL_V22.version {
+                    "This is a United Offensive server: run vcod with --mod-dir uo".to_string()
+                } else {
+                    format!(
+                        "This is a CoD {} server: run vcod without --mod-dir uo",
+                        proto.short_version
+                    )
+                });
+            }
             // A server of the other version refuses the connect naming its
             // own; speak that one and start over.
             "error"
@@ -2668,6 +2703,55 @@ mod tests {
             .push_back(oob("error", "\nEXE_SERVER_IS_DIFFERENT_VER\u{15}1.5\n"));
         c.pump_at(t0);
         assert_eq!(c.state(), NetState::Disconnected);
+    }
+
+    /// A UO install opens on protocol 22 and drops on a 1.1 server's
+    /// refusal instead of switching; a 1.1 install drops on a UO one's.
+    #[test]
+    fn a_server_of_another_game_ends_the_handshake() {
+        let t0 = Instant::now();
+        for (install, server, why) in [
+            (
+                &protocol::PROTOCOL_V22,
+                "1.1",
+                "This is a CoD 1.1 server: run vcod without --mod-dir uo",
+            ),
+            (
+                &protocol::PROTOCOL_V1,
+                "1.51",
+                "This is a United Offensive server: run vcod with --mod-dir uo",
+            ),
+        ] {
+            let mut c = NetClient::start_from(FakeTransport::default(), t0, install);
+            assert_eq!(c.protocol().version, install.version);
+            c.transport
+                .incoming
+                .push_back(oob("challengeResponse", " 7"));
+            c.pump_at(t0);
+            c.transport.incoming.push_back(oob(
+                "error",
+                &format!("\nEXE_SERVER_IS_DIFFERENT_VER\u{15}{server}\n"),
+            ));
+            assert_eq!(c.pump_at(t0), vec![NetEvent::Dropped(why.to_string())]);
+            assert_eq!(c.state(), NetState::Disconnected);
+        }
+    }
+
+    /// 1.1 and 1.5 still cross over from an install's connect.
+    #[test]
+    fn an_install_switches_between_1_1_and_1_5() {
+        let t0 = Instant::now();
+        let mut c = NetClient::start_from(FakeTransport::default(), t0, &protocol::PROTOCOL_V6);
+        c.transport
+            .incoming
+            .push_back(oob("challengeResponse", " 7"));
+        c.pump_at(t0);
+        c.transport
+            .incoming
+            .push_back(oob("error", "\nEXE_SERVER_IS_DIFFERENT_VER\u{15}1.1\n"));
+        c.pump_at(t0);
+        assert_eq!(c.state(), NetState::Challenging);
+        assert_eq!(c.protocol().version, 1);
     }
 
     /// A PunkBuster server refuses a client without it in one `error`, the

@@ -30,6 +30,9 @@ vcod --connect <ip:port> --team axis --weapon kar98k_mp
   it, as UO itself does, so `vcod --game-dir <UO install> --mod-dir uo
   --connect <ip:port> --team spectator` watches a UO server and
   `vcod mp_cassino --game-dir <UO install> --mod-dir uo` flies its maps.
+  The client plays only servers of its install's game: with `--mod-dir uo`
+  it refuses a 1.1 or 1.5 server, without it a UO one, and says which
+  flag to use.
 - `--vanilla` loads only the stock retail paks of the install's patch
   (`pak0`..`pak8` on 1.1, `pak0`..`pakf` on 1.5, UO's `pakuo*` and its
   `uomappack00` too, and their `localized_*` paks) and ignores every other
