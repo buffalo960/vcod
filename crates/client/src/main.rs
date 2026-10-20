@@ -420,9 +420,9 @@ struct Args {
     /// With `--net-probe` and `--probe-team`: stand still and print a `RIDE`
     /// line per snapshot with the origin, velocity, ground entity and view
     /// yaw, the mover push and ride capture's wire half, and a `RIDE_NEW`
-    /// line per entity that enters the snapshot; `client-probes/probe_ride`
-    /// and `probe_worldcopy` move a brush model under the player. Writes no
-    /// fixture.
+    /// line per entity that enters the snapshot, and `--probe-fall`'s `CMDS`
+    /// lines; `client-probes/probe_ride` and `probe_worldcopy` move a brush
+    /// model under the player. Writes no fixture.
     #[arg(long)]
     probe_ride: bool,
     /// With `--net-probe` and `--probe-team`: stand still and print an `ITEM`
