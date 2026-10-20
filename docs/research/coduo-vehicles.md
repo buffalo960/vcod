@@ -1030,8 +1030,8 @@ second on, the gunner's 20 units out (VERIFIED, capture,
 vcod runs it as `ClientSim::vehicle_overlap` before each UO cmd's pmove,
 the collmap instance taken out of the collision world for the cmd
 (`CollisionWorld::unlink_model_instance`), and deals the run-over and
-the prone damage in the cmd (`Server::vehicle_overlap_hits`), ahead of
-what its pmove raised. `vehicle_die_ab` sends the
+the prone damage ahead of the cmd's pmove (`Server::vehicle_overlap_hits`),
+so a kill there runs the pmove on the corpse. `vehicle_die_ab` sends the
 probe's 16, 16 and 18 ms cmds a frame and puts the driver's corpse
 within 1 unit of retail's at both lines, and the gunner's within 6.2
 from his mid-turn start (INFERRED, the residue is the probe client's cmd
@@ -1081,6 +1081,42 @@ sounds as it strikes the Panzer past the victim, `EV_SOUND_ALIAS` parm 7
 ms after the jeep's first move in the standing run (VERIFIED, capture);
 the gate matches each one's time from that move, alias and snapped
 origin on ours (`compare_impacts`).
+
+Measured, retail UO 1.51b, 2026-10-20, the same probe with
+`--probe-vehicle bail` for the driver (out at full throttle a second into
+the drive) and the victim 300 ahead (fixture
+`crates/server/tests/fixtures/vehicles/mp_kharkov-jeep-runover-bail-uo.txt`,
+recipe in its header): the driverless Horch rolls on at about 320
+units/s and strikes the standing victim once.
+
+- 121 points, `MOD_CRUSH_JEEP`, the Horch (182) both the inflictor and
+  the attacker, weapon `none`, no direction, and the victim's unsnapped
+  origin as the point, the callback's time the last frame's (VERIFIED,
+  capture). That is `VEH_PlayerDamage` with `r.ownerNum` 1023 after the
+  driver's exit (11.2), on the cmd's path (INFERRED, the time).
+- The callback reads the victim's `origin` equal to the point, the
+  origin his cmd started from: the kill lands before that cmd's
+  `Pmove` (VERIFIED, capture: the probe's `dmgorigin` line; vcod read
+  the origin past the pmove until 2026-10-20, (-1025, 7768, -97) against
+  retail's (-1032.02, 7763.81, -103.08)).
+- The corpse leaves on the knock, 418 units/s by the frames after. Where
+  the death frame's gsc reads it depends on how many of the victim's
+  cmds that frame ran past the kill: four retail runs put it 7.5, 14.2,
+  20.9 and 27.7 units out (a fifth is lost to the crash below), and
+  vcod's three cmds a frame 20.9 (INFERRED, the steps are whole cmds of
+  that speed). Where the victim lands from his placement is the probe
+  client's timing too: four runs settle within 0.03 of (-1032.02,
+  7763.81, -103.08), where vcod settles, and one 0.7 away (VERIFIED,
+  capture).
+- Stock UO `tdm.gsc`'s `Callback_PlayerKilled` reads
+  `level.teamkill_penalty`, which nothing sets, for a kill whose
+  attacker is not a player (line 815): a script runtime error, fatal on
+  a `developer 1` server (VERIFIED, the first capture run). The probe
+  sets it to 0.
+
+`vehicle_runover_ab`'s `a_driverless_jeep_runs_over_a_standing_player`
+replays it on ours: the damage line, its point and the callback's origin
+match retail's exactly, the corpse within one cmd's travel.
 
 ### 11.7 A rider killed in his seat
 
