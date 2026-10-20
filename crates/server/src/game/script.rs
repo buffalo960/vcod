@@ -3196,6 +3196,12 @@ impl ScriptRuntime {
         // 50 ms step runs here, by entity number among the rest
         // (coduo-vehicles.md 12, "The think's turn").
         if self.host.vehicles.live.contains_key(&id) {
+            // A think script set (a `delete`'s free) replaces the
+            // vehicle's own.
+            self.host.run_entity_think(id, now_ms);
+            if !self.host.vehicles.live.contains_key(&id) {
+                return None;
+            }
             let inputs = crate::game::vehicle::think::rider_inputs(&self.host, sims);
             let host = &mut self.host;
             let ran = self
