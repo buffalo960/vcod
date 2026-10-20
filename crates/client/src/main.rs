@@ -6248,6 +6248,8 @@ impl ApplicationHandler for App {
                                                 clients: &newest.clients,
                                                 configstrings: net.configstrings(),
                                                 viewer: ps_client,
+                                                own: client_num,
+                                                eye: cam.pos,
                                                 heads: &heads,
                                                 entity_pos: &entity_pos,
                                             },

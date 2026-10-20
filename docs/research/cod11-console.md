@@ -261,4 +261,6 @@ What the server does with the bit (the masked cmd, `eFlags` 0x40000) is in
 (the console open, `Ui::active`, the HUD's chat field; the bypass read
 off the cvar) sets `PlayInput::talking` before each frame's cmds;
 `play::loopback`'s `a_key_catcher_lights_the_talk_flag` sees the server
-light `EF_TALK` for it. vcod has no cgame key catcher.
+light `EF_TALK` for it. vcod has no cgame key catcher. The cgame draws
+the bit as `headiconTalkBalloon` over a teammate's head
+(`cod11-gametypes-re-bel.md` 7.3, "The second sprite").

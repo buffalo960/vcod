@@ -662,6 +662,20 @@ entity (cod11-turrets.md 8), so there a freed drop's slot is empty at
 once. vcod: `DropRing::claim` reads the slot by number on 1.1 and by the
 entity's handle on 1.5 and UO.
 
+VERIFIED, 1.1d `G_RunThink` (0x50d08): it returns when `nextthink`
+(`+0x1fc`) is 0 or below (0x50d1a) or past `level.time` (`level+0x1e8`,
+0x50d1c), else zeroes `nextthink` (0x50d24) and calls `think` (`+0x200`),
+a NULL one being a `G_Error` (0x50d3f). INFERRED: the eviction's
+`G_FreeEntity` at `level.time + 1` overwrites whatever think the holder had
+and runs on its next turn; vcod's `ObjectTable::schedule` and
+`ObjectTable::run_think` do the same for an item, a script model or any
+holder whose turn ends in `GameHost::run_entity_think`. VERIFIED: 1.1d's
+`G_RunMissile` ends in `G_RunThink` (0x54050, 0x54398). INFERRED: a grenade
+that took a held slot's number loses its fuse to the free and vanishes
+unexploded a frame on. vcod keeps a missile's fuse in `Missiles`, and the
+missile's turn never runs the entity think, so there it flies on and
+explodes; not ported.
+
 VERIFIED, `G_RunItem` (0x4eb18): a `trap_PointContents` with mask 0x80000000
 (0x4ec47..0x4ec4f) and a `G_FreeEntity` (0x4ec5f). VERIFIED, on a patched
 map (section 14.5): an item whose origin is in a brush carrying that bit when

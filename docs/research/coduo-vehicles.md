@@ -1811,6 +1811,33 @@ not measured.
       0x4000 (VERIFIED decompile). The seat cycle (`Cmd_NextVehSlot_f`
       0x4ed9b, `G_VEH_CycleSlot` 0x8da1e) calls no DObj time setter
       (INFERRED, read of the decompile).
+    - **The driver's idle.** A driver boarded by use keeps the legs
+      clip he stood in, `pb_stand_alert` (a 6.27 s loop, no
+      `moveSpeed`), at the phase it reached on foot: the seat changes
+      no legs anim (`legsAnim` 697 from the first snapshot of the tank
+      gun run's capture to the `nextvehslot`) (VERIFIED, capture). Its
+      sways move his head, chest and hands 0.8 units at a time, so the
+      bones in the seat read where that clip started. Every retail
+      vehicle fixture that logs both lines has `PROBE activated` 2050 ms
+      past `PROBE place` (all seven under `fixtures/vehicles/` and
+      `fixtures/seatspawn/`) (VERIFIED, captures). The net probe settles
+      2 s from the placed snapshot (`vehicle_probe.rs`'s `settle`) and its
+      use rides the next frame (INFERRED). 697 is the idle with the
+      restart toggle (0x200) on, so an odd number of legs sets since the
+      spawn's `gclient_t` memset zeroed it (cod15-movement.md 4,
+      player-model-anim-system.md on the toggle) (INFERRED): retail's
+      spawn went straight to the idle on its own frame, the placement's.
+      vcod's `vehicle_ab` boarded 2000 ms past the place, and its seeded
+      pick spawned the driver on a sloped point (-688, -1160) whose
+      100 ms spawn think slid him 30 units a second, so the end frame set
+      a walk clip and the idle only the frame after. Both put ours'
+      idle 150 ms behind retail's: from 300 ms after the use his hands
+      and head moved as retail's did 150 ms earlier (worst 0.83). With
+      the use at 2050 and a flat `mp_teamdeathmatch_spawn` pinned
+      (64, 152), `the_tank_rider_s_bones_follow_retail_s_in_both_seats`
+      reads every driver mark to the print (0.00) and every gunner mark
+      within 0.01 (VERIFIED, replay, 2026-10-20). Nothing in the server
+      changed: the lag was the replay's boarding, not the body.
     - **The tank driver's link offset.** The seat link
       (0x8998d) links the player with `G_EntLinkToWithOffset` at
       `BG_GetVehiclePosOffset(type, requested slot)` (0x230e5): a use
@@ -1829,12 +1856,7 @@ not measured.
       `tank` run; again in the 2026-10-20 tank gun run, whose driver's
       marks `vehicle_ab`'s
       `the_tank_rider_s_bones_follow_retail_s_in_both_seats` gates, 20
-      high through the first stint on both). In that run the driver
-      boards facing 90 off the hull, and from 300 ms after the use his
-      hands and head move as retail's did 50 to 150 ms earlier (16050 to
-      18150, worst 0.83 at 16250; feet within 0.06) (VERIFIED, replay);
-      the turret's ramp matches frame for frame, so the lag is in the
-      body, and it is not traced. The relink after the write links
+      high through the first stint on both). The relink after the write links
       at `r.currentOrigin` as written, unsnapped, where `ClientThink_real`'s
       own link takes the snapped origin: `G_RunClient` (0x41dfc) runs
       `G_SetFixedLink(ent, 2)`, `G_SetOrigin(ent, r.currentOrigin)`,

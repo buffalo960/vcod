@@ -919,7 +919,15 @@ The triggers:
   `a_gunner_spawned_off_the_gun_reads_retail_s_origin`). The angles the
   script reads there (1.1d `(0, 0, 0)`, UO `(0, -41, 0)` for a spawn at
   yaw 319) are the think's view (cod11-gametypes-re-bel.md 8.6), which the
-  same gate holds too.
+  same gate holds too. VERIFIED, the 2026-10-20 retakes of both fixtures
+  (with the gunner's cmds and `ct=`): a frame later the script reads
+  `(1764.48, 1890.38, 1.02)` on both servers, the frame having run the
+  probe's two cmds 16 and 32 ms past the spawn (1.1d `ct` 11682 after the
+  spawn's 11650, UO 12382 after 12350); the cmd stamped on the spawn's own
+  time ran on neither. The yaw is the last of them (1.1d -147, UO -141).
+  The same gate sends ours those two cmds as far past its own spawn and
+  reads the same text. The rig's own 25 and 50 ms cmds fell 50 ms and
+  read -1.01, which was the rig, not the server (VERIFIED, replay).
 - INFERRED, from the call sites: deleting the turret. `G_FreeEntity` calls
   `G_FreeTurret` (0x66b6f), which releases any gunner and clears the record.
 
@@ -960,9 +968,8 @@ offsets one word down: the `+0x1a0` word is `parent` (cod11-combat.md
 
 vcod: a gunner's disconnect drops his turret's owner and busy byte
 (`ScriptRuntime::client_disconnect`), and `GameHost::free_ground_refs` runs the
-`groundEntityNum` part on every protocol. A missile's `r.ownerNum` and
-`parent` are not cleared when its thrower leaves: `Missile::owner` keeps
-the slot.
+`groundEntityNum` part on every protocol, and `Missiles::free_owner_refs`
+the missile `r.ownerNum` and `parent` part (cod11-combat.md 13.7).
 
 VERIFIED: `StopFollowing` (0x46b8c) clears `eFlags` 0xC000, `viewlocked`,
 `viewlocked_entNum` and `gunfx` on a spectator's playerstate. INFERRED: a

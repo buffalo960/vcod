@@ -1,18 +1,21 @@
-# Retail CoD UO 1.51b dedicated server, 2026-10-16: client-probes/probe_turret on
+# Retail CoD UO 1.51b dedicated server, 2026-10-20: client-probes/probe_turret on
 # mp_carentan with probe_teleport 1 and probe_respawn 1, as mp_carentan-turret.txt.
-# COD_DIR=<UO install> COD_VERSION=uo COD_LNXDED_HOME=<abs> PORT=32193 SECS=55 tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 +set probe_respawn 1
-# vcod --net-probe 127.0.0.1:32193 --game-dir <UO install> --mod-dir uo --probe-team axis --probe-secs 40
-# vcod --net-probe 127.0.0.1:32193 --game-dir <UO install> --mod-dir uo --save-turret --capture-tag seatspawn-uo --probe-secs 30   # 2 s after the first
-# PROBE lines from the server log; !trace lines are the gunner's own snapshots
-# around the spawn frame (13700).
-PROBE seat 13700 1 (1764.48, 1890.38, 3.99) (0.00, -41.00, 0.00)
-PROBE seatnext 13750 1 (1764.48, 1890.38, 1.02) (0.00, -145.00, 0.00)
-!trace ms=1579 serverTime=13650 pm_type=0 pm_flags=262144 eFlags=49176 groundEntityNum=1023 origin=1758.8,1845.7,-23.9 viewangles=0.0,-157.0,0.0 delta_angles=0,58072,0 viewlocked=0 viewlocked_entNum=298 gunfx=0 hint=0:0:0 weapon=23
-!trace ms=1627 serverTime=13700 pm_type=0 pm_flags=262144 eFlags=24 groundEntityNum=1023 origin=1764.5,1890.4,4.0 viewangles=0.0,-41.0,0.0 delta_angles=0,12561,0 viewlocked=0 viewlocked_entNum=0 gunfx=0 hint=0:0:255 weapon=0
-!event ms=1627 event=200 parm=0 entity=170
-!event ms=1627 event=199 parm=0 entity=171
-!event ms=1627 event=0 parm=0 entity=4294967295
-!event ms=1627 event=0 parm=0 entity=4294967295
-!event ms=1627 event=0 parm=0 entity=4294967295
-!event ms=1627 event=0 parm=0 entity=4294967295
-!trace ms=1676 serverTime=13750 pm_type=0 pm_flags=262144 eFlags=24 groundEntityNum=1023 origin=1764.5,1890.4,1.0 viewangles=0.0,-145.0,0.0 delta_angles=0,12561,0 viewlocked=0 viewlocked_entNum=0 gunfx=0 hint=0:0:255 weapon=0
+# COD_DIR=<UO install> COD_VERSION=uo COD_LNXDED_HOME=<abs> PORT=34012 SECS=55 tools/run_probe.sh client-probes/probe_turret mp_carentan +set probe_teleport 1 +set probe_respawn 1
+# vcod --net-probe 127.0.0.1:34012 --game-dir <UO install> --mod-dir uo --probe-team axis --probe-secs 40
+# vcod --net-probe 127.0.0.1:34012 --game-dir <UO install> --mod-dir uo --save-turret --capture-tag seatspawn-uo --probe-secs 30   # 2 s after the first
+# PROBE lines from the server log; !cmd, !trace (with ct=) and !event lines are the
+# gunner's own cmds and snapshots from the frame before the spawn (12350) to the
+# frame after it, out of the --save-turret capture.
+PROBE seat 12350 1 (1764.48, 1890.38, 3.99) (0.00, -41.00, 0.00)
+PROBE seatnext 12400 1 (1764.48, 1890.38, 1.02) (0.00, -141.00, 0.00)
+!trace ms=1585 serverTime=12300 ct=12298 pm_type=0 pm_flags=262144 eFlags=49176 groundEntityNum=1023 origin=1757.6,1848.6,-23.9 viewangles=0.0,-153.0,0.0 delta_angles=0,58072,0 viewlocked=0 viewlocked_entNum=298 gunfx=0 hint=0:0:0 weapon=23 legsAnim=95 torsoAnim=0 eventSequence=1 events=99,0,0,0 eventParms=7,0,0,0 exact=1757.5844,1848.6172,-23.874 velocity=0,0,0
+!cmd ms=1601 st=12316 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,45875,0 view=0,38411,0
+!cmd ms=1617 st=12332 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,46239,0 view=0,38775,0
+!cmd ms=1633 st=12350 buttons=0 wbuttons=0 weapon=0 up=0 forward=0 right=0 angles=0,27307,0 view=0,39140,0
+!trace ms=1633 serverTime=12350 ct=12350 pm_type=0 pm_flags=262144 eFlags=24 groundEntityNum=1023 origin=1764.5,1890.4,4.0 viewangles=0.0,-41.0,0.0 delta_angles=0,11833,0 viewlocked=0 viewlocked_entNum=0 gunfx=0 hint=0:0:255 weapon=0 legsAnim=0 torsoAnim=0 eventSequence=0 events=0,0,0,0 eventParms=0,0,0,0 exact=1764.4846,1890.3767,3.9931984 velocity=0,0,-80
+!event ms=1633 event=200 parm=0 entity=170
+!event ms=1633 event=199 parm=0 entity=171
+!cmd ms=1650 st=12366 buttons=0 wbuttons=0 weapon=0 up=0 forward=0 right=0 angles=0,27671,0 view=0,39504,0
+!cmd ms=1666 st=12382 buttons=0 wbuttons=0 weapon=0 up=0 forward=0 right=0 angles=0,28035,0 view=0,39868,0
+!cmd ms=1682 st=12400 buttons=0 wbuttons=0 weapon=0 up=0 forward=0 right=0 angles=0,28399,0 view=0,40232,0
+!trace ms=1682 serverTime=12400 ct=12382 pm_type=0 pm_flags=262144 eFlags=24 groundEntityNum=1023 origin=1764.5,1890.4,1.0 viewangles=0.0,-141.0,0.0 delta_angles=0,11833,0 viewlocked=0 viewlocked_entNum=0 gunfx=0 hint=0:0:255 weapon=0 legsAnim=0 torsoAnim=0 eventSequence=0 events=0,0,0,0 eventParms=0,0,0,0 exact=1764.4846,1890.3767,1.0203972 velocity=0,0,-106

@@ -7909,7 +7909,7 @@ impl Server {
                 };
                 self.bot_noises.push(crate::bots::Noise {
                     at: (x.at + glam::Vec3::Z * 40.0).into(),
-                    source: x.owner,
+                    source: x.owner.unwrap_or(usize::MAX),
                     radius: crate::bots::HEAR_BLAST,
                 });
                 let Some(def) = weapons.get(x.weapon as usize) else {
@@ -7919,6 +7919,11 @@ impl Server {
                     self.pending_explosions.push(x);
                     continue;
                 };
+                // A thrower who left is `r.ownerNum` 0x3ff: the direct hit's
+                // `G_Damage` gets a NULL attacker (combat doc 13.7).
+                let attacker = x
+                    .owner
+                    .unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
                 // A shell's direct hit lands before its splash, which skips
                 // the client it struck (`G_MissileImpact`, coduo-diff.md 21).
                 if let Some((victim, damage)) = x.direct
@@ -7927,7 +7932,7 @@ impl Server {
                 {
                     let hit = crate::game::combat::Hit {
                         victim,
-                        attacker: x.owner,
+                        attacker,
                         inflictor: Some(x.inflictor),
                         damage,
                         dflags: 0,
@@ -7959,7 +7964,7 @@ impl Server {
                 {
                     rt.deliver_entity_hit(&crate::game::combat::EntityHit {
                         target: v,
-                        attacker: x.owner,
+                        attacker,
                         inflictor: Some(x.inflictor),
                         damage: x.shell_damage,
                         dflags: 0,
@@ -7976,19 +7981,28 @@ impl Server {
                     && x.shell_damage != 0
                 {
                     rt.trigger_sweep(&crate::game::combat::TriggerSweep {
-                        attacker: x.owner,
+                        attacker,
                         start: x.contact,
                         end: x.contact,
                         damage: x.shell_damage,
                         mod_: x.direct_mod,
                     });
                 }
+                // `G_RadiusDamage` returns before its walk when `parent`, its
+                // attacker, is NULL: the thrower left (combat doc 13.7).
+                let Some(owner) = x.owner else {
+                    if x.concussive {
+                        rt.spawn_concussive();
+                    }
+                    self.pending_explosions.push(x);
+                    continue;
+                };
                 let blast = crate::game::combat::Blast::new(
                     x.at,
                     def.explosion_radius,
                     def.explosion_inner_damage as f32,
                     def.explosion_outer_damage as f32,
-                    Some(x.owner),
+                    Some(owner),
                     Some(x.inflictor),
                     crate::items::item_name(crate::defs::Defs::of(self.proto), x.weapon as usize)
                         .unwrap_or_default(),
@@ -8099,13 +8113,13 @@ impl Server {
                                     rt.damage_vehicle(
                                         v.id,
                                         damage,
-                                        x.owner,
+                                        owner,
                                         x.inflictor,
                                         x.at.into(),
                                         x.mod_,
                                     );
                                 } else {
-                                    rt.damage_entity(&v, &blast, damage, x.owner);
+                                    rt.damage_entity(&v, &blast, damage, owner);
                                 }
                             }
                         }
