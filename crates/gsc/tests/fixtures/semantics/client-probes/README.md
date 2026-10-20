@@ -2571,7 +2571,37 @@ cargo run -p vcod -- --net-probe 127.0.0.1:33683 --probe-secs 53 $B
 Retail's lines, 2026-10-20, are
 `crates/server/tests/fixtures/threadorder/mp_pavlov.txt` and
 `mp_pavlov-pair.txt`, which `threadorder_ab.rs` replays on ours. It needs a client, so
-`capture_probes.sh` and `semantics_ab.rs` cannot run it.
+`capture_probes.sh` and `semantics_ab.rs` cannot run it. The same two runs
+on 1.5b (`COD_VERSION=1.5`, `COD_DIR` and the probes' `--game-dir` at a
+1.5 install) and UO 1.51b (`COD_VERSION=uo`, the UO install, the probes
+with `--mod-dir uo`), 2026-10-20, are `mp_pavlov-1.5.txt`,
+`mp_pavlov-pair-1.5.txt`, `mp_pavlov-uo.txt` and `mp_pavlov-pair-uo.txt`
+beside them: 1.1d's lines in 1.1d's order. On UO's pair run the second
+probe to connect began first; the gate renumbers each log's clients in
+the order they began.
+
+## probe_menuclock
+
+The clock a spawn woken by a menu answer runs on, against the client's
+first playing snapshot (`docs/research/cod11-gametypes-re-bel.md` 8.7).
+The player sits as a spectator until his `mr`; each `kill` respawns him
+from the callback 0.5 s later. `sv_floodProtect 0` keeps the scripted
+capture's `score`s from dropping a `kill`.
+
+```
+[COD_VERSION=1.5|uo] COD_DIR=<install> COD_LNXDED_HOME=<absolute, no '+'> PORT=34025 PROBE_SECS=40 \
+    tools/run_probe.sh client-probes/probe_menuclock mp_pavlov +set sv_floodProtect 0
+# second shell, 10 s later (1.5: --capture-tag 1.5; UO: --mod-dir uo --capture-tag uo):
+vcod --game-dir <install> --net-probe 127.0.0.1:34025 --probe-secs 18 --save-scripted first \
+    --probe-say "6:mr {sid} 0 a" --probe-say "9:kill" --probe-say "12:kill"
+```
+
+The capture lands in `crates/server/tests/fixtures/gametypes/`; the
+committed ones (2026-10-20, 1.1d, 1.5b, UO 1.51b) moved to
+`crates/server/tests/fixtures/threadorder/menuclock-first*.txt`, the
+server's `PROBE` lines beside them as `menuclock-log*.txt`, and
+`menuclock_ab.rs` replays them. All three print the same offsets: each
+pick on its first playing snapshot's time, each placing 50 later.
 
 ## probe_satchelshot
 
