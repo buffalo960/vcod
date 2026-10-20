@@ -297,6 +297,45 @@ fn ours_pair_in(
     thrower_at: Option<[f32; 3]>,
     target_log: Option<&str>,
 ) -> Vec<String> {
+    let fs = Rc::new(fs);
+    let run = |shift| {
+        ours_pair_run(
+            fs.clone(),
+            map,
+            part,
+            throw,
+            ms,
+            prone_yaw,
+            thrower_at,
+            target_log,
+            shift,
+        )
+    };
+    let (lines, played) = run(0);
+    // Ours' join takes as long as its gamestate's fragments: a map or a
+    // protocol whose join runs a frame off rejoins that much earlier, so
+    // the target plays on the capture's frame and his cmds land on it.
+    match (target_log.map(first_play), played) {
+        (Some((t, _)), Some(p)) if p != t => run(t - p).0,
+        _ => lines,
+    }
+}
+
+/// One run of [`ours_pair_in`], the clients joining `shift` ms later than
+/// [`TARGET_PLAYS_AFTER_JOIN_MS`] says, and the target's first playing
+/// snapshot time.
+#[allow(clippy::too_many_arguments)]
+fn ours_pair_run(
+    fs: Rc<vcod_common::pk3::Pk3Fs>,
+    map: &str,
+    part: &str,
+    throw: bool,
+    ms: i64,
+    prone_yaw: Option<f32>,
+    thrower_at: Option<[f32; 3]>,
+    target_log: Option<&str>,
+    shift: i64,
+) -> (Vec<String>, Option<i64>) {
     let prone = prone_yaw.is_some();
     let mut missiles = Vec::new();
     let mut last_snap = None;
@@ -325,12 +364,12 @@ fn ours_pair_in(
         sv.pin_spawns(vec![target, vec![Some(spot)]]);
     }
     sv.load_world(world);
-    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    sv.load_scripts(fs).expect("load the scripts");
     let (join_ms, late_ms) = match (target_play, target_log) {
         (Some((t, _)), Some(log)) => {
             let thrower = thrower_spawn(log);
             (
-                t - TARGET_PLAYS_AFTER_JOIN_MS,
+                t - TARGET_PLAYS_AFTER_JOIN_MS + shift,
                 thrower - t + TARGET_PLAYS_AFTER_JOIN_MS - THROWER_SPAWNS_AFTER_JOIN_MS,
             )
         }
@@ -375,6 +414,7 @@ fn ours_pair_in(
     }
     let mut selected: Option<u8> = None;
     let mut spawned: Option<i64> = None;
+    let mut played: Option<i64> = None;
     let mut started: Option<i64> = None;
     let frame = Duration::from_millis(common::FRAME_MS as u64);
     let live = |cl: &NetClient<common::ClientEnd>| {
@@ -431,6 +471,7 @@ fn ours_pair_in(
             send(ca, &mut ha, buttons, selected);
         }
         if prone && live(&cb) {
+            played.get_or_insert(cb.snapshots().newest().unwrap().server_time as i64);
             let mut cmds = hb.cmds(&cb, 0);
             for c in &mut cmds {
                 c.wbuttons |= vcod_common::net::msg::WBUTTON_PRONE;
@@ -497,7 +538,7 @@ fn ours_pair_in(
     }
     let mut out = sv.script_log().to_vec();
     out.extend(missiles);
-    out
+    (out, played)
 }
 
 /// How long after ours' client connects its first playing snapshot comes,
@@ -1021,22 +1062,23 @@ const SLIDING_SPAWN_15: [f32; 3] = [976.016, -863.939, -5.89044];
 const LEVEL_SPAWN_15: [f32; 3] = [1080.0, 3488.0, -23.875];
 const LEVEL_SPAWN_UO: [f32; 3] = [1800.0, 2696.0, -23.875];
 
-/// How far ours' frag may rest off retail's on a prone back, both
-/// throwers spawned alike. The first strike is retail's to the bit (the
-/// bone trace's float stores, cod11-combat.md 3.1, "The arithmetic on 1.5
-/// and UO"); the contacts after it land a float step or three off in z
-/// (on 1.5b the rest at -16.427534 against -16.427536, on UO the second
-/// strike 3 steps off). The pose is the engine's (3.1, "The pose on 1.5
-/// and UO") and its clips run on the engine's float node time ("The
-/// clip's float time"), which left the 1.5b rest where it was: these
-/// captures logged no cmds, and a prone body rides where its drop settled
-/// (the brecourt `-cmds` gate replays one to the bit).
-const BACK_NEAR: f32 = 0.0001;
+/// How many float steps ours' frag may land off retail's on a prone back.
+/// On the `-cmds` captures the target's spawn, drop, airborne body
+/// (`fTorsoHeight` to the bit, read by gdb at 1.5b 0x1e589 and UO
+/// 0x22ecf), landing and legs clips are retail's, and so is the thrower's
+/// throw; the strike on his body still lands 2 steps off in z on 1.5b and
+/// 1 on UO, UO's second strike 3. Off by that little with every input
+/// retail's, the miss is in the posed bones or the bone trace at this
+/// pose, which only a skeleton dump at the strike can name
+/// (cod11-combat.md 3.1, "The prone strike on mp_carentan"). The older
+/// captures logged no cmds; with the site's ground trace now retail's
+/// they land within the same.
+const STRIKE_STEPS: u32 = 3;
 
 /// mp_carentan on 1.5b, the target lying still with the body his drop
 /// left (cod15-movement.md 4, "The airborne prone body"): the first frag
 /// strikes his back and comes to rest on it, his number its ground, each
-/// within [`BACK_NEAR`] of retail's, not snapped 1.5 up onto his bones
+/// within [`STRIKE_STEPS`] of retail's, not snapped 1.5 up onto his bones
 /// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
 /// which drops it to the floor (12.6), where it bounces at 1.5's half of
 /// the reflection (12.4) and rests. Every snapshot of both frags carries
@@ -1061,8 +1103,46 @@ fn a_frag_rests_on_a_prone_players_back_on_15() {
         if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
             return;
         }
-        prone_back_gate(fs, fixture, thrower_at, true, BACK_NEAR);
+        prone_back_gate(fs, fixture, thrower_at, true, STRIKE_STEPS);
     }
+}
+
+/// [`a_frag_rests_on_a_prone_players_back_on_15`] on a capture that logged
+/// both clients' cmds: with the target's drop and the thrower's cmds
+/// replayed, every snapshot of both frags carries retail's `trType` and
+/// ground, every base past the strike on him retail's bits.
+#[test]
+fn a_frag_rests_on_a_prone_players_back_like_retail_on_15() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    let fixture =
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5-cmds.txt");
+    prone_back_gate(fs, fixture, landed(fixture), true, STRIKE_STEPS);
+}
+
+/// [`a_frag_strikes_a_prone_players_back_on_uo`] on a capture that logged
+/// both clients' cmds.
+#[test]
+fn a_frag_strikes_a_prone_players_back_like_retail_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let fixture =
+        include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo-cmds.txt");
+    prone_back_gate(fs, fixture, landed(fixture), false, STRIKE_STEPS);
+}
+
+/// Where a fixture's thrower spawned: its first `PROBE thrower` origin.
+fn landed(fixture: &str) -> [f32; 3] {
+    let lines: Vec<String> = fixture.lines().map(str::to_string).collect();
+    thrower_lines(&lines)
+        .first()
+        .expect("a PROBE thrower line")
+        .0
 }
 
 /// [`a_frag_rests_on_a_prone_players_back_on_15`] on United Offensive
@@ -1080,20 +1160,21 @@ fn a_frag_strikes_a_prone_players_back_on_uo() {
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo.txt"),
         LEVEL_SPAWN_UO,
         false,
-        BACK_NEAR,
+        STRIKE_STEPS,
     );
 }
 
 /// The prone part on `fs`'s install against `fixture`: the first frag's
-/// first strike on the target (his number its ground) retail's to the bit,
-/// with `rests` its first rest on him, and its first four bases, each
-/// within `near` of retail's; both frags end on the floor.
+/// strike on the target (his number its ground), with `rests` its rest on
+/// him, and its first four bases, each within `steps` float steps of
+/// retail's; both frags end on the floor, and with `rests` every snapshot
+/// of both carries retail's `trType` and ground and a base within `steps`.
 fn prone_back_gate(
     fs: vcod_common::pk3::Pk3Fs,
     fixture: &str,
     thrower_at: [f32; 3],
     rests: bool,
-    near: f32,
+    steps: u32,
 ) {
     let ours = ours_pair_in(
         fs,
@@ -1103,36 +1184,42 @@ fn prone_back_gate(
         12_000,
         Some(225.0),
         Some(thrower_at),
-        None,
+        fixture.contains("target CMDS").then_some(fixture),
     );
-    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    // Ours logs a missile until its explode.
+    let retail: Vec<String> = fixture
+        .lines()
+        .filter(|l| !l.contains(" etype 0 "))
+        .map(str::to_string)
+        .collect();
     report(&retail, &ours);
     let (r, o) = (missile_grounds(&retail), missile_grounds(&ours));
     if std::env::var_os("SM_REPORT").is_some() {
         eprintln!("retail {r:?}\nours   {o:?}");
     }
     assert_eq!((r.len(), o.len()), (2, 2), "{o:?}");
+    // How many float steps apart two bases lie, the worst axis.
+    let off = |a: [f32; 3], b: [f32; 3]| {
+        (0..3)
+            .map(|i| (a[i].to_bits() as i64 - b[i].to_bits() as i64).unsigned_abs() as u32)
+            .max()
+            .unwrap()
+    };
     let on_him = |v: &[MissileRow], rest: bool| {
         v.iter()
             .find(|g| g.2 == 0 && (g.0 == 0) == rest)
             .map(|g| g.1)
     };
-    let (rs, os) = (on_him(&r[0], false), on_him(&o[0], false));
-    assert_eq!(
-        os.map(|b| b.map(f32::to_bits)),
-        rs.map(|b| b.map(f32::to_bits)),
-        "the first strike on him: retail {rs:?}, ours {os:?}"
-    );
     for rest in [false, true] {
         let (rb, ob) = (on_him(&r[0], rest), on_him(&o[0], rest));
         if !rest || rests {
             let (Some(rb), Some(ob)) = (rb, ob) else {
                 panic!("rest {rest}: retail {rb:?}, ours {ob:?}: {:?}", o[0]);
             };
-            let off = (0..3).map(|i| (rb[i] - ob[i]).abs()).fold(0.0, f32::max);
             assert!(
-                off <= near,
-                "rest {rest}: retail {rb:?}, ours {ob:?}, {off} off"
+                off(rb, ob) <= steps,
+                "rest {rest}: retail {rb:?}, ours {ob:?}, {} steps off",
+                off(rb, ob)
             );
         } else {
             assert_eq!((rb, ob), (None, None), "a rest on him");
@@ -1154,10 +1241,7 @@ fn prone_back_gate(
     let (rb, ob) = (bases(&r[0]), bases(&o[0]));
     assert_eq!(rb.len(), ob.len());
     for (a, b) in rb.iter().zip(&ob) {
-        assert!(
-            (0..3).all(|i| (a[i] - b[i]).abs() <= near),
-            "retail {rb:?}\nours   {ob:?}"
-        );
+        assert!(off(*a, *b) <= steps, "retail {rb:?}\nours   {ob:?}");
     }
     for g in 0..2 {
         let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
@@ -1171,13 +1255,21 @@ fn prone_back_gate(
         for g in 0..2 {
             assert_eq!(r[g].len(), o[g].len(), "grenade {g}'s snapshots");
             for (s, (a, b)) in r[g].iter().zip(&o[g]).enumerate() {
-                let off = (0..3).map(|i| (a.1[i] - b.1[i]).abs()).fold(0.0, f32::max);
                 assert!(
-                    a.0 == b.0 && a.2 == b.2 && off <= near,
+                    a.0 == b.0 && a.2 == b.2 && off(a.1, b.1) <= steps,
                     "grenade {g} snapshot {s}: retail {a:?}, ours {b:?}"
                 );
             }
         }
+    }
+    if std::env::var_os("SM_REPORT").is_some() {
+        let worst = r[0]
+            .iter()
+            .chain(&r[1])
+            .zip(o[0].iter().chain(&o[1]))
+            .map(|(a, b)| off(a.1, b.1))
+            .max();
+        eprintln!("worst {worst:?} steps");
     }
 }
 

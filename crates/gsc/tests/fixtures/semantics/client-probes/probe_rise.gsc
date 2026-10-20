@@ -1,5 +1,5 @@
 //	The stance refusals' server half (docs/research/cod11-mantle.md, "The
-//	forced-stance events"). Stock dm on 1.1d, one `--probe-uo-weapon
+//	forced-stance events"). Stock dm on 1.1d, 1.5b or UO, one `--probe-uo-weapon
 //	direct --probe-team allies --probe-weapon m1carbine_mp` client, whose
 //	buttons, `wbuttons` and `up` the script sets through
 //	`iPrintLn("PROBE_IN <buttons> <wbuttons> <up>")`.

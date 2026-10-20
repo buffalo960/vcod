@@ -2072,6 +2072,23 @@ round on a curved patch at different points of its facet seams, because
 1.5 or UO server clips patches and terrain in that build's arithmetic
 (`bsp-ibsp59-format.md`, "Patch collision on 1.5 and UO").
 
+The `position` on a world hit or a miss is the world trace's own end
+point, not a lerp the builtin makes. VERIFIED, 1.5b game.mp
+`GScr_BulletTrace` (0x5f456): it passes `trap_LocationalTrace`'s result
+straight to `Scr_AddVector` (0x5f559). VERIFIED, 1.5b `cod_lnxded`: the
+locational trace's last step compares the entity pass's fraction with
+the world's (0x809a44d..0x809a45b) and rewrites the end point (0x809a45f
+on, the stored move above) only when the entity pass lowered it;
+otherwise the end point stays `CM_BoxTrace`'s (`collision::cm_endpos`,
+`cod15-movement.md` 7). VERIFIED, live (retail 1.5b and UO 1.51b,
+2026-10-20, gdb on `BG_CheckProneValid`'s `fTorsoHeight` store,
+1.5b game.mp 0x1e589, UO 0x22ecf): `probe_scriptmodel`'s prone target,
+put on `ground_at` + 0.125 by `setorigin`, starts his drop at z
+-22.749998 (0xc1b5ffff) on both servers, where a lerp rounding the
+product and the sum apart gives -22.75. vcod's builtin lerped; it now
+reads the trace's `endpos` for the world and keeps
+`combat::trace_point` for a script model or a body.
+
 ---
 
 ## 3. Hit locations
@@ -2412,8 +2429,36 @@ them throughout: its pose is the glam one, not the stored build.
 VERIFIED, vcod measurement: `pronepose_ab`'s 1.5b mp_brecourt rays, the
 origin and the eight marks are retail's bits (the 3-step `RAY_STEPS_15`
 is gone); the 1.5b mp_carentan prone rest stays one step off, as it was
-on seconds, since that capture logged no cmds (`scriptmodel_ab`'s
-`BACK_NEAR`).
+on seconds (next section).
+
+#### The prone strike on mp_carentan
+
+VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20,
+`probe_scriptmodel`'s prone part with both clients' cmds logged,
+fixtures `mp_carentan-scriptmodel-prone-rest-{1.5,uo}-cmds.txt`; recipe
+in each header): the first frag strikes the prone target's back and, on
+1.5b, rests on it until he is moved; on UO it strikes him again lower
+down and slides off. Replaying both clients' cmds, three inputs had kept
+ours off retail's, each now retail's:
+
+- the site's ground trace (2.7, the `bulletTrace` end point), which put
+  the target's drop a float step high;
+- the airborne body's `fTorsoHeight` (`cod15-movement.md` 4);
+- the legs on a lie-down pressed mid-fall
+  (`player-model-anim-system.md`, "The lie-down in the air").
+
+VERIFIED, vcod measurement (`scriptmodel_ab`'s `..._like_retail_on_15`
+and `..._on_uo`): with them the thrower's site offset, the target's
+origin at every cmd of his drop, his body and his legs clips match the
+captures and the gdb reads, and every frag snapshot carries retail's
+`trType` and ground. The first strike on him still lands 2 float steps
+off retail's z on 1.5b (-10.992799 against -10.992797, the hold on him
+too; every base after it is retail's bits) and 1 on UO, UO's second
+strike 3 (-18.95676 against -18.956766). INFERRED: with every input
+above retail's, the miss lies in the posed bones or the bone trace at
+this pose; a skeleton dump at the strike (the gdb method above) would
+name it. Before the site fix the UO first strike read as retail's bit
+and 1.5b's old capture's too: two errors that cancelled.
 
 VERIFIED, vcod measurement (`scriptmodel_ab`, the UO mp_brecourt roll):
 the first frag strikes the prone target's legs and rests on the grade
@@ -9072,6 +9117,14 @@ Through dm's own callback, whose `dropItem` takes the carbine and its clip
 in the death's frame (the 25950 snapshot already lacks clip slot 10), the
 first dead cmd's snapshot read 0x10: the ammo test fails. `rise_ab` holds
 ours to both.
+
+VERIFIED live, 2026-10-20: the same probe and client on `COD_VERSION=1.5`
+and `COD_VERSION=uo tools/run_probe.sh mp_carentan` (fixtures
+`mp_carentan-dm-slope-50ms-rise-1.5.txt` and `-rise-uo.txt`, same
+directory) read the same on both deaths: the keeping body's death snapshot
+and its first dead cmd's carry 0x400 and the second's clears it, and the
+stock callback's first dead cmd already reads 0x10. `rise_ab`'s 1.5 and UO
+rows hold ours to both.
 
 ---
 

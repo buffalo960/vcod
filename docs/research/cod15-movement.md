@@ -282,6 +282,18 @@ does one whose first lie-down took a heading off the view (`proneDirection`
 -45 where the client held 270), which the fixtures exclude: that heading is
 the spawn point's yaw, below.
 
+VERIFIED, `fTorsoHeight`'s arithmetic (`BG_CheckProneValid`'s last
+step, 1.1d `game.mp.i386.so` 0x2e14c, 1.5b 0x1e589, UO game.mp.uo
+0x22ecf): the chest sample's z less the origin's z less 6 is one x87
+expression stored once, the difference never rounded on its own.
+VERIFIED, live (gdb on 1.5b and UO, 2026-10-20, the `fstps` at that
+store): the chest sample on mp_carentan's flat spot is
+-17.874535 (0xc18eff0c) on both servers, and the stored body off an
+origin at -22.885998 is -0.98853683, where rounding the difference first
+gives -0.9885349; the flat lie-down at spawn on mp_carentan reads
+0.0004427433 on the wire, not 0.00044250488. vcod: `pmove::check_prone`
+takes the difference in `f64`.
+
 ### The spawn's lie-down
 
 VERIFIED, `game.mp.i386.so` 1.5b `ClientSpawn` (0x3c9a8): after the
