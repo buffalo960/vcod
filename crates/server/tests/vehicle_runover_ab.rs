@@ -28,12 +28,20 @@ const SETTLE_MS: i64 = 2000;
 const TAP_MS: i64 = 150;
 const SEATED_MS: i64 = 2000;
 const AHEAD_MS: i64 = 6000;
+/// `BAIL`: the throttle's time before the exit, which keeps it held.
+const BAIL_MS: i64 = 1000;
 
 /// Our PROBE lines, and the `EV_SOUND_ALIAS` temp entities the victim's
 /// snapshots carried, each once as `VEH <time> temp <n> ev 172 parm <p>
 /// other 0 pos <x> <y> <z>` in the probe client's format. The victim is
 /// allied, the driver on `driver_team`; `cvars` go on top of the probe's.
-fn ours(victim: &str, driver_team: &str, cvars: &[(&str, &str)]) -> Option<Vec<String>> {
+/// With `bail` the driver drives `vehicle_probe.rs` `BAIL`, out 1 s in.
+fn ours(
+    victim: &str,
+    driver_team: &str,
+    cvars: &[(&str, &str)],
+    bail: bool,
+) -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
     let p = &PROTOCOL_V22;
     let bsp_path = fs.resolve_map(MAP).expect("the map in the UO paks");
@@ -95,8 +103,10 @@ fn ours(victim: &str, driver_team: &str, cvars: &[(&str, &str)]) -> Option<Vec<S
         if since.is_some_and(|ms| ms >= ahead + AHEAD_MS) {
             break;
         }
-        let tap = since.is_some_and(|ms| (SETTLE_MS..SETTLE_MS + TAP_MS).contains(&ms));
-        hold.forward = if since.is_some_and(|ms| (ahead..ahead + AHEAD_MS).contains(&ms)) {
+        let tapping = |from: i64| since.is_some_and(|ms| (from..from + TAP_MS).contains(&ms));
+        let throttle = if bail { BAIL_MS + TAP_MS } else { AHEAD_MS };
+        let tap = tapping(SETTLE_MS) || (bail && tapping(ahead + BAIL_MS));
+        hold.forward = if since.is_some_and(|ms| (ahead..ahead + throttle).contains(&ms)) {
             127
         } else {
             0
@@ -206,7 +216,7 @@ fn time(l: &str) -> Option<i32> {
 /// `vehicle_hit_person`) from 100 ms before the first hit to `upto` ms past
 /// it, each time made relative to the jeep's first move: the drive's start
 /// rides the probe client's own clock from its spawn.
-fn around_hit(lines: &[String], upto: i32) -> Vec<String> {
+fn around_hit(lines: &[String], upto: i32, origins: bool) -> Vec<String> {
     let placed = lines
         .iter()
         .filter(|l| l.starts_with("PROBE a "))
@@ -223,6 +233,7 @@ fn around_hit(lines: &[String], upto: i32) -> Vec<String> {
         .filter(|l| {
             l.starts_with("PROBE v ")
                 || l.starts_with("PROBE dmg ")
+                || (origins && l.starts_with("PROBE dmgorigin "))
                 || (l.starts_with("VEH ") && l.contains(" parm 8 "))
         })
         .filter_map(|l| {
@@ -329,11 +340,30 @@ const LIE_DOWN: Drift = Drift {
     why: "where the prone victim's lie-down left him",
 };
 
+/// The driverless jeep's victim, dead from the strike's frame on: the gsc
+/// reads his corpse, knocked off at 418 units/s, after however many of the
+/// probe client's cmds that frame ran past the kill. Retail's capture ran
+/// two (14.2 units out), ours runs three (20.9); retail's other runs put
+/// the death frame's corpse 7.5 and 27.7 out. From there the corpse rides
+/// the cmd clock as in [`FLIGHT`] and comes to rest 3.5 off. The strike's
+/// frame itself (the damage, its point and the origin the callback reads)
+/// is exact.
+const CORPSE: Drift = Drift {
+    after: 0,
+    within: 5.5,
+    why: "the probe client's cmd clock in the corpse's flight",
+};
+
 /// Retail's lines against ours one for one: whole words (times, damage,
 /// health, alias indices) equal, decimals within 0.01 up to `drift.after`
 /// ms past the first hit and within `drift.within` from there.
 fn compare(retail: &[String], ours: &[String], upto: i32, drift: Drift) {
-    let (r, o) = (around_hit(retail, upto), around_hit(ours, upto));
+    // Captures from before the probe logged `dmgorigin` carry none.
+    let origins = retail.iter().any(|l| l.starts_with("PROBE dmgorigin "));
+    let (r, o) = (
+        around_hit(retail, upto, origins),
+        around_hit(ours, upto, origins),
+    );
     if std::env::var_os("RUNOVER_REPORT").is_some() {
         for l in &r {
             eprintln!("retail {l}");
@@ -387,7 +417,7 @@ fn compare(retail: &[String], ours: &[String], upto: i32, drift: Drift) {
 #[test]
 fn a_jeep_runs_over_a_standing_player_twice() {
     let r = retail("tests/fixtures/vehicles/mp_kharkov-jeep-runover-stand-uo.txt");
-    let Some(o) = ours("stand", "axis", &[]) else {
+    let Some(o) = ours("stand", "axis", &[], false) else {
         return;
     };
     compare(&r, &o, 1000, FLIGHT);
@@ -397,7 +427,7 @@ fn a_jeep_runs_over_a_standing_player_twice() {
 #[test]
 fn a_prone_player_under_a_jeep_takes_ten_a_cmd() {
     let r = retail("tests/fixtures/vehicles/mp_kharkov-jeep-runover-prone-uo.txt");
-    let Some(o) = ours("prone", "axis", &[]) else {
+    let Some(o) = ours("prone", "axis", &[], false) else {
         return;
     };
     compare(&r, &o, 1000, CREEP);
@@ -410,9 +440,24 @@ fn a_prone_player_under_a_jeep_takes_ten_a_cmd() {
 #[test]
 fn a_teammate_s_jeep_makes_a_prone_player_hurt_himself() {
     let r = retail("tests/fixtures/vehicles/mp_kharkov-jeep-runover-prone-team-uo.txt");
-    let Some(o) = ours("prone", "allies", &[("scr_friendlyfire", "0")]) else {
+    let Some(o) = ours("prone", "allies", &[("scr_friendlyfire", "0")], false) else {
         return;
     };
     compare(&r, &o, 1000, LIE_DOWN);
+    compare_impacts(&r, &o);
+}
+
+/// A driverless jeep (its driver out at full throttle a second into the
+/// drive) rolls on into a standing victim, and its one strike kills him.
+/// `VEH_PlayerDamage` passes the jeep as the attacker too, and the body's
+/// origin as the point; the kill lands before the cmd's pmove, so the
+/// callback reads the origin the cmd started from (coduo-vehicles.md 11.6).
+#[test]
+fn a_driverless_jeep_runs_over_a_standing_player() {
+    let r = retail("tests/fixtures/vehicles/mp_kharkov-jeep-runover-bail-uo.txt");
+    let Some(o) = ours("stand", "axis", &[("probe_victim_ahead", "300")], true) else {
+        return;
+    };
+    compare(&r, &o, 1000, CORPSE);
     compare_impacts(&r, &o);
 }

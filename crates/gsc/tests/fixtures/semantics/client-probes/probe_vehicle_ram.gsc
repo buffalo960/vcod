@@ -35,6 +35,11 @@
 //	PROBE replace <time> <num> <spot> <yaw>
 //	PROBE v <time> <origin> <health> <sessionstate>
 //	PROBE dmg <time> <victim> inf <n> att <n> <damage> flags <f> <mod> <weapon> <point> <dir> <hitloc> health <h>
+//	PROBE dmgorigin <time> <victim> <origin>
+//
+//	`dmgorigin` is the victim's origin as the callback runs: ahead of the
+//	cmd's pmove when the hit comes from `ClientThink_real`. Captures from
+//	before 2026-10-20 carry no `dmgorigin` line.
 //
 //	UO only.
 
@@ -42,6 +47,9 @@ main()
 {
 	thread watch_places();
 	maps\mp\gametypes\tdm::main();
+	// Stock tdm reads it unset when a non-player kills (a driverless
+	// vehicle): a script runtime error, fatal under `developer 1`.
+	level.teamkill_penalty = 0;
 	level.probe_tdm_damage = level.callbackPlayerDamage;
 	level.callbackPlayerDamage = ::probe_damage;
 }
@@ -64,6 +72,7 @@ probe_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vP
 		if (isdefined(vDir))
 			dir = vDir;
 		logPrint("PROBE dmg " + gettime() + " " + self getEntityNumber() + " inf " + num(eInflictor) + " att " + num(eAttacker) + " " + iDamage + " flags " + iDFlags + " " + sMeansOfDeath + " " + sWeapon + " " + point + " " + dir + " " + sHitLoc + " health " + self.health + "\n");
+		logPrint("PROBE dmgorigin " + gettime() + " " + self getEntityNumber() + " " + self.origin + "\n");
 	}
 	[[level.probe_tdm_damage]](eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
 }

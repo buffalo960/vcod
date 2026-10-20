@@ -299,12 +299,6 @@ pub(crate) enum Attack {
     /// A `projectile` weapon's fire: `Weapon_RocketLauncher_Fire` (0x68c40)
     /// launches a rocket along the spread aim (combat doc 13.6).
     Rocket(Shot),
-    /// UO's `ClientThink_real` found the body inside a vehicle ahead of
-    /// its pmove (coduo-vehicles.md 11.6).
-    Overlap {
-        slot: usize,
-        overlap: crate::spectate::VehicleOverlap,
-    },
 }
 
 /// `Weapon_RocketLauncher_Fire`'s push on the shooter along the view
@@ -940,7 +934,9 @@ fn vehicle_player_damage(
     } else {
         "MOD_CRUSH_TANK"
     };
-    let weapon = v.wire.weapon as usize;
+    let weapon = crate::items::item_name(rt.host.defs, v.wire.weapon as usize)
+        .unwrap_or("none")
+        .to_string();
     match v.seats[1] {
         Some(driver) => {
             let hit = crate::game::combat::Hit {
@@ -950,16 +946,14 @@ fn vehicle_player_damage(
                 damage,
                 dflags: 0,
                 mod_,
-                weapon: crate::items::item_name(rt.host.defs, weapon)
-                    .unwrap_or("none")
-                    .to_string(),
+                weapon,
                 point: at.into(),
                 dir: [0.0; 3],
                 hitloc: "none",
             };
             rt.deliver_hits(vec![hit]);
         }
-        None => rt.deliver_world_hit(slot, veh, damage, 0, mod_),
+        None => rt.deliver_unowned_hit(slot, [veh, veh], damage, 0, mod_, &weapon, at.into()),
     }
 }
 
@@ -8785,6 +8779,18 @@ impl Server {
                     }
                     _ => None,
                 };
+            }
+            // The run-over and the prone 10 land ahead of the pmove, before
+            // anything the cmd raises: a kill there runs this cmd's pmove on
+            // the corpse (coduo-vehicles.md 11.6).
+            if let Some(o) = overlap.filter(|o| o.struck.is_some() || o.prone) {
+                self.vehicle_overlap_hits(slot, o, &mut rounds, &mut bodies, &weapons);
+            }
+            let collision = self.world.as_ref().map(|w| &w.collision);
+            let c = self.clients[slot].as_mut().unwrap();
+            let sim = c.sim.as_mut().unwrap();
+            let round = &mut rounds[slot];
+            if !frozen {
                 let unlinked = match (overlap, collision) {
                     (Some(o), Some(w)) if o.unlink => w.unlink_model_instance(o.entity),
                     _ => None,
@@ -8830,13 +8836,7 @@ impl Server {
             // `ClientEvents` (0x3fd24): this cmd's shots, swings, throws and
             // falls, in the order it raised them, fired below before its
             // touch pass.
-            // The body inside a vehicle took its run-over and prone damage
-            // ahead of the pmove, before anything the cmd raised.
-            let mut attacks: Vec<Attack> = overlap
-                .filter(|o| o.struck.is_some() || o.prone)
-                .map(|o| Attack::Overlap { slot, overlap: o })
-                .into_iter()
-                .collect();
+            let mut attacks: Vec<Attack> = Vec::new();
             for e in &raised {
                 let weapon = sim.ps.weapon;
                 let grenade = weapons
@@ -9535,10 +9535,6 @@ impl Server {
                 self.launch(shot, weapons);
                 return;
             }
-            Attack::Overlap { slot, overlap } => {
-                self.vehicle_overlap_hits(slot, overlap, rounds, bodies, weapons);
-                return;
-            }
         };
         let Some(def) = weapons.get(weapon as usize) else {
             return;
@@ -9624,8 +9620,7 @@ impl Server {
                 | Attack::Fall { .. }
                 | Attack::Suicide { .. }
                 | Attack::Strike(_)
-                | Attack::Rocket(_)
-                | Attack::Overlap { .. } => {
+                | Attack::Rocket(_) => {
                     unreachable!()
                 }
             }
