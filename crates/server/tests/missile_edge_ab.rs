@@ -670,14 +670,6 @@ fn explode(lines: &[String]) -> Option<(i32, [f32; 3])> {
         })
 }
 
-/// A splash's tokens past the position: `ev`, `parm`, `other` and then
-/// `surf`, `scale`, `weapon`.
-fn splash_fields(t: &[String]) -> Vec<String> {
-    let mut out = t[..6].to_vec();
-    out.extend_from_slice(&t[10..]);
-    out
-}
-
 /// A frag thrown flat off the wall: its `trDelta` z (the throw's 120)
 /// passes 30, so the move that enters the water raises the splash at the
 /// missile's origin before it, and the whole flight matches retail's to
