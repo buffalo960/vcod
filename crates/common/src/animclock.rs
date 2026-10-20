@@ -12,6 +12,18 @@ use crate::animscript::movetype_bit;
 use crate::animtree::{AnimMotion, PlayerAnims};
 use glam::Vec3;
 
+thread_local! {
+    static RESTART_WEIGHTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test hook: while on, this thread's 1.5 and UO setter restarts a weighted
+/// node as 1.1's does, the rule before "The setter on a weighted node"
+/// (cod11-combat.md 3.1), so a gate can show its capture tells the two apart.
+#[doc(hidden)]
+pub fn restart_weighted_nodes(on: bool) {
+    RESTART_WEIGHTED.with(|c| c.set(on));
+}
+
 /// The restart toggle on a wire anim value.
 const TOGGLE: i32 = 0x200;
 
@@ -489,6 +501,7 @@ impl ChannelClock {
             _ => (0.0, 0.0),
         };
         let windowed = window.is_some();
+        let keeps = windowed && !RESTART_WEIGHTED.with(|c| c.get());
         let blend = match window {
             None => blend_ms(anims, old_index, new_index, legs),
             Some(w) => blend_ms_windowed(anims, old_index, new_index, legs, now_ms, w),
@@ -526,13 +539,13 @@ impl ChannelClock {
         // only from the torso (a fresh corpse's death never), so a weighted
         // legs clip plays on from where it stands (cod11-combat.md 3.1,
         // "The setter on a weighted node").
-        let (phase, phase_t) = if windowed && back.is_some() {
+        let (phase, phase_t) = if keeps && back.is_some() {
             (0.0, 0.0)
         } else {
             (phase, phase_t)
         };
         self.current = match back {
-            Some((p, _)) if windowed && (legs || new.is_some_and(|n| n.death)) => Play {
+            Some((p, _)) if keeps && (legs || new.is_some_and(|n| n.death)) => Play {
                 base_ms: now_ms,
                 base_s: p.seconds(now_ms),
                 rate: 1.0,
