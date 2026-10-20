@@ -56,6 +56,13 @@ pub(super) fn seed_stream(seed: u64) -> u64 {
 }
 
 impl Server {
+    /// Test-facing, for the bot harness: the team scores, [axis, allies].
+    pub fn team_scores(&mut self) -> [i32; 2] {
+        self.script
+            .as_mut()
+            .map_or([0, 0], |rt| rt.with_host(|h, _| h.team_scores))
+    }
+
     fn bot_settings(&self) -> Settings {
         let on = |name: &str, default: &str| {
             crate::game::builtins::cvar::atoi(&self.live_cvar(name, default)) != 0
