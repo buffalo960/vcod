@@ -1,16 +1,19 @@
-//! Client cvars set by the server's `v` command, plus the 140/204
-//! configstring mirror those same names may fall back to
+//! Client cvars the server sets with `v` and `CG_MapRestart`, which live
+//! in the console's cvar store, plus the 140/204 configstring mirror
+//! those same names may fall back to
 //! (docs/research/cod11-hud-protocol.md, section 0; `crates/server/src/cvars.rs`,
 //! the "140/204 mirror").
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use crate::console::shell::{Effect, Shell};
 use vcod_common::net::protocol::{CS_LAYOUT_V1, CsLayout};
 
-/// Cvars a `v` command set, keyed lowercase. A `v` wins over the 140/204
+/// The names the server set this connection, keyed lowercase; their
+/// values are the console's. A server-set name wins over the 140/204
 /// mirror `get` also checks.
 pub struct ClientCvars {
-    set: HashMap<String, String>,
+    set: HashSet<String>,
     /// Where the mirror sits: configstrings 140..=203 name the cvars and
     /// 204..=267 hold their values on 1.1, United Offensive's 149 and 277
     /// blocks hold 128 each (`CsLayout`).
@@ -20,7 +23,7 @@ pub struct ClientCvars {
 impl Default for ClientCvars {
     fn default() -> Self {
         Self {
-            set: HashMap::new(),
+            set: HashSet::new(),
             layout: CS_LAYOUT_V1,
         }
     }
@@ -38,32 +41,45 @@ impl ClientCvars {
         (first..=last, self.layout.cvar_values - first)
     }
 
-    /// `v <name> "<value>"`; returns whether the command was a `v` this
-    /// consumed.
-    pub fn on_server_command(&mut self, tokens: &[String]) -> bool {
+    /// `trap_Cvar_Set` from the cgame: CoDMP.exe's trap 9 (0x402331) is
+    /// `Cvar_Set2` with `force` (`Shell::force`), so a server-set cvar
+    /// lands in the console's store whatever its flags. Returns what the
+    /// set asks of the caller (a userinfo push, a config save).
+    fn server_set(&mut self, shell: &mut Shell, name: &str, value: &str) -> Vec<Effect> {
+        self.set.insert(name.to_lowercase());
+        shell.force(name, value)
+    }
+
+    /// `v <name> "<value>"` (cgame 0x30030550, UO 0x3003d570): the cgame
+    /// sets the cvar. `None` when the command is not a `v`.
+    pub fn on_server_command(
+        &mut self,
+        tokens: &[String],
+        shell: &mut Shell,
+    ) -> Option<Vec<Effect>> {
         if tokens.first().map(String::as_str) != Some("v") {
-            return false;
+            return None;
         }
-        let Some(name) = tokens.get(1) else {
-            return false;
-        };
-        let value = tokens.get(2).cloned().unwrap_or_default();
-        self.set.insert(name.to_lowercase(), value);
-        true
+        let name = tokens.get(1)?;
+        let value = tokens.get(2).map_or("", String::as_str);
+        Some(self.server_set(shell, name, value))
     }
 
     /// `CG_MapRestart`'s `trap_Cvar_Set`s (1.1 cgame 0x3002ca60, uo
     /// 0x30039500; events doc 9.8): the objective text empties, the
-    /// stance and run state go back to standing and running.
-    pub fn on_map_restart(&mut self) {
+    /// view goes back to first person and the run state to running.
+    /// `cl_stance`'s reset is the caller's: vcod keeps the stance in its
+    /// input, not a cvar.
+    pub fn on_map_restart(&mut self, shell: &mut Shell) -> Vec<Effect> {
+        let mut out = Vec::new();
         for (name, value) in [
             ("cg_thirdperson", "0"),
-            ("cl_stance", "0"),
             ("cl_run", "1"),
             ("cg_objectivetext", ""),
         ] {
-            self.set.insert(name.into(), value.into());
+            out.extend(self.server_set(shell, name, value));
         }
+        out
     }
 
     /// The mirror's `(name, value)` pairs as the cgame sets them (1.1
@@ -83,24 +99,33 @@ impl ClientCvars {
             .take_while(|(name, _)| !name.is_empty())
     }
 
-    /// A `v`-set value, else the 140/204 mirror entry under a
-    /// case-insensitive name match.
-    pub fn get(&self, name: &str, configstrings: &[String]) -> Option<String> {
-        if let Some(v) = self.set.get(&name.to_lowercase()) {
-            return Some(v.clone());
+    /// A server-set cvar's console value, else the 140/204 mirror entry
+    /// under a case-insensitive name match, else the console's.
+    pub fn get(&self, name: &str, configstrings: &[String], shell: &Shell) -> Option<String> {
+        let key = name.to_lowercase();
+        if !self.set.contains(&key)
+            && let Some((_, v)) = self
+                .mirrored(configstrings)
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        {
+            return Some(v.to_owned());
         }
-        self.mirrored(configstrings)
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.to_owned())
+        shell.cvar(name).map(str::to_owned)
     }
 
-    /// Every value [`Self::get`] can answer, keyed lowercase.
-    pub fn all(&self, configstrings: &[String]) -> HashMap<String, String> {
+    /// The mirror's values with the server-set cvars' console values over
+    /// them, keyed lowercase. The UI falls back to the console for the
+    /// rest.
+    pub fn all(&self, configstrings: &[String], shell: &Shell) -> HashMap<String, String> {
         let mut out: HashMap<String, String> = self
             .mirrored(configstrings)
             .map(|(n, v)| (n.to_lowercase(), v.to_owned()))
             .collect();
-        out.extend(self.set.iter().map(|(k, v)| (k.clone(), v.clone())));
+        out.extend(
+            self.set
+                .iter()
+                .filter_map(|k| Some((k.clone(), shell.cvar(k)?.to_owned()))),
+        );
         out
     }
 }
@@ -109,12 +134,73 @@ impl ClientCvars {
 mod tests {
     use super::*;
 
+    fn toks(s: &str) -> Vec<String> {
+        s.split(' ').map(str::to_string).collect()
+    }
+
     #[test]
-    fn v_sets_a_client_cvar() {
+    fn v_sets_the_console_cvar() {
         let mut c = ClientCvars::default();
-        assert!(c.on_server_command(&["v".into(), "scr_showweapontab".into(), "1".into()]));
-        assert!(!c.on_server_command(&["t".into(), "0".into()]));
-        assert_eq!(c.get("SCR_SHOWWEAPONTAB", &[]).as_deref(), Some("1"));
+        let mut shell = Shell::new();
+        assert_eq!(
+            c.on_server_command(&toks("v scr_showweapontab 1"), &mut shell),
+            Some(vec![])
+        );
+        assert_eq!(c.on_server_command(&toks("t 0"), &mut shell), None);
+        assert_eq!(shell.cvar("SCR_SHOWWEAPONTAB"), Some("1"));
+        assert_eq!(
+            c.get("SCR_SHOWWEAPONTAB", &[], &shell).as_deref(),
+            Some("1")
+        );
+    }
+
+    /// The chat cvars the HUD reads off the console, and `vc_widescreen`
+    /// through the HUD's lookup, both take a `v`; an archived one asks
+    /// for a save, as `cvar_modifiedFlags` does.
+    #[test]
+    fn v_reaches_the_cvars_the_client_reads() {
+        let mut c = ClientCvars::default();
+        let mut shell = Shell::new();
+        assert_eq!(c.get("vc_widescreen", &[], &shell).as_deref(), Some("1"));
+        let out = c.on_server_command(&toks("v cg_chatHeight 2"), &mut shell);
+        assert_eq!(out, Some(vec![Effect::SaveConfig]));
+        assert_eq!(shell.cvar("cg_chatheight"), Some("2"));
+        c.on_server_command(&toks("v cg_teamChatsOnly 1"), &mut shell);
+        assert_eq!(shell.cvar("cg_teamChatsOnly"), Some("1"));
+        // Forced: a read-only cvar takes it too.
+        c.on_server_command(&toks("v vc_vanilla 1"), &mut shell);
+        assert_eq!(shell.cvar("vc_vanilla"), Some("1"));
+        // A console set after the `v` is what the lookup reads.
+        shell.execute("set scr_showweapontab 0");
+        c.on_server_command(&toks("v scr_showweapontab 1"), &mut shell);
+        shell.execute("set scr_showweapontab 2");
+        assert_eq!(
+            c.get("scr_showweapontab", &[], &shell).as_deref(),
+            Some("2")
+        );
+    }
+
+    #[test]
+    fn v_of_a_userinfo_cvar_asks_for_a_userinfo_push() {
+        let mut c = ClientCvars::default();
+        let mut shell = Shell::new();
+        let out = c
+            .on_server_command(&toks("v rate 5000"), &mut shell)
+            .unwrap();
+        assert!(out.contains(&Effect::Userinfo), "{out:?}");
+        assert_eq!(shell.userinfo().rate, "5000");
+    }
+
+    #[test]
+    fn map_restart_resets_through_the_console() {
+        let mut c = ClientCvars::default();
+        let mut shell = Shell::new();
+        shell.execute("set cl_run 0");
+        c.on_server_command(&toks("v cg_objectiveText DM_KILL"), &mut shell);
+        c.on_map_restart(&mut shell);
+        assert_eq!(shell.cvar("cl_run"), Some("1"));
+        assert_eq!(c.get("cg_objectiveText", &[], &shell).as_deref(), Some(""));
+        assert_eq!(shell.cvar("cg_thirdperson"), Some("0"));
     }
 
     #[test]
@@ -125,12 +211,19 @@ mod tests {
         }
         cs[167] = "scr_allow_m1carbine".into();
         cs[167 + 64] = "0".into();
-        let c = ClientCvars::default();
-        assert_eq!(c.get("scr_allow_m1carbine", &cs).as_deref(), Some("0"));
-        assert_eq!(c.get("scr_allow_nope", &cs), None);
-        let mut c = c;
-        c.on_server_command(&["v".into(), "SCR_allow_m1carbine".into(), "1".into()]);
-        assert_eq!(c.all(&cs)["scr_allow_m1carbine"], "1");
+        let mut shell = Shell::new();
+        let mut c = ClientCvars::default();
+        assert_eq!(
+            c.get("scr_allow_m1carbine", &cs, &shell).as_deref(),
+            Some("0")
+        );
+        assert_eq!(c.get("scr_allow_nope", &cs, &shell), None);
+        c.on_server_command(&toks("v SCR_allow_m1carbine 1"), &mut shell);
+        assert_eq!(c.all(&cs, &shell)["scr_allow_m1carbine"], "1");
+        assert_eq!(
+            c.get("scr_allow_m1carbine", &cs, &shell).as_deref(),
+            Some("1")
+        );
     }
 
     /// The cgame stops at the first empty name: a name past a hole is
@@ -142,10 +235,11 @@ mod tests {
         cs[204] = "1".into();
         cs[142] = "scr_past_hole".into();
         cs[206] = "2".into();
+        let shell = Shell::new();
         let c = ClientCvars::default();
-        assert_eq!(c.get("scr_first", &cs).as_deref(), Some("1"));
-        assert_eq!(c.get("scr_past_hole", &cs), None);
-        let all = c.all(&cs);
+        assert_eq!(c.get("scr_first", &cs, &shell).as_deref(), Some("1"));
+        assert_eq!(c.get("scr_past_hole", &cs, &shell), None);
+        let all = c.all(&cs, &shell);
         assert_eq!(all.len(), 1, "{all:?}");
     }
 }

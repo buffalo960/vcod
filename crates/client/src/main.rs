@@ -3570,12 +3570,12 @@ impl App {
         // CoDMP.exe 0x40dc30).
         if matches!(phase, Phase::Live(_)) && !net.is_demo() {
             match join
-                .main_menu(net.configstrings())
+                .main_menu(net.configstrings(), &self.shell)
                 .filter(|n| self.ui.has_menu(n))
             {
                 Some(name) => {
                     self.ui
-                        .set_server_cvars(join.cvars.all(net.configstrings()));
+                        .set_server_cvars(join.cvars.all(net.configstrings(), &self.shell));
                     self.ui.open_script_main(&name, &self.shell, &mut out);
                 }
                 None => self.ui.open_ingame(&self.shell, &mut out),
@@ -4273,6 +4273,8 @@ impl ApplicationHandler for App {
                                     // (events doc 9.8).
                                     if play::join::is_map_restart(tokens) {
                                         join.on_restart();
+                                        let out = join.cvars.on_map_restart(&mut self.shell);
+                                        cvar_effects(&self.shell, net, &self.config_path, out);
                                         // `cg.mapRestart`: the next snapshot runs
                                         // the respawn reset (0x30028a70) whatever
                                         // its spawn count.
@@ -4285,7 +4287,6 @@ impl ApplicationHandler for App {
                                             &self.fs,
                                             net::info_value_for_key(net.configstring(3), "n"),
                                         );
-                                        self.shell.execute("set cl_run 1");
                                         input.force_stance(play::input::Stance::Stand);
                                     }
                                     // UO's `F <ms>`, `rewindFx` (uo cgame
@@ -4297,15 +4298,16 @@ impl ApplicationHandler for App {
                                     {
                                         self.fx.rewind(ms as f32);
                                     }
-                                    // The engine's `v` sets a client cvar: a UO seat's
-                                    // `v cl_run 1` and `v cl_stance 0` (game 0x8998d).
-                                    if tokens.first().is_some_and(|t| t == "v")
-                                        && let Some(name) = tokens.get(1)
+                                    // `v` sets a client cvar in the console's store,
+                                    // a demo's too. A UO seat's `v cl_stance 0`
+                                    // (game 0x8998d) moves vcod's stance, which
+                                    // lives in the input, not a cvar.
+                                    if let Some(out) =
+                                        join.cvars.on_server_command(tokens, &mut self.shell)
                                     {
-                                        let value = tokens.get(2).map_or("", String::as_str);
-                                        if name.eq_ignore_ascii_case("cl_run") {
-                                            self.shell.execute(&format!("set cl_run {value}"));
-                                        } else if name.eq_ignore_ascii_case("cl_stance") {
+                                        cvar_effects(&self.shell, net, &self.config_path, out);
+                                        if tokens[1].eq_ignore_ascii_case("cl_stance") {
+                                            let value = tokens.get(2).map_or("", String::as_str);
                                             input.force_stance(match value.trim() {
                                                 "1" => play::input::Stance::Crouch,
                                                 "2" => play::input::Stance::Prone,
@@ -4361,7 +4363,7 @@ impl ApplicationHandler for App {
                                         }) => {
                                             let mut out = Vec::new();
                                             self.ui.set_server_cvars(
-                                                join.cvars.all(net.configstrings()),
+                                                join.cvars.all(net.configstrings(), &self.shell),
                                             );
                                             if !self.ui.open_script_popup(
                                                 &name,
@@ -4429,7 +4431,7 @@ impl ApplicationHandler for App {
                         if let Some(w) = join.waiting() {
                             let mut out = Vec::new();
                             self.ui
-                                .set_server_cvars(join.cvars.all(net.configstrings()));
+                                .set_server_cvars(join.cvars.all(net.configstrings(), &self.shell));
                             if self
                                 .ui
                                 .open_script_popup(&w.name, w.no_mouse, &self.shell, &mut out)
@@ -4440,7 +4442,7 @@ impl ApplicationHandler for App {
                         }
                         if self.ui.active() {
                             self.ui
-                                .set_server_cvars(join.cvars.all(net.configstrings()));
+                                .set_server_cvars(join.cvars.all(net.configstrings(), &self.shell));
                         }
 
                         // One quick-chat line per second, played and shown
@@ -4589,6 +4591,12 @@ impl ApplicationHandler for App {
                                 }
                                 input.cl_run =
                                     play::input::ClRun(self.shell.cvar_f32("cl_run") as i32);
+                                input.talking = play::input::talking(
+                                    self.console.open,
+                                    self.ui.active(),
+                                    self.hud.as_ref().is_some_and(|h| h.chat_field.is_some()),
+                                    self.shell.cvar_f32("cl_bypassMouseInput") as i32,
+                                );
                                 for &t in &times {
                                     ring.push(input.build(t, &held));
                                 }
@@ -5179,7 +5187,7 @@ impl ApplicationHandler for App {
                                         // (cod15-movement.md 6).
                                         hud.bob = if pmove::MoveRules::for_protocol(p).v15() {
                                             pmove::BobCvars::from_cvars(|c| {
-                                                join.cvars.get(c, net.configstrings())
+                                                join.cvars.get(c, net.configstrings(), &self.shell)
                                             })
                                         } else {
                                             pmove::BobCvars::default()
@@ -5661,8 +5669,9 @@ impl ApplicationHandler for App {
                                                 .axis[0];
                                             Some(f.y.atan2(f.x).to_degrees())
                                         });
-                                    let client_cvar =
-                                        |c: &str| join.cvars.get(c, net.configstrings());
+                                    let client_cvar = |c: &str| {
+                                        join.cvars.get(c, net.configstrings(), &self.shell)
+                                    };
                                     let server_address =
                                         net.transport().peer().map(|a| a.to_string());
                                     let hud_frame = hud::HudFrame {
@@ -6767,9 +6776,8 @@ fn cg_fov(shell: &console::shell::Shell) -> f32 {
 }
 
 /// `CL_SystemInfoChanged` (CoDMP.exe 0x415eb0) at a gamestate or a `d 1`:
-/// every systeminfo key becomes a client cvar. A demo sets none. A forced
-/// userinfo cvar (`rate`, `snaps`) goes back to the server as a userinfo
-/// change, an archived one into the config, as `cvar_modifiedFlags` does.
+/// every systeminfo key becomes a client cvar (`rate` and `snaps` among
+/// them). A demo sets none.
 fn system_info_changed(
     shell: &mut console::shell::Shell,
     net: &mut net::NetClient<net::UdpTransport>,
@@ -6778,9 +6786,24 @@ fn system_info_changed(
     if net.is_demo() {
         return;
     }
-    for effect in shell.apply_systeminfo(net.configstring(1)) {
+    let out = shell.apply_systeminfo(net.configstring(1));
+    cvar_effects(shell, net, config_path, out);
+}
+
+/// What a forced cvar set asks for: a userinfo cvar goes back to the
+/// server as a userinfo change, an archived one into the config, as
+/// `cvar_modifiedFlags` does. A demo's connection sends nothing.
+fn cvar_effects(
+    shell: &console::shell::Shell,
+    net: &mut net::NetClient<net::UdpTransport>,
+    config_path: &std::path::Path,
+    effects: Vec<console::shell::Effect>,
+) {
+    for effect in effects {
         match effect {
-            console::shell::Effect::Userinfo => net.set_userinfo(shell.userinfo()),
+            console::shell::Effect::Userinfo if !net.is_demo() => {
+                net.set_userinfo(shell.userinfo())
+            }
             console::shell::Effect::SaveConfig => {
                 if let Err(e) = std::fs::write(config_path, shell.config_text()) {
                     log::warn!("cannot write {}: {e}", config_path.display());
