@@ -756,36 +756,23 @@ fn vehicle_fire(
     }
 }
 
-/// `G_VehicleClientThink` and the undriven vehicles' thinks
-/// (`crate::game::vehicle::think`), handed each rider's last cmd and view;
-/// then what the step left for the riders: dead riders out, the hull's
-/// angles for the next cmds' clamps, `vehMotion`, the hull-view bit and the
-/// gunner's overheat.
+/// `G_VehicleClientThink` (`crate::game::vehicle::think::run_driven`),
+/// handed each rider's last cmd and view; then what this frame's thinks,
+/// the undriven ones' in the entity pass included, left for the riders:
+/// dead riders out, the hull's angles for the next cmds' clamps,
+/// `vehMotion`, the hull-view bit and the gunner's overheat.
 fn vehicle_frame(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime) {
-    use crate::game::vehicle::think::RiderInput;
     if rt.host.vehicles.live.is_empty() {
         return;
     }
-    let inputs: Vec<Option<RiderInput>> = clients
+    let sims: Vec<(usize, &crate::spectate::ClientSim)> = clients
         .iter()
         .enumerate()
-        .map(|(slot, c)| {
-            let c = c.as_ref()?;
-            let sim = c.sim.as_ref()?;
-            sim.seat?;
-            Some(RiderInput {
-                forward: sim.pers_cmd.forward,
-                right: sim.pers_cmd.right,
-                up: sim.pers_cmd.up,
-                buttons: sim.pers_cmd.buttons,
-                view: sim.view_angles(),
-                sighted: sim.ps.weapon_pos_frac != 0.0,
-                alive: !sim.dead && rt.client_vitals(slot).health > 0,
-            })
-        })
+        .filter_map(|(slot, c)| Some((slot, c.as_ref()?.sim.as_ref()?)))
         .collect();
+    let inputs = crate::game::vehicle::think::rider_inputs(&rt.host, &sims);
     rt.vehicle_deaths();
-    rt.with_host(|host, cx| crate::game::vehicle::think::run(host, cx, &inputs));
+    rt.with_host(|host, cx| crate::game::vehicle::think::run_driven(host, cx, &inputs));
     rt.vehicle_deaths();
     apply_seat_ops(clients, rt);
     crush(clients, rt);
