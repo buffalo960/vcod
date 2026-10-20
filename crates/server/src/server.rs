@@ -1704,6 +1704,8 @@ pub struct Server {
     creases: std::cell::RefCell<crate::nav::Creases>,
     /// Per bot, its walk along `nav`.
     bot_paths: BTreeMap<usize, crate::nav::Follower>,
+    /// Bots' routes in a UO vehicle's driver's seat.
+    bot_drives: bot_vehicles::BotDrives,
     /// Each bombzone's `(mins, maxs)` and the stand `site_stand` picked in
     /// it, for the life of the nav graph.
     bot_sites: Vec<([f32; 3], [f32; 3], [f32; 3])>,
@@ -2144,6 +2146,7 @@ impl Server {
             nav_background: false,
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
+            bot_drives: Default::default(),
             bot_sites: Vec::new(),
             bot_breach_stands: Vec::new(),
             bot_noises: Vec::new(),
@@ -4568,7 +4571,14 @@ impl Server {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
             };
-            if let Some(g) = self.nav.clone() {
+            // A seat leaves the walk's follower alone; a driver steers along
+            // a route its hull fits (`drive_waypoint`).
+            if let Some(s) = view.seat.filter(|s| s.seat == 1) {
+                view.waypoint = self.drive_waypoint(slot, goal, &s);
+            } else {
+                self.bot_drives.forget(slot);
+            }
+            if let Some(g) = self.nav.clone().filter(|_| view.seat.is_none()) {
                 let mut follower = self.bot_paths.remove(&slot).unwrap_or_default();
                 if self.bots.get_mut(&slot).is_some_and(|b| b.take_stuck()) {
                     follower.stuck();

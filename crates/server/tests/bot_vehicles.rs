@@ -89,3 +89,48 @@ fn a_bot_beside_a_tank_boards_it() {
     );
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
+
+/// Once in, the bot drives the tank off along the graph toward its roam,
+/// and backs off and gets out when it is stuck or the ride is long.
+#[test]
+#[ignore = "builds mp_cassino's UO graph and runs a bot 100 s of game time, ~10 s in release; run with --ignored"]
+fn a_bot_drives_a_tank_off_and_gets_out() {
+    let Some((mut sv, mut now)) = uo_server(1, false) else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    run(&mut sv, &mut now, 100);
+    let slot = sv.bot_slots()[0];
+    let tank = sv.test_vehicles()[0];
+    beside(&mut sv, slot, &tank);
+    let Some((num, 1)) = run_until_seated(&mut sv, &mut now, slot, 200) else {
+        panic!("the bot never took the driver's seat");
+    };
+    let mut far = 0.0f32;
+    let mut out = None;
+    for tick in 0..2000 {
+        run(&mut sv, &mut now, 1);
+        let at = sv
+            .test_vehicles()
+            .into_iter()
+            .find(|v| v.num == num)
+            .expect("the tank is gone")
+            .origin;
+        far = far.max((at[0] - tank.origin[0]).hypot(at[1] - tank.origin[1]));
+        if std::env::var("VEH_REPORT").is_ok() && tick % 20 == 0 {
+            eprintln!(
+                "{tick} tank {at:?} seat {:?}",
+                sv.bot_body(slot).unwrap().seat
+            );
+        }
+        if sv.bot_body(slot).unwrap().seat.is_none() {
+            out = Some(tick);
+            break;
+        }
+    }
+    eprintln!("drove {far:.0} units, out at tick {out:?}");
+    assert!(far > 500.0, "the tank went only {far:.0} units");
+    assert!(out.is_some(), "the bot never got out");
+    assert!(sv.bot_body(slot).unwrap().playing);
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}

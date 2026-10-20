@@ -35,8 +35,8 @@ const REVERSE_TICKS: u32 = 30;
 const STALLS: u32 = 4;
 /// Ground a ride has to make for its back-offs to start counting afresh.
 const PROGRESS: f32 = 300.0;
-/// A waypoint this near the hull is passed; the steer has no say inside it.
-const PASSED: f32 = 96.0;
+/// A route's last point this near the hull is reached.
+const PASSED: f32 = 48.0;
 /// The steer holds off inside this much heading error; a tank turns in
 /// place past `TURN_IN_PLACE` before it drives on.
 const STEER_SLACK: f32 = 6.0;
