@@ -147,10 +147,10 @@ impl Bot {
         })
     }
 
-    /// A hurt bot with nothing in sight and no duty walks to a health item
-    /// lying near ([`Vitals::heal`]).
+    /// A hurt fighting bot with nothing in sight and no duty walks to a
+    /// health item lying near ([`Vitals::heal`]).
     pub(super) fn heal_goal(&self, view: &BotView) -> Option<Goal> {
-        if !self.retreat_on || self.retreat.is_some() || view.enemy.is_some() {
+        if !self.retreat_on || !self.shoot || self.retreat.is_some() || view.enemy.is_some() {
             return None;
         }
         let p = view.survive.heal?;
