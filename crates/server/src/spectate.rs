@@ -2257,7 +2257,7 @@ impl ClientSim {
                 .seat
                 .as_ref()
                 .and_then(|seat| vcod_common::playerpose::seat_inputs(a, legs, seat));
-            seat_ramp.set(goal, now_ms);
+            seat_ramp.set(goal, now_ms, |leaf| a.leaf_motion(leaf));
             self.pose.seat_ramp = seat_ramp;
         }
     }
