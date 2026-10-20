@@ -2429,7 +2429,8 @@ fn write_configstrings_fixture(
         retail_build()
     ));
     out.push_str(&format!(
-        "# map {map}, g_gametype {gametype}, sv_maxclients {max_clients}, sv_pure {pure}, dedicated 1, stock scr_* defaults.\n"
+        "# map {map}, g_gametype {gametype}, sv_maxclients {max_clients}, sv_pure {pure}, dedicated 1;\n\
+         # cs 0 below holds the rest of the serverinfo cvars.\n"
     ));
     out.push_str("# Captured with tools/run_server.sh and --net-probe at debug level.\n");
     out.push_str("# One '<index> <value>' line per non-empty slot, ascending. Values are raw;\n");
@@ -6960,8 +6961,15 @@ fn write_scripted_fixture(
     let gametype = probe_gt.strip_prefix("probe_").unwrap_or(probe_gt);
     let mut out = String::new();
     let build = retail_build();
+    // Only a probe named after a stock gametype wraps that gametype's script.
+    const STOCK: [&str; 9] = ["dm", "tdm", "sd", "re", "bel", "hq", "ctf", "dom", "bas"];
+    let running = if STOCK.contains(&gametype) {
+        format!("stock {gametype}.gsc under the gsc probe")
+    } else {
+        "the gsc probe".to_string()
+    };
     out.push_str(&format!(
-        "# Retail CoD {build} dedicated server running stock {gametype}.gsc under the gsc probe\n\
+        "# Retail CoD {build} dedicated server running {running}\n\
          # client-probes/{probe_gt}.gsc on {map}; this probe joined {}, weapon {}, role {role}.\n",
         join.team, join.weapon
     ));
@@ -6970,9 +6978,14 @@ fn write_scripted_fixture(
          #   COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=<s> \\\n\
          #       tools/run_probe.sh client-probes/<probe> <map>\n\
          #   cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team <team> \\\n\
-         #       --save-scripted <role> --probe-secs <s>\n\
-         # docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.\n\
-         # One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after\n\
+         #       --save-scripted <role> --probe-secs <s>\n",
+    );
+    out.push_str(match gametype {
+        "re" | "bel" => "# docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.\n",
+        _ => "# The gsc probe's header has the teams, roles and times.\n",
+    });
+    out.push_str(
+        "# One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after\n\
          # each `s` (and UO's announcer `S`) with the alias it names, and one !trace per snapshot whose rendering\n\
          # moved plus one a second (vcod_common::net::capture::trace_body has the format).\n\
          # ms is since the probe started. The probe sends `score` every 2 s, so every `b`\n\
