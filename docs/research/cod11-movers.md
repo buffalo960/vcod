@@ -1437,12 +1437,11 @@ VERIFIED, same captures: retail's body stops above the floor after the
 placement's one-unit drop (z -151.64 through the 1.5 settle, -151.35
 for one UO frame) where ours lands on it, and the probe dropped from its
 spawn point, so the settle's idle start is in neither half; the settle
-and the run's first 150 ms stay named in `GAPS_15_UO`. VERIFIED, same
-captures: the crouch walk back that returns at 42000 while its node
-still blends out stays off (to 18 units) until its blend out ends.
-INFERRED, off the 1.5b setter's control flow (its `trap_XAnimGetWeight`
-test ahead of the `trap_XAnimSetTime`): the phase is set only when the
-node's weight reads 0, which vcod does not model yet.
+(and on 1.5 the run's first 150 ms, its blend out of that idle) stay
+named in `legs_ab`'s `GAPS_15` and `GAPS_UO`. VERIFIED, same captures:
+the crouch walk back that returns at 42000 while its node still blends
+out keeps its time, as "The setter on a weighted node" (cod11-combat.md
+3.1) has it, to 0.03 units.
 
 **The blend.** VERIFIED, the setter: `lf+0x18` starts at the new anim's
 `+0x40` (0x2a6ab; `BG_FinalizePlayerAnims` writes -1 there for an unset 0,

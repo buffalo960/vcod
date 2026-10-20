@@ -466,7 +466,7 @@ fn a_walking_body_is_posed_like_retail_on_15() {
         return;
     }
     let run = ours_walk(fs, CLIENT_15, RETAIL_IDLE_MS_15, SPAWN_15).unwrap();
-    check_walk(&run, SERVER_15, CLIENT_15, GAPS_15_UO);
+    check_walk(&run, SERVER_15, CLIENT_15, GAPS_15);
 }
 
 /// The UO walk (`-legs-uo.txt`), as [`a_walking_body_is_posed_like_retail_on_15`].
@@ -476,41 +476,37 @@ fn a_walking_body_is_posed_like_retail_on_uo() {
         return;
     };
     let run = ours_walk(fs, CLIENT_UO, RETAIL_IDLE_MS_UO, SPAWN_UO).unwrap();
-    check_walk(&run, SERVER_UO, CLIENT_UO, GAPS_15_UO);
+    check_walk(&run, SERVER_UO, CLIENT_UO, GAPS_UO);
 }
 
-/// Bone rows the 1.5b and UO walks may miss: a step's rows up to a level
-/// time, and why. Every other row, the run's from its blend's end on, is
-/// exact (the 1.1 spread phase puts those 20 units off).
-const GAPS_15_UO: &[(&str, i32, &str)] = &[
+/// Bone and origin rows the 1.5b and UO walks may miss: a step's rows up to
+/// a level time, and why. Every other row, the run's from its blend's end
+/// on, is exact (the 1.1 spread phase puts those 20 units off).
+const GAPS_15: &[(&str, i32, &str)] = &[
     (
         "settle",
         26500,
         "retail's body stops above the floor after the placement's one-unit drop \
-         (z -151.64 through the settle on 1.5, -151.35 for a frame on UO) where \
-         ours lands on it at -151.88, and the probe dropped from its spawn point, \
-         so the idle's start is in neither half of the capture; the best fit of \
-         ours' join (RETAIL_IDLE_MS_15, _UO) leaves 0.4 units and 20 degrees on \
-         1.5, 0.5 and 3 on UO",
+         (z -151.64 through the settle) where ours lands on it at -151.88, and the \
+         probe dropped from its spawn point, so the idle's start is in neither \
+         half of the capture; the best fit of ours' join (RETAIL_IDLE_MS_15) \
+         leaves 0.4 units and 20 degrees",
     ),
     (
         "run",
         26650,
         "the run's blend out of the settle's idle, as settle",
     ),
-    (
-        "crouch_back",
-        43350,
-        "the crouch walk back comes back at 42000 while its node still blends out; \
-         1.5b's and UO's setter keeps a weighted node's time (it calls XAnimSetTime \
-         only at weight 0) and vcod restarts it (backlog Top 10 #1, animset15)",
-    ),
-    (
-        "crouch_stop",
-        43750,
-        "the crouch walk back's blend out, as crouch_back",
-    ),
 ];
+
+/// [`GAPS_15`] on UO: retail's body sits 0.53 above the floor for the first
+/// frame, and the best fit of the join (RETAIL_IDLE_MS_UO) leaves 0.5 units
+/// and 3 degrees; the run's blend clears.
+const GAPS_UO: &[(&str, i32, &str)] = &[(
+    "settle",
+    26500,
+    "as GAPS_15's settle: the drop's first frame and the idle's start",
+)];
 
 /// The anim selection and the four bones of `run` against the retail walk
 /// at `server` and `client`; bone rows `gaps` names pass.
