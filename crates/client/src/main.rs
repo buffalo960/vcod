@@ -4591,6 +4591,12 @@ impl ApplicationHandler for App {
                                 }
                                 input.cl_run =
                                     play::input::ClRun(self.shell.cvar_f32("cl_run") as i32);
+                                input.talking = play::input::talking(
+                                    self.console.open,
+                                    self.ui.active(),
+                                    self.hud.as_ref().is_some_and(|h| h.chat_field.is_some()),
+                                    self.shell.cvar_f32("cl_bypassMouseInput") as i32,
+                                );
                                 for &t in &times {
                                     ring.push(input.build(t, &held));
                                 }

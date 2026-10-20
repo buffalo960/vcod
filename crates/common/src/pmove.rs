@@ -575,6 +575,11 @@ pub struct PlayerState {
     /// Milliseconds into the eye's current leg, retail's `cmd.serverTime -
     /// viewHeightLerpTime`; `None` while no leg runs (`viewHeightLerpTime` 0).
     view_lerp_ms: Option<i32>,
+    /// 1.1's prone box at the crouch's 50 (`PM_CheckDuck` 0x31c1d-0x31c9b):
+    /// set by each cmd's stance pass while the eye is off the prone height
+    /// and its leg at most half run (docs/research/cod11-mantle.md, "The
+    /// prone box while the eye goes down").
+    prone_box_crouch: bool,
     /// Retail's `pm_flags` 0x2: set on entering a crouch, cleared on standing,
     /// and left alone by prone, so a prone entered from a crouch carries it
     /// and one entered from standing does not (both measured,
@@ -870,6 +875,7 @@ impl PlayerState {
             ground_surface_flags: 0,
             view_height_cur: Stance::Stand.view_height(),
             view_lerp_ms: None,
+            prone_box_crouch: false,
             ducked: false,
             // Retail leaves the target at 0 until the first stance change.
             view_lerp_target: 0.0,
@@ -963,6 +969,9 @@ impl PlayerState {
             return SPECTATOR_MAXS;
         }
         let stance = match self.rules {
+            MoveRules::V1_1 if self.stance == Stance::Prone && self.prone_box_crouch => {
+                Stance::Crouch
+            }
             MoveRules::V1_1 => self.stance,
             // `PM_CheckDuck` sizes the box off the stepped target (1.5
             // 0x24155..0x241ce).
@@ -2314,7 +2323,9 @@ fn update_stance(
                         // 1.5 clears 0x2 on the way down (0x2390c).
                         ps.ducked = false;
                     }
-                    enter_prone(ps, input, world);
+                    if v15 {
+                        enter_prone(ps, input, world);
+                    }
                 }
                 // 0x3196b: every cmd that keeps asking is refused again.
                 None => {
@@ -2374,6 +2385,19 @@ fn update_stance(
         step_view_target(ps);
         view_height_adjust_v15(ps, msec);
         return;
+    }
+    // 0x31c1d-0x31c9b: the prone box stays the crouch's until the eye is
+    // down or past half its leg, `(cmd.serverTime - viewHeightLerpTime) /
+    // duration` read before this cmd's adjust (0x308cc, 0 with no leg).
+    ps.prone_box_crouch = ps.stance == Stance::Prone && ps.view_height_cur != VIEW_PRONE && {
+        let frac = ps.view_lerp_ms.map_or(0.0, |ms| {
+            (f64::from(ms + msec) / f64::from(view_lerp_duration(ps))).clamp(0.0, 1.0)
+        });
+        frac <= 0.5
+    };
+    // 1.1 lies down in the box just sized (0x31ca1).
+    if ps.stance == Stance::Prone && before != Stance::Prone {
+        enter_prone(ps, input, world);
     }
     // The bbox snaps; the eye eases.
     view_height_adjust(ps, msec);
@@ -2908,6 +2932,21 @@ fn enter_prone(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) {
             ps.ground_plane = None;
         }
         ps.aim_spread_scale = 255.0;
+    }
+    if ps.rules == MoveRules::V1_1 {
+        // 0x31d35-0x31df1: the box goes 10 up and back down, and the body
+        // takes where it lands.
+        let (mins, maxs) = (ps.mins(), ps.maxs());
+        let up = world.box_trace(
+            ps.origin,
+            ps.origin + Vec3::Z * 10.0,
+            mins,
+            maxs,
+            MASK_PLAYERSOLID,
+        );
+        ps.origin = world
+            .box_trace(up.endpos, ps.origin, mins, maxs, MASK_PLAYERSOLID)
+            .endpos;
     }
     // The body takes the view's yaw as it is (1.1 0x31dfc; 1.5 in 0x232c4).
     ps.prone_direction = view_deg(ps.yaw);
