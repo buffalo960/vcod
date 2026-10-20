@@ -475,7 +475,10 @@ fn com_filter(filter: &str, name: &str) -> bool {
                 let Some(rest) = n.get(ni..) else {
                     return false;
                 };
-                match rest.windows(run.len()).position(|w| w.eq_ignore_ascii_case(run)) {
+                match rest
+                    .windows(run.len())
+                    .position(|w| w.eq_ignore_ascii_case(run))
+                {
                     Some(p) => ni += p + run.len(),
                     None => return false,
                 }
@@ -893,7 +896,14 @@ mod tests {
             "fs_restrict",
         ];
         assert_eq!(listed("fs_"), fs);
-        for f in ["g_spe", "g_spe?", "g_speed??", "[[g]_speed", "g_s[pq-r]", "G_[A-z]PEED"] {
+        for f in [
+            "g_spe",
+            "g_spe?",
+            "g_speed??",
+            "[[g]_speed",
+            "g_s[pq-r]",
+            "G_[A-z]PEED",
+        ] {
             assert_eq!(listed(f), ["g_speed"], "{f}");
         }
         assert_eq!(listed("sv_*rate"), ["sv_maxRate"]);

@@ -82,7 +82,10 @@ mod tests {
 
     fn thread(stack: &[(u32, &str, u32)], vars: usize, endons: usize) -> ThreadUsage {
         ThreadUsage {
-            stack: stack.iter().map(|(o, f, l)| (*o, f.to_string(), *l)).collect(),
+            stack: stack
+                .iter()
+                .map(|(o, f, l)| (*o, f.to_string(), *l))
+                .collect(),
             vars,
             endons,
         }
@@ -92,7 +95,10 @@ mod tests {
     /// waiting position first and every caller after a `called from:`.
     #[test]
     fn script_usage_groups_threads_by_stack() {
-        let a = [(0, "maps/mp/gametypes/dm", 40), (0, "maps/mp/gametypes/dm", 12)];
+        let a = [
+            (0, "maps/mp/gametypes/dm", 40),
+            (0, "maps/mp/gametypes/dm", 12),
+        ];
         let text = script_usage(
             &[
                 thread(&a, 3, 1),
