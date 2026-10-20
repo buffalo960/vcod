@@ -4131,6 +4131,46 @@ of runs does not settle. `pm_type` 7, a dead player still
 linked, takes `0x34220` and does not move at all: vcod runs
 `dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
 
+### 5.8 A `trigger_hurt` kill and the corpse's fall
+
+VERIFIED, `client-probes/probe_hurtfall` on retail 1.1d, 2026-10-20, three
+runs (`crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtfall.txt`,
+`-hurtlow.txt`, `-hurtland.txt`, recipes in their headers). The probe lifts
+mp_carentan's one `trigger_hurt` (entity 72, `dmg 1000`, model `*1`, the
+kill slab at z -176..-160 under the whole map) by an origin write and drops
+a `--probe-ride` client from z 362 over the street at (900 1930) through
+it. The origin write moves the slab's touch volume: every run killed at the
+lifted height.
+
+- VERIFIED, all three: the damage callback gets the trigger as inflictor
+  and attacker, `dflags` 0, `MOD_TRIGGER_HURT`, weapon `none`, an
+  undefined point and an undefined direction, hitloc `none`; the killed
+  callback's direction prints `(0.00, 0.00, 0.00)`. INFERRED: the undefined
+  pair is `hurt_touch`'s (0x64dc4) null point and direction through
+  `Scr_PlayerDamage` (0x5ca18), the shape the sine crush showed
+  (`cod11-movers.md` 21), so stock `dm.gsc` adds `iDFLAGS_NO_KNOCKBACK`
+  and `finishPlayerDamage` sets no knockback timer (0x43952).
+- VERIFIED, `-hurtfall.txt` (slab at 224..240, kill at z 233): the corpse
+  falls the remaining 276 on the client's cmds, lands at -43.19 at 3450 and
+  then creeps south about 0.05 a frame for 2.5 s, the street's grade under
+  `PM_DeadMove` (5.7).
+- VERIFIED, `-hurtlow.txt` (slab moved to 27..43 at the drop, kill at z 24):
+  the corpse lands 150 ms after the kill at y 1928.90 and creeps the same
+  way. A 120 ms knockback timer on the kill would have slid it on to y
+  1905 (vcod before the fix; `hurtfall_ab` fails on that).
+- VERIFIED, `-hurtland.txt` (slab at -56..-40 from the first frame, its top
+  3 over the street): the kill comes first, at origin -42.00 with the street
+  at -43.17 under it, and the landing's fall damage callback follows in the
+  same frame (both read 3350): 66 points on a body at health 0, which reads
+  -66 from then on, with no second killed callback. INFERRED: the kill is
+  the touch pass of a cmd still airborne and the fall damage the next cmd's
+  `PM_CrashLand` through `ClientEvents` (0x3fda8), the dead player's landing
+  of `cod11-player-clip.md` 8.8.
+
+**As implemented.** `ScriptRuntime::deliver_world_hit` passes the callback
+undefined vectors. `crates/server/tests/hurtfall_ab.rs` replays each
+capture's cmds on vcod-server and holds every `PROBE` line exact.
+
 ---
 
 ## 6. `P_DamageFeedback`
