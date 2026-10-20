@@ -4937,6 +4937,11 @@ struct HitSample {
     clip: Vec<(usize, i16)>,
     velocity: [f32; 3],
     origin: [f32; 3],
+    /// `commandTime` and the two anim timers, which run down by each cmd's
+    /// msec from the event that set them.
+    command_time: i32,
+    legs_timer: i32,
+    torso_timer: i32,
 }
 
 /// The non-zero entries of a playerstate ammo array, as `index:value` pairs.
@@ -5011,6 +5016,9 @@ impl HitSample {
                 snap.ps.field_f32(p, "velocity[2]"),
             ],
             origin: snap.ps.origin(p),
+            command_time: f("commandTime"),
+            legs_timer: f("legsTimer"),
+            torso_timer: f("torsoTimer"),
         }
     }
 
@@ -5033,6 +5041,8 @@ impl HitSample {
             self.torso_anim,
             self.weaponstate,
             self.stats1,
+            self.legs_timer,
+            self.torso_timer,
         ];
         v.extend(self.events);
         v.extend(self.event_parms);
@@ -5055,7 +5065,7 @@ impl HitSample {
             "!trace ms={} serverTime={} health={} damageEvent={} damageCount={} damageYaw={} \
 damagePitch={} pm_type={} eFlags={} deadViewHeight={} viewHeightCurrent={:.1} eventSequence={} \
 events={},{},{},{} eventParms={},{},{},{} legsAnim={} torsoAnim={} weaponstate={} stats1={} \
-clip={} ammo={} velocity={} origin={}\n",
+clip={} ammo={} velocity={} origin={} ct={} legsTimer={} torsoTimer={}\n",
             self.elapsed_ms,
             self.server_time,
             self.health,
@@ -5084,6 +5094,9 @@ clip={} ammo={} velocity={} origin={}\n",
             pairs_str(&self.ammo),
             vec_str(self.velocity),
             vec_str(self.origin),
+            self.command_time,
+            self.legs_timer,
+            self.torso_timer,
         )
     }
 }
@@ -6404,6 +6417,7 @@ fn write_hit_fixture(
         "# ms is since the role's script started; serverTime is the server's own clock.\n",
     );
     out.push_str("# clip and ammo are the non-zero entries of the two arrays, as index:value.\n");
+    out.push_str("# ct is commandTime; legsTimer and torsoTimer are the anim timers, run down by each cmd.\n");
     for n in notes {
         out.push_str(n);
         out.push('\n');
