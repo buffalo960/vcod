@@ -823,7 +823,11 @@ impl ScriptRuntime {
                 .get(id)
                 .filter(|t| t.kind == crate::game::trigger::TriggerKind::Hurt)
                 .map(|t| (t.damage, t.dflags));
-            self.host.trigger_fires.push((id, client));
+            if !self.host.queue_trigger(id, client) {
+                self.host
+                    .engine_notifies
+                    .push((id, "trigger", vec![Value::Entity(client)]));
+            }
             if let Some((damage, dflags)) = hurt {
                 self.deliver_world_hit(
                     slot,
@@ -1502,8 +1506,11 @@ impl ScriptRuntime {
         self.host.client_lookat[slot] = hit;
         if let Some(id) = hit
             && self.host.triggers.fire(id, now_ms, false).fired()
+            && !self.host.queue_trigger(id, client)
         {
-            self.host.trigger_fires.push((id, client));
+            self.host
+                .engine_notifies
+                .push((id, "trigger", vec![Value::Entity(client)]));
         }
     }
 

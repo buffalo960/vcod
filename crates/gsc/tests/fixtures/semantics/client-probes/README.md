@@ -1445,7 +1445,28 @@ came out in another order then (`mt 101`, `mt 102`, `pt 102`, `t a`, `t b`,
 retail's, `G_RunFrame`'s trigger queue included. A full retail log of the
 first mode, rerun that day, is
 `crates/server/tests/fixtures/touchorder/mp_pavlov.txt`, which
-`touchorder_ab.rs` replays.
+`touchorder_ab.rs` replays. On 2026-10-20 the same mode ran on 1.5b
+(`COD_VERSION=1.5`, the probe client with the 1.5 install as `--game-dir`)
+and UO 1.51b (`COD_VERSION=uo`, the UO install and `--mod-dir uo`): every
+first frame logs 1.1d's lines in 1.1d's order (`mp_pavlov-1.5.txt`,
+`mp_pavlov-uo.txt` beside it, both replayed). The items rest at other
+heights there (-29.08 for a on both), which the gate does not read.
+
+## probe_trigqueue
+
+`G_RunFrame`'s trigger queue when it fills, for
+`docs/research/cod11-gsc-language.md`, "Engine notifies and the trigger
+queue". No client; one script-spawned `trigger_damage` opened by
+`enableLinkTo` takes N `radiusDamage`s in one step. One shell per patch:
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PROBE_SECS=20 \
+    [COD_VERSION=1.5|uo] tools/run_probe.sh client-probes/probe_trigqueue mp_carentan
+```
+
+Retail 1.1d, 1.5b and UO 1.51b printed byte-identical logs on 2026-10-20,
+`crates/server/tests/fixtures/touchorder/trigqueue.txt`, which
+`touchorder_ab.rs` replays at each patch.
 
 ## probe_squash
 

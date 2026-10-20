@@ -117,7 +117,6 @@ pub fn responds(spawnflags: i32, mod_: i32, uo: bool) -> bool {
 /// attacker (not for the `use` arm's mod -1), the wait is armed
 /// (`multi_wait` after `(crandom * random + wait) * 1000` ms, or with no
 /// positive wait `G_FreeEntity` 100 ms on), and `health` goes back to full.
-/// Returns whether it fired.
 pub fn activate(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -125,29 +124,29 @@ pub fn activate(
     attacker: EntId,
     damage: i32,
     mod_: i32,
-) -> bool {
+) -> Fired {
     let Some(spec) = host
         .triggers
         .get(id)
         .filter(|t| t.kind == TriggerKind::Damage)
         .and_then(|t| t.spec)
     else {
-        return false;
+        return Fired::No;
     };
     let uo = host.is_uo();
     if uo && !teams_agree(host, cx, spec.team, attacker) {
-        return false;
+        return Fired::No;
     }
     let linked = host.links.is_enabled(id);
     let armed = host.ents.get(id).is_some_and(|e| e.nextthink != 0);
     if armed && !linked {
-        return false;
+        return Fired::No;
     }
     if spec.threshold > 0 && damage < spec.threshold {
-        return false;
+        return Fired::No;
     }
     if !responds(spec.spawnflags, mod_, uo) {
-        return false;
+        return Fired::No;
     }
     let health_field = cx.intern_folded("health");
     let health = match host.get_field(cx, id, health_field) {
@@ -155,11 +154,13 @@ pub fn activate(
         _ => 0,
     };
     if spec.accumulate != 0 && FULL_HEALTH - health < spec.accumulate {
-        return false;
+        return Fired::No;
     }
-    if mod_ != -1 {
-        host.trigger_fires.push((id, attacker));
-    }
+    let fired = if mod_ != -1 && !host.queue_trigger(id, attacker) {
+        Fired::Spot
+    } else {
+        Fired::Yes
+    };
     if !linked {
         let now = host.level_time_ms;
         if spec.wait > 0.0 {
@@ -173,7 +174,7 @@ pub fn activate(
         }
     }
     restore(host, cx, id);
-    true
+    fired
 }
 
 /// `health` back to [`FULL_HEALTH`].
@@ -203,9 +204,25 @@ fn teams_agree(host: &mut GameHost, cx: &mut Cx, team: i32, attacker: EntId) -> 
     theirs == 0 || theirs == team
 }
 
+/// What an activation did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fired {
+    No,
+    Yes,
+    /// Fired with `G_Trigger`'s queue full: the caller notifies
+    /// `"trigger"` with the attacker on the spot (`GameHost::queue_trigger`).
+    Spot,
+}
+
+impl Fired {
+    pub fn fired(self) -> bool {
+        self != Fired::No
+    }
+}
+
 /// `Pain_trigger_damage` / `Die_trigger_damage` after `G_Damage` took
 /// `damage` off `health`: activate, then back to full when nothing
-/// accumulates. `false` when `id` is no `trigger_damage`.
+/// accumulates. [`Fired::No`] when `id` is no `trigger_damage`.
 pub fn damaged(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -213,21 +230,21 @@ pub fn damaged(
     attacker: EntId,
     damage: i32,
     mod_name: &str,
-) -> bool {
+) -> Fired {
     let Some(spec) = host
         .triggers
         .get(id)
         .filter(|t| t.kind == TriggerKind::Damage)
         .and_then(|t| t.spec)
     else {
-        return false;
+        return Fired::No;
     };
     let mod_ = host.defs.mod_index(mod_name).unwrap_or(0);
-    activate(host, cx, id, attacker, damage, mod_);
+    let fired = activate(host, cx, id, attacker, damage, mod_);
     if spec.accumulate == 0 {
         restore(host, cx, id);
     }
-    true
+    fired
 }
 
 /// `G_CheckHitTriggerDamage(attacker, start, end, damage, mod)` (1.1d
@@ -306,7 +323,10 @@ pub fn sweep(
             "damage",
             vec![Value::Int(damage), Value::Entity(attacker)],
         ));
-        activate(host, cx, id, attacker, damage, mod_);
+        if activate(host, cx, id, attacker, damage, mod_) == Fired::Spot {
+            host.engine_notifies
+                .push((id, "trigger", vec![Value::Entity(attacker)]));
+        }
         if spec.accumulate == 0 {
             restore(host, cx, id);
         }
@@ -430,8 +450,8 @@ mod tests {
                     ..spec()
                 },
             );
-            assert!(!activate(&mut host, cx, t, who, 49, 2));
-            assert!(activate(&mut host, cx, t, who, 50, 2));
+            assert!(!activate(&mut host, cx, t, who, 49, 2).fired());
+            assert!(activate(&mut host, cx, t, who, 50, 2).fired());
             let a = place(
                 &mut host,
                 cx,
@@ -469,8 +489,8 @@ mod tests {
                 },
             );
             host.level_time_ms = 2000;
-            assert!(activate(&mut host, cx, t, who, 10, 0));
-            assert!(!activate(&mut host, cx, t, who, 10, 0));
+            assert!(activate(&mut host, cx, t, who, 10, 0).fired());
+            assert!(!activate(&mut host, cx, t, who, 10, 0).fired());
             host.run_entity_thinks(cx, 2100);
             assert!(host.ents.get(t).is_none());
         });
