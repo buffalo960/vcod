@@ -6632,8 +6632,35 @@ barrage whose caller left hangs shells with `r.ownerNum` 0x3ff and `parent`
 shell goes off on contact through `G_MissileImpact`, whose 0x3ff test
 (0x5dccc) leaves inflictor and attacker NULL: no splash, and a direct hit
 with both undefined. Only `G_DropArtillery`'s 15 s fallback,
-`G_ExplodeMissile`, reads `parent`, and so would walk its splash with entity
-1023 as the attacker; vcod does not model that path for a disowned shell.
+`G_ExplodeMissile`, reads `parent`, and so walks its splash with entity
+1023 as the attacker.
+
+VERIFIED, UO: `G_DropArtillery` (0x5eabe) sets the shell's `nextthink` to
+`level.time + 15000` (0x5eadc, 0x5eae1) and its `think` to
+`G_ExplodeMissile` (0x5eaf0). VERIFIED: `G_ExplodeMissile` first copies
+`+0x330` into `r.ownerNum` when that is 0x3ff (0x5e2db..0x5e2f3), then takes
+`parent` (`+0x1a8`, 0x5e2fc..0x5e308) as `G_RadiusDamage`'s attacker, with
+the shell as inflictor and ignore and `+0x25c` as the means of death
+(0x5e79c). VERIFIED: `fire_artillery` writes `+0x25c` 14 and no `+0x330`
+(0x5ff4a..0x601fb); `fire_rocket` writes `+0x25c` 6. INFERRED: `+0x330`
+is then the 0 that `G_FreeEntity`'s memset or `G_InitGame`'s left. INFERRED: a shell that strikes nothing in 15 s goes off as
+`MOD_ARTILLERY_SPLASH`, charged to its caller while he is there, to no one
+when his leave swept `parent` to NULL, and to `&g_entities[1023]` when the
+barrage hung it after he left. VERIFIED: `G_InitGame` (0x586cf) memsets
+`g_entities` (0xd3000 bytes), and the only reference to `g_entities +
+0xd2cb4` (entity 1023) in the module is a compare; `Scr_AddEntity`
+(0x7239f) pushes `Scr_AddEntityNum` of the entity's first word, `s.number`.
+INFERRED: entity 1023's number reads 0, so `CodeCallback_PlayerDamage` gets
+entity 0 as `eAttacker` from that splash. vcod: the drop arms
+`Missile::explode_at_ms` 15 s on, a shell `fire_artillery` hangs with no
+owner keeps `parent_unspawned`, and its fuse blast is charged to
+`host::ZEROED_ENTITY`, which `ScriptRuntime::attacker_entity` reads as entity
+0. A fuse blast's means of death is the missile's own splash one (a rocket's
+`MOD_PROJECTILE_SPLASH`, a shell's `MOD_ARTILLERY_SPLASH`); before
+2026-10-20 vcod named every fuse blast `MOD_GRENADE_SPLASH`. Not modelled
+(INFERRED): a UO vehicle shell's fuse blast is charged to `parent`, the
+vehicle, where vcod charges the driver, and the explode's `r.ownerNum` of 0
+for a disowned artillery shell passes nothing vcod traces.
 
 VERIFIED, UO `fire_rocket` (0x5fc74): from a vehicle (`eType` 12) the
 rocket's `+0x330` takes the vehicle's own `r.ownerNum` (0x5fd3f, 0x5fd45),
@@ -6647,8 +6674,18 @@ with it, as vcod charges the slot (`Missile::owner`, kept by
 `free_owner_refs` for a vehicle's shell). A vehicle freed under its shell
 sweeps the shell's `r.ownerNum` to 0x3ff, which drops the `+0x330` read:
 vcod's `Missiles::free_vehicle_refs`, from `GameHost::free_entity`.
-INFERRED, not modelled: with the slot empty retail charges the freed
-entity, whose number `G_FreeEntity`'s memset zeroed; vcod drops the hit.
+VERIFIED, UO: `ClientDisconnect` (0x45433) ends in `G_FreeEntity`, whose
+memset clears the whole 0x34c-byte entity, `s.number` with it.
+VERIFIED: `G_DamageClient` passes the attacker on untouched to
+`Scr_PlayerDamage`, whose `GScr_AddEntity` pushes a non-NULL one through
+`Scr_AddEntity`, `Scr_AddEntityNum(ent->s.number, 0)`; `G_Damage`'s other
+arms push it through `Scr_AddEntity` too. INFERRED: with the slot empty
+the shell's direct hit and splash are charged to the freed entity and the
+callback sees entity 0 as `eAttacker`: the client in slot 0 when there is
+one. vcod: `ScriptRuntime::charged_owner` turns an owner slot with no client
+into `host::ZEROED_ENTITY`, delivered as entity 0. Not modelled: with no
+entity 0 in use vcod passes undefined, where retail pushes the free
+entity's object.
 
 VERIFIED, UO: with the owner 0x3ff `G_MissileImpact` keeps the inflictor
 NULL too (0x5dc8e), `G_Damage` hands a client victim to `G_DamageClient`
@@ -6685,11 +6722,21 @@ way still goes off in `G_MissileImpact`. INFERRED, from Q3's `G_RunFrame`:
 an exploded missile riding out its event runs no think, so a free set then
 changes nothing. vcod: `ScriptRuntime::run_entity` hands a `ThinkFn::Free`
 armed on a missile's entity to `Missiles::schedule_free` before its turn,
-and the pool frees it on the turn the think is due. Not modelled: a shell
-that strikes on the same turn its free is due is freed by retail before its
-event goes out, and vcod sends the explode. Pinned by
-`a_deleted_grenade_flies_on_and_goes_unexploded` and
-`on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded`.
+and the pool frees it on the turn the think is due.
+
+A shell that strikes on the very turn its free is due. VERIFIED:
+`G_RunMissile` tests `eType` against 4 straight after `G_MissileImpact`
+and skips `G_RunThink` when it changed (1.1d 0x54354..0x54358, UO
+0x5f574..0x5f578), and the explode writes `eType` 0. VERIFIED, UO:
+`G_RunEntity` (0x59a35) frees an entity whose `freeAfterEvent` (`+0x194`) is
+set once 300 ms have passed since its event (0x59ac5..0x59aec) and runs
+nothing else on it (0x59b5c); 1.1d's (0x502bc, `+0x184`) is the same.
+INFERRED: the strike's explode goes out and the entity rides out its 300 ms
+whatever free is pending, as vcod's pool does (`free_at_ms` cleared on a
+strike). The earlier note that retail frees it before its event goes out
+was wrong. Pinned by `a_deleted_grenade_flies_on_and_goes_unexploded`,
+`on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded` and
+`a_shell_striking_as_its_free_falls_due_rides_out_its_event`.
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 
