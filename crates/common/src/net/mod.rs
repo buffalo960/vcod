@@ -39,9 +39,9 @@ use snapshot::SnapshotRing;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
-/// `MAX_DOWNLOAD_BLKSIZE`, 8192 on CoD 1.1, not RTCW's 2048 (docs/protocol-1.1.md,
-/// svc_download).
-const MAX_DOWNLOAD_BLKSIZE: usize = 8192;
+/// Largest download block: retail's `CL_ParseDownload` checks no size and
+/// copies into a 16 KiB stack buffer (docs/protocol-1.1.md, svc_download).
+const MAX_DOWNLOAD_BLKSIZE: usize = 0x4000;
 
 /// Largest pk3 a server may announce; the biggest stock pak is under 300 MiB.
 const MAX_DOWNLOAD_SIZE: u32 = 512 << 20;
@@ -2212,6 +2212,36 @@ mod tests {
         c.handle_message(&gs);
         assert_eq!(c.state(), NetState::Active);
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn download_takes_blocks_past_8192() {
+        let dir = std::env::temp_dir().join(format!("vcod-dl-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let dest = dir.join("main/foo.pk3");
+
+        let mut c = active_client();
+        c.begin_download("main/foo.pk3", &dest).unwrap();
+        // One 11800-byte block, the size a public 1.1 server sends.
+        let zip = crate::testing::pk3_with(&[("maps/mp/foo.bsp", &[7u8; 11672])]);
+        assert_eq!(
+            zip.len(),
+            11800,
+            "resize the entry to keep the block at 11800"
+        );
+        c.handle_message(&ops_message(|w| {
+            w.write_byte(SVC_DOWNLOAD);
+            w.write_short(0);
+            w.write_long(zip.len() as i32);
+            w.write_short(zip.len() as i16);
+            write_data(w, &zip);
+            w.write_byte(SVC_DOWNLOAD);
+            w.write_short(1);
+            w.write_short(0);
+        }));
+
+        assert_eq!(std::fs::read(&dest).unwrap(), zip);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
