@@ -11,6 +11,7 @@
 pub(crate) mod cover;
 
 use crate::server::FRAME_MS;
+pub mod team;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 
 /// Hip-shot range; beyond it a tap is noise anyway.
@@ -342,6 +343,9 @@ pub struct ReView {
     pub objectives: Vec<ReObjView>,
     /// As [`SdView::rank`]: defenders spread over the objectives by it.
     pub rank: usize,
+    /// One of the attackers nearest the teammate carrying an objective
+    /// ([`team::escorts`]): it keeps by him, and the rest hold his goal.
+    pub escort: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -382,12 +386,15 @@ pub struct SdView {
     pub sites: Vec<SiteView>,
     /// The planted bomb, until it is defused or explodes.
     pub bomb: Option<BombView>,
-    /// The bot's place among its team's bots, by slot: sites are dealt out
-    /// by it, so a team spreads over both.
+    /// The site the bot goes to, `rank % sites` ([`team::site_rank`]):
+    /// one per round for every attacker, the defenders spread over both.
     pub rank: usize,
     /// The bot is its team's bot nearest the bomb: the one defender that
     /// goes for the defuse while the rest keep off its line of sight.
     pub lead: bool,
+    /// A teammate planting nearby ([`team::cover`]): the bot guards him
+    /// rather than make for its own site.
+    pub cover: Option<[f32; 3]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1253,6 +1260,12 @@ impl Bot {
         if let Some(c) = Self::blast_near(view) {
             return Goal::Away(c);
         }
+        // A carrier keeps for the goal and fights on the way.
+        if self.carrying(view)
+            && let Some(g) = self.objective_goal(view)
+        {
+            return g;
+        }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
         }
@@ -1339,7 +1352,13 @@ impl Bot {
                 at: b.origin,
                 inner: BOMB_GUARD_INNER,
             }),
-            (ObjRole::Attack, None) => site().map(ObjTarget::Plant),
+            (ObjRole::Attack, None) => match sd.cover {
+                Some(at) => Some(ObjTarget::Guard {
+                    at,
+                    inner: team::COVER_INNER,
+                }),
+                None => site().map(ObjTarget::Plant),
+            },
             (ObjRole::Defend, Some(b)) if sd.lead => Some(ObjTarget::Defuse {
                 bomb: b,
                 reach: self.press_reach(DEFUSE_REACH),
@@ -1392,9 +1411,10 @@ impl Bot {
                     };
                     return Some(ObjTarget::Pickup { aim, from });
                 }
-                if let Some(at) = Self::carrier(view, o) {
+                if let Some(at) = Self::carrier(view, o).filter(|_| re.escort) {
                     return Some(ObjTarget::Guard { at, inner: 0.0 });
                 }
+                // The rest go ahead and hold the goal he makes for.
                 Self::goal_guard(view, o)
             }
             ObjRole::Defend => {
@@ -2649,8 +2669,9 @@ impl Bot {
         // A `bas` charge about to go: the keys keep running the graph's way
         // out whatever the fight wants, and no bipod goes down. A planter
         // and a defender fighting in the charge room both stood in the
-        // blast to the end (seed 5).
-        let clearing = Self::blast_near(view).is_some();
+        // blast to the end (seed 5). A retrieval carrier runs on the same
+        // way (`team`'s `carrying`).
+        let clearing = Self::blast_near(view).is_some() || self.carrying(view);
         if self.shoot {
             self.track(view.enemy);
             let keys = (cmd.forward, cmd.right, cmd.up, cmd.wbuttons);
@@ -3498,7 +3519,7 @@ use vcod_common::pmove::cmd::ANGLE2SHORT;
 /// Whether a body at `origin` (feet) has reached the chest-high `spot`.
 /// The feet stand inside a zone, [`SITE_MARGIN`] in from its sides, or on
 /// its stand when the zone is narrower than the margin.
-fn inside_site(o: [f32; 3], s: &SiteView) -> bool {
+pub(crate) fn inside_site(o: [f32; 3], s: &SiteView) -> bool {
     let inside = (0..2).all(|i| o[i] >= s.mins[i] + SITE_MARGIN && o[i] <= s.maxs[i] - SITE_MARGIN)
         && o[2] <= s.maxs[2]
         && o[2] + PLAYER_HEIGHT >= s.mins[2];
@@ -3806,6 +3827,7 @@ mod tests {
             bomb: None,
             rank: 0,
             lead: true,
+            cover: None,
         });
         v
     }
@@ -4044,6 +4066,7 @@ mod tests {
         v.re = Some(ReView {
             role,
             rank: 0,
+            escort: true,
             objectives: vec![ReObjView {
                 pickup: Some([30.0, 0.0, 72.0]),
                 goal: [3000.0, 0.0, 64.0],
@@ -4153,6 +4176,56 @@ mod tests {
         assert_eq!(bot.goal(&v), Goal::To([1000.0, 0.0, 64.0]));
         v.origin = [900.0, 0.0, 64.0];
         assert_eq!(bot.goal(&v), Goal::Hold);
+    }
+
+    /// A carrier with an enemy in sight keeps for the goal: the path
+    /// keys stay, and only the view turns to fight.
+    #[test]
+    fn a_carrier_runs_for_the_goal_through_a_fight() {
+        let (mut bot, mut v) = engaged(1);
+        let e = v.enemy;
+        v.re = re_view(ObjRole::Attack).re;
+        let o = &mut v.re.as_mut().unwrap().objectives[0];
+        (o.pickup, o.carried, o.mine) = (None, true, true);
+        v.enemy = e;
+        assert_eq!(bot.goal(&v), Goal::To([3000.0, 0.0, 64.0]));
+        v.waypoint = Some([0.0, 500.0, 64.0]);
+        let cmd = bot.think(&v);
+        assert!(cmd.forward != 0 || cmd.right != 0, "the keys run the path");
+    }
+
+    /// Only the escort keeps by the carrier; the rest of the team go
+    /// ahead and hold the ring round his goal, clear of its trigger.
+    #[test]
+    fn the_other_attackers_hold_the_carriers_goal() {
+        let bot = Bot::new("allies", true, 1);
+        let mut v = re_view(ObjRole::Attack);
+        v.re.as_mut().unwrap().escort = false;
+        let o = &mut v.re.as_mut().unwrap().objectives[0];
+        (o.pickup, o.carried, o.carrier_at) = (None, true, Some([1000.0, 0.0, 64.0]));
+        assert_eq!(bot.goal(&v), Goal::To([3000.0, 0.0, 64.0]));
+        v.origin = [3000.0 - 350.0, 0.0, 64.0];
+        assert_eq!(bot.goal(&v), Goal::Hold);
+    }
+
+    /// An attacker with a teammate planting nearby guards him, off the
+    /// zone, instead of making for its own site or pressing use in his.
+    #[test]
+    fn an_attacker_covers_a_planting_teammate() {
+        let mut bot = attacker();
+        let mut v = sd_view(ObjRole::Attack);
+        v.sd.as_mut().unwrap().rank = 1;
+        v.sd.as_mut().unwrap().cover = Some([0.0, 0.0, 64.0]);
+        v.origin = [1000.0, 0.0, 64.0];
+        assert_eq!(bot.goal(&v), Goal::To([0.0, 0.0, 64.0]));
+        // On the planter: off him; in the ring: holds, use never pressed.
+        v.origin = [20.0, 0.0, 64.0];
+        assert_eq!(bot.goal(&v), Goal::Roam);
+        v.origin = [200.0, 0.0, 64.0];
+        assert_eq!(bot.goal(&v), Goal::Hold);
+        for _ in 0..40 {
+            assert_eq!(bot.think(&v).buttons & BUTTON_USE, 0);
+        }
     }
 
     #[test]

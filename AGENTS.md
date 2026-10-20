@@ -127,7 +127,8 @@ check.
   ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
-  `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
+  `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
+  `--example team_tally` `bot-objectives.md` 9's 1.1 `sd`/`re` objective tally; its
   `digest` matches across two builds only when they built the same graph,
   the check for a collision change meant to move no trace. `--example
   cover_ab` pits a team fighting from cover against one without
@@ -169,12 +170,12 @@ check.
   unless `--set protocol=` says otherwise; its per-version tables (weapon
   list, item rows, means of death) are `server::defs::Defs::of(proto)` and
   its configstring blocks `proto.cs`, never the 1.1 constants.
-  `configstrings_15_ab`, `timeout_15_ab` and `turret_ab`'s 1.5 replay
+  `configstrings_15_ab`, `timeout_15_ab`, `legs_ab`'s 1.5 walks (the stop and go too) and `turret_ab`'s 1.5 replay
   run only with `COD_DIR` at a 1.5 install (a UO one's `main/` is 1.5's);
   `moves_ab`'s UO replays (sprint, mounts and cook),
   `configstrings_uo_ab`, `playerstate_uo_ab`, `playerstate_combat_ab`'s
   UO capture,
-  `mount_uo_ab`, `uo_weapons_ab` and `turret_ab`'s UO replay only with it
+  `mount_uo_ab`, `uo_weapons_ab`, `legs_ab`'s UO walks and `turret_ab`'s UO replay only with it
   at a UO install (its `uo/` beside `main/`,
   `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
@@ -357,6 +358,8 @@ header of the fixture it produced.
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
+  It starts 3 s past the weapon pick, after the seat; `--slope-from-spawn`
+  logs from the spawn, whose pick sets the seat's `legsAnim` toggle (13).
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and
