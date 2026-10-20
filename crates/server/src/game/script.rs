@@ -3218,6 +3218,26 @@ impl ScriptRuntime {
         now_ms: i32,
     ) -> Option<PassStop> {
         use crate::game::missile::Turn;
+        // A vehicle's turn is its think (`G_RunThink`): an undriven one's
+        // 50 ms step runs here, by entity number among the rest
+        // (coduo-vehicles.md 12, "The think's turn").
+        if self.host.vehicles.live.contains_key(&id) {
+            // A think script set (a `delete`'s free) replaces the
+            // vehicle's own.
+            self.host.run_entity_think(id, now_ms);
+            if !self.host.vehicles.live.contains_key(&id) {
+                return None;
+            }
+            let inputs = crate::game::vehicle::think::rider_inputs(&self.host, sims);
+            let host = &mut self.host;
+            let ran = self
+                .vm
+                .with_cx(|cx| crate::game::vehicle::think::run_undriven(host, cx, id, &inputs));
+            if ran {
+                self.vehicle_deaths();
+            }
+            return None;
+        }
         let host = &mut self.host;
         // A missile meets the script models and UO's vehicles where they
         // stand on its turn.

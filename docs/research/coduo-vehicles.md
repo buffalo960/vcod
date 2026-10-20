@@ -1284,8 +1284,9 @@ face.
   the Panzer IV parked 680 ahead glances off it twice (yaw 35 to 74) and
   shoves it 2.95 units, two thinks a hit (VERIFIED, capture). vcod ran
   every vehicle's think in slot order after the entity pass, so the tank
-  moved in the hit's own frame; it now runs the undriven thinks first
-  (`think::run`). Ours now moves the tank on retail's thinks and lands
+  moved in the hit's own frame; it now runs the undriven thinks on their
+  entity-pass turns (`think::run_undriven`, "The think's turn" below).
+  Ours now moves the tank on retail's thinks and lands
   the first shove on retail's pose to 0.01 (-722.47, 7985.67) (VERIFIED,
   `vehicle_ram_ab`, which holds the tank's pose to 0.02 and its speed to
   0.01 on every think between the hits).
@@ -1387,6 +1388,40 @@ face.
   spawn as retail's does, every think's pose to 0.02 and speed to 0.01
   through both hits (VERIFIED, `vehicle_ram_ab`, 2026-10-16). The gap is
   closed.
+- **The think's turn.** `G_RunFrame`'s entity loop (game.mp.uo 0x69c21)
+  calls `G_RunEntity` (0x69a35) once per in-use entity by number, its link
+  parent first. A vehicle is not a missile (4), an item (3), a mover (5,
+  8) or a client, so its arm is `G_RunThink` (0x69862): when `nextthink`
+  (`ent+0x20c`) is positive and not past `level.time` it is zeroed and
+  `Scr_Vehicle_Think` called (VERIFIED decompile). The think returns at
+  once for a driven vehicle (`ent+0x17e` 2) while the flag at .bss
+  0xbe954 is 0, setting `nextthink` to `level.time`; otherwise it steps
+  and sets `nextthink` to `level.time + 50` (VERIFIED decompile,
+  0x8c7cc). `G_VehicleClientThink` (0x9b0ce) sets that flag, walks the
+  64 vehicle pool records (.bss 0xe43c0, stride 0x3ec, entity number at
+  +0x228) in order and `G_RunThink`s each driven one, then clears it
+  (VERIFIED decompile). So an undriven vehicle steps on its own turn in
+  the entity pass, among the missiles, movers and links by number, and
+  a driven one after the loop in pool order. A model linked to a parked
+  tank follows the tank's shove in the same frame: `probe_vehicle_ram`
+  with `+set probe_link 1` spawns a script_model 100 over the struck
+  tank (entity 437, the tank 187), links it, and logs its origin each
+  frame (`PROBE l`); on every frame the tank moves (first at 19800, the
+  same shoves as the capture above, speeds 21.10, 10.47, then 18.745,
+  7.69916) the model's x and y move with it in that frame (VERIFIED,
+  retail UO 1.51b, port 34421, 2026-10-20, fixture
+  `mp_kharkov-jeep-ram-link-uo.txt`). vcod ran the undriven thinks after
+  the pass, so the model trailed the tank by a frame (-724.0 against
+  retail's -722.98, 50 ms past the first hit); `run_entity` now runs
+  `think::run_undriven` on the vehicle's turn, and `vehicle_ram_ab`'s
+  `a_model_linked_to_a_shoved_tank_moves_on_the_tanks_frame` holds the
+  model to 0.02 on every frame from 200 ms before the first hit to a
+  second past the second. The seat ops (a dead rider's exit) and the
+  run-over knock (`VEH_PlayerCollision`) an undriven think queues still
+  apply in vcod after `G_VehicleClientThink`, with the driven ones';
+  retail's think calls `VEH_UnlinkPlayer` for a dead rider itself, first
+  thing after the driven check (VERIFIED decompile, 0x8c7cc). No capture
+  tells the two apart yet.
 - **Self-damage.** 0x827ab's tail runs two `G_Damage`s on the vehicle
   itself, inflictor and attacker the vehicle, dir the hit's normal, point
   the hit, dflags 0, `MOD_COLLISION` (0x18), hit location 2 (VERIFIED
