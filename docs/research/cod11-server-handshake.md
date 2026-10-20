@@ -2101,7 +2101,7 @@ vcod's port: `crates/common/src/pak_checksum.rs`, `Pk3Fs::paks` and
   one snapshot interval in whole 2048-byte units plus one (`sv_maxRate`
   caps the rate). When every block in the window went out it waits; past
   1000 ms with no ack it starts again from the first unacked block.
-  VERIFIED (code). So 1.1d's blocks are 2048 bytes; the 8192-byte blocks in
+  VERIFIED (code). So 1.1d's blocks are 2048 bytes; the 8192- and 11800-byte blocks in
   docs/protocol-1.1.md came off public servers. INFERRED.
 - `nextdl <n>` with `n` the block due advances the window, or ends the
   transfer when that block is the empty one (`clientDownload: %d : file
