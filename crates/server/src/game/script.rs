@@ -503,9 +503,14 @@ impl ScriptRuntime {
             // which `Scr_PlayerDamage` passes as undefined (combat doc 13.7).
             // UO's drops the inflictor too, which `GScr_AddEntity` pushes as
             // undefined.
-            let (attacker, inflictor) = match (self.client_entity(hit.attacker), hit.inflictor) {
+            let (attacker, inflictor) = match (self.attacker_entity(hit.attacker), hit.inflictor) {
                 (Some(a), i) => (Value::Entity(a), Some(i.unwrap_or(a))),
-                (None, i) if hit.attacker == crate::game::host::ENTITYNUM_NONE as usize => {
+                // A zeroed attacker with no entity 0 in use: retail pushes
+                // the free entity's object, which vcod has none of.
+                (None, i)
+                    if hit.attacker == crate::game::host::ENTITYNUM_NONE as usize
+                        || hit.attacker == crate::game::host::ZEROED_ENTITY =>
+                {
                     (Value::Undefined, i)
                 }
                 _ => continue,
@@ -555,7 +560,7 @@ impl ScriptRuntime {
     /// (`crate::game::damage_trigger::sweep`), charged to the attacker's
     /// client entity, or the world when it has none.
     pub fn trigger_sweep(&mut self, t: &crate::game::combat::TriggerSweep) {
-        let attacker = self.client_entity(t.attacker);
+        let attacker = self.attacker_entity(t.attacker);
         let host = &mut self.host;
         self.vm.with_cx(|cx| {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
@@ -571,7 +576,7 @@ impl ScriptRuntime {
         if self.host.ents.get(id).is_none() {
             return;
         }
-        let attacker = self.client_entity(hit.attacker);
+        let attacker = self.attacker_entity(hit.attacker);
         let host = &mut self.host;
         let notifies = self.vm.with_cx(|cx| {
             let world = host.ents.world(cx);
@@ -1080,7 +1085,7 @@ impl ScriptRuntime {
         };
         // Held, the blend 0x61389 last set stands.
         if !held {
-            sim.gunner_leaves = placed.as_ref().map(|g| g.leaves.clone());
+            sim.set_gunner_blend(placed.as_ref(), self.host.level_time_ms);
         }
         if let Some(mut at) = placed.as_ref().map(|g| g.origin) {
             if let Some(world) = &self.host.world {
@@ -2373,6 +2378,27 @@ impl ScriptRuntime {
         self.host.test_clients.svs_time_ms = svs_ms;
     }
 
+    /// The entity `Scr_AddEntity` pushes for a damage's attacker: the
+    /// slot's client, or entity 0 for a
+    /// [`crate::game::host::ZEROED_ENTITY`] attacker (combat doc 13.7).
+    pub fn attacker_entity(&self, slot: usize) -> Option<EntId> {
+        if slot == crate::game::host::ZEROED_ENTITY {
+            return self.host.ents.handle(0);
+        }
+        self.client_entity(slot)
+    }
+
+    /// A blast's owner as `G_Damage` is handed it: a slot with no client
+    /// left (a UO vehicle shell keeps its driver's `+0x330` after he left)
+    /// is the freed entity there, whose number reads 0
+    /// ([`crate::game::host::ZEROED_ENTITY`], combat doc 13.7).
+    pub fn charged_owner(&self, owner: Option<usize>) -> Option<usize> {
+        owner.map(|slot| match self.client_entity(slot) {
+            Some(_) => slot,
+            None => crate::game::host::ZEROED_ENTITY,
+        })
+    }
+
     pub fn client_entity(&self, slot: usize) -> Option<EntId> {
         let id = self.host.ents.handle(u32::try_from(slot).ok()?)?;
         self.host
@@ -2710,7 +2736,7 @@ impl ScriptRuntime {
         attacker: usize,
     ) {
         let id = victim.id;
-        let attacker = self.client_entity(attacker);
+        let attacker = self.attacker_entity(attacker);
         let host = &mut self.host;
         let notifies = self.vm.with_cx(|cx| {
             let attacker = attacker.unwrap_or_else(|| host.ents.world(cx));
@@ -2736,7 +2762,7 @@ impl ScriptRuntime {
         at: [f32; 3],
         mod_: &str,
     ) {
-        let attacker = self.client_entity(attacker);
+        let attacker = self.attacker_entity(attacker);
         let host = &mut self.host;
         let notifies = self.vm.with_cx(|cx| {
             // `G_RadiusDamage` hands over `r.currentOrigin` less the blast,
@@ -3192,6 +3218,26 @@ impl ScriptRuntime {
         now_ms: i32,
     ) -> Option<PassStop> {
         use crate::game::missile::Turn;
+        // A vehicle's turn is its think (`G_RunThink`): an undriven one's
+        // 50 ms step runs here, by entity number among the rest
+        // (coduo-vehicles.md 12, "The think's turn").
+        if self.host.vehicles.live.contains_key(&id) {
+            // A think script set (a `delete`'s free) replaces the
+            // vehicle's own.
+            self.host.run_entity_think(id, now_ms);
+            if !self.host.vehicles.live.contains_key(&id) {
+                return None;
+            }
+            let inputs = crate::game::vehicle::think::rider_inputs(&self.host, sims);
+            let host = &mut self.host;
+            let ran = self
+                .vm
+                .with_cx(|cx| crate::game::vehicle::think::run_undriven(host, cx, id, &inputs));
+            if ran {
+                self.vehicle_deaths();
+            }
+            return None;
+        }
         let host = &mut self.host;
         // A missile meets the script models and UO's vehicles where they
         // stand on its turn.
@@ -4802,6 +4848,48 @@ mod tests {
         rt.run_frame(50);
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
         assert_eq!(rt.client_field(0, "seen").as_deref(), Some("0 0 none"));
+    }
+
+    /// A UO vehicle shell charges its driver's slot (`+0x330`) after he
+    /// left, and `Scr_AddEntity` reads the freed entity's number, 0 after
+    /// `G_FreeEntity`'s memset: the client in slot 0 is `eAttacker`
+    /// (game.mp.uo 0x5dcff, combat doc 13.7).
+    #[test]
+    fn a_hit_charged_to_an_empty_slot_names_entity_0() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() {}\n\
+             CodeCallback_PlayerConnect() {}\n\
+             CodeCallback_PlayerDamage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc) {\n\
+                 self.seen = eAttacker getEntityNumber();\n\
+             }\n",
+        );
+        for slot in [0, 1] {
+            rt.push_client_event(ClientEvent::Connect {
+                slot,
+                name: "vcod".into(),
+            });
+        }
+        rt.run_frame(0);
+        rt.host.client_vitals[1].takedamage = true;
+        assert_eq!(rt.charged_owner(Some(0)), Some(0));
+        let attacker = rt.charged_owner(Some(5)).unwrap();
+        assert_eq!(attacker, crate::game::host::ZEROED_ENTITY);
+        rt.deliver_hits(vec![crate::game::combat::Hit {
+            victim: 1,
+            attacker,
+            inflictor: None,
+            damage: 30,
+            dflags: 0,
+            mod_: "MOD_PROJECTILE",
+            weapon: "none".into(),
+            point: [0.0; 3],
+            dir: [0.0, 0.0, -1.0],
+            hitloc: "none",
+        }]);
+        rt.run_frame(50);
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+        assert_eq!(rt.client_field(1, "seen").as_deref(), Some("0"));
     }
 
     /// The object table has to survive past map load, so the runtime owns the

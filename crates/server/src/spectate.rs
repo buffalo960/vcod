@@ -259,6 +259,11 @@ pub struct ClientSim {
     /// The turret placement's leaf blend for the gun this client mans,
     /// which its legs pose by while mounted.
     pub gunner_leaves: Option<Vec<(usize, f32)>>,
+    /// The turret group the placement last set before the current one, with
+    /// its leaves: what the legs blend out of on an aim-fire change.
+    pub gunner_left: Option<(usize, Vec<(usize, f32)>)>,
+    /// The group `gunner_leaves` sit under.
+    gunner_node: Option<usize>,
     /// The takeoff anim a move raised since the last `update_anims`, and the
     /// hold-clock time its timer was set on: the cmd's serverTime, or its
     /// start when the move's `PM_DropTimers` ran it down
@@ -608,6 +613,8 @@ impl ClientSim {
             movetype: Default::default(),
             footsteps_movetype: Default::default(),
             gunner_leaves: None,
+            gunner_left: None,
+            gunner_node: None,
             jumped: None,
             breakdown_continue: Vec::new(),
             jump_time: 0,
@@ -2148,6 +2155,33 @@ impl ClientSim {
     }
 
     /// The controls the last skeleton build eased to, which the record
+    /// The turret placement's leaf blend at level time `now_ms`, `None`
+    /// off a `turretanim` anim: the legs pose by its leaves, and its sync
+    /// group steps at the mean frequency their weights give from the next
+    /// frame on (cod11-turrets.md 13.9).
+    pub fn set_gunner_blend(
+        &mut self,
+        placed: Option<&vcod_common::turretpose::GunnerPlacement>,
+        now_ms: i32,
+    ) {
+        if let Some(g) = placed
+            && self.gunner_node.is_some_and(|n| n != g.node)
+        {
+            self.gunner_left = self.gunner_node.zip(self.gunner_leaves.take());
+        }
+        self.gunner_leaves = placed.map(|g| g.leaves.clone());
+        self.gunner_node = placed.map(|g| g.node);
+        if placed.is_none() {
+            self.gunner_left = None;
+        }
+        if let Some(g) = placed {
+            let legs = self.anim.legs();
+            self.pose
+                .legs_clock
+                .set_sync_frequency(legs, now_ms, g.frequency, g.looping);
+        }
+    }
+
     /// keeps for the next build's ease (coduo-vehicles.md 13).
     pub fn keep_eased(&mut self, c: vcod_common::playerpose::Controllers) {
         if self.pose.eased.is_some() {
@@ -2237,6 +2271,7 @@ impl ClientSim {
                 waist_pitch: body.waist_pitch,
             },
             turret_leaves: self.gunner_leaves.clone(),
+            turret_left: self.gunner_left.clone(),
             seat: self.seat.zip(self.seat_angles).map(|(s, a)| {
                 vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos, self.seat_steer)
                     .armed(self.ps.weapon.into())

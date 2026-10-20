@@ -64,7 +64,7 @@ instead of leaving the fact in a commit message.
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
-| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md` |
+| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness) |
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
 | Shader scripts, light grid, prop and entity lighting | `cod11-shader-scripts.md`, `cod11-light-grid-and-leaf-lights.md` |
 | Gamma, overbright, `r_intensity` | `cod11-gamma.md` |
@@ -224,6 +224,13 @@ check.
 - To reproduce a screenshot spot in fly mode, add a temporary
   `VCOD_POS="x y z yaw"` override to the `FlyCamera::new` spawn in `main.rs`
   and remove it before committing.
+- Bot play is measured, not eyeballed: `cargo run --release -p vcod-server
+  --example bot_match [seed...]` runs seeded bot-vs-bot matches (`MAP=`,
+  `GAMETYPE=`, `BOTS=`, `TICKS=`, `JOBS=`, `SET=`, `UO=1`) and prints
+  kills, deaths, damage, time-to-kill, wins, objective actions and stalls
+  per team. A bot behaviour change reports its before and after on the
+  same seeds in `docs/research/bot-combat.md`, whose section 1 says what
+  each number means. Retail has no bots, so this is the only yardstick.
 - Pixel and by-ear checks (aim sign, lean direction, shading, sound) belong to
   the human. Report them as pending.
 
@@ -681,10 +688,14 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
 - One spectator anywhere turns `StuckInClient` off on 1.1 only; 1.5's and
   UO's scans pass over him, so two players set down on one spot part at
-  once there, in a `rand()` direction a gate pins from the capture
-  (`Server::pin_stuck_velocities`, player-clip doc 6.2).
+  once there, in a `rand()` direction a gate replays from the glibc seed
+  recovered off the capture (`Server::pin_stuck_rand`, player-clip doc
+  13.4).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
+- A brush model is traced at its live `r.currentAngles`, not its link's: a
+  finished rotate leaves them truncated to 65536ths (60 reads 59.99634),
+  so the clip turns by that (movers doc 22).
 - A cmd's `Pmove` is one `movetrace::Pm`, handed to every chopped step's
   world (`MoveWorld::in_pmove`): 1.5's and UO's `PM_trace` drops bodies
   from its mask for the rest of the cmd once a trace starts in one, and
@@ -699,8 +710,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   received (`coduo-vehicles.md` 11.4, 12). The cmds left in an exit's
   frame run linked and move nothing (`pm_type` 1 until `G_RunClient`,
   11.2) but stand the rider's legs up: 1.5's and UO's `PM_Footsteps`
-  select a linked player's idle, airborne or not (14), and the undriven vehicles think before the driven ones step, so
-  a pushed vehicle moves the frame after the hit (12).
+  select a linked player's idle, airborne or not (14), and an undriven
+  vehicle thinks on its own turn in the entity pass, by number, the
+  driven ones after it, so a pushed vehicle moves the frame after the hit
+  and what is linked to it moves with it (12, "The think's turn").
 - A UO vehicle's `eType` 12 and its sound blends' 9 are not 1.1's types:
   the server builds them with `game::wire::ET_RAW` so the protocol map
   leaves the type alone and still maps the events. Vehicle clip brushes
@@ -922,7 +935,8 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   as two tree nodes, weighted 1 and 0.01 under a torso anim. A 1.5 or UO
   server samples a clip at the engine's node time, a float stepped by
   50 ms frames (`Layer::time`, `PoseInputs::node_time`; a UO seat's leaves
-  each step their own, `SeatRamp::leaf_times`), not its seconds
+  each step their own, `SeatRamp::leaf_times`; an MG42 gunner's
+  fire group its leaves' weighted mean, `set_sync_frequency`), not its seconds
   (combat doc 3.1, "The clip's float time").
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
