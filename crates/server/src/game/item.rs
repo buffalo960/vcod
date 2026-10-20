@@ -189,17 +189,27 @@ pub fn bounds(weapon: bool) -> (Vec3, Vec3) {
     }
 }
 
-/// `rand() * -2^-31`, the draw every item constant multiplies (0x74d50,
-/// 0x74e50): a uniform in (-1, 0].
-fn neg_unit(host: &mut GameHost) -> f32 {
-    -(host.rand_int() as f32 / 2_147_483_648.0)
+/// `rand() / 2^31` as each module divides it, the draw every item constant
+/// multiplies: 1.1d multiplies by -2^-31 (0x74d50, 0x74e50), a uniform in
+/// (-1, 0]; 1.5b and UO divide by +2^31 (game15 0x8a0ec, game.mp.uo
+/// 0xb056c), [0, 1) (items doc 14.2).
+fn unit_draw(host: &mut GameHost) -> f32 {
+    let u = host.rand_int() as f32 / 2_147_483_648.0;
+    if host.speaks_1_1() { -u } else { u }
 }
 
-/// The module's `crandom()` as compiled, `2 * neg_unit() - 1`: it reads
-/// (-3, -1] rather than Q3's (-1, 1), so a launch climbs at 50 to 150
-/// units a second and every spin runs negative (section 8).
+/// The module's `crandom()` as compiled, `2 * unit_draw() - 1`: on 1.1d it
+/// reads (-3, -1] rather than Q3's (-1, 1), so a launch climbs at 50 to 150
+/// units a second and every spin runs negative (section 8); on 1.5b and UO
+/// it reads [-1, 1).
 pub fn crandom(host: &mut GameHost) -> f32 {
-    2.0 * neg_unit(host) - 1.0
+    2.0 * unit_draw(host) - 1.0
+}
+
+/// `G_BounceItem`'s lift over the floor, `0.5 + 0.5 * unit_draw()`:
+/// (0, 0.5] on 1.1d, [0.5, 1) on 1.5b and UO (items doc 14.2).
+fn landing_lift(host: &mut GameHost) -> f32 {
+    0.5 + 0.5 * unit_draw(host)
 }
 
 /// What one `G_RunItem` did to an item in the air.
@@ -221,8 +231,8 @@ pub enum Ran {
 /// then free, nudge or land. Every item's `physicsBounce` is 0 (stored by
 /// `G_SpawnItem` at 0x4e6d7, never by `LaunchItem`), so a contact keeps no
 /// velocity: a floor stops it and a wall drops it straight down. `lift` is
-/// drawn only on a landing, `0.5 + 0.5 * neg_unit()` above the sweep's end,
-/// and is handed that end.
+/// drawn only on a landing (`landing_lift`) above the sweep's end, and is
+/// handed that end.
 pub fn run_flight(
     world: &CollisionWorld,
     pos: &mut Trajectory,
@@ -337,7 +347,7 @@ pub fn run_item(host: &mut GameHost, cx: &mut Cx, id: EntId, now_ms: i32) -> boo
                 now_ms,
                 &mut |floor| match host.test_item_lift.as_mut() {
                     Some(f) => f(now_ms, floor.into()),
-                    None => 0.5 + 0.5 * neg_unit(host),
+                    None => landing_lift(host),
                 },
             );
             let _ = host.set_field(cx, id, origin_atom, Value::Vector(origin.into()));
@@ -1016,6 +1026,24 @@ fn respawn_secs(host: &mut GameHost, cx: &mut Cx, id: EntId, index: usize) -> Op
 mod tests {
     use super::*;
     use crate::game::testing::fixture;
+
+    /// `G_BounceItem`'s lift: 1.1d's `rand() * -2^-31` keeps it in (0, 0.5],
+    /// 1.5b's and UO's `rand() / 2^31` in [0.5, 1) (items doc 14.2).
+    #[test]
+    fn the_landing_lift_reads_each_patchs_range() {
+        for (defs, lo, hi) in [
+            (&crate::defs::V1, 0.0, 0.5),
+            (&crate::defs::V15, 0.5, 1.0),
+            (&crate::defs::UO, 0.5, 1.0),
+        ] {
+            let mut host = GameHost::new(vec![String::new(); 2048]);
+            host.defs = defs;
+            for _ in 0..1000 {
+                let l = landing_lift(&mut host);
+                assert!(l > lo - 1e-6 && l <= hi, "{l} outside ({lo}, {hi}]");
+            }
+        }
+    }
 
     /// The use key's sort: scores under 1.0 apart compare equal and the
     /// merge keeps the left run's first, so 5.0 still goes ahead of 4.5.
