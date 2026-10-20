@@ -379,14 +379,16 @@ pass after the flood (`NavGraph::link_ladders`) handles them on their own.
 `PM_CheckJump` lifts the feet 39 units (vz `sqrt(2 * 39 * 800)` = 249.8,
 `vcod_common::pmove::JUMP_HEIGHT`; docs/research/cod11-mantle.md, "Jumps"),
 over the 18-unit step. Two kinds of edge use it, kept in
-`NavGraph::jumps`, and a bot on one sends the jump key on the walk's cue
-(`nav::jump_cue`, `nav::jump_key`):
+`NavGraph::jumps`, and a bot on one sends the jump key where the walk
+that proved it jumped (`nav::PinJump`, `nav::leap_cue`, `nav::jump_key`):
 
 - A pinned jump: the flood's forward walk above, stalled at a ledge's face
-  or a low wall. A bot on the edge jumps on the ground while it closes on
-  the waypoint under 2 units a tick (stopped at the face or sliding along
-  it), or stands within 16 units flat under a waypoint more than a step
-  above. VERIFIED (measured, `mp_depot` `re`, seed 7): from the stair
+  or a low wall. A bot on the edge runs the walk's own rule, tick by
+  tick: it jumps on the ground after two ticks moved under 2 units with
+  its key held at the waypoint, out of a bob (below), or standing within
+  16 units flat under a waypoint more than a step above, each only where
+  `jump_clear` passes from where it stands (2026-10-20, "The jump cue and
+  the re-proof" below). VERIFIED (measured, `mp_depot` `re`, seed 7): from the stair
   landing at z 84 to the step at z 116 by (-1759, -603) the bot came in at
   an angle, slid along the step's face and ran off the stair's side at
   every try on the pinned cue alone; the cue under the waypoint takes it up.
@@ -394,9 +396,10 @@ over the 18-unit step. Two kinds of edge use it, kept in
   face too steep to stand on, where the step lifts the body onto the face
   and it slides back, so it is off the ground on most ticks and the
   pinned jump above never fires. A run that stalls sliding jumps on its
-  next tick on the ground instead (`nav::BOB`). Only the flood's runs do:
-  the follower's walks on from a bot's body never take that jump, so a
-  way proved with one is a jump edge or nothing. VERIFIED (measured
+  next tick on the ground instead (`nav::BOB`). Only the flood's runs and
+  the jump edges' re-proof do, and a bot on a jump edge: the follower's
+  walks on from a bot's body never take that jump, so a way proved with
+  one is a jump edge or nothing. VERIFIED (measured
   2026-10-17, UO rules, walks): mp_berlin's roof gutter, a trough
   between the roof at z 768 and a steep roof slope south-east of it, with
   a ledge at 633-652 on its south side. The slope node a 149-unit drop off
@@ -457,9 +460,9 @@ over the 18-unit step. Two kinds of edge use it, kept in
   and hopped there for 12 s. From the foot with a jump to hand the run
   lands on the rim; with 150 ms on the timer it falls in
   (`nav::tests::a_jump_edge_waits_on_its_foot_for_the_jump`). Set off
-  from rest on the foot a body reads pinned on its first tick (closing
-  0), so the pinned cue needs a move key held the tick before
-  (`bots::tests::a_bot_set_off_from_rest_is_not_pinned`).
+  from rest on the foot a body moves little on its first tick, so a
+  pinned tick counts only with a move key held at the waypoint the tick
+  before (`bots::tests::a_bot_set_off_from_rest_is_not_pinned`).
 - A pinned walk jumps under a ceiling lower than the jump's 39 units too:
   `jump_clear` looks for room ahead at the height the body rises to, not
   at the full jump's. A floor-bound walk (node to node) also jumps where
@@ -3537,7 +3540,8 @@ settings, release; ours only):
   a bot sent there on master jumps on its cue and arrives from 2 of 3
   starts. The walk's jump and the bot's are not the same rule: the walk
   jumps after two pinned ticks and only where `jump_clear` passes, the
-  bot whenever it closes under `PINNED`.
+  bot whenever it closes under `PINNED`. Since aligned
+  ("The jump cue and the re-proof" below).
 
 ### The crest run and the stringer's jump
 
@@ -3606,6 +3610,87 @@ against 0 / 3 / 0 (two unstick spells off (276, 3388, -390)).
   -52) and replanned into its crease (4 deaths in 96 seeds); held only
   where the body would coast off (`coasts_off`), the crow's nest deaths
   stayed.
+
+### The jump cue and the re-proof
+
+The 2026-10-20 round took the lip walk's open divergence (above): the
+bot's jump on a jump edge and the walk's were different rules, and the
+walk proved its jumps aimed where no bot steers. VERIFIED (measured,
+`ship_stalls`, `dm`, 6 bots, 4000 ticks, release, 1.1; ours only;
+stalled bot-ticks / falls / deaths):
+
+| | `mp_depot` 1-767 odd | `mp_ship` 1-1535 odd |
+|---|---|---|
+| master 8433f794 | 2186 / 2 / 0 | 76 / 1 / 0 |
+| the walk's rule with its room test, no re-proof | 68 / 2 / 0 (1-383) | 129 / 5 / 0 (1-767) |
+| the walk's rule with its room test, re-proof with it | 68 / 0 / 0 (1-383) | 341 / 6 / 2 (1-767) |
+| the rule without the room test, re-proof as a bot (kept) | 131 / 1 / 0 | 126 / 1 / 1 |
+
+Seed 1145 on `mp_depot`: 76 stalled bot-ticks on master, 0 on the kept
+row. Master's depot total is seed 663's 2118 (the gutter spell, "The
+lip walk") and seed 221's 68, which the kept row still has. The ship
+counts move by a seed or two's stall between any two builds, so the
+rows differ within that noise but for the spots named below.
+
+- The cue is the walk's own rule (`nav::PinJump`, run by `walk_sliding`
+  and by `Bot::think`): jump on the ground after two ticks moved under
+  2 units (half one creeping) with the key held at the waypoint, out of
+  a bob (two such ticks sliding, then the next tick on the ground), or
+  standing within 16 units flat under a top more than a step up. The
+  bot read pinned off its pace toward the top in one tick, so landed
+  short of `mp_depot`'s pit step at (-1533.2, 2112, 239.1) and carried
+  back at 4 units a tick it jumped at once, from 49 units off the face,
+  and fell back (`bots::tests::a_bot_landed_short_of_a_ledge_runs_at_it_before_it_jumps`).
+- The bot skips the walk's room test (`jump_clear`). With it, bots
+  pinned on `mp_ship`'s stair at (5408, 333, 328) on the jump edge
+  (5402, 321, 344) -> (5404, 354, 204), 6 units off the walk's line,
+  where the box raised 41 meets the stair overhead toward the top, and
+  fell off it on unstick spells (seeds 71, 231, 391), and on
+  `mp_depot` a bot pinned under the 42-unit lip of (-1374, 2112, 254)
+  fell the same way (seed 71); the old cue jumped there and the step-up
+  took it over. VERIFIED (measured, traces).
+- Sliding on a face too steep to stand on, a tick counts as pinned
+  while the bot closes on the top under 2 units a tick, however far it
+  moves: on `mp_ship`'s beam at (2214, -325, -48) a bot that came in
+  across the walk's line to (2176, -319, -32) slid along the face at 5
+  units a tick and never stalled by distance, where the walk bobs in
+  place (seeds 315, 361; `bots::tests::a_bot_sliding_along_a_steep_face_jumps_out_of_the_bob`).
+- `NavGraph::reprove_jumps`, after the leaps, walks every other jump
+  edge again from its node, aimed at its top (where a bot steers), with
+  the bot's jump (`nav::as_a_bot`: the bob, no room test), then aimed
+  8 units either side. An edge that lands only aside keeps that aim in
+  `NavGraph::aims` and a bot on it steers there (`NavGraph::aim`,
+  `Follower::jump_aim`); one that lands at none is dropped. The pit
+  edge (-1569, 2087, 212) -> (-1533.2, 2112, 239.1) lands at none and is
+  dropped (`nav::tests::a_jump_edge_that_lands_only_off_where_a_bot_steers_is_dropped`);
+  `mp_depot`'s (-1760, 71, -24) -> (-1731, 32, 11) lands only aside
+  (`nav::tests::a_jump_edge_that_lands_only_aimed_aside_keeps_its_aim`).
+  `mp_dawnville`'s (-96, -15409, -13) -> (-89, -15360, 19), the one way
+  to spawns 88 and 154, now lands at its node: the walk with the room
+  test pins on the wall at y -15375 and refuses the jump, the bot's
+  jump there lands (`nav::tests::a_jump_edge_is_proved_again_by_the_bots_jump`).
+  Aimed jumps after the pass (`examples/nav_build.rs`): `mp_brecourt`
+  44, `mp_carentan` 112, `mp_chateau` 82, `mp_dawnville` 38,
+  `mp_depot` 77, `mp_harbor` 15, `mp_hurtgen` 53, `mp_pavlov` 85,
+  `mp_powcamp` 25, `mp_railyard` 106, `mp_rocket` 38, `mp_ship` 124;
+  `mp_depot` loses 14 edges (91 525 to 91 511). Spawns in one component
+  are unchanged on all twelve (`tests/nav_census.rs`; dawnville 178).
+  VERIFIED (measured). A room-tested re-proof dropped 0 to 22 edges a map
+  aimed at the node and both sides, 20 to 146 aimed at the node alone,
+  where `mp_dawnville` fell to 176.
+- Tried and dropped: the follower's walk on along a jump edge
+  (`Follower::edge_holds`) with the bot's jump too. `mp_depot` seeds 159
+  and 247 cleared, but bots then climbed `mp_ship`'s mast ladder for the
+  crow's nest's rim at 1254 and bobbed under the head at
+  (4964, 64, 1219): stalls in ten seeds of 1535 that the room-tested
+  walk on has in none (205, 423, 463, 625, 965, 1369 at the head, 57,
+  381, 929, 1003 on the stair above). VERIFIED (measured, the same seeds
+  each way).
+- Left: the stair at (5404-5467, 321-354, 204-332) on `mp_ship` (seeds
+  445, 481: a fall at (5416, 325, 312) and stalls round the deep jump
+  edge's top at 204), and the pit at (-1409, 2087, 212) on `mp_depot`
+  (seed 159: the plans dither between the pit's exits, a bot bobbing up
+  the slope at (-1280, 2100) to (-1280, 2148, 227), a plain edge).
 
 ## 4. Memory and hearing
 
