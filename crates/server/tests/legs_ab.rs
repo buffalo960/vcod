@@ -87,9 +87,9 @@ const TORSO_IDLE_MS: i32 = 7600;
 
 /// The 1.5b and UO walks' join, as the [`RETAIL_IDLE_MS`] ours' client
 /// joins for: retail's probe spawned on a point it dropped from, so its
-/// idle's time is unknown; these fit the settle. `LEGS_IDLE_MS` overrides
-/// both for a sweep.
-const RETAIL_IDLE_MS_15: i32 = 8200;
+/// idle's time is unknown; these fit the settle (1.5's to 0.02 units and
+/// 0.09 degrees). `LEGS_IDLE_MS` overrides both for a sweep.
+const RETAIL_IDLE_MS_15: i32 = 8250;
 const RETAIL_IDLE_MS_UO: i32 = 3700;
 
 /// Where each walk's probe spawned (its log's `ps.origin` until the
@@ -334,7 +334,26 @@ fn run_ours(
     spawn: Option<([f32; 3], [f32; 3])>,
 ) -> Option<Ours> {
     let proto = vcod_server::server::install_protocol(&fs);
-    let walk = walk(&std::fs::read_to_string(client).unwrap());
+    let mut walk = walk(&std::fs::read_to_string(client).unwrap());
+    let first = walk.snaps.first().expect("a snapshot");
+    let (placed, placed_ct) = (first.t, first.ct);
+    // The probe sent a cmd at the placement's own time, before the log's
+    // first (its cmds end each frame on the frame's time): the fall from
+    // the placement runs from retail's commandTime through it.
+    if let Some(&(c, world)) = walk.cmds.first()
+        && c.server_time > placed
+    {
+        walk.cmds.insert(
+            0,
+            (
+                UserCmd {
+                    server_time: placed,
+                    ..c
+                },
+                world,
+            ),
+        );
+    }
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
@@ -354,7 +373,6 @@ fn run_ours(
     let mut cl = NetClient::start_with_protocol(ClientEnd(q.clone()), now, 0x2001, proto);
     let mut join = Join::new("allies", "m1carbine_mp");
     let p = proto;
-    let placed = walk.snaps.first().expect("a snapshot").t;
     let acked: BTreeMap<i32, i32> = walk.snaps.iter().map(|s| (s.t, s.ct)).collect();
     let mut legs = BTreeMap::new();
     let last = walk.snaps.last().unwrap().t;
@@ -366,8 +384,16 @@ fn run_ours(
         if t > last {
             break;
         }
-        if t <= placed {
+        if t < placed {
             cl.send_frame(&holding(&cl));
+        } else if t == placed {
+            // The placement frame runs the cmds up to retail's commandTime.
+            let mut c = holding(&cl);
+            c.server_time = placed_ct;
+            c.angles = cl.snapshots().newest().map_or([0; 3], |s| {
+                [0, 1, 2].map(|i| -s.ps.field_i32(p, &format!("delta_angles[{i}]")) & 0xffff)
+            });
+            cl.send_cmds(&[c]);
         } else {
             // Retail's cmds up to what the snapshot of frame `t` had
             // acknowledged, so this frame runs the moves retail's did.
@@ -466,7 +492,7 @@ fn a_walking_body_is_posed_like_retail_on_15() {
         return;
     }
     let run = ours_walk(fs, CLIENT_15, RETAIL_IDLE_MS_15, SPAWN_15).unwrap();
-    check_walk(&run, SERVER_15, CLIENT_15, GAPS_15);
+    check_walk(&run, SERVER_15, CLIENT_15, &[]);
 }
 
 /// The UO walk (`-legs-uo.txt`), as [`a_walking_body_is_posed_like_retail_on_15`].
@@ -479,33 +505,14 @@ fn a_walking_body_is_posed_like_retail_on_uo() {
     check_walk(&run, SERVER_UO, CLIENT_UO, GAPS_UO);
 }
 
-/// Bone and origin rows the 1.5b and UO walks may miss: a step's rows up to
-/// a level time, and why. Every other row, the run's from its blend's end
-/// on, is exact (the 1.1 spread phase puts those 20 units off).
-const GAPS_15: &[(&str, i32, &str)] = &[
-    (
-        "settle",
-        26500,
-        "retail's body stops above the floor after the placement's one-unit drop \
-         (z -151.64 through the settle) where ours lands on it at -151.88, and the \
-         probe dropped from its spawn point, so the idle's start is in neither \
-         half of the capture; the best fit of ours' join (RETAIL_IDLE_MS_15) \
-         leaves 0.4 units and 20 degrees",
-    ),
-    (
-        "run",
-        26650,
-        "the run's blend out of the settle's idle, as settle",
-    ),
-];
-
-/// [`GAPS_15`] on UO: retail's body sits 0.53 above the floor for the first
-/// frame, and the best fit of the join (RETAIL_IDLE_MS_UO) leaves 0.5 units
-/// and 3 degrees; the run's blend clears.
+/// Bone rows the UO walk may miss: a step's rows up to a level time, and
+/// why. Every other row is exact, and so is the whole 1.5b walk.
 const GAPS_UO: &[(&str, i32, &str)] = &[(
     "settle",
     26500,
-    "as GAPS_15's settle: the drop's first frame and the idle's start",
+    "the probe dropped from its spawn point, so the idle's start is in neither \
+     half of the capture; the best fit of ours' join (RETAIL_IDLE_MS_UO) leaves \
+     0.11 units and 2.9 degrees",
 )];
 
 /// The anim selection and the four bones of `run` against the retail walk

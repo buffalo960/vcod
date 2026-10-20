@@ -1433,12 +1433,24 @@ the settle's idle and every later movement clip the walk starts fresh
 pose like retail's to 0.01 units and 0.08 degrees once the run's blend
 out of the idle ends (`legs_ab`'s `..._on_15` and `..._on_uo`). Under
 1.1's spread the same rows read 20 units off, 243 of them failing.
-VERIFIED, same captures: retail's body stops above the floor after the
-placement's one-unit drop (z -151.64 through the 1.5 settle, -151.35
-for one UO frame) where ours lands on it, and the probe dropped from its
-spawn point, so the settle's idle start is in neither half; the settle
-(and on 1.5 the run's first 150 ms, its blend out of that idle) stay
-named in `legs_ab`'s `GAPS_15` and `GAPS_UO`. VERIFIED, same captures:
+VERIFIED, same captures: the placement's one-unit drop stops at z
+-151.64139 (vz -33) on 1.5 and reads -151.35341 (vz -28) for one UO
+frame because the probe sent a cmd at the placement's own level time,
+25000, which the client half does not list (its `!cmd` lines start a
+cmd later): 1.5 falls 18, 16 and 16 ms from commandTime 24982 and UO 2,
+16 and 16 from 24998. The fall itself is pmove's: under 1.5's stored
+tail (cod15-movement.md 7) the 18 ms step from rest takes the move as
+its velocity (-7), then -20 and -33, so the body ends 0.234 over the
+floor and the next ground trace (0.25 down) stands it there; UO's 2 ms
+step does not take the move and ends -2, -15, -28. Both to every digit
+the snapshots print. INFERRED: the cmd at 25000 is the probe's, which
+ends each frame's cmds on the frame's time (25050, 25100, ... in both
+logs). `legs_ab` replays retail's commandTime on the placement frame and
+that cmd before the log's first; the 1.5 walk is then exact throughout
+(its join fit to 8250). The probe dropped from its spawn point, so the
+settle's idle start is in neither half; on UO the best fit of the join
+still leaves the settle 0.11 units and 2.9 degrees off, named in
+`legs_ab`'s `GAPS_UO`. VERIFIED, same captures:
 the crouch walk back that returns at 42000 while its node still blends
 out keeps its time, as "The setter on a weighted node" (cod11-combat.md
 3.1) has it, to 0.03 units.
