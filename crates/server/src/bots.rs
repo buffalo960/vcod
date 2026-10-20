@@ -2551,7 +2551,8 @@ impl Bot {
                     glam::Vec3::from(p).distance(glam::Vec3::from(view.origin))
                 });
                 let armed = !crate::nav::on_jump_top(flat, rise);
-                let under = crate::nav::jump_under(flat, rise);
+                let climbed = self.pin_from.map_or(0.0, |p| view.origin[2] - p[2]);
+                let under = crate::nav::jump_under(flat, rise, climbed);
                 // Sliding on a face too steep to stand on, a bot that came
                 // in across the walk's line slides along it rather than
                 // bobbing in place: not closing on the top counts as pinned

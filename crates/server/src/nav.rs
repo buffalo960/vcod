@@ -104,9 +104,9 @@ pub struct NavGraph {
     /// jump until the body lands ([`Gait::CrouchJump`]), through a window
     /// too low for a standing body ([`NavGraph::link_pockets`]).
     pub crouch_jumps: HashSet<(u32, u32)>,
-    /// The jump edges whose walk lands only aimed [`SIDESTEP`] to one side
-    /// of their top ([`NavGraph::reprove_jumps`]), and the point it aimed
-    /// at: a bot on one steers there ([`NavGraph::aim`]).
+    /// The jump edges whose walk lands only aimed beside their top
+    /// ([`NavGraph::reprove_jumps`]), and the point it aimed at: a bot on
+    /// one steers there ([`NavGraph::aim`]).
     pub aims: HashMap<(u32, u32), glam::Vec2>,
     /// Drops deeper than a jump whose walk from 4 units aside of their node
     /// falls, and walks down beside a fall that hurts whose forward walk
@@ -780,8 +780,9 @@ impl NavGraph {
     /// can bob under the top and never land: a bot in mp_depot's pit at
     /// (-1569, 2087, 212) jumped at the step at (-1533, 2112, 239) again and
     /// again (bot-navigation.md, "Jumps"). An edge that lands only aimed
-    /// [`SIDESTEP`] to one side keeps that aim ([`Self::aims`]); one that
-    /// lands at none is dropped.
+    /// [`SIDESTEP`] to one side, or at its column's centre, where the flood
+    /// aimed, keeps that aim ([`Self::aims`]); one that lands at none is
+    /// dropped.
     fn reprove_jumps(&mut self, world: &CollisionWorld) {
         let mut jobs: Vec<(u32, u32)> = self
             .jumps
@@ -793,11 +794,14 @@ impl NavGraph {
         let walked = par_map(&jobs, |&(a, b)| {
             let (from, to) = (self.nodes[a as usize], self.nodes[b as usize]);
             let across = (to - from).truncate().perp().normalize_or_zero() * SIDESTEP;
-            [0.0, 1.0, -1.0].into_iter().find_map(|k| {
-                let target = to.truncate() + across * k;
-                let w = as_a_bot(|| walk_as(world, from, target, Some(to.z), Gait::Forward));
-                matches!(w, Walked::Arrived(..)).then_some((k != 0.0).then_some(target))
-            })
+            let at = to.truncate();
+            let centre = self.center(self.column(to));
+            [at, at + across, at - across, centre]
+                .into_iter()
+                .find_map(|target| {
+                    let w = as_a_bot(|| walk_as(world, from, target, Some(to.z), Gait::Forward));
+                    matches!(w, Walked::Arrived(..)).then_some((target != at).then_some(target))
+                })
         });
         for (&(a, b), aim) in jobs.iter().zip(walked) {
             match aim {
@@ -4462,8 +4466,10 @@ fn walk_sliding(
         // few: it jumps on the next one (mp_berlin's roof gutter,
         // bot-navigation.md "Jumps").
         let armed = matches!(gait, Gait::Forward | Gait::CrouchJump) && !jumped;
-        let under = floor
-            .is_some_and(|f| jump_under(target.distance(ps.origin.truncate()), f - ps.origin.z));
+        let rose = ps.origin.z - before.z;
+        let under = floor.is_some_and(|f| {
+            jump_under(target.distance(ps.origin.truncate()), f - ps.origin.z, rose)
+        });
         let roomless = ROOMLESS.get();
         let clear = || roomless || jump_clear(world, &ps, target, gait == Gait::CrouchJump);
         if pin.before(armed, ps.on_ground, under, clear) {
@@ -4529,10 +4535,17 @@ const JUMP_UNDER: f32 = 16.0;
 const JUMP_TICKS: usize = 13;
 
 /// Whether a body standing `flat` from a jump edge's top and `rise` under
-/// it jumps whatever its pace ([`JUMP_UNDER`]).
-pub fn jump_under(flat: f32, rise: f32) -> bool {
-    flat < JUMP_UNDER && rise > vcod_common::pmove::STEPSIZE
+/// it, having `climbed` the last tick, jumps whatever its pace
+/// ([`JUMP_UNDER`]). Not while it still climbs a ramp under the top: off
+/// mp_uo_dawnville's ramp at (-195, -16833, 138) that jump flies past the
+/// floor at 176 and falls back, where the run on stalls at its foot and
+/// jumps onto it (bot-navigation.md, "The jump cue and the re-proof").
+pub fn jump_under(flat: f32, rise: f32, climbed: f32) -> bool {
+    flat < JUMP_UNDER && rise > vcod_common::pmove::STEPSIZE && climbed < CLIMBING
 }
+
+/// A tick's rise at which a body still climbs a ramp ([`jump_under`]).
+const CLIMBING: f32 = 1.0;
 
 /// Whether a leap jumps now, its top `flat` away and `rise` above: at the
 /// lip ([`lip_ahead`]), as its walk did, and never once on the top.
@@ -6355,9 +6368,10 @@ mod tests {
         assert!(!leap_cue(false, 40.0, 32.0), "pinned is no cue");
         assert!(leap_cue(true, 40.0, 32.0));
         // Right under a ledge's top, not under a step.
-        assert!(jump_under(10.0, 32.0));
-        assert!(!jump_under(30.0, 32.0), "still short of it");
-        assert!(!jump_under(10.0, 10.0), "under a step");
+        assert!(jump_under(10.0, 32.0, 0.0));
+        assert!(!jump_under(30.0, 32.0, 0.0), "still short of it");
+        assert!(!jump_under(10.0, 10.0, 0.0), "under a step");
+        assert!(!jump_under(10.0, 32.0, 2.0), "still climbing a ramp");
         // On the top: no more jumping.
         assert!(!leap_cue(true, 10.0, 2.0));
         assert_eq!(jump_key(true, true, false), 127);
@@ -6810,7 +6824,7 @@ mod tests {
             ps.velocity = ((top - foot).truncate().normalize() * 190.0).extend(0.0);
             for tick in 1..30 {
                 let to = top.truncate() - ps.origin.truncate();
-                let cue = jump_under(to.length(), top.z - ps.origin.z);
+                let cue = jump_under(to.length(), top.z - ps.origin.z, 0.0);
                 let cmd = UserCmd {
                     server_time: tick * FRAME_MS,
                     forward: 127,
@@ -7456,6 +7470,35 @@ mod tests {
             ..Follower::default()
         };
         assert_eq!(f.jump_aim(&g), Some(aim));
+    }
+
+    /// United Offensive's mp_uo_dawnville: the jump edge from (-241,
+    /// -16802, 103) up the ramp to the floor at (-190, -16848, 176), the
+    /// way to spawns 220 and 248. Right under the floor while still
+    /// climbing the ramp, a jump flies past it and falls back; the walk
+    /// runs on to the ramp's head, stalls and jumps on, and the re-proof
+    /// keeps the edge.
+    #[test]
+    fn a_jump_from_a_ramp_waits_for_its_head() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let bsp = vcod_common::bsp::parse(
+            &fs.read(&fs.resolve_map("mp_uo_dawnville").unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        world.collision.unlink_script_brushes(&bsp.entities, "tdm");
+        let w = &world.collision;
+        with_rules(MoveRules::Uo, || {
+            let foot = settle(w, Vec3::new(-241.0, -16802.0, 120.0), 0.0).unwrap();
+            let top = settle(w, Vec3::new(-190.0, -16848.0, 190.0), 0.0).unwrap();
+            let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+            g.jumps.insert((0, 1));
+            g.reprove_jumps(w);
+            assert!(g.edges[0] == [1] && g.jumps.contains(&(0, 1)));
+        });
     }
 
     /// mp_dawnville's spawns 88 and 154 at (145, -15311, 7) are reached
