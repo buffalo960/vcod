@@ -583,6 +583,10 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
             continue;
         }
         let owner = host.vehicles.live[&id].seats[1].map(|s| s as u32);
+        let model = seat::model_name(host, cx, id);
+        let bounds = host
+            .model_bounds_of(&model)
+            .map(|(lo, hi)| (glam::Vec3::from(lo), glam::Vec3::from(hi)));
         out.push(crate::game::combat::PlacedModel {
             id,
             origin: posed.origin,
@@ -592,6 +596,7 @@ pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::comba
             owner,
             takes_damage: true,
             body: false,
+            bounds,
         });
     }
     out

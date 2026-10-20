@@ -1849,12 +1849,22 @@ pub struct PlacedModel {
     /// `setContents` can give a script model that, and a missile's bounce
     /// off it is soft (combat doc 12.4).
     pub body: bool,
+    /// The xmodel descriptor's own bounds, unrotated about `origin`: the
+    /// entity clip drops the model when the segment misses them before it
+    /// clips a triangle (combat doc 2.7). `None` skips the test.
+    pub bounds: Option<(Vec3, Vec3)>,
 }
 
 impl PlacedModel {
     /// The segment's first hit on this model closer than `best`: fraction,
     /// world normal and the surface's flags.
     pub fn clip(&self, start: Vec3, end: Vec3, mask: u32, best: f32) -> Option<(f32, Vec3, u32)> {
+        if let Some((mins, maxs)) = self.bounds {
+            let (lo, hi) = (self.origin + mins, self.origin + maxs);
+            if vcod_common::collision::segment_misses_box(start, end, lo, hi, best) {
+                return None;
+            }
+        }
         let local = |p: Vec3| self.axis.transpose() * (p - self.origin);
         let (s, e) = (local(start), local(end));
         match self.surfs.is_empty() {
@@ -2897,6 +2907,7 @@ mod tests {
             owner: None,
             takes_damage: true,
             body: false,
+            bounds: None,
         };
         let sims = [(0, &a), (1, &b)];
         let fire = |pass: Pass| {
@@ -2980,6 +2991,7 @@ mod tests {
             owner: None,
             takes_damage: false,
             body: false,
+            bounds: None,
         };
         let sims = [(0, &a), (1, &b)];
         let model = crate_(100.0);
@@ -3386,6 +3398,7 @@ mod tests {
             owner: None,
             takes_damage,
             body: false,
+            bounds: None,
         };
         let swing = |models: &[PlacedModel], targets: &[ShotTarget]| {
             melee_fire(
@@ -3630,6 +3643,7 @@ mod tests {
             owner: None,
             takes_damage: false,
             body: false,
+            bounds: None,
         };
         let open = vcod_common::collision::test_world(&[]);
         assert_eq!(can_damage(at, &near, &open, &[], &[], None), 1.0);

@@ -669,9 +669,10 @@ pub fn clip_model_surfs(
         .map(|_| (trace.fraction, trace.normal, trace.surface_flags))
 }
 
-/// `coduo_lnxded` 0x805e387: whether the segment's part up to `max`
-/// misses the box, slab by slab, the minimum faces first.
-fn segment_misses_box(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, max: f32) -> bool {
+/// `coduo_lnxded` 0x805e387 (1.1d `cod_lnxded` 0x805a788, 1.5b 0x805e553):
+/// whether the segment's part up to `max` misses the box, slab by slab, the
+/// minimum faces first.
+pub fn segment_misses_box(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, max: f32) -> bool {
     let (mut lo, mut hi) = (0.0f32, max);
     for (sign, b) in [(-1.0f32, mins), (1.0, maxs)] {
         for i in 0..3 {

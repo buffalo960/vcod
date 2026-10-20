@@ -958,7 +958,7 @@ impl GameHost {
 
     /// `xmodel_bounds`' entry for a `.model` value, loading it on first use.
     /// `None` for no model, which is a `script_model` with no DObj yet.
-    fn model_bounds_of(&mut self, name: &str) -> Option<Bounds> {
+    pub fn model_bounds_of(&mut self, name: &str) -> Option<Bounds> {
         if name.is_empty() {
             return None;
         }
@@ -1348,6 +1348,9 @@ impl GameHost {
             let Some(tris) = self.xmodel_tris(&name) else {
                 continue;
             };
+            let bounds = self
+                .model_bounds_of(&name)
+                .map(|(lo, hi)| (glam::Vec3::from(lo), glam::Vec3::from(hi)));
             out.push(crate::game::combat::PlacedModel {
                 id,
                 origin: vec(self.get_field(cx, id, origin)),
@@ -1361,6 +1364,7 @@ impl GameHost {
                     .get(id)
                     .and_then(|e| e.link.as_ref())
                     .is_some_and(|l| l.contents & 0x200_0000 != 0),
+                bounds,
             });
         }
         out
