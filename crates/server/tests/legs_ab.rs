@@ -19,9 +19,17 @@
 //! fires, reloads and aims standing, running, strafing and crouched: the
 //! torso clips over the legs (cod11-movers.md 15, "Torso over legs").
 //!
-//! `LEGS_REPORT=1` prints every compared frame.
+//! `-legs-1.5.txt` / `-legs-client-1.5.txt` and `-legs-uo.txt` /
+//! `-legs-client-uo.txt` are the walk on retail 1.5b and UO, which start
+//! the run at their own spread phase (cod11-movers.md 15, "The phase on 1.5
+//! and UO"); ours spawns where retail's probe did ([`SPAWN_15`]).
 //!
-//! Needs `COD_DIR`; without the paks the test returns early.
+//! `LEGS_REPORT=1` prints every compared frame; `LEGS_IDLE_MS` sweeps the
+//! 1.5 and UO join.
+//!
+//! Needs `COD_DIR`; without the paks the test returns early. The 1.1 walks
+//! run at a 1.1 install, the 1.5 one at a 1.5 or UO install and the UO one at a
+//! UO install.
 
 mod common;
 
@@ -31,6 +39,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, Protocol};
 use vcod_common::net::{NetClient, NetEvent};
 
 const MAP: &str = "mp_carentan";
@@ -38,6 +47,10 @@ const SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-legs.txt";
 const CLIENT: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client.txt";
 const TORSO_SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-torso.txt";
 const TORSO_CLIENT: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-torso.txt";
+const SERVER_15: &str = "tests/fixtures/movers/mp_carentan-dm-legs-1.5.txt";
+const CLIENT_15: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-1.5.txt";
+const SERVER_UO: &str = "tests/fixtures/movers/mp_carentan-dm-legs-uo.txt";
+const CLIENT_UO: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-uo.txt";
 
 /// The player's origin, to `logPrint`'s hundredth.
 const ORIGIN_TOL: f32 = 0.02;
@@ -72,11 +85,29 @@ const RETAIL_IDLE_MS: i32 = 5750;
 /// `TORSO_IDLE_MS` overrides it for a sweep.
 const TORSO_IDLE_MS: i32 = 7600;
 
+/// The 1.5b and UO walks' join, as the [`RETAIL_IDLE_MS`] ours' client
+/// joins for: retail's probe spawned on a point it dropped from, so its
+/// idle's time is unknown; these fit the settle. `LEGS_IDLE_MS` overrides
+/// both for a sweep.
+const RETAIL_IDLE_MS_15: i32 = 8200;
+const RETAIL_IDLE_MS_UO: i32 = 3700;
+
+/// Where each walk's probe spawned (its log's `ps.origin` until the
+/// placement): 1.5's and UO's controllers ease from the spawn's view.
+const SPAWN_15: [f32; 2] = [-952.0, 2296.0];
+const SPAWN_UO: [f32; 2] = [720.0, -32.0];
+
 /// Ours' first snapshot showing the idle comes 800 ms after the client
-/// starts connecting on a fresh server, so the client starts this many
-/// frames in for an idle set at `idle_ms`.
-fn join_frames(idle_ms: i32) -> u32 {
-    (idle_ms as u32 - 800) / FRAME_MS as u32
+/// starts connecting on a fresh server (900 on 1.5 and 1050 on UO, whose
+/// gametypes open `serverinfo_<gametype>` before the team menu), so the
+/// client starts this many frames in for an idle set at `idle_ms`.
+fn join_frames(idle_ms: i32, proto: &Protocol) -> u32 {
+    let join_ms = match proto.version {
+        v if v == PROTOCOL_V1.version => 800,
+        v if v == PROTOCOL_V6.version => 900,
+        _ => 1050,
+    };
+    (idle_ms - join_ms) as u32 / FRAME_MS as u32
 }
 
 fn report() -> bool {
@@ -238,19 +269,48 @@ fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| {
         run_ours(
+            vcod_common::testing::game_fs_11()?,
             "probe_legs",
             include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_legs.gsc"),
             CLIENT,
             RETAIL_IDLE_MS,
+            None,
         )
     })
     .as_ref()
+}
+
+/// Ours over a 1.5 or UO walk, on `fs`, spawned on the spawn point at
+/// `spawn` (x, y), where retail's probe sat until the placement.
+fn ours_walk(
+    fs: vcod_common::pk3::Pk3Fs,
+    client: &str,
+    idle_ms: i32,
+    spawn: [f32; 2],
+) -> Option<Ours> {
+    let idle_ms = std::env::var("LEGS_IDLE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(idle_ms);
+    let pin = common::spawn_points(&fs, MAP)
+        .into_iter()
+        .find(|(o, _)| (o[0] - spawn[0]).abs() < 1.0 && (o[1] - spawn[1]).abs() < 1.0)
+        .expect("retail's spawn point");
+    run_ours(
+        fs,
+        "probe_legs",
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_legs.gsc"),
+        client,
+        idle_ms,
+        Some(pin),
+    )
 }
 
 fn ours_torso() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| {
         run_ours(
+            vcod_common::testing::game_fs_11()?,
             "probe_torso",
             include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_torso.gsc"),
             TORSO_CLIENT,
@@ -258,30 +318,42 @@ fn ours_torso() -> Option<&'static Ours> {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(TORSO_IDLE_MS),
+            None,
         )
     })
     .as_ref()
 }
 
 /// Ours under `gametype` replaying the client half at `client`.
-fn run_ours(gametype: &str, script: &str, client: &str, idle_ms: i32) -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs_11()?;
+fn run_ours(
+    fs: vcod_common::pk3::Pk3Fs,
+    gametype: &str,
+    script: &str,
+    client: &str,
+    idle_ms: i32,
+    spawn: Option<([f32; 3], [f32; 3])>,
+) -> Option<Ours> {
+    let proto = vcod_server::server::install_protocol(&fs);
     let walk = walk(&std::fs::read_to_string(client).unwrap());
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, gametype), now);
+    sv.set_protocol(proto);
     sv.overlay_script(&format!("maps/mp/gametypes/{gametype}"), script);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    for _ in 0..join_frames(idle_ms) {
+    if spawn.is_some() {
+        sv.pin_spawns(vec![vec![spawn]]);
+    }
+    for _ in 0..join_frames(idle_ms, proto) {
         now += Duration::from_millis(FRAME_MS as u64);
         sv.tick(now);
     }
     let q = Rc::new(RefCell::new(Queues::default()));
-    let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
+    let mut cl = NetClient::start_with_protocol(ClientEnd(q.clone()), now, 0x2001, proto);
     let mut join = Join::new("allies", "m1carbine_mp");
-    let p = &vcod_common::net::protocol::PROTOCOL_V1;
+    let p = proto;
     let placed = walk.snaps.first().expect("a snapshot").t;
     let acked: BTreeMap<i32, i32> = walk.snaps.iter().map(|s| (s.t, s.ct)).collect();
     let mut legs = BTreeMap::new();
@@ -331,7 +403,9 @@ fn run_ours(gametype: &str, script: &str, client: &str, idle_ms: i32) -> Option<
         }
         assert!(sv.script_aborts().is_empty(), "{:?}", sv.script_aborts());
         if let Some(s) = cl.snapshots().newest() {
-            if legs.values().all(|l: &(i32, i32, i32)| l.0 == 0) {
+            // A pinned spawn drops onto the floor first, so its idle comes
+            // later and was never measured on retail.
+            if spawn.is_none() && legs.values().all(|l: &(i32, i32, i32)| l.0 == 0) {
                 let l = s.ps.field_i32(p, "legsAnim");
                 assert!(
                     l == 0 || s.server_time == idle_ms,
@@ -378,9 +452,68 @@ fn a_walking_body_is_posed_like_retail() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    let retail = frames(std::fs::read_to_string(SERVER).unwrap().lines());
+    check_walk(run, SERVER, CLIENT, &[]);
+}
+
+/// The 1.5b walk (`-legs-1.5.txt`): the run out of the settle idle starts
+/// at 1.5's spread phase (cod11-movers.md 15, "The phase on 1.5 and UO").
+#[test]
+fn a_walking_body_is_posed_like_retail_on_15() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    let run = ours_walk(fs, CLIENT_15, RETAIL_IDLE_MS_15, SPAWN_15).unwrap();
+    check_walk(&run, SERVER_15, CLIENT_15, GAPS_15);
+}
+
+/// The UO walk (`-legs-uo.txt`), as [`a_walking_body_is_posed_like_retail_on_15`].
+#[test]
+fn a_walking_body_is_posed_like_retail_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let run = ours_walk(fs, CLIENT_UO, RETAIL_IDLE_MS_UO, SPAWN_UO).unwrap();
+    check_walk(&run, SERVER_UO, CLIENT_UO, GAPS_UO);
+}
+
+/// Bone and origin rows the 1.5b and UO walks may miss: a step's rows up to
+/// a level time, and why. Every other row, the run's from its blend's end
+/// on, is exact (the 1.1 spread phase puts those 20 units off).
+const GAPS_15: &[(&str, i32, &str)] = &[
+    (
+        "settle",
+        26500,
+        "retail's body stops above the floor after the placement's one-unit drop \
+         (z -151.64 through the settle) where ours lands on it at -151.88, and the \
+         probe dropped from its spawn point, so the idle's start is in neither \
+         half of the capture; the best fit of ours' join (RETAIL_IDLE_MS_15) \
+         leaves 0.4 units and 20 degrees",
+    ),
+    (
+        "run",
+        26650,
+        "the run's blend out of the settle's idle, as settle",
+    ),
+];
+
+/// [`GAPS_15`] on UO: retail's body sits 0.53 above the floor for the first
+/// frame, and the best fit of the join (RETAIL_IDLE_MS_UO) leaves 0.5 units
+/// and 3 degrees; the run's blend clears.
+const GAPS_UO: &[(&str, i32, &str)] = &[(
+    "settle",
+    26500,
+    "as GAPS_15's settle: the drop's first frame and the idle's start",
+)];
+
+/// The anim selection and the four bones of `run` against the retail walk
+/// at `server` and `client`; bone rows `gaps` names pass.
+fn check_walk(run: &Ours, server: &str, client: &str, gaps: &[(&str, i32, &str)]) {
+    let retail = frames(std::fs::read_to_string(server).unwrap().lines());
     let ours = frames(run.log.iter().map(String::as_str));
-    let walk = walk(&std::fs::read_to_string(CLIENT).unwrap());
+    let walk = walk(&std::fs::read_to_string(client).unwrap());
     let step: BTreeMap<i32, &str> = walk.snaps.iter().map(|s| (s.t, s.step.as_str())).collect();
     let mut bad = Vec::new();
     // The anim selection first: the same index and movementDir on the same
@@ -418,8 +551,9 @@ fn a_walking_body_is_posed_like_retail() {
             .next_back()
             .map_or("?", |(_, s)| *s)
             .to_string();
+        let gap = gaps.iter().any(|g| g.0 == label && *t <= g.1);
         let d_origin = off(r.origin, o.origin);
-        if d_origin > ORIGIN_TOL {
+        if d_origin > ORIGIN_TOL && !gap {
             bad.push(format!(
                 "{t} {label} origin: retail {:?} ours {:?}",
                 r.origin, o.origin
@@ -445,7 +579,7 @@ fn a_walking_body_is_posed_like_retail() {
         } else {
             (STEADY_TOL, STEADY_TURN)
         };
-        if dp > tol || da > turn_tol {
+        if (dp > tol || da > turn_tol) && !gap {
             bad.push(format!(
                 "{t} {label}{}: bones off {dp:.2}, turned {da:.2}",
                 if blending { " (blending)" } else { "" }
