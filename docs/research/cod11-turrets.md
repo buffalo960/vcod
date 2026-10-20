@@ -1889,30 +1889,43 @@ The other phases, measured 2026-10-17 (`turret_ab.rs` `TURRET_REPORT=1`):
 
 ### 13.4 The target's spawn and cmds
 
-Three more runs of the recipe on 2026-10-17, each a `--capture-tag` run
-whose target is `--probe-team axis --probe-fall` (its stdout logs every cmd
-stamp it sent, `CMDS`, and its own playerstate, `FALL`) and whose gsc
-appends `getTime()` to each `PROBE place` line:
-`mp_carentan-dm-turret-spawn.txt` (1.1d), `-spawn-15.txt` (1.5b) and
-`-spawn-uo.txt` (UO 1.51b), each with a `-script.txt` (the server log) and
-a `-target.txt` (the target's `CMDS` and `FALL` lines) beside it.
+Three more runs of the recipe, each a `--capture-tag` run whose target is
+`--probe-team axis --probe-fall` (its stdout logs every cmd stamp it sent,
+`CMDS`, and its own playerstate, `FALL`) and whose gsc appends `getTime()`
+to each `PROBE place` line: `mp_carentan-dm-turret-spawn.txt` (1.1d),
+`-spawn-15.txt` (1.5b) and `-spawn-uo.txt` (UO 1.51b), each with a
+`-script.txt` (the server log) and a `-target.txt` (the target's `CMDS`
+and `FALL` lines) beside it. The first takes were on 2026-10-17; all three
+were retaken on 2026-10-20 with the gunner's `!trace` lines carrying `ct=`
+(below), the UO one with `probe_spawnlog 1`. The measurements in 13.4 to
+13.7 that name a `-spawn` capture's times were made on the 2026-10-17
+takes (in the tree up to a78fced2) unless they say otherwise.
 
 - VERIFIED, `-spawn-target.txt` lines 9-10: the target reads `pm_type` 4
-  and health 0 at 11400 and stands at the placed spot with health 100 at
-  11500, the time `-spawn-script.txt` line 24 gives the placement; `FALL`
+  and health 0 at 11050 and stands at the placed spot with health 100 at
+  11150, the time `-spawn-script.txt` line 25 gives the placement; `FALL`
   prints on every health change, so the spawn and the placement share the
-  frame. The same holds at 12250 on 1.5b and 11850 on UO (their lines 9-10
-  and 24).
+  frame. The same holds at 11300 on 1.5b (line 25) and 11950 on UO (line
+  30).
 - VERIFIED, `-spawn-target.txt` lines 11-18: the target falls from the
-  placement on its own 16-17 ms cmds, lands at `commandTime` 11832 with
-  `legsAnim` 99 (the `land` event's anim, `player-model-anim-system.md`) at 11850, and idles (634) by 11950.
-  vcod measurement: our join's 50 ms cmds landed it at 11850 with no land
-  anim, so its idle ran from another time than retail's.
-- VERIFIED, lines 37-38: the wound shows on 30150 (`pm_time` 50,
-  `pm_flags` 0x200, health 47) and the kill on 30200, 30 ms of the
-  target's cmds later (`pm_time` 20). The kill frame ran 49 ms on UO
-  (`-spawn-uo-target.txt` line 37, `pm_time` 1) and 48 on 1.5b
-  (`-spawn-15-target.txt` line 36, `pm_time` 2).
+  placement on its own 16-17 ms cmds, lands at `commandTime` 11482 with
+  `legsAnim` 99 (the `land` event's anim, `player-model-anim-system.md`)
+  at 11500, and idles (634) by 11650.
+  vcod measurement on the first take: our join's 50 ms cmds landed it a
+  frame off with no land anim, so its idle ran from another time than
+  retail's.
+- VERIFIED, `-spawn-target.txt` lines 38-39: the wound shows on 30350
+  (`pm_time` 50, `pm_flags` 0x40200, health 47) and the kill on 30400.
+  1.5b: 29950 and 30000 (`-spawn-15-target.txt` lines 36-37); UO: 31100
+  and 31150 (`-spawn-uo-target.txt` lines 37-38).
+- VERIFIED, `-spawn-uo-script.txt` line 28 (`PROBE spawnat`): the UO
+  retake's target spawned at (192, 1280, 0.13), yaw -135, and stands at
+  the placed spot with velocity 0 (`-spawn-uo-target.txt` line 10).
+  `spawn_gate` pins that spawn, as `hit_gate` does. vcod measurement: an
+  earlier UO retake without `probe_spawnlog` (not kept) read velocity
+  (5, 5) at the placement and its target stood 1.7 units off the spot
+  when the rounds met him; ours, spawned elsewhere, stood on it. A spawn
+  point that is not flat leaves the target a drift.
 
 vcod: `turret_ab`'s `rig_aligned` runs our server alone until the target's
 placement lands on retail's `PROBE place` time, sends the target's cmds at
@@ -1940,13 +1953,34 @@ snapshots that carry its entity.
   entity and playerstate matching retail's at the kill, until the pose
   fix of 13.7 put it on 1512. It was the pose, not the trace's arithmetic
   (13.5): UO's target idles a frame ahead (13.6, 13.7).
-- VERIFIED, the gunner's own cmds, read off each snapshot's view: a cmd
-  stamped a ms past the snapshot time and followed by one stamped a ms
-  below it runs before that snapshot (1.1d 21551, UO 22101 and 22551), and
-  the one below never shows; 1.5b's 21184 and 21234 and UO's strafe 36284
-  reach the server a frame late. The gates list them (`EARLY_SPAWN*`,
-  `LATE_SPAWN*`). UO's 36284 matches only with its own stamp kept, which
-  the stamped replay does and the older gates' re-stamped one does not.
+- VERIFIED, the gunner's own cmds on the first takes, read off each
+  snapshot's view: a cmd stamped a ms past the snapshot time and followed
+  by one stamped a ms below it ran before that snapshot (1.1d 21551, UO
+  22101 and 22551), and the one below never showed; 1.5b's 21184 and 21234
+  and UO's strafe 36284 reached the server a frame late. The gates listed
+  them by fit (`EARLY_SPAWN*`, `LATE_SPAWN*`).
+- VERIFIED, the retakes' `ct=`: each `!trace` logs the snapshot's
+  `commandTime`, the stamp of the last cmd its frame ran, so a cmd shows
+  first in the first snapshot whose `ct=` reaches its stamp. Against the
+  rule "the first snapshot past its stamp", 1.1d's 24798, 24899, 29033,
+  34184 and 36384 ran a frame late, and the first of each pair stamped
+  26400 and 32000 a frame early (`ct=` 26400 at 26400). 1.5b's 19933,
+  20049, 26332, 27332, 30386, 30434, 31848, 35399 and 35949 ran late. UO's
+  20198, 22682, 22783, 24949, 30149 and 33348 ran late and the first of
+  each pair stamped 25200, 30300 and 31200 early. A cmd stamped at or
+  below one already run lands in that frame and runs on neither server.
+  vcod: `turret_ab`'s `frame_of` places every cmd off `ct=` and the gate
+  diffs ours' `commandTime` against it on every snapshot, so no list is
+  left; on all three servers every frame ran the same last cmd as
+  retail's. `ct=` cannot tell a cmd overtaken by a later one (13.3's 1.5b
+  strafe) from one that ran: both sit below the later stamp.
+- VERIFIED, `-spawn-uo.txt`: UO's turret round rolls `g_tracerChanceLMG`
+  on each player hit (`uo_turret_round`, `coduo-diff.md` 21). The first
+  take drew a tracer on both hits; the retake on the wound at 31100 and
+  not on the kill at 31150. Ours rolls off its own seed, so `spawn_gate`
+  hands a UO replay retail's outcomes, one per hit in order
+  (`Server::pin_tracer_rolls`); the draw still runs, so later draws stay
+  where they were.
 
 ### 13.5 The hit point to the last bit
 
