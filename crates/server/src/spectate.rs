@@ -34,7 +34,7 @@ const SPAWN_THINK_MS: f32 = 100.0;
 /// `docs/research/cod11-events-and-fx.md`.
 use vcod_common::net::event_ids::EV_PLAYER_TELEPORT_IN;
 use vcod_common::net::event_ids::EV_PLAYER_TELEPORT_OUT;
-use vcod_common::net::flags::EF_FIRING;
+use vcod_common::net::flags::{EF_FIRING, EF_TALK};
 /// `pingPlayer`'s bit (docs/research/cod11-hud-protocol.md, "Compass
 /// friendlies").
 use vcod_common::net::flags::{EF_FRIEND_PING, EF_PING};
@@ -388,6 +388,9 @@ pub struct ClientSim {
     /// with the weapon ready or firing and a loaded clip ([`attack_flag`];
     /// combat doc 16.5).
     pub attacking: bool,
+    /// `ps.eFlags` 0x40000 as `PmoveSingle` writes it every cmd: the cmd's
+    /// talk bit (1.1 0x33f6a, 1.5b 0x281d4; UO's 0x20000 at 0x2d8af).
+    pub talking: bool,
     /// `eFlags` 0x80000, `pingPlayer`'s chat flash on teammates' compasses,
     /// held until the stamp the builtin left (`GameHost::client_ping_until`).
     pub ping: bool,
@@ -646,6 +649,7 @@ impl ClientSim {
             mounted_on: None,
             firing: false,
             attacking: false,
+            talking: false,
             ping: false,
             voted: false,
             compass_friend: 0,
@@ -874,6 +878,7 @@ impl ClientSim {
         self.mounted_on = None;
         self.firing = false;
         self.attacking = false;
+        self.talking = false;
         // The memset again; nothing after it in `ClientSpawn` rewrites them.
         self.compass_friend = 0;
         self.last_friend = 0;
@@ -1147,6 +1152,7 @@ impl ClientSim {
             } else {
                 0
             }
+            | if self.talking { EF_TALK } else { 0 }
             | if self.ping { EF_PING } else { 0 }
             | if self.voted {
                 crate::game::vote::EF_VOTED
@@ -1422,6 +1428,7 @@ impl ClientSim {
         self.attacking = self.pm_type != PmType::Intermission
             && !self.respawned
             && attack_flag(&self.ps, cmd.buttons, weapons);
+        self.talking = self.pm_type != PmType::Intermission && cmd.buttons & msg::BUTTON_TALK != 0;
         // A dead player's view is frozen and its body falls and slides;
         // nothing it presses reaches the mover or the weapon (combat doc,
         // 1.12 and 6, the `pm_type > 5` returns).
@@ -4400,6 +4407,28 @@ mod tests {
         );
         sim.become_player([0.0; 3], 0.0, [0; 3]);
         assert_eq!(sim.to_wire(p, 0, 0).field_i32(p, "eFlags") & EF_FIRING, 0);
+    }
+
+    /// The talk bit sets `eFlags` 0x40000 for the cmd and stops the body
+    /// (the talk captures read 262168 while it is held, cod15-movement.md 5).
+    #[test]
+    fn a_talking_cmd_sets_the_talk_bit_and_moves_nothing() {
+        let p = &PROTOCOL_V1;
+        let mut sim = ClientSim::spectator([0.0; 3], 0.0, [0; 3]);
+        sim.become_player([0.0; 3], 0.0, [0; 3]);
+        let talk = UserCmd {
+            buttons: msg::BUTTON_TALK,
+            forward: 127,
+            ..NULL_USERCMD
+        };
+        sim.step(&talk, 0.05, None, &[]);
+        assert_eq!(
+            sim.to_wire(p, 0, 0).field_i32(p, "eFlags") & EF_TALK,
+            EF_TALK
+        );
+        assert_eq!(sim.ps.origin, glam::Vec3::ZERO);
+        sim.step(&NULL_USERCMD, 0.05, None, &[]);
+        assert_eq!(sim.to_wire(p, 0, 0).field_i32(p, "eFlags") & EF_TALK, 0);
     }
 
     /// `ClientSpawn`'s memset: the capture's first trace, a fresh spawn,
