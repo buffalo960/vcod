@@ -1655,7 +1655,8 @@ fn replay(text: &str, world: &CollisionWorld, weapons: &[Option<WeaponDef>]) -> 
 /// retail's origin by any amount, or on the other side of the ground, fails
 /// unless the server moved the body ([`Delta::relocated`]).
 /// `mp_carentan-dm-slope-8ms-prone-{mound,street}.txt` predate the `wire=`
-/// field: their lines carry no eye leg, speed or gravity to rebuild from.
+/// field (no eye leg, speed or gravity to rebuild from); their `-1.1`
+/// recaptures stand in for them here.
 #[test]
 fn predictor_replays_retail_slope_runs() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {

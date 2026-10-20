@@ -740,7 +740,10 @@ at `commandTime` 48443-48485 came out 1-4 ulps off retail's z in the air
 ours, with a box of half height 22-34.5 retail's bits), the moves,
 speedgrav, springfield and deadlink runs held 4, 2, 2 and 1 such snapshots,
 and the kerb run's lie-down from a crouch at 30541 kept -7.875002 where
-retail lands on -7.875. With both, all 16 captures replay to the bit.
+retail lands on -7.875. With both, all 16 captures replay to the bit,
+and so do the two prone crawls recaptured with `wire=` the same day
+(`mp_carentan-dm-slope-8ms-prone-{street,mound}-1.1.txt`, 1610 snapshots
+each), which without them sit 5 and 6 snapshots off.
 
 ### Prone Blocked, `pm_flags` 0x8000
 
