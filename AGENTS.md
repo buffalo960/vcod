@@ -832,7 +832,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   error (`GameHost::initializing`), and so is any `precacheModel`,
   `precacheShader`, `precacheString`, `precacheItem` or
   `precacheShellShock`, even of a name already precached; a test that
-  precaches late fails there. Menus and icons may precache any time.
+  precaches late fails there. So is `RegisterItem` of an item not yet
+  registered (`giveWeapon`, `setWeaponSlotWeapon`, a script `spawn` of an
+  item, a drop): a test that hands a player weapons by hand registers
+  them first (`GameHost::precache_items_for_test`). Menus and icons may precache any time.
   Past that wait `setModel`, `attach`, `setViewModel`, `setShader`,
   `setText`, `label` and the objective icons only find a name already
   indexed (`Allocators::index_precached`), and `statusicon`, `headicon`
