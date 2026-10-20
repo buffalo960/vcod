@@ -564,7 +564,14 @@ fn vehicle_model(host: &mut GameHost, model: &str) -> physics::VehicleModel {
 pub fn placed_models(host: &mut GameHost, cx: &mut Cx) -> Vec<crate::game::combat::PlacedModel> {
     let mut out = Vec::new();
     for id in host.vehicles.in_slot_order() {
-        if host.ents.get(id).is_none_or(|e| e.unlinked) {
+        // The entity clip skips an entity whose `r.contents` meet none of
+        // the trace's mask (`coduo_lnxded` 0x809a72a): a wreck's
+        // `setContents(0)` before its blast (coduo-vehicles.md 15.2).
+        if host
+            .ents
+            .get(id)
+            .is_none_or(|e| e.unlinked || e.link.as_ref().is_some_and(|l| l.contents == 0))
+        {
             continue;
         }
         let Some(posed) = seat::posed(host, cx, id) else {
@@ -804,7 +811,8 @@ pub fn immune(info: &VehicleInfo, mod_: &str) -> bool {
 /// `Scr_Vehicle_DamageScale` (0x8ccad): the hit's direction off the hull
 /// picks the front, side or rear scale; splash blends two by the angle and
 /// takes 0.7 of it; bullets also take `dmgScaleBullet`. A grenade's splash
-/// takes 1.0 for its weapon's `vehiclescale` (not parsed yet). `origin` and
+/// takes its inflictor's weapon's `vehiclescale` when that is positive
+/// (`inflictor_scale`), else 1. `origin` and
 /// `angles` are the record's physics pose (`rec+0xb8`, `rec+0xd0`), the
 /// direction measured on `AnglesToAxis` of the whole angles; `maxs` is
 /// `r.maxs`.
@@ -815,6 +823,7 @@ pub fn damage_scale(
     maxs: [f32; 3],
     point: [f32; 3],
     mod_: &str,
+    inflictor_scale: f32,
 ) -> f32 {
     let b = match mod_ {
         "MOD_PISTOL_BULLET" | "MOD_RIFLE_BULLET" => 0.01 * info.dmg_scale_bullet,
@@ -841,6 +850,11 @@ pub fn damage_scale(
     };
     match mod_ {
         "MOD_GRENADE_SPLASH" => {
+            let b = if inflictor_scale > 0.0 {
+                inflictor_scale
+            } else {
+                1.0
+            };
             let under = point[2] - 10.0 < origin[2] + 0.5 * maxs[2]
                 && (point[0] - origin[0]).powi(2)
                     + (point[1] - origin[1]).powi(2)
@@ -1023,7 +1037,12 @@ pub fn vehicle_damage(
                 .map_or(info.maxs, |b| b.1);
             ((v.phys.s.origin.into(), v.phys.s.angles.into()), maxs)
         });
-    let scale = damage_scale(&info, pose.0, pose.1, maxs, point, mod_);
+    // `s.weapon` of the inflictor: a thrown grenade's own weapon file.
+    let inflictor_scale = inflictor
+        .and_then(|i| host.missiles.weapon_of(i))
+        .and_then(|w| host.weapons.get(w as usize))
+        .map_or(0.0, |d| d.vehicle_scale);
+    let scale = damage_scale(&info, pose.0, pose.1, maxs, point, mod_, inflictor_scale);
     // The f32 scale times the damage, `fistp` under a 0xc00 control word
     // (0x4ffbf..0x4ffd1): truncated; the generic arm then lifts 0 to 1.
     let damage = ((f64::from(scale) * f64::from(damage)).trunc() as i32).max(1);

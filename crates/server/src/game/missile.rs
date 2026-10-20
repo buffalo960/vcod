@@ -1652,6 +1652,11 @@ impl Missiles {
 
     /// One missile's `r.currentOrigin` into its script `origin`, as
     /// [`Missiles::sync_origins`] does for all of them.
+    /// A missile's `s.weapon`, gone off or not.
+    pub fn weapon_of(&self, id: EntId) -> Option<u8> {
+        self.live.iter().find(|m| m.id == id).map(|m| m.weapon)
+    }
+
     /// A live missile's `r.currentOrigin`.
     pub fn origin_of(&self, id: EntId) -> Option<Vec3> {
         self.live.iter().find(|m| m.id == id).map(|m| m.origin)

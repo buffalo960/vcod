@@ -558,6 +558,10 @@ pub struct WeaponDef {
     pub explosion_radius: f32,
     pub explosion_inner_damage: i32,
     pub explosion_outer_damage: i32,
+    /// UO's `vehiclescale`: a grenade's splash on a vehicle is multiplied by
+    /// it when positive (`Scr_Vehicle_DamageScale` 0x9ccad, coduo-vehicles.md
+    /// 13); 0 where the file has none.
+    pub vehicle_scale: f32,
     /// Units per second along the view, and the extra lift added to z.
     pub projectile_speed: f32,
     pub projectile_speed_up: f32,
@@ -987,6 +991,7 @@ impl WeaponDef {
             explosion_radius: parse_num(map, "explosionRadius", 0.0),
             explosion_inner_damage: parse_num(map, "explosionInnerDamage", 0),
             explosion_outer_damage: parse_num(map, "explosionOuterDamage", 0),
+            vehicle_scale: parse_num(map, "vehiclescale", 0.0),
             projectile_speed: parse_num(map, "projectileSpeed", 0.0),
             projectile_speed_up: parse_num(map, "projectileSpeedUp", 0.0),
             projectile_model: opt_str(map, "projectileModel")
@@ -1908,6 +1913,7 @@ mod tests {
             ("meleeDelay", "0.1"),
             ("meleeTime", "0.66"),
             ("explosionRadius", "350"),
+            ("vehiclescale", "0.5"),
             ("explosionInnerDamage", "120"),
             ("explosionOuterDamage", "5"),
             ("projectileSpeed", "960"),
@@ -1924,6 +1930,7 @@ mod tests {
         assert_eq!(d.melee_delay, 0.1);
         assert_eq!(d.melee_time, 0.66);
         assert_eq!(d.explosion_radius, 350.0);
+        assert_eq!(d.vehicle_scale, 0.5);
         assert_eq!(
             (d.explosion_inner_damage, d.explosion_outer_damage),
             (120, 5)
