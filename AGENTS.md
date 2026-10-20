@@ -639,7 +639,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   its tail and the trace's end point, and `PM_ClipVelocity`,
   `VectorNormalize` and `PM_Friction` store theirs (`cod15-movement.md` 7), and
 so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
-  locational bone trace and its hit point (`BoneTraceCtx::arith`, 3.1). A 1.5 or
+  locational bone trace (`BoneTraceCtx::arith`, 3.1; its hit point on a
+  body keeps the stack, `combat::trace_point`). A 1.5 or
   UO server sets `CollisionWorld::set_arith(Arith::for_protocol(..))`;
   a replay world in a test sets it too. A 1.5 or UO body's bones for a
   trace or a tag link come from the engine's own unnormalized anim
