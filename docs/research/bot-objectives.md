@@ -1300,8 +1300,10 @@ a row:
 | axis | 1.03 | 0.97 | 72% | 77% |
 
 - A wounded bot running the retreat dies within 5 s 5 to 10 points less
-  often, on all six runs. (On UO the untreated side moved too: the
-  matches diverge whole.)
+  often, on all six runs. On 1.1 the untreated side's share stays within
+  3 points; on UO it fell 8 to 11 too, perhaps because an enemy backing
+  off finishes fewer wounded (a guess; 16 matches, about 180 wounds a
+  side).
 - K/D: the treated side's ratio against `none`, both sides and both seed
   sets in one geometric mean, is 1.02 on 1.1 and 0.99 on UO: no change
   within the noise.
