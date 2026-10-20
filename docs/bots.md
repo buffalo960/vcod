@@ -141,3 +141,4 @@ gametype's objectives, and fight when `vc_bot_shoot` is on.
 - `status` shows a bot's address as `127.0.0.1:-1`.
 - Bots don't use UO vehicles.
 - Bot skill has no cvar; aim, reaction and memory are fixed in `bots.rs` (`Skill`).
+- A bot picks its cover against the one enemy it is fighting; another enemy may still see it there. It takes no cover while planting, carrying or holding a capture zone, nor within 300 units of the enemy.

@@ -419,7 +419,8 @@ something, the bullet links it.
   built from pmove runs, ladders and jumps. They play the objectives: S&D
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
   hunts. With `--bots-shoot` they fight back, with a reaction delay, a turn
-  cap and aim that settles on target. They are still bad at it. So am I.
+  cap and aim that settles on target, from behind a low wall they duck
+  under to reload or round a corner they lean out of. They are still bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from
   UO's weapon menus and deploy a light machine gun's bipod to fire it, cook
