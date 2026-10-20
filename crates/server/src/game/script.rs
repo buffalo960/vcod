@@ -781,6 +781,11 @@ impl ScriptRuntime {
         self.touch_triggers_at(slot, now_ms, origin);
     }
 
+    /// `ClientImpacts` for `slot`'s cmd: [`GameHost::client_impacts`].
+    pub fn client_impacts(&mut self, slot: usize, touched: &[u32]) {
+        self.host.client_impacts(slot, touched);
+    }
+
     /// `G_TouchTriggers` with its boxes on `origin`, `ps.origin`, while the
     /// client's `origin` field holds the snapped `r.currentOrigin` a hurt's
     /// callbacks read (`docs/research/cod11-combat.md` 5.5).
@@ -1091,7 +1096,11 @@ impl ScriptRuntime {
             if rule.locks_view() {
                 sim.viewlocked = 2;
             }
-            let forward = crate::game::spawn::angle_forward(sim.view_angles());
+            let forward = crate::game::spawn::angle_forward(rule.fire_angles(
+                sim.view_angles(),
+                rec.angles2,
+                angles,
+            ));
             // A missing tag skips the round and its event, not the flags.
             if let Some(tags) = &rec.tags {
                 shot = Some(TurretShot {

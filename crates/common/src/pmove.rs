@@ -3581,6 +3581,24 @@ const ALL_SOLID_NUDGES: [[f32; 3]; 26] = [
     [-1.0, 1.0, -1.0],
 ];
 
+/// The mover's own trace: 1.5's and UO's `PM_trace`
+/// ([`MoveWorld::pm_trace`]), 1.1's plain `pm->trace`.
+fn pm_trace(
+    ps: &PlayerState,
+    world: &MoveWorld,
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+    mask: u32,
+) -> crate::collision::Trace {
+    if ps.rules.v15() {
+        world.pm_trace(start, end, mins, maxs, mask)
+    } else {
+        world.box_trace(start, end, mins, maxs, mask)
+    }
+}
+
 /// `PM_CorrectAllSolid` (`game.mp.i386.so` 0x30214): the first one-unit
 /// nudge whose box is clear, the origin moved there and dropped up to a
 /// unit, and that drop's trace as the ground trace. `None` when every nudge
@@ -3596,8 +3614,8 @@ fn correct_all_solid(
     let free = ALL_SOLID_NUDGES
         .iter()
         .map(|n| ps.origin + Vec3::from_array(*n))
-        .find(|p| !world.box_trace(*p, *p, mins, maxs, mask).startsolid)?;
-    let t = world.box_trace(free, free - Vec3::Z, mins, maxs, mask);
+        .find(|p| !pm_trace(ps, world, *p, *p, mins, maxs, mask).startsolid)?;
+    let t = pm_trace(ps, world, free, free - Vec3::Z, mins, maxs, mask);
     ps.origin = t.endpos;
     Some(t)
 }
@@ -3616,7 +3634,7 @@ fn near_ground_missed(ps: &PlayerState, world: &MoveWorld, mask: u32) -> bool {
         ps.origin - Vec3::Z * reach,
         ps.mins(),
         ps.maxs(),
-        mask,
+        world.pm_mask(mask),
     );
     if ps.on_ground {
         t.fraction < 1.0 / 64.0
@@ -3637,7 +3655,9 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmIn
     };
     let (x, y) = (ps.origin.x, ps.origin.y);
     let end = ps.origin - Vec3::Z * reach.1;
-    let mut t = world.box_trace(
+    let mut t = pm_trace(
+        ps,
+        world,
         ps.origin + Vec3::Z * reach.0,
         end,
         ps.mins(),
@@ -3663,7 +3683,7 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmIn
     // The x, y and end are the first trace's, the z the corrected origin's.
     if t.startsolid {
         let from = Vec3::new(x, y, ps.origin.z - 0.001);
-        t = world.box_trace(from, end, ps.mins(), ps.maxs(), mask);
+        t = pm_trace(ps, world, from, end, ps.mins(), ps.maxs(), mask);
         if t.startsolid {
             lose_ground(ps);
             return;
@@ -3688,12 +3708,14 @@ fn ground_trace(ps: &mut PlayerState, world: &MoveWorld, mask: u32, input: &PmIn
     if t.fraction < 1.0 && thrown_off && !ps.on_ladder {
         ps.takeoff.get_or_insert(Takeoff::raised(false, input));
     } else if t.fraction >= 1.0 && ps.on_ground && !ps.on_ladder {
+        // `PM_GroundTraceMissed` traces without `PM_trace`, under the
+        // move's mask as it stands.
         let drop = world.box_trace(
             ps.origin,
             ps.origin - Vec3::Z * 64.0,
             ps.mins(),
             ps.maxs(),
-            mask,
+            world.pm_mask(mask),
         );
         if drop.fraction >= 1.0 {
             ps.takeoff.get_or_insert(Takeoff::raised(true, input));
@@ -4326,7 +4348,9 @@ fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -
     probe_maxs.x -= LADDER_PROBE_SHRINK;
     probe_maxs.y -= LADDER_PROBE_SHRINK;
     probe_maxs.z = probe_maxs.z.max(LADDER_PROBE_FLOOR);
-    let t = world.box_trace(
+    let t = pm_trace(
+        ps,
+        world,
         ps.origin,
         ps.origin + dir * tracedist,
         probe_mins,
@@ -4339,7 +4363,9 @@ fn check_ladder_move(ps: &mut PlayerState, input: &PmInput, world: &MoveWorld) -
     let mut ladder = is_ladder(&t) && (!walking || input.forward > 0.0);
     // 1.5 confirms a new grab along the face's normal (0x27652, 0x277a9).
     if ladder && ps.rules.v15() && !was_on_ladder {
-        let back = world.box_trace(
+        let back = pm_trace(
+            ps,
+            world,
             ps.origin,
             ps.origin - t.normal * tracedist,
             probe_mins,
@@ -4712,7 +4738,7 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
     for _ in 0..NUM_BUMPS {
         // `VectorMA` on the x87 rounds once, into the float store.
         let end = (ps.origin.as_dvec3() + ps.velocity.as_dvec3() * f64::from(time_left)).as_vec3();
-        let t = world.box_trace(ps.origin, end, mins, maxs, mask);
+        let t = pm_trace(ps, world, ps.origin, end, mins, maxs, mask);
         if t.allsolid {
             // trapped in solid: keep the horizontal control, kill the fall
             ps.velocity.z = 0.0;
@@ -4724,6 +4750,7 @@ fn slide_move(ps: &mut PlayerState, world: &MoveWorld, dt: f32, gravity: bool, m
         if t.fraction == 1.0 {
             break;
         }
+        world.touch(&t);
         bumps += 1;
         time_left = (f64::from(time_left) - f64::from(time_left) * f64::from(t.fraction)) as f32;
 
@@ -4931,7 +4958,9 @@ fn step_slide(
     // (docs/research/cod11-mantle.md, "The step-up stops a unit short").
     let mut step = 0.0;
     if blocked {
-        let up = world.box_trace(
+        let up = pm_trace(
+            ps,
+            world,
             start_o,
             start_o + Vec3::Z * (step_size + 1.0),
             mins,
@@ -4953,7 +4982,15 @@ fn step_slide(
     // "The ground snap").
     if ground_plane || step != 0.0 {
         let reach = step + if ground_plane { snap } else { 0.0 };
-        let down = world.box_trace(ps.origin, ps.origin - Vec3::Z * reach, mins, maxs, mask);
+        let down = pm_trace(
+            ps,
+            world,
+            ps.origin,
+            ps.origin - Vec3::Z * reach,
+            mins,
+            maxs,
+            mask,
+        );
         // A down pass that meets a player drops the step and the snap and
         // keeps the plain slide (0x3533a; docs/research/cod11-player-clip.md 2.3).
         if world.entity_num(&down) < MAX_CLIENTS {
@@ -4990,7 +5027,15 @@ fn step_slide(
         // slide's end, which is what walks a player down a kerb without a
         // fall and raises the negative step events the captures carry.
         if ground_plane {
-            let down = world.box_trace(ps.origin, ps.origin - Vec3::Z * snap, mins, maxs, mask);
+            let down = pm_trace(
+                ps,
+                world,
+                ps.origin,
+                ps.origin - Vec3::Z * snap,
+                mins,
+                maxs,
+                mask,
+            );
             if down.fraction < 1.0 {
                 ps.origin = down.endpos;
                 ps.velocity = clip_velocity(ps.velocity, down.normal, ps.rules.v15());
