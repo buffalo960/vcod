@@ -1158,6 +1158,55 @@ impl GameHost {
         out
     }
 
+    /// The other live players as a `Pmove` meets them, off
+    /// [`Self::client_bodies`]: what the spawn's think moves among. A body
+    /// `StuckInClient` marked a corpse still reads as one here.
+    pub fn move_bodies(&self, except: usize) -> Vec<vcod_common::movetrace::Body> {
+        self.client_bodies
+            .iter()
+            .enumerate()
+            .filter(|(s, _)| *s != except)
+            .filter_map(|(s, b)| {
+                let b = b.as_ref()?;
+                Some(vcod_common::movetrace::Body {
+                    entity: s as u32,
+                    origin: b.origin,
+                    mins: b.mins,
+                    maxs: b.maxs,
+                    contents: vcod_common::movetrace::CONTENTS_BODY,
+                })
+            })
+            .collect()
+    }
+
+    /// `ClientImpacts` (1.1d 0x3f780, 1.5b 0x38574, UO 0x3f9ba) after a
+    /// client's `Pmove`, as `(notified, other)` pairs: per entity its move
+    /// touched, once each, a `"touch"` on the client with the entity, then
+    /// one on the entity with the client (docs/research/cod11-player-clip.md
+    /// 13).
+    pub fn impacts(&self, slot: usize, touched: &[u32]) -> Vec<(EntId, Value)> {
+        let Some(client) = u32::try_from(slot).ok().and_then(|n| self.ents.handle(n)) else {
+            return Vec::new();
+        };
+        touched
+            .iter()
+            .filter_map(|&n| self.ents.handle(n))
+            .flat_map(|other| {
+                [
+                    (client, Value::Entity(other)),
+                    (other, Value::Entity(client)),
+                ]
+            })
+            .collect()
+    }
+
+    /// [`Self::impacts`] for a cmd's move, raised outside a script step.
+    pub fn client_impacts(&mut self, slot: usize, touched: &[u32]) {
+        for (id, arg) in self.impacts(slot, touched) {
+            self.engine_notifies.push((id, "touch", vec![arg]));
+        }
+    }
+
     /// `G_Trigger` (1.5b 0x69f68, UO 0x76218; 1.1d inlines it): queues a
     /// `"trigger"` on `id` with `activator` for `G_RunFrame`'s rounds, or
     /// returns false when the queue already holds its 0x100 entries, where
