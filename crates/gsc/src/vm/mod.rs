@@ -198,11 +198,14 @@ pub enum ErrorKind {
     Custom(String),
 }
 
-/// One live thread for `Vm::thread_usage`: `(file, line)` per frame,
-/// innermost first, the defined locals across its frames and its endons.
+/// One live thread for `Vm::thread_usage`: `(file order, file, line)` per
+/// frame, innermost first, the defined locals across its frames and its
+/// endons. The file order is the file's place in install order, so the
+/// derived order follows retail's sort by code address (cod_lnxded
+/// 0x80a2218) as far as vcod's compile order matches retail's.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ThreadUsage {
-    pub stack: Vec<(String, u32)>,
+    pub stack: Vec<(u32, String, u32)>,
     pub vars: usize,
     pub endons: usize,
 }
@@ -467,12 +470,15 @@ impl From<StructId> for Target {
 pub struct Program {
     interner: Interner,
     functions: HashMap<FuncRef, Rc<Function>>,
+    file_order: HashMap<Atom, u32>,
 }
 
 pub struct Vm {
     interner: Interner,
     heap: Heap,
     functions: HashMap<FuncRef, Rc<Function>>,
+    /// Each file's place in install order, for `thread_usage`.
+    file_order: HashMap<Atom, u32>,
     level: StructId,
     game: ArrayId,
     /// `.size` on an array or string, interned once here rather than per
@@ -526,6 +532,7 @@ impl Vm {
         Self::from_program(&Program {
             interner: Interner::default(),
             functions: HashMap::new(),
+            file_order: HashMap::new(),
         })
     }
 
@@ -541,6 +548,7 @@ impl Vm {
             interner,
             heap,
             functions: program.functions.clone(),
+            file_order: program.file_order.clone(),
             level,
             game,
             size_atom,
@@ -578,7 +586,9 @@ impl Vm {
                         // `ip` is past the call or wait the frame sits on.
                         let at = (f.ip as usize).saturating_sub(1);
                         let line = f.func_rc.lines.get(at).copied().unwrap_or(0);
-                        (self.interner.resolve(f.func_rc.file).to_string(), line)
+                        let file = f.func_rc.file;
+                        let order = self.file_order.get(&file).copied().unwrap_or(u32::MAX);
+                        (order, self.interner.resolve(file).to_string(), line)
                     })
                     .collect(),
                 vars: t
@@ -731,6 +741,7 @@ impl Vm {
         Program {
             interner: self.interner.clone(),
             functions: self.functions.clone(),
+            file_order: self.file_order.clone(),
         }
     }
 
@@ -776,6 +787,8 @@ impl Vm {
                 file: f.file,
                 name: f.name,
             };
+            let next = self.file_order.len() as u32;
+            self.file_order.entry(f.file).or_insert(next);
             self.functions.insert(key, Rc::new(f));
         }
         Ok(())

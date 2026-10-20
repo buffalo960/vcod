@@ -219,6 +219,23 @@ pub fn rotate_to(
         return Err(ErrorKind::BadType(what));
     };
     let from = field_vec(host, cx, id, "angles");
+    // Each target component is taken to within 180 of `r.currentAngles`,
+    // `AngleSubtract(dest, cur) + cur` on the x87 stack (0x60ad0..0x60afb).
+    let near = |d: f32, c: f32| {
+        let mut a = f64::from(d) - f64::from(c);
+        while a > 180.0 {
+            a -= 360.0;
+        }
+        while a < -180.0 {
+            a += 360.0;
+        }
+        (a + f64::from(c)) as f32
+    };
+    let dest = Vec3::new(
+        near(dest.x, from.x),
+        near(dest.y, from.y),
+        near(dest.z, from.z),
+    );
     let now = host.level_time_ms;
     let start = host.movers.rotate_to(id, now, from, dest, m);
     linked(host, cx, id, None, start);
@@ -288,14 +305,11 @@ pub fn rotate_velocity(
     recv: Option<Target>,
     args: &[Value],
 ) -> Result<Value, ErrorKind> {
-    let what = "rotateVelocity takes a velocity, a time, accel and decel";
+    let what = "rotateVelocity takes a velocity and a time";
     let (id, m) = call(host, cx, recv, args, 1, what)?;
     let Some(v) = vector(args.first()) else {
         return Err(ErrorKind::BadType(what));
     };
-    if args.len() < 4 {
-        return Err(ErrorKind::BadType(what));
-    }
     let from = field_vec(host, cx, id, "angles");
     let now = host.level_time_ms;
     let start = host.movers.rotate_velocity(id, now, from, v, m);
@@ -406,7 +420,9 @@ mod tests {
             assert!(move_gravity(&mut host, cx, t, &[v, Value::Int(12)]).is_ok());
             let full = [v, Value::Int(1), Value::Int(0), Value::Int(0)];
             assert!(rotate_velocity(&mut host, cx, t, &full).is_ok());
-            assert!(rotate_velocity(&mut host, cx, t, &full[..3]).is_err());
+            // Accel and decel are optional, as on every rotate (0x60e4d).
+            assert!(rotate_velocity(&mut host, cx, t, &full[..2]).is_ok());
+            assert!(rotate_velocity(&mut host, cx, t, &full[..1]).is_err());
             assert!(move_gravity(&mut host, cx, t, &[v]).is_err());
             assert!(move_gravity(&mut host, cx, None, &[v, Value::Int(12)]).is_err());
 

@@ -944,10 +944,22 @@ below.
   or not (210 and 210 on an idle `dm` server). VERIFIED. The list is sorted
   case-insensitively with letters folded to lower case: `scr_hq_scorelimit`
   sorts before `scr_hqt_scorelimit` and `g_ScoresBanner_Allies` before
-  `g_scriptMainMenu`. VERIFIED. The filter matches the whole name without
-  case (`cvarlist G_SPEED` printed `g_speed`, `cvarlist foo` only `foo`)
-  and takes `*` (`*_debugMove`). VERIFIED. vcod's `Com_Filter` has no
-  `[...]` sets.
+  `g_scriptMainMenu`. VERIFIED. The filter is `Com_Filter` (0x8067774,
+  called with `casesensitive` 0), Q3's with one change: a `*` run ends at
+  the next `*` or `?` only, so a `[` inside one is literal. INFERRED from
+  0x8067774's control flow. The rest follows Q3's: the filter's end
+  matches whatever is left of the name, `?` steps one character, a `*`
+  run is found at its first occurrence (0x8067660, no backtracking),
+  `[...]` is a set with `a-z` ranges and `]]` for a literal `]`, and `[[`
+  drops the first `[`. INFERRED from the same function. Measured over
+  rcon on 1.1d, each VERIFIED: `cvarlist fs_` listed all nine `fs_*`;
+  `G_SPEED`, `g_spe`, `g_spe?`, `g_speed??`, `[[g]_speed`, `g_s[pq-r]`
+  and `G_[A-z]PEED` listed `g_speed` alone; `sv_*rate` `sv_maxRate`;
+  `*ps` `g_banIPs` among others; `g_[s]` the eight `g_s*`; `*_[s]`,
+  `*[ab]`, `g_s[]]`, `g_speed[]` and `g_speed[a]` nothing. A `?` past the
+  name's end leaves retail reading past its terminator (`g_speed??`
+  still matched, the filter ending there); vcod lets nothing more match
+  at that position (`cvars::com_filter`).
 - The registry: `tools/capture_cvars.py` lists every cvar a retail server
   holds with its flags and the default its query prints, and wrote
   `crates/server/src/cvars/registry.rs`, which seeds vcod's table. VERIFIED.
@@ -1050,10 +1062,33 @@ the game and a socket on 127.0.0.1:20510 standing in for the master.
   count: 1, var usage: 1`. VERIFIED. vcod's numbers are its own VM's
   (`game::usage`): a thread's var usage is its defined locals across
   frames, its endon usage the endons it holds, a position is always the
-  `(file '...', line N)` form, and the groups sort by stack; an entity's
+  `(file '...', line N)` form; an entity's
   var usage is the fields its script struct holds, which leaves out the
   map keys retail keeps as variables (ours read 210 entities, 4 vars on
   mp_carentan with no client).
+- `scriptUsage`'s order: each thread's record is its code positions,
+  innermost first (the current position, then each caller's from the
+  stack's type-6 entries), and `qsort` with 0x80a2218 orders records by
+  those pointers element by element, a shorter record first on a shared
+  prefix; a group is a run of equal records. INFERRED from 0x809d2d0 and
+  0x80a2218. A pointer's order is the compiled code buffer's, which
+  `GScr_LoadScripts` (game module 0x693c8) fills through
+  `GScr_LoadGameTypeScript` (0x69158: the gametype, then
+  `_callbacksetup`) and then `Scr_LoadScript("maps/mp/<map>")`. INFERRED. With `developer 1` and `developer_script 1` retail
+  prints positions as `(file 'maps\mp\gametypes\tdm.gsc', line 992)\n`
+  followed by the source line verbatim (its `\r\n` kept) and a line of
+  spaces ending in `*` under the column. VERIFIED. On mp_brecourt every
+  gametype listed its own groups in line order and then `_minefields`'
+  one (`count: 32` at line 19), though `_minefields` sorts first by name;
+  `tdm` gave lines 992 and 1184, `sd` 1246, 1291, 1691 and 1822, `re`
+  1379, 1424, 1824, 1905 and 1988, `bel` 1076 and 1265. VERIFIED. vcod
+  sorts a position by its file's place in install order
+  (`Vm::thread_usage`; the loader installs the gametype's closure, then
+  the level's, each file before the files it calls), then its line; that
+  matches every capture above (`script_usage_orders_files_as_retail`).
+  Where vcod's install order or a file's line order departs from
+  retail's code order the groups still differ; vcod prints neither the
+  source line nor the caret.
 - `stringUsage` (0x8084d74 -> 0x809a780, ported in shape): the script
   memory tree, a buddy allocator over 65535 eight-byte buckets
   (`MT_GetSize` 0x809ae08 rounds a request up to a power of two of
@@ -1330,8 +1365,13 @@ holds on UO.
   `--ban-file`), checked at `getchallenge` before the temporary bans with
   retail's print (`GUID 0`) and refusal; `unbanUser` gives retail's three
   replies, an empty one standing for a list that has never had a file or
-  an entry. vcod's own lines need no `\r` and the last needs no line end,
-  so its `unbanUser` finds a name retail's misses there.
+  an entry. vcod's own lines need no `\r`. An entry read off a last line
+  with no line end is never matched, as on retail, and a rewrite keeps
+  that line last and unended (`Bans::unended`). Retail's `banUser`
+  appends `%i %s\r\n` after such a line, running the two lines together
+  so the file check reads only the first guid (INFERRED from the append
+  at 0x8089121 and the line walk at 0x8088ff8); vcod ends the line
+  first, so the new ban holds.
 
 ### Shutdown (`SV_Shutdown` 0x808ad8c)
 

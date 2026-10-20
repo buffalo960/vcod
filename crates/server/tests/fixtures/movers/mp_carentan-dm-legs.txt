@@ -4,7 +4,7 @@
 #   COD_LNXDED_HOME=<absolute, no '+'> PORT=30701 PROBE_SECS=75 \
 #       tools/run_probe.sh client-probes/probe_legs mp_carentan
 #   cargo run -p vcod -- --net-probe 127.0.0.1:30701 --probe-team allies --save-legs --probe-secs 70
-# probe_legs.gsc puts the player on the street at (932, -376, -151.875) at level time
+# probe_legs.gsc puts the player on the map's bottom brush floor, 145 under the garden terrain, at (932, -376, -151.875) at level time
 # 25000 and links script_origins to bip01 l foot, bip01 r foot, tag_weapon_right and
 # bip01 head with zero offsets; the client half (-legs-client.txt) is the walk it did
 # from there. This file is the server half, games_mp.log's PROBE lines, per server frame:

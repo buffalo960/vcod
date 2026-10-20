@@ -3647,6 +3647,16 @@ impl Server {
         }
     }
 
+    /// Test-facing: the next rockets' `trDelta`, a retail capture's
+    /// (`Missiles::pin_rocket_deltas`).
+    pub fn pin_rocket_deltas(&mut self, deltas: Vec<[f32; 3]>) {
+        if let Some(rt) = self.script.as_mut() {
+            rt.host
+                .missiles
+                .pin_rocket_deltas(deltas.into_iter().map(glam::Vec3::from));
+        }
+    }
+
     /// Test-facing: the outcomes of the next UO turret rounds' tracer rolls,
     /// one per player hit, as a retail capture drew them.
     pub fn pin_tracer_rolls(&mut self, rolls: Vec<bool>) {
@@ -7513,7 +7523,7 @@ impl Server {
                 return;
             }
         }
-        self.end_frames(&moved, wall_ms);
+        self.end_frames(&moved, (wall_ms, frames));
     }
 
     /// How far this frame moves the game clock. 1.1's `SV_Frame` steps
@@ -8546,10 +8556,10 @@ impl Server {
     }
 
     /// `SV_Frame`'s steps past its game frames.
-    fn end_frames(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    fn end_frames(&mut self, moved: &[MoveSummary], wall: (Option<f32>, u32)) {
         self.check_timeouts();
         // Every entity built once, then culled and written per client.
-        self.send_snapshots(moved, wall_ms);
+        self.send_snapshots(moved, wall);
         self.send_unentered();
         self.send_zombies();
         // `SV_Frame`'s last step (0x808d258).
@@ -9871,7 +9881,9 @@ impl Server {
     /// still in its ring, uncompressed otherwise. Every entity state is built
     /// once from the world the moves and the script frame left, then culled
     /// and written per client.
-    fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
+    /// `wall` is `--trace`'s: the wall gap since the last tick and the
+    /// frames this tick ran, so a catch-up tick's gap reads against them.
+    fn send_snapshots(&mut self, moved: &[MoveSummary], wall: (Option<f32>, u32)) {
         let live = self.build_world_frame();
         let svs_ms = self.svs_time_ms();
         if let Some(rt) = self.script.as_mut() {
@@ -10134,9 +10146,10 @@ impl Server {
                     )
                 });
                 log::info!(
-                    "trace c{slot} msg {message_num} wall {} sv {} ct {} lead {} \
+                    "trace c{slot} msg {message_num} wall {} frames {} sv {} ct {} lead {} \
 cmds {processed} span {span} queued {queued} ack {} behind {ack_behind} {base_desc} {} B{walk}",
-                    wall_ms.map_or("-".into(), |w| format!("{w:.1}")),
+                    wall.0.map_or("-".into(), |w| format!("{w:.1}")),
+                    wall.1,
                     self.sv_time_ms,
                     command_time,
                     lead,
@@ -11195,6 +11208,52 @@ mod tests {
         assert!(
             !Rc::ptr_eq(&spawned, &compiled(&sv)),
             "the restart ran the old text after a new overlay"
+        );
+    }
+
+    /// `scriptUsage` on retail 1.1d, mp_brecourt `tdm` (handshake doc,
+    /// "Console commands over rcon"): the gametype's two waits, then the
+    /// 32 minefield threads, in code address order, not by file name.
+    #[test]
+    fn script_usage_orders_files_as_retail() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(
+            ServerConfig {
+                map: "mp_brecourt".into(),
+                gametype: "tdm".into(),
+                ..cfg()
+            },
+            now,
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        for _ in 0..10 {
+            sv.tick(now);
+        }
+        let text = sv.script.as_mut().unwrap().script_usage();
+        // The var usage numbers are vcod's own VM's; the counts and the
+        // order are retail's.
+        let heads: Vec<&str> = text
+            .lines()
+            .filter_map(|l| match l.starts_with("count") {
+                true => l.split(',').next(),
+                false => l.starts_with("(file").then_some(l),
+            })
+            .collect();
+        assert_eq!(
+            heads,
+            [
+                "count: 1",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 992)",
+                "count: 1",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 1184)",
+                "count: 32",
+                "(file 'maps\\mp\\_minefields.gsc', line 19)",
+            ],
+            "{text}"
         );
     }
 

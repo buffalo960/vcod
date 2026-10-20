@@ -403,11 +403,6 @@ fn assert_each_shot_once(name: &str, t: &Tally, brought: &BTreeMap<i32, usize>, 
     );
 }
 
-/// A 1.1 install's paks, `None` at a 1.5 or UO one.
-fn v1_fs() -> Option<Pk3Fs> {
-    vcod_common::testing::game_fs_11()
-}
-
 /// United Offensive's mp44 held from the hip, held down the sight, then
 /// tapped (`--probe-autofire`, moves_ab's `AUTOFIRE_UO`): 29 rounds, each
 /// once. Reading the predicted ring in UO's ids played every round twice
@@ -430,7 +425,7 @@ fn a_uo_autofire_capture_plays_each_shot_once() {
 /// changes and eight carbine shots, every event once.
 #[test]
 fn a_1_1_moves_capture_plays_each_event_once() {
-    let Some(fs) = v1_fs() else {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
     let (t, brought) = replay_own(
@@ -454,7 +449,7 @@ fn the_windows_build_draws_no_new_correction() {
     let Some(fs) = vcod_common::testing::game_fs() else {
         return;
     };
-    let v1 = v1_fs();
+    let v1 = vcod_common::testing::game_fs_11();
     let mut runs: Vec<(&'static Protocol, &str, &Pk3Fs)> = vec![
         (&PROTOCOL_V6, "mp_carentan-dm-slope-8ms-moves-1.5.txt", &fs),
         (&PROTOCOL_V6, "mp_carentan-dm-slope-8ms-turns-1.5.txt", &fs),
@@ -738,7 +733,7 @@ fn a_mounted_gunners_hit_feeds_the_damage_once() {
 #[test]
 fn a_1_1_follow_capture_plays_each_shot_once() {
     let tag = "-follow-1.1";
-    let weapons = v1_fs()
+    let weapons = vcod_common::testing::game_fs_11()
         .map(|fs| {
             let gs = vcod_common::testing::fixture_gamestate(
                 &PROTOCOL_V1,

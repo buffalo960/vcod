@@ -10,7 +10,9 @@ const RULE: &str = "********************************\n";
 /// `MT_InitBits`' tree: 65536 eight-byte buckets, bucket 0 never handed out.
 const BUCKETS: usize = 0xffff;
 
-/// Threads grouped by their whole call stack, each group's count and summed
+/// Threads grouped by their whole call stack, sorted as retail's qsort
+/// orders code addresses (file install order, then line; a shorter stack
+/// first on a shared prefix), each group's count and summed
 /// locals and endons over the innermost position and its callers, then
 /// `(class, count, fields)` for every object class that has any.
 pub fn script_usage(threads: &[ThreadUsage], classes: &[(&str, usize, usize)]) -> String {
@@ -24,7 +26,7 @@ pub fn script_usage(threads: &[ThreadUsage], classes: &[(&str, usize, usize)]) -
             "count: {}, var usage: {vars}, endon usage: {endons}\n",
             group.len()
         ));
-        for (i, (file, line)) in group[0].stack.iter().enumerate() {
+        for (i, (_, file, line)) in group[0].stack.iter().enumerate() {
             if i > 0 {
                 out.push_str("called from:\n");
             }
@@ -78,9 +80,12 @@ pub fn string_usage(lengths: &[usize]) -> String {
 mod tests {
     use super::*;
 
-    fn thread(stack: &[(&str, u32)], vars: usize, endons: usize) -> ThreadUsage {
+    fn thread(stack: &[(u32, &str, u32)], vars: usize, endons: usize) -> ThreadUsage {
         ThreadUsage {
-            stack: stack.iter().map(|(f, l)| (f.to_string(), *l)).collect(),
+            stack: stack
+                .iter()
+                .map(|(o, f, l)| (*o, f.to_string(), *l))
+                .collect(),
             vars,
             endons,
         }
@@ -90,11 +95,14 @@ mod tests {
     /// waiting position first and every caller after a `called from:`.
     #[test]
     fn script_usage_groups_threads_by_stack() {
-        let a = [("maps/mp/gametypes/dm", 40), ("maps/mp/gametypes/dm", 12)];
+        let a = [
+            (0, "maps/mp/gametypes/dm", 40),
+            (0, "maps/mp/gametypes/dm", 12),
+        ];
         let text = script_usage(
             &[
                 thread(&a, 3, 1),
-                thread(&[("maps/mp/_load", 7)], 2, 0),
+                thread(&[(0, "maps/mp/_load", 7)], 2, 0),
                 thread(&a, 4, 1),
             ],
             &[("entity", 211, 431), ("hudelem", 1, 1), ("pathnode", 0, 0)],
@@ -113,6 +121,30 @@ mod tests {
              ent type 'hudelem'... count: 1, var usage: 1\n\
              ********************************\n"
         );
+    }
+
+    /// Retail 1.1d on mp_brecourt, `tdm`, with `developer_script 1`: the
+    /// gametype's two waits, then the minefields' 32 (handshake doc,
+    /// "Console commands over rcon"). The gametype installs first, so it
+    /// sorts first although `_minefields` sorts before it by name.
+    #[test]
+    fn script_usage_orders_groups_by_install_order() {
+        let tdm = "maps/mp/gametypes/tdm";
+        let mines = [(7, "maps/mp/_minefields", 19)];
+        let mut threads = vec![thread(&mines, 2, 0); 32];
+        threads.push(thread(&[(0, tdm, 1184)], 6, 0));
+        threads.push(thread(&[(0, tdm, 992)], 2, 0));
+        let text = script_usage(&threads, &[]);
+        let blocks: Vec<&str> = text.lines().filter(|l| l.starts_with("(file")).collect();
+        assert_eq!(
+            blocks,
+            [
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 992)",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 1184)",
+                "(file 'maps\\mp\\_minefields.gsc', line 19)",
+            ]
+        );
+        assert!(text.contains("count: 32, var usage: 64, endon usage: 0\n"));
     }
 
     #[test]
