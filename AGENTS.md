@@ -661,9 +661,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   nearly ties another (brushes a float step apart, terrain within its
   1e-5 back-off of a brush or a partition, a submodel against the world)
   and a box stopped at fraction 0, a capsule stopped there on two
-  contacts or starting all in solid, and a sweep stopped on terrain no
-  leaf on its walk lists (out of the world it never clips): leaf order
-  names the surface a body standing on two floors steps on.
+  contacts or starting all in solid, and a sweep stopped on terrain or a
+  brush no leaf on its walk lists (out of the world, or a brush's
+  pushed-out planes overreaching an unbevelled edge, it never clips):
+  leaf order names the surface a body standing on two floors steps on.
 - A trace whose start is its end is a position test: terrain reads
   `startsolid` only through `Terrain::position_test`. A push's candidate
   and spot tests are retail's box against brushes, not the capsule
@@ -675,6 +676,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   clients linked in the area tree: a blocked push leaves its player out
   until his own next cmd, and a two-client gate on that orders the
   clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
+- One spectator anywhere turns `StuckInClient` off on 1.1 only; 1.5's and
+  UO's scans pass over him, so two players set down on one spot part at
+  once there, in a `rand()` direction a gate pins from the capture
+  (`Server::pin_stuck_velocities`, player-clip doc 6.2).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
 - A cmd's `Pmove` is one `movetrace::Pm`, handed to every chopped step's

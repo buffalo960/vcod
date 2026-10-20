@@ -429,7 +429,26 @@ exit at 0x409b7. INFERRED, the control flow:
 
 INFERRED: so one spectator, one intermission client or one client still
 connecting, in any slot, turns `StuckInClient` off for every player on the
-server. Section 10.3 is the capture. 1.5 and UO skip such a slot instead (13.4).
+server. Section 10.3 is the capture.
+
+1.5b and UO pass over such a slot instead. VERIFIED, 1.5b
+`game.mp.i386.so` `StuckInClient` (0x3a449): the scan's own-view test on
+the other slot (`and eax,0x20000` at 0x3a50e, 1.5's own-view bit) and its
+`sessionState` test (`+0x20cc`, 0x3a525) both branch to the loop's
+increment at 0x3aaac, as do the in-use, self, health and contents tests.
+VERIFIED, UO `game.mp.uo.i386.so` `StuckInClient` (0x4258c): the same
+shape (own view 0x80000 at 0x42651, `sessionState` `+0x4504` at 0x42668,
+increment at 0x42c03), plus one more skip: a partner whose `s.eFlags`
+carries 0x100000 (`and eax,0x100000` at 0x426ce), UO's `EF_IN_VEHICLE`
+(`coduo-diff.md` 9). INFERRED: on 1.5 and UO a spectator turns nothing
+off, and a seated UO player is nobody's partner. VERIFIED, off the 1.5b
+and UO runs of `probe_pushcand` (`cod11-movers.md` 12, "The candidate
+trace"): with a spectator connected, two players `setOrigin`ed onto one
+spot are shoved apart on the next end frame, both velocities 190 long.
+
+vcod: `game::stuck::stuck_in_client` takes `StuckRules::V1_1` on protocol
+1 and `StuckRules::V1_5` on 1.5 and UO; `StuckView::seated` is the
+vehicle skip.
 
 ### 6.3 Overlap
 
@@ -453,6 +472,16 @@ VERIFIED: the float at 0x72d30 reads -2^-31 and the one at 0x72d34 reads
   `self.velocity.xy = -dir * s_self`, z untouched;
 - both take `pm_time` 300 and `pm_flags |= 0x100`;
 - it returns 1 at the first overlap found.
+
+VERIFIED, 1.5b rodata 0x77b68..0x77b78 reads -1.0, 2^31, 1.0, 0.0 and
+1e-4, and UO's 0x9de2c..0x9de3c the same five; the jitter at 1.5's
+0x3a842 is `fild` of `rand()`, divided by 2^31, doubled (`fld st(0)`,
+`faddp`) and less 1.0, added to the difference on the x87 stack before
+its store. INFERRED: so on 1.5 and UO each `j = rand() / 2^30 - 1`, in
+[-1, 1): two stacked players part in any direction, where 1.1's push
+always points them into one quadrant. The speed test reads `sqrt` of the
+horizontal velocity above 0.0 where 1.1 tests for a non-zero component,
+the same set of cases.
 
 VERIFIED: `ClientEndFrame` stores `ps.speed` at 0x41100. INFERRED: the
 store runs ahead of the `StuckInClient` call and writes `(int)g_speed`.
@@ -1648,15 +1677,10 @@ eight frames a walk (one UO walk nine), the host's line first. INFERRED: 1.1d's
 
 ### 13.4 1.5's `StuckInClient`
 
-VERIFIED: 1.5b `StuckInClient` (0x3a449) tests the own-view bit
-(`pm_flags` 0x20000 in 1.5's layout) and `sessionState` (`cl+0x20cc`) of
-the other slot inside the loop's skip condition, where 1.1d's branches to
-the exit (section 6.2). UO's (0x4258c) is the same with 0x80000 and
-`cl+0x4504`, and also skips another whose `eFlags` (`ent+8`) carry
-0x100000. VERIFIED: each axis's jitter is `rand() / D + rand() / D - C`
-on one `rand()`, with `D` = 2^31 (1.5b .rodata 0x77b6c `0x4f000000`, UO
-0x9de30) and `C` = 1.0 (0x77b70, UO 0x9de34). INFERRED: a jitter in
-[-1, 1).
+The scan and the vehicle skip are section 6.2's. VERIFIED: each axis's
+jitter is `rand() / D + rand() / D - C` on one `rand()`, with `D` = 2^31
+(1.5b .rodata 0x77b6c `0x4f000000`, UO 0x9de30) and `C` = 1.0 (0x77b70, UO
+0x9de34). INFERRED: a jitter in [-1, 1).
 
 VERIFIED (`mp_carentan-dm-bump-overlap-spectator-15-walker.txt` and
 `-script.txt`, 1.5b, a plain `--net-probe` holding slot 0): the first
@@ -1684,13 +1708,12 @@ lists every entity it bumps on all three. `GameHost::impacts` is
 `ClientImpacts`: the cmd loop raises its notifies after the touch pass
 and ahead of the use key (`ClientThink_real` 0x40614), the `spawn`
 builtin inside the call. The spawn's think moves among the other live
-players (`GameHost::move_bodies`). `stuck_in_client` takes 13.4's scan
-and jitter on 1.5 and UO. `spawnbody_ab.rs` holds every trial's origin
+players (`GameHost::move_bodies`). `spawnbody_ab.rs` holds every trial's origin
 and touches against the three captures; `stuck_ab.rs` holds 13.4's
 capture.
 
 Not modelled: an entity's own touch function from `ClientImpacts` (none
-on a player); UO's `eFlags` 0x100000 skip in `StuckInClient`; a body
+on a player); a body
 `StuckInClient` marked CORPSE still reads as a body to the spawn's think
 (`move_bodies`), and that think sees the other players where the tick's
 moves left them, not where a script moved them since.

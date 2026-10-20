@@ -747,6 +747,31 @@ times, slab and all three coordinates of every player: the street's
 Clipping against every playing client instead keeps both pairs at -30
 and fails eight rows.
 
+VERIFIED, the same recipe on the retail 1.5b and UO 1.51b Linux servers,
+2026-10-20: `mp_carentan-dm-pushcand-1.5.txt` and `-uo.txt` (PROBE lines,
+both allied clients' `CMDS` lines, and the `RIDE` lines of the snapshots
+a `StuckInClient` push left on them). The alone and sunk phases are
+1.1's: the lone player moved 8 on the slab's moving frame, the sunk one
+left at z -33.00. The stacked and half pairs are not: the spectator does
+not keep `StuckInClient` off there (`cod11-player-clip.md` 6.2), so on the
+first end frame after the `setOrigin`s the pair is shoved apart, both
+velocities 190 long (1.5 stacked: slot 1 (-170.53, -83.78) at 17750, pushed
+again at 17800; UO: slot 1 (179.16, 63.25) at 18100 and 18150), and comes
+to rest 95 to 107 units apart before the slab moves (1.5:
+(-274.58, 2397.78) and (-190.04, 2449.83)). The half pair takes one push,
+its direction mostly the 15 units between them (1.5 slot 1
+(-189.88, -6.76) at 20950). In both phases the slab still holds at 0
+through the four logged frames and the half second after, and neither
+player moves. Which body blocks it this far apart is not traced; ours
+stalls on the same frames.
+
+vcod: `push_candidate_ab` replays both captures as it does 1.1's, and pins
+each push's velocities from the `RIDE` lines (`Server::pin_stuck_velocities`):
+retail seeds `rand()` from the clock, so the jitter cannot be replayed.
+Every row matches, level times, slab and all three coordinates of both
+players. Before `StuckInClient` took 1.5's scan the pairs stayed stacked
+on ours and 48 rows failed across the two.
+
 ### `TR_SINE` and the crush arm
 
 VERIFIED, every immediate store `mov DWORD PTR [reg+0xc],0x4` or

@@ -1851,6 +1851,11 @@ replays on those cmds in that packet order.
 The slab runs a one-frame `movey` into one player, two stacked, two half
 overlapped and one sunk into the street, logging its origin and both
 players' every frame.
+The same recipe ran on 1.5b and UO (`-1.5.txt`, `-uo.txt`, the headers
+carry the `COD_VERSION` and `--game-dir` lines). There the spectator does
+not keep `StuckInClient` off and the stacked and half pairs are shoved
+apart; those fixtures add each push frame's `RIDE` lines, which the gate
+pins in place of `rand()`.
 
 ## probe_sine
 

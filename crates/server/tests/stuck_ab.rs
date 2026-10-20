@@ -33,7 +33,7 @@ use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::PROTOCOL_V1;
 use vcod_common::net::{NetClient, NetEvent};
 use vcod_server::Server;
-use vcod_server::game::stuck::{StuckView, stuck_in_client};
+use vcod_server::game::stuck::{StuckRules, StuckView, stuck_in_client};
 
 const PMF_TIME_KNOCKBACK: i32 = 0x100;
 const PUSH_SPEED: f32 = 190.0;
@@ -358,12 +358,13 @@ fn our_stuck_test_fires_where_retail_pushed_in_the_bump_capture() {
             maxs,
             vel_xy: vel,
             speed: PUSH_SPEED,
+            seated: false,
         };
         let views = [
             Some(view(spot, target.maxs, Vec2::ZERO)),
             Some(view(w.origin, Vec3::new(15.0, 15.0, 70.0), w.vel)),
         ];
-        if stuck_in_client(0, &views, false, || 1 << 30).is_some() {
+        if stuck_in_client(0, &views, StuckRules::V1_1, || 1 << 30).is_some() {
             fired.push(ct);
         }
         if w.pushed_now() {

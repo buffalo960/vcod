@@ -17,6 +17,13 @@
 //! which of a stalled pair moves first, while the blocked push leaves the
 //! other out of the tree, rides the packet order.
 //!
+//! The same recipe on 1.5b (`-1.5.txt`) and UO (`-uo.txt`): there the
+//! spectator does not keep `StuckInClient` off, so the stacked and half
+//! pairs are shoved apart before the slab moves (movers doc 12, "The
+//! candidate trace"). Which way rides retail's `rand()`, so ours takes each
+//! push's velocities from the capture's `RIDE` lines
+//! (`Server::pin_stuck_velocities`).
+//!
 //! `PUSHCAND_REPORT=1` prints both logs side by side.
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
@@ -25,13 +32,16 @@ mod common;
 
 use common::{ADDR, ADDR_B, ADDR_C, ClientEnd, FRAME_MS, Join, ProbeHold, Queues, holding};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::PROTOCOL_V6;
 use vcod_common::net::{NetClient, NetEvent};
 
 const MAP: &str = "mp_carentan";
 const FIXTURE: &str = "tests/fixtures/movers/mp_carentan-dm-pushcand.txt";
+const FIXTURE_15: &str = "tests/fixtures/movers/mp_carentan-dm-pushcand-1.5.txt";
+const FIXTURE_UO: &str = "tests/fixtures/movers/mp_carentan-dm-pushcand-uo.txt";
 
 /// How long before its first snapshot a capture's client starts joining.
 const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
@@ -54,6 +64,33 @@ fn rows<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
+/// The capture's `StuckInClient` pushes: each `p1`/`p2` `RIDE` line's
+/// horizontal velocity, keyed by its snapshot time and the client's slot.
+fn stuck_pins(text: &str) -> HashMap<(i32, usize), [f32; 2]> {
+    let mut pins = HashMap::new();
+    for l in text.lines() {
+        let Some((slot, rest)) = WHO
+            .iter()
+            .enumerate()
+            .find_map(|(i, w)| Some((i + 1, l.strip_prefix(w)?.strip_prefix(" RIDE ")?)))
+        else {
+            continue;
+        };
+        let field = |k: &str| {
+            rest.split_whitespace()
+                .find_map(|t| t.strip_prefix(k))
+                .expect("a RIDE field")
+        };
+        let t: i32 = field("t=").parse().unwrap();
+        let v: Vec<f32> = field("vel=")
+            .split(',')
+            .map(|c| c.parse().unwrap())
+            .collect();
+        pins.insert((t, slot), [v[0], v[1]]);
+    }
+    pins
+}
+
 struct Ours {
     log: Vec<String>,
     /// Each allied client's first snapshot time.
@@ -64,10 +101,13 @@ struct Ours {
 /// their first snapshots fall on retail's, `late` starting each that much
 /// earlier.
 fn run_once(fs: vcod_common::pk3::Pk3Fs, retail: &str, late: [i64; 2]) -> Ours {
+    let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_pushcand"), now);
+    sv.set_protocol(p);
+    sv.pin_stuck_velocities(stuck_pins(retail));
     sv.overlay_script(
         "maps/mp/gametypes/probe_pushcand",
         include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_pushcand.gsc"),
@@ -125,7 +165,7 @@ fn run_once(fs: vcod_common::pk3::Pk3Fs, retail: &str, late: [i64; 2]) -> Ours {
             let live = cl
                 .snapshots()
                 .newest()
-                .is_some_and(|s| s.ps.field_i32(&PROTOCOL_V1, "pm_type") <= 1);
+                .is_some_and(|s| s.ps.field_i32(p, "pm_type") <= 1);
             if live {
                 cmds.extend(holds[i].cmds(cl, 0).into_iter().map(|c| {
                     let wall = walls[i].get(&c.server_time).copied().unwrap_or(u64::MAX);
@@ -186,21 +226,21 @@ fn run_once(fs: vcod_common::pk3::Pk3Fs, retail: &str, late: [i64; 2]) -> Ours {
     }
 }
 
-#[test]
-fn a_push_lists_only_players_its_trace_names_the_pusher_for() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        eprintln!("COD_DIR unset or has no main/: skipping");
+/// Runs the probe on ours under `fs`'s protocol and diffs every logged
+/// origin with `fixture`'s.
+fn check(fs: fn() -> Option<vcod_common::pk3::Pk3Fs>, fixture: &str) {
+    let Some(first_fs) = fs() else {
+        eprintln!("no install of this version under COD_DIR: skipping");
         return;
     };
-    let retail_text = std::fs::read_to_string(FIXTURE).unwrap();
-    let mut ours = run_once(fs, &retail_text, [0, 0]);
+    let retail_text = std::fs::read_to_string(fixture).unwrap();
+    let mut ours = run_once(first_fs, &retail_text, [0, 0]);
     // A join that took a frame more or less than retail's runs again,
     // shifted by the difference.
     let want: [i32; 2] = WHO.map(|who| common::cmds_ran(&retail_text, who)[0].0);
     if ours.first.iter().zip(want).any(|(f, w)| *f != Some(w)) {
         let late = std::array::from_fn(|i| ours.first[i].map_or(0, |f| (f - want[i]) as i64));
-        let fs = vcod_common::testing::game_fs_11().unwrap();
-        ours = run_once(fs, &retail_text, late);
+        ours = run_once(fs().unwrap(), &retail_text, late);
     }
     assert!(
         ours.log.iter().any(|l| l.contains("PROBE done")),
@@ -215,4 +255,26 @@ fn a_push_lists_only_players_its_trace_names_the_pusher_for() {
     }
     assert!(retail.len() > 50, "the fixture has no rows");
     assert_eq!(ours, retail, "\nours:\n{}", ours.join("\n"));
+}
+
+/// The 1.5b install's paks, `None` elsewhere (a UO install's `main/` is
+/// 1.5's, so this runs there too).
+fn fs_15() -> Option<vcod_common::pk3::Pk3Fs> {
+    let fs = vcod_common::testing::game_fs()?;
+    (vcod_server::server::install_protocol(&fs).version == PROTOCOL_V6.version).then_some(fs)
+}
+
+#[test]
+fn a_push_lists_only_players_its_trace_names_the_pusher_for() {
+    check(vcod_common::testing::game_fs_11, FIXTURE);
+}
+
+#[test]
+fn a_push_lists_only_players_its_trace_names_the_pusher_for_on_15() {
+    check(fs_15, FIXTURE_15);
+}
+
+#[test]
+fn a_push_lists_only_players_its_trace_names_the_pusher_for_on_uo() {
+    check(vcod_common::testing::uo_fs, FIXTURE_UO);
 }
