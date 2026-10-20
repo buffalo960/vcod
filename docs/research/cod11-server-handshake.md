@@ -1404,6 +1404,17 @@ VERIFIED (captures).
   1.5b's and UO 1.51b's `getinfo`, and `sv_hostname "x y;z"` as
   `\hostname\x yz` in 1.1d's `getinfo`. vcod's `Info::set`
   strips the same way (it used to refuse a value with a `\`).
+- A `"` reaches a cvar only from a script; no rcon or `+set` line carries
+  one. VERIFIED live 2026-10-20 on 1.1d, 1.5b and UO 1.51b,
+  `client-probes/probe_svinfoquote` on mp_carentan with one client and
+  getinfo/getstatus from a socket
+  (`crates/server/tests/fixtures/handshake/svinfo-quote.txt`): after
+  `setCvar("sv_hostname", "q\"h;s\\b e")` the cvar reads back whole and
+  configstring 0, `getinfo` and `getstatus` all carry `qhsb e`; set to
+  `"lead` the `d 0` update carries `lead`; set to a lone `"` the key is gone
+  from configstring 0 and both replies; `tail"` brings it back as `tail`.
+  All three servers sent the same. vcod's does too (`connect.rs`,
+  `a_quote_in_a_serverinfo_value_is_stripped_like_retail`).
 - The string's limit is 1024 bytes (`> 0x400` at the end of 0x80827d4).
   1.1d's `infoResponse` on mp_carentan holds 123 bytes beside
   `\challenge\`, so an 890-byte challenge (exactly 1024) was answered and

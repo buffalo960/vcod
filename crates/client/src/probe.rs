@@ -698,6 +698,12 @@ pub fn probe(
             match e {
                 NetEvent::GamestateReady => {
                     gamestates += 1;
+                    // The serverinfo as the client holds it (handshake doc,
+                    // "The challenge key": what `Cvar_InfoString` strips).
+                    println!(
+                        "cs 0 (serverinfo): \"{}\"",
+                        escape_ctl(client.configstrings().first().map_or("", String::as_str))
+                    );
                     if let Err(e) =
                         check_capture_tag(client.protocol(), writes_fixture, tag.as_deref())
                     {
@@ -892,6 +898,11 @@ pub fn probe(
                             "cs {i} (vote): \"{}\" at serverTime {:?}",
                             escape_ctl(client.configstrings().get(i).map_or("", String::as_str)),
                             client.snapshots().newest().map(|s| s.server_time)
+                        );
+                    } else if i == 0 {
+                        println!(
+                            "cs 0 (serverinfo): \"{}\"",
+                            escape_ctl(client.configstrings().first().map_or("", String::as_str))
                         );
                     } else if i == 3 {
                         // `n\\<alias>\\t\\<fade end time>`.

@@ -403,7 +403,8 @@ something, the bullet links it.
 - Publishes retail's pak lists and checksums in the systeminfo, serves the
   paks it lists to clients that lack them at retail's pace (on 1.5 and UO,
   `sv_wwwDownload` sends them to `sv_wwwBaseURL` instead, connected or
-  disconnected), and with `--set sv_pure=1` checks each client's pak checksums the way a pure retail server
+  disconnected, and after a failed www transfer streams the pak on 1.5 and
+  redirects again on UO, as each retail server does), and with `--set sv_pure=1` checks each client's pak checksums the way a pure retail server
   does. `sv_minPing`/`sv_maxPing` refuse off-LAN clients by challenge ping,
   and an off-LAN client's messages wait out its rate and `snaps`. Big
   messages, the gamestate included, go one fragment per frame, and a client
