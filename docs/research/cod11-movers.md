@@ -2041,8 +2041,10 @@ prediction.
 The evidence is
 `crates/gsc/tests/fixtures/semantics/client-probes/probe_worldcopy.gsc` on
 the retail 1.1d Linux server, mp_carentan, with one `--probe-ride` client,
-2026-10-12: `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt`
-(the server's `PROBE f` line per frame: player, health pack, copy) and
+2026-10-12, retaken 2026-10-20 with the client's cmds logged:
+`crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy.txt` (the
+server's `PROBE f` line per frame: player, health pack, copy, and the
+client's `CMDS` lines, section 21 "The slide down the slope") and
 `-worldcopy-wire.txt` (the client's `RIDE` line per snapshot, a `RIDE_NEW`
 line per entity that entered, and the trajectory lines). The player stands
 at (-512, 2688) on the street's terrain (z -23.875) with a pack dropped 40
@@ -2122,9 +2124,10 @@ frame. VERIFIED, the capture: every landing of the pack rests it a fresh
 `G_BounceItem` lift (`docs/research/cod11-items.md` 14.2), up to half a
 unit, over a floor ours finds to the hundredth (-23.875 on the street,
 8.125 on the copy); ours cannot replay retail's `rand()`, so the gate lands
-the pack with retail's lift and holds each lift to the range. Its gap: on
-the frame after the first lift the player stands 0.11 higher on ours, a
-frame in the air whose length is the usercmd's (section 21).
+the pack with retail's lift and holds each lift to the range. Replayed on
+the client's own cmds, every frame matches to the hundredth; the gap one
+50 ms cmd a frame left (the player 0.11 higher the frame after the first
+lift, a frame in the air) was the cmd split (section 21).
 
 ### The client
 
@@ -2146,8 +2149,9 @@ Section 21 measures a turned copy and the `TR_SINE` crush.
 
 ## 21. A turned world copy, `func_static` damage and the sine crush
 
-Two captures on the retail 1.1d Linux server, mp_carentan, each with one
-`--probe-team allies` client, 2026-10-12:
+Three captures on the retail 1.1d Linux server, mp_carentan, each with one
+`--probe-team allies` client, 2026-10-12 (the first two retaken 2026-10-20
+by a `--probe-ride` client, which logs its cmds):
 
 - `crates/server/tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt`, off
   `client-probes/probe_worldcopy2.gsc`: the player at (-512, 2688) on the
@@ -2198,26 +2202,23 @@ terrain and patches keep the upright one.
 
 ### Push
 
-VERIFIED, the capture, against ours with the player put back at retail's
-rest after each fall (below): through both 45-degree turns, the turn back
-and the unpitch the player is carried to the hundredth, including the
-(-4, -4) jitters the real world forces, and the pack rests and is carried
-the same.
+VERIFIED, vcod measurement against the 2026-10-20 captures, replayed on
+the client's own cmds (below): through the lift, both 45-degree turns, the
+turn back, the pitch and unpitch and the sink, every frame of
+`-worldcopy2` matches to the hundredth, including the (-4, -4) jitters the
+real world forces, the falls after them and the slides down the copy's
+slope, and the pack rests and is carried the same; every `PROBE g` row of
+`-worldcopy3` matches to the ten-thousandth.
 
-Four rows of frames differ, each a player in the air:
-
-- The first lift: the player slides down the copy's slope, 0.86 on retail
-  and 0.54 on ours in the `-worldcopy2` replay, 0.55 on both (to 0.007) in
-  `-worldcopy3`'s.
-- A jitter off a blocked turn (yaw45 frame 14) and one off the lowered copy
-  (down frames 12-13): the fall after each.
-- Pitch frame 15: retail's carried spot is blocked and the player jitters
-  (-4, +4); ours is blocked a frame later. The cause of the block is the
-  turned centre (below); the frame of difference is the resync, which puts
-  ours' player at retail's printed hundredths, up to 0.005 off the real
-  spot, where the margin the turned centre leaves at frame 15 is 0.002.
-- The jitter's fall after it, sliding down the copy's slope 0.78 on retail
-  and 0.32 on ours.
+The 2026-10-12 captures logged no cmds. Replayed at an even three cmds a
+frame, with the player put back at retail's rest after each fall, four rows
+of their frames differed, each a player in the air: the first lift's slide
+down the copy's slope (0.86 on retail, 0.54 on ours), the fall after a
+jitter off a blocked turn and one off the lowered copy, and the pitch's
+blocked frame and the jitter's fall after it. The pitch's frame of
+difference was the resync, which put ours' player at retail's printed
+hundredths, up to 0.005 off the real spot, where the margin the turned
+centre leaves at the blocked frame is 0.002.
 
 ### The slide down the slope
 
@@ -2247,15 +2248,40 @@ five of 10 ms 0.64; retail's run slid 0.86 and `-worldcopy3`'s 0.55.
 
 INFERRED: the probe client sleeps `--probe-cmd-ms` (16) between cmds,
 each in its own packet (`client/src/probe.rs`), so the lengths and how
-they straddle a server frame differ from run to run, and neither capture
-records them. The pitch jitter's fall is the same case: retail's frame 15
-sample sits 0.30 under the jittered spot with x and y untouched, a fall no
-cmd has yet landed, where ours' three cmds have landed it and slid it 0.32;
-the two rest about 0.3 apart.
+they straddle a server frame differ from run to run. The 2026-10-12
+captures did not record them. The pitch jitter's fall is the same case:
+in `-worldcopy3`'s first take retail's frame 15 sample sat 0.30 under the
+jittered spot with x and y untouched, a fall no cmd had yet landed, where
+ours' three even cmds had landed it and slid it 0.32.
 
-`worldcopy_ab.rs` replays `-worldcopy2` and `-worldcopy3` at three cmds a
-frame and holds `-worldcopy3`'s first lift to the ten-thousandth through
-frame 11.
+VERIFIED, vcod measurement against the 2026-10-20 captures: `--probe-ride`
+now prints `--probe-fall`'s `CMDS` lines (each cmd's `serverTime` and each
+snapshot's `commandTime`), and `worldcopy_ab.rs` replays them through
+`ProbeHold::framed`, each cmd on retail's side of a frame, with the client
+joined so its first snapshot falls on retail's. Every fall and slide in
+`-worldcopy`, `-worldcopy2`, `-worldcopy3` and `mp_harbor-dm-turnedslab`
+then matches retail's: the frames to the hundredth, the `PROBE g` rows to
+the ten-thousandth. No resync is left in the gate.
+
+### The carry's rounding
+
+VERIFIED, `game.mp.i386.so` `G_TryPushingEntity` 0x54956-0x54aa1: the
+moved point (`r.currentOrigin + move`) is stored to a float (0x54961,
+0x54970, 0x54982); `org`, that point less the pusher's `r.currentOrigin`
+(`fsub [eax+0x134]` at 0x549eb, 0x54a01, 0x54a1b), the three dot products
+with the stored matrix rows and `org2 - org` (`fsubrp` at 0x54a64, 0x54a7e,
+0x54a94) stay on the x87 stack, and the sum with the stored moved point
+(`fadd [ebp-0xcc]` at 0x54a84, `[ebp-0xd0]` at 0x54a96) is rounded once
+by the `fstp` to the trace start (0x54a9e). INFERRED: Quake III's
+`trBase + (org2 - org)`, at extended precision.
+
+VERIFIED, vcod measurement in the `-worldcopy3` replay: turning the point
+in floats as `pusher + R * (point - pusher)` left the rider 0.0002 a frame
+off retail's through each turn, 0.0017 by the pitch's rest, and every
+`PROBE g` row of the pitch missed the ten-thousandth (182 rows). With 1.1d's
+order and one rounding (`push::carried`, in `f64`) all of them match.
+1.5b's and UO's carry keep the float order: their stored build was not
+read here.
 
 ### The turned centre
 
@@ -2384,7 +2410,8 @@ retail's frame, where a box kept axial in the world reaches 21.2 with its
 corner.
 
 One capture on the retail 1.1d Linux server, mp_harbor, one `--probe-team
-allies` client, 2026-10-12:
+allies` client, 2026-10-12, retaken 2026-10-20 by a `--probe-ride` client
+that logs its cmds:
 `crates/server/tests/fixtures/movers/mp_harbor-dm-turnedslab.txt`, off
 `client-probes/probe_turnedslab.gsc`. The `bel` gametype's
 `script_brushmodel` `*9`, one brush 4 x 56 x 96 at the world origin, kept
@@ -2402,9 +2429,12 @@ world would meet the face from 23.2 in, so `G_MoverPush`'s candidate test
 VERIFIED, vcod measurement in the replay: with the brushes turned into the
 world and the box kept axial there, ours lists the player at 22, 20 and 18,
 jitters it (+4, +4) and the slab stays down; with the sweep turned into the
-model's frame, every row matches retail's but the player's landing height
-(0.125 to 0.36 on retail, where the cmd lengths leave it within the ground
-trace's quarter unit).
+model's frame, every row matches retail's. The player's landing height
+after each `setOrigin` (0.125 to 0.36 over the floor) is where the cmd
+lengths leave it within the ground trace's quarter unit: the 2026-10-12
+capture logged no cmds and missed it by up to 0.25; the 2026-10-20
+recapture, replayed on its client's cmds (section 21), matches every
+`PROBE g` row to the print's six digits.
 
 vcod: `CollisionWorld::clip_turned_model` takes every trace against a posed
 model whose angles are not all zero: `start + mid` and `end + mid` into the

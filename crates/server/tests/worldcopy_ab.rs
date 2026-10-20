@@ -18,6 +18,11 @@
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
 //! beside a turned submodel as it lifts.
 //!
+//! Each capture but `-sinecrush.txt` and `-tiltslab.txt` holds its
+//! client's cmds (`CMDS` lines), and ours replays them
+//! (`ProbeHold::framed`): where a fall lands and slides rides on where its
+//! cmds split it (movers doc 21, "The slide down the slope").
+//!
 //! `WORLDCOPY_REPORT=1` prints every compared row, `WORLDCOPY_PS=1` the
 //! client's playerstate per snapshot.
 //!
@@ -57,62 +62,11 @@ const PROBE_CRUSH: &str =
 /// Float formatting.
 const TOL: f32 = 0.05;
 
-/// A known divergence: phase, column (0 the player, 1 the pack, 2 the
-/// copy), the first and last frame it covers, and its tolerance.
-type Gap = (&'static str, usize, usize, usize, f32);
-
-/// The known divergences, each with the movers doc section that explains
-/// it. Every one is a player in the air for a frame or two, which a
-/// usercmd's length decides: the retail client's cmds ran 50 to 65 ms
-/// apart, ours run exactly one a frame.
-const GAPS: &[Gap] = &[
-    // The first push leaves the player in the air over the copy's floor
-    // (cod11-movers.md 20).
-    ("up", 0, 28, 28, 0.15),
-];
-
-/// [`GAPS`] for the turned copy's capture (cod11-movers.md 21), replayed at
-/// the probe client's three cmds a frame. After each the player is put back
-/// at retail's rest ([`RESYNC2`]). Each is a fall whose slide down the
-/// copy's slope rides on where the cmd boundaries fell, which the capture
-/// does not record.
-const GAPS2: &[Gap] = &[
-    // The first lift: retail slid 0.86 down the copy's slope, ours 0.54.
-    ("up", 0, 11, 30, 0.35),
-    // A jitter off a blocked turn: the fall that follows.
-    ("yaw45", 0, 14, 19, 1.1),
-    // Retail's push is blocked at pitch frame 15 and jitters (-4, 4); ours
-    // is blocked a frame later. The resync to retail's hundredths leaves
-    // ours' player up to 0.005 off retail's, more than the 0.002 the turned
-    // centre leaves at that frame; `GAPS3`' capture holds it.
-    ("pitch", 0, 15, 15, 4.1),
-    // The jitter's fall and slide.
-    ("pitch", 0, 16, 25, 0.55),
-    // A jitter off the lowered copy: the fall that follows.
-    ("down", 0, 12, 12, 0.25),
-];
-
-/// The samples after which ours' player is put where retail's is at the
-/// next: a rest after each of [`GAPS2`]' falls.
-const RESYNC2: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("pitch", 25)];
-
-/// [`GAPS2`] for `probe_worldcopy3`'s rerun of the turns, whose `PROBE g`
-/// lines hold the player to the ten-thousandth. Its first lift's slide
-/// matches to 0.007.
-const GAPS3: &[Gap] = &[
-    // A jitter off a blocked turn: the fall that follows.
-    ("yaw45", 0, 15, 19, 1.4),
-    // The jitter off the pitch's blocked frame: retail's sample 15 is 0.3
-    // into the fall, ours has landed; both slide down the copy's slope.
-    ("pitch", 0, 15, 25, 0.35),
-];
+/// How long before its first snapshot a capture's client starts joining.
+const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
 
 /// The `PROBE g` print's ten-thousandth plus the carry's float error.
 const PRECISE_TOL: f32 = 0.0003;
-
-/// [`RESYNC2`] for `probe_worldcopy3`, the last before the pitch to the
-/// ten-thousandth.
-const RESYNC3: &[(&str, usize)] = &[("up", 30), ("yaw45", 19), ("yaw0", 48), ("pitch", 25)];
 
 /// `probe_tiltslab`'s `PROBE g` print, six digits, and the 0.003 a rest
 /// on a tilted face sits off retail's along its normal.
@@ -274,56 +228,38 @@ struct Ours {
     lifts: Vec<(i32, f32, f32)>,
     /// Whether the level dropped.
     killed: bool,
+    /// The client's first snapshot's time.
+    first_snap: Option<i32>,
 }
 
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy", PROBE, SERVER, &[], 0, false))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy", PROBE, SERVER, 0, false))
         .as_ref()
 }
 
 fn ours2() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy2", PROBE2, SERVER2, RESYNC2, 0, true))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy2", PROBE2, SERVER2, 0, true))
         .as_ref()
 }
 
 fn ours3() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy3", PROBE3, SERVER3, RESYNC3, 0, true))
+    RUN.get_or_init(|| run_ours(MAP, "probe_worldcopy3", PROBE3, SERVER3, 0, true))
         .as_ref()
 }
 
 fn ours_slab() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| {
-        run_ours(
-            "mp_harbor",
-            "probe_turnedslab",
-            PROBE_SLAB,
-            SLAB,
-            &[],
-            0,
-            true,
-        )
-    })
-    .as_ref()
+    RUN.get_or_init(|| run_ours("mp_harbor", "probe_turnedslab", PROBE_SLAB, SLAB, 0, true))
+        .as_ref()
 }
 
 fn ours_tilt() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| {
-        run_ours(
-            "mp_harbor",
-            "probe_tiltslab",
-            PROBE_TILT,
-            TILT,
-            &[],
-            0,
-            true,
-        )
-    })
-    .as_ref()
+    RUN.get_or_init(|| run_ours("mp_harbor", "probe_tiltslab", PROBE_TILT, TILT, 0, true))
+        .as_ref()
 }
 
 fn ours_crush() -> Option<&'static Ours> {
@@ -334,7 +270,6 @@ fn ours_crush() -> Option<&'static Ours> {
             "probe_sinecrush",
             PROBE_CRUSH,
             CRUSH,
-            &[],
             CRUSH_JOIN_MS,
             true,
         )
@@ -342,19 +277,44 @@ fn ours_crush() -> Option<&'static Ours> {
     .as_ref()
 }
 
-/// Runs `probe` on `map` on ours with one allied client standing still, to `PROBE
-/// done` or the level's drop. `fixture` is the retail capture whose pack
-/// lifts it borrows, when it has a pack; once ours has logged each
-/// `resync` sample, the player is put where retail's is at the next.
-/// `probe_rate` sends the probe client's three cmds a frame instead of one.
+/// [`run_once`], run again once if the client's first snapshot missed
+/// retail's: how long ours takes to join differs by map.
 fn run_ours(
     map: &str,
     name: &str,
     probe: &str,
     fixture: &str,
-    resync: &[(&str, usize)],
     join_ms: u32,
     probe_rate: bool,
+) -> Option<Ours> {
+    let ours = run_once(map, name, probe, fixture, join_ms, probe_rate, 0)?;
+    let text = std::fs::read_to_string(fixture).unwrap();
+    let Some(&(first, _)) = common::cmds_ran(&text, "").first() else {
+        return Some(ours);
+    };
+    match ours.first_snap {
+        Some(t) if t != first => {
+            let late = (t - first) as i64;
+            run_once(map, name, probe, fixture, join_ms, probe_rate, late)
+        }
+        _ => Some(ours),
+    }
+}
+
+/// Runs `probe` on `map` on ours with one allied client standing still, to `PROBE
+/// done` or the level's drop. `fixture` is the retail capture whose pack
+/// lifts it borrows, when it has a pack, and whose client's cmds it replays,
+/// when it logs them. `late_ms` starts the client that much earlier.
+/// `probe_rate` sends the probe client's three cmds a frame instead of one.
+#[allow(clippy::too_many_arguments)]
+fn run_once(
+    map: &str,
+    name: &str,
+    probe: &str,
+    fixture: &str,
+    join_ms: u32,
+    probe_rate: bool,
+    late_ms: i64,
 ) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
@@ -372,9 +332,6 @@ fn run_ours(
     // entity pass), the clocks lined up on the first `rest` sample. Each lift
     // is kept for the test to hold to the lift's range.
     let retail_text = std::fs::read_to_string(fixture).unwrap();
-    let retail_phases = phases(retail_text.lines());
-    let retail_precise = precise(retail_text.lines());
-    let mut resynced = 0;
     let track = pack_track(&retail_text);
     let rest = track.first().map_or([0.0; 3], |s| s.1);
     let sampling = Rc::new(std::cell::Cell::new(false));
@@ -405,6 +362,24 @@ fn run_ours(
         sv.tick(now);
         sv.take_outgoing();
     }
+    // A capture that logs its client's cmds (`CMDS` lines) is replayed on
+    // them: the client joins so its first snapshot falls on retail's, and
+    // each cmd runs on retail's side of a frame (`ProbeHold::framed`).
+    let mut hold = common::ProbeHold {
+        base: Some([0.0; 3]),
+        framed: true,
+        times: common::cmds_times(&retail_text, ""),
+        ran: common::cmds_ran(&retail_text, ""),
+        ..Default::default()
+    };
+    let replay = !hold.ran.is_empty();
+    if let Some(&(first, _)) = hold.ran.first() {
+        while (sv.game_time_ms() as i64) < first as i64 - FIRST_SNAP_AFTER_JOIN_MS - late_ms {
+            now += Duration::from_millis(FRAME_MS as u64);
+            sv.tick(now);
+            sv.take_outgoing();
+        }
+    }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     // mp_harbor's allies are Russian.
@@ -416,9 +391,21 @@ fn run_ours(
     let mut join = Join::new("allies", weapon);
     let mut present: Option<std::collections::BTreeSet<u32>> = None;
     let mut new = BTreeMap::new();
+    let mut first_snap = None;
     for _ in 0..3000 {
         now += Duration::from_millis(FRAME_MS as u64);
-        if probe_rate {
+        let live = cl
+            .snapshots()
+            .newest()
+            .is_some_and(|s| s.ps.field_i32(&PROTOCOL_V1, "pm_type") == 0);
+        if replay && live {
+            let cmds = hold.cmds(&cl, 0);
+            cl.send_cmds(&cmds);
+        } else if replay {
+            if let Some(c) = cl.send_frame(&holding(&cl)) {
+                hold.last = c.server_time;
+            }
+        } else if probe_rate {
             send_at_probe_rate(&mut cl);
         } else {
             cl.send_frame(&holding(&cl));
@@ -431,6 +418,7 @@ fn run_ours(
             }
         }
         if let Some(s) = cl.snapshots().newest() {
+            first_snap.get_or_insert(s.server_time);
             let p = &PROTOCOL_V1;
             if let Some(present) = &present {
                 for (&n, e) in s.entities.iter().filter(|(n, _)| !present.contains(n)) {
@@ -483,20 +471,6 @@ fn run_ours(
                 lifts.borrow_mut().push((time + off, o[2], r[2] - o[2]));
             }
         }
-        if let Some(&(phase, k)) = resync.get(resynced) {
-            let ours = phases(sv.script_log().iter().map(String::as_str));
-            if ours.get(phase).is_some_and(|f| f.len() > k) {
-                // The frame's push has run, so the next sample is where
-                // retail's player stood: to the hundredth, or to the
-                // ten-thousandth off a fixture's `PROBE g` lines.
-                let at = match retail_precise.get(phase) {
-                    Some(p) => p[k + 1],
-                    None => retail_phases[phase][k + 1][0].expect("a player sample"),
-                };
-                sv.test_set_client_origin(0, at);
-                resynced += 1;
-            }
-        }
         if sv.is_killed() || sv.script_log().iter().any(|l| l.contains("PROBE done")) {
             break;
         }
@@ -507,6 +481,7 @@ fn run_ours(
         new,
         lifts: lifts.take(),
         killed: sv.is_killed(),
+        first_snap,
     })
 }
 
@@ -571,7 +546,7 @@ fn a_moving_world_copy_pushes_like_retail() {
     assert!(!lifts.is_empty(), "the pack never landed on ours");
     let retail = phases(std::fs::read_to_string(SERVER).unwrap().lines());
     let ours = phases(log.iter().map(String::as_str));
-    let bad = compare_phases(&retail, &ours, GAPS);
+    let bad = compare_phases(&retail, &ours);
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",
@@ -580,14 +555,9 @@ fn a_moving_world_copy_pushes_like_retail() {
     );
 }
 
-/// Every phase's frames column by column, each to [`TOL`] or its `gaps`
-/// row; the rows that differ.
-fn compare_phases(retail: &Phases, ours: &Phases, gaps: &[Gap]) -> Vec<String> {
-    let tol = |phase: &str, col: usize, k: usize| {
-        gaps.iter()
-            .find(|g| g.0 == phase && g.1 == col && (g.2..=g.3).contains(&k))
-            .map_or(TOL, |g| g.4)
-    };
+/// Every phase's frames column by column, each to [`TOL`]; the rows that
+/// differ.
+fn compare_phases(retail: &Phases, ours: &Phases) -> Vec<String> {
     let mut bad = Vec::new();
     for (name, r) in retail {
         let Some(o) = ours.get(name) else {
@@ -607,9 +577,7 @@ fn compare_phases(retail: &Phases, ours: &Phases, gaps: &[Gap]) -> Vec<String> {
                     of.get(col).copied().flatten(),
                 );
                 let row = match (a, b) {
-                    (Some(a), Some(b)) if diff(a, b) > tol(name, col, k) => {
-                        Some(format!("{a:?} ours {b:?}"))
-                    }
+                    (Some(a), Some(b)) if diff(a, b) > TOL => Some(format!("{a:?} ours {b:?}")),
                     (Some(_), Some(_)) | (None, None) => None,
                     (a, b) => Some(format!("{a:?} ours {b:?}")),
                 };
@@ -663,7 +631,7 @@ fn a_turned_world_copy_clips_and_pushes_like_retail() {
     let text = std::fs::read_to_string(SERVER2).unwrap();
     let retail = phases(text.lines());
     let ours = phases(log.iter().map(String::as_str));
-    let mut bad = compare_phases(&retail, &ours, GAPS2);
+    let mut bad = compare_phases(&retail, &ours);
     let (r, o) = (events(text.lines()), events(log.iter().map(String::as_str)));
     for i in 0..r.len().max(o.len()) {
         let (a, b) = (r.get(i), o.get(i));
@@ -682,11 +650,11 @@ fn a_turned_world_copy_clips_and_pushes_like_retail() {
     );
 }
 
-/// The first lift and the pitch of `probe_worldcopy3`: the lift's fall
-/// slides down the copy's slope as far as retail's, and from retail's rest
-/// to the ten-thousandth the turned centre (`CM_TransformedBoxTrace`) blocks the
-/// carried spot on the frame retail's does and the jitter lands where
-/// retail's did (cod11-movers.md 21).
+/// `probe_worldcopy3` to the ten-thousandth on the client's own cmds: the
+/// first lift's fall slides down the copy's slope as far as retail's, the
+/// turns carry the player with retail's rounding, the turned centre
+/// (`CM_TransformedBoxTrace`) blocks the carried spot on the frame retail's
+/// does and the jitter lands where retail's did (cod11-movers.md 21).
 #[test]
 fn a_pitched_copy_blocks_its_rider_like_retail() {
     let Some(Ours { log, .. }) = ours3() else {
@@ -707,18 +675,23 @@ fn a_pitched_copy_blocks_its_rider_like_retail() {
             }
         }
     }
-    let mut bad = compare_phases(&retail, &ours, GAPS3);
-    // The first lift's fall lands and slides down the copy's slope to the
-    // ten-thousandth in its first frame.
-    for (k, (a, b)) in rp["up"].iter().zip(&op["up"]).enumerate().take(12) {
-        if diff(*a, *b) > PRECISE_TOL {
-            bad.push(format!("up {k} precise: retail {a:?} ours {b:?}"));
+    let mut bad = compare_phases(&retail, &ours);
+    // Every frame to the ten-thousandth: the lift's slide down the copy's
+    // slope, the carry through the turns, the pitch's blocked frame and the
+    // jitter's fall.
+    for (phase, r) in &rp {
+        if r.len() != op.get(phase).map_or(0, Vec::len) {
+            bad.push(format!(
+                "{phase} precise: {} rows, ours {:?}",
+                r.len(),
+                op.get(phase).map(Vec::len)
+            ));
+            continue;
         }
-    }
-    // Carried to the ten-thousandth up to the blocked frame.
-    for (k, (a, b)) in rp["pitch"].iter().zip(&op["pitch"]).enumerate().take(15) {
-        if diff(*a, *b) > PRECISE_TOL {
-            bad.push(format!("pitch {k} precise: retail {a:?} ours {b:?}"));
+        for (k, (a, b)) in r.iter().zip(&op[phase]).enumerate() {
+            if diff(*a, *b) > PRECISE_TOL {
+                bad.push(format!("{phase} {k} precise: retail {a:?} ours {b:?}"));
+            }
         }
     }
     assert!(
@@ -728,17 +701,6 @@ fn a_pitched_copy_blocks_its_rider_like_retail() {
         bad.join("\n")
     );
 }
-
-/// [`GAPS`] for the turned slab: the player's height in each stand. The
-/// probe sets it a unit up and it lands within the ground trace's quarter
-/// unit, 0.125 to 0.36 over the floor on retail, where the client's cmd
-/// lengths leave it.
-const SLAB_GAPS: &[Gap] = &[
-    ("18", 0, 0, 19, 0.25),
-    ("20", 0, 0, 19, 0.25),
-    ("22", 0, 0, 19, 0.25),
-    ("25", 0, 0, 19, 0.25),
-];
 
 /// A turned submodel tests a body beside it with a box axial in the
 /// model's frame (`CM_TransformedBoxTrace`, cod11-movers.md 22): lifted 2
@@ -755,9 +717,30 @@ fn a_turned_submodel_tests_its_neighbour_like_retail() {
         log.iter().any(|l| l.contains("PROBE done")),
         "the probe never finished on ours: {log:#?}"
     );
-    let retail = phases(std::fs::read_to_string(SLAB).unwrap().lines());
+    let text = std::fs::read_to_string(SLAB).unwrap();
+    let retail = phases(text.lines());
     let ours = phases(log.iter().map(String::as_str));
-    let bad = compare_phases(&retail, &ours, SLAB_GAPS);
+    let mut bad = compare_phases(&retail, &ours);
+    // Each landing's rest, to the `PROBE g` print's six digits.
+    let g = |lines: &mut dyn Iterator<Item = &str>| -> Vec<Vec<f32>> {
+        lines
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| l.find("PROBE g ").map(|i| &l[i + 8..]))
+            .map(|l| {
+                l.split_whitespace()
+                    .skip(2)
+                    .map(|v| v.parse().unwrap())
+                    .collect()
+            })
+            .collect()
+    };
+    let (rg, og) = (g(&mut text.lines()), g(&mut log.iter().map(String::as_str)));
+    assert_eq!(rg.len(), og.len(), "PROBE g rows");
+    for (k, (a, b)) in rg.iter().zip(&og).enumerate() {
+        if a.iter().zip(b).any(|(a, b)| (a - b).abs() > PRECISE_TOL) {
+            bad.push(format!("g {k}: retail {a:?} ours {b:?}"));
+        }
+    }
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",
