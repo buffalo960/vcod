@@ -8,7 +8,9 @@
 //! in front of a UO shooter: a rocket's direct hit and a swing both run
 //! `G_Damage` on it (13.1, 2.5). `probe_skyshot`'s spot part stands the shooter on
 //! mp_harbor's sea wall: a rocket, a frag and UO's smoke grenade into the
-//! water raise retail's splash (12.1).
+//! water raise retail's splash (12.1). A rocket fired with the shooter's eye
+//! inside mp_carentan's 0x2080 kerb brush starts solid and goes off at
+//! the end of its first move (11.1, 12.3).
 //!
 //! `ME_REPORT=1` prints both logs. The 1.1d tests need `COD_DIR` at a 1.1
 //! install, the 1.5b rows a 1.5 or UO one, the UO ones a UO one; each
@@ -196,7 +198,11 @@ fn ours_pinned(
                     i("_union.scale"),
                     i("weapon"),
                 ));
-            } else if i("eType") == 4 || missiles.contains(num) {
+            } else if i("eType") == 4
+                || missiles.contains(num)
+                // Exploded on its first move: on the wire as `eType` 0.
+                || (i("eType") == 0 && i("weapon") != 0 && i("eventSequence") != 0)
+            {
                 missiles.insert(*num);
                 let slot = (i("eventSequence") - 1) & 3;
                 lines.push(format!(
@@ -772,6 +778,107 @@ fn a_rocket_into_water_splashes() {
         );
         assert_eq!(ox.0 - o[0].0, rx.0 - r[0].0, "retail {rx:?}, ours {ox:?}");
         assert_eq!(ox.1, rx.1, "retail {rx:?}, ours {ox:?}");
+    }
+}
+
+/// The integer `trDelta` whose `vectoangles` is the `apos` retail's
+/// missile line shows (`fire_rocket` truncates the delta and takes its
+/// angles off it), near `speed` along those angles; `None` unless exactly
+/// one fits.
+fn delta_for_apos(lines: &[String], speed: f32) -> Option<[f32; 3]> {
+    let l = lines.iter().find(|l| l.contains(" missile "))?;
+    let t: Vec<&str> = l.split(' ').collect();
+    let at = t.iter().position(|w| *w == "apos")? + 1;
+    let apos = [t[at].parse::<f32>().ok()?, t[at + 1].parse::<f32>().ok()?];
+    let (p, y) = (apos[0].to_radians(), apos[1].to_radians());
+    let near = glam::Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin()) * speed;
+    let mut fits = Vec::new();
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            for dz in -2..=2 {
+                let d = [
+                    near.x.trunc() + dx as f32,
+                    near.y.trunc() + dy as f32,
+                    near.z.trunc() + dz as f32,
+                ];
+                let a = vcod_server::game::builtins::math::vectoangles(d);
+                if a[0] == apos[0] && a[1] == apos[1] {
+                    fits.push(d);
+                }
+            }
+        }
+    }
+    (fits.len() == 1).then(|| fits[0])
+}
+
+/// A rocket fired with the shooter's eye inside mp_carentan's 0x2080 caulk
+/// brush over a window: `fire_rocket`'s clipmask 0x2802091 meets the
+/// brush, so the first move starts solid, and every protocol reads that as
+/// a contact at the move's end, where the rocket goes off in mid-air on
+/// the launch snapshot. 1.1d keeps the trace's zero normal (parm 0), 1.5b
+/// packs the reversed flight (combat doc 11.1, 12.3). Ours flies retail's
+/// `trDelta`, recovered off its launch angles.
+#[test]
+fn a_rocket_fired_inside_a_kerb_brush_goes_off_at_once() {
+    for (fs, fixture) in [
+        (
+            vcod_common::testing::game_fs_11(),
+            include_str!("fixtures/missiles/mp_carentan-kerb-rocket.txt"),
+        ),
+        (
+            fs_15(),
+            include_str!("fixtures/missiles/mp_carentan-kerb-rocket-15.txt"),
+        ),
+    ] {
+        let Some(fs) = fs else {
+            continue;
+        };
+        let fixture = retail(fixture);
+        let delta = delta_for_apos(&fixture, 2800.0).expect("one delta fits retail's apos");
+        let log = ours_pinned(
+            fs,
+            "mp_carentan",
+            "probe_skyshot",
+            SKYSHOT,
+            &[
+                ("probe_part", "spot"),
+                ("probe_weapon", "panzerfaust_mp"),
+                ("probe_x", "1192"),
+                ("probe_y", "-536"),
+                ("probe_z", "340"),
+                ("probe_yaw", "90"),
+                ("probe_pitch", "0"),
+            ],
+            Script::Aim,
+            20_000,
+            Vec::new(),
+            vec![delta],
+        );
+        report(&fixture, &log);
+        let (r, o) = (first_rocket(&fixture), first_rocket(&log));
+        assert!(!o.is_empty(), "ours fired nothing: {log:?}");
+        let at = |m: &[(i32, [f32; 3])]| {
+            m[..2]
+                .iter()
+                .map(|(t, p)| (t - m[0].0, *p))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(at(&o), at(&r), "retail {r:?}\nours {o:?}");
+        // From `ev` on: event, parm, apos and the rest.
+        let line = |lines: &[String]| {
+            let l = lines
+                .iter()
+                .find(|l| l.contains(" missile "))
+                .unwrap_or_else(|| panic!("no missile on the wire: {lines:?}"));
+            let t: Vec<String> = l.split(' ').map(str::to_string).collect();
+            let ev = t.iter().position(|w| w == "ev").unwrap();
+            let base = t.iter().position(|w| w == "base").unwrap();
+            let time: i32 = t[1].parse().unwrap();
+            (time, t[base..base + 4].to_vec(), t[ev..ev + 4].to_vec())
+        };
+        let (rl, ol) = (line(&fixture), line(&log));
+        assert_eq!(ol.0 - o[0].0, rl.0 - r[0].0, "retail {rl:?}, ours {ol:?}");
+        assert_eq!((&ol.1, &ol.2), (&rl.1, &rl.2), "retail {rl:?}, ours {ol:?}");
     }
 }
 

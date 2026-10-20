@@ -657,7 +657,12 @@ impl VehicleProbe {
                     i("_union.scale"),
                     i("weapon"),
                 );
-            } else if i("eType") == ET_MISSILE || self.missiles.contains(&(*num as i32)) {
+            } else if i("eType") == ET_MISSILE
+                || self.missiles.contains(&(*num as i32))
+                // A missile that went off on its first move reaches the
+                // wire already exploded: `eType` 0 with its weapon and event.
+                || (i("eType") == 0 && i("weapon") != 0 && i("eventSequence") != 0)
+            {
                 self.missiles.insert(*num as i32);
                 let slot = (i("eventSequence") - 1) & 3;
                 // The base's bits, for a rest height to the last bit; the

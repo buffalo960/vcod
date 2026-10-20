@@ -5351,6 +5351,14 @@ which are branch conditions.
   retail UO 1.51b the same throws raise 178 with `weapon` set (5 the
   bazooka, 18 the frag, 52 the smoke grenade), and the smoke grenade
   leaves the wire on the snapshot that carries its splash, never popped.
+  VERIFIED, live (retail 1.5b, 2026-10-20, `mp_harbor-water-{rocket,frag}
+  -15.txt`, same spots): 173 off the same arm, parm 5, `surfType` 20, the
+  frag's at -102 with `scale` 32 and its whole flight ours to the
+  hundredth; that rocket's splash move, from -93.28, also reaches the
+  floor, so its splash and its explode go out on one snapshot.
+  `a_rocket_into_water_splashes` flies each server's rocket on retail's
+  `trDelta` (off the script's first two positions), so the splash, its
+  `scale` and the explode are held exactly on all three.
   vcod: `CollisionWorld::water_hit` (the water brushes with each side's
   surface flags) and `Missile::step`'s `wet` arm, the temp entity spawned
   on the missile's turn through `Missiles::take_splashes`; gated by
@@ -5479,8 +5487,22 @@ the ordering and the conditions in it.
   repeats that test at 0x5f367. INFERRED: a move that starts inside a brush
   is a contact at its end point, which 1.5 and UO bounce straight back
   along the move. vcod: `Missile::full_trace` under `falls` and the zeroing
-  in `Missile::step`, pinned by `a_start_solid_move_is_a_contact`; no
-  capture exercises it.
+  in `Missile::step`, pinned by `a_start_solid_move_is_a_contact`.
+  VERIFIED, live (retail 1.1d and 1.5b, mp_carentan, 2026-10-20,
+  `fixtures/missiles/mp_carentan-kerb-rocket{,-15}.txt`,
+  `client-probes/probe_skyshot`'s spot part at (1192, -536, 340)): with the
+  shooter's eye inside the 0x2080 caulk brush (1164..1220, -544..-528,
+  366..430), a panzerfaust round fired flat along +y goes off at the end of
+  its first move, 279 units out in open air, and reaches the wire already
+  exploded (`eType` 0, `EV_ROCKET_EXPLODE`) on the launch snapshot. 1.1d's
+  explode packs parm 0, the zero normal of a trace that started solid and
+  met nothing after; 1.5b's packs 104, the byte of the reversed flight.
+  INFERRED: 1.1's brush would not stop a 0x11 move, so the contact also
+  confirms 11.1's clipmask. `missile_edge_ab`'s
+  `a_rocket_fired_inside_a_kerb_brush_goes_off_at_once` replays both, the
+  round flying retail's `trDelta` (the one integer delta whose
+  `vectoangles` is the capture's `apos`); under the old 0x11 mask it
+  fails on both.
 - Otherwise `G_MissileImpact(ent, &tr, dir)` runs, and `G_RunThink(ent)`
   follows only when `s.eType` is still 4. VERIFIED: `G_MissileImpact`'s
   explode path sets `s.eType` to 0 (13.1), so the test is what stops a
