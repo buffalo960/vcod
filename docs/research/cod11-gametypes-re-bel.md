@@ -341,8 +341,55 @@ configstring `0x14 + n`.
   `headiconTalkBalloon` on `eFlags` 0x40000 at `height - 5.0` (0x30069414),
   the last two only for a teammate or a spectating viewer. The killcam
   icon alone passes the distance flag: radius `6.66 * max(0.6, d * 1/256 +
-  0.2)` and centre raised `8 * scale - 8` (0x30027404..0x30027435). vcod
-  draws only the head icon (`crates/client/src/head_icon.rs`).
+  0.2)` and centre raised `8 * scale - 8` (0x30027404..0x30027435).
+
+#### The second sprite
+
+- VERIFIED, 0x30027565..0x30027629: the height starts at 0 (0x300274e8)
+  and becomes `16.0` only after a head icon's sprite call. The four arms
+  after it are exclusive, each returning after its draw: (1) the entity's
+  number is `cg.clientNum` (0x301e2144) and `snap->ps.clientNum` is not:
+  `headiconYouInKillCam`, distance flag 1, no team test; (2) `eFlags &
+  0x1000`: `headiconDisconnected`, no team test; then, only when the two
+  teams match or the viewer's is 3: (3) `cent+0x224 > cg.time`: the
+  voice-chat material at `cent+0x220`; (4) `eFlags & 0x40000`:
+  `headiconTalkBalloon`. Each height goes through `_ftol` (0x3005a890)
+  as the sprite's integer parameter, so the talk balloon's is 11 over a
+  head icon and -5 without one: its centre is the head bone plus 29 or
+  13, or the origin plus 83 or 67.
+- VERIFIED: the three materials register at map load: `headiconDisconnected`
+  and `headiconYouInKillCam` type 5 (0x301d5aac, 0x301d5ab0), and
+  `headiconVoiceChat` and `headiconTalkBalloon` type 2 (0x301d5aa4,
+  0x301d5aa8). pak0's shader file maps them to `gfx/hud/disconnected.tga`,
+  `gfx/hud/talkballoon.tga` and `gfx/hud/killcamindicator.tga` (the last
+  `sort nearest`, `nofog`), each `blendFunc blend` with vertex colour and
+  alpha.
+- VERIFIED: the sprite's `renderfx` is 2 when `snap->ps` `pm_flags` has
+  0x50000 (own view or follow), the entity is `snap->ps.clientNum` and
+  `0x30207158` is 0 (0x30027331..0x3002734e). INFERRED: that hides every
+  sprite of the body the camera sits in; vcod never draws that body, so
+  it never builds its sprites.
+- VERIFIED, game.mp `ClientEndFrame` (0x50e98): a playing client's
+  `s.eFlags` gets 0x1000 when `level.time` minus `gclient+0x21e4` is
+  over 1000 and loses it otherwise. INFERRED, off Q3's `EF_CONNECTION`
+  of the same shape: that field is the last cmd's time. vcod-server does
+  not set the bit, so the disconnected icon shows only against retail.
+
+#### 1.5 and UO
+
+- VERIFIED, 1.5 `cgame_mp_x86.dll` (sprite pass 0x30028840, sprite
+  0x30028680) and UO `uo_cgame_mp_x86.dll` (0x30032ac0, 0x30032910): the
+  same arms in the same order. The constants read the same: `5.0`
+  (1.5 0x3006b670, UO 0x3007bde0), `18.0`, `72.0`, `6.66`, `1/256`, `0.2`,
+  `0.6`, `8.0`, and the `16.0` stack (UO 0x30032b55). 1.5's own-view mask
+  is 0x30000 and UO's 0xc0000, their renumbered `pm_flags`. UO tests
+  disconnected on 0x800 and the balloon on 0x20000, which
+  `eflags_v22_to_v1` maps to 1.1's 0x1000 and 0x40000; 1.5 tests 1.1's
+  bits.
+
+vcod (`crates/client/src/head_icon.rs`) draws the head icon and arms 1, 2
+and 4. It has no voice-chat icon (stock paks ship no `.voice` file), so
+the balloon never yields to one.
 
 ### 7.4 `objective_position` detaches
 

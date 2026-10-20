@@ -201,8 +201,9 @@ something, the bullet links it.
 - The HUD the stock `hud.menu` lays out: crosshair that opens with spread,
   health, ammo, stance, compass with objectives and teammates, use hints with retail's pick-up and swap lines, hit
   direction with retail's red flash, chat, announcements and the "You killed" centre print. Also the gametype script's own HUD
-  elements (S&D clock, bomb icons, progress bar) in retail's fonts, and head
-  icons over players. A spectator following someone sees their HUD, weapon
+  elements (S&D clock, bomb icons, progress bar) in retail's fonts, head
+  icons over players, and over them the talk balloon on a teammate typing
+  or in a menu, the disconnected icon and the killcam marker. A spectator following someone sees their HUD, weapon
   and scope. On 1.5 and UO `^8` and `^9` in any text draw in the server's
   `g_TeamColor_Allies` and `g_TeamColor_Axis`, as 1.5's team chat uses
   them.
