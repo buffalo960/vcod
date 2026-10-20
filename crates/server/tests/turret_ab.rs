@@ -43,6 +43,7 @@ const ET_MG42: i32 = 11;
 /// `docs/research/cod11-events-and-fx.md` section 1.
 const EV_FIRE_WEAPON_MG42: i32 = 168;
 const EV_SOUND_ALIAS: i32 = 172;
+const EV_BULLET_TRACER: i32 = 171;
 const EV_BULLET_HIT_SMALL: i32 = 173;
 const EV_BULLET_HIT_LARGE: i32 = 174;
 /// The spot the probe script places its clients around (its own comment).
@@ -2195,12 +2196,16 @@ fn spawn_gate(
     };
     let cap = Capture {
         target_cmds: target_cmds(&read(&path("-target"))),
+        target_spawn: spawn_at(&read(&path("-script"))),
         ..parse(&read(&path("")))
     };
     let place = place_ms(read(&path("-script")).lines(), 0).expect("retail's PROBE place");
     let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
         return;
     };
+    if p.version == PROTOCOL_V22.version {
+        rig.sv.pin_tracer_rolls(tracer_rolls(&cap));
+    }
     let ours = replay(&mut rig, &cap);
     let mut rows = diff(&cap, &ours, &fs().unwrap());
     rows.extend(target_rows(&cap, &read(&path("-target")), &ours));
@@ -2210,6 +2215,25 @@ fn spawn_gate(
     ));
     rows.extend(credit_rows(&read(&path("-script")), &rig));
     finish(rows, gaps);
+}
+
+/// Retail's UO tracer rolls, one per player hit in hit order: a UO round's
+/// only server impact is a player hit's, and a roll that came up sends
+/// `EV_BULLET_TRACER` in the same snapshot (`coduo-diff.md` 21). Ours draws
+/// off its own seed, so the replay takes retail's outcomes.
+fn tracer_rolls(cap: &Capture) -> Vec<bool> {
+    let mut out = Vec::new();
+    for (_, s) in &cap.traces {
+        let hits = s.impacts.len();
+        let tracers = s.events.iter().filter(|e| e.0 == EV_BULLET_TRACER).count();
+        assert!(
+            tracers <= hits && (hits <= 1 || tracers % hits == 0),
+            "t={}: {tracers} tracers on {hits} hits",
+            s.t
+        );
+        out.extend((0..hits).map(|i| i < tracers));
+    }
+    out
 }
 
 /// The kill credit: ours logs the `D;` and `K;` records retail's server log
