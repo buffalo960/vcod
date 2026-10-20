@@ -2402,8 +2402,16 @@ carriers against the section 19 captures.
   used to fire it as a bullet (3 damage, `MOD_PISTOL_BULLET` a pulse);
   its fire event now starts nothing (`a_flamethrower_pulse_deals_no_bullet_damage`).
   `fdc <n>`
-  (`Cmd_FlameDamageClient_f` 0x4ee2c, one argument, 0 to
-  `level.num_entities`) stores `n` and the time; `G_CheckFlameDamage`
+  (`Cmd_FlameDamageClient_f` 0x4ee2c) stores `n` and the time when it
+  has exactly one argument, read through a 4-byte `trap_Argv` buffer (its
+  first three characters) and `atoi`, and `0 <= n <= level+0x1e4`;
+  anything else prints `bad arg count` or `bad inflictor num` and keeps
+  the last report (VERIFIED decompile). `level+0x1e4` is `maxclients`,
+  not `num_entities`: `G_InitGame` (0x586cf) copies `g_maxclients`'s
+  integer there and `G_Spawn` counts entities at `level+0xc` (VERIFIED
+  decompile). So `fdc 1000` reads as 100, `fdc x`
+  as 0, and `n == maxclients` passes (INFERRED, off the compare);
+  `server::fdc_inflictor` reads it the same way; `G_CheckFlameDamage`
   (0x3f4d4) runs in `ClientEndFrame` (0x42f59) after the cursor hints: with
   `wbuttons` bit 1 in the client's last cmd and the report inside 3000 ms,
   the reporter takes the flamethrower's `damage` (2), four times over when

@@ -1791,6 +1791,22 @@ const MAX_MENUS: i64 = 31;
 /// - an index `strtol` reads past 31 (unsigned, so a negative one too) names
 ///   the menu by its own text;
 /// - otherwise the menu is the slot's configstring, empty if unset.
+/// UO's `Cmd_FlameDamageClient_f` (game.mp.uo 0x4ee2c) on `fdc`'s
+/// arguments: exactly one, read into a 4-byte buffer (so its first three
+/// characters) and `atoi`'d, then kept when it lies in `0..=maxclients`
+/// (`level+0x1e4`, `g_maxclients`). A bad one leaves the last report alone
+/// (coduo-diff.md 21).
+fn fdc_inflictor(args: &str, max_clients: usize) -> Option<u32> {
+    let mut words = args.split_whitespace();
+    let (Some(word), None) = (words.next(), words.next()) else {
+        return None;
+    };
+    let head: String = word.chars().take(3).collect();
+    u32::try_from(crate::game::builtins::cvar::atoi(&head))
+        .ok()
+        .filter(|&n| n as usize <= max_clients)
+}
+
 fn parse_menu_response(cmd: &str, server_id: i32) -> Option<(MenuRef, String)> {
     let args = crate::game::say::tokenize(cmd);
     let [_, sid, index, response] = args.as_slice() else {
@@ -3225,22 +3241,15 @@ impl Server {
                         .push((packet, PacketCommand::CycleSeat { back }));
                 }
             }
-            // UO's `Cmd_FlameDamageClient_f` (0x4ee2c): the one argument
-            // is an entity number up to `level.num_entities`.
             "fdc" if self.proto.version == PROTOCOL_V22.version => {
-                let n = args
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|_| args.split_whitespace().count() == 1);
                 let now = self.sv_time_ms;
-                match n {
-                    Some(n) if (n as usize) < vcod_common::net::protocol::MAX_GENTITIES => {
+                match fdc_inflictor(args, self.clients.len()) {
+                    Some(n) => {
                         if let Some(c) = self.clients[slot].as_mut() {
                             c.flame = Some((n, now));
                         }
                     }
-                    _ => log::debug!("client {slot}: bad fdc {args:?}"),
+                    None => log::debug!("client {slot}: bad fdc {args:?}"),
                 }
             }
             "mr" => {
@@ -10336,6 +10345,26 @@ mod tests {
     /// Every landing of the two 2026-10-05 retail runs, parm and maxhealth
     /// to damage (player-clip doc 8.10): the float `0.01` keeps each whole
     /// share just under, and past 99 the fall does 110 percent.
+    /// `Cmd_FlameDamageClient_f`'s reading (game.mp.uo 0x4ee2c): `atoi` of
+    /// the first three characters, kept in `0..=maxclients`, one argument
+    /// only.
+    #[test]
+    fn an_fdc_argument_reads_as_retail_reads_it() {
+        assert_eq!(fdc_inflictor("3", 20), Some(3));
+        assert_eq!(fdc_inflictor("20", 20), Some(20));
+        assert_eq!(fdc_inflictor("21", 20), None);
+        assert_eq!(fdc_inflictor("100", 20), None);
+        assert_eq!(fdc_inflictor("1000", 64), None);
+        assert_eq!(fdc_inflictor("5000", 64), None);
+        assert_eq!(fdc_inflictor("12345", 64), None);
+        assert_eq!(fdc_inflictor("1234", 200), Some(123));
+        assert_eq!(fdc_inflictor("x", 20), Some(0));
+        assert_eq!(fdc_inflictor("4x", 20), Some(4));
+        assert_eq!(fdc_inflictor("-1", 20), None);
+        assert_eq!(fdc_inflictor("", 20), None);
+        assert_eq!(fdc_inflictor("1 2", 20), None);
+    }
+
     #[test]
     fn fall_damage_is_retails_share_of_max_health() {
         for (percent, max, damage) in [
