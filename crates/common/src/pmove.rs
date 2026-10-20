@@ -3952,6 +3952,25 @@ fn cmd_scale(ps: &PlayerState, input: &PmInput) -> f32 {
     scale
 }
 
+/// 1.1d's `PM_CmdScale` (0x2e5bc) as `PM_LadderMove` receives it: the
+/// length stored as a float, then `speed * max / (127 * length)` and the
+/// walk scale left on the x87 stack, unrounded, as the function returns
+/// it (cod11-mantle.md, "Ladders").
+fn cmd_scale_x87(ps: &PlayerState, input: &PmInput) -> f64 {
+    let (f, r, u) = (input.forward * 127.0, input.right * 127.0, input.up * 127.0);
+    let max = f.abs().max(r.abs()).max(u.abs());
+    if max <= 0.0 {
+        return 0.0;
+    }
+    let total = (f * f + r * r + u * u).sqrt();
+    let scale = f64::from(ps.speed) * f64::from(max) / (f64::from(total) * 127.0);
+    if ps.walking || input.walk_slow {
+        scale * f64::from(SCALE_WALK)
+    } else {
+        scale
+    }
+}
+
 /// 1.5b's `PM_Accelerate` (0x1ed62), which its walk, air and ladder moves
 /// all call: the speed along the wish and what it still lacks stored as
 /// floats, the rate floored at `pm_stopspeed` (100) and stored once, capped
@@ -4408,58 +4427,100 @@ fn ladder_move(
         return;
     }
     let input = &cmd;
+    let v15 = ps.rules.v15();
+    // Each value below rounds where the binaries store it: 1.1d keeps every
+    // expression on the x87 stack, the scale included (0x33970-0x33d64);
+    // 1.5b (0x27846) and UO (0x2cebc) store every variable
+    // (cod11-mantle.md, "Ladders", "The ladder move's arithmetic").
+    let r32 = |x: f64| x as f32;
     let (forward, right) = view_vectors(ps);
-    let upscale = ((forward.z + LADDER_UPSCALE_BIAS) * LADDER_UPSCALE_GAIN).clamp(-1.0, 1.0);
+    let upscale =
+        r32((f64::from(forward.z) + f64::from(LADDER_UPSCALE_BIAS))
+            * f64::from(LADDER_UPSCALE_GAIN))
+        .clamp(-1.0, 1.0);
     // `ProjectPointOnPlane(pml.right, flat right, vLadderVec)` (0x339fa):
     // strafing slides along the face instead of into or off it.
     let flat_right = x87::normalize(right.with_z(0.0));
     let right = flat_right - normal * flat_right.dot(normal);
     let (f, r) = (input.forward * 127.0, input.right * 127.0);
-    let scale = cmd_scale(ps, input);
+    let scale = if v15 {
+        f64::from(cmd_scale(ps, input))
+    } else {
+        cmd_scale_x87(ps, input)
+    };
     let mut wishvel = Vec3::ZERO;
     if f != 0.0 {
-        wishvel.z = f * (upscale * LADDER_CLIMB_SCALE * scale);
+        let climb = f64::from(upscale) * f64::from(LADDER_CLIMB_SCALE) * scale;
+        // 1.1d stores the climb's scale before the key multiplies it.
+        let climb = if v15 { climb } else { f64::from(r32(climb)) };
+        wishvel.z = r32(f64::from(f) * climb);
     }
     if r != 0.0 {
-        wishvel += right * (r * LADDER_STRAFE_SCALE * scale);
+        let side = scale * f64::from(LADDER_STRAFE_SCALE) * f64::from(r);
+        for i in 0..3 {
+            wishvel[i] = r32(side * f64::from(right[i]) + f64::from(wishvel[i]));
+        }
     }
-    let wishspeed = wishvel.length();
-    let wishdir = x87::normalize(wishvel);
-    // The accelerate is inline (0x33acb-0x33b8b): the walk's floored rate,
-    // capped at what the wish still lacks. Its division by `ps.friction`
-    // with a ground entity (0x33b4c) divides by 1.0: `ClientSpawn` is the
-    // field's only writer on all three patches (cod11-mantle.md, "Ladders").
-    let add = wishspeed - ps.velocity.dot(wishdir);
-    if add > 0.0 {
-        let rate = LADDER_ACCELERATE * dt * wishspeed.max(LADDER_ACCEL_FLOOR);
-        ps.velocity += wishdir * rate.min(add);
+    if v15 {
+        let sq = r32(x87::dot(wishvel, wishvel));
+        let wishspeed = r32(f64::from(sq).sqrt());
+        let wishdir = x87::normalize_stored(wishvel);
+        // `PM_Accelerate` (1.5 0x1ed62 from 0x27a7e, UO 0x2379e from 0x2d0f4).
+        accelerate_stored(ps, wishdir, wishspeed, LADDER_ACCELERATE, dt);
+    } else {
+        let wishspeed = f64::from(r32(x87::dot(wishvel, wishvel).sqrt()));
+        let wishdir = x87::normalize(wishvel);
+        // The accelerate is inline (0x33acb-0x33b8b): the walk's floored
+        // rate, capped at what the wish still lacks. Its division by
+        // `ps.friction` with a ground entity (0x33b4c) divides by 1.0:
+        // `ClientSpawn` is the field's only writer on all three patches
+        // (cod11-mantle.md, "Ladders").
+        let add = wishspeed - x87::dot(ps.velocity, wishdir);
+        if add > 0.0 {
+            let rate = f64::from(LADDER_ACCELERATE)
+                * f64::from(dt)
+                * wishspeed.max(f64::from(LADDER_ACCEL_FLOOR));
+            let speed = rate.min(add);
+            ps.velocity = (wishdir.as_dvec3() * speed + ps.velocity.as_dvec3()).as_vec3();
+        }
     }
     if f == 0.0 {
         // no climb key: vertical velocity decays toward zero by gravity
         // instead of falling (0x33b95-0x33bf9)
-        let g = ps.gravity * dt;
+        let g = f64::from(ps.gravity) * f64::from(dt);
+        let vz = f64::from(ps.velocity.z);
         if ps.velocity.z > 0.0 {
-            ps.velocity.z = (ps.velocity.z - g).max(0.0);
+            ps.velocity.z = r32(vz - g).max(0.0);
         } else {
-            ps.velocity.z = (ps.velocity.z + g).min(0.0);
+            ps.velocity.z = r32(vz + g).min(0.0);
         }
     }
     if r == 0.0 {
         // No strafe key: the velocity along the flat right loses 16/s of
         // itself, at least a unit a frame, and all of it once that is more
         // than it has (0x33c0a-0x33ce4).
-        let side = Vec3::new(right.x, right.y, 0.0).normalize_or_zero();
-        let d = ps.velocity.x * side.x + ps.velocity.y * side.y;
+        let flat = Vec3::new(right.x, right.y, 0.0);
+        let side = if v15 {
+            x87::normalize_stored(flat)
+        } else {
+            x87::normalize(flat)
+        };
+        let d = f64::from(ps.velocity.x) * f64::from(side.x)
+            + f64::from(ps.velocity.y) * f64::from(side.y);
+        let d = if v15 { f64::from(r32(d)) } else { d };
         if d != 0.0 {
-            ps.velocity.x -= d * side.x;
-            ps.velocity.y -= d * side.y;
-            let mut drop = d * dt * PM_LADDER_FRICTION;
+            ps.velocity.x = r32(f64::from(ps.velocity.x) - d * f64::from(side.x));
+            ps.velocity.y = r32(f64::from(ps.velocity.y) - d * f64::from(side.y));
+            let drop = d * f64::from(dt) * f64::from(PM_LADDER_FRICTION);
+            let mut drop = if v15 { f64::from(r32(drop)) } else { drop };
             if drop.abs() < d.abs() {
                 if drop.abs() < 1.0 {
                     drop = if drop < 0.0 { -1.0 } else { 1.0 };
                 }
-                ps.velocity.x += (d - drop) * side.x;
-                ps.velocity.y += (d - drop) * side.y;
+                let left = d - drop;
+                let left = if v15 { f64::from(r32(left)) } else { left };
+                ps.velocity.x = r32(f64::from(side.x) * left + f64::from(ps.velocity.x));
+                ps.velocity.y = r32(f64::from(side.y) * left + f64::from(ps.velocity.y));
             }
         }
     }
@@ -4468,13 +4529,14 @@ fn ladder_move(
     // while the wish climbs, else 250 (@0x70cd4/0x70cd8). This is retail's
     // sticky grip, not a dismount hop; leaving happens via the push-off above.
     if !ps.on_ground {
-        let n = Vec3::new(normal.x, normal.y, 0.0);
-        let d = ps.velocity.x * n.x + ps.velocity.y * n.y;
-        ps.velocity.x -= d * n.x;
-        ps.velocity.y -= d * n.y;
+        let (nx, ny) = (f64::from(normal.x), f64::from(normal.y));
+        let d = nx * f64::from(ps.velocity.x) + ny * f64::from(ps.velocity.y);
+        let d = if v15 { f64::from(r32(d)) } else { d };
+        ps.velocity.x = r32(f64::from(ps.velocity.x) - d * nx);
+        ps.velocity.y = r32(f64::from(ps.velocity.y) - d * ny);
         let k = if wishvel.z > 0.0 { -500.0 } else { -250.0 };
-        ps.velocity.x += k * n.x;
-        ps.velocity.y += k * n.y;
+        ps.velocity.x = r32(nx * k + f64::from(ps.velocity.x));
+        ps.velocity.y = r32(ny * k + f64::from(ps.velocity.y));
     }
     // no gravity while going up a ladder
     step_slide_move(ps, world, dt, false, MASK_PLAYERSOLID, Some(events));
