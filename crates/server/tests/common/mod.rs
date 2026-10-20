@@ -122,7 +122,32 @@ pub fn step_pair_seen(
     b: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
     now: Instant,
 ) -> (Vec<NetEvent>, Vec<NetEvent>, SentPackets) {
-    for (addr, q) in [(ADDR, a.0), (ADDR_B, b.0)] {
+    exchange_pair(sv, a, b, now, false)
+}
+
+/// [`step_pair`] with `b`'s packets handed to the server ahead of `a`'s.
+pub fn step_pair_b_first(
+    sv: &mut Server,
+    a: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    b: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    now: Instant,
+) -> (Vec<NetEvent>, Vec<NetEvent>) {
+    let (ea, eb, _) = exchange_pair(sv, a, b, now, true);
+    (ea, eb)
+}
+
+fn exchange_pair(
+    sv: &mut Server,
+    a: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    b: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    now: Instant,
+    b_first: bool,
+) -> (Vec<NetEvent>, Vec<NetEvent>, SentPackets) {
+    let mut order = [(ADDR, a.0), (ADDR_B, b.0)];
+    if b_first {
+        order.reverse();
+    }
+    for (addr, q) in order {
         let pending: Vec<Vec<u8>> = q.borrow_mut().to_server.drain(..).collect();
         for p in pending {
             sv.handle_packet(addr, &p, now);
@@ -201,6 +226,11 @@ pub fn join_pair_logged(
 /// retail's level time): each frame sends those past its last and before
 /// the frame's time. Empty, every client sends one cmd a frame on its own
 /// clock.
+///
+/// Once both are in, `b`'s packets reach the server first: a frame runs the
+/// menu threads of its later packet first (`client-probes/probe_threadorder`),
+/// so `a` answers and spawns ahead of `b`, as a retail client that joined
+/// first does.
 pub fn join_pair_stamped(
     sv: &mut Server,
     qa: &Rc<RefCell<Queues>>,
@@ -233,7 +263,11 @@ pub fn join_pair_stamped(
             }
         }
         cb.send_frame(&holding(&cb));
-        let (ea, eb) = step_pair(sv, (qa, &mut ca), (qb, &mut cb), *now);
+        let (ea, eb) = if ca.state() == NetState::Active && cb.state() == NetState::Active {
+            step_pair_b_first(sv, (qa, &mut ca), (qb, &mut cb), *now)
+        } else {
+            step_pair(sv, (qa, &mut ca), (qb, &mut cb), *now)
+        };
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
             for e in events {
                 match e {
