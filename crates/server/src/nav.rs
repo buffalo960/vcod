@@ -2394,18 +2394,23 @@ impl Follower {
         if jump && !jumped {
             self.walked_jump = Some(edge);
         }
-        // A run that leaves the ground on the way, where a miss can hurt,
-        // has to land from a body a couple of units either side too, as a
-        // drop's run does: off mp_ship's dome crest at (3615, -345, 635) the
-        // walk on from where a bot passed the node lands on the south face,
-        // the same walk two units across flies off it, and the bot flew
-        // off it to the hold at 56 (seed 4231, bot-navigation.md section 3).
+        // A run on, neither a jump nor down a step, that comes down off
+        // the ground under where it set off, where a miss can hurt: a run
+        // a couple of units either side may not fall deeper than a jump.
+        // Off mp_ship's dome crest at (3615, -345, 635) the walk on from
+        // where a bot passed the node dips 7 onto the south face, the same
+        // walk two units across flies off it, and the bot flew off it to
+        // the hold at 56 (seed 4231, bot-navigation.md section 3).
         let across = pace.truncate().perp().normalize_or_zero().extend(0.0) * ASIDE_DROP;
-        !trail.aloft
+        let flies = |at: Vec3| {
+            let mut trail = Trail::default();
+            walk(at, &mut trail).is_none() && trail.dip > vcod_common::pmove::JUMP_HEIGHT
+        };
+        jump || trail.dip <= 0.0
+            || b.z < a.z - vcod_common::pmove::STEPSIZE
             || across == Vec3::ZERO
             || !self.miss_hurts(world, edge, b)
-            || (walk(at + across, &mut Trail::default()).is_some()
-                && walk(at - across, &mut Trail::default()).is_some())
+            || !(flies(at + across) || flies(at - across))
     }
 
     /// Whether a body faster than the walk's run, at `pace` and its
@@ -4222,12 +4227,12 @@ const SETTLE_TICKS: usize = 40;
 const HELD_TICKS: usize = 10;
 
 /// What a walk passed over: the spots where the body was off the ground
-/// against a plane too steep to stand on, and whether it was ever off the
-/// ground and off the rungs.
+/// against a plane too steep to stand on, and the deepest it went under its
+/// start off the ground and off the rungs.
 #[derive(Default)]
 struct Trail {
     slid: Vec<Vec3>,
-    aloft: bool,
+    dip: f32,
 }
 
 /// [`walk_with`] without the crease test, the body's weapon moving it at
@@ -4355,7 +4360,7 @@ fn walk_sliding(
         let held = ps.on_ground || ps.on_ladder;
         if !held {
             fell = true;
-            trail.aloft = true;
+            trail.dip = trail.dip.max(from.z - ps.origin.z);
             fall_top = fall_top.max(ps.origin.z);
         }
         let deep = match pace {
@@ -7171,7 +7176,8 @@ mod tests {
     /// the ground over the crest and flew off the south face to the hold
     /// at 56 (seed 4231 on 1080e30d; body and pace as the follower read
     /// them). The walk on from the body lands; two units across it flies
-    /// off, so the edge does not hold from there. From the node it does.
+    /// off, so the edge does not hold from there. From the node it does,
+    /// and so does a walk whose runs aside miss without falling.
     #[test]
     fn a_run_on_that_leaves_the_ground_over_a_fall_lands_from_either_side() {
         let Some(world) = map_world("mp_ship") else {
@@ -7198,7 +7204,7 @@ mod tests {
             Gait::Forward,
             &mut trail,
         );
-        assert!(matches!(on, Walked::Arrived(_, false)) && trail.aloft);
+        assert!(matches!(on, Walked::Arrived(_, false)) && trail.dip > 0.0);
         assert!(a_miss_hurts(w, b));
         assert!(
             !f.edge_holds(Some(w), at, pace, &g),
@@ -7207,6 +7213,23 @@ mod tests {
         let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
         assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
         assert!(f.edge_holds(Some(w), a, Vec3::ZERO, &g), "from rest on it");
+        // The crow's nest ladder's foot at 692: the walk hops a lip and its
+        // runs aside never arrive, but neither falls.
+        let (a, b) = (
+            Vec3::new(4992.056, 97.13228, 692.125),
+            Vec3::new(4959.0, 64.0, 692.125),
+        );
+        let g = NavGraph::from_parts(vec![a, b], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let at = Vec3::new(5006.1475, 115.67403, 692.125);
+        let pace = Vec3::new(-42.0, -172.0, 0.0);
+        assert!(
+            f.edge_holds(Some(w), at, pace, &g),
+            "onto the ladder's foot"
+        );
     }
 
     /// mp_ship's stair stringer by the hull crates: the jump edge from
