@@ -1062,28 +1062,15 @@ const SLIDING_SPAWN_15: [f32; 3] = [976.016, -863.939, -5.89044];
 const LEVEL_SPAWN_15: [f32; 3] = [1080.0, 3488.0, -23.875];
 const LEVEL_SPAWN_UO: [f32; 3] = [1800.0, 2696.0, -23.875];
 
-/// How many float steps ours' frag may land off retail's on a prone back.
-/// On the `-cmds` captures the target's spawn, drop, airborne body
-/// (`fTorsoHeight` to the bit, read by gdb at 1.5b 0x1e589 and UO
-/// 0x22ecf), landing and legs clips are retail's, and so is the thrower's
-/// throw; the strike on his body still lands 2 steps off in z on 1.5b and
-/// 1 on UO, UO's second strike 3. Off by that little with every input
-/// retail's, the miss is in the posed bones or the bone trace at this
-/// pose, which only a skeleton dump at the strike can name
-/// (cod11-combat.md 3.1, "The prone strike on mp_carentan"). The older
-/// captures logged no cmds; with the site's ground trace now retail's
-/// they land within the same.
-const STRIKE_STEPS: u32 = 3;
-
 /// mp_carentan on 1.5b, the target lying still with the body his drop
 /// left (cod15-movement.md 4, "The airborne prone body"): the first frag
 /// strikes his back and comes to rest on it, his number its ground, each
-/// within [`STRIKE_STEPS`] of retail's, not snapped 1.5 up onto his bones
+/// on retail's bits, not snapped 1.5 up onto his bones
 /// as 1.1's would be (12.2); moved off, he leaves it to 1.5's fall test,
 /// which drops it to the floor (12.6), where it bounces at 1.5's half of
 /// the reflection (12.4) and rests. Every snapshot of both frags carries
-/// retail's `trType` and ground. The older capture, whose target's body
-/// went unlogged, holds the same. Runs only with `COD_DIR` at a 1.5
+/// retail's `trType` and ground and retail's base. The older capture,
+/// whose target's body went unlogged, holds the same. Runs only with `COD_DIR` at a 1.5
 /// install.
 #[test]
 fn a_frag_rests_on_a_prone_players_back_on_15() {
@@ -1103,14 +1090,14 @@ fn a_frag_rests_on_a_prone_players_back_on_15() {
         if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
             return;
         }
-        prone_back_gate(fs, fixture, thrower_at, true, STRIKE_STEPS);
+        prone_back_gate(fs, fixture, thrower_at, true);
     }
 }
 
 /// [`a_frag_rests_on_a_prone_players_back_on_15`] on a capture that logged
 /// both clients' cmds: with the target's drop and the thrower's cmds
-/// replayed, every snapshot of both frags carries retail's `trType` and
-/// ground, every base past the strike on him retail's bits.
+/// replayed, every snapshot of both frags carries retail's `trType`,
+/// ground and base bits, the strike on him too.
 #[test]
 fn a_frag_rests_on_a_prone_players_back_like_retail_on_15() {
     let Some(fs) = vcod_common::testing::game_fs() else {
@@ -1121,7 +1108,7 @@ fn a_frag_rests_on_a_prone_players_back_like_retail_on_15() {
     }
     let fixture =
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-1.5-cmds.txt");
-    prone_back_gate(fs, fixture, landed(fixture), true, STRIKE_STEPS);
+    prone_back_gate(fs, fixture, landed(fixture), true);
 }
 
 /// [`a_frag_strikes_a_prone_players_back_on_uo`] on a capture that logged
@@ -1133,7 +1120,7 @@ fn a_frag_strikes_a_prone_players_back_like_retail_on_uo() {
     };
     let fixture =
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo-cmds.txt");
-    prone_back_gate(fs, fixture, landed(fixture), false, STRIKE_STEPS);
+    prone_back_gate(fs, fixture, landed(fixture), false);
 }
 
 /// Where a fixture's thrower spawned: its first `PROBE thrower` origin.
@@ -1160,22 +1147,15 @@ fn a_frag_strikes_a_prone_players_back_on_uo() {
         include_str!("fixtures/scriptmodel/mp_carentan-scriptmodel-prone-rest-uo.txt"),
         LEVEL_SPAWN_UO,
         false,
-        STRIKE_STEPS,
     );
 }
 
 /// The prone part on `fs`'s install against `fixture`: the first frag's
 /// strike on the target (his number its ground), with `rests` its rest on
-/// him, and its first four bases, each within `steps` float steps of
-/// retail's; both frags end on the floor, and with `rests` every snapshot
-/// of both carries retail's `trType` and ground and a base within `steps`.
-fn prone_back_gate(
-    fs: vcod_common::pk3::Pk3Fs,
-    fixture: &str,
-    thrower_at: [f32; 3],
-    rests: bool,
-    steps: u32,
-) {
+/// him, and its first four bases, each retail's bits; both frags end on
+/// the floor, and with `rests` every snapshot of both carries retail's
+/// `trType`, ground and base.
+fn prone_back_gate(fs: vcod_common::pk3::Pk3Fs, fixture: &str, thrower_at: [f32; 3], rests: bool) {
     let ours = ours_pair_in(
         fs,
         "mp_carentan",
@@ -1217,7 +1197,7 @@ fn prone_back_gate(
                 panic!("rest {rest}: retail {rb:?}, ours {ob:?}: {:?}", o[0]);
             };
             assert!(
-                off(rb, ob) <= steps,
+                off(rb, ob) == 0,
                 "rest {rest}: retail {rb:?}, ours {ob:?}, {} steps off",
                 off(rb, ob)
             );
@@ -1241,7 +1221,7 @@ fn prone_back_gate(
     let (rb, ob) = (bases(&r[0]), bases(&o[0]));
     assert_eq!(rb.len(), ob.len());
     for (a, b) in rb.iter().zip(&ob) {
-        assert!(off(*a, *b) <= steps, "retail {rb:?}\nours   {ob:?}");
+        assert!(off(*a, *b) == 0, "retail {rb:?}\nours   {ob:?}");
     }
     for g in 0..2 {
         let (rr, or) = (*r[g].last().unwrap(), *o[g].last().unwrap());
@@ -1256,7 +1236,7 @@ fn prone_back_gate(
             assert_eq!(r[g].len(), o[g].len(), "grenade {g}'s snapshots");
             for (s, (a, b)) in r[g].iter().zip(&o[g]).enumerate() {
                 assert!(
-                    a.0 == b.0 && a.2 == b.2 && off(a.1, b.1) <= steps,
+                    a.0 == b.0 && a.2 == b.2 && off(a.1, b.1) == 0,
                     "grenade {g} snapshot {s}: retail {a:?}, ours {b:?}"
                 );
             }
