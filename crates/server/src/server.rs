@@ -4898,8 +4898,8 @@ impl Server {
 
     /// The rocket launchers lying about, on a `bas` level only: what a bot
     /// breaches a base with (bot-objectives.md 7.2); and the bullet
-    /// weapons with a round in the clip, what a bot with nothing left to
-    /// fire takes up.
+    /// weapons, what a bot with nothing left to fire takes up. Each with a
+    /// round in its clip or its reserve.
     fn bot_launchers(
         &mut self,
         uo: Option<&script::UoObjectives>,
@@ -4914,8 +4914,9 @@ impl Server {
         let (mut launchers, mut guns) = (Vec::new(), Vec::new());
         for (w, at, empty) in rt.weapon_items() {
             match weapons.get(w as usize) {
+                _ if empty => {}
                 Some(d) if d.weapon_class == "rocketlauncher" => launchers.push(at),
-                Some(d) if d.weapon_type == "bullet" && !empty => guns.push(at),
+                Some(d) if d.weapon_type == "bullet" => guns.push(at),
                 _ => {}
             }
         }
@@ -5090,8 +5091,9 @@ impl Server {
                 .is_some_and(|d| d.weapon_class == "rocketlauncher")
         };
         let rocket = held_rocket(sim.ps.weapon, sim.ps.weapons_held & loaded, is_launcher);
-        let spent_rocket = (1u8..64)
-            .find(|&w| sim.ps.weapons_held >> w & 1 == 1 && loaded >> w & 1 == 0 && is_launcher(w));
+        let launchers = (1u8..64)
+            .filter(|&w| sim.ps.weapons_held >> w & 1 == 1 && is_launcher(w))
+            .fold(0u64, |m, w| m | 1 << w);
         let gun = (1u8..64).find(|&i| {
             loaded >> i & 1 == 1
                 && weapons
@@ -5202,7 +5204,8 @@ impl Server {
             unpin: None,
             pistol,
             rocket,
-            spent_rocket,
+            primaries: [sim.ps.weapon_slots[1], sim.ps.weapon_slots[2]],
+            launchers,
             gun,
             reload_ms,
             draw_ms,
