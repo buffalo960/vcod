@@ -231,3 +231,34 @@ The options screens' cvars (`mss_volume`, `r_mode`, `r_fullscreen` and the
 inert ones), `setfromcvar`, `exec` and `vid_restart` are in
 `cod11-front-end.md`, section 14; `ui_load` and `ui_menuFiles` in its
 section 1.
+
+## 6. The talk button
+
+VERIFIED, `0x40b600` (my `CL_CmdButtons`, called from the cmd builder
+`0x40b720`): after the key buttons it ORs `buttons` 0x2 (`BUTTON_TALK`)
+when the key-catcher word `0x155f2c4` is non-zero and
+`cl_bypassMouseInput` (the cvar pointer at `0x142f604`) reads 0 as an
+integer. INFERRED: its default, the string at `0x56871c`, is `"0"`, the
+value the cmd builder also writes back into `cl_viewPitchCompensate`. The catcher
+bits are 1 for the console (section 1), and INFERRED off the routing in
+the mouse handler `0x40b0a0` (bit 2 sends a motion to the UI, bit 8 to
+the cgame) and the key handler `0x40dc30` (bit 4 to the chat field
+`0x40d380`): 2 for a menu, 4 for the `messagemode` line, 8 for the cgame.
+So the console, a menu (the main menu over the game, a script menu) or
+the chat line up sets the bit on every cmd, whatever keys were held.
+
+VERIFIED, pak0's `ui_mp/wm_quickmessage.menu` and
+`ui_mp/scriptmenus/quick{commands,responses,statements}.menu` set
+`cl_bypassMouseInput` 1 on open and 0 on close, so a quick message menu
+never sends the bit and the player keeps moving under it.
+
+VERIFIED, 1.5 `CoDMP.exe` `0x40c130` (catcher word `0x15b8aa4`,
+`cl_bypassMouseInput` at `0x1488824`) and UO `CoDUOMP.exe` `0x40c700`
+(`0x4ad3d64`, `0x4e1cbdc`) make the same test and set the same 0x2.
+
+What the server does with the bit (the masked cmd, `eFlags` 0x40000) is in
+`cod15-movement.md` 5, "The talk button". vcod: `play::input::talking`
+(the console open, `Ui::active`, the HUD's chat field; the bypass read
+off the cvar) sets `PlayInput::talking` before each frame's cmds;
+`play::loopback`'s `a_key_catcher_lights_the_talk_flag` sees the server
+light `EF_TALK` for it. vcod has no cgame key catcher.
