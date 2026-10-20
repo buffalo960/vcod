@@ -347,7 +347,9 @@ impl Shell {
             binds: BTreeMap::new(),
             run_only: BTreeMap::new(),
         };
-        s.register("name", "vcod", ARCHIVE | USERINFO);
+        // CL_Init (CoDMP.exe 0x41236b; 1.5 and UO alike): "Unknown Soldier",
+        // archived and userinfo (docs/research/cod11-console.md 5).
+        s.register("name", "Unknown Soldier", ARCHIVE | USERINFO);
         // Com_Init (CoDMP.exe 0x437636): "0", CVAR_SYSTEMINFO | CVAR_ROM; only
         // a systeminfo moves it, and `Cvar_Set2`'s cheat check reads it.
         s.register("sv_cheats", "0", ROM);
@@ -385,6 +387,13 @@ impl Shell {
         // windows wrap at them (docs/research/cod11-chat.md 3.3).
         s.register("cg_gameMessageWidth", "70", ARCHIVE);
         s.register("cg_gameBoldMessageWidth", "60", ARCHIVE);
+        // CL_Init (CoDMP.exe 0x412318) registers `cg_teamChatsOnly` "0";
+        // cgame's rows at 0x30074ed4 and 0x30074ec4 (1.5 0x30076e94 and
+        // 0x30076e84, UO 0x30085734 and 0x30085724) `cg_chatHeight` "8" and
+        // `cg_chatTime` "12000"; all archived (docs/research/cod11-chat.md 3.2).
+        s.register("cg_teamChatsOnly", "0", ARCHIVE);
+        s.register("cg_chatHeight", "8", ARCHIVE);
+        s.register("cg_chatTime", "12000", ARCHIVE);
         // cgame's row at 0x30074a20: default "0", archived and CVAR_CHEAT.
         // 1 drops a blob under each player (crate::blob_shadow).
         s.register("cg_shadows", "0", ARCHIVE | CHEAT);
@@ -1402,7 +1411,7 @@ mod tests {
     fn setfromcvar_exec_and_keys_in_key_order() {
         let mut s = Shell::new();
         s.execute("setfromcvar ui_name name; setfromcvar ui_x nosuchcvar");
-        assert_eq!(s.cvar("ui_name"), Some("vcod"));
+        assert_eq!(s.cvar("ui_name"), Some("Unknown Soldier"));
         assert_eq!(s.cvar("ui_x"), Some(""));
         assert_eq!(
             s.execute("exec default_mp.cfg; vid_restart"),
@@ -1446,7 +1455,7 @@ mod tests {
         assert_eq!(
             s.userinfo(),
             Userinfo {
-                name: "vcod".into(),
+                name: "Unknown Soldier".into(),
                 rate: "25000".into(),
                 snaps: "20".into(),
                 password: String::new(),

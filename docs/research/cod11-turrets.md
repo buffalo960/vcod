@@ -880,7 +880,14 @@ INFERRED, from the store order above: a prone player's `angles` read
 back after `setPlayerAngles` are the cone's held angles, not the
 script's. vcod's builtin holds them through the host's mirror of the
 cone (`pmove::ProneCone`, set at each cmd and by `spawn`) since
-2026-10-19.
+2026-10-19. INFERRED: the cone `SetClientViewAngle` reads is the live
+playerstate's (`ps.pm_flags & 1`, the `eFlags` byte at +0x81 & 0xc0,
+`ps+0x368`, `ps+0x370`, 0x41e30), and of the player methods in the 1.1d,
+1.5b and UO tables (`tools/re/dump_builtins.py`) only `spawn` moves any of
+them inside a script frame; it rewrites the mirror from its own think, so
+a `spawn` then a `setPlayerAngles` in one thread reads unheld angles on a
+body the spawn stood up
+(`setplayerangles_after_a_spawn_in_the_same_thread_reads_the_new_stance`).
 
 The triggers:
 

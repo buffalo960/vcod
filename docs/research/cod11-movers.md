@@ -180,16 +180,29 @@ replaces the trajectory.
 
 ## 11. A brush model mover's clip follows it
 
-The evidence for sections 11 to 13 is a second paired capture against the
-retail 1.1d Linux server, mp_carentan under a `dm`-shaped probe, 2026-10-05:
+The evidence for sections 11 to 14 is a second paired capture against the
+retail 1.1d Linux server, mp_carentan under a `dm`-shaped probe, recaptured
+2026-10-20 (port 33801):
 `crates/server/tests/fixtures/movers/mp_carentan-dm-ride.txt` (the server
 half, one `PROBE f` line per server frame of a phase, from
-`crates/gsc/tests/fixtures/semantics/client-probes/probe_ride.gsc`) and
-`mp_carentan-dm-ride-wire.txt` (the client half, the `--probe-ride`
-playerstate per snapshot and every trajectory change). The probe renames the
+`crates/gsc/tests/fixtures/semantics/client-probes/probe_ride.gsc`, then the
+client's `CMDS` lines) and `mp_carentan-dm-ride-wire.txt` (the client half,
+the `--probe-ride` playerstate per snapshot, the slab's `RIDE_ENT` and
+`RIDE_GONE` lines and every trajectory change). The probe renames the
 two bombzone brush models' `script_gameobjectname` to `dm` so `_gameobjects`
 keeps them, stands the player on brush 4281 of model `*5` (entity 177, a
 plank slab whose top is z -22) and runs one verb per phase on the entity.
+
+VERIFIED, off this capture and the 2026-10-05 one it replaced: where a
+`setOrigin` a unit over the courtyard terrain comes to rest rides on the
+client's cmds. Before `push_y` the 2026-10-05 run fell -30, -30.445,
+-31.819 on three snapshots, this one -30, -30.683, -31.875; under `lift`
+both rest at -31.84, and before `bm_hide`, after the unlink, this one falls
+-30, -31.156, -31.836. `ride_ab.rs` replays the capture's cmds
+(`ProbeHold::framed`), the linked frames included, and every snapshot from
+the first placement on matches retail's to its three decimals; on one cmd
+a frame, 602 of 981 do not (VERIFIED, vcod measurement). The old run's
+-31.819 is why `REST_GAPS` existed; that run logged no cmds.
 
 VERIFIED, off the capture: a script_brushmodel with no `origin`, `angles` or
 `model` key reads `getorigin()` and `.angles` `(0, 0, 0)` and `.model` `""`
@@ -549,7 +562,8 @@ line. A client's link does not snap.
 
 ### A blocked mover
 
-VERIFIED, both ride captures: the slab lowered onto the standing player
+VERIFIED, both earlier ride captures (2026-10-05 and -06, since replaced;
+section 11): the slab lowered onto the standing player
 moves 2 units more on retail than on ours once. In the `-ents` run its
 trajectory, stalled from 36700, logs no change at 36950 and shifts again
 from 37000: it moved 72 to 70 on that pass and stalled at 70. In the first
@@ -597,7 +611,10 @@ vcod: the move verbs write the start into `origin` and link
 leaves the blocker unlinked as retail does. `ride_ab.rs`'s
 `a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail` replays the
 crush capture, holding the cmd back from each frame that ran without one,
-and matches every slab sample; the `-ents` run keeps its `crush` gap.
+and matches every slab sample. In the 2026-10-20 ride capture (section 11)
+every frame of `crush` had a cmd, and the slab holds at 72 for all 75
+stalled samples, as on ours; `ride_ab.rs`'s wire gate replays its cmds
+and the slab's trajectory matches with no tolerance on `trTime`.
 
 ### The box test
 
@@ -774,12 +791,12 @@ the offset in the parent's frame.
 
 ## 14. The brush model on the wire, and the client's half
 
-The evidence for the wire half is a third capture from the same probe with
+The evidence for the wire half was a third capture from the same probe with
 five phases added at its end (`hide`, `show`, `notsolid`, `solid`, `delete`
-on the slab), 2026-10-06:
-`crates/server/tests/fixtures/movers/mp_carentan-dm-ride-ents.txt`, the
-server's phase starts and the `--probe-ride` client's `RIDE_ENT` (the slab's
-`solid`, `index` and `eFlags` on change), `RIDE_GONE` and trajectory lines.
+on the slab), 2026-10-06. The 2026-10-20 ride capture (section 11) runs the
+same probe and replaces it: its wire file holds the `--probe-ride` client's
+`RIDE_ENT` (the slab's `solid`, `index` and `eFlags` on change),
+`RIDE_GONE` and trajectory lines, the server file the phase starts.
 
 VERIFIED, off that capture: both bombzone brush models arrive on the first
 snapshot as `eType` 8, `solid` `0xffffff`, `index` 5 and 6 (their inline

@@ -246,6 +246,15 @@ pub fn set_team_colours(team_codes: bool, cvar: &dyn Fn(&str) -> Option<String>)
     TEAM_COLOURS.set(next);
 }
 
+/// The front end's codes, before any game and after one: the install's
+/// exe decides, so a 1.5 or UO install takes `^8`/`^9` (white, no game's
+/// cvars) and a 1.1 one leaves them literal whatever the last game spoke
+/// (cod11-hud-protocol.md 7).
+pub fn set_front_end_colours(fs: &Pk3Fs) {
+    let install = vcod_common::net::protocol::install_protocol(fs);
+    set_team_colours(install.team_colour_codes, &|_| None);
+}
+
 /// Whether `^d` is a colour code: `0`..`7`, and on 1.5 and UO `8` and `9`
 /// too, for the renderer, the console and message writers and the chat
 /// wrap alike (cod11-chat.md 3.3).
@@ -515,6 +524,22 @@ mod tests {
         });
         assert_eq!(split_color_codes("^8a", default)[0].1, [0.0, 0.5, 1.0, 0.5]);
         set_team_colours(false, &cvars);
+    }
+
+    /// A 1.1 install's front end reads `^8` literally even after a UO game
+    /// left the codes on.
+    #[test]
+    fn the_front_end_takes_the_installs_codes() {
+        set_team_colours(true, &|_| None);
+        assert!(is_colour_code('8'));
+        set_front_end_colours(&Pk3Fs::empty());
+        assert!(!is_colour_code('8'));
+        if let Some(fs) = vcod_common::testing::uo_fs() {
+            set_front_end_colours(&fs);
+            assert!(is_colour_code('9'));
+            assert_eq!(split_color_codes("^9a", [1.0; 4])[0].1, [1.0; 4]);
+            set_team_colours(false, &|_| None);
+        }
     }
 
     #[test]
