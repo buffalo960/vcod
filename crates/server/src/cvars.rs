@@ -325,13 +325,13 @@ impl Cvars {
     }
 
     /// `Cvar_List_f` (cod_lnxded 0x806f530): every cvar whose name matches
-    /// `filter` (`*` and `?`, case-insensitive), sorted case-folded, each
+    /// `filter` (`com_filter`), sorted case-folded, each
     /// as seven flag columns, the name and the quoted value; then the
     /// count of every cvar, matched or not, twice.
     pub fn list(&self, filter: Option<&str>) -> String {
         let mut out = String::new();
         for c in self.vars.values() {
-            if filter.is_some_and(|f| !wildcard(f, &c.name)) {
+            if filter.is_some_and(|f| !com_filter(f, &c.name)) {
                 continue;
             }
             for (bit, letter) in flag::COLUMNS {
@@ -441,19 +441,87 @@ pub fn latch(latched: &mut Option<String>, live: &str, name: &str, value: &str) 
     }
 }
 
-/// `Com_Filter` without its `[...]` sets: `*` any run, `?` any one
-/// character, the rest compared case-insensitively over the whole name.
-fn wildcard(pattern: &str, name: &str) -> bool {
-    fn go(p: &[u8], n: &[u8]) -> bool {
-        match p.split_first() {
-            None => n.is_empty(),
-            Some((b'*', rest)) => (0..=n.len()).any(|i| go(rest, &n[i..])),
-            Some((&c, rest)) => n.split_first().is_some_and(|(&d, tail)| {
-                (c == b'?' || c.eq_ignore_ascii_case(&d)) && go(rest, tail)
-            }),
+/// `Com_Filter` (cod_lnxded 0x8067774), case-insensitive: a prefix match
+/// (the filter's end matches whatever is left of the name), `?` steps one
+/// character, `*` finds the first occurrence of the run up to the next `*`
+/// or `?` (a `[` in that run is literal), `[...]` is a set with `a-z`
+/// ranges, `]]` a literal `]` in one, and `[[` drops the first `[`
+/// (handshake doc, "Console commands over rcon"). A `?` past the name's
+/// end leaves retail reading past its terminator; that position matches
+/// nothing more here.
+fn com_filter(filter: &str, name: &str) -> bool {
+    let (f, n) = (filter.as_bytes(), name.as_bytes());
+    // The name's byte at `i`: its terminator at the end, `None` past it.
+    let at = |i: usize| match i.cmp(&n.len()) {
+        std::cmp::Ordering::Less => Some(n[i].to_ascii_uppercase()),
+        std::cmp::Ordering::Equal => Some(0),
+        std::cmp::Ordering::Greater => None,
+    };
+    let up = |c: u8| c.to_ascii_uppercase();
+    let set_end = |fi: usize| f[fi] == b']' && f.get(fi + 1) != Some(&b']');
+    let (mut fi, mut ni) = (0, 0);
+    while fi < f.len() {
+        match f[fi] {
+            b'*' => {
+                fi += 1;
+                let start = fi;
+                while fi < f.len() && f[fi] != b'*' && f[fi] != b'?' {
+                    fi += 1;
+                }
+                let run = &f[start..fi];
+                if run.is_empty() {
+                    continue;
+                }
+                let Some(rest) = n.get(ni..) else {
+                    return false;
+                };
+                match rest.windows(run.len()).position(|w| w.eq_ignore_ascii_case(run)) {
+                    Some(p) => ni += p + run.len(),
+                    None => return false,
+                }
+            }
+            b'?' => {
+                fi += 1;
+                ni += 1;
+            }
+            b'[' if f.get(fi + 1) == Some(&b'[') => fi += 1,
+            b'[' => {
+                fi += 1;
+                let Some(c) = at(ni) else {
+                    return false;
+                };
+                let mut found = false;
+                while fi < f.len() && !found && !set_end(fi) {
+                    let hi = f.get(fi + 2).copied();
+                    if f.get(fi + 1) == Some(&b'-')
+                        && hi.is_some_and(|h| h != b']' || f.get(fi + 3) == Some(&b']'))
+                    {
+                        found = (up(f[fi])..=up(f[fi + 2])).contains(&c);
+                        fi += 3;
+                    } else {
+                        found = up(f[fi]) == c;
+                        fi += 1;
+                    }
+                }
+                if !found {
+                    return false;
+                }
+                while fi < f.len() && !set_end(fi) {
+                    fi += 1;
+                }
+                fi += 1;
+                ni += 1;
+            }
+            c => {
+                if at(ni) != Some(up(c)) {
+                    return false;
+                }
+                fi += 1;
+                ni += 1;
+            }
         }
     }
-    go(pattern.as_bytes(), name.as_bytes())
+    true
 }
 
 /// `Cmd_TokenizeString` cut down to what a cfg line needs: `//` starts a
@@ -799,6 +867,55 @@ mod tests {
             cv.list(Some("*_debugMove"))
                 .starts_with("        g_debugMove \"0\"\n\n")
         );
+    }
+
+    /// `cvarlist <filter>` on a retail 1.1d server's 210 cvars (handshake
+    /// doc, "Console commands over rcon"): the names each filter listed.
+    #[test]
+    fn com_filter_matches_retail() {
+        let cv = Cvars::new();
+        let listed = |f: &str| -> Vec<&str> {
+            cv.vars
+                .values()
+                .map(|c| c.name.as_str())
+                .filter(|n| com_filter(f, n))
+                .collect()
+        };
+        let fs = [
+            "fs_basegame",
+            "fs_basepath",
+            "fs_cdpath",
+            "fs_copyfiles",
+            "fs_debug",
+            "fs_game",
+            "fs_homepath",
+            "fs_ignoreLozalized",
+            "fs_restrict",
+        ];
+        assert_eq!(listed("fs_"), fs);
+        for f in ["g_spe", "g_spe?", "g_speed??", "[[g]_speed", "g_s[pq-r]", "G_[A-z]PEED"] {
+            assert_eq!(listed(f), ["g_speed"], "{f}");
+        }
+        assert_eq!(listed("sv_*rate"), ["sv_maxRate"]);
+        assert_eq!(listed("*speeds"), ["com_speeds"]);
+        assert_eq!(
+            listed("g_[s]"),
+            [
+                "g_ScoresBanner_Allies",
+                "g_ScoresBanner_Axis",
+                "g_ScoresBanner_None",
+                "g_ScoresBanner_Spectators",
+                "g_scriptMainMenu",
+                "g_smoothClients",
+                "g_speed",
+                "g_synchronousClients",
+            ]
+        );
+        // A `[` inside a `*` run is literal; `[]` and `[` past the name's
+        // end never match.
+        for f in ["*_[s]", "*[ab]", "g_s[]]", "g_speed[]", "g_speed[a]"] {
+            assert!(listed(f).is_empty(), "{f}");
+        }
     }
 
     /// `Cvar_Set2`'s refusals and its latch, each string as retail printed

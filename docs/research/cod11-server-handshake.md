@@ -944,10 +944,22 @@ below.
   or not (210 and 210 on an idle `dm` server). VERIFIED. The list is sorted
   case-insensitively with letters folded to lower case: `scr_hq_scorelimit`
   sorts before `scr_hqt_scorelimit` and `g_ScoresBanner_Allies` before
-  `g_scriptMainMenu`. VERIFIED. The filter matches the whole name without
-  case (`cvarlist G_SPEED` printed `g_speed`, `cvarlist foo` only `foo`)
-  and takes `*` (`*_debugMove`). VERIFIED. vcod's `Com_Filter` has no
-  `[...]` sets.
+  `g_scriptMainMenu`. VERIFIED. The filter is `Com_Filter` (0x8067774,
+  called with `casesensitive` 0), Q3's with one change: a `*` run ends at
+  the next `*` or `?` only, so a `[` inside one is literal. INFERRED from
+  0x8067774's control flow. The rest follows Q3's: the filter's end
+  matches whatever is left of the name, `?` steps one character, a `*`
+  run is found at its first occurrence (0x8067660, no backtracking),
+  `[...]` is a set with `a-z` ranges and `]]` for a literal `]`, and `[[`
+  drops the first `[`. INFERRED from the same function. Measured over
+  rcon on 1.1d, each VERIFIED: `cvarlist fs_` listed all nine `fs_*`;
+  `G_SPEED`, `g_spe`, `g_spe?`, `g_speed??`, `[[g]_speed`, `g_s[pq-r]`
+  and `G_[A-z]PEED` listed `g_speed` alone; `sv_*rate` `sv_maxRate`;
+  `*ps` `g_banIPs` among others; `g_[s]` the eight `g_s*`; `*_[s]`,
+  `*[ab]`, `g_s[]]`, `g_speed[]` and `g_speed[a]` nothing. A `?` past the
+  name's end leaves retail reading past its terminator (`g_speed??`
+  still matched, the filter ending there); vcod lets nothing more match
+  at that position (`cvars::com_filter`).
 - The registry: `tools/capture_cvars.py` lists every cvar a retail server
   holds with its flags and the default its query prints, and wrote
   `crates/server/src/cvars/registry.rs`, which seeds vcod's table. VERIFIED.
