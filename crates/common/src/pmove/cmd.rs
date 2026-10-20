@@ -4,7 +4,7 @@
 //! a playing client's cmds through here, so a prediction replays the
 //! server's own code.
 
-use super::{MAX_FRAME_MS, PlayerState, PmEvent, PmInput, weapon};
+use super::{MAX_FRAME_MS, MoveRules, PlayerState, PmEvent, PmInput, weapon};
 use crate::movetrace::MoveWorld;
 use crate::net::msg::{self, UserCmd};
 use crate::weapon::WeaponDef;
@@ -53,6 +53,32 @@ pub fn pm_input(cmd: &UserCmd) -> PmInput {
         angles: [cmd.angles[0], cmd.angles[1]],
         sprint: cmd.buttons & msg::BUTTON_SPRINT_V22 != 0,
         server_time: cmd.server_time,
+    }
+}
+
+/// `PmoveSingle`'s talk arm, ahead of every `pm_type` dispatch: a cmd with
+/// `BUTTON_TALK` (the console, a menu or the chat line up) keeps only the
+/// talk bit on 1.1 (`buttons = 2`, game.mp.i386.so 0x34004), the talk and
+/// sight bits on 1.5 and UO (`buttons &= 0x12`, 1.5b 0x27f5e, UO 0x2d5d7),
+/// keeps the stance bits of `wbuttons` (`&= 0xc2`) and zeroes the three
+/// moves. Only `pm->cmd` is masked: `pm->oldcmd` stays the raw cmd
+/// (docs/research/cod15-movement.md 5, "The talk button").
+pub fn talk_masked(cmd: &UserCmd, rules: MoveRules) -> UserCmd {
+    if cmd.buttons & msg::BUTTON_TALK == 0 {
+        return *cmd;
+    }
+    let keep = match rules {
+        MoveRules::V1_1 => msg::BUTTON_TALK,
+        MoveRules::V1_5 | MoveRules::Uo => msg::BUTTON_TALK | msg::BUTTON_ADS,
+    };
+    UserCmd {
+        buttons: cmd.buttons & keep,
+        wbuttons: cmd.wbuttons
+            & (msg::WBUTTON_CROUCH | msg::WBUTTON_PRONE | msg::WBUTTON_STANCE_HELD),
+        forward: 0,
+        right: 0,
+        up: 0,
+        ..*cmd
     }
 }
 
@@ -230,6 +256,7 @@ pub fn spectator_step(
     spectator: bool,
 ) -> [f32; 3] {
     let view = apply_view(ps, cmd.angles, delta_angles);
+    let cmd = &talk_masked(cmd, ps.rules);
     if spectator && cmd.wbuttons & msg::WBUTTON_PRONE != 0 {
         ring.add(crate::net::event_ids::EV_STANCE_FORCE_STAND, 0);
     }
@@ -263,7 +290,7 @@ pub fn dead_step(
     weapons: &[Option<WeaponDef>],
     respawned: bool,
 ) {
-    let input = pm_input(cmd);
+    let input = pm_input(&talk_masked(cmd, ps.rules));
     // Its airborne test is `pm_type != 1`, which a linked corpse (7) passes.
     let linked = std::mem::replace(&mut ps.linked, false);
     weapon::adjust_aim_spread_scale(
@@ -305,7 +332,16 @@ pub fn player_step(
 ) -> PlayerStep {
     let mut view = apply_view(ps, cmd.angles, *delta_angles);
     clamp_view(ps, cmd.angles, delta_angles, &mut view);
-    let events = super::pmove(ps, &pm_input(cmd), world, dt, weapons);
+    let events = super::pmove(
+        ps,
+        &pm_input(&talk_masked(cmd, ps.rules)),
+        world,
+        dt,
+        weapons,
+    );
+    // `pm->oldcmd` is the raw cmd: a talking cmd's sight still counts for
+    // the next one's prone crawl test.
+    ps.last_cmd_ads = cmd.buttons & msg::BUTTON_ADS != 0;
     // Retail holds a prone view inside the cone around the body and the pitch
     // cap off the ground by pushing `delta_angles`, so the client's own
     // prediction lands in the same place, and the view the snapshot and the

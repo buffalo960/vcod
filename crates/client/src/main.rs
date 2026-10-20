@@ -615,6 +615,13 @@ struct Args {
     /// through the shot and the rechamber (tag `springfield-held-1.1`).
     #[arg(long)]
     probe_autofire: bool,
+    /// With --save-slope: the talk bit (the console or the chat line up)
+    /// held over the sight, a run, a lean, a shot, a jump, a crouch and a
+    /// prone crawl, from the street placement of `client-probes/probe_prone`,
+    /// facing world yaw 0. Tag the fixture `talk-1.1`, `talk-1.5` or
+    /// `talk-uo`; moves_ab.rs replays each under its rules.
+    #[arg(long)]
+    probe_talk: bool,
     /// With --save-slope, on a 1.5 or United Offensive server: shots whose
     /// muzzle moves, from a placement of `client-probes/probe_moveshot` on
     /// mp_carentan facing world yaw 0. `walk` (`+set probe_spot street`,
@@ -1201,6 +1208,7 @@ fn main() -> Result<()> {
                 turns: args.probe_turns,
                 sprint: args.probe_sprint,
                 autofire: args.probe_autofire,
+                talk: args.probe_talk,
                 moveshot: args.probe_moveshot,
                 uofoot: args.probe_uofoot,
                 uoturret: args.probe_uoturret,

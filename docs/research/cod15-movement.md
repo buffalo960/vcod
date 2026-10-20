@@ -463,11 +463,38 @@ takes `framed`, which lands him on retail's float after the script's
   VERIFIED. Not modelled.
 - `PmoveSingle`: `PM_Footsteps` runs before `PM_Weapon` (0x28889, 0x2888e;
   1.1 after, 0x34331/0x34336); the talk button keeps the sight bit
-  (`buttons &= 0x12`, 0x27f5e); the ADS-prone move zeroing tests the
+  (`buttons &= 0x12`, 0x27f5e; "The talk button" below); the ADS-prone move zeroing tests the
   effective stance; every non-normal arm clears the ladder flag. VERIFIED.
   UO keeps 1.5's order (0x2e04e, 0x2e053). VERIFIED. `pmove::pmove` runs
   each version's order, so a step that fires and steps rings the shot
   first on 1.1 only (`the_shot_and_the_footstep_ring_in_each_versions_order`).
+- The talk button. A cmd with `buttons` 0x2 (the console, a menu or the
+  chat line up) is masked in `pm->cmd` before any `pm_type` arm: 1.1 writes
+  `buttons = 2` (game.mp.i386.so 0x3400a), 1.5 `buttons &= 0x12`
+  (0x27f5e) and UO the same (0x2d5d7), so 1.5 and UO keep the sight and
+  drop the attack, melee, use and UO's sprint; all three keep `wbuttons &
+  0xc2` (crouch, prone, the held-stance bit; 1.1 0x3400e, 1.5 0x27f6d) and
+  zero forward, right and up (cmd +0x18..+0x1a). VERIFIED. 1.1 masks after
+  its `eFlags` 0x400 test, which checks the talk bit itself (0x33fd8); 1.5
+  masks first and its 0x400 test (0x282c5) reads the masked attack.
+  INFERRED. Both set `eFlags` 0x40000 on a talking cmd and clear
+  it on any other (1.1 0x33f72/0x33f82, 1.5 0x281f8/0x2821f); UO's bit is
+  0x20000 (0x2d8cf), 0x40000 in 1.1's layout. VERIFIED. Between steps
+  `Pmove` (1.1 0x3447c) writes only `cmd.serverTime` and `cmd.upmove`
+  (0x344e4, 0x344f8). VERIFIED. The next cmd's prone crawl test
+  (`oldcmd.buttons & 0x10`) reads the raw sight a talking cmd carried:
+  VERIFIED, `talk-1.1` at ct 34741, where retail keeps the sight down on
+  the first crawl cmd after a sighted prone talk and a masked `oldcmd`
+  would raise it. VERIFIED, live (1.1d, 1.5b and UO 1.51b,
+  2026-10-20, `--probe-talk`, fixtures
+  `mp_carentan-dm-slope-8ms-talk-{1.1,1.5,uo}.txt`): 1.1's sight drops
+  over 0.75 s under the bit and comes back up after, 1.5's and UO's hold
+  at 1; a talking run stops under friction, a lean, a shot and a jump do
+  nothing, a crouch holds; `eFlags` reads 262168 (0x40018) standing.
+  vcod: `cmd::talk_masked` in `player_step`, `spectator_step` and
+  `dead_step`; `ps.last_cmd_ads` takes the raw cmd; the server's
+  `ClientSim::talking` sets `flags::EF_TALK`. `moves_ab` replays all
+  three exactly.
 - `PM_Footsteps` (0x24ae8): the rate formula is 1.1's
   (`cod11-sound-system.md` 9a), every intermediate stored as a float, K at
   rodata 0x75a2c-0x75a48, the stance the effective one. VERIFIED. A lean
