@@ -1,0 +1,23 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-20: the PROBE lines of
+# client-probes/probe_vehblast on mp_peaks.
+# COD_VERSION=uo PORT=33751 PROBE_SECS=70 tools/run_probe.sh client-probes/probe_vehblast mp_peaks
+#   +set probe_vehicletype willyjeep_mp +set probe_weapon bazooka_mp +set probe_shots 2
+#   +set probe_dist 250 +set probe_dist_0 300 +set probe_side_0 150 +set probe_z_0 0
+#   +set probe_z_1 20
+# then, 18 s in, the shooter: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:33751
+#   --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon direct --probe-secs 45
+#   --save-snapshots --capture-tag uo-blastjeep (crates/common/tests/fixtures/net/*-uo-blastjeep.bin).
+# The first bazooka round strikes the ground 150 off the empty Willys's flank: its splash is
+# under 100 and the jeep takes nothing. The second strikes its flank for 899 (1000 times the
+# f32 0.9), under its script's health buffer, and the jeep script kills it inside the notify;
+# its wreck's blast reaches the shooter 10.5 s later.
+PROBE vehicle 110 willyjeep_mp (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85) health 2900
+PROBE place 23000 0 (-3870.26, 84.35, -102.52) 164.998
+PROBE fire 24500 0 (-3870.10, 84.35, -118.51) (19.11, 165.01, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 24550 0 dmg 56 mod MOD_PROJECTILE_SPLASH loc none
+PROBE place 33500 1 (-3918.55, 97.29, -102.52) 164.998
+PROBE fire 35000 1 (-3918.54, 97.29, -114.97) (8.09, 165.00, 0.00) (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE hit 35050 0 dmg 26 mod MOD_PROJECTILE_SPLASH loc none
+PROBE vdamage 35100 899 MOD_PROJECTILE (-4120.89, 153.02, -86.66) (-0.95, 0.26, -0.15) 0 92 -999
+PROBE hit 45600 0 dmg 11 mod MOD_EXPLOSIVE loc none
+PROBE done 50000

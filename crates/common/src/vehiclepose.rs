@@ -295,17 +295,37 @@ pub fn seat_frame(
 /// turret stops a round where it is turned (docs/research/coduo-vehicles.md
 /// 13). Surfaces with contents 0 meet no mask and are left out.
 pub fn posed_collision(model: &XModel, worlds: &[(Vec3, Quat)], out: &mut Vec<ModelTri>) {
+    posed_collision_surfs(model, worlds, out, &mut Vec::new());
+}
+
+/// [`posed_collision`] with each surface's run, posed bone frame and stored
+/// bounds in `surfs`, for [`crate::collision::clip_model_surfs`].
+pub fn posed_collision_surfs(
+    model: &XModel,
+    worlds: &[(Vec3, Quat)],
+    out: &mut Vec<ModelTri>,
+    surfs: &mut Vec<crate::collision::ModelSurf>,
+) {
     for surf in model.collision.iter().filter(|s| s.contents != 0) {
         let (Some(bind), Some(&(wp, wr))) = (model.bones.get(surf.bone), worlds.get(surf.bone))
         else {
             continue;
         };
         let inv = bind.rot.inverse();
+        let first = out.len();
         out.extend(surf.tris.iter().map(|t| ModelTri {
             tri: t.map(|v| wr * (inv * (v - bind.pos)) + wp),
             contents: surf.contents,
             surface_flags: surf.flags,
         }));
+        let to_bone = wr.inverse();
+        surfs.push(crate::collision::ModelSurf {
+            tris: first..out.len(),
+            rot: to_bone,
+            pos: -(to_bone * wp),
+            mins: surf.bounds.0,
+            maxs: surf.bounds.1,
+        });
     }
 }
 
