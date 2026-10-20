@@ -4466,11 +4466,20 @@ fn walk_sliding(
         // few: it jumps on the next one (mp_berlin's roof gutter,
         // bot-navigation.md "Jumps").
         let armed = matches!(gait, Gait::Forward | Gait::CrouchJump) && !jumped;
-        let rose = ps.origin.z - before.z;
+        let roomless = ROOMLESS.get();
+        // Only a bot's jump waits out a ramp's climb ([`jump_under`]); the
+        // flood's walks keep the jump under the top. Taken out of them too,
+        // it turned 26 of mp_ship's jump edges plain and dropped a node,
+        // and bots stalled and fell at its stairwell and crow's nest
+        // (bot-navigation.md, "The jump cue and the re-proof").
+        let rose = if roomless {
+            ps.origin.z - before.z
+        } else {
+            0.0
+        };
         let under = floor.is_some_and(|f| {
             jump_under(target.distance(ps.origin.truncate()), f - ps.origin.z, rose)
         });
-        let roomless = ROOMLESS.get();
         let clear = || roomless || jump_clear(world, &ps, target, gait == Gait::CrouchJump);
         if pin.before(armed, ps.on_ground, under, clear) {
             jumped = true;
@@ -7499,6 +7508,24 @@ mod tests {
             g.reprove_jumps(w);
             assert!(g.edges[0] == [1] && g.jumps.contains(&(0, 1)));
         });
+    }
+
+    /// mp_ship's stair from (5792, -423, 124) up to (5792, -382, 204): the
+    /// flood's walk jumps under the top while still climbing and proves a
+    /// jump edge, as it did before the bot's jump waited out a ramp's
+    /// climb. Taken into the flood's walks, that wait turned 26 of
+    /// mp_ship's jump edges plain, and bots stalled and fell at its
+    /// stairwell and crow's nest.
+    #[test]
+    fn the_floods_walk_jumps_under_a_top_while_climbing() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let foot = settle(w, Vec3::new(5792.0, -423.0, 140.0), 0.0).unwrap();
+        let top = settle(w, Vec3::new(5792.0, -382.0, 220.0), 0.0).unwrap();
+        let walked = walk_as(w, foot, top.truncate(), Some(top.z), Gait::Forward);
+        assert!(matches!(walked, Walked::Arrived(_, true)), "a jump edge");
     }
 
     /// mp_dawnville's spawns 88 and 154 at (145, -15311, 7) are reached

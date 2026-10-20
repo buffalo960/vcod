@@ -2538,32 +2538,28 @@ impl Bot {
             } else {
                 // The walk that proved the edge held its key at the top
                 // every tick: a tick counts as pinned only with the key held
-                // at this waypoint, and not in the air off a jump. A body
-                // set off from rest on a foot moves little on its first tick
-                // (`nav::Follower::jump_wait`). No room test: the edge was
-                // proved again by this rule (`nav::NavGraph::reprove_jumps`).
+                // at this waypoint, closing on it under the pinned pace (the
+                // walk, straight at the top, closes as far as it moves), and
+                // not in the air off a jump. A body set off from rest on a
+                // foot has not yet held its key (`nav::Follower::jump_wait`).
+                // No room test: the edge was proved again by this rule
+                // (`nav::NavGraph::reprove_jumps`). Read off the distance
+                // moved instead, a bot sliding along the rail over mp_ship's
+                // stair drop at (5402, 321, 344) jumped late, past it, into
+                // the crease at (5445, 355, 292) (bot-navigation.md, "The
+                // jump cue and the re-proof").
                 let held = self.pressed == Some(w);
                 if !held {
                     self.pin = crate::nav::PinJump::default();
                 }
                 self.pin_air &= !(view.on_ground || view.on_ladder);
-                let moved = self.pin_from.map_or(f32::INFINITY, |p| {
-                    glam::Vec3::from(p).distance(glam::Vec3::from(view.origin))
-                });
                 let armed = !crate::nav::on_jump_top(flat, rise);
                 let climbed = self.pin_from.map_or(0.0, |p| view.origin[2] - p[2]);
                 let under = crate::nav::jump_under(flat, rise, climbed);
-                // Sliding on a face too steep to stand on, a bot that came
-                // in across the walk's line slides along it rather than
-                // bobbing in place: not closing on the top counts as pinned
-                // there, which starts the walk's bob (mp_ship's beam at
-                // (2214, -325, -48), bot-navigation.md "Jumps").
                 let to = glam::Vec2::new(w[0] - view.origin[0], w[1] - view.origin[1]);
                 let v = glam::Vec2::new(view.velocity[0], view.velocity[1]);
                 let closing = v.dot(to.normalize_or_zero()) * (FRAME_MS as f32 / 1000.0);
-                let slow =
-                    moved < crate::nav::PINNED || (view.sliding && closing < crate::nav::PINNED);
-                let stalled = held && slow && !self.pin_air;
+                let stalled = held && closing < crate::nav::PINNED && !self.pin_air;
                 self.pin.before(armed, view.on_ground, under, || true)
                     || self
                         .pin
@@ -4574,30 +4570,42 @@ mod tests {
         assert_eq!(ups, [0, 127, 0, 127]);
     }
 
-    /// Landed short of a ledge on a jump edge and moving, the bot runs at
-    /// the face again before it jumps, as the walk did. Jumping as soon as
-    /// it closed on the top under 2 units a tick, a bot in mp_depot's pit
-    /// at (-1569, 2087, 212) jumped off every landing at the step at
-    /// (-1533, 2112, 239), fell back and jumped again (seed 1145,
-    /// bot-navigation.md "Jumps").
+    /// Not closing on the top for one tick is no jump; the walk's second
+    /// pinned tick is. Jumping on the first, a bot in mp_depot's pit at
+    /// (-1569, 2087, 212) carried back off each landing jumped at the step
+    /// at (-1533, 2112, 239) again and again (seed 1145, bot-navigation.md
+    /// "Jumps").
     #[test]
-    fn a_bot_landed_short_of_a_ledge_runs_at_it_before_it_jumps() {
+    fn a_bot_jumps_on_its_second_tick_not_closing_on_the_top() {
         let mut bot = Bot::new("allies", false, 1);
         let mut v = view();
         v.jump = true;
         v.waypoint = Some([60.0, 0.0, 96.0]);
-        // Carried away from the top by the landing, 4 units a tick.
-        let mut ups = Vec::new();
-        for i in 0..4 {
-            v.origin = [-4.0 * i as f32, 0.0, 64.0];
-            v.velocity = [-80.0, 0.0, 0.0];
-            ups.push(bot.think(&v).up);
-        }
-        assert_eq!(ups, [0; 4], "not pinned while it moves");
-        // At the face, still: the second pinned tick jumps.
-        v.velocity = [0.0; 3];
+        v.velocity = [190.0, 0.0, 0.0];
+        assert_eq!(bot.think(&v).up, 0, "running at it");
+        // Carried away from the top by a landing, 4 units a tick.
+        v.velocity = [-80.0, 0.0, 0.0];
         let ups: Vec<i8> = (0..2).map(|_| bot.think(&v).up).collect();
         assert_eq!(ups, [0, 127]);
+    }
+
+    /// Sliding along a ledge's face at a run, across the way to the top,
+    /// is pinned: the bot jumps where it meets the face, not where it comes
+    /// to rest.
+    #[test]
+    fn a_bot_sliding_along_a_ledges_face_is_pinned() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.jump = true;
+        v.waypoint = Some([20.0, 10.0, 96.0]);
+        v.velocity = [0.0, 190.0, 0.0];
+        let ups: Vec<i8> = (0..3)
+            .map(|i| {
+                v.origin = [0.0, 9.5 * i as f32, 64.0];
+                bot.think(&v).up
+            })
+            .collect();
+        assert_eq!(ups, [0, 0, 127]);
     }
 
     /// Sliding along a face too steep to stand on, across the way to the
