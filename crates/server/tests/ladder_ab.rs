@@ -271,7 +271,7 @@ fn report(rows: &[Row]) {
         let (o, v) = (r.retail.origin, r.retail.velocity);
         let (f, b) = (&r.ours_free, &r.ours_rebased);
         println!(
-            "{:<15} ct={} retail [{:.3},{:.3},{:.3}] v [{:.1},{:.1},{:.1}] fl={:#x} | free dz={:.3} dxy={:.3} v [{:.1},{:.1},{:.1}] | rebased dz={:.3} dxy={:.3} v [{:.1},{:.1},{:.1}]{}",
+            "{:<15} ct={} retail [{},{},{}] v [{:.1},{:.1},{:.1}] fl={:#x} | free dz={:e} dxy={:e} v [{:.1},{:.1},{:.1}] | rebased dz={:e} dxy={:e} v [{:.1},{:.1},{:.1}]{}",
             r.phase,
             r.retail.ct,
             o.x,
@@ -321,35 +321,6 @@ fn fixture(name: &str) -> Vec<Line> {
     parse_fixture(&text)
 }
 
-/// Phases whose rows miss retail's origin by a float step or a few: the
-/// fixture, the phase, the most a row (rebased or free) may miss by and
-/// why. Each is checked to still miss, so one that starts matching fails.
-/// Every other row matches to the bit, origin and velocity, on all three
-/// servers (docs/research/cod11-mantle.md, "Ladders").
-const GAPS: &[(&str, &str, f32, &str)] = &[
-    ("mp_ship-dm-ladder.txt", "up-level", 2e-5, CLIMB_11),
-    ("mp_ship-dm-ladder.txt", "up-top", 4e-5, CLIMB_11),
-    ("mp_ship-dm-ladder-1.5.txt", "down-back", 4e-5, LETGO_15),
-    ("mp_ship-dm-ladder-uo.txt", "up-top", 3e-5, DECK_UO),
-    ("mp_ship-dm-ladder-uo.txt", "off", 2e-5, DECK_UO),
-];
-
-/// 1.1d's level climb, two rows (ct 8720, 21188): z a float step over
-/// retail's after a 29 + 20 ms and a 52 + 19 ms pair of cmds, which the
-/// phase's free run carries. A 59.375 climb from either start reaches
-/// ours' z in f32 or extended arithmetic alike. Cause not found.
-const CLIMB_11: &str = "1.1d's climb, a float step on two rows";
-/// 1.5b's first `down-back` frame after the pitched climb (ct 16932, the
-/// climb slowing from 66 to 23): z a float step under retail's, which
-/// the phase's free run carries. Cause not found.
-const LETGO_15: &str = "1.5b's turn from the climb to the back-down";
-/// UO's body on the deck at the ladder's top, pressing forward into the
-/// `clipplayer` brush at y -87.125: each frame's overclip sets it back a
-/// few ten-thousandths, and ours lands two or three float steps further
-/// back than retail's. The free run of `off` starts on the last of them.
-/// Cause not found.
-const DECK_UO: &str = "UO's push into the deck's clipplayer";
-
 #[test]
 fn the_ladder_mover_climbs_where_retail_does() {
     let Some((world, weapons)) = load() else {
@@ -359,10 +330,21 @@ fn the_ladder_mover_climbs_where_retail_does() {
     // A 1.1 capture replays on 1.1's paks only (a UO install's `main/` is
     // 1.5's).
     let install_11 = vcod_common::testing::game_fs_11().is_some();
+    // UO numbers its weapons its own way (`defs::UO`): the capture's climb
+    // weapon 12 is the enfield, and its `moveSpeedScale` sets the deck walk.
+    let uo_weapons = vcod_common::testing::uo_fs()
+        .map(|fs| vcod_server::weapons::WeaponTable::load(&fs, &vcod_server::defs::UO));
     for (name, yaw, rules) in FIXTURES {
         if *rules == MoveRules::V1_1 && !install_11 {
             continue;
         }
+        let weapons = match rules {
+            MoveRules::Uo => match &uo_weapons {
+                Some(w) => w,
+                None => continue,
+            },
+            _ => &weapons,
+        };
         println!("{name}");
         // 1.5b's and UO's servers store their floats (AGENTS.md, "Movement
         // and collision").
@@ -391,40 +373,27 @@ fn check(name: &str, rows: &[Row]) {
     for (p, (free, rebased, dv)) in &worst {
         println!("{p:<15} free {free:e} rebased {rebased:e} dv {dv:e}");
     }
-    let gap = |phase: &str| {
-        GAPS.iter()
-            .find(|g| g.0 == name && g.1 == phase)
-            .map(|g| (g.2, g.3))
-    };
+    // Every row matches to the bit, origin and velocity, on all three
+    // servers (docs/research/cod11-mantle.md, "Ladders").
     for r in rows {
         assert!(
             !r.rebased.ladder_disagrees,
-            "{} ct={}: ours on the ladder {}, retail pm_flags {:#x}",
+            "{name} {} ct={}: ours on the ladder {}, retail pm_flags {:#x}",
             r.phase, r.retail.ct, r.ours_rebased.on_ladder, r.retail.pm_flags
         );
-        let bound = gap(&r.phase).map_or(0.0, |g| g.0);
         assert!(
-            size(r.rebased) <= bound && r.rebased.dv == 0.0,
-            "{} ct={}: rebased {:?}",
+            size(r.rebased) == 0.0 && r.rebased.dv == 0.0,
+            "{name} {} ct={}: rebased {:?}",
             r.phase,
             r.retail.ct,
             r.rebased
         );
         assert!(
-            size(r.free) <= bound,
-            "{} ct={}: free {:?}",
+            size(r.free) == 0.0,
+            "{name} {} ct={}: free {:?}",
             r.phase,
             r.retail.ct,
             r.free
-        );
-    }
-    for (_, phase, _, why) in GAPS.iter().filter(|g| g.0 == name) {
-        let (free, rebased, _) = worst
-            .get(phase)
-            .unwrap_or_else(|| panic!("GAPS names {name} {phase}, which the replay lacks"));
-        assert!(
-            free.max(*rebased) > 0.0,
-            "GAPS entry {name} {phase} ({why}) matches retail now: drop it"
         );
     }
 }

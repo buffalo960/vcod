@@ -1145,10 +1145,16 @@ So ladders are brushes flagged at the material level, not entities.
   0.0002 was the replay world's arithmetic; with the collision world on
   1.5b's and UO's stored floats (`Arith::Stored`, as their servers set
   it) every row of all five captures matches retail's origin and
-  velocity to the bit except five phases a float step or three off
-  (`ladder_ab`'s `GAPS`): two 1.1d climb rows, 1.5b's first `down-back`
-  frame, and UO's body pressing into the deck's `clipplayer` brush at the
-  top, each with its phase's free run. Causes not found. VERIFIED, vcod
+  velocity to the bit except five phases a float step or three off: two
+  1.1d climb rows, 1.5b's first `down-back` frame, and UO's body pressing
+  into the deck's `clipplayer` brush at the top. VERIFIED, vcod
+  measurement, 2026-10-20: all five closed, and `ladder_ab` has no
+  tolerance left. The 1.1d and 1.5b rows came from the ladder move's
+  rounding ("The ladder move's arithmetic" below). The UO rows were the
+  gate's: it replayed UO's cmds against 1.1's weapon table, where weapon
+  12 is not UO's `enfield_mp`, so the deck walk took another
+  `moveSpeedScale` (34.30 units/s into the brush on a 17 ms frame where
+  retail's set-back implies about 33.3). VERIFIED, vcod
   measurement: the 1.5 capture
   replayed under 1.1's rules misses by 0.84 units and 275 units/s at the
   top (`up-top`), the step off the rungs (`cod15-movement.md` 5).
@@ -1191,6 +1197,45 @@ So ladders are brushes flagged at the material level, not entities.
   relocations.
 - Leaving a ladder fires event 0x90 (EV_WATER_TOUCH per the EV table - the
   pairing looks odd; flagged unverified).
+
+### The ladder move's arithmetic
+
+Where `PM_LadderMove` rounds, read off `objdump -d` of each module (1.1d
+`game.mp.i386.so` 0x33944, 1.5b `game.mp.i386.so` 0x27846, UO
+`game.mp.uo.i386.so` 0x2cebc). vcod's `ladder_move` follows it.
+
+- 1.1d keeps every expression on the x87 stack and rounds only at a
+  store. INFERRED, off the instruction order: `upscale` is stored once,
+  `(forward.z + 0.25) * 2.5` (0x33970-0x33982). `PM_CmdScale` (0x2e5bc)
+  stores only the cmd's length (0x2e629). It returns `speed * max /
+  (127 * length)` times the walk or run scale in `st(0)`, unrounded.
+  `PM_LadderMove` stores `upscale * 0.5 * scale` once (0x33a3e), then
+  `forwardmove` times that (0x33a50). The strafe term, the inline
+  accelerate's `add`, rate and step (0x33acb-0x33b8b), the no-forward
+  `gravity * frametime` (0x33bb2), the side bleed's `d` and `d *
+  frametime * 16` (0x33c30-0x33c81) and the wall glue's `d` (0x33d02-0x33d16)
+  all stay on the stack. Each velocity component is rounded once, at its
+  `fstp`.
+- VERIFIED, `objdump` and vcod measurement: a level climb's wish is
+  127 x float(0.3125 x 190/127). That is exactly 59.375. Rounding the
+  scale to a float first, as vcod did, gives 59.375004. The extra 4e-6
+  units/s was the one float step two of 1.1d's climb rows missed by
+  (`ladder_ab`, ct 8720 and 21188).
+- 1.5b and UO store every variable, and their two functions are the same
+  code (UO reads `vLadderVec` at ps+0x5c, not 0x58). INFERRED, off the
+  instruction order: `PM_CmdScale` (1.5 0x1eec9) returns a stored float.
+  The climb is `pm_ladderScale` (0.5, .rodata 0x75628 via the GOT) times
+  `upscale`, the scale and `forwardmove`, rounded once (0x27979-0x2799f).
+  Each strafe component is rounded once. The wish goes through
+  `VectorNormalize2` (0x33216): squared length, length and reciprocal
+  each stored. The accelerate is the shared `PM_Accelerate` (0x1ed62
+  from 0x27a7e, UO 0x2379e from 0x2d0f4), with `pm_accelerate` 9.0
+  (.rodata 0x75644). The side bleed stores `d`, `d * frametime *
+  pm_ladderfriction` (16.0, .rodata 0x7565c) and `d - f`, and takes its
+  unit step through a sign helper (0x28b8a). The glue stores its `d`.
+  VERIFIED, `ladder_ab`: 1.5b's first `down-back` frame (ct 16932) missed
+  by a float step under vcod's old unstored version, and matches with
+  this one.
 
 ### The ladder yaw cap
 

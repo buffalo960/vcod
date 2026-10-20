@@ -1747,6 +1747,47 @@ mod tests {
         });
     }
 
+    /// Client against client is capsule against capsule
+    /// (`CM_TestCapsuleInCapsule`, object-model doc 22.2): two players 22
+    /// apart on each axis overlap as boxes but their radius 15 capsules sit
+    /// 31.1 apart. A side whose `r.contents` is 0 is never touched.
+    #[test]
+    fn is_touching_one_client_against_another_is_capsule_against_capsule() {
+        let (mut vm, mut host) = crate::game::testing_world_fixture();
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let a = host.ents.spawn_client(cx, 0, None).unwrap();
+            let b = host.ents.spawn_client(cx, 1, None).unwrap();
+            let place = |host: &mut GameHost, cx: &mut Cx, id: EntId, at: [f32; 3]| {
+                host.set_field(cx, id, origin, Value::Vector(at)).unwrap();
+                let slot = id.0 as usize;
+                host.link_client(slot, at, host.client_box(slot), 0x0200_0000, true);
+            };
+            let touching = |host: &mut GameHost, cx: &mut Cx| {
+                is_touching(host, cx, Some(Target::Entity(a)), &[Value::Entity(b)])
+            };
+            place(&mut host, cx, a, [0.0; 3]);
+            place(&mut host, cx, b, [22.0, 22.0, 0.0]);
+            assert_eq!(
+                touching(&mut host, cx),
+                Ok(Value::Int(0)),
+                "the corners clear"
+            );
+            place(&mut host, cx, b, [21.0, 21.0, 0.0]);
+            assert_eq!(
+                touching(&mut host, cx),
+                Ok(Value::Int(1)),
+                "29.7 is inside 30"
+            );
+            // Stacked: the lower top sphere at 55, the upper bottom one at 84.
+            place(&mut host, cx, b, [0.0, 0.0, 69.0]);
+            assert_eq!(touching(&mut host, cx), Ok(Value::Int(1)));
+            place(&mut host, cx, b, [10.0, 0.0, 0.0]);
+            host.area.set_contents(1, 0);
+            assert_eq!(touching(&mut host, cx), Ok(Value::Int(0)), "no contents");
+        });
+    }
+
     /// `linkTo` takes the offset the client already stands at and `unlink`
     /// releases it; both are edges the sim applies (object-model doc, 23.2).
     #[test]

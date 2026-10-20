@@ -749,7 +749,9 @@ unknown `g_scriptMainMenu` opens nothing: `0x400134b0` looks the name up
   VERIFIED (the builtin table and the format strings). So case 10 is
   `openMenu` and case 11 `openMenuNoMouse`. INFERRED (the names'
   order). No stock script calls `openMenuNoMouse`. VERIFIED (the pak
-  scripts).
+  scripts). VERIFIED (decompile of 0x454b4): its body is `openMenu`'s
+  with the other format, and vcod-server has both builtins
+  (`builtins::client::open_menu_no_mouse`, since 2026-10-20).
 - `UI_Refresh` (`vmMain` case 5, `0x40007b20`) paints the menus and then
   the cursor shader (`0x401e1f9c`) 32 by 32 at the cursor less 16 when
   the menu count (`0x400189a0` answers `0x401bf400`) is not 0, after
