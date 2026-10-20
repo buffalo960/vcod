@@ -997,7 +997,9 @@ fn the_tank_rider_s_bones_follow_retail_s_in_both_seats() {
     let seats = seat_of(&retail, 0);
     let first = r.keys().map(|(t, _)| *t).min().unwrap_or(0) + 50;
     let report = std::env::var("VEHICLE_REPORT").is_ok();
-    let mut per_seat: BTreeMap<i32, (usize, f32, (f32, i32, String))> = BTreeMap::new();
+    // Per seat: samples, their sum, and the worst (miss, time, tag).
+    type Worst = (f32, i32, String);
+    let mut per_seat: BTreeMap<i32, (usize, f32, Worst)> = BTreeMap::new();
     for ((t, tag), a) in r.iter().filter(|((t, _), _)| *t > first) {
         let Some(b) = o.get(&(*t, tag.clone())) else {
             continue;
