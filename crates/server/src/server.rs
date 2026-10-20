@@ -1392,7 +1392,7 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
 /// `G_RunClient` (game.mp.uo 0x41dfc) on a seated rider: `G_SetFixedLink`
 /// mode 2 puts `r.currentOrigin` and `ps.origin` at the seat tag of the
 /// vehicle as it stands, shifted by the link's own offset, and links him
-/// there. His end frame puts `ps.origin` and `r.currentOrigin` back on the
+/// there unsnapped. His end frame puts `ps.origin` and `r.currentOrigin` back on the
 /// seat (coduo-vehicles.md 13, "The tank driver's link offset").
 fn run_rider_link(
     rt: &mut script::ScriptRuntime,
@@ -1408,7 +1408,7 @@ fn run_rider_link(
     }) else {
         return;
     };
-    sim.ps.origin = at;
+    sim.seat_linked_at(at);
     rt.set_client_origin(slot, at.to_array());
     link_client(rt, slot, sim);
 }

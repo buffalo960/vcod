@@ -1345,6 +1345,14 @@ impl ClientSim {
         self.linked_unsnapped = true;
     }
 
+    /// `G_SetFixedLink`'s write of a seated UO rider's `ps.origin` and
+    /// `r.currentOrigin` in `G_RunClient`, which relinks there unsnapped
+    /// (coduo-vehicles.md 13, "The tank driver's link offset").
+    pub fn seat_linked_at(&mut self, origin: Vec3) {
+        self.ps.origin = origin;
+        self.linked_unsnapped = true;
+    }
+
     /// `SetClientViewAngle` (0x41e30): the view becomes `angles` (degrees,
     /// wire convention), held to the prone cone first on a prone player
     /// (`pmove::prone_view_angle`), and `delta_angles` is rewritten so the

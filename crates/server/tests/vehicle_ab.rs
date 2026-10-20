@@ -1158,6 +1158,54 @@ fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
     );
 }
 
+/// What the entity pass finds of a tank driver boarded by use: his turn
+/// links him with no seat offset, 20 above the seat his end frame puts
+/// `ps.origin` on (coduo-vehicles.md 13, "The tank driver's link offset"),
+/// so the area tree a later entity's blast or missile queries, and the body
+/// such a round traces, sit at the link through the first stint, and on
+/// the seat once a `nextvehslot` has asked for the slot it takes.
+#[test]
+fn a_tank_driver_boarded_by_use_sits_in_the_area_tree_at_his_link() {
+    let Some(mut b) = board("mp_cassino", "panzeriv_mp", &[]) else {
+        return;
+    };
+    let p = &PROTOCOL_V22;
+    // Held still long enough for the turret to settle, whose turn moves
+    // the seat between the link and the end frame.
+    let lift = |b: &mut Boarded| {
+        for _ in 0..100 {
+            let c = holding(&b.cl, 0);
+            b.frame(c);
+        }
+        let ps = &b.cl.snapshots().newest().unwrap().ps;
+        let (mins, _) = b.sv.test_area_link(0).expect("the driver is linked");
+        let mins_z = f(ps.field_i32(p, "mins[2]"));
+        let origin_z = ps.origin(p)[2];
+        mins[2] - mins_z - origin_z
+    };
+    let first = lift(&mut b);
+    // A link box is grown a unit each way (`SV_LinkEntity`).
+    assert!(
+        (first - 19.0).abs() < 1e-3,
+        "first stint: {first} above the seat"
+    );
+    for seat in [2, 1] {
+        b.cl.send_reliable("nextvehslot");
+        for _ in 0..60 {
+            let c = holding(&b.cl, 0);
+            b.frame(c);
+            if b.cl.snapshots().newest().unwrap().ps.field_i32(p, "vehPos") == seat {
+                break;
+            }
+        }
+    }
+    let back = lift(&mut b);
+    assert!(
+        (back + 1.0).abs() < 1e-3,
+        "back in the driver's seat: {back}"
+    );
+}
+
 const TANK_RESPAWN: &str =
     "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-respawn-uo.txt";
 
