@@ -2370,10 +2370,48 @@ target's own cmds replayed): on UO the target's origin, eight bone marks
 and all 406 rays a frame that stop on him are retail's bits; before the
 port the rays sat 1 to 139 steps off. Every record and world record of
 the gdb dump matches ours. On 1.5b the origin and the marks are
-retail's bits and the rays sit within 3 steps: 1.5b's prone idle moves,
-and the dump's locals sit up to 8 steps off ours where a key is lerped,
-the frame fraction vcod takes off its clip's seconds where the engine
-steps a float time every frame (`RAY_STEPS_15`).
+retail's bits, and since the clip's float time below so is every ray.
+Before that the rays sat within 3 steps (1.5b's prone idle moves, and
+the dump's locals up to 8 steps off ours where a key is lerped).
+
+#### The clip's float time
+
+The frame a 1.5b or UO clip is sampled at is not its seconds times its
+frame rate. VERIFIED, `cod_lnxded` 1.5b 0x80c84f0 (UO `coduo_lnxded`
+0x80bd884, the same code), the leaf arm, reached through syscall 0x70
+from `G_DObjUpdateServerTime` (1.5b game.mp 0x7c5b1, `level+0x1f0`
+times 0.001 passed as a float, 0.05 at `sv_fps 20`): for a node whose
+weight (`+0x3c`) is not 0 the new time is the node's old time (`+0x2c`)
+plus `dtime * rate (+0x40) * frequency (parts +0x8)`, the sum left on
+the x87 stack (`flds`, `fmuls`, `fmuls`, `flds`, `faddp`, 0x80c85ae) and
+stored once as a float. A looping clip then adds or takes 1 until the
+time is in [0, 1), each step stored; any other clip stops at 1 and keeps
+its old time when the sum is at or under 0. A nested node passes its
+children `dtime * rate`. VERIFIED, UO 0x80b816e: the frequency is the
+frame rate over `numframes` (`frame_count - 1`, header frames plus the
+loop bit less one), divided as floats and stored (0x80b83e9), 0 for one
+frame. VERIFIED, the sampler (UO 0x80b9b72, 1.5b 0x80c47de, the same
+instructions): the frame is the time times `numframes` as floats,
+stored, and a key's fraction is taken off that.
+
+VERIFIED, 1.5b game.mp's player anim setter (the `trap_XAnimSetTime`
+calls): a looping movement clip replacing another starts at the old
+clip's `trap_XAnimGetTime`, and a death anim on a body not freshly
+cloned at 1.0. INFERRED, off `G_RunFrame`'s loop over
+`G_DObjUpdateServerTime` while it returns non-zero (cod11-movers.md 15):
+a notetrack due inside a frame splits that frame's step in two, which
+vcod does not model; no stock player clip the gates cover carries one.
+
+vcod: `animclock::Play` keeps the node time beside the seconds, stepped
+in whole 50 ms frames with the sum in `f64` and stored as `f32`
+(`Play::step`), `Layer::time` hands it out, and the server's pose on
+1.5 and UO samples at `time * numframes` (`PoseInputs::node_time`).
+1.1d keeps the seconds: its pose is the glam one, not the stored build.
+VERIFIED, vcod measurement: `pronepose_ab`'s 1.5b mp_brecourt rays, the
+origin and the eight marks are retail's bits (the 3-step `RAY_STEPS_15`
+is gone); the 1.5b mp_carentan prone rest stays one step off, as it was
+on seconds, since that capture logged no cmds (`scriptmodel_ab`'s
+`BACK_NEAR`).
 
 VERIFIED, vcod measurement (`scriptmodel_ab`, the UO mp_brecourt roll):
 the first frag strikes the prone target's legs and rests on the grade

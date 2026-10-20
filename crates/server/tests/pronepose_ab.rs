@@ -516,8 +516,7 @@ fn steps(a: f32, b: f32) -> i64 {
 }
 
 /// `probe_rays` against `fixture`: the settled origin, every bone mark and
-/// every ray's stop on the body to retail's float, each ray within
-/// `ray_steps` float steps.
+/// every ray's stop on the body to retail's float.
 fn check_rays(
     fs: vcod_common::pk3::Pk3Fs,
     map: &str,
@@ -525,7 +524,6 @@ fn check_rays(
     yaw: f32,
     spawn_yaw: Option<f32>,
     fixture: &str,
-    ray_steps: i64,
 ) {
     let read = std::env::var("PB_FIXTURE")
         .ok()
@@ -569,7 +567,7 @@ fn check_rays(
         }
         for (k, a) in &r.rays {
             if let Some((_, b)) = o.rays.iter().find(|x| x.0 == *k)
-                && steps(*a, *b) > ray_steps
+                && a != b
             {
                 off.push(format!(
                     "frame {f} ray {k:?}: retail {a}, ours {b}, {} steps",
@@ -591,9 +589,10 @@ fn check_rays(
 }
 
 /// probe_scriptmodel's prone target on mp_brecourt's grade, on 1.5b,
-/// spawned on the spot: his origin and the eight bone marks to retail's
-/// float, and every downward `bulletTrace` that stops on him within
-/// [`RAY_STEPS_15`].
+/// spawned on the spot: his origin, the eight bone marks and every
+/// downward `bulletTrace` that stops on him to retail's float. 1.5b's
+/// prone idle moves, so its keys lerp at the engine's float node time
+/// (cod11-combat.md 3.1, "The clip's float time").
 #[test]
 fn a_prone_body_on_the_mp_brecourt_field_traces_like_15() {
     let Some(fs) = fs_15() else {
@@ -606,19 +605,11 @@ fn a_prone_body_on_the_mp_brecourt_field_traces_like_15() {
         270.0,
         Some(270.0),
         include_str!("fixtures/pronebones/mp_brecourt-brecourt-rays-1.5.txt"),
-        RAY_STEPS_15,
     );
 }
 
-/// How many float steps a 1.5b ray may stop off retail's: 1.5b's prone
-/// idle moves, and the clip's time fraction, which the engine steps in
-/// floats every frame, is vcod's seconds, so a key lerped between frames
-/// lands a few steps off (cod11-combat.md 3.1, "The pose on 1.5 and UO").
-const RAY_STEPS_15: i64 = 3;
-
 /// [`a_prone_body_on_the_mp_brecourt_field_traces_like_15`] on United
-/// Offensive 1.51b, whose prone idle stands on its keys: every ray to
-/// retail's float.
+/// Offensive 1.51b, whose prone idle stands on its keys.
 #[test]
 fn a_prone_body_on_the_mp_brecourt_field_traces_like_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
@@ -631,6 +622,5 @@ fn a_prone_body_on_the_mp_brecourt_field_traces_like_uo() {
         270.0,
         None,
         include_str!("fixtures/pronebones/mp_brecourt-brecourt-rays-uo.txt"),
-        0,
     );
 }

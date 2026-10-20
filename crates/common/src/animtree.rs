@@ -280,6 +280,8 @@ pub struct AnimMotion {
     /// The loop period in seconds.
     pub duration: f32,
     pub looping: bool,
+    /// [`crate::xanim::RootMotion::frequency`].
+    pub frequency: f32,
     /// `animation_t +0x44`: the root's whole travel, truncated, in units per
     /// second of the clip's truncated ms length (0x27f59..0x27fa5).
     pub move_speed: i32,
@@ -349,6 +351,7 @@ impl PlayerAnims {
                 Some(AnimMotion {
                     duration: m.duration,
                     looping: m.looping,
+                    frequency: m.frequency,
                     move_speed,
                     vertical: move_speed != 0 && movetypes & climb != 0,
                     blend_ms: if fires.contains(&name) { 30 } else { 0 },

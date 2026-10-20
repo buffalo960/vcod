@@ -933,6 +933,10 @@ pub struct PoseInputs<'a> {
     /// current seat's comes first, then the node a seat change left, which
     /// the old legs clip fades out on.
     pub seat_leaves: Vec<(usize, Vec<(usize, f32)>)>,
+    /// Sample each clip at its engine node time ([`crate::animclock::Layer::time`])
+    /// rather than its seconds: the 1.5 and UO server's stored pose
+    /// (cod11-combat.md 3.1, "The clip's float time").
+    pub node_time: bool,
 }
 
 /// The legs and torso clips as the tree walk blends `main`'s two nodes
@@ -1002,7 +1006,7 @@ fn layer_clips(
         if let Some((_, leaves)) = inputs.seat_leaves.iter().find(|(n, _)| Some(*n) == node) {
             for &(leaf, w) in leaves {
                 if let Some(anim) = clip(&inputs.anims.tree.nodes[leaf].name) {
-                    let frame = anim.frame_pos(l.seconds, anim.looping);
+                    let frame = layer_frame(inputs, l, &anim);
                     out.push((anim, frame, l.weight * w));
                 }
             }
@@ -1013,10 +1017,21 @@ fn layer_clips(
         else {
             continue;
         };
-        let frame = anim.frame_pos(l.seconds, anim.looping);
+        let frame = layer_frame(inputs, l, &anim);
         out.push((anim, frame, l.weight));
     }
     out
+}
+
+/// Where in `anim` a layer samples: off its seconds, or under
+/// [`PoseInputs::node_time`] the node time times `numframes`, stored, as
+/// the sampler takes it (UO `coduo_lnxded` 0x80b9b72).
+fn layer_frame(inputs: &PoseInputs, l: &crate::animclock::Layer, anim: &XAnim) -> f32 {
+    if inputs.node_time {
+        l.time * anim.frame_count.saturating_sub(1) as f32
+    } else {
+        anim.frame_pos(l.seconds, anim.looping)
+    }
 }
 
 #[cfg(test)]

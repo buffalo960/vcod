@@ -58,6 +58,11 @@ const FADES: usize = 5;
 /// `base_s + (t - base_ms) * rate / 1000`. The engine advances a node by
 /// `frametime * rate` at each frame's start, and the rate only changes at an
 /// end frame, so the clock rebases there.
+///
+/// Beside the seconds it keeps the engine's own node time, the fraction of
+/// the clip a float sum of per-frame steps has reached ([`Play::time`]),
+/// which 1.5's and UO's stored pose samples at (cod11-combat.md 3.1, "The
+/// clip's float time").
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Play {
     /// The anim index, toggle off.
@@ -65,11 +70,57 @@ struct Play {
     base_ms: i32,
     base_s: f32,
     rate: f32,
+    /// The node time `time_t` held at level time `time_ms`.
+    time_ms: i32,
+    time_t: f32,
+    /// [`AnimMotion::frequency`] and looping, which the step reads.
+    frequency: f32,
+    looping: bool,
 }
+
+/// The server frame the engine steps a node time by: `level.frametime`
+/// times 0.001 at `sv_fps 20` (1.5b `G_DObjUpdateServerTime` 0x7c5b1).
+const STEP_MS: i32 = 50;
 
 impl Play {
     fn seconds(&self, now_ms: i32) -> f32 {
         self.base_s + now_ms.wrapping_sub(self.base_ms).max(0) as f32 * 0.001 * self.rate
+    }
+
+    /// The node time after every whole frame step up to `now_ms`.
+    fn time(&self, now_ms: i32) -> f32 {
+        let steps = now_ms.wrapping_sub(self.time_ms).max(0) / STEP_MS;
+        (0..steps).fold(self.time_t, |t, _| self.step(t))
+    }
+
+    /// One frame of the leaf arm of 1.5b's 0x80c84f0 (UO 0x80bd884): the
+    /// node time plus `dtime * rate * frequency` on the x87 stack, stored;
+    /// a looping clip wraps by 1, any other stops at 1, and a step that
+    /// would leave it at or under 0 is dropped.
+    fn step(&self, t: f32) -> f32 {
+        let dt = f64::from(STEP_MS as f32 * 0.001);
+        let mut next = (f64::from(t) + dt * f64::from(self.rate) * f64::from(self.frequency)) as f32;
+        if self.looping {
+            while next < 0.0 {
+                next += 1.0;
+            }
+            while next >= 1.0 {
+                next -= 1.0;
+            }
+        } else if next >= 1.0 {
+            next = 1.0;
+        } else if next <= 0.0 {
+            return t;
+        }
+        next
+    }
+
+    /// Steps the node time up to `now_ms` and keeps it there, so a long
+    /// clip never walks its whole history.
+    fn settle(&mut self, now_ms: i32) {
+        let steps = now_ms.wrapping_sub(self.time_ms).max(0) / STEP_MS;
+        self.time_t = self.time(now_ms);
+        self.time_ms = self.time_ms.wrapping_add(steps * STEP_MS);
     }
 }
 
@@ -158,6 +209,8 @@ pub struct Layer {
     pub index: i32,
     /// The clip's time in seconds, unwrapped; the pose wraps a looping clip.
     pub seconds: f32,
+    /// The engine's node time, the fraction of the clip played, wrapped.
+    pub time: f32,
     pub weight: f32,
 }
 
@@ -192,6 +245,8 @@ impl ChannelClock {
                 base_ms: start_ms,
                 base_s: 0.0,
                 rate: 1.0,
+                time_ms: start_ms,
+                ..Play::default()
             },
             weight: Ramp::new(1.0, 1.0, start_ms, 0.0),
             rate: 1.0,
@@ -229,6 +284,7 @@ impl ChannelClock {
         let layer = |p: &Play, w: &Ramp| Layer {
             index: p.index,
             seconds: p.seconds(now_ms),
+            time: p.time(now_ms),
             weight: w.at(now_ms),
         };
         self.fading
@@ -274,6 +330,10 @@ impl ChannelClock {
         at: Times,
         window: Option<&mut i32>,
     ) -> Touches {
+        self.current.settle(at.clock_ms);
+        for (p, _) in self.fading.iter_mut().flatten() {
+            p.settle(at.clock_ms);
+        }
         let index = wire & !TOGGLE;
         let touches = if wire != self.anim {
             self.set(anims, wire, legs, seen, at.clock_ms, window)
@@ -354,11 +414,16 @@ impl ChannelClock {
         let (old, new) = (motion(old_index), motion(new_index));
         if let Some(n) = new.filter(|n| n.death && seen.eflags & EF_FRESH_CORPSE == 0) {
             self.anim = wire;
+            // The death arm's `trap_XAnimSetTime(.., 1.0)`.
             self.current = Play {
                 index: new_index,
                 base_ms: now_ms,
                 base_s: n.duration,
                 rate: 1.0,
+                time_ms: now_ms,
+                time_t: 1.0,
+                frequency: n.frequency,
+                looping: n.looping,
             };
             self.weight = Ramp::new(1.0, 1.0, now_ms, 0.0);
             self.fading = [None; FADES];
@@ -368,14 +433,20 @@ impl ChannelClock {
             };
         }
         let client_num = seen.client_num;
-        let phase = match new {
+        // The phase in seconds' terms and as the old node's float time
+        // (`trap_XAnimGetTime`).
+        let (phase, phase_t) = match new {
             Some(n) if n.move_speed != 0 && n.looping => match old {
-                Some(o) if o.move_speed != 0 && o.looping && o.duration > 0.0 => {
-                    (self.current.seconds(now_ms) / o.duration).rem_euclid(1.0)
+                Some(o) if o.move_speed != 0 && o.looping && o.duration > 0.0 => (
+                    (self.current.seconds(now_ms) / o.duration).rem_euclid(1.0),
+                    self.current.time(now_ms),
+                ),
+                _ => {
+                    let p = spread_phase(now_ms, client_num);
+                    (p, p)
                 }
-                _ => spread_phase(now_ms, client_num),
             },
-            _ => 0.0,
+            _ => (0.0, 0.0),
         };
         let blend = match window {
             None => blend_ms(anims, old_index, new_index, legs),
@@ -414,6 +485,10 @@ impl ChannelClock {
             base_s: phase * new.map_or(0.0, |n| n.duration),
             // The goal weight call's own rate; the updater sets the real one.
             rate: 1.0,
+            time_ms: now_ms,
+            time_t: phase_t,
+            frequency: new.map_or(0.0, |n| n.frequency),
+            looping: new.is_some_and(|n| n.looping),
         };
         self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
         if !legs {
@@ -518,9 +593,11 @@ impl ChannelClock {
     pub fn pause(&mut self, ms: i32) {
         let shift = |t: &mut i32| *t = t.wrapping_add(ms);
         shift(&mut self.current.base_ms);
+        shift(&mut self.current.time_ms);
         shift(&mut self.weight.start_ms);
         for (p, w) in self.fading.iter_mut().flatten() {
             shift(&mut p.base_ms);
+            shift(&mut p.time_ms);
             shift(&mut w.start_ms);
         }
         shift(&mut self.nodes.torso.start_ms);
@@ -528,6 +605,7 @@ impl ChannelClock {
     }
 
     fn set_rate(&mut self, now_ms: i32, rate: f32) {
+        self.current.settle(now_ms);
         self.current.base_s = self.current.seconds(now_ms);
         self.current.base_ms = now_ms;
         self.current.rate = rate;
