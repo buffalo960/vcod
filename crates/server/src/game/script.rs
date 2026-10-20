@@ -650,6 +650,32 @@ impl ScriptRuntime {
         dflags: i32,
         mod_: &str,
     ) {
+        self.deliver_unowned_hit(
+            victim_slot,
+            [inflictor, inflictor],
+            damage,
+            dflags,
+            mod_,
+            "none",
+            [0.0; 3],
+        );
+    }
+
+    /// Damage from `[inflictor, attacker]`, neither a player, with no
+    /// direction: [`Self::deliver_world_hit`]'s shape with a weapon and a
+    /// point, as a driverless vehicle's `VEH_PlayerDamage` passes them
+    /// (coduo-vehicles.md 11.6).
+    #[allow(clippy::too_many_arguments)]
+    pub fn deliver_unowned_hit(
+        &mut self,
+        victim_slot: usize,
+        [inflictor, attacker]: [EntId; 2],
+        damage: i32,
+        dflags: i32,
+        mod_: &str,
+        weapon: &str,
+        point: [f32; 3],
+    ) {
         if !self.client_vitals(victim_slot).takedamage {
             return;
         }
@@ -666,18 +692,18 @@ impl ScriptRuntime {
         let (mod_, weapon, hitloc) = self.vm.with_cx(|cx| {
             (
                 cx.intern_exact(mod_),
-                cx.intern_exact("none"),
+                cx.intern_exact(weapon),
                 cx.intern_exact("none"),
             )
         });
         let args = vec![
             Value::Entity(inflictor),
-            Value::Entity(inflictor),
+            Value::Entity(attacker),
             Value::Int(damage),
             Value::Int(dflags),
             Value::String(mod_),
             Value::String(weapon),
-            Value::Vector([0.0; 3]),
+            Value::Vector(point),
             Value::Vector([0.0; 3]),
             Value::String(hitloc),
         ];
