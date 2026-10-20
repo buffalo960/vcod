@@ -2429,7 +2429,8 @@ fn write_configstrings_fixture(
         retail_build()
     ));
     out.push_str(&format!(
-        "# map {map}, g_gametype {gametype}, sv_maxclients {max_clients}, sv_pure {pure}, dedicated 1, stock scr_* defaults.\n"
+        "# map {map}, g_gametype {gametype}, sv_maxclients {max_clients}, sv_pure {pure}, dedicated 1;\n\
+         # cs 0 below holds the rest of the serverinfo cvars.\n"
     ));
     out.push_str("# Captured with tools/run_server.sh and --net-probe at debug level.\n");
     out.push_str("# One '<index> <value>' line per non-empty slot, ascending. Values are raw;\n");
@@ -2479,8 +2480,12 @@ const PM_NORMAL: i32 = 0;
 /// headless. The referenced paks no local pak matches by checksum go into
 /// `dir` (`FS_ComparePaks`' rule and file names), then `donedl`; each pak's
 /// checksum is printed beside the one `sv_referencedPaks` gave for it.
+/// Under `--vanilla` it fetches nothing and searches only stock paks, as the
+/// client's `start_loading` does.
 struct DownloadProbe {
     dir: std::path::PathBuf,
+    /// `--vanilla`, read off the install's search path.
+    vanilla: bool,
     /// Checksums of the install's paks.
     installed: Vec<i32>,
     /// The install's search path, which `searched` puts the scratch
@@ -2501,6 +2506,7 @@ impl DownloadProbe {
     fn new(dir: std::path::PathBuf, fs: Option<&vcod_common::pk3::Pk3Fs>) -> Self {
         DownloadProbe {
             dir,
+            vanilla: fs.is_some_and(vcod_common::pk3::Pk3Fs::vanilla),
             installed: fs.map_or_else(Vec::new, |fs| fs.paks().map(|p| p.checksum).collect()),
             install_dirs: fs.map_or_else(Vec::new, |fs| fs.dirs().to_vec()),
             searched: None,
@@ -2531,7 +2537,7 @@ impl DownloadProbe {
             .chain(&self.scratch_dirs)
             .cloned()
             .collect();
-        match vcod_common::pk3::Pk3Fs::open_dirs(dirs, None, false) {
+        match vcod_common::pk3::Pk3Fs::open_dirs(dirs, None, self.vanilla) {
             Ok(fs) => self.searched = Some(fs),
             Err(e) => println!("DOWNLOAD: cannot reopen the search path: {e:#}"),
         }
@@ -2557,34 +2563,35 @@ impl DownloadProbe {
             // A pak an earlier run left there counts for `cp` too.
             self.reopen();
             let mut have = self.installed.clone();
-            have.extend(
-                vcod_common::pk3::search_paks(
-                    &dir_paths.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
-                )
-                .iter()
-                .map(|p| p.checksum),
-            );
+            if let Some(fs) = &self.searched {
+                have.extend(fs.paks().map(|p| p.checksum));
+            }
             let referenced = net::download::referenced_paks(&info);
-            let candidates: Vec<(String, std::path::PathBuf)> = net::download::candidates_for_map(
-                &info,
-                client.protocol(),
-                "",
-                &dirs,
-                |c| have.contains(&c),
-                |rel| self.dir.join(rel).exists(),
-            )
-            .into_iter()
-            .map(|(name, rel)| {
-                let sum = referenced
-                    .iter()
-                    .find(|p| p.name == name)
-                    .and_then(|p| p.checksum);
-                let remote = format!("{name}.pk3");
-                let dest = self.dir.join(rel);
-                self.expected.insert(remote.clone(), (dest.clone(), sum));
-                (remote, dest)
-            })
-            .collect();
+            let candidates: Vec<(String, std::path::PathBuf)> = if self.vanilla {
+                println!("DOWNLOAD: --vanilla fetches nothing");
+                Vec::new()
+            } else {
+                net::download::candidates_for_map(
+                    &info,
+                    client.protocol(),
+                    "",
+                    &dirs,
+                    |c| have.contains(&c),
+                    |rel| self.dir.join(rel).exists(),
+                )
+                .into_iter()
+                .map(|(name, rel)| {
+                    let sum = referenced
+                        .iter()
+                        .find(|p| p.name == name)
+                        .and_then(|p| p.checksum);
+                    let remote = format!("{name}.pk3");
+                    let dest = self.dir.join(rel);
+                    self.expected.insert(remote.clone(), (dest.clone(), sum));
+                    (remote, dest)
+                })
+                .collect()
+            };
             println!(
                 "DOWNLOAD: {} referenced, {} to fetch into {}",
                 referenced.len(),
@@ -6954,8 +6961,15 @@ fn write_scripted_fixture(
     let gametype = probe_gt.strip_prefix("probe_").unwrap_or(probe_gt);
     let mut out = String::new();
     let build = retail_build();
+    // Only a probe named after a stock gametype wraps that gametype's script.
+    const STOCK: [&str; 9] = ["dm", "tdm", "sd", "re", "bel", "hq", "ctf", "dom", "bas"];
+    let running = if STOCK.contains(&gametype) {
+        format!("stock {gametype}.gsc under the gsc probe")
+    } else {
+        "the gsc probe".to_string()
+    };
     out.push_str(&format!(
-        "# Retail CoD {build} dedicated server running stock {gametype}.gsc under the gsc probe\n\
+        "# Retail CoD {build} dedicated server running {running}\n\
          # client-probes/{probe_gt}.gsc on {map}; this probe joined {}, weapon {}, role {role}.\n",
         join.team, join.weapon
     ));
@@ -6964,9 +6978,14 @@ fn write_scripted_fixture(
          #   COD_LNXDED_HOME=<absolute, no '+'> PORT=<p> SECS=<s> \\\n\
          #       tools/run_probe.sh client-probes/<probe> <map>\n\
          #   cargo run -p vcod -- --net-probe 127.0.0.1:<p> --probe-team <team> \\\n\
-         #       --save-scripted <role> --probe-secs <s>\n\
-         # docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.\n\
-         # One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after\n\
+         #       --save-scripted <role> --probe-secs <s>\n",
+    );
+    out.push_str(match gametype {
+        "re" | "bel" => "# docs/research/cod11-gametypes-re-bel.md sections 7 (re) and 8 (bel) have the teams, roles and times.\n",
+        _ => "# The gsc probe's header has the teams, roles and times.\n",
+    });
+    out.push_str(
+        "# One !gamestate per gamestate, one !cmd per serverCommand verbatim, a !sound after\n\
          # each `s` (and UO's announcer `S`) with the alias it names, and one !trace per snapshot whose rendering\n\
          # moved plus one a second (vcod_common::net::capture::trace_body has the format).\n\
          # ms is since the probe started. The probe sends `score` every 2 s, so every `b`\n\
@@ -13862,6 +13881,44 @@ fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--vanilla` holds across the download reopen: a pak an earlier run
+    /// left in the scratch directory stays off the search path `cp` reads.
+    #[test]
+    fn a_vanilla_download_reopen_keeps_to_the_stock_paks() {
+        use std::io::Write;
+        let pk3 = |dir: &std::path::Path, file: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            let mut z = zip::ZipWriter::new(std::fs::File::create(dir.join(file)).unwrap());
+            z.start_file("readme.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(file.as_bytes()).unwrap();
+            z.finish().unwrap();
+        };
+        let root = tempfile::tempdir().unwrap();
+        let install = root.path().join("install/main");
+        let scratch = root.path().join("scratch");
+        pk3(&install, "pak0.pk3");
+        pk3(&scratch.join("main"), "mp_custom.pk3");
+        for vanilla in [false, true] {
+            let fs = vcod_common::pk3::Pk3Fs::open_search(&install, None, None, vanilla).unwrap();
+            let mut dl = DownloadProbe::new(scratch.clone(), Some(&fs));
+            dl.scratch_dirs = vec![scratch.join("main")];
+            dl.reopen();
+            let names: Vec<String> = dl
+                .fs()
+                .unwrap()
+                .paks()
+                .map(vcod_common::pk3::PakInfo::qualified_name)
+                .collect();
+            assert_eq!(
+                names.contains(&"main/mp_custom".to_string()),
+                !vanilla,
+                "{names:?}"
+            );
+            assert_eq!(dl.fs().unwrap().vanilla(), vanilla);
+        }
+    }
 
     /// The stock rifle is semi-automatic: a held fire bit is one shot and then
     /// nothing, so every shot needs its own release edge. Counted at the

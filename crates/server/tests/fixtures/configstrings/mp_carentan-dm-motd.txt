@@ -1,5 +1,6 @@
 # Retail CoD 1.1d dedicated server configstring table at gamestate.
-# map mp_carentan, g_gametype dm, sv_maxclients 8, sv_pure 0, dedicated 1, stock scr_* defaults.
+# map mp_carentan, g_gametype dm, sv_maxclients 8, sv_pure 0, dedicated 1; the recipe below
+# sets the rest.
 # Captured with tools/run_server.sh and --net-probe at debug level.
 # Recipe: COD_LNXDED_HOME at a fresh homepath (game module only, no cfg) whose main/ holds a
 # zzz_motd.pk3 with mp_carentan.bsp rebuilt by tools/bsp_worldspawn_key.py to carry

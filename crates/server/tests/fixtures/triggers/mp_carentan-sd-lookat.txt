@@ -32,8 +32,9 @@
 #     and the planter is unlinked and put back on the attackers' spawn, because
 #     standing 88 units out along the defender-to-bomb line its body was what
 #     the lookat's second trace hit and no station fired until it left.
-# The A/B gate in crates/server/tests never sets the cvar: it stands its clients
-# where it wants them itself, so both teleport threads return at their first line.
+# The A/B gate (crates/server/tests/sd_plant_ab.rs) sets the cvar too, for the
+# planter's put-back after the plant; it stands its clients where it wants them
+# itself, so the probe's other two teleports land before it places them.
 #
 # Record formats, one logPrint each, with the m:ss stamp stripped:
 #   PROBE watch <entity> trigger_lookat

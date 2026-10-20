@@ -1,6 +1,7 @@
 //	The shellshock playerstate fields, mp_carentan only. Once a player is
-//	playing and the level clock reads 15000, puts it on probe_legs' street
-//	mark facing +x, then on a schedule from there:
+//	playing and the level clock reads 15000, puts it on probe_legs' mark
+//	(the map's bottom brush floor under the garden, not a street) facing +x,
+//	then on a schedule from there:
 //
 //		+1000  shellShock("default", 2.5)
 //		+4000  shellShock("pain", 1.25)     over a running shock
