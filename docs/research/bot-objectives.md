@@ -745,7 +745,8 @@ first everywhere.
 - **The breach.** An attacker with no loaded rocket launcher carried
   (`BotView::rocket`: `weaponClass rocketlauncher`, clip or reserve, the
   one in hand first, else any) walks to the nearest launcher lying about
-  (`BasView::launchers`, off `ScriptRuntime::weapon_items`) and taps use
+  with a round left (`BasView::launchers`, off
+  `ScriptRuntime::weapon_items`) and taps use
   on it, the retrieval pickup's tap (section 4.2): walking over a weapon
   it does not carry takes nothing (`cod11-items.md` 1). With both
   primary slots full the pickup's swap drops the weapon in hand, or
