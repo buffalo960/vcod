@@ -756,6 +756,38 @@ overwrites the untagged one and refuses the tagged ones without
 `--overwrite-fixture`: move them to `tmp/` and `git checkout` the fixture
 directory after.
 
+## probe_spawnbody
+
+A spawn inside another player and `ClientImpacts`' `"touch"`
+(`docs/research/cod11-player-clip.md` 13). The first player to play is the
+host, the second the spawner; the script holds both clients' keys through
+`PROBE_IN <buttons> <wbuttons> <up> <forward> <right>` lines, so both run
+`--probe-uo-weapon direct`. Each trial puts the host on probe_bump's
+mp_carentan spot facing +x, sets the spawner's forward key and `spawn`s
+him 8 inside the host or 31 off, logging the origin the spawn's think
+left (exact, integer part and remainder); two walks then put the spawner
+60 behind the host and hold forward 0.6 s. Every `"touch"` a player gets
+from another is logged. Two shells after the server, the host first:
+
+```
+COD_VERSION=<1.1|1.5|uo> COD_DIR=<install> PORT=<p> PROBE_SECS=85 \
+  tools/run_probe.sh client-probes/probe_spawnbody mp_carentan
+# about 8 s later:
+cargo run -p vcod -- --game-dir <install> --net-probe 127.0.0.1:<p> \
+  --probe-uo-weapon direct --probe-team allies --probe-secs 74
+# 4 s after that:
+cargo run -p vcod -- --game-dir <install> --net-probe 127.0.0.1:<p> \
+  --probe-uo-weapon direct --probe-team allies --probe-secs 70
+```
+
+(`--mod-dir uo` on both clients for UO.) The server's `PROBE` lines are
+`crates/server/tests/fixtures/playerstate/mp_carentan-dm-spawnbody-<1.1|1.5|uo>.txt`,
+which `spawnbody_ab.rs` replays.
+
+The 1.5b overlap capture `-bump-overlap-spectator-15-walker.txt` and
+`-script.txt` is probe_bump's spectator-slot recipe on `COD_VERSION=1.5`,
+the walker tagged `overlap-spectator-15`.
+
 ## probe_bomb and probe_blastbody
 
 Who a scripted blast reaches, for `docs/research/cod11-combat.md` 14.4. Both
