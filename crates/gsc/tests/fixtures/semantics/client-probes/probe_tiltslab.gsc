@@ -79,6 +79,11 @@ pose(p, slab, cx, cy, name, angles, origin, drop)
 	slab rotateto(angles, 0.05);
 	wait 0.1;
 	logPrint("PROBE slab " + name + " " + slab.origin + " " + slab.angles + "\n");
+	// The pose's last bits: origin off its target in ten-thousandths,
+	// angles in millionths of a degree.
+	o = slab.origin;
+	a = slab.angles;
+	logPrint("PROBE r " + name + " " + ((o[0] - origin[0]) * 10000) + " " + ((o[1] - origin[1]) * 10000) + " " + ((o[2] - origin[2]) * 10000) + " " + ((a[0] - angles[0]) * 1000000) + " " + ((a[1] - angles[1]) * 1000000) + " " + ((a[2] - angles[2]) * 1000000) + "\n");
 	sample(name, p, slab, cx, cy, 2);
 }
 
