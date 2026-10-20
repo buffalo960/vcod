@@ -2657,4 +2657,19 @@ takes two arguments, `mover::run_one` writes a moving group's
 `prev + (eval - prev)` unless its segment ended that frame, the plan's
 `finish` stops a `movegravity` at the frame's evaluation, and
 `bg_evaluate` takes a gravity arc through `Trajectory::evaluate_kept`
-(`evaluate_stored` on 1.5 and UO, not measured there).
+(`evaluate_stored` on 1.5 and UO).
+
+**1.5b and UO.** VERIFIED, two captures off the same probe on mp_carentan,
+2026-10-20: `mp_carentan-dm-moverreads-1.5.txt` (retail 1.5b) and
+`mp_carentan-dm-moverreads-uo.txt` (retail UO 1.51b) are line for line
+identical to each other, and to 1.1d's but for one row: the second arc's
+z at 2400 reads -5.72205e-06 where 1.1d's reads -9.53674e-06. Every
+`.speed` and `.dmg` read, the `movegravity` start off `r.currentOrigin`,
+the gravity stop, the raw angles mid-rotate, the normalize and the
+`rotateto` fold read as on 1.1d. INFERRED: the one row is the stored
+`dt` and stored `base + delta * dt` of 1.5b's and UO's
+`BG_EvaluateTrajectory` (1.5b `.so` 0x1b877, UO 0x1fe63,
+`Trajectory::evaluate_stored`), the arc's evaluation feeding `move` in
+`G_MoverTeam`; with 1.1d's `evaluate_kept` ours reads 1.1d's value there.
+`ride_ab.rs`'s `mover_script_reads_match_retail_on_1_5` and `_on_uo`
+replay both, every line exact.

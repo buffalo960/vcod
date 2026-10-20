@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::trajectory::Trajectory;
 use vcod_common::net::{NetClient, NetEvent};
 
@@ -814,6 +814,8 @@ fn every_link_snaps_angles_like_retail() {
 }
 
 const MOVERREADS: &str = "tests/fixtures/movers/mp_carentan-dm-moverreads.txt";
+const MOVERREADS_15: &str = "tests/fixtures/movers/mp_carentan-dm-moverreads-1.5.txt";
+const MOVERREADS_UO: &str = "tests/fixtures/movers/mp_carentan-dm-moverreads-uo.txt";
 
 /// Mover script reads (movers doc 23): `.speed` and `.dmg` after a sine
 /// mover's spawn, `.origin` across a `moveGravity` started on a moving
@@ -825,10 +827,37 @@ fn mover_script_reads_match_retail() {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
+    mover_reads(&PROTOCOL_V1, fs, MOVERREADS);
+}
+
+#[test]
+fn mover_script_reads_match_retail_on_1_5() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        eprintln!("COD_DIR is not a 1.5 install: skipping");
+        return;
+    }
+    mover_reads(&PROTOCOL_V6, fs, MOVERREADS_15);
+}
+
+#[test]
+fn mover_script_reads_match_retail_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR is not a UO install: skipping");
+        return;
+    };
+    mover_reads(&PROTOCOL_V22, fs, MOVERREADS_UO);
+}
+
+fn mover_reads(proto: &'static Protocol, fs: vcod_common::pk3::Pk3Fs, fixture: &str) {
     let bsp_path = fs.resolve_map(MAP).expect("map in mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_moverreads"), now);
+    sv.set_protocol(proto);
     sv.overlay_script(
         "maps/mp/gametypes/probe_moverreads",
         include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_moverreads.gsc"),
@@ -850,7 +879,7 @@ fn mover_script_reads_match_retail() {
             .collect()
     };
     let ours = rows(sv.script_log().iter().map(String::as_str).collect());
-    let text = std::fs::read_to_string(MOVERREADS).unwrap();
+    let text = std::fs::read_to_string(fixture).unwrap();
     let retail = rows(text.lines().collect());
     if std::env::var("MOVERREADS_REPORT").is_ok_and(|v| v == "1") {
         for (r, o) in retail.iter().zip(&ours) {
