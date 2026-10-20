@@ -147,6 +147,9 @@ pub mod cvar {
     pub const SHOOT: &str = "vc_bot_shoot";
     /// Draws names from [`super::NAMES`]; 0 names them `bot<slot>`.
     pub const NAMES: &str = "vc_bot_names";
+    /// The skill level new and unpinned bots play at
+    /// (`crate::bots::Skill::level`).
+    pub const SKILL: &str = "vc_bot_skill";
 }
 
 /// What the cvars ask for, read once a pass.
@@ -156,6 +159,8 @@ pub struct Settings {
     pub autobalance: bool,
     pub shoot: bool,
     pub names: bool,
+    /// Clamped to `crate::bots::MAX_LEVEL`.
+    pub skill: u8,
 }
 
 /// One side of a team game, or neither.

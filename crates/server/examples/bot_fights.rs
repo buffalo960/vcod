@@ -3,8 +3,8 @@
 //! team's bots, with the retreat (`bots/retreat.rs`) on for the bots
 //! `RETREAT=` names: `all` (the default), `none`, `allies` or `axis`.
 //! One side on and the other off is the measure: in a symmetric match
-//! every kill is someone's death. Behind docs/research/bot-objectives.md,
-//! "Retreat".
+//! every kill is someone's death. Behind docs/research/bot-combat.md
+//! section 4.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_fights [seed...]
 //! `MAPS=` a comma list (mp_carentan,mp_harbor,mp_depot,mp_brecourt),
 //! `GAMETYPE=` (tdm), `BOTS=` (8), `TICKS=` (6000, 5 min), `UO=1` a United

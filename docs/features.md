@@ -439,7 +439,8 @@ something, the bullet links it.
 - Bot management over rcon: `addbot`, `removebot` and `listbots`, names
   like `[BOT] Sir Camps-a-Lot` drawn without repeats, team balance that
   moves only dead bots, and a `vc_bot_minplayers` floor a joining human
-  takes a bot's place under. The `vc_bot_*` cvars apply live
+  takes a bot's place under, and four skill levels (`vc_bot_skill`, or
+  per bot with `addbot ... skill N`). The `vc_bot_*` cvars apply live
   (docs/usage.md, "Bots").
 
 ## What it doesn't do

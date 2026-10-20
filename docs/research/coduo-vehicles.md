@@ -1284,8 +1284,9 @@ face.
   the Panzer IV parked 680 ahead glances off it twice (yaw 35 to 74) and
   shoves it 2.95 units, two thinks a hit (VERIFIED, capture). vcod ran
   every vehicle's think in slot order after the entity pass, so the tank
-  moved in the hit's own frame; it now runs the undriven thinks first
-  (`think::run`). Ours now moves the tank on retail's thinks and lands
+  moved in the hit's own frame; it now runs the undriven thinks on their
+  entity-pass turns (`think::run_undriven`, "The think's turn" below).
+  Ours now moves the tank on retail's thinks and lands
   the first shove on retail's pose to 0.01 (-722.47, 7985.67) (VERIFIED,
   `vehicle_ram_ab`, which holds the tank's pose to 0.02 and its speed to
   0.01 on every think between the hits).
@@ -1387,6 +1388,40 @@ face.
   spawn as retail's does, every think's pose to 0.02 and speed to 0.01
   through both hits (VERIFIED, `vehicle_ram_ab`, 2026-10-16). The gap is
   closed.
+- **The think's turn.** `G_RunFrame`'s entity loop (game.mp.uo 0x69c21)
+  calls `G_RunEntity` (0x69a35) once per in-use entity by number, its link
+  parent first. A vehicle is not a missile (4), an item (3), a mover (5,
+  8) or a client, so its arm is `G_RunThink` (0x69862): when `nextthink`
+  (`ent+0x20c`) is positive and not past `level.time` it is zeroed and
+  `Scr_Vehicle_Think` called (VERIFIED decompile). The think returns at
+  once for a driven vehicle (`ent+0x17e` 2) while the flag at .bss
+  0xbe954 is 0, setting `nextthink` to `level.time`; otherwise it steps
+  and sets `nextthink` to `level.time + 50` (VERIFIED decompile,
+  0x8c7cc). `G_VehicleClientThink` (0x9b0ce) sets that flag, walks the
+  64 vehicle pool records (.bss 0xe43c0, stride 0x3ec, entity number at
+  +0x228) in order and `G_RunThink`s each driven one, then clears it
+  (VERIFIED decompile). So an undriven vehicle steps on its own turn in
+  the entity pass, among the missiles, movers and links by number, and
+  a driven one after the loop in pool order. A model linked to a parked
+  tank follows the tank's shove in the same frame: `probe_vehicle_ram`
+  with `+set probe_link 1` spawns a script_model 100 over the struck
+  tank (entity 437, the tank 187), links it, and logs its origin each
+  frame (`PROBE l`); on every frame the tank moves (first at 19800, the
+  same shoves as the capture above, speeds 21.10, 10.47, then 18.745,
+  7.69916) the model's x and y move with it in that frame (VERIFIED,
+  retail UO 1.51b, port 34421, 2026-10-20, fixture
+  `mp_kharkov-jeep-ram-link-uo.txt`). vcod ran the undriven thinks after
+  the pass, so the model trailed the tank by a frame (-724.0 against
+  retail's -722.98, 50 ms past the first hit); `run_entity` now runs
+  `think::run_undriven` on the vehicle's turn, and `vehicle_ram_ab`'s
+  `a_model_linked_to_a_shoved_tank_moves_on_the_tanks_frame` holds the
+  model to 0.02 on every frame from 200 ms before the first hit to a
+  second past the second. The seat ops (a dead rider's exit) and the
+  run-over knock (`VEH_PlayerCollision`) an undriven think queues still
+  apply in vcod after `G_VehicleClientThink`, with the driven ones';
+  retail's think calls `VEH_UnlinkPlayer` for a dead rider itself, first
+  thing after the driven check (VERIFIED decompile, 0x8c7cc). No capture
+  tells the two apart yet.
 - **Self-damage.** 0x827ab's tail runs two `G_Damage`s on the vehicle
   itself, inflictor and attacker the vehicle, dir the hit's normal, point
   the hit, dflags 0, `MOD_COLLISION` (0x18), hit location 2 (VERIFIED
@@ -1725,14 +1760,19 @@ face.
   the model's `+0x4c`/`+0x58`) added to the origin unrotated (VERIFIED
   disassembly; 0x805e387 is a slab test over `[0, fraction]`). The model
   bounds are read by 0x80c3ff0 off the DObj's first model's `+4` record,
-  `+0x4c..+0x60` (VERIFIED decompile); which of the file's bounds land
-  there is not read. vcod's body test takes the fixed box
+  `+0x4c..+0x60` (VERIFIED decompile), the descriptor's own `mins`/`maxs`
+  after its version, a cube about the origin (VERIFIED decompile of the
+  parser 0x80c3310 and the paks; `cod11-combat.md` 2.7, "The whole-model
+  bounds reject"). vcod's body test takes the fixed box
   (`combat::BODY_BROAD_MINS`), keeps the nearest bone any candidate
   scores, and passes the 1.1 combat gates unchanged; a seated passenger's
   feet under his origin now meet the profile's rays at -4 as retail's do
-  (VERIFIED, replay). The model reject is not ported: a ray that misses
-  the unrotated box yet meets the turned hull is rare at the stock
-  vehicles' proportions (INFERRED).
+  (VERIFIED, replay). vcod ports the model reject
+  (`PlacedModel::bounds`, the same for a script model); no UO
+  `mp_vehicle_*` or `mp_static_vehicle_*` model's collision leaves its cube
+  at rest (VERIFIED, the paks: the Panzer IV's reaches 172.3 of 201.7).
+  So on a hull it only saves work, a turned turret staying inside
+  (INFERRED).
 - **The silhouette.** Measured again with `probe_profile 1`, retail UO
   1.51b, 2026-10-15 (fixtures `*-silhouette-uo.txt`, recipe in their
   headers): every 2 s the probe traces a grid of level `bulletTrace`s
@@ -2257,8 +2297,7 @@ face.
   `vehicle_armor_ab` with the probe client's cmd stream), shell
   (`vehicle_shell_ab`) and section 12's push (`vehicle_ram_ab`).
 - **Not done.** The path methods; `closespeed` and
-  `harc` read 0; the model arm's whole-model bounds reject (0x80c6b36,
-  section 13).
+  `harc` read 0.
 - **The seat blend's ramp.** `G_PlayerVehiclePositionAndBlend` (0x9048f)
   clears the legs anim's tree with `trap_XAnimClearTreeGoalWeightsStrict`
   and blend time 0, then sets each goal weight at the rate `1 / (10 |weight

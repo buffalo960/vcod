@@ -17,6 +17,13 @@ pub(super) struct BotAdmin {
     pinned: std::collections::BTreeSet<usize>,
     /// `vc_bot_shoot` as last applied.
     pub(super) shoot: bool,
+    /// `vc_bot_skill` as last applied.
+    skill: u8,
+    /// Bots `addbot ... skill N` set a level for; the cvar leaves them be.
+    skills: BTreeMap<usize, u8>,
+    /// Levels for the bots an `addbot auto ... skill N` asked the next
+    /// pass to add.
+    pending_skills: std::collections::VecDeque<u8>,
     /// The name draw's own generator, so naming a bot never moves the
     /// server's `rand()` sequence the seeded tests replay.
     name_rng: u64,
@@ -40,6 +47,9 @@ impl BotAdmin {
             manual,
             pinned: Default::default(),
             shoot,
+            skill: crate::bots::DEFAULT_LEVEL,
+            skills: BTreeMap::new(),
+            pending_skills: Default::default(),
             name_rng: seed ^ 0x9e37_79b9_7f4a_7c15,
             seed_rng: seed_stream(seed),
             last_pass: None,
@@ -56,6 +66,19 @@ pub(super) fn seed_stream(seed: u64) -> u64 {
 }
 
 impl Server {
+    /// A bot's skill level, or `None` for no bot or values no level has
+    /// (a test's hand-set `Skill`).
+    pub fn bot_skill(&self, slot: usize) -> Option<u8> {
+        self.bots.get(&slot)?.skill.level_of()
+    }
+
+    /// Test-facing, for the bot harness: the team scores, [axis, allies].
+    pub fn team_scores(&mut self) -> [i32; 2] {
+        self.script
+            .as_mut()
+            .map_or([0, 0], |rt| rt.with_host(|h, _| h.team_scores))
+    }
+
     fn bot_settings(&self) -> Settings {
         let on = |name: &str, default: &str| {
             crate::game::builtins::cvar::atoi(&self.live_cvar(name, default)) != 0
@@ -65,6 +88,9 @@ impl Server {
             autobalance: on(cvar::AUTOBALANCE, "1"),
             shoot: on(cvar::SHOOT, "1"),
             names: on(cvar::NAMES, "1"),
+            skill: self
+                .live_int_cvar(cvar::SKILL)
+                .clamp(0, i32::from(crate::bots::MAX_LEVEL)) as u8,
         }
     }
 
@@ -158,6 +184,17 @@ impl Server {
             }
         }
         self.bot_admin
+            .skills
+            .retain(|slot, _| self.bots.contains_key(slot));
+        if s.skill != self.bot_admin.skill {
+            self.bot_admin.skill = s.skill;
+            for (slot, b) in self.bots.iter_mut() {
+                if !self.bot_admin.skills.contains_key(slot) {
+                    b.skill = crate::bots::Skill::level(s.skill);
+                }
+            }
+        }
+        self.bot_admin
             .pinned
             .retain(|slot| self.bots.contains_key(slot));
         self.bot_admin
@@ -180,7 +217,8 @@ impl Server {
         for action in botmgmt::plan(&roster, want, teamed, s.autobalance) {
             match action {
                 Action::Add(side) => {
-                    if self.add_bot(side, s).is_none() {
+                    let level = self.bot_admin.pending_skills.pop_front();
+                    if self.add_bot(side, s, level).is_none() {
                         break;
                     }
                 }
@@ -188,12 +226,14 @@ impl Server {
                 Action::Move(slot, side) => self.move_bot(slot, side),
             }
         }
+        self.bot_admin.pending_skills.clear();
     }
 
     /// Connects one bot in the first free public slot, asking for `side`
-    /// (allies on `Side::None`). Its two draws come off the bots' own seed
-    /// stream, never the server's `rand()`.
-    fn add_bot(&mut self, side: Side, s: Settings) -> Option<usize> {
+    /// (allies on `Side::None`), at skill `level` (pinned) or the cvar's.
+    /// Its two draws come off the bots' own seed stream, never the
+    /// server's `rand()`.
+    fn add_bot(&mut self, side: Side, s: Settings, level: Option<u8>) -> Option<usize> {
         let private = self.private_clients().max(0) as usize;
         let Some(slot) = self.free_slot_from(private) else {
             log::warn!("no free slot for a bot");
@@ -219,6 +259,10 @@ impl Server {
             format!("bot{}", slot + 1)
         };
         bot.name = name.clone();
+        bot.skill = crate::bots::Skill::level(level.unwrap_or(s.skill));
+        if let Some(l) = level {
+            self.bot_admin.skills.insert(slot, l);
+        }
         let userinfo = format!("\\name\\{name}\\snaps\\20\\rate\\25000\\cl_anonymous\\0");
         // A loopback address nothing listens on; every transmit to a bot
         // is skipped, the addr only has to be unique.
@@ -277,19 +321,31 @@ impl Server {
         }
     }
 
-    /// `addbot [allies|axis|auto] [count]`, the words in either order. A
-    /// named side pins the bots there; `auto` (the default) raises the
-    /// count the pass deals out by balance.
+    /// `addbot [allies|axis|auto] [count] [skill N]`, the words in any
+    /// order. A named side pins the bots there; `auto` (the default) raises
+    /// the count the pass deals out by balance. `skill N` sets the bots'
+    /// level, which `vc_bot_skill` then leaves alone.
     pub(super) fn add_bot_command(&mut self, args: &[String]) {
+        const USAGE: &str = "usage: addbot [allies|axis|auto] [count] [skill 0-3]\n";
         let mut side = Side::None;
         let mut count = 1usize;
-        for a in args {
+        let mut level = None;
+        let mut words = args.iter();
+        while let Some(a) = words.next() {
             if let Some(s) = Side::parse(a) {
                 side = s;
+            } else if a.eq_ignore_ascii_case("skill") {
+                match words.next().and_then(|n| n.parse::<u8>().ok()) {
+                    Some(n) => level = Some(n.min(crate::bots::MAX_LEVEL)),
+                    None => {
+                        self.print(USAGE);
+                        return;
+                    }
+                }
             } else if let Ok(n) = a.parse::<usize>() {
                 count = n;
             } else {
-                self.print("usage: addbot [allies|axis|auto] [count]\n");
+                self.print(USAGE);
                 return;
             }
         }
@@ -304,6 +360,11 @@ impl Server {
             return;
         }
         if side == Side::None {
+            if let Some(l) = level {
+                self.bot_admin
+                    .pending_skills
+                    .extend(std::iter::repeat_n(l, count));
+            }
             self.bot_admin.manual = self.bots.len().max(self.bot_admin.manual) + count;
             self.bot_admin.dirty = true;
             self.print(&format!("adding {count} bot(s)\n"));
@@ -312,7 +373,7 @@ impl Server {
         let s = self.bot_settings();
         let mut added = 0;
         for _ in 0..count {
-            let Some(slot) = self.add_bot(side, s) else {
+            let Some(slot) = self.add_bot(side, s, level) else {
                 break;
             };
             self.bot_admin.pinned.insert(slot);
@@ -376,7 +437,7 @@ impl Server {
     /// the server keeps and why.
     pub(super) fn list_bots(&mut self) {
         let roster = self.bot_roster();
-        let mut text = String::from("num team    score pinned name\n");
+        let mut text = String::from("num team    score pinned skill name\n");
         for m in roster.iter().filter(|m| m.bot) {
             let name = self.bots.get(&m.slot).map_or("", |b| b.name.as_str());
             let team = match m.side {
@@ -385,8 +446,9 @@ impl Server {
                 Side::None => "-",
             };
             let pinned = if m.pinned { "yes" } else { "no" };
+            let skill = self.bot_skill(m.slot).map_or("-".into(), |l| l.to_string());
             text.push_str(&format!(
-                "{:3} {team:<7} {:5} {pinned:<6} {name}\n",
+                "{:3} {team:<7} {:5} {pinned:<6} {skill:<5} {name}\n",
                 m.slot, m.score
             ));
         }
@@ -396,7 +458,7 @@ impl Server {
             .filter(|m| !m.bot && m.side != Side::None)
             .count();
         text.push_str(&format!(
-            "{} bot(s), {humans} human player(s); manual {}, {} {}, {} {}, {} {}\n",
+            "{} bot(s), {humans} human player(s); manual {}, {} {}, {} {}, {} {}, {} {}\n",
             roster.iter().filter(|m| m.bot).count(),
             self.bot_admin.manual,
             cvar::MIN_PLAYERS,
@@ -405,6 +467,8 @@ impl Server {
             u8::from(s.autobalance),
             cvar::SHOOT,
             u8::from(s.shoot),
+            cvar::SKILL,
+            s.skill,
         ));
         self.print(&text);
     }
@@ -432,8 +496,8 @@ mod tests {
         sv.test_seed_rng(5);
         let before = sv.rng;
         let s = sv.bot_settings();
-        let a = sv.add_bot(Side::Axis, s).expect("a slot");
-        let b = sv.add_bot(Side::Allies, s).expect("a slot");
+        let a = sv.add_bot(Side::Axis, s, None).expect("a slot");
+        let b = sv.add_bot(Side::Allies, s, None).expect("a slot");
         assert_eq!(sv.rng, before);
         assert_ne!(sv.bots[&a].rng, sv.bots[&b].rng);
     }

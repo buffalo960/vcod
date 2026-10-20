@@ -24,6 +24,11 @@ use vcod_gsc::{Atom, Cx, EntId, ErrorKind, Host, Target, Value};
 /// 0x75b48, 500.0).
 const CONCUSSIVE_LIFE_MS: i32 = 500;
 pub const ENTITYNUM_NONE: i32 = vcod_common::net::protocol::ENTITYNUM_NONE as i32;
+/// An attacker that is no client but not NULL either, whose `s.number`
+/// reads 0: a client slot `G_FreeEntity` memset, or `g_entities[1023]`,
+/// which nothing spawns. `Scr_AddEntity` pushes entity 0 for it
+/// (combat doc 13.7).
+pub const ZEROED_ENTITY: usize = usize::MAX - 1;
 /// `G_Trigger`'s queue: 0x100 entries of 12 bytes on all three patches
 /// (1.1d `level+0x1dec`, 1.5b `+0x2210`, UO `+0x2260`).
 pub const TRIGGER_QUEUE_LEN: usize = 0x100;
@@ -958,7 +963,7 @@ impl GameHost {
 
     /// `xmodel_bounds`' entry for a `.model` value, loading it on first use.
     /// `None` for no model, which is a `script_model` with no DObj yet.
-    fn model_bounds_of(&mut self, name: &str) -> Option<Bounds> {
+    pub fn model_bounds_of(&mut self, name: &str) -> Option<Bounds> {
         if name.is_empty() {
             return None;
         }
@@ -1348,6 +1353,9 @@ impl GameHost {
             let Some(tris) = self.xmodel_tris(&name) else {
                 continue;
             };
+            let bounds = self
+                .model_bounds_of(&name)
+                .map(|(lo, hi)| (glam::Vec3::from(lo), glam::Vec3::from(hi)));
             out.push(crate::game::combat::PlacedModel {
                 id,
                 origin: vec(self.get_field(cx, id, origin)),
@@ -1361,6 +1369,7 @@ impl GameHost {
                     .get(id)
                     .and_then(|e| e.link.as_ref())
                     .is_some_and(|l| l.contents & 0x200_0000 != 0),
+                bounds,
             });
         }
         out

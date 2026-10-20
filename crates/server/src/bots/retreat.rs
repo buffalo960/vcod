@@ -4,7 +4,7 @@
 //! on the threat, reloads there and holds a while facing the way the threat
 //! was, then fights or plays on. A bot with a duty no retreat should break
 //! (a carrier, a defuser, a body holding a zone) stays.
-//! docs/research/bot-objectives.md, "Retreat".
+//! docs/research/bot-combat.md 4.
 
 use super::*;
 use crate::nav::NavGraph;
@@ -201,7 +201,7 @@ impl Bot {
             return look;
         };
         // Backing off, the sights stay up on an enemy in sight; dropped, the
-        // retreating side scored fewer kills (bot-objectives.md 10).
+        // retreating side scored fewer kills (bot-combat.md 4).
         if view.enemy.is_none() {
             cmd.buttons &= !msg::BUTTON_ADS;
         }
