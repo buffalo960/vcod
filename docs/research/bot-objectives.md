@@ -1318,3 +1318,21 @@ one with 1 per seed (six shooting bots, `tdm` on mp_cassino, 3 min of game
 time; `MAP=`, `GAMETYPE=`, `BOTS=`, `TICKS=` change that) and prints the
 kills, those off a vehicle's guns (`*turret*`, `*gunner*`), the boardings,
 the bot-ticks seated and the units the driven vehicles went.
+
+| seed | vehicles | kills | off the guns | boardings | bot-ticks seated | units driven |
+|---|---|---|---|---|---|---|
+| 1 | off | 39 | 0 | 0 | 0 | 0 |
+| 1 | on | 24 | 10 | 12 | 7713 | 19070 |
+| 3 | off | 32 | 0 | 0 | 0 | 0 |
+| 3 | on | 25 | 11 | 10 | 6326 | 18315 |
+| 5 | off | 41 | 0 | 0 | 0 | 0 |
+| 5 | on | 30 | 12 | 10 | 7300 | 20947 |
+| 7 | off | 39 | 0 | 0 | 0 | 0 |
+| 7 | on | 30 | 12 | 6 | 6925 | 21216 |
+
+(2026-10-20.) With vehicles on, a third of the bots' time is spent seated
+(21600 bot-ticks a game) and the tanks' guns score about 40 per cent of
+the kills, but the game has about 30 per cent fewer kills: a tank's driver
+is out of every round's reach (coduo-vehicles.md 13) and a tank is slow
+to lay its gun. The `bas` gates on mp_foy (`tests/bots.rs`) end their
+rounds on their bases with 9 to 18 boardings.
