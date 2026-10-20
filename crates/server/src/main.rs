@@ -298,12 +298,12 @@ fn main() -> Result<()> {
     // a serverTime 5-10% slow against a probe's wall clock under load. The
     // frames owed run in one tick with one round of snapshots, as
     // `SV_Frame`'s loop does (map-cycle doc, 4.7).
-    let mut next = Instant::now();
+    let mut schedule = Schedule::new(Instant::now());
     let mut stats = TickStats::default();
     // When retail's event loop would be free to handle the next packet: the
     // end of the last one handled. Its frame runs in well under a
     // millisecond, so a tick does not hold it; an rcon `map_restart` does.
-    let mut free_at = next;
+    let mut free_at = schedule.next;
     let mut send = |to: std::net::SocketAddr, pkt: &[u8]| {
         if let Err(e) = sock.send_to(pkt, to) {
             log::debug!("send to {to}: {e}");
@@ -311,7 +311,7 @@ fn main() -> Result<()> {
     };
     loop {
         let now = Instant::now();
-        let late = now.saturating_duration_since(next);
+        let late = now.saturating_duration_since(schedule.next);
         for _ in 0..MAX_PACKETS_PER_FRAME {
             let Ok(queued) = packets.try_recv() else {
                 break;
@@ -326,15 +326,7 @@ fn main() -> Result<()> {
         // is owed by this tick's frames, as `Com_Frame` charges the time
         // `Cbuf_Execute` took to the next `SV_Frame` (0x806d003, 0x806d0e4).
         server.drain_console(now);
-        let behind = Instant::now().saturating_duration_since(next);
-        let frames = if behind > MAX_CATCH_UP {
-            // A stall past the catch-up bound (a debugger, a suspend) is
-            // dropped rather than replayed.
-            next = Instant::now();
-            1
-        } else {
-            1 + (behind.as_millis() / FRAME.as_millis()) as u32
-        };
+        let frames = schedule.owed(Instant::now());
         server.tick_frames(now, frames);
         if trace {
             stats.add(now.elapsed(), late);
@@ -353,7 +345,7 @@ fn main() -> Result<()> {
         if server.quit_requested() {
             return Ok(());
         }
-        next += FRAME * frames;
+        schedule.ran(frames);
         if trace && stats.ticks == 20 {
             stats.log_and_reset();
         }
@@ -363,12 +355,44 @@ fn main() -> Result<()> {
         // a client's reply to it can land before the next frame. Answered
         // only at the tick, a joining client's first message was a frame's
         // bare one rather than its gamestate.
-        while let Some(left) = next.checked_duration_since(Instant::now()) {
+        while let Some(left) = schedule.next.checked_duration_since(Instant::now()) {
             let Ok(queued) = packets.recv_timeout(left) else {
                 break;
             };
             handle_queued(&mut server, queued, Instant::now(), &mut free_at, &mut send);
         }
+    }
+}
+
+/// The loop's fixed frame grid: slot `n` starts at `start + n * FRAME`
+/// whatever each tick took or each wait overslept, so the snapshot cadence
+/// carries only the wake-up's own lateness and never accumulates it
+/// (protocol-1.1.md, "The server's frame cadence").
+struct Schedule {
+    /// When the next frame's slot starts.
+    next: Instant,
+}
+
+impl Schedule {
+    fn new(start: Instant) -> Self {
+        Self { next: start }
+    }
+
+    /// The frames owed at `now`: the slot due plus every whole slot
+    /// already past. A stall past `MAX_CATCH_UP` (a debugger, a suspend)
+    /// is dropped rather than replayed, and the grid restarts at `now`.
+    fn owed(&mut self, now: Instant) -> u32 {
+        let behind = now.saturating_duration_since(self.next);
+        if behind > MAX_CATCH_UP {
+            self.next = now;
+            return 1;
+        }
+        1 + (behind.as_millis() / FRAME.as_millis()) as u32
+    }
+
+    /// Moves the grid past the frames a tick ran.
+    fn ran(&mut self, frames: u32) {
+        self.next += FRAME * frames;
     }
 }
 
@@ -462,6 +486,57 @@ impl TickStats {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
+
+    /// The loop on a simulated clock: each wake overshoots its slot by up
+    /// to 4 ms and each tick takes up to 8 ms. Every snapshot goes out within
+    /// that much of its grid slot and 2000 ticks run exactly 2000 frames, so
+    /// neither the wake nor the tick's length drifts the cadence.
+    #[test]
+    fn the_frame_grid_never_drifts() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        let mut rng = 0x2545_f491_u32;
+        let mut draw = |max_us: u32| {
+            rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            Duration::from_micros(u64::from((rng >> 8) % max_us))
+        };
+        let mut now = start;
+        let mut ran = 0;
+        let mut sent = Vec::new();
+        for _ in 0..2000 {
+            now = now.max(schedule.next) + draw(4000);
+            let frames = schedule.owed(now);
+            assert_eq!(frames, 1);
+            ran += frames;
+            now += draw(8000);
+            sent.push(now);
+            schedule.ran(frames);
+        }
+        assert_eq!(schedule.next, start + FRAME * ran);
+        for (n, at) in sent.iter().enumerate() {
+            let off = at.duration_since(start + FRAME * n as u32);
+            assert!(off < Duration::from_millis(12), "frame {n} {off:?} late");
+        }
+    }
+
+    /// A tick that overran its slot is caught up in the next one, back on
+    /// the grid; a stall past the catch-up bound restarts the grid instead.
+    #[test]
+    fn an_overrun_is_caught_up_on_the_grid() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert_eq!(schedule.owed(start), 1);
+        schedule.ran(1);
+        // The first tick ran 120 ms: slots 1 and 2 are both owed at once.
+        let now = start + Duration::from_millis(120);
+        assert_eq!(schedule.owed(now), 2);
+        schedule.ran(2);
+        assert_eq!(schedule.next, start + FRAME * 3);
+        let stalled = start + Duration::from_secs(10);
+        assert_eq!(schedule.owed(stalled), 1);
+        schedule.ran(1);
+        assert_eq!(schedule.next, stalled + FRAME);
+    }
 
     /// A packet handled at a tick's start is answered there, not after the
     /// tick that follows: an rcon or `getinfo` reply goes out with no frame
