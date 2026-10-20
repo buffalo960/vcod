@@ -209,7 +209,15 @@ use the same lookup).
 ### 3.2 The chat (0x3002c920, drawn by 0x300150b0)
 
 VERIFIED, the cvars: `cg_chatHeight` default `8` (vmCvar at 0x301dc080),
-`cg_chatTime` `12000` (0x30297ca0). INFERRED, the ring: at most
+`cg_chatTime` `12000` (0x30297ca0), both flags 1 (archived) in the
+cgame's cvar table (rows 0x30074ed4 and 0x30074ec4; 1.5 0x30076e94 and
+0x30076e84, UO 0x30085734 and 0x30085724, same defaults and flags).
+VERIFIED: `cg_teamChatsOnly` is the exe's (`CL_Init`, push at
+CoDMP.exe 0x412318, `"0"` flags 1) and the cgame's (row 0x30074f94,
+vmCvar 0x30298240, `"0"` flags 1). VERIFIED, 0x3002c920's head: a
+`cg_chatHeight` integer below 1, or a `cg_chatTime` one below 1, zeroes
+the ring's head and tail and adds nothing; the draw (0x300150b0) returns
+at once on the height below 1. INFERRED, the ring: at most
 `min(cg_chatHeight, 8)` lines of 0x10f bytes with an arrival time each; a
 line wraps once it holds 90 characters (`> 0x59`, colour codes not
 counted), back at its last space, and the text after that space is read
@@ -222,8 +230,15 @@ VERIFIED, 1.5's `CG_AddToTeamChat` (cgame 0x3002de50) has the same
 does UO's (0x30039390, its ring at 0x3044ade8). VERIFIED, UO's
 continuation line opens with two codes: `^` and the first colour the
 line read, then `^` and the last one (the first starts as byte 0xff,
-which the renderer does not read as a code). vcod opens it with the last
-code only, which draws the same unless no code came before the wrap.
+which the renderer does not read as a code). VERIFIED: that first code
+is the message's, set on the first code read and never reset at a wrap;
+1.5's continuation opens with the last code only, as 1.1's. vcod:
+`hud::chat::wrap` under `Rules::uo`.
+
+vcod reads `cg_chatHeight`, `cg_chatTime` and `cg_teamChatsOnly` off its
+console cvars each frame (`hud::chat::Rules`, `hud::chat::takes`). With a
+height lowered under the lines held, it draws the newest ones only;
+retail's ring then indexes modulo the new height (not modelled).
 
 INFERRED, the draw, newest first, row `k` = -1, -2, ...:
 

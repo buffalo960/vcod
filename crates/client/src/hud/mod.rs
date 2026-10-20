@@ -275,6 +275,12 @@ impl Hud {
         self.bold_messages.width = messages::line_width(bold, vid_width);
     }
 
+    /// `cg_chatHeight` and `cg_chatTime` as this frame reads them, and
+    /// whether the chat wraps as UO's does ([`chat::Rules`]).
+    pub fn set_chat_rules(&mut self, rules: chat::Rules) {
+        self.chat.set_rules(rules);
+    }
+
     /// A weapon-select bind ran: the weapon name shows again.
     pub fn weapon_selected(&mut self) {
         self.player.weapon_name.select();

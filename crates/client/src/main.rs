@@ -2577,6 +2577,7 @@ impl App {
     /// game ended. The map set is the `menu` one too while no game is up.
     fn enter_menu(&mut self, error: Option<&str>) {
         self.audio.on_gamestate("menu");
+        hud::font::set_front_end_colours(&self.fs);
         let mut out = Vec::new();
         match error {
             Some(e) => self.ui.show_error(e, &self.shell, &mut out),
@@ -4225,6 +4226,11 @@ impl ApplicationHandler for App {
                         };
                         let mut gamestate_ready = false;
                         for ev in &events {
+                            if let net::NetEvent::Chat { team, .. } = ev
+                                && !hud::chat::takes(*team, self.shell.cvar("cg_teamChatsOnly"))
+                            {
+                                continue;
+                            }
                             if let Some(hud) = &mut self.hud {
                                 let p = net.protocol();
                                 let bound =
@@ -6272,6 +6278,10 @@ impl ApplicationHandler for App {
                                             self.shell.cvar_f32("cg_gameBoldMessageWidth") as i32,
                                             screen_w as u32,
                                         );
+                                        hud.set_chat_rules(hud::chat::Rules::read(
+                                            |c| self.shell.cvar(c),
+                                            p.version == net::protocol::PROTOCOL_V22.version,
+                                        ));
                                         hud_quads = hud.build(&hud_frame);
                                         self.hud_ms = hud_t0.elapsed().as_secs_f32() * 1000.0;
                                         // The vote draw's `player_talk` on a

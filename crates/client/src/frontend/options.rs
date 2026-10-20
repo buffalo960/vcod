@@ -680,6 +680,7 @@ mod tests {
     fn only_typed_text_and_backspace_repeat_in_an_edit_field() {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
+        shell.force("name", "vcod");
         let mut out = Vec::new();
         ui.open_main(&Shell::new(), &mut out);
         click(&mut ui, "main", "@MENU_MULTIPLAYER_OPTIONS", &mut shell);
@@ -704,6 +705,7 @@ mod tests {
     fn the_name_field_edits_ui_name_and_closing_sets_name() {
         let Some((mut ui, loc)) = ui() else { return };
         let mut shell = Shell::new();
+        shell.force("name", "vcod");
         let mut out = Vec::new();
         ui.open_main(&Shell::new(), &mut out);
         click(&mut ui, "main", "@MENU_MULTIPLAYER_OPTIONS", &mut shell);
