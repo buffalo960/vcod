@@ -148,6 +148,9 @@ address given and the flags word: `sensitivity` `"5"` (0x5686b0) flags 1,
 `m_filter` `"0"` flags 1, the userinfo `name` `"Unknown Soldier"` flags 3,
 `rate` (0x5667b4) `"5000"` (0x5667bc) flags 3 and `snaps` `"20"`
 (0x5667b0) flags 3.
+VERIFIED: the `name` row's push is at 0x41236b, and 1.5's and UO's
+`CL_Init` register `name` (1.5 0x5a2e60, UO 0x59381c) `"Unknown Soldier"`
+flags 3 the same. vcod's shell defaults `name` to it.
 
 VERIFIED: the flag bits are Q3's. `Cvar_Set2` (0x439650) prints `%s is read
 only.` on 0x40, `%s is write protected.` on 0x10 and `%s is cheat
