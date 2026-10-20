@@ -19,6 +19,9 @@ pub struct Bans {
     /// Whether retail's file would exist: it was read, or a ban wrote it.
     /// `unbanUser` prints nothing without one.
     file: bool,
+    /// The entry read off a last line with no line end, which retail's
+    /// `unbanUser` never matches; a rewrite keeps it last and unended.
+    unended: Option<Ipv4Addr>,
 }
 
 impl Bans {
@@ -31,18 +34,21 @@ impl Bans {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
             Err(e) => return Err(e),
         };
-        let entries = text
-            .lines()
-            .filter_map(|l| {
-                let l = l.trim();
-                let (ip, name) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
-                Some((ip.parse().ok()?, name.trim().to_string()))
-            })
-            .collect();
+        let parse = |l: &str| -> Option<(Ipv4Addr, String)> {
+            let l = l.trim();
+            let (ip, name) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
+            Some((ip.parse().ok()?, name.trim().to_string()))
+        };
+        let entries: BTreeMap<_, _> = text.lines().filter_map(parse).collect();
+        let unended = match text.ends_with(['\n', '\r']) {
+            true => None,
+            false => text.lines().last().and_then(parse).map(|(ip, _)| ip),
+        };
         Ok(Bans {
             entries,
             path: Some(path),
             file,
+            unended,
         })
     }
 
@@ -58,18 +64,24 @@ impl Bans {
         }
         self.entries.insert(ip, name.to_string());
         self.file = true;
+        // Retail appends after the unended line, running the two together;
+        // vcod ends it so the new ban holds.
+        self.unended = None;
         self.write();
     }
 
     /// 1.5's `unbanUser` past its usage check (cod_lnxded 1.5b 0x808921d):
-    /// every entry whose name is `name` ignoring case goes, and the count
-    /// gone comes back. `None` stands for retail's missing `ban.txt`.
+    /// every entry whose name is `name` ignoring case goes, but for one on
+    /// a last line with no line end, and the count gone comes back. `None`
+    /// stands for retail's missing `ban.txt`.
     pub fn remove_named(&mut self, name: &str) -> Option<usize> {
         if !self.file {
             return None;
         }
         let before = self.entries.len();
-        self.entries.retain(|_, n| !n.eq_ignore_ascii_case(name));
+        let unended = self.unended;
+        self.entries
+            .retain(|ip, n| Some(*ip) == unended || !n.eq_ignore_ascii_case(name));
         self.write();
         Some(before - self.entries.len())
     }
@@ -78,14 +90,19 @@ impl Bans {
         let Some(path) = &self.path else {
             return;
         };
-        let text: String = self
+        let line = |(ip, name): (&Ipv4Addr, &String)| match name.as_str() {
+            "" => format!("{ip}"),
+            _ => format!("{ip} {name}"),
+        };
+        let mut text: String = self
             .entries
             .iter()
-            .map(|(ip, name)| match name.as_str() {
-                "" => format!("{ip}\n"),
-                _ => format!("{ip} {name}\n"),
-            })
+            .filter(|(ip, _)| Some(**ip) != self.unended)
+            .map(|e| line(e) + "\n")
             .collect();
+        if let Some(e) = self.unended.and_then(|ip| self.entries.get_key_value(&ip)) {
+            text += &line(e);
+        }
         if let Err(e) = std::fs::write(path, text) {
             log::error!("writing {}: {e}", path.display());
         }
@@ -117,6 +134,30 @@ mod tests {
         assert_eq!(again.remove_named("dup"), Some(2));
         assert_eq!(again.remove_named("dup"), Some(0));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "10.1.2.3\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Retail 1.5b's `unbanUser` missed `baz` on a last line with no line
+    /// end (handshake doc, "1.5 permanent bans"), and left that line as it
+    /// was.
+    #[test]
+    fn unban_misses_a_last_line_with_no_line_end() {
+        let dir = std::env::temp_dir().join(format!("vcod-bans-unended-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ban.txt");
+        std::fs::write(&path, "10.0.0.1 Dup\n10.0.0.2 dup\r\n10.0.0.4 Baz").unwrap();
+        let mut bans = Bans::load(path.clone()).unwrap();
+        assert_eq!(bans.remove_named("baz"), Some(0));
+        assert_eq!(bans.remove_named("dup"), Some(2));
+        assert!(bans.contains(Ipv4Addr::new(10, 0, 0, 4)));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "10.0.0.4 Baz");
+        // A ban ends the line; from then on the name is found.
+        bans.add(Ipv4Addr::new(10, 0, 0, 5), "New");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "10.0.0.4 Baz\n10.0.0.5 New\n"
+        );
+        assert_eq!(bans.remove_named("baz"), Some(1));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -94,8 +94,10 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
 - `--gametype-script <file>` runs a gametype from disk instead of the paks.
 - `--test-entities <n>` adds invisible entities that move on the wire, to
   exercise the entity encoding.
-- `--trace` logs every snapshot per client, and once a second the slowest
-  tick and how far the loop fell behind its 20 Hz schedule.
+- `--trace` logs every snapshot per client (its `wall` gap since the last
+  tick beside the `frames` that tick ran), and once 20 frames have run the
+  loop's ticks and frames, the slowest tick and how far the loop fell
+  behind its 20 Hz schedule.
 
 ### Bots
 
