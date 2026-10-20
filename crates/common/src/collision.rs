@@ -3918,8 +3918,8 @@ mod tests {
         assert_eq!(world.hit_contents(&inside), 0);
     }
 
-    /// A 0x2080 kerb brush stops a shot, a blast probe and a falling item,
-    /// and a player walks through it.
+    /// A 0x2080 kerb brush stops a shot, a blast probe, a missile and a
+    /// falling item, and a player walks through it.
     #[test]
     fn a_kerb_brush_clips_every_mask_but_the_players() {
         let kerb = 0x2080;
@@ -3937,8 +3937,8 @@ mod tests {
         assert_eq!(world.point_contents(Vec3::new(0.0, 0.0, -8.0)), kerb);
 
         let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+        assert!(world.missile_trace(above, below).fraction < 1.0);
         assert_eq!(world.box_trace(above, below, mins, maxs).fraction, 1.0);
-        assert_eq!(world.missile_trace(above, below).fraction, 1.0);
     }
 
     /// A prop's triangles stop a shot through them, front face only,
