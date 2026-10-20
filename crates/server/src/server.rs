@@ -4388,6 +4388,10 @@ impl Server {
         let bel = self.bot_bel();
         let uo = self.bot_uo();
         let (launchers, guns) = self.bot_launchers(uo.as_ref());
+        let packs = self
+            .script
+            .as_mut()
+            .map_or(Vec::new(), |rt| rt.health_items());
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -4407,6 +4411,7 @@ impl Server {
                     enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
                 view.noise = crate::bots::loudest(&noises, *slot, view.origin);
+                view.survive.heal = crate::bots::retreat::nearest_pack(&view, &packs);
                 let held = self.bot_sidesteps.remove(slot);
                 if let Some(e) = enemy {
                     (view.friend_in_line, view.sidestep) =
@@ -4563,6 +4568,12 @@ impl Server {
         };
         let (climbers, standing) = (bodies(true), bodies(false));
         for (slot, mut view) in views {
+            if let Some((threat, held)) = self.bots.get(&slot).and_then(|b| b.cover_query())
+                && let (Some(g), Some(w)) = (self.nav.as_ref(), self.world.as_ref())
+            {
+                view.survive.cover =
+                    crate::bots::retreat::cover_spot(g, &w.collision, view.origin, threat, held);
+            }
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
             };
@@ -5273,6 +5284,17 @@ impl Server {
                 .level_cvars
                 .as_ref()
                 .is_some_and(|(g, _)| g == "sd" || g == "re"),
+            survive: crate::bots::retreat::Vitals {
+                health: sim.health,
+                max_health: sim.max_health,
+                clip_size: def.map_or(0, |d| d.clip_size.min(i16::MAX as u32) as i16),
+                enemy_eye: enemy.and_then(|e| {
+                    let s = self.clients.get(e.slot)?.as_ref()?.sim.as_ref()?;
+                    Some(s.ps.view().eye.into())
+                }),
+                heal: None,
+                cover: None,
+            },
         })
     }
 
@@ -5705,7 +5727,15 @@ impl Server {
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
             deployed: sim.ps.deployed(),
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
+            retreating: self.bots.get(&slot).map_or(0, |b| b.retreating()),
         })
+    }
+
+    /// Test-facing: turns a bot's retreat on or off (`Bot::set_retreat`).
+    pub fn test_bot_retreat(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.set_retreat(on);
+        }
     }
 
     /// Test-facing: pins a bot's goal to a point (`Bot::force_goal`).

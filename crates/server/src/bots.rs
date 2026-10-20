@@ -11,6 +11,8 @@
 use crate::server::FRAME_MS;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 
+pub(crate) mod retreat;
+
 /// Hip-shot range; beyond it a tap is noise anyway.
 pub(crate) const SHOOT_RANGE: f32 = 1500.0;
 /// A frag goes at a target this close and no further, and no nearer than
@@ -307,6 +309,8 @@ pub struct BotView {
     /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
     /// on rather than `kill` itself.
     pub one_life: bool,
+    /// Health, clip size and cover, for the retreat (`bots/retreat.rs`).
+    pub survive: retreat::Vitals,
 }
 
 /// Behind Enemy Lines as the bot plays it (docs/research/bot-objectives.md,
@@ -668,6 +672,8 @@ pub struct BotBody {
     /// Tracking an enemy it saw within the last second: a scoped or
     /// sighted shot at range stands still on purpose.
     pub engaged: bool,
+    /// Breaking contact (`bots/retreat.rs`): 1 hurt, 2 dry, 0 not.
+    pub retreating: u8,
 }
 
 pub struct Bot {
@@ -821,6 +827,11 @@ pub struct Bot {
     pub(crate) last_seen_seq: i32,
     /// The client-command sequence the bot's own replies use.
     pub(crate) next_command_seq: i32,
+    /// The retreat (`bots/retreat.rs`): whether this bot retreats at all,
+    /// the one under way, and the health the last hurt one started at.
+    retreat_on: bool,
+    retreat: Option<retreat::Retreat>,
+    hurt_at: i32,
 }
 
 /// The enemy the bot is engaging and how settled its aim on it is.
@@ -1109,6 +1120,9 @@ impl Bot {
             next_command_seq: 1,
             team: team.to_string(),
             rng: seed | 1,
+            retreat_on: true,
+            retreat: None,
+            hurt_at: i32::MAX,
         }
     }
 
@@ -1242,8 +1256,14 @@ impl Bot {
         if let Some(c) = Self::blast_near(view) {
             return Goal::Away(c);
         }
+        if let Some(g) = self.retreat_goal(view) {
+            return g;
+        }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
+        }
+        if let Some(g) = self.heal_goal(view) {
+            return g;
         }
         if let Some(bel) = view.bel.as_ref() {
             return self.bel_goal(view, bel);
@@ -2140,6 +2160,8 @@ impl Bot {
         }
         self.switch_to = None;
         self.calm_ticks = 0;
+        self.retreat = None;
+        self.hurt_at = i32::MAX;
     }
 
     /// The remembered spot not yet reached, else this tick's noise. The same
@@ -2375,7 +2397,7 @@ impl Bot {
         self.lmg_rest = self.lmg_rest.saturating_sub(1);
         self.lmg_linger = self.lmg_linger.saturating_sub(1);
         // A bipod down holds the body; it means to stay put.
-        let standing = self.objective_standing(view) || view.deployed;
+        let standing = self.objective_standing(view) || view.deployed || self.holding_cover(view);
         self.stall_ticks += 1;
         self.stall_reach = self
             .stall_reach
@@ -2639,6 +2661,7 @@ impl Bot {
         // and a defender fighting in the charge room both stood in the
         // blast to the end (seed 5).
         let clearing = Self::blast_near(view).is_some();
+        let path = ((cmd.forward, cmd.right, cmd.up, cmd.wbuttons), yaw);
         if self.shoot {
             self.track(view.enemy);
             let keys = (cmd.forward, cmd.right, cmd.up, cmd.wbuttons);
@@ -2660,6 +2683,7 @@ impl Bot {
                 [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
             }
         }
+        [pitch, yaw] = self.retreat_keys(view, &mut cmd, path.0, path.1, [pitch, yaw]);
         self.flee(view, &mut cmd, yaw);
         // A switch ends when it lands, or when the weapon is gone (dropped,
         // or swapped at a pickup) and the byte would read as a holster for
@@ -2687,6 +2711,7 @@ impl Bot {
         {
             cmd.wbuttons |= msg::WBUTTON_RELOAD;
         }
+        self.retreat_update(view);
         cmd.angles = cmd_angles(view, [pitch, yaw]);
         cmd
     }
@@ -3674,7 +3699,7 @@ mod tests {
 
     /// A shooting bot with no reaction delay, already looking at an enemy
     /// 100 units down +x.
-    fn engaged(seed: u64) -> (Bot, BotView) {
+    pub(super) fn engaged(seed: u64) -> (Bot, BotView) {
         let mut bot = Bot::new("allies", true, seed);
         bot.skill.reaction_min = 0;
         bot.skill.reaction_spread = 0;
@@ -3688,7 +3713,7 @@ mod tests {
         (bot, v)
     }
 
-    fn view() -> BotView {
+    pub(super) fn view() -> BotView {
         BotView {
             origin: [0.0, 0.0, 64.0],
             eye_height: vcod_common::pmove::VIEW_STAND,
@@ -3758,6 +3783,7 @@ mod tests {
             bel: None,
             uo: None,
             one_life: false,
+            survive: Default::default(),
         }
     }
 
@@ -4013,7 +4039,7 @@ mod tests {
 
     /// A view on an `re` level: one objective lying 30 units ahead (its
     /// pickup trigger's middle on the floor), its goal far off.
-    fn re_view(role: ObjRole) -> BotView {
+    pub(super) fn re_view(role: ObjRole) -> BotView {
         let mut v = view();
         v.view = [0.0, 0.0, 0.0];
         v.re = Some(ReView {

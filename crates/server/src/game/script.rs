@@ -1433,6 +1433,30 @@ impl ScriptRuntime {
             .collect()
     }
 
+    /// Every health item lying in the world to be picked up (`item_health*`,
+    /// a death's `dropHealth`), not taken: where a hurt bot heals
+    /// (`bots/retreat.rs`).
+    pub fn health_items(&mut self) -> Vec<[f32; 3]> {
+        let defs = self.host.defs;
+        let health: Vec<usize> = defs
+            .static_items()
+            .filter(|(_, n, _)| n.starts_with("item_health"))
+            .map(|(i, ..)| i)
+            .collect();
+        let ids: Vec<EntId> = self
+            .host
+            .ents
+            .iter_inuse()
+            .filter_map(|(id, e)| {
+                let item = e.item?;
+                (!item.taken && health.contains(&(item.index as usize))).then_some(id)
+            })
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.entity_origin_of(id))
+            .collect()
+    }
+
     /// One client's health as the script left it, read every frame the way
     /// `client_weapons` is.
     /// `ClientEndFrame`'s `takedamage` write.
