@@ -486,7 +486,9 @@ impl ScriptRuntime {
     /// unless the hit names one, which a blast does: there the missile that
     /// went off is handed over, still alive for as long as its explode event
     /// rides the wire. A hit on a slot with no entity, or from one, is
-    /// dropped: there is nobody to call and nobody to name. So is one on a
+    /// dropped: there is nobody to call and nobody to name. An attacker of
+    /// `ENTITYNUM_NONE` with an inflictor is a missile's whose thrower left,
+    /// delivered with an undefined attacker. So is one on a
     /// victim without `takedamage`, `G_Damage`'s first test (4.2 step 1),
     /// and one a vehicle seat shuts out ([`crate::game::vehicle::Vehicles::occupant_damage`]).
     pub fn deliver_hits(&mut self, hits: Vec<crate::game::combat::Hit>) {
@@ -494,13 +496,18 @@ impl ScriptRuntime {
             if !self.client_vitals(hit.victim).takedamage {
                 continue;
             }
-            let (Some(victim), Some(attacker)) = (
-                self.client_entity(hit.victim),
-                self.client_entity(hit.attacker),
-            ) else {
+            let Some(victim) = self.client_entity(hit.victim) else {
                 continue;
             };
-            let inflictor = hit.inflictor.unwrap_or(attacker);
+            // A missile whose thrower left hands `G_Damage` a NULL attacker,
+            // which `Scr_PlayerDamage` passes as undefined (combat doc 13.7).
+            let (attacker, inflictor) = match (self.client_entity(hit.attacker), hit.inflictor) {
+                (Some(a), i) => (Value::Entity(a), i.unwrap_or(a)),
+                (None, Some(i)) if hit.attacker == crate::game::host::ENTITYNUM_NONE as usize => {
+                    (Value::Undefined, i)
+                }
+                _ => continue,
+            };
             let Some(damage) = self.host.vehicles.occupant_damage(
                 hit.victim,
                 Some(inflictor),
@@ -519,7 +526,7 @@ impl ScriptRuntime {
             });
             let args = vec![
                 Value::Entity(inflictor),
-                Value::Entity(attacker),
+                attacker,
                 Value::Int(hit.damage),
                 Value::Int(hit.dflags),
                 Value::String(mod_),
@@ -2531,9 +2538,10 @@ impl ScriptRuntime {
                         rec.busy = 0;
                     }
                 }
-                // `G_FreeEntity`'s unlink and ground sweep
+                // `G_FreeEntity`'s unlink, owner and ground sweeps
                 // (`ClientDisconnect` 0x42bfc).
                 self.host.area.unlink(slot as u32);
+                self.host.missiles.free_owner_refs(slot);
                 self.host.free_ground_refs(slot as u32);
                 self.host.ents.free_client(slot);
                 // `CalculateRanks` closes it on all three (1.1d 0x42c1f).

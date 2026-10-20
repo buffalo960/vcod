@@ -960,9 +960,8 @@ offsets one word down: the `+0x1a0` word is `parent` (cod11-combat.md
 
 vcod: a gunner's disconnect drops his turret's owner and busy byte
 (`ScriptRuntime::client_disconnect`), and `GameHost::free_ground_refs` runs the
-`groundEntityNum` part on every protocol. A missile's `r.ownerNum` and
-`parent` are not cleared when its thrower leaves: `Missile::owner` keeps
-the slot.
+`groundEntityNum` part on every protocol, and `Missiles::free_owner_refs`
+the missile `r.ownerNum` and `parent` part (cod11-combat.md 13.7).
 
 VERIFIED: `StopFollowing` (0x46b8c) clears `eFlags` 0xC000, `viewlocked`,
 `viewlocked_entNum` and `gunfx` on a spectator's playerstate. INFERRED: a
