@@ -2251,6 +2251,14 @@ face.
   drive on ours: past the links' first frame the 2170 samples sit 0.008
   units off retail's on average and none past 0.55, the hands at the
   steer's swings, 8 samples past 0.3 (VERIFIED, replay, 2026-10-20).
+  The worst (25100 to 25300) fall in the blend after the legs anim
+  changes from `vehicleJeepDriverDriving` to `vehicleJeepDriverIdle`
+  (25050), the old node's `drivingA` and `turnR` fading under the new
+  node's `idle` and `turnR` ramp. Each seat leaf's own node time
+  (`cod11-combat.md` 3.1, "The clip's float time") moves none of them:
+  `drivingA`'s leaf was allocated when its node started, and the other
+  three are single-frame or clamp on their first step (VERIFIED, replay,
+  2026-10-20). What is left is the weights.
   Without the ramp the frames after each steer change read up to 0.9
   off where they read 0.01 to 0.55 with it (VERIFIED,
   replay).

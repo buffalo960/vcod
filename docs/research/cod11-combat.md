@@ -2456,9 +2456,48 @@ vcod: `animclock::Play` keeps the node time beside the seconds, stepped
 in whole 50 ms frames with the sum in `f64` and stored as `f32`
 (`Play::step`), `Layer::time` hands it out, and the server's pose on
 1.5 and UO samples at `time * numframes` (`PoseInputs::node_time`).
-A UO rider's seat leaves and a clip under a node with children (whose
-frequency the clock does not hold) stay on the seconds, and 1.1d keeps
-them throughout: its pose is the glam one, not the stored build.
+A clip under a node with children (whose frequency the clock does not
+hold) stays on the seconds, and 1.1d keeps them throughout: its pose is
+the glam one, not the stored build.
+
+A leaf under a plain node keeps its own time. VERIFIED, UO
+`coduo_lnxded` 0x80bd884: a node with children whose flags (`+0xc`) carry
+neither sync bit (`& 3`, 1 `loopsync`, 2 `nonloopsync`) calls itself on
+each child with `dtime * rate (+0x40)`, and only a node whose weight is
+not 0 steps or descends; a sync node steps a time of its own at the
+weighted mean of its children's `frequency * rate` (0x80bb732, children
+with weight and a frequency only) and copies it into every descendant
+(0x80bd7e4). VERIFIED, 0x80c05a2 (the goal-weight setter): a node with
+no info is allocated (0x80bf9be) and its time block zeroed (0x38 bytes
+from `+0xc`) when given a goal weight; VERIFIED, 0x80bcc1e: one whose
+weight and goal both read 0 at the frame's weight step is freed, so set
+again it starts at time 0. VERIFIED, game.mp.uo `G_XAnimUpdate`
+(0x69983): every entity's weight step (`trap_DObjInitServerTime`) runs
+before any time step (`G_XAnimUpdateEnt`), so a time step reads the
+frame's stepped weight. VERIFIED, game.mp.uo disassembly: the seat
+blend `G_PlayerVehiclePositionAndBlend` sets its two leaves and its group
+at rate 1.0 (`movl $0x3f800000,0x10(%esp)` at 0x908ef, 0x909c6 and
+0x90a41, ahead of `trap_XAnimSetGoalWeight`), and the gunner placement
+(0x6ac06) sets every goal weight at rate 1.0; a seat's legs anims carry
+no `moveSpeed`, so their own rate is 1 (INFERRED, the clock's 0x2ada5
+arm). The UO seats' groups (`vehicleJeepDriverIdle` and kin) are
+`: complete` with no sync; the MG42 groups, the tank gunner's seat
+included, are sync (VERIFIED, `animtrees/multiplayer.atr` in
+`pakuo00.pk3`).
+
+vcod: `PlayerAnims::leaf_motion` holds the frequency of each leaf under
+a plain `complete` group, `playerpose::SeatRamp` starts a
+`animclock::LeafTime` at 0 for a leaf set from no weight and keeps it
+while the leaf keeps weight, and the server's 1.5 and UO pose samples a
+seat leaf at it (`PoseInputs::leaf_times`). A sync group's leaves (an
+MG42 gunner's, the tank gunner's seat) stay on the seconds. VERIFIED,
+vcod measurement (2026-10-20): `vehicle_ab`'s jeep driver bones move by
+at most 0.01 on 8 of 2170 samples, and no UO vehicle or turret gate
+changes: every stock seat leaf is a single frame (`c_mp_jeep_driver_turnL`,
+`_turnR`, `c_mp_jeep_gunner_idle`, the MG42 aim leaves), a two-frame clip
+that clamps on its first step (`c_mp_jeep_driver_idle`) or
+`c_mp_jeep_driver_drivingA` (30 frames, looping), whose node the legs
+clock already started at 0 when the leaf was allocated.
 VERIFIED, vcod measurement: `pronepose_ab`'s 1.5b mp_brecourt rays, the
 origin and the eight marks are retail's bits (the 3-step `RAY_STEPS_15`
 is gone); the 1.5b mp_carentan prone rest stays one step off, as it was

@@ -125,6 +125,38 @@ impl Play {
     }
 }
 
+/// A leaf's own node time under a plain (not sync) group, as a UO seat's
+/// leaves keep it: 0 when the leaf is first given weight, then stepped by
+/// [`Play::step`] at rate 1 each frame (the seat's legs anims carry no
+/// `moveSpeed`, and the groups and leaves are set at rate 1), a nested
+/// node passing its children `dtime * rate` (cod11-combat.md 3.1, "The
+/// clip's float time").
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LeafTime(Play);
+
+impl LeafTime {
+    /// A leaf allocated at level time `start_ms`.
+    pub fn new(start_ms: i32, frequency: f32, looping: bool) -> LeafTime {
+        LeafTime(Play {
+            rate: 1.0,
+            time_ms: start_ms,
+            frequency,
+            looping,
+            ..Play::default()
+        })
+    }
+
+    /// The node time after every whole frame step up to `now_ms`.
+    pub fn at(&self, now_ms: i32) -> f32 {
+        self.0.time(now_ms)
+    }
+
+    /// Steps the time up to `now_ms` and keeps it there.
+    pub fn settle(&mut self, now_ms: i32) {
+        self.0.settle(now_ms);
+    }
+}
+
 /// A node's weight easing to its goal: `XAnimSetGoalWeight` (`cod_lnxded`
 /// 0x080bd674) gives it `|goal - weight| * time` to get there and the
 /// per-frame step (0x080bb130) moves it the remaining distance over the
