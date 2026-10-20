@@ -1,5 +1,6 @@
 //! The order a frame runs the threads the touch pass woke, ours against
-//! retail 1.1d's run of `client-probes/probe_touchorder` on mp_pavlov
+//! retail 1.1d's, 1.5b's and UO 1.51b's runs of
+//! `client-probes/probe_touchorder` on mp_pavlov
 //! (docs/research/cod11-combat.md 14.7, "The touch pass";
 //! docs/research/cod11-gsc-language.md, "Engine notifies and the trigger
 //! queue"). One client stands where minefields 101 and 102 overlap beside
@@ -17,7 +18,11 @@
 //! The probe client's cmds are not on the frame grid, so how many land in
 //! one frame differs run to run: the gate compares each frame's first round
 //! and its touch lines exactly, and checks that every later line is an `f`
-//! pair. `TO_REPORT=1` prints both logs. Needs `COD_DIR` at a 1.1 install.
+//! pair. `TO_REPORT=1` prints both logs.
+//!
+//! The `probe_trigqueue` tests fill the queue (see `check_trigqueue`).
+//! Each test runs at its own install's `COD_DIR`: 1.1, 1.5 (a UO install's
+//! `main/` counts) or UO.
 
 mod common;
 
@@ -25,6 +30,7 @@ use common::{Join, Queues, step};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::{NetClient, NetEvent};
 
 const SCRIPT: &str =
@@ -79,12 +85,13 @@ fn first_round(frame: &[String]) -> Vec<String> {
     frame[..end].to_vec()
 }
 
-fn ours(fs: vcod_common::pk3::Pk3Fs) -> Vec<String> {
+fn ours(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
     let map = "mp_pavlov";
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(map, "probe_touchorder"), now);
+    sv.set_protocol(proto);
     sv.overlay_script("maps/mp/gametypes/probe_touchorder", SCRIPT);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -118,16 +125,10 @@ fn ours(fs: vcod_common::pk3::Pk3Fs) -> Vec<String> {
     sv.script_log().to_vec()
 }
 
-#[test]
-fn the_touch_pass_wakes_its_threads_in_retails_order() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
-        return;
-    };
-    let retail: Vec<String> = include_str!("fixtures/touchorder/mp_pavlov.txt")
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let ours = ours(fs);
+/// Ours against one retail log of the probe.
+fn check(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol, retail: &str) {
+    let retail: Vec<String> = retail.lines().map(str::to_string).collect();
+    let ours = ours(fs, proto);
     if std::env::var_os("TO_REPORT").is_some() {
         eprintln!("retail:\n{}\nours:\n{}", retail.join("\n"), ours.join("\n"));
     }
@@ -146,11 +147,49 @@ fn the_touch_pass_wakes_its_threads_in_retails_order() {
     }
 }
 
+#[test]
+fn the_touch_pass_wakes_its_threads_in_retails_order() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check(
+        fs,
+        &PROTOCOL_V1,
+        include_str!("fixtures/touchorder/mp_pavlov.txt"),
+    );
+}
+
+/// Retail 1.5b's run: the same lines as 1.1d's.
+#[test]
+fn the_touch_pass_wakes_its_threads_in_retails_order_on_1_5() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    check(
+        fs,
+        &PROTOCOL_V6,
+        include_str!("fixtures/touchorder/mp_pavlov-1.5.txt"),
+    );
+}
+
+/// Retail UO 1.51b's run: the same lines as 1.1d's.
+#[test]
+fn the_touch_pass_wakes_its_threads_in_retails_order_on_uo() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check(
+        fs,
+        &PROTOCOL_V22,
+        include_str!("fixtures/touchorder/mp_pavlov-uo.txt"),
+    );
+}
+
 /// `client-probes/probe_trigqueue` on ours, no client, on mp_carentan.
-fn trigqueue(
-    fs: vcod_common::pk3::Pk3Fs,
-    proto: &'static vcod_common::net::protocol::Protocol,
-) -> Vec<String> {
+fn trigqueue(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
     let map = "mp_carentan";
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -177,10 +216,7 @@ fn trigqueue(
 /// spot, its waiter running after the step; a thread off the frame grid
 /// queues after the rounds, so its entries are handed out next frame, 256
 /// rounds of one.
-fn check_trigqueue(
-    fs: vcod_common::pk3::Pk3Fs,
-    proto: &'static vcod_common::net::protocol::Protocol,
-) {
+fn check_trigqueue(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) {
     let retail: Vec<&str> = include_str!("fixtures/touchorder/trigqueue.txt")
         .lines()
         .filter(|l| l.starts_with("PROBE"))
@@ -197,7 +233,7 @@ fn a_full_trigger_queue_notifies_on_the_spot_on_1_1() {
     let Some(fs) = vcod_common::testing::game_fs_11() else {
         return;
     };
-    check_trigqueue(fs, &vcod_common::net::protocol::PROTOCOL_V1);
+    check_trigqueue(fs, &PROTOCOL_V1);
 }
 
 #[test]
@@ -205,12 +241,10 @@ fn a_full_trigger_queue_notifies_on_the_spot_on_1_5() {
     let Some(fs) = vcod_common::testing::game_fs() else {
         return;
     };
-    if vcod_server::server::install_protocol(&fs).version
-        != vcod_common::net::protocol::PROTOCOL_V6.version
-    {
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
         return;
     }
-    check_trigqueue(fs, &vcod_common::net::protocol::PROTOCOL_V6);
+    check_trigqueue(fs, &PROTOCOL_V6);
 }
 
 #[test]
@@ -218,5 +252,5 @@ fn a_full_trigger_queue_notifies_on_the_spot_on_uo() {
     let Some(fs) = vcod_common::testing::uo_fs() else {
         return;
     };
-    check_trigqueue(fs, &vcod_common::net::protocol::PROTOCOL_V22);
+    check_trigqueue(fs, &PROTOCOL_V22);
 }
