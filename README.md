@@ -6,11 +6,13 @@ protocol. Patch 1.1, patch 1.5 and United Offensive 1.51 all work, against
 vcod's own server or the retail ones. Nobody ever wrote that protocol down,
 so I dug it out of the binaries.
 
-![mp_pavlov in fly mode](docs/screenshots/fly-mp_pavlov.jpg)
+[![mp_railyard on a public server, 3840x1600](docs/screenshots/ultrawide-mp_railyard-s.jpg)](docs/screenshots/ultrawide-mp_railyard.jpg)
 
-![Walk mode with the kar98k viewmodel](docs/screenshots/walk-mp_pavlov.jpg)
+[![mp_harbor on a public server, 3840x1600](docs/screenshots/ultrawide-mp_harbor-s.jpg)](docs/screenshots/ultrawide-mp_harbor.jpg)
 
-![Spectating a public TDM server](docs/screenshots/spectate.jpg)
+[![Twelve bots fighting over one wall on mp_pavlov, 3840x1600](docs/screenshots/ultrawide-mp_pavlov-bots-s.jpg)](docs/screenshots/ultrawide-mp_pavlov-bots.jpg)
+
+All three run at 21:9 with the F3 overlay up. Click one for the full size.
 
 ## Read this first: it plays, and it still has opinions
 
@@ -58,9 +60,14 @@ The short tour. The long one, gaps included, is
 - **Extras retail never had**, all off by default: soft sun shadows, SSAO,
   bloom, HDR, sun shafts, soft particles and a film grade. `--rtx-on` turns
   them all on for one run. Despite the name, no rays were harmed.
-- **Wide screens**: a Hor+ view and a HUD that keeps to the window's
-  edges on 16:9 and 21:9 (`vc_widescreen 0` for retail's), borderless or
-  exclusive fullscreen, and Alt+Enter.
+- **Widescreen and ultrawide.** Retail keeps the same horizontal field of
+  view on any window, so a wider screen loses picture at the top and
+  bottom, and its HUD stays in a 4:3 box in the middle. vcod widens the
+  view instead (Hor+): 16:9 and 21:9 see more at the sides, and the
+  compass, kill feed and ammo counter move out to the window's edges.
+  `vc_widescreen 0` brings back retail's. Borderless and exclusive
+  fullscreen both work, and Alt+Enter flips between windowed and
+  fullscreen.
 
 ## How to play
 
