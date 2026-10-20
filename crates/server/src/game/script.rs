@@ -647,9 +647,10 @@ impl ScriptRuntime {
     /// Damage whose attacker is not a player. `hurt_touch` (0x64dc4) hands
     /// `G_Damage` the trigger entity for both the inflictor and the attacker
     /// and zero for the point and the direction, which the immediates it
-    /// pushes show directly (VERIFIED); the stock callback tests
+    /// pushes show directly (VERIFIED), and `Scr_PlayerDamage` passes a null
+    /// point or direction as undefined; the stock callback tests
     /// `isPlayer(attacker)`, so a non-player attacker is a shape the corpus
-    /// already handles.
+    /// already handles. A blocked mover's crush is the same call.
     pub fn deliver_world_hit(
         &mut self,
         victim_slot: usize,
@@ -665,14 +666,18 @@ impl ScriptRuntime {
             dflags,
             mod_,
             "none",
-            [0.0; 3],
+            None,
+            None,
         );
     }
 
-    /// Damage from `[inflictor, attacker]`, neither a player, with no
-    /// direction: [`Self::deliver_world_hit`]'s shape with a weapon and a
-    /// point, as a driverless vehicle's `VEH_PlayerDamage` passes them
-    /// (coduo-vehicles.md 11.6).
+    /// Damage from `[inflictor, attacker]`, neither a player:
+    /// [`Self::deliver_world_hit`]'s shape with a weapon, a point and a
+    /// direction, as a driverless vehicle's `VEH_PlayerDamage` passes them
+    /// (a zero direction, coduo-vehicles.md 11.6). `None` reaches the
+    /// callback undefined (`Scr_PlayerDamage`, game.mp 0x5ca18), and an
+    /// undefined direction makes the stock gametypes add
+    /// `DAMAGE_NO_KNOCKBACK` (cod11-movers.md 21, "The sine crush").
     #[allow(clippy::too_many_arguments)]
     pub fn deliver_unowned_hit(
         &mut self,
@@ -682,7 +687,8 @@ impl ScriptRuntime {
         dflags: i32,
         mod_: &str,
         weapon: &str,
-        point: [f32; 3],
+        point: Option<[f32; 3]>,
+        dir: Option<[f32; 3]>,
     ) {
         if !self.client_vitals(victim_slot).takedamage {
             return;
@@ -711,8 +717,8 @@ impl ScriptRuntime {
             Value::Int(dflags),
             Value::String(mod_),
             Value::String(weapon),
-            Value::Vector(point),
-            Value::Vector([0.0; 3]),
+            point.map_or(Value::Undefined, Value::Vector),
+            dir.map_or(Value::Undefined, Value::Vector),
             Value::String(hitloc),
         ];
         if let Err(e) = self.start_with_args(

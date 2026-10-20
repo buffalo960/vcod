@@ -139,19 +139,38 @@ struct Ours {
     first_snap: Option<i32>,
 }
 
-/// Both tests read the one run; it takes most of the gate's time.
+/// A retail capture's probe: the gametype name, its source, the
+/// capture whose cmds ours replays and the cvars the run set.
+struct Probe {
+    name: &'static str,
+    source: &'static str,
+    fixture: &'static str,
+    cvars: &'static [(&'static str, &'static str)],
+}
+
+const RIDE: Probe = Probe {
+    name: "probe_ride",
+    source: include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_ride.gsc"),
+    fixture: SERVER,
+    cvars: &[("probe_teleport", "1")],
+};
+
+/// The wire tests read the one run; it takes most of the gate's time.
 fn ours() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
-    RUN.get_or_init(|| {
-        let ours = run_once(0)?;
-        let text = std::fs::read_to_string(SERVER).unwrap();
-        let first = common::cmds_ran(&text, "").first()?.0;
-        match ours.first_snap {
-            Some(t) if t != first => run_once((t - first) as i64),
-            _ => Some(ours),
-        }
-    })
-    .as_ref()
+    RUN.get_or_init(|| run_ours(&RIDE)).as_ref()
+}
+
+/// [`run_once`], run again once if the client's first snapshot missed
+/// retail's.
+fn run_ours(probe: &Probe) -> Option<Ours> {
+    let ours = run_once(probe, 0)?;
+    let text = std::fs::read_to_string(probe.fixture).unwrap();
+    let first = common::cmds_ran(&text, "").first()?.0;
+    match ours.first_snap {
+        Some(t) if t != first => run_once(probe, (t - first) as i64),
+        _ => Some(ours),
+    }
 }
 
 /// How long before its first snapshot the capture's client starts joining.
@@ -163,20 +182,19 @@ const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
 /// (`ProbeHold::framed`): where a fall lands, and whether a frame ran with
 /// no cmd from the player, rides on them (movers doc 12, "A blocked
 /// mover", and 21). `late_ms` starts the client that much earlier.
-fn run_once(late_ms: i64) -> Option<Ours> {
+fn run_once(probe: &Probe, late_ms: i64) -> Option<Ours> {
     let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_ride"), now);
-    sv.overlay_script(
-        "maps/mp/gametypes/probe_ride",
-        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_ride.gsc"),
-    );
-    sv.set_cvar("probe_teleport", "1");
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, probe.name), now);
+    sv.overlay_script(&format!("maps/mp/gametypes/{}", probe.name), probe.source);
+    for (k, v) in probe.cvars {
+        sv.set_cvar(k, v);
+    }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    let retail_text = std::fs::read_to_string(SERVER).unwrap();
+    let retail_text = std::fs::read_to_string(probe.fixture).unwrap();
     let mut hold = common::ProbeHold {
         base: Some([0.0; 3]),
         framed: true,
@@ -621,31 +639,29 @@ fn a_rotated_brush_model_keeps_retails_quantized_angles() {
     );
 }
 
-const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-crush.txt";
+const CRUSH: Probe = Probe {
+    name: "probe_crush",
+    source: include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_crush.gsc"),
+    fixture: "tests/fixtures/movers/mp_carentan-dm-crush.txt",
+    cvars: &[],
+};
 
-/// The crush capture logs no cmds, so the player rests where its client's
-/// cmd split left him: -31.875 there, which prints -31.88, and -31.874992
-/// on ours, which prints -31.87 (movers doc 21). One print step.
-const CRUSH_TOL: f32 = 0.011;
-
-/// `probe_crush`'s retail run: per phase the start and every frame's
-/// `(level time, player origin, slab origin)`, and the frames that ran with
-/// no cmd from the player, those whose snapshot repeats the `ct` of the one
-/// before (a snapshot the jittered link lost proves nothing either way).
+/// `probe_crush`'s script log: per phase the start and every frame's
+/// `(phase, level time, player origin, slab origin)`.
 struct Crush {
     starts: BTreeMap<String, i32>,
     frames: Vec<(String, i32, [f32; 3], [f32; 3])>,
-    no_cmd: std::collections::BTreeSet<i32>,
 }
 
 impl Crush {
-    fn parse(text: &str) -> Crush {
+    fn parse<'a>(lines: impl Iterator<Item = &'a str>) -> Crush {
         let mut starts = BTreeMap::new();
         let mut frames = Vec::new();
-        let mut ct = BTreeMap::new();
-        for l in text.lines().filter(|l| !l.starts_with('#')) {
-            let tokens: Vec<&str> = l.split_whitespace().collect();
-            match tokens.as_slice() {
+        for l in lines.filter(|l| !l.starts_with('#')) {
+            let Some(l) = l.find("PROBE ").map(|i| &l[i..]) else {
+                continue;
+            };
+            match l.split_whitespace().collect::<Vec<_>>().as_slice() {
                 ["PROBE", "at", phase, t] => {
                     starts.insert(phase.to_string(), t.parse().unwrap());
                 }
@@ -653,106 +669,66 @@ impl Crush {
                     let v = vectors(l);
                     frames.push((phase.to_string(), t.parse().unwrap(), v[0], v[1]));
                 }
-                ["RIDE", t, c, ..] => {
-                    let num = |s: &str, k: &str| s.strip_prefix(k).unwrap().parse::<i32>().unwrap();
-                    ct.insert(num(t, "t="), num(c, "ct="));
-                }
                 _ => {}
             }
         }
-        let no_cmd = ct
-            .iter()
-            .filter(|(t, c)| ct.get(&(**t - FRAME_MS as i32)) == Some(*c))
-            .map(|(t, _)| *t)
-            .collect();
-        Crush {
-            starts,
-            frames,
-            no_cmd,
-        }
+        Crush { starts, frames }
     }
-}
-
-/// `probe_crush` on ours, the client's cmds held back from every frame
-/// that ran without one on retail; the script log.
-fn run_crush(retail: &Crush) -> Option<Vec<String>> {
-    let fs = vcod_common::testing::game_fs_11()?;
-    let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
-    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
-    let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_crush"), now);
-    sv.overlay_script(
-        "maps/mp/gametypes/probe_crush",
-        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_crush.gsc"),
-    );
-    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
-    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    let q = Rc::new(RefCell::new(Queues::default()));
-    let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
-    let mut join = Join::new("allies", "m1carbine_mp");
-    let mut last = None;
-    let mut skipped = 0;
-    for _ in 0..1500 {
-        now += Duration::from_millis(FRAME_MS as u64);
-        let lift = sv
-            .script_log()
-            .iter()
-            .find_map(|l| l.strip_prefix("PROBE at lift ")?.trim().parse::<i32>().ok());
-        // The frame about to run, on retail's clock.
-        let frame = lift
-            .zip(last)
-            .map(|(lift, t): (i32, i32)| t + FRAME_MS as i32 - lift + retail.starts["lift"]);
-        if frame.is_some_and(|f| retail.no_cmd.contains(&f)) {
-            skipped += 1;
-        } else {
-            cl.send_frame(&holding(&cl));
-        }
-        for e in step_at(&mut sv, ADDR, &q, &mut cl, now) {
-            match e {
-                NetEvent::ServerCommand(tokens) => join.on_server_command(&tokens, &mut cl, now),
-                NetEvent::Dropped(r) => panic!("dropped: {r}"),
-                _ => {}
-            }
-        }
-        last = cl.snapshots().newest().map(|s| s.server_time);
-        if sv.script_log().iter().any(|l| l.contains("PROBE done")) {
-            break;
-        }
-    }
-    assert_eq!(sv.script_aborts(), Vec::<String>::new());
-    assert!(skipped > 0, "no frame held its cmd back");
-    Some(sv.script_log().to_vec())
 }
 
 /// A blocked push leaves the player out of the area tree until his next
 /// cmd links him (`G_MoverPush` 0x55621), so a frame that runs with no cmd
 /// from him lets the slab move one frame's 2 units; and a `moveto` on the
 /// stalled slab puts `r.currentOrigin` where its trajectory has it at the
-/// call, a frame further on (0x5fb38). Movers doc 12, "A blocked mover".
+/// call, a frame further on (0x5fb38). Ours replays the capture's cmds on
+/// its jittered link, the frames that ran none included, and every frame
+/// of every phase, the fall after the teleport too, matches to the log's
+/// two decimals. Movers doc 12, "A blocked mover".
 #[test]
 fn a_blocked_slab_moves_on_a_frame_without_a_cmd_like_retail() {
-    let retail = Crush::parse(&std::fs::read_to_string(CRUSH).unwrap());
-    let Some(log) = run_crush(&retail) else {
-        eprintln!("COD_DIR unset or has no main/: skipping");
-        return;
-    };
-    let ours = Crush::parse(&log.join("\n"));
-    let shift = ours.starts["lift"] - retail.starts["lift"];
+    let retail = Crush::parse(std::fs::read_to_string(CRUSH.fixture).unwrap().lines());
+    // The capture's slab slips under the player at least once while held.
+    let held: Vec<f32> = retail
+        .frames
+        .iter()
+        .filter(|f| f.0 == "crush")
+        .map(|f| f.3[2])
+        .collect();
+    assert!(held.windows(2).any(|w| w[0] != w[1] && w[1] != held[0]));
+    // The probe's phases run off the player's spawn, and ours' client takes
+    // its own time through the team menu: it joins late or early by
+    // however far the first run's lift missed retail's, so the frames that
+    // run no cmd fall on the same phase frames.
+    let mut late = 0;
+    let mut ours = None;
+    for _ in 0..3 {
+        let Some(run) = run_once(&CRUSH, late) else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let parsed = Crush::parse(run.log.iter().map(String::as_str));
+        let shift = parsed.starts.get("lift").copied().unwrap_or(0) - retail.starts["lift"];
+        ours = Some(parsed);
+        if shift == 0 {
+            break;
+        }
+        late += shift as i64;
+    }
+    let ours = ours.unwrap();
+    assert_eq!(
+        ours.starts, retail.starts,
+        "ours' phases start on retail's frames"
+    );
     let mut bad = Vec::new();
     for (phase, t, player, slab) in &retail.frames {
-        let o = ours.frames.iter().find(|f| f.1 == t + shift);
-        // Past the teleport the player falls on the retail client's cmd
-        // lengths, which the capture does not hold (movers doc 21, "The
-        // slide down the slope"); this gate is the slab's.
-        let off = |op: &[f32; 3]| {
-            if phase == "reset" {
-                0.0
-            } else {
-                diff(*player, *op)
-            }
-        };
+        let o = ours.frames.iter().find(|f| f.1 == *t);
+        if report() {
+            println!("{phase} {t}: retail {player:?} {slab:?} ours {o:?}");
+        }
         let row = match o {
-            Some((p, _, op, os)) if p == phase && off(op).max(diff(*slab, *os)) < CRUSH_TOL => {
+            Some((p, _, op, os))
+                if p == phase && diff(*player, *op).max(diff(*slab, *os)) < TOL =>
+            {
                 continue;
             }
             Some((_, _, op, os)) => format!("player {op:?} slab {os:?}"),

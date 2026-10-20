@@ -1236,10 +1236,7 @@ pub fn probe(
                     c.server_time,
                     fall_walk.map(|_| c.angles[1]),
                     (c.buttons, c.wbuttons, c.up),
-                    client
-                        .snapshots()
-                        .newest()
-                        .map(|s| (s.server_time, s.ps.field_i32(wire(), "commandTime"))),
+                    client.snapshots(),
                 );
             }
             if save_plant || save_defuse {
@@ -11524,7 +11521,7 @@ const KILLCAM_TAIL: Duration = Duration::from_secs(3);
 /// `wbuttons` or `up` differ from the cmd before (`in=<k>:<buttons>:
 /// <wbuttons>:<up>`) and the cmds sent on a newer snapshot than the cmd
 /// before (`snap=<k>:<serverTime>`), so a replay presses on retail's cmd,
-/// and each of those snapshots' `commandTime` (`ct=<serverTime>:
+/// and the `commandTime` of every snapshot parsed (`ct=<serverTime>:
 /// <commandTime>`), the last cmd the server ran before that frame, so a
 /// replay runs each cmd on retail's side of a frame. `w=` is each cmd's
 /// wall clock at the send, the first in microseconds since the epoch and
@@ -11542,6 +11539,7 @@ struct FallProbe {
     ran: Vec<String>,
     last_input: Option<(u8, u8, i8)>,
     last_snap: Option<i32>,
+    last_msg: Option<u32>,
 }
 
 const FALL_CMDS_PER_LINE: usize = 60;
@@ -11552,7 +11550,7 @@ impl FallProbe {
         server_time: i32,
         yaw: Option<i32>,
         input: (u8, u8, i8),
-        snap: Option<(i32, i32)>,
+        ring: &vcod_common::net::snapshot::SnapshotRing,
     ) {
         let k = self.cmds.len();
         if self.last_input != Some(input) {
@@ -11560,10 +11558,22 @@ impl FallProbe {
                 .push(format!("{k}:{}:{}:{}", input.0, input.1, input.2));
             self.last_input = Some(input);
         }
-        if let Some((t, ct)) = snap.filter(|&(t, _)| self.last_snap != Some(t)) {
-            self.snaps.push(format!("{k}:{t}"));
-            self.ran.push(format!("{t}:{ct}"));
-            self.last_snap = Some(t);
+        if let Some(s) = ring
+            .newest()
+            .filter(|s| self.last_snap != Some(s.server_time))
+        {
+            // Every snapshot parsed since the last cmd, not only the newest:
+            // two that land in one loop pass would hide a frame's `ct`.
+            let from = self.last_msg.map_or(s.message_num, |n| {
+                (n + 1).max(s.message_num.saturating_sub(31))
+            });
+            for snap in (from..=s.message_num).filter_map(|n| ring.get(n)) {
+                let ct = snap.ps.field_i32(wire(), "commandTime");
+                self.ran.push(format!("{}:{ct}", snap.server_time));
+            }
+            self.snaps.push(format!("{k}:{}", s.server_time));
+            self.last_snap = Some(s.server_time);
+            self.last_msg = Some(s.message_num);
         }
         self.cmds.push((server_time, yaw));
         self.walls.push(
