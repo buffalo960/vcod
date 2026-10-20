@@ -375,6 +375,7 @@ fn replay_with(
     let mut pending: Vec<(UserCmd, [i32; 3])> = Vec::new();
     let mut da = first_da;
     let mut last_seat = 0;
+    let mut last_eflags = 0;
     let mut started = false;
     for line in lines {
         match line {
@@ -391,6 +392,7 @@ fn replay_with(
                 if !started {
                     started = true;
                     last_seat = seat;
+                    last_eflags = s.wire.get("eFlags").copied().unwrap_or(0);
                     out.push(sample(&cl));
                     continue;
                 }
@@ -400,8 +402,16 @@ fn replay_with(
                 reanchor |= change;
                 last_seat = seat;
                 let want = s.t + offset;
-                // The cmds retail's frame had run by this snapshot.
-                let ran = s.ct + offset;
+                // The cmds retail's frame had run by this snapshot. A spawn
+                // (`eFlags` 0x8 flips) thinks at the frame's own time, so a
+                // `commandTime` there is no cmd's: the frame ran those before.
+                let eflags = s.wire.get("eFlags").copied().unwrap_or(0);
+                let spawned = std::mem::replace(&mut last_eflags, eflags) & 8 != eflags & 8;
+                let ran = if spawned && s.ct == s.t {
+                    s.t - 1
+                } else {
+                    s.ct
+                } + offset;
                 for _ in 0..40 {
                     if cl
                         .snapshots()
@@ -1144,6 +1154,45 @@ fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
         mine, theirs,
         "origin and angles the script reads after the spawn"
     );
+}
+
+const TANK_RESPAWN: &str =
+    "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-respawn-uo.txt";
+
+/// The same spawn on the capture's own cmds: the frame after it the
+/// spawned driver has fallen and walked as far as those cmds' clock took
+/// him, which `PROBE seatnext` reads (retail 31.96 here, 33.15 in
+/// `mp_cassino-tank-uo.txt`'s run); then every snapshot on foot.
+#[test]
+fn a_driver_spawned_out_of_the_seat_moves_on_retail_s_cmds() {
+    let text = std::fs::read_to_string(TANK_RESPAWN).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = replay(
+        "mp_cassino",
+        "panzeriv_mp",
+        &[("probe_respawn", "3")],
+        &lines,
+    ) else {
+        return;
+    };
+    let fixture = include_str!("fixtures/seatspawn/mp_cassino-tank-cmds-uo.txt");
+    let read = |log: &mut dyn Iterator<Item = &str>, offset: i32| -> Vec<String> {
+        log.filter(|l| l.starts_with("PROBE seat"))
+            .map(|l| {
+                let t: Vec<&str> = l.splitn(4, ' ').collect();
+                let at = t[2].parse::<i32>().unwrap() - offset;
+                format!("{} {at} {}", t[1], t[3])
+            })
+            .collect()
+    };
+    let theirs = read(&mut fixture.lines(), 0);
+    let mine = read(&mut ours.log.iter().map(String::as_str), ours.offset);
+    assert_eq!(theirs.len(), 2, "retail's seat and seatnext");
+    assert_eq!(
+        mine, theirs,
+        "what the script reads after the spawn and a frame later"
+    );
+    tally(&lines, &ours.samples).assert_within(&[]);
 }
 
 /// Every impact in the order it first showed on a snapshot.

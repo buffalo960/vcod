@@ -4775,6 +4775,7 @@ impl Server {
         sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(proto);
         client.sim = Some(sim);
         client.last_processed_st = sv_time_ms;
+        client.last_usercmd_st = sv_time_ms;
         log::info!("client {slot} {name:?} connected (test client)");
         *entry = Some(client);
     }
@@ -7452,6 +7453,7 @@ impl Server {
                 self.sv_time_ms.wrapping_add(200),
             )
         });
+        c.last_usercmd_st = entering.map_or(c.last_processed_st, |c| c.server_time);
         log::info!("client {slot} {:?} begin (spectator)", c.name);
         // `ClientBegin`: the notify that releases the connect callback's
         // `waittill("begin")`. The event queues rather than fires here, so it
@@ -8700,6 +8702,10 @@ impl Server {
                 continue;
             }
             let mut cmd = c.pending.remove(0).cmd;
+            let fresh = cmd.server_time > c.last_usercmd_st;
+            if fresh {
+                c.last_usercmd_st = cmd.server_time;
+            }
             // `ClientThink_real` holds the cmd's clock within 1000 ms behind
             // and 200 ms ahead of the `level.time` it runs on, the last
             // frame's (player-clip doc 8.12).
@@ -8711,6 +8717,9 @@ impl Server {
             // rather than clamped away.
             let dt_ms = cmd.server_time.wrapping_sub(c.last_processed_st);
             if dt_ms <= 0 {
+                if let Some(sim) = c.sim.as_mut().filter(|_| fresh) {
+                    sim.stale_cmd(&cmd);
+                }
                 continue;
             }
             let sim = c.sim.as_mut().unwrap();

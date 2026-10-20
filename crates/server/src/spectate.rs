@@ -1409,6 +1409,16 @@ impl ClientSim {
         self.pain_after_ms = until_ms;
     }
 
+    /// A cmd `ClientThink_real` drops as stale (its clock not past
+    /// `commandTime`): `ClientThink` (game.mp.uo 0x51d13) has already
+    /// rotated it into `pers.cmd` and the one before into `pers.oldcmd`,
+    /// which the next cmd's turn spread reads (cod11-combat.md 2.1).
+    pub fn stale_cmd(&mut self, cmd: &UserCmd) {
+        self.last_cmd_angles = cmd.angles;
+        self.ps.last_cmd_angles = [cmd.angles[0], cmd.angles[1]];
+        self.ps.last_cmd_ads = cmd.buttons & vcod_common::net::msg::BUTTON_ADS != 0;
+    }
+
     /// Advance one frame, returning the events the move raised, already in the
     /// ring. The axes arrive quantized to ±127/0 and dt comes off the cmd
     /// clocks. `weapons` is the map's weapon table, which only a player reads.
