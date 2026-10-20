@@ -1,27 +1,32 @@
-//! Item flight, landing and respawn against one retail run of
-//! `client-probes/probe_itemdrop` on mp_carentan
-//! (`items/mp_carentan-dm-itemdrop.txt`, header for the recipe; read in
-//! `docs/research/cod11-items.md` section 14). The fixture holds the probe's
+//! Item flight, landing and respawn against retail runs of
+//! `client-probes/probe_itemdrop` on mp_carentan, one per patch
+//! (`items/mp_carentan-dm-itemdrop.txt` on 1.1d, `-15.txt` on 1.5b, `-uo.txt`
+//! on United Offensive; headers for the recipes; read in
+//! `docs/research/cod11-items.md` section 14). A fixture holds the probe's
 //! `PROBE` lines and every `ITEM`/`ITEM_GONE` line the `--probe-items`
 //! client printed.
 //!
-//! Two gates:
+//! Two gates per patch:
 //!
 //! - every flight retail sent is replayed through our `G_RunItem` from the
 //!   trajectory retail put on the wire, on the map's own collision: each
 //!   later trajectory retail sent (a wall's nudge) on the same frame and to
 //!   the hundredth, and the landing on the same frame, at the same x and y,
-//!   at most the half unit of random lift above our sweep's end, aligned to
-//!   the same angles and on the same ground;
+//!   at most the patch's random lift above our sweep's end, aligned to the
+//!   same angles and on the same ground;
 //! - the probe runs on our server with a client holding its view the way the
 //!   probe client did, and its items are held to retail's frame by frame,
-//!   timed from `PROBE start`: what the client sees and when it sees it,
-//!   with the launch's random climb, spin and lift held to their ranges
-//!   rather than to retail's draws.
+//!   timed from `PROBE start`: what the client sees and when it sees it.
+//!   Ours takes the `rand()` draws retail's climbs and spins read back to
+//!   (`Server::pin_item_draws`) and each landing's lift off retail's rest,
+//!   so every launch's climb and spin is retail's to the bit (to the printed
+//!   thousandth on 1.1d's older fixture) and each drop lands on retail's
+//!   frame.
 //!
 //! `ITEM_REPORT=1` prints both sides' item lines.
 //!
-//! Needs `COD_DIR`; without the paks both tests return early.
+//! Needs `COD_DIR`: a 1.1 install runs the 1.1d fixture, a UO one (whose
+//! `main/` is 1.5's) the 1.5b and UO ones; without the paks they return.
 
 mod common;
 
@@ -32,30 +37,104 @@ use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use vcod_common::net::msg::{NULL_USERCMD, UserCmd};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::trajectory::{TR_GRAVITY, TR_LINEAR, TR_STATIONARY, Trajectory};
 use vcod_server::game::item::{LAUNCH_CLIPMASK, RUN_CLIPMASK, Ran, bounds, run_flight};
 
 const MAP: &str = "mp_carentan";
 const PROBE_PATH: &str = "maps/mp/gametypes/probe_itemdrop";
 const PROBE_SRC: &str = "../gsc/tests/fixtures/semantics/client-probes/probe_itemdrop.gsc";
-const FIXTURE: &str = "tests/fixtures/items/mp_carentan-dm-itemdrop.txt";
 const ET_ITEM: i32 = 3;
 const FRAME_MS: i32 = 50;
-/// The most a landing sits above the sweep's end: `G_BounceItem`'s lift is
-/// 1.1d's `0.5 + 0.5 * rand() * -2^-31`, in (0, 0.5] (items doc 14.2).
-const LIFT_MAX: f32 = 0.5;
 /// Where the two sides' start positions may differ: a player resting a fifth
 /// of a unit off retail's (items doc 13.4).
 const START_TOL: f32 = 0.5;
-/// Where a drop may start off retail's: the tag sways with the idle
-/// animation, which runs from the spawn on both sides once the client joins
-/// after the probe's watcher wakes; ours reads 0.13 at worst (items doc 14).
+/// Where a drop may start off retail's, against the dropper's origin: the
+/// tag sways with the idle animation, which runs from the spawn on both
+/// sides once the client joins after the probe's watcher wakes; ours reads
+/// 0.13 at worst (items doc 14).
 const TAG_TOL: f32 = 0.2;
 /// Angles the same surface aligns to.
 const ANGLE_TOL: f32 = 0.05;
 /// The drops, whose climb, spin and so landing frame are random draws.
 const DROPS: [&str; 4] = ["flat", "wall", "slope", "health"];
+/// `Drop_Item`'s climb and `Drop_Weapon`'s spin rates, `crandom()` scaled.
+const CLIMB: (f64, f64) = (200.0, 50.0);
+const SPIN: [f64; 3] = [50.0, 40.0, 60.0];
+
+/// One patch's capture and the draws its module makes.
+struct Patch {
+    fixture: &'static str,
+    proto: &'static Protocol,
+    /// `crandom()`'s sign: 1.1d's reads `2 * rand() * -2^-31 - 1`, (-3, -1];
+    /// 1.5b's and UO's `2 * rand() / 2^31 - 1`, [-1, 1) (items doc 14.2).
+    negative: bool,
+    /// How far apart two printings of one float may be: 1.1d's fixture
+    /// printed the thousandth, the later ones the float itself.
+    printed: f32,
+}
+
+const V1: Patch = Patch {
+    fixture: "tests/fixtures/items/mp_carentan-dm-itemdrop.txt",
+    proto: &PROTOCOL_V1,
+    negative: true,
+    printed: 0.0005,
+};
+const V15: Patch = Patch {
+    fixture: "tests/fixtures/items/mp_carentan-dm-itemdrop-15.txt",
+    proto: &PROTOCOL_V6,
+    negative: false,
+    printed: 0.0,
+};
+const UO: Patch = Patch {
+    fixture: "tests/fixtures/items/mp_carentan-dm-itemdrop-uo.txt",
+    proto: &PROTOCOL_V22,
+    negative: false,
+    printed: 0.0,
+};
+
+impl Patch {
+    /// The paks the capture's server read, when the install has them.
+    fn fs(&self) -> Option<vcod_common::pk3::Pk3Fs> {
+        if self.proto.version == PROTOCOL_V1.version {
+            return vcod_common::testing::game_fs_11();
+        }
+        if self.proto.version == PROTOCOL_V22.version {
+            return vcod_common::testing::uo_fs();
+        }
+        // A UO install's `main/` is 1.5's.
+        vcod_common::testing::game_fs()
+            .filter(|fs| vcod_server::server::install_protocol(fs).version == PROTOCOL_V6.version)
+    }
+
+    /// `G_BounceItem`'s lift, `0.5 + 0.5 * u`: (0, 0.5] on 1.1d, [0.5, 1)
+    /// on 1.5b and UO.
+    fn lift(&self) -> (f32, f32) {
+        if self.negative {
+            (0.0, 0.5)
+        } else {
+            (0.5, 1.0)
+        }
+    }
+
+    /// The `rand()` that gives `k * crandom()` the value `v`.
+    fn draw_for(&self, v: f32, k: f64) -> i32 {
+        let c = f64::from(v) / k;
+        let u = (c + 1.0) / 2.0;
+        let u = if self.negative { -u } else { u };
+        (u * 2_147_483_648.0).round().clamp(0.0, 2_147_483_647.0) as i32
+    }
+
+    /// The range a `k * crandom()` draw lands in, as an inclusive check.
+    fn in_range(&self, v: f32, k: f64) -> bool {
+        let v = f64::from(v);
+        if self.negative {
+            v > -3.0 * k && v <= -k
+        } else {
+            v >= -k && v < k
+        }
+    }
+}
 
 fn report() -> bool {
     std::env::var("ITEM_REPORT").is_ok_and(|v| v == "1")
@@ -198,8 +277,9 @@ impl Run {
     }
 }
 
-fn retail() -> Run {
-    let text = std::fs::read_to_string(FIXTURE).unwrap_or_else(|e| panic!("read {FIXTURE}: {e}"));
+fn retail(patch: &Patch) -> Run {
+    let path = patch.fixture;
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     let probe = text
         .lines()
         .filter(|l| l.starts_with("PROBE "))
@@ -209,10 +289,13 @@ fn retail() -> Run {
     Run::new(probe, lines)
 }
 
-fn world(fs: &vcod_common::pk3::Pk3Fs) -> vcod_server::world::World {
+fn world(fs: &vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> vcod_server::world::World {
     let bsp_path = fs.resolve_map(MAP).expect("the map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).expect("read the bsp")).expect("bsp");
-    vcod_server::world::World::from_bsp(&bsp, Some(fs))
+    let w = vcod_server::world::World::from_bsp(&bsp, Some(fs));
+    w.collision
+        .set_arith(vcod_common::patch::Arith::for_protocol(proto));
+    w
 }
 
 /// Two angles apart, wrapped.
@@ -229,11 +312,26 @@ fn angles_off(a: Vec3, b: Vec3) -> f32 {
 
 #[test]
 fn the_flights_land_where_retail_lands() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
+    flights_land(&V1);
+}
+
+#[test]
+fn the_flights_land_where_retail_lands_15() {
+    flights_land(&V15);
+}
+
+#[test]
+fn the_flights_land_where_retail_lands_uo() {
+    flights_land(&UO);
+}
+
+fn flights_land(patch: &Patch) {
+    let Some(fs) = patch.fs() else {
         return;
     };
-    let retail = retail();
-    let world = world(&fs);
+    let retail = retail(patch);
+    let world = world(&fs, patch.proto);
+    let (lift_lo, lift_hi) = patch.lift();
     let mut rows = Vec::new();
     for tag in retail.tags.keys() {
         let lines: Vec<Item> = retail
@@ -254,7 +352,7 @@ fn the_flights_land_where_retail_lands() {
         } else {
             LAUNCH_CLIPMASK
         };
-        let weapon = launch.index <= 64;
+        let weapon = launch.index <= patch.proto.max_weapons as i32;
         let mut pos = launch.pos;
         let mut origin = pos.evaluate(pos.tr_time);
         let mut now = pos.tr_time;
@@ -330,7 +428,7 @@ fn the_flights_land_where_retail_lands() {
             .abs()
             .max_element()
             > 0.01
-            || !(-0.01..=LIFT_MAX + 0.01).contains(&lift)
+            || !(lift_lo - 0.01..=lift_hi + 0.01).contains(&lift)
         {
             rows.push(format!(
                 "{tag}: retail rests at {}, ours at {origin} before the lift",
@@ -365,21 +463,72 @@ fn the_flights_land_where_retail_lands() {
     assert!(rows.is_empty(), "{}", rows.join("\n"));
 }
 
+/// The `rand()` values retail's item draws read back to, in the order its
+/// module drew them: the `random` health's respawn (any value: a truncated
+/// draw of 0.5 at most floors to the same second), then each drop's climb
+/// and, for a weapon, its three spin rates.
+fn retail_draws(patch: &Patch, retail: &Run) -> Vec<i32> {
+    let mut draws = vec![1 << 30];
+    for tag in DROPS {
+        let launch = retail.of(tag).into_iter().find_map(|l| match l {
+            Line::Item(i) if i.pos.tr_type == TR_GRAVITY && i.ground == 0 => Some(i),
+            _ => None,
+        });
+        let launch = launch.unwrap_or_else(|| panic!("{tag}: no launch on retail"));
+        draws.push(patch.draw_for(launch.pos.delta.z - CLIMB.0 as f32, CLIMB.1));
+        if launch.apos.tr_type == TR_LINEAR {
+            for (k, v) in SPIN.iter().zip(launch.apos.delta.to_array()) {
+                draws.push(patch.draw_for(v, *k));
+            }
+        }
+    }
+    draws
+}
+
+/// Where retail rested each landing: the lift a landing of ours takes is
+/// retail's rest over our floor at the same x and y, held to the patch's
+/// range, or the range's middle where retail landed nothing there.
+fn retail_lifts(patch: &Patch, retail: &Run) -> vcod_server::game::host::ItemLift {
+    let rests: Vec<Vec3> = retail
+        .lines
+        .iter()
+        .filter_map(|l| match l {
+            Line::Item(i) if i.pos.tr_type == TR_STATIONARY => Some(i.pos.base),
+            _ => None,
+        })
+        .collect();
+    let (lo, hi) = patch.lift();
+    Box::new(move |_, floor| {
+        let floor = Vec3::from(floor);
+        rests
+            .iter()
+            .filter(|r| (r.truncate() - floor.truncate()).abs().max_element() <= START_TOL)
+            .map(|r| r.z - floor.z)
+            .find(|l| (lo - 0.01..=hi + 0.01).contains(l))
+            .map_or((lo + hi) * 0.5, |l| l.clamp(lo, hi))
+    })
+}
+
 /// Our server under the probe, with a client sending the probe client's
 /// cadence and a zero view, until `PROBE done`.
-fn run_ours(fs: vcod_common::pk3::Pk3Fs) -> Run {
+fn run_ours(patch: &Patch, fs: vcod_common::pk3::Pk3Fs, retail: &Run) -> Run {
     let probe = std::fs::read_to_string(PROBE_SRC).expect("read the probe");
-    let world = world(&fs);
+    let world = world(&fs, patch.proto);
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_itemdrop"), now);
+    sv.set_protocol(patch.proto);
     sv.overlay_script(PROBE_PATH, &probe);
     sv.load_world(world);
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(common::Queues::default()));
     let (mut cl, _join) = common::join(&mut sv, &q, &mut now, "allies", "m1carbine_mp");
-    let p = &PROTOCOL_V1;
-    let carbine = vcod_server::configstrings::weapon_index("m1carbine_mp").unwrap() as u8;
+    sv.pin_item_draws(retail_draws(patch, retail));
+    sv.test_item_lifts(retail_lifts(patch, retail));
+    let p = patch.proto;
+    let carbine = vcod_server::defs::Defs::of(p)
+        .weapon_index("m1carbine_mp")
+        .unwrap() as u8;
     let mut raised = false;
     let mut last: BTreeMap<u32, Item> = BTreeMap::new();
     let mut lines = Vec::new();
@@ -424,12 +573,9 @@ fn run_ours(fs: vcod_common::pk3::Pk3Fs) -> Run {
                     pos: Trajectory::read(e, p, "pos"),
                     apos: Trajectory::read(e, p, "apos"),
                     seq: i("eventSequence"),
-                    events: [
-                        i("events[0]"),
-                        i("events[1]"),
-                        i("events[2]"),
-                        i("events[3]"),
-                    ],
+                    // In 1.1's numbering, as the probe client prints them.
+                    events: ["events[0]", "events[1]", "events[2]", "events[3]"]
+                        .map(|n| (p.event_to_v1)(i(n))),
                 };
                 // A line per change, the way the probe client prints them.
                 let mut key = item.clone();
@@ -495,31 +641,33 @@ fn shape(line: &str, start: i32) -> (String, Vec<Vec3>) {
 
 #[test]
 fn the_probe_runs_as_retail_ran() {
-    let Some(fs) = vcod_common::testing::game_fs_11() else {
+    probe_runs(&V1);
+}
+
+#[test]
+fn the_probe_runs_as_retail_ran_15() {
+    probe_runs(&V15);
+}
+
+#[test]
+fn the_probe_runs_as_retail_ran_uo() {
+    probe_runs(&UO);
+}
+
+fn probe_runs(patch: &Patch) {
+    let Some(fs) = patch.fs() else {
         return;
     };
-    let retail = retail();
-    let ours = run_ours(fs);
+    let retail = retail(patch);
+    let ours = run_ours(patch, fs, &retail);
     let mut rows = Vec::new();
 
-    // The probe's own lines, the flights' positions aside: a drop's climb is
-    // a random draw, so its `at` and `rest` lines are the item gate's.
-    let keep = |l: &&String| {
-        let w: Vec<&str> = l.split_whitespace().collect();
-        !(matches!(w[1], "at" | "rest") && DROPS.contains(&w[2]))
-    };
     let r: Vec<_> = retail
         .probe
         .iter()
-        .filter(keep)
         .map(|l| shape(l, retail.start))
         .collect();
-    let o: Vec<_> = ours
-        .probe
-        .iter()
-        .filter(keep)
-        .map(|l| shape(l, ours.start))
-        .collect();
+    let o: Vec<_> = ours.probe.iter().map(|l| shape(l, ours.start)).collect();
     if r.len() != o.len() {
         rows.push(format!(
             "retail logged {} probe lines, ours {}:\n  retail {:?}\n  ours {:?}",
@@ -529,15 +677,31 @@ fn the_probe_runs_as_retail_ran() {
             o.iter().map(|x| &x.0).collect::<Vec<_>>()
         ));
     }
+    // How far each drop's start is off retail's, which its `at` and `rest`
+    // lines may be half as far again off (`compare_item`).
+    let mut start_off = BTreeMap::new();
     for ((rw, rv), (ow, ov)) in r.iter().zip(&o) {
         if rw != ow {
             rows.push(format!("probe line\n  retail {rw}\n  ours   {ow}"));
             continue;
         }
-        // A weapon drop's third vector is where the tag put it.
-        let thrown = rw.starts_with("PROBE drop") && !rw.starts_with("PROBE drop health");
-        for (k, (a, b)) in rv.iter().zip(ov).enumerate() {
-            let tol = if thrown && k == 2 { TAG_TOL } else { START_TOL };
+        let w: Vec<&str> = rw.split_whitespace().collect();
+        if w[1] == "drop" && rv.len() == 4 {
+            // The start against the dropper: the tag's sway, the player's
+            // rest aside (items doc 14.1).
+            let (ra, oa) = (rv[2] - rv[0], ov[2] - ov[0]);
+            if (ra - oa).abs().max_element() > TAG_TOL {
+                rows.push(format!(
+                    "{rw}: retail starts {ra} off the player, ours {oa}"
+                ));
+            }
+            start_off.insert(w[2], (rv[2] - ov[2]).abs().max_element());
+        }
+        let tol = match start_off.get(w[2]) {
+            Some(off) if matches!(w[1], "at" | "rest") => 0.01 + 1.5 * off,
+            _ => START_TOL,
+        };
+        for (a, b) in rv.iter().zip(ov) {
             if (*a - *b).abs().max_element() > tol {
                 rows.push(format!("{rw}: retail {a}, ours {b}"));
             }
@@ -552,16 +716,21 @@ fn the_probe_runs_as_retail_ran() {
             eprintln!("{tag} ours:");
             o.iter().for_each(|l| eprintln!("  {l:?}"));
         }
-        compare_item(tag, &r, retail.start, &o, ours.start, &mut rows);
+        compare_item(patch, tag, &r, retail.start, &o, ours.start, &mut rows);
     }
     assert!(rows.is_empty(), "{}", rows.join("\n"));
 }
 
 /// One item's lines, both sides, timed from each side's `PROBE start`.
-fn compare_item(tag: &str, r: &[Line], rs: i32, o: &[Line], os: i32, rows: &mut Vec<String>) {
-    let drop = DROPS.contains(&tag);
-    // A drop's landing frame and a landing's lift are random draws; the
-    // lines either side of them still have to come in retail's order.
+fn compare_item(
+    patch: &Patch,
+    tag: &str,
+    r: &[Line],
+    rs: i32,
+    o: &[Line],
+    os: i32,
+    rows: &mut Vec<String>,
+) {
     let kind = |l: &Line| match l {
         Line::Gone { .. } => "gone",
         Line::Item(i) if i.pos.tr_type == TR_GRAVITY => "flying",
@@ -573,11 +742,19 @@ fn compare_item(tag: &str, r: &[Line], rs: i32, o: &[Line], os: i32, rows: &mut 
         rows.push(format!("{tag}: retail's lines go {rk:?}, ours {ok:?}"));
         return;
     }
+    let close = |a: f32, b: f32| (a - b).abs() <= patch.printed;
+    // How far a drop's start is off retail's (the hand's sway, a player
+    // resting off retail's, items doc 13.4, 14.1): its flight and rest may be
+    // half as far again off, the climb's z turned into x as it lands.
+    let start_off = r.iter().zip(o).find_map(|(a, b)| match (a, b) {
+        (Line::Item(a), Line::Item(b)) if a.pos.tr_type == TR_GRAVITY && a.ground == 0 => {
+            Some((a.pos.base - b.pos.base).abs().max_element())
+        }
+        _ => None,
+    });
     for (a, b) in r.iter().zip(o) {
         let (rt, ot) = (a.t() - rs, b.t() - os);
-        let landing = matches!(a, Line::Item(i) if i.pos.tr_type == TR_STATIONARY && i.ground == 1022 && i.client_num != 254);
-        let nudge = matches!(a, Line::Item(i) if i.pos.tr_type == TR_GRAVITY && i.pos.delta == Vec3::ZERO && i.ground == 0);
-        if rt != ot && !(drop && (landing || nudge)) {
+        if rt != ot {
             rows.push(format!("{tag}: a line at {rt} on retail, {ot} on ours"));
         }
         let (Line::Item(a), Line::Item(b)) = (a, b) else {
@@ -603,10 +780,14 @@ fn compare_item(tag: &str, r: &[Line], rs: i32, o: &[Line], os: i32, rows: &mut 
             ));
         }
         // The launch: retail's frame, along +x at 150, climbing and
-        // spinning inside the draw's range.
+        // spinning at retail's draws, inside the patch's range.
         if a.pos.tr_type == TR_GRAVITY && a.ground == 0 && a.pos.delta != Vec3::ZERO {
             let d = b.pos.delta;
-            if d.x != a.pos.delta.x || d.y != a.pos.delta.y || !(d.z > 50.0 && d.z <= 150.0) {
+            if d.x != a.pos.delta.x
+                || d.y != a.pos.delta.y
+                || !close(d.z, a.pos.delta.z)
+                || !patch.in_range(d.z - CLIMB.0 as f32, CLIMB.1)
+            {
                 rows.push(format!("{tag}: launched at {d}, retail at {}", a.pos.delta));
             }
             if b.pos.tr_time - os != a.pos.tr_time - rs {
@@ -614,38 +795,32 @@ fn compare_item(tag: &str, r: &[Line], rs: i32, o: &[Line], os: i32, rows: &mut 
             }
         }
         if a.apos.tr_type == TR_LINEAR {
-            let s = b.apos.delta;
-            let inside = |v: f32, k: f32| v > -3.0 * k && v <= -k;
-            if !(inside(s.x, 50.0) && inside(s.y, 40.0) && inside(s.z, 60.0))
-                || b.apos.base != a.apos.base
-            {
+            let s = b.apos.delta.to_array();
+            let ra = a.apos.delta.to_array();
+            let spins = (0..3).all(|k| close(s[k], ra[k]) && patch.in_range(s[k], SPIN[k]));
+            if !spins || b.apos.base != a.apos.base {
                 rows.push(format!("{tag}: spins {:?}, retail {:?}", b.apos, a.apos));
             }
         }
-        let start = |i: &Item| i.pos.base;
-        let tol = if drop && tag != "health" {
-            TAG_TOL
-        } else {
-            START_TOL
+        // A drop starts a player's rest and a tag's sway off retail's, and
+        // rests at most half as far again off; anything else rests on
+        // retail's lift, to the hundredth.
+        let tol = match start_off {
+            Some(off) if a.pos.tr_type == TR_STATIONARY => 0.01 + 1.5 * off,
+            _ if a.pos.tr_type == TR_STATIONARY => 0.01,
+            _ => START_TOL,
         };
-        let near = if a.pos.tr_type == TR_STATIONARY {
-            // Where it rests: the same spot up to the two draws of lift,
-            // except a drop, whose climb moved the spot.
-            drop || ((start(a) - start(b)).abs().max_element() <= LIFT_MAX + 0.01)
-        } else {
-            drop && a.pos.delta == Vec3::ZERO || (start(a) - start(b)).abs().max_element() <= tol
-        };
-        if !near {
+        let off = (a.pos.base - b.pos.base).abs().max_element();
+        if report() && a.pos.tr_type == TR_STATIONARY {
+            eprintln!("{tag} at {rt}: rests {off:.4} off retail, start {start_off:?}");
+        }
+        if off > tol {
             rows.push(format!(
                 "{tag} at {rt}: retail at {}, ours at {}",
-                start(a),
-                start(b)
+                a.pos.base, b.pos.base
             ));
         }
-        if a.apos.tr_type == TR_STATIONARY
-            && !drop
-            && angles_off(a.apos.base, b.apos.base) > ANGLE_TOL
-        {
+        if a.apos.tr_type == TR_STATIONARY && angles_off(a.apos.base, b.apos.base) > ANGLE_TOL {
             rows.push(format!(
                 "{tag} at {rt}: retail lies at {}, ours at {}",
                 a.apos.base, b.apos.base
