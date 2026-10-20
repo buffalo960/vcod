@@ -942,6 +942,91 @@ fn the_jeep_gun_replays_on_ours() {
     tally(&lines, &ours).assert_within(&[]);
 }
 
+const TANK_GUN: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-gun-uo.txt";
+const TANK_GUN_BONES: &str = "tests/fixtures/vehicles/mp_cassino-tank-gun-bones-uo.txt";
+
+/// `GUN` on a Panzer IV: the driver's seat by use, `nextvehslot` to the
+/// gunner's, the gun swept past its spans on `tag_secondary_player`'s
+/// base, then out (coduo-vehicles.md 8). Every field of every snapshot.
+#[test]
+fn the_tank_gun_replays_on_ours() {
+    let text = std::fs::read_to_string(TANK_GUN).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[("probe_bones", "1")], &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[]);
+}
+
+/// The same run's marks linked to the rider's bones, every frame of both
+/// stints. Through the first, a driver boarded by use is linked with no
+/// seat offset, so every mark reads 20 above the seat until the
+/// `nextvehslot` (coduo-vehicles.md 13, "The tank driver's link offset").
+#[test]
+fn the_tank_rider_s_bones_follow_retail_s_in_both_seats() {
+    let text = std::fs::read_to_string(TANK_GUN).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = replay("mp_cassino", "panzeriv_mp", &[("probe_bones", "1")], &lines) else {
+        return;
+    };
+    let retail: Vec<String> = std::fs::read_to_string(TANK_GUN_BONES)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let seat_of = |log: &[String], offset: i32| -> BTreeMap<i32, i32> {
+        log.iter()
+            .filter_map(|l| l.trim().strip_prefix("PROBE bone "))
+            .map(|r| {
+                let t: Vec<&str> = r.split_whitespace().collect();
+                (t[0].parse::<i32>().unwrap() - offset, t[2].parse().unwrap())
+            })
+            .collect()
+    };
+    let (r, o) = (bones(&retail, 0), bones(&ours.log, ours.offset));
+    let seats = seat_of(&retail, 0);
+    let first = r.keys().map(|(t, _)| *t).min().unwrap_or(0) + 50;
+    let report = std::env::var("VEHICLE_REPORT").is_ok();
+    let mut per_seat: BTreeMap<i32, (usize, f32, (f32, i32, String))> = BTreeMap::new();
+    for ((t, tag), a) in r.iter().filter(|((t, _), _)| *t > first) {
+        let Some(b) = o.get(&(*t, tag.clone())) else {
+            continue;
+        };
+        let d = (0..3).map(|i| (a[i] - b[i]).abs()).fold(0.0, f32::max);
+        if report {
+            eprintln!("{t} {tag}: retail {a:?} ours {b:?} off {d:.2}");
+        }
+        let e = per_seat
+            .entry(seats[t])
+            .or_insert((0, 0.0, (0.0, 0, String::new())));
+        e.0 += 1;
+        e.1 += d;
+        if d > e.2.0 {
+            e.2 = (d, *t, tag.clone());
+        }
+    }
+    for (seat, (n, sum, worst)) in &per_seat {
+        eprintln!(
+            "seat {seat}: {n} samples, mean {:.3}, worst {worst:?}",
+            sum / *n as f32
+        );
+    }
+    for (seat, mean_tol, worst_tol) in TANK_BONE_TOLERANCE {
+        let (n, sum, worst) = per_seat.get(&seat).cloned().unwrap_or_default();
+        assert!(n > 200, "seat {seat}: only {n} samples in common");
+        let mean = sum / n as f32;
+        assert!(mean <= mean_tol, "seat {seat}: mean {mean} off");
+        assert!(worst.0 <= worst_tol, "seat {seat}: {worst:?} off retail's");
+    }
+}
+
+/// Per seat, the mean and worst miss of one bone sample. The driver's
+/// (measured 0.19, 0.83): from 300 ms after the use boarding, his hands and
+/// head move as retail's did 50 to 150 ms earlier (16050 to 18150, worst
+/// at 16250), not traced (coduo-vehicles.md 13, "The tank driver's link
+/// offset"). The gunner's (0.006, 0.91): the change's glide, 18450 to 18600.
+const TANK_BONE_TOLERANCE: [(i32, f32, f32); 2] = [(1, 0.2, 0.9), (2, 0.01, 1.0)];
+
 /// The client's own gunner draws his gun off his view, turned into the
 /// hull and clamped to `fTorsoPitch`/`fWaistPitch` (cgame 0x300207c0): once
 /// retail's server gun has settled on the same view, the two agree.
