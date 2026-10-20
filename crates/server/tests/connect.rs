@@ -429,3 +429,186 @@ fn a_client_that_never_sends_begin_enters_the_world_on_its_first_usercmd() {
         "no snapshot: the client never left CS_PRIMED without sending `begin`"
     );
 }
+
+/// `client-probes/<probe>` on ours, mp_carentan, the install's protocol.
+/// `None` without paks.
+fn probe_server(probe: &str) -> Option<Server> {
+    let fs = vcod_common::testing::game_fs()?;
+    let proto = vcod_server::server::install_protocol(&fs);
+    let fs = Rc::new(fs);
+    let bsp_path = fs.resolve_map("mp_carentan").expect("mp_carentan");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut sv = Server::new(common::cfg("mp_carentan", probe), Instant::now());
+    sv.set_protocol(proto);
+    let src = std::fs::read_to_string(format!(
+        "../gsc/tests/fixtures/semantics/client-probes/{probe}.gsc"
+    ))
+    .expect("the probe");
+    sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), &src);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs).expect("load the scripts");
+    Some(sv)
+}
+
+/// Steps `sv` and `cl` 50 ms at a time for `ms`, the client sending a cmd
+/// each step when `moving`; returns the client's events.
+fn run_for(
+    sv: &mut Server,
+    q: &Rc<RefCell<Queues>>,
+    cl: &mut NetClient<ClientEnd>,
+    now: &mut Instant,
+    ms: u64,
+    moving: bool,
+) -> Vec<NetEvent> {
+    let mut events = Vec::new();
+    for _ in 0..ms / 50 {
+        *now += Duration::from_millis(50);
+        if moving {
+            cl.send_frame(&NULL_USERCMD);
+        }
+        events.extend(step(sv, q, cl, *now));
+    }
+    events
+}
+
+/// `client-probes/probe_svinfoquote` on retail 1.1d, 1.5b and UO 1.51b,
+/// mp_carentan, 2026-10-20, one plain `--net-probe` client and getinfo /
+/// getstatus over a socket (`fixtures/handshake/svinfo-quote.txt`): the cvar keeps
+/// `"`, `;` and `\`, the serverinfo drops all three, and a value with
+/// nothing left drops its key from configstring 0 and from both replies.
+/// All three servers sent the same. cod11-server-handshake.md, "The
+/// challenge key".
+#[test]
+fn a_quote_in_a_serverinfo_value_is_stripped_like_retail() {
+    let Some(mut sv) = probe_server("probe_svinfoquote") else {
+        return;
+    };
+    let q = Rc::new(RefCell::new(Queues::default()));
+    let mut now = Instant::now();
+    let mut cl = connect(&mut sv, &q, &mut now);
+    let query = |sv: &mut Server, now: Instant| {
+        let at: std::net::SocketAddr = "127.0.0.1:27999".parse().unwrap();
+        let mut got = Vec::new();
+        for (ask, key) in [("getinfo xxx", "hostname"), ("getstatus", "sv_hostname")] {
+            sv.handle_packet(at, &vcod_common::net::connectionless::build_oob(ask), now);
+            for (_, p) in sv.take_outgoing().into_iter().filter(|(to, _)| *to == at) {
+                let (_, rest) = vcod_common::net::connectionless::parse_oob(&p).unwrap();
+                let text = String::from_utf8_lossy(rest).into_owned();
+                let info = text.lines().next().unwrap_or("").to_string();
+                got.push(info_value_for_key(&info, key).map(str::to_string));
+            }
+        }
+        got
+    };
+    let mut seen = vec![info_value_for_key(cl.configstring(0), "sv_hostname").map(str::to_string)];
+    let mut replies = vec![query(&mut sv, now)];
+    // The probe's hostnames change at 8, 11 and 14 s; sample between.
+    for until in [9500u64, 3000, 3000, 3000] {
+        for e in run_for(&mut sv, &q, &mut cl, &mut now, until, true) {
+            if e == NetEvent::ConfigstringChanged(0) {
+                seen.push(
+                    info_value_for_key(cl.configstring(0), "sv_hostname").map(str::to_string),
+                );
+            }
+        }
+        replies.push(query(&mut sv, now));
+    }
+    let host = |s: Option<&str>| s.map(str::to_string);
+    assert_eq!(
+        seen,
+        [
+            host(Some("qhsb e")),
+            host(Some("lead")),
+            None,
+            host(Some("tail"))
+        ],
+        "configstring 0"
+    );
+    let replies: Vec<Option<String>> = replies
+        .into_iter()
+        .map(|r| {
+            assert_eq!(r.len(), 2, "one getinfo and one getstatus reply");
+            assert_eq!(r[0], r[1]);
+            r[0].clone()
+        })
+        .collect();
+    assert_eq!(
+        replies,
+        [
+            host(Some("qhsb e")),
+            host(Some("lead")),
+            None,
+            host(Some("tail")),
+            host(Some("tail"))
+        ],
+        "getinfo and getstatus"
+    );
+    let log: Vec<&str> = sv
+        .script_log()
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE "))
+        .filter_map(|l| l.split_once(' ').map(|(_, r)| r))
+        .filter(|l| l.starts_with("hostname"))
+        .collect();
+    assert_eq!(
+        log,
+        [
+            "hostname [q\"h;s\\b e]",
+            "hostname [\"lead]",
+            "hostname [\"]",
+            "hostname [tail\"]"
+        ],
+        "the cvar itself"
+    );
+}
+
+/// `client-probes/probe_primedprint` on retail 1.1d, 1.5b and UO 1.51b,
+/// mp_carentan, 2026-10-20, one plain `--net-probe` client behind a relay
+/// that dropped its sequenced packets for 3 s after the gamestate
+/// (`fixtures/handshake/primed-print.txt`). Every print sent while the client was
+/// connected or primed, its own or the broadcast, never arrived; every
+/// client cvar did, the first inside the gamestate message and the rest
+/// with the first snapshot, then the print sent at `begin`. All three
+/// servers sent the same. docs/protocol-1.1.md, "The server command
+/// queue".
+#[test]
+fn prints_sent_while_primed_are_dropped_and_cvars_kept() {
+    let Some(mut sv) = probe_server("probe_primedprint") else {
+        return;
+    };
+    let q = Rc::new(RefCell::new(Queues::default()));
+    let mut now = Instant::now();
+    let mut cl = NetClient::start(ClientEnd(q.clone()), now);
+    let mut events = Vec::new();
+    while !events.contains(&NetEvent::GamestateReady) {
+        assert!(events.len() < 10_000 && cl.state() != NetState::Disconnected);
+        events.extend(run_for(&mut sv, &q, &mut cl, &mut now, 50, false));
+    }
+    // Primed: the client acks nothing and sends no cmd.
+    events.extend(run_for(&mut sv, &q, &mut cl, &mut now, 3000, false));
+    events.extend(run_for(&mut sv, &q, &mut cl, &mut now, 2000, true));
+    let got: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            NetEvent::GamestateReady => Some("gamestate".to_string()),
+            NetEvent::ServerCommand(t) if t[0] == "v" && t[1].starts_with("pp_") => {
+                Some(format!("v {}", t[1]))
+            }
+            // `iPrintLn` is `f`, type 0; the client cvar `v`, type 1.
+            NetEvent::ServerCommand(t) if t[0] == "f" && t[1].starts_with("pp ") => {
+                Some(format!("print {}", t[1]))
+            }
+            _ => None,
+        })
+        .collect();
+    let sent = sv
+        .script_log()
+        .iter()
+        .filter(|l| l.contains(" sent "))
+        .count();
+    assert!(sent > 4, "the probe sent {sent}");
+    let mut want = vec!["v pp_0".to_string(), "gamestate".to_string()];
+    want.extend((1..sent).map(|n| format!("v pp_{n}")));
+    want.push("print pp entered".to_string());
+    assert_eq!(got, want);
+}
