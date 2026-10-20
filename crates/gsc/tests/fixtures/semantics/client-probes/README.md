@@ -2569,3 +2569,24 @@ Retail's lines, 2026-10-20, are
 `crates/server/tests/fixtures/threadorder/mp_pavlov.txt` and
 `mp_pavlov-pair.txt`, which `threadorder_ab.rs` replays on ours. It needs a client, so
 `capture_probes.sh` and `semantics_ab.rs` cannot run it.
+
+## probe_satchelshot
+
+United Offensive only. Two satchel charges thrown on mp_cassino, then a
+sighted kar98k round into the second; with `probe_shoot 0` no round, and
+the first's fuse sets the second off (`docs/research/coduo-diff.md` 21,
+"Satchel"). The script presses the buttons through `PROBE_IN` lines.
+
+```
+COD_VERSION=uo COD_DIR=<UO install> COD_LNXDED_HOME=<absolute, no '+'> PORT=33931 PROBE_SECS=50 \
+    tools/run_probe.sh client-probes/probe_satchelshot mp_cassino [+set probe_shoot 0 +set probe_turn 10]
+# second shell, 18 s later:
+vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:33931 --probe-team allies \
+    --probe-weapon thompson_mp --probe-uo-weapon direct --probe-secs 28 \
+    --save-snapshots --capture-tag uo-satchelshot
+```
+
+Retail's lines, 2026-10-20, are
+`crates/server/tests/fixtures/missiles/mp_cassino-satchel{shot,chain}-uo.txt`
+with the snapshot pairs `*-uo-satchel{shot,chain}.bin`, which
+`uo_weapons_ab.rs` replays on ours.
