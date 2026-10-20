@@ -381,6 +381,7 @@ impl Ui {
         let arenas = create::load_arenas(fs);
         let mut browser = Browser::default();
         browser.columns = server_columns(&menus);
+        browser.master_host = vcod_common::net::protocol::install_protocol(fs).master;
         let fonts = UiFonts::load(fs)
             .map_err(|e| log::warn!("ui: {e}, drawing no text"))
             .ok();
@@ -451,10 +452,13 @@ impl Ui {
         self
     }
 
-    /// Takes `browser`'s lists, laid out by this UI's `joinserver.menu`.
+    /// Takes `browser`'s lists, laid out by this UI's `joinserver.menu` and
+    /// asking this UI's install's master.
     pub fn set_browser(&mut self, browser: Browser) {
+        let master_host = self.browser.master_host;
         self.browser = browser;
         self.browser.columns = server_columns(&self.menus);
+        self.browser.master_host = master_host;
     }
 
     /// Whether a menu is up and taking input.

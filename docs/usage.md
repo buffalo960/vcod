@@ -30,6 +30,9 @@ vcod --connect <ip:port> --team axis --weapon kar98k_mp
   it, as UO itself does, so `vcod --game-dir <UO install> --mod-dir uo
   --connect <ip:port> --team spectator` watches a UO server and
   `vcod mp_cassino --game-dir <UO install> --mod-dir uo` flies its maps.
+  The client plays only servers of its install's game: with `--mod-dir uo`
+  it refuses a 1.1 or 1.5 server, without it a UO one, and says which
+  flag to use.
 - `--vanilla` loads only the stock retail paks of the install's patch
   (`pak0`..`pak8` on 1.1, `pak0`..`pakf` on 1.5, UO's `pakuo*` and its
   `uomappack00` too, and their `localized_*` paks) and ignores every other
@@ -81,7 +84,8 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   and in the retail clients. `g_motd` reaches the client as configstring
   14 (UO 15), which no retail client draws, so it shows nowhere.
 - `dedicated` defaults to 1, not retail's 2, so dev runs stay off the master
-  list. `--set dedicated=2` heartbeats `codmaster.activision.com` every three
+  list. `--set dedicated=2` heartbeats `codmaster.activision.com`
+  (`coduomaster.activision.com` on UO) every three
   minutes and sends a flatline on Ctrl-C or `quit`.
 - `--bots <n>` adds `n` bots in real client slots. The nav graph builds on
   its own thread on the first tick (a second or two on big maps); bots

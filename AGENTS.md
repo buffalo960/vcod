@@ -157,8 +157,11 @@ check.
   also joins 1.5 servers (protocol 6, `net::protocol::PROTOCOL_V6`,
   `cod15-protocol-diff.md`) and plays United Offensive 1.51 ones, vehicles included
   (protocol 22, `PROTOCOL_V22`, `coduo-diff.md` 18; run it with the UO
-  install as `--game-dir` and `--mod-dir uo`): it connects as 1.1 and
-  switches when refused.
+  install as `--game-dir` and `--mod-dir uo`): it connects with its
+  install's protocol and switches when refused, between 1.1 and 1.5 only.
+  A UO install refuses a 1.1 or 1.5 server and the others a UO one
+  (`Protocol::same_game`, `NetClient::connect_from`); the net probe still
+  switches to any.
   The server speaks one protocol per process, the install's
   (`server::install_protocol`: 1.5's `pak0` checksum, UO's `uo/pakuo*`)
   unless `--set protocol=` says otherwise; its per-version tables (weapon

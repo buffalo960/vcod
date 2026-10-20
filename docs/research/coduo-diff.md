@@ -64,7 +64,14 @@ shader, efx, weapon, menu, sound alias, gsc) from a scratch harness.
   `pak9` exist only in 1.5, so a UO client needs a 1.5 base install, not a
   1.1 one.
 - The master is `coduomaster.activision.com` and CD keys go to
-  `coduoauthorize.activision.com` (strings, VERIFIED). Neither was queried.
+  `coduoauthorize.activision.com` (strings in `CoDUOMP.exe` and
+  `coduo_lnxded`, VERIFIED). Live, 2026-10-20: the master answers on
+  20510, `getservers 21`, `22` and `24 full empty` with an empty
+  `getserversResponse`, `getservers 23 full empty` with 6 addresses, and
+  `getservers 1` and `6` with 46 and 69, so it also lists 1.1 and 1.5
+  servers (VERIFIED). Which protocol those 6 speak, and which one the retail UO
+  browser asks for, is open; vcod's browser still sends `getservers 1`
+  and `6` to whichever master the install names.
 
 ## 2. Protocol number and queries
 

@@ -36,7 +36,8 @@ something, the bullet links it.
 - Opens on the stock main menu and server browser, drawn from the game's own
   `ui_mp/*.menu` files. The browser's three sources are retail's: Local
   (a `getinfo` broadcast to ports 28960-28963), Internet (what
-  `codmaster.activision.com` knows) and Favorites (kept in `servercache.dat`
+  `codmaster.activision.com` knows, `coduomaster.activision.com` with
+  `--mod-dir uo`) and Favorites (kept in `servercache.dat`
   beside `CoDMP.exe`, the file retail uses). It pings, filters (by game
   type too), shows when each source was last refreshed, sorts by
   column, joins on double-click, and runs the stock password, server info,
@@ -97,7 +98,8 @@ something, the bullet links it.
   and `fs_game`; the client downloads nothing under it
   ([usage.md](usage.md)).
 - Watches a United Offensive 1.51 server (protocol 22) with `--mod-dir uo`:
-  it switches protocol when the server refuses the 1.1 connect, loads the
+  it connects speaking UO's protocol and refuses a 1.1 or 1.5 server
+  (without `--mod-dir uo` it refuses a UO one), loads the
   UO map and models from `uo/` over the 1.5 `main/`, and draws the players,
   items, script models, the stock UO script menus, the kill feed and the
   events UO shares with 1.1. Tanks and jeeps draw posed as UO's cgame poses
@@ -454,8 +456,8 @@ console.
 
 **Client**
 
-- Patch 1.5 servers (protocol 6) are joined by switching protocol when
-  one refuses the 1.1 connect. A pure 1.5 server wants a 1.5 install as
+- Patch 1.1 and 1.5 servers (protocols 1 and 6) are joined from either
+  install by switching protocol when one refuses the install's connect. A pure 1.5 server wants a 1.5 install as
   `COD_DIR`
   ([cod15-protocol-diff.md](research/cod15-protocol-diff.md)).
   Prediction runs 1.5's movement there (jump penalty, no prone dive, the

@@ -7,9 +7,8 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use super::connectionless::info_value_for_key;
 
-/// `CL_GlobalServers_f` (CoDMP.exe 0x413890) always asks this host, on
-/// `PORT_MASTER`.
-pub const MASTER_HOST: &str = "codmaster.activision.com";
+/// `CL_GlobalServers_f` (CoDMP.exe 0x413890) asks one fixed host, the
+/// install's [`super::protocol::Protocol::master`], on `PORT_MASTER`.
 pub const MASTER_PORT: u16 = 20510;
 
 /// What the stock browser's refresh ends up sending: the UI runs
