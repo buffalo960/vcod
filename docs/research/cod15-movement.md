@@ -494,7 +494,7 @@ takes `framed`, which lands him on retail's float after the script's
   vcod: `cmd::talk_masked` in `player_step`, `spectator_step` and
   `dead_step`; `ps.last_cmd_ads` takes the raw cmd; the server's
   `ClientSim::talking` sets `flags::EF_TALK`. `moves_ab` replays all
-  three exactly.
+  three exactly. When the client sets the bit: `cod11-console.md` 6.
 - `PM_Footsteps` (0x24ae8): the rate formula is 1.1's
   (`cod11-sound-system.md` 9a), every intermediate stored as a float, K at
   rodata 0x75a2c-0x75a48, the stance the effective one. VERIFIED. A lean
