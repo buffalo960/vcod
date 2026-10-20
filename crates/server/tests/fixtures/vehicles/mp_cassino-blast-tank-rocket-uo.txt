@@ -1,0 +1,25 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-20: the PROBE lines of
+# client-probes/probe_vehblast on mp_cassino.
+# COD_VERSION=uo PORT=33751 PROBE_SECS=80 tools/run_probe.sh client-probes/probe_vehblast mp_cassino
+#   +set probe_vehicletype panzeriv_mp +set probe_weapon bazooka_mp +set probe_shots 3
+#   +set probe_dist 300 +set probe_dist_0 200 +set probe_dir_1 90 +set probe_dir_2 270
+# then, 18 s in, the shooter: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:33751
+#   --probe-team allies --probe-weapon thompson_mp --probe-uo-weapon direct --probe-secs 55
+#   --save-snapshots --capture-tag uo-blasttank (crates/common/tests/fixtures/net/*-uo-blasttank.bin).
+# Three bazooka rounds strike the empty Panzer IV: its right flank, its front, its rear; the
+# third takes it under its script's health buffer and the tank script kills it inside the
+# notify. vdamage lines are its damage notifies, hit lines the shooter's own splash.
+PROBE vehicle 186 panzeriv_mp (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00) health 2900
+PROBE place 22700 0 (4676.00, -1779.00, 0.12) 270
+PROBE fire 24200 0 (4676.00, -1779.00, 1.12) (8.25, 270.00, 0.00) (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00)
+PROBE hit 24250 0 dmg 52 mod MOD_PROJECTILE_SPLASH loc none
+PROBE vdamage 24300 500 MOD_PROJECTILE (4682.90, -1909.01, 43.95) (0.05, -0.99, -0.13) 0 157 2400
+PROBE place 33200 1 (4376.00, -1979.00, 0.12) 0
+PROBE fire 34700 1 (4441.70, -2038.58, -7.87) (4.73, 14.27, 0.00) (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00)
+PROBE hit 34750 0 dmg 36 mod MOD_PROJECTILE_SPLASH loc none
+PROBE vdamage 34800 329 MOD_PROJECTILE (4601.19, -1980.13, 62.18) (0.94, 0.35, 0.06) 0 158 2071
+PROBE place 43700 2 (4976.00, -1979.00, 0.12) 180
+PROBE fire 45200 2 (4976.00, -1979.00, -7.88) (3.81, 180.00, 0.00) (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00)
+PROBE hit 45250 0 dmg 20 mod MOD_PROJECTILE_SPLASH loc none
+PROBE vdamage 45300 1000 MOD_PROJECTILE (4784.41, -1993.45, 38.16) (-0.99, -0.08, -0.07) 0 159 -999
+PROBE done 60200
