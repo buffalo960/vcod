@@ -689,6 +689,9 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
 - A vehicle's collmap clips as that vehicle's own model instance
   (`CollisionWorld::set_model_instance`; one inline model serves every
   vehicle of a kind), passed by its own traces as `Pusher::Copy(entity)`.
+  Its brushes clip in lump order and a contact at fraction 0 ends them,
+  so a later brush never reads a sweep all solid (`coduo-vehicles.md`
+  11.7).
   Its hull against rounds, missiles and blast probes is the xmodel's
   collision posed per bone (`vehicle::placed_models`), not the collmap.
   The server poses it with `Scr_Vehicle_Controller`'s controls only
