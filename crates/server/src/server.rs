@@ -11189,6 +11189,52 @@ mod tests {
         );
     }
 
+    /// `scriptUsage` on retail 1.1d, mp_brecourt `tdm` (handshake doc,
+    /// "Console commands over rcon"): the gametype's two waits, then the
+    /// 32 minefield threads, in code address order, not by file name.
+    #[test]
+    fn script_usage_orders_files_as_retail() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let now = Instant::now();
+        let mut sv = Server::new(
+            ServerConfig {
+                map: "mp_brecourt".into(),
+                gametype: "tdm".into(),
+                ..cfg()
+            },
+            now,
+        );
+        sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+        for _ in 0..10 {
+            sv.tick(now);
+        }
+        let text = sv.script.as_mut().unwrap().script_usage();
+        // The var usage numbers are vcod's own VM's; the counts and the
+        // order are retail's.
+        let heads: Vec<&str> = text
+            .lines()
+            .filter_map(|l| match l.starts_with("count") {
+                true => l.split(',').next(),
+                false => l.starts_with("(file").then_some(l),
+            })
+            .collect();
+        assert_eq!(
+            heads,
+            [
+                "count: 1",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 992)",
+                "count: 1",
+                "(file 'maps\\mp\\gametypes\\tdm.gsc', line 1184)",
+                "count: 32",
+                "(file 'maps\\mp\\_minefields.gsc', line 19)",
+            ],
+            "{text}"
+        );
+    }
+
     /// `probe_startclock` on retail: the script clock starts on the load's
     /// `level.time`, the settle frames walk it 100 ms at a time, and a thread
     /// due at a frame's `level.time` runs the frame after

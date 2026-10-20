@@ -1062,10 +1062,33 @@ the game and a socket on 127.0.0.1:20510 standing in for the master.
   count: 1, var usage: 1`. VERIFIED. vcod's numbers are its own VM's
   (`game::usage`): a thread's var usage is its defined locals across
   frames, its endon usage the endons it holds, a position is always the
-  `(file '...', line N)` form, and the groups sort by stack; an entity's
+  `(file '...', line N)` form; an entity's
   var usage is the fields its script struct holds, which leaves out the
   map keys retail keeps as variables (ours read 210 entities, 4 vars on
   mp_carentan with no client).
+- `scriptUsage`'s order: each thread's record is its code positions,
+  innermost first (the current position, then each caller's from the
+  stack's type-6 entries), and `qsort` with 0x80a2218 orders records by
+  those pointers element by element, a shorter record first on a shared
+  prefix; a group is a run of equal records. INFERRED from 0x809d2d0 and
+  0x80a2218. A pointer's order is the compiled code buffer's, which
+  `GScr_LoadGameTypeScript` (game module 0x69158) fills with the gametype
+  before `_callbacksetup` and the level script after (0x41026 in the
+  export). INFERRED. With `developer 1` and `developer_script 1` retail
+  prints positions as `(file 'maps\mp\gametypes\tdm.gsc', line 992)\n`
+  followed by the source line verbatim (its `\r\n` kept) and a line of
+  spaces ending in `*` under the column. VERIFIED. On mp_brecourt every
+  gametype listed its own groups in line order and then `_minefields`'
+  one (`count: 32` at line 19), though `_minefields` sorts first by name;
+  `tdm` gave lines 992 and 1184, `sd` 1246, 1291, 1691 and 1822, `re`
+  1379, 1424, 1824, 1905 and 1988, `bel` 1076 and 1265. VERIFIED. vcod
+  sorts a position by its file's place in install order
+  (`Vm::thread_usage`; the loader installs the gametype's closure, then
+  the level's, each file before the files it calls), then its line; that
+  matches every capture above (`script_usage_orders_files_as_retail`).
+  Where vcod's install order or a file's line order departs from
+  retail's code order the groups still differ; vcod prints neither the
+  source line nor the caret.
 - `stringUsage` (0x8084d74 -> 0x809a780, ported in shape): the script
   memory tree, a buddy allocator over 65535 eight-byte buckets
   (`MT_GetSize` 0x809ae08 rounds a request up to a power of two of
