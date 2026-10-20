@@ -12,6 +12,18 @@ use crate::animscript::movetype_bit;
 use crate::animtree::{AnimMotion, PlayerAnims};
 use glam::Vec3;
 
+thread_local! {
+    static RESTART_WEIGHTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test hook: while on, this thread's 1.5 and UO setter restarts a weighted
+/// node as 1.1's does, the rule before "The setter on a weighted node"
+/// (cod11-combat.md 3.1), so a gate can show its capture tells the two apart.
+#[doc(hidden)]
+pub fn restart_weighted_nodes(on: bool) {
+    RESTART_WEIGHTED.with(|c| c.set(on));
+}
+
 /// The restart toggle on a wire anim value.
 const TOGGLE: i32 = 0x200;
 
@@ -432,7 +444,7 @@ impl ChannelClock {
     /// [`blend_ms`], the new one restarting at 0 or, for a looping movement
     /// clip, at the phase of the looping movement clip it replaces, else at
     /// one the level time and the client number spread out (0x2a858..0x2a919,
-    /// `trap_XAnimSetTime` 0x2aa5a). A death anim on a body not freshly
+    /// `trap_XAnimSetTime` 0x2aa5a; 1.5's and UO's [`spread_phase_15`]). A death anim on a body not freshly
     /// cloned goes straight to its last frame at full weight, every other
     /// clip on the channel dropped (0x2a97b..0x2aa5a, cgame 0x3000395d..0x300039f5).
     fn set(
@@ -468,6 +480,11 @@ impl ChannelClock {
             };
         }
         let client_num = seen.client_num;
+        // The windowed setter is 1.5's and UO's, whose spread differs.
+        let spread = |now_ms, client_num| match window.is_some() {
+            false => spread_phase(now_ms, client_num),
+            true => spread_phase_15(now_ms, client_num, old.map_or(1000, |o| o.length_ms + 200)),
+        };
         // The phase in seconds' terms and as the old node's float time
         // (`trap_XAnimGetTime`).
         let (phase, phase_t) = match new {
@@ -477,13 +494,14 @@ impl ChannelClock {
                     self.current.time(now_ms),
                 ),
                 _ => {
-                    let p = spread_phase(now_ms, client_num);
+                    let p = spread(now_ms, client_num);
                     (p, p)
                 }
             },
             _ => (0.0, 0.0),
         };
         let windowed = window.is_some();
+        let keeps = windowed && !RESTART_WEIGHTED.with(|c| c.get());
         let blend = match window {
             None => blend_ms(anims, old_index, new_index, legs),
             Some(w) => blend_ms_windowed(anims, old_index, new_index, legs, now_ms, w),
@@ -521,13 +539,13 @@ impl ChannelClock {
         // only from the torso (a fresh corpse's death never), so a weighted
         // legs clip plays on from where it stands (cod11-combat.md 3.1,
         // "The setter on a weighted node").
-        let (phase, phase_t) = if windowed && back.is_some() {
+        let (phase, phase_t) = if keeps && back.is_some() {
             (0.0, 0.0)
         } else {
             (phase, phase_t)
         };
         self.current = match back {
-            Some((p, _)) if windowed && (legs || new.is_some_and(|n| n.death)) => Play {
+            Some((p, _)) if keeps && (legs || new.is_some_and(|n| n.death)) => Play {
                 base_ms: now_ms,
                 base_s: p.seconds(now_ms),
                 rate: 1.0,
@@ -828,6 +846,16 @@ fn spread_phase(now_ms: i32, client_num: i32) -> f32 {
     ((now_ms / 100 + client_num * 360) % 1000) as f32 * 0.001
 }
 
+/// 1.5b's and UO's spread (`game.mp` 1.5b 0x18fa2..0x19036, UO
+/// 0x1d114..0x1d1a8): `clientNum * 0.36f + (bg.time % period) / period`
+/// stored as a float, less its integer part. `period` is the old anim's
+/// `XAnimGetLength` + 200, or 1000 when the old anim is no clip (none).
+/// The sum runs on the x87 stack; `f64` here.
+fn spread_phase_15(now_ms: i32, client_num: i32, period: i32) -> f32 {
+    let x = ((now_ms % period) as f64 / period as f64 + client_num as f64 * 0.36f32 as f64) as f32;
+    x - x.trunc()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,6 +894,21 @@ mod tests {
             spread_phase(99_999, 3),
             (999 + 1080) as f32 % 1000.0 * 0.001
         );
+    }
+
+    #[test]
+    fn the_15_spread_phase_runs_on_the_old_clips_period() {
+        // Values the sum gives rounded to a float once, off exact rationals.
+        let cases = [
+            (12_345, 0, 1000, 0x3eb0a3d7),
+            (12_345, 3, 1000, 0x3ed9999c),
+            (25_050, 5, 1466, 0x3f6326ea),
+            (99_999, 63, 2133, 0x3f0fd5e0),
+        ];
+        for (now, client, period, bits) in cases {
+            let p = spread_phase_15(now, client, period);
+            assert_eq!(p.to_bits(), bits, "{now} {client} {period}: {p}");
+        }
     }
 
     #[test]
@@ -961,6 +1004,35 @@ mod tests {
             },
         );
         assert_eq!(c.rate(), 200.0 / speed);
+    }
+
+    /// A run out of the idle starts at the spread phase: 1.1's off the
+    /// tenth of a second, 1.5's and UO's off the idle's own length.
+    #[test]
+    fn a_run_out_of_the_idle_starts_at_the_protocols_spread() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let idle = anims.wire_of("pb_stand_alert").unwrap();
+        let run = anims.wire_of("pb_combatrun_forward_loop").unwrap();
+        let period = anims.motion(idle).unwrap().length_ms + 200;
+        for windowed in [false, true] {
+            let mut c = ChannelClock::default();
+            let mut window = 0;
+            for (t, wire) in [(1000, idle), (12_350, run)] {
+                let at = Times::end_frame(t);
+                match windowed {
+                    false => c.update(&anims, true, wire, &seen(0.0, 0), at),
+                    true => c.update_windowed(&anims, true, wire, &seen(0.0, 0), at, &mut window),
+                }
+            }
+            let want = match windowed {
+                false => spread_phase(12_350, 3),
+                true => spread_phase_15(12_350, 3, period),
+            };
+            assert_eq!(c.current.time_t, want, "{windowed}");
+        }
     }
 
     /// A death anim plays from its start on a body `cloneplayer` just made

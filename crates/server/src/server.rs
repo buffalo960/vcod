@@ -4428,9 +4428,25 @@ impl Server {
                 Some((*slot, view))
             })
             .collect();
+        let round = u32::from(self.server_id);
         if let Some((attackers, defenders, objectives)) = &re {
             let team = |slot: usize| teams.get(slot).copied().unwrap_or(0);
             let slots: Vec<usize> = views.iter().map(|(s, _)| *s).collect();
+            // The attackers by each carrier who keep by him (`team::escorts`).
+            let escorts: Vec<usize> = objectives
+                .iter()
+                .filter_map(|(o, carrier, _)| Some((o.carrier_at?, (*carrier)?)))
+                .flat_map(|(at, carrier)| {
+                    let mates: Vec<(usize, [f32; 3])> = views
+                        .iter()
+                        .filter(|(s, v)| {
+                            *s != carrier && team(*s) == team(carrier) && v.playing && !v.dead
+                        })
+                        .map(|(s, v)| (*s, v.origin))
+                        .collect();
+                    crate::bots::team::escorts(at, &mates)
+                })
+                .collect();
             for (slot, view) in views.iter_mut() {
                 let mine = team(*slot);
                 let role = if mine == *attackers {
@@ -4440,12 +4456,12 @@ impl Server {
                 } else {
                     continue;
                 };
+                let mates: Vec<usize> =
+                    slots.iter().copied().filter(|s| team(*s) == mine).collect();
                 view.re = Some(crate::bots::ReView {
                     role,
-                    rank: slots
-                        .iter()
-                        .filter(|s| team(**s) == mine && *s < slot)
-                        .count(),
+                    rank: crate::bots::team::round_rank(*slot, &mates, mine, round),
+                    escort: escorts.contains(slot),
                     objectives: objectives
                         .iter()
                         .map(|(o, carrier, shown_to)| crate::bots::ReObjView {
@@ -4522,6 +4538,19 @@ impl Server {
                 .iter()
                 .map(|(slot, v)| (*slot, team(*slot), bomb_dist(v), v.playing))
                 .collect();
+            // Who the script holds planting in a zone (`team::cover`).
+            let planting: Vec<(usize, [f32; 3], bool)> = views
+                .iter()
+                .map(|(slot, v)| {
+                    let held = v.playing
+                        && v.linked
+                        && sd
+                            .sites
+                            .iter()
+                            .any(|z| crate::bots::inside_site(v.origin, z));
+                    (*slot, v.origin, held)
+                })
+                .collect();
             for (slot, view) in views.iter_mut() {
                 let mine = team(*slot);
                 let role = if mine == *attackers {
@@ -4531,7 +4560,19 @@ impl Server {
                 } else {
                     continue;
                 };
-                let rank = side.iter().filter(|s| s.1 == mine && s.0 < *slot).count();
+                let mates: Vec<usize> = side.iter().filter(|s| s.1 == mine).map(|s| s.0).collect();
+                let attack = role == crate::bots::ObjRole::Attack;
+                let rank = crate::bots::team::site_rank(attack, *slot, &mates, mine, round);
+                let cover = attack
+                    .then(|| {
+                        let mates: Vec<_> = planting
+                            .iter()
+                            .filter(|p| team(p.0) == mine)
+                            .copied()
+                            .collect();
+                        crate::bots::team::cover(*slot, view.origin, &mates)
+                    })
+                    .flatten();
                 // Nearest first, the lower slot on a tie.
                 let lead = side
                     .iter()
@@ -4542,6 +4583,7 @@ impl Server {
                     role,
                     rank,
                     lead,
+                    cover,
                     ..sd.clone()
                 });
             }
@@ -4570,6 +4612,16 @@ impl Server {
                 .collect()
         };
         let (climbers, standing) = (bodies(true), bodies(false));
+        // On an objective level each playing bot's path ahead, which its
+        // teammates' plans pay more to share (`team::crowd`).
+        let paths: Vec<crate::bots::team::TeamPath> = views
+            .iter()
+            .filter(|(_, v)| v.playing && !v.dead && Self::team_objective(v))
+            .filter_map(|(slot, _)| {
+                let f = self.bot_paths.get(slot)?;
+                Some((*slot, teams.get(*slot).copied()?, f.ahead().collect()))
+            })
+            .collect();
         for (slot, mut view) in views {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
@@ -4583,6 +4635,12 @@ impl Server {
             }
             if let Some(g) = self.nav.clone().filter(|_| view.seat.is_none()) {
                 let mut follower = self.bot_paths.remove(&slot).unwrap_or_default();
+                follower.crowd = match teams.get(slot) {
+                    Some(&t) if Self::team_objective(&view) => {
+                        crate::bots::team::crowd(&paths, slot, t)
+                    }
+                    _ => Vec::new(),
+                };
                 if self.bots.get_mut(&slot).is_some_and(|b| b.take_stuck()) {
                     follower.stuck();
                 }
@@ -5299,6 +5357,12 @@ impl Server {
     /// the attacking and defending team values and the view with a
     /// placeholder role. Read fresh every frame, since a `map_restart`
     /// respawns the zones under new handles.
+    /// A level whose bots share out a team objective: `sd`, `re` and UO's
+    /// `ctf`, `dom`, `hq` and `bas`.
+    fn team_objective(v: &crate::bots::BotView) -> bool {
+        v.sd.is_some() || v.re.is_some() || v.uo.is_some()
+    }
+
     fn bot_sd(&mut self) -> Option<(i32, i32, crate::bots::SdView)> {
         if self.level_cvars.as_ref().is_none_or(|(g, _)| g != "sd") {
             return None;
@@ -5331,6 +5395,7 @@ impl Server {
                 bomb,
                 rank: 0,
                 lead: false,
+                cover: None,
             },
         ))
     }

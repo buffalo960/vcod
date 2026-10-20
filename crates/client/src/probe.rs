@@ -164,6 +164,8 @@ pub struct Save {
     pub slope: bool,
     /// `--slope-every-state`: [`SlopeCapture`] keeps every `pm_type`.
     pub slope_every_state: bool,
+    /// `--slope-from-spawn`: [`SlopeCapture`] starts at the spawn.
+    pub slope_from_spawn: bool,
     /// `--probe-prone <yaw>`: the slope capture's walk is [`ProneScript`]
     /// instead of the route, facing up the grade along that world yaw.
     pub prone: Option<f32>,
@@ -372,6 +374,7 @@ pub fn probe(
         motion: save_motion,
         slope: save_slope,
         slope_every_state,
+        slope_from_spawn,
         prone: prone_uphill,
         moves: probe_moves,
         turns: probe_turns,
@@ -643,9 +646,10 @@ pub fn probe(
             .is_some_and(|t| t.starts_with("overlap-wall")),
     );
     let mut wrote_bump = false;
-    // A tag starting `torso` fires and reloads on the move (probe_torso).
+    // A tag starting `torso` fires and reloads on the move (probe_torso),
+    // one starting `stopgo` stops and goes inside the legs blends.
     let mut legs =
-        crate::legs_probe::LegsProbe::new(tag.as_deref().is_some_and(|t| t.starts_with("torso")));
+        crate::legs_probe::LegsProbe::new(crate::legs_probe::Walk::of_tag(tag.as_deref()));
     let mut wrote_legs = false;
     let mut shock = crate::shock_probe::ShockProbe::default();
     let mut wrote_shock = false;
@@ -1296,6 +1300,8 @@ pub fn probe(
                 if save_slope && (!prone_crawl || prone.recording()) {
                     slope_capture.observe(s);
                 }
+            } else if save_slope && slope_from_spawn {
+                slope_capture.observe(s);
             }
             if probe_follow {
                 follow.observe(now, s);
@@ -4937,6 +4943,11 @@ struct HitSample {
     clip: Vec<(usize, i16)>,
     velocity: [f32; 3],
     origin: [f32; 3],
+    /// `commandTime` and the two anim timers, which run down by each cmd's
+    /// msec from the event that set them.
+    command_time: i32,
+    legs_timer: i32,
+    torso_timer: i32,
 }
 
 /// The non-zero entries of a playerstate ammo array, as `index:value` pairs.
@@ -5011,6 +5022,9 @@ impl HitSample {
                 snap.ps.field_f32(p, "velocity[2]"),
             ],
             origin: snap.ps.origin(p),
+            command_time: f("commandTime"),
+            legs_timer: f("legsTimer"),
+            torso_timer: f("torsoTimer"),
         }
     }
 
@@ -5033,6 +5047,8 @@ impl HitSample {
             self.torso_anim,
             self.weaponstate,
             self.stats1,
+            self.legs_timer,
+            self.torso_timer,
         ];
         v.extend(self.events);
         v.extend(self.event_parms);
@@ -5055,7 +5071,7 @@ impl HitSample {
             "!trace ms={} serverTime={} health={} damageEvent={} damageCount={} damageYaw={} \
 damagePitch={} pm_type={} eFlags={} deadViewHeight={} viewHeightCurrent={:.1} eventSequence={} \
 events={},{},{},{} eventParms={},{},{},{} legsAnim={} torsoAnim={} weaponstate={} stats1={} \
-clip={} ammo={} velocity={} origin={}\n",
+clip={} ammo={} velocity={} origin={} ct={} legsTimer={} torsoTimer={}\n",
             self.elapsed_ms,
             self.server_time,
             self.health,
@@ -5084,6 +5100,9 @@ clip={} ammo={} velocity={} origin={}\n",
             pairs_str(&self.ammo),
             vec_str(self.velocity),
             vec_str(self.origin),
+            self.command_time,
+            self.legs_timer,
+            self.torso_timer,
         )
     }
 }
@@ -6404,6 +6423,7 @@ fn write_hit_fixture(
         "# ms is since the role's script started; serverTime is the server's own clock.\n",
     );
     out.push_str("# clip and ammo are the non-zero entries of the two arrays, as index:value.\n");
+    out.push_str("# ct is commandTime; legsTimer and torsoTimer are the anim timers, run down by each cmd.\n");
     for n in notes {
         out.push_str(n);
         out.push('\n');
