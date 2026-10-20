@@ -1664,6 +1664,9 @@ goes there too, as `mp_brecourt-<gametype>-log.txt`.
 Recipe, timeline and findings: `docs/research/cod11-gametypes-re-bel.md`,
 sections 7 (re: allies `attacker` first, axis `defender` 3 s later, 150 s)
 and 8 (bel: both `--probe-team axis`, `first` then `second`, 130 s).
+`probe_bel` logs every spawn into play's origin (`PROBE spawned`) before it
+moves the player, which is how the gate replays `bel.gsc`'s random picks
+(section 8.7).
 
 ## probe_linkto
 
