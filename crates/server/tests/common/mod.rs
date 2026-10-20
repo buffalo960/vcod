@@ -3,6 +3,8 @@
 //! of them uses part of it, hence the crate-level allow.
 #![allow(dead_code)]
 
+pub mod snapcull;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
