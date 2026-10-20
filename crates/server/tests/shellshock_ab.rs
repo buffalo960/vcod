@@ -34,13 +34,6 @@ const CLIENT: &str = "tests/fixtures/shellshock/mp_carentan-dm-shock-client.txt"
 /// The client joins this many frames in, well before the gsc's 15000.
 const JOIN_FRAMES: u32 = 100;
 
-/// Where the walk is compared from, after the placement: past the first
-/// run-up's acceleration.
-const MOVE_FROM_MS: i32 = 300;
-
-/// A snapshot's step of the origin against retail's.
-const STEP_TOL: f32 = 0.01;
-
 /// One snapshot's fields, as the fixture prints them.
 #[derive(Clone, Debug, PartialEq)]
 struct Snap {
@@ -116,7 +109,22 @@ struct Ours {
 
 fn run_ours() -> Option<Ours> {
     let fs = vcod_common::testing::game_fs_11()?;
-    let (cmds, retail) = client();
+    let (mut cmds, retail) = client();
+    let (placed, placed_ct) = (retail[0].0, retail[0].1);
+    // The probe sent a holding cmd at the placement's own time, before it
+    // saw the placement, and captures before 2026-10-21 did not log it: the
+    // fall from the placement runs from retail's commandTime through it.
+    if cmds.first().is_some_and(|c| c.server_time > placed) {
+        let weapon = cmds[0].weapon;
+        cmds.insert(
+            0,
+            UserCmd {
+                server_time: placed,
+                weapon,
+                ..NULL_USERCMD
+            },
+        );
+    }
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
@@ -135,7 +143,6 @@ fn run_ours() -> Option<Ours> {
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
     let mut join = Join::new("allies", "m1carbine_mp");
     let p = &vcod_common::net::protocol::PROTOCOL_V1;
-    let placed = retail.first().expect("a snapshot").0;
     let acked: BTreeMap<i32, i32> = retail.iter().map(|(t, ct, _)| (*t, *ct)).collect();
     let last = retail.last().unwrap().0;
     let mut snaps = BTreeMap::new();
@@ -146,8 +153,16 @@ fn run_ours() -> Option<Ours> {
         if t > last {
             break;
         }
-        if t <= placed {
+        if t < placed {
             cl.send_frame(&holding(&cl));
+        } else if t == placed {
+            // The placement frame runs the cmds up to retail's commandTime.
+            let mut c = holding(&cl);
+            c.server_time = placed_ct;
+            c.angles = cl.snapshots().newest().map_or([0; 3], |s| {
+                [0, 1, 2].map(|i| -s.ps.field_i32(p, &format!("delta_angles[{i}]")) & 0xffff)
+            });
+            cl.send_cmds(&[c]);
         } else {
             // Retail's cmds up to what the snapshot of frame `t` had
             // acknowledged, so this frame runs the moves retail's did. The
@@ -215,10 +230,8 @@ fn shellshock_fields_and_the_shocked_walk_match_retail() {
     assert_eq!(our_calls, retail_calls);
 
     let (_, retail) = client();
-    let placed = retail[0].0;
     let mut bad = Vec::new();
     let mut compared = 0;
-    let mut prev: Option<(&Snap, &Snap)> = None;
     for (t, _, r) in &retail {
         let Some(o) = ours.snaps.get(t) else {
             bad.push(format!("{t}: no snapshot of ours"));
@@ -231,25 +244,12 @@ fn shellshock_fields_and_the_shocked_walk_match_retail() {
         if r.shock != o.shock {
             bad.push(format!("{t}: retail {:?} ours {:?}", r.shock, o.shock));
         }
-        // The walk from the end of the first run-up: ours' commandTime at
-        // the placement is 14950 to retail's 14968 (the join's phase), so
-        // the first replayed cmd runs 18 ms longer and leaves a constant
-        // 1.66 units on the origin. Every later step, shocked or not, moves
-        // the same.
-        if *t >= placed + MOVE_FROM_MS
-            && let Some((rp, op)) = prev
-        {
-            let step = |a: &Snap, b: &Snap| [0, 1, 2].map(|i| b.origin[i] - a.origin[i]);
-            let (rs, os) = (step(rp, r), step(op, o));
-            let off = (0..3).map(|i| (rs[i] - os[i]).abs()).fold(0.0, f32::max);
-            if r.vel != o.vel || off > STEP_TOL {
-                bad.push(format!(
-                    "{t}: retail vel {:?} step {rs:?}, ours vel {:?} step {os:?}",
-                    r.vel, o.vel
-                ));
-            }
+        if r.origin != o.origin || r.vel != o.vel {
+            bad.push(format!(
+                "{t}: retail origin {:?} vel {:?}, ours origin {:?} vel {:?}",
+                r.origin, r.vel, o.origin, o.vel
+            ));
         }
-        prev = Some((r, o));
     }
     assert!(compared > 200, "only {compared} snapshots compared");
     assert!(
