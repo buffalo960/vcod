@@ -24,6 +24,9 @@ use vcod_gsc::{Atom, Cx, EntId, ErrorKind, Host, Target, Value};
 /// 0x75b48, 500.0).
 const CONCUSSIVE_LIFE_MS: i32 = 500;
 pub const ENTITYNUM_NONE: i32 = vcod_common::net::protocol::ENTITYNUM_NONE as i32;
+/// `G_Trigger`'s queue: 0x100 entries of 12 bytes on all three patches
+/// (1.1d `level+0x1dec`, 1.5b `+0x2210`, UO `+0x2260`).
+pub const TRIGGER_QUEUE_LEN: usize = 0x100;
 
 /// A cleared level objective record: what `objective_add` starts from and
 /// what `objective_delete` leaves.
@@ -1132,8 +1135,26 @@ impl GameHost {
             out[0].1 = hit.uo_args(cx, damage.max(1), attacker);
         }
         // A `trigger_damage`'s `pain` or `die` (combat doc 14.8).
-        crate::game::damage_trigger::damaged(self, cx, id, attacker, damage.max(1), &hit.mod_);
+        let fired =
+            crate::game::damage_trigger::damaged(self, cx, id, attacker, damage.max(1), &hit.mod_);
+        if fired == crate::game::damage_trigger::Fired::Spot {
+            out.push(("trigger", vec![Value::Entity(attacker)]));
+        }
         out
+    }
+
+    /// `G_Trigger` (1.5b 0x69f68, UO 0x76218; 1.1d inlines it): queues a
+    /// `"trigger"` on `id` with `activator` for `G_RunFrame`'s rounds, or
+    /// returns false when the queue already holds its 0x100 entries, where
+    /// retail notifies on the spot and the caller does
+    /// (docs/research/cod11-gsc-language.md, "Engine notifies and the
+    /// trigger queue").
+    pub fn queue_trigger(&mut self, id: EntId, activator: EntId) -> bool {
+        if self.trigger_fires.len() >= TRIGGER_QUEUE_LEN {
+            return false;
+        }
+        self.trigger_fires.push((id, activator));
+        true
     }
 
     /// Whether an entity with no client has `takedamage` (+0x171, UO
