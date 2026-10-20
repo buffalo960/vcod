@@ -284,7 +284,8 @@ something, the bullet links it.
   `script_origin` never, and cull fog drops whatever lies past its far
   distance, matched against live 1.5b and UO runs (same doc, 15). The
   compass reads each engine's `SV_inSnapshot`: a teammate off the map
-  shows on UO and not on 1.1, a sounded one leaves it. An eye in a solid
+  shows on 1.5 and UO and not on 1.1, one past a cull fog shows on 1.5
+  and UO, a sounded one leaves it. An eye in a solid
   leaf is sent no entities, on all three, as retail does.
 - Hosts United Offensive 1.51 (protocol 22) from a UO install with
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
@@ -297,8 +298,8 @@ something, the bullet links it.
   ([coduo-diff.md](research/coduo-diff.md) 20). Artillery strikes,
   smoke grenades, satchel charges, the flamethrower's reported damage and
   mounted MG overheat run UO's rules too; the strike, the smoke, the bipod
-  MG, the satchel and the overheat match retail's captures, and a satchel
-  can be shot or blasted off (same doc, 21). The four UO
+  MG, the satchel and the overheat match retail's captures, and so does a
+  satchel shot off or set off by another's blast (same doc, 21). The four UO
   modes' configstrings match retail's, and so do a flag pickup and capture
   in `ctf`, a flag taken and retaken in `dom`, a radio captured and
   neutralized in `hq` and a base breach in `bas`, HUD, compass and
@@ -371,7 +372,8 @@ something, the bullet links it.
   panzerschreck) fires a rocket that flies, strikes and explodes as
   retail's does; a missile at the sky is freed on 1.1 and 1.5 and flies
   on through it on UO, and one that drops fast into water splashes (UO
-  frees a smoke grenade there). A rocket or a swing hurts a UO `setTakeDamage`
+  frees a smoke grenade there, and a UO grenade that goes off under water
+  goes off on the surface). A rocket or a swing hurts a UO `setTakeDamage`
   model directly, and a swing at nothing raises no event.
 - Corpses in the eight-slot body queue, dropped weapons, pickups by touch or
   use key, items that fly retail's arc and respawn on its timer.

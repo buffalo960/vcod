@@ -4,7 +4,7 @@
 //! (docs/research/coduo-diff.md 12, "Server").
 
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
-use vcod_common::weapon_table::STATIC_ITEMS;
+use vcod_common::weapon_table::{STATIC_ITEMS, static_item};
 
 pub struct Defs {
     pub proto: &'static Protocol,
@@ -109,12 +109,12 @@ impl Defs {
         self.proto.max_weapons + 1 + STATIC_ITEMS.len()
     }
 
-    /// The compiled-in rows at this version's indices: `STATIC_ITEMS` holds
-    /// 1.1's, which sit right after its 64 weapon rows, as UO's sit after
-    /// its 128.
+    /// The compiled-in rows at this version's indices
+    /// (`weapon_table::static_item`): 65..69 on 1.1 and 1.5, after UO's 128
+    /// weapon rows on UO.
     pub fn static_items(&self) -> impl Iterator<Item = (usize, &'static str, &'static str)> {
-        let shift = self.proto.max_weapons - PROTOCOL_V1.max_weapons;
-        STATIC_ITEMS.iter().map(move |&(i, n, m)| (i + shift, n, m))
+        (self.proto.max_weapons + 1..self.num_items())
+            .filter_map(|i| static_item(self.proto, i).map(|(n, m)| (i, n, m)))
     }
 
     /// The enum value of a `MOD_*` name.
@@ -139,6 +139,14 @@ mod tests {
         assert_eq!(
             UO.static_items().map(|(i, ..)| i).collect::<Vec<_>>(),
             [129, 130, 131, 132, 133]
+        );
+        assert_eq!(
+            V15.static_items().collect::<Vec<_>>(),
+            V1.static_items().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            V1.static_items().map(|(i, n, _)| (i, n)).last(),
+            Some((69, "item_health_large"))
         );
         assert_eq!(UO.mod_index("MOD_FLAME"), Some(25));
         assert_eq!(V1.mod_index("MOD_SUICIDE"), Some(22));

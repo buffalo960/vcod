@@ -532,7 +532,7 @@ fn launch(
         let atom = cx.intern_folded(field);
         host.set_field(cx, id, atom, value)?;
     }
-    host.register_item(&name);
+    host.register_item(&name)?;
     let now = host.level_time_ms;
     if let Some(e) = host.ents.get_mut(id) {
         e.item = Some(ItemState {

@@ -400,7 +400,7 @@ fn spawn_entity(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<Valu
         let item = crate::items::item_name(host.defs, index)
             .unwrap_or(&name)
             .to_string();
-        host.register_item(&item);
+        host.register_item(&item)?;
         crate::game::item::spawn_in_place(host, cx, id, index, flags);
     } else if name == "script_model" {
         crate::game::spawn::link_script_model(host, cx, id);

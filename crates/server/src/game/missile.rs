@@ -2779,6 +2779,47 @@ mod tests {
         assert_eq!(frame.exploded[0].inflictor, id);
     }
 
+    /// A satchel gone off on its fuse keeps retail's `takedamage`, but no
+    /// blast or round sets it off again: `G_ExplodeMissile` zeroes its
+    /// contents, and `freeAfterEvent` keeps `G_RunFrame` from running the
+    /// think a second `G_GrenadeDie` would set (coduo-diff.md 21). It goes
+    /// out once and is freed when its event ages out.
+    #[test]
+    fn a_satchel_gone_off_never_goes_off_again() {
+        let world = vcod_common::collision::test_world(&[]);
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let id = armed(
+            &mut ms,
+            &mut host,
+            &mut vm,
+            Vec3::new(0.0, 0.0, 8.0),
+            Vec3::ZERO,
+            0,
+        );
+        ms.set_uo_kind(id, explosion_type("rocket"), true, 0);
+        let mut blew = Vec::new();
+        for f in 1..=100 {
+            let t = f * 50;
+            // Every frame from the fuse's on, a blast or a round reaches it.
+            if ms.contains(id) && !ms.blast_targets().iter().any(|(b, _)| *b == id) {
+                assert!(!ms.kill(id, t), "a gone-off satchel took damage at {t}");
+                assert!(ms.shot_targets().is_empty(), "a round stops on it at {t}");
+            }
+            let frame = ms.run(Some(&world), &[], &[], None, t);
+            blew.extend(frame.exploded.iter().map(|_| t));
+            if frame.freed.contains(&id) {
+                assert_eq!(t, blew[0] + EVENT_VALID_MS + 50, "freed with its event");
+            }
+        }
+        assert_eq!(blew, [4000], "one explode, on the fuse");
+        assert!(!ms.contains(id));
+    }
+
     /// A tank shell striking a vehicle's collmap names the vehicle as what
     /// it struck, and once the caller marks the hit the explode carries
     /// UO's 0x100000 for the impact row's `vehicle` column.

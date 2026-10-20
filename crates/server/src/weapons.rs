@@ -175,6 +175,19 @@ impl WeaponTable {
         self.get(index).map_or("", |d| d.weapon_class.as_str())
     }
 
+    /// `index` and every weapon its `altWeapon` chain reaches, in chain
+    /// order: the walk `RegisterItem` (0x4e504) and `BG_GivePlayerWeapon`
+    /// (0x36a38) make over `def+0x2fc`, stopping at 0 or back at the start.
+    pub fn alt_chain(&self, index: usize) -> Vec<usize> {
+        let mut chain = vec![index];
+        let mut alt = self.get(index).map_or(0, |d| d.alt_index);
+        while alt != 0 && !chain.contains(&alt) {
+            chain.push(alt);
+            alt = self.get(alt).map_or(0, |d| d.alt_index);
+        }
+        chain
+    }
+
     /// The `SLOT_NAMES` index the weapon file's `weaponSlot` names, 0 for a
     /// weapon with none.
     pub fn slot(&self, index: usize) -> usize {

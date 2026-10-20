@@ -1547,8 +1547,15 @@ impl GameHost {
     /// which retail may not: it reads a different struct there (object
     /// model doc, section 15, M3). No stock alt-fire file carries a model
     /// the base does not, so the two readings cannot be told apart.
-    pub fn register_item(&mut self, name: &str) {
-        for item in self.items.register(name) {
+    ///
+    /// A new item past `level.initializing` is a script error
+    /// (`Scr_Error` at 0x4e577; UO and 1.5b the same).
+    pub fn register_item(&mut self, name: &str) -> Result<(), ErrorKind> {
+        let registered = self
+            .items
+            .register(name, &self.weapons, self.initializing)
+            .map_err(ErrorKind::Custom)?;
+        for item in registered {
             for model in crate::items::item_models(self.defs, self.fs.as_deref(), item) {
                 if let Err(e) =
                     self.allocators
@@ -1559,6 +1566,18 @@ impl GameHost {
             }
         }
         self.configstrings.set(8, self.items.bitstring());
+        Ok(())
+    }
+
+    /// Registers `names` as a level's precache would, for a test that hands
+    /// a player weapons without going through `giveWeapon`.
+    #[cfg(test)]
+    pub fn precache_items_for_test(&mut self, names: &[&str]) {
+        let was = std::mem::replace(&mut self.initializing, true);
+        for name in names {
+            self.register_item(name).unwrap();
+        }
+        self.initializing = was;
     }
 
     /// A uniform draw in `[0, 1)` off the host's own state.

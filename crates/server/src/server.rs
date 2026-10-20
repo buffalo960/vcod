@@ -1781,6 +1781,22 @@ fn oob_argv(raw: &[u8], n: usize) -> String {
 /// `CsRange::Menu`'s 32 slots.
 const MAX_MENUS: i64 = 31;
 
+/// UO's `Cmd_FlameDamageClient_f` (game.mp.uo 0x4ee2c) on `fdc`'s
+/// arguments: exactly one, read into a 4-byte buffer (so its first three
+/// characters) and `atoi`'d, then kept when it lies in `0..=maxclients`
+/// (`level+0x1e4`, `g_maxclients`). A bad one leaves the last report alone
+/// (coduo-diff.md 21).
+fn fdc_inflictor(args: &str, max_clients: usize) -> Option<u32> {
+    let mut words = args.split_whitespace();
+    let (Some(word), None) = (words.next(), words.next()) else {
+        return None;
+    };
+    let head: String = word.chars().take(3).collect();
+    u32::try_from(crate::game::builtins::cvar::atoi(&head))
+        .ok()
+        .filter(|&n| n as usize <= max_clients)
+}
+
 /// `Cmd_MenuResponse_f` (0x486d8) on `mr <serverId> <menuIndex> <response>`,
 /// tokenized as `Cmd_TokenizeString` does (quotes group). The menu and the
 /// response the `menuresponse` notify carries, or `None` for a stale
@@ -3225,22 +3241,15 @@ impl Server {
                         .push((packet, PacketCommand::CycleSeat { back }));
                 }
             }
-            // UO's `Cmd_FlameDamageClient_f` (0x4ee2c): the one argument
-            // is an entity number up to `level.num_entities`.
             "fdc" if self.proto.version == PROTOCOL_V22.version => {
-                let n = args
-                    .trim()
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|_| args.split_whitespace().count() == 1);
                 let now = self.sv_time_ms;
-                match n {
-                    Some(n) if (n as usize) < vcod_common::net::protocol::MAX_GENTITIES => {
+                match fdc_inflictor(args, self.clients.len()) {
+                    Some(n) => {
                         if let Some(c) = self.clients[slot].as_mut() {
                             c.flame = Some((n, now));
                         }
                     }
-                    _ => log::debug!("client {slot}: bad fdc {args:?}"),
+                    None => log::debug!("client {slot}: bad fdc {args:?}"),
                 }
             }
             "mr" => {
@@ -4908,8 +4917,8 @@ impl Server {
 
     /// The rocket launchers lying about, on a `bas` level only: what a bot
     /// breaches a base with (bot-objectives.md 7.2); and the bullet
-    /// weapons with a round in the clip, what a bot with nothing left to
-    /// fire takes up.
+    /// weapons, what a bot with nothing left to fire takes up. Each with a
+    /// round in its clip or its reserve.
     fn bot_launchers(
         &mut self,
         uo: Option<&script::UoObjectives>,
@@ -4924,8 +4933,9 @@ impl Server {
         let (mut launchers, mut guns) = (Vec::new(), Vec::new());
         for (w, at, empty) in rt.weapon_items() {
             match weapons.get(w as usize) {
+                _ if empty => {}
                 Some(d) if d.weapon_class == "rocketlauncher" => launchers.push(at),
-                Some(d) if d.weapon_type == "bullet" && !empty => guns.push(at),
+                Some(d) if d.weapon_type == "bullet" => guns.push(at),
                 _ => {}
             }
         }
@@ -5100,8 +5110,9 @@ impl Server {
                 .is_some_and(|d| d.weapon_class == "rocketlauncher")
         };
         let rocket = held_rocket(sim.ps.weapon, sim.ps.weapons_held & loaded, is_launcher);
-        let spent_rocket = (1u8..64)
-            .find(|&w| sim.ps.weapons_held >> w & 1 == 1 && loaded >> w & 1 == 0 && is_launcher(w));
+        let launchers = (1u8..64)
+            .filter(|&w| sim.ps.weapons_held >> w & 1 == 1 && is_launcher(w))
+            .fold(0u64, |m, w| m | 1 << w);
         let gun = (1u8..64).find(|&i| {
             loaded >> i & 1 == 1
                 && weapons
@@ -5212,7 +5223,8 @@ impl Server {
             unpin: None,
             pistol,
             rocket,
-            spent_rocket,
+            primaries: [sim.ps.weapon_slots[1], sim.ps.weapon_slots[2]],
+            launchers,
             gun,
             reload_ms,
             draw_ms,
@@ -10336,6 +10348,26 @@ mod tests {
     /// Every landing of the two 2026-10-05 retail runs, parm and maxhealth
     /// to damage (player-clip doc 8.10): the float `0.01` keeps each whole
     /// share just under, and past 99 the fall does 110 percent.
+    /// `Cmd_FlameDamageClient_f`'s reading (game.mp.uo 0x4ee2c): `atoi` of
+    /// the first three characters, kept in `0..=maxclients`, one argument
+    /// only.
+    #[test]
+    fn an_fdc_argument_reads_as_retail_reads_it() {
+        assert_eq!(fdc_inflictor("3", 20), Some(3));
+        assert_eq!(fdc_inflictor("20", 20), Some(20));
+        assert_eq!(fdc_inflictor("21", 20), None);
+        assert_eq!(fdc_inflictor("100", 20), None);
+        assert_eq!(fdc_inflictor("1000", 64), None);
+        assert_eq!(fdc_inflictor("5000", 64), None);
+        assert_eq!(fdc_inflictor("12345", 64), None);
+        assert_eq!(fdc_inflictor("1234", 200), Some(123));
+        assert_eq!(fdc_inflictor("x", 20), Some(0));
+        assert_eq!(fdc_inflictor("4x", 20), Some(4));
+        assert_eq!(fdc_inflictor("-1", 20), None);
+        assert_eq!(fdc_inflictor("", 20), None);
+        assert_eq!(fdc_inflictor("1 2", 20), None);
+    }
+
     #[test]
     fn fall_damage_is_retails_share_of_max_health() {
         for (percent, max, damage) in [
@@ -13139,6 +13171,7 @@ mod tests {
         held.current = frag as u8;
         let rt = sv.script.as_mut().unwrap();
         rt.host.weapons = sv.weapon_table.clone();
+        rt.host.precache_items_for_test(&["fraggrenade_mp"]);
         rt.host.client_weapons[0] = held;
         let c = sv.clients[0].as_mut().unwrap();
         let sim = c.sim.as_mut().unwrap();
@@ -13341,6 +13374,7 @@ mod tests {
     fn a_frag_given_back_in_the_frame_it_was_thrown_stays_held() {
         // The clients never spawn, so they are still G_InitGentity's "noclass".
         let script = "main() { \
+               precacheitem(\"fraggrenade_mp\"); \
                while (1) { \
                  wait 0.05; \
                  g = getentarray(\"grenade\", \"classname\"); \
@@ -13414,6 +13448,8 @@ mod tests {
         held.current = colt as u8;
         let rt = sv.script.as_mut().unwrap();
         rt.host.weapons = table.clone();
+        rt.host
+            .precache_items_for_test(&["m1carbine_mp", "thompson_mp", "colt_mp"]);
         rt.host.client_weapons[0] = held;
         rt.host.client_vitals[0] = crate::game::host::Vitals {
             health: 100,
@@ -13594,6 +13630,7 @@ mod tests {
         held.current = carbine as u8;
         let rt = sv.script.as_mut().unwrap();
         rt.host.weapons = sv.weapon_table.clone();
+        rt.host.precache_items_for_test(&["fraggrenade_mp"]);
         rt.host.client_weapons[0] = held;
         rt.host.client_vitals[0] = crate::game::host::Vitals {
             health: 100,

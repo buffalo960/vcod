@@ -1381,24 +1381,41 @@ impl ScriptRuntime {
     }
 
     /// Every weapon item lying in the world to be picked up, as `(weapon
-    /// index, origin, clip empty)`: placed `mpweapon_*` entities while
-    /// shown and drops.
+    /// index, origin, empty)`: placed `mpweapon_*` entities while shown and
+    /// drops. Empty is no round in the clip or the reserve: a drop writes
+    /// -1 into each count it found empty (`cod11-items.md` 8), and 0 is
+    /// unset, which the pickup fills.
     /// A taken one waits on its respawn off every snapshot and is left out.
     pub fn weapon_items(&mut self) -> Vec<(u8, [f32; 3], bool)> {
+        use vcod_gsc::Host;
         let defs = self.host.defs;
-        let items: Vec<(EntId, u8, bool)> = self
+        let items: Vec<(EntId, u8, i32)> = self
             .host
             .ents
             .iter_inuse()
             .filter_map(|(id, e)| {
                 let item = e.item?;
                 let weapon = !item.taken && defs.weapon_name(item.index as usize).is_some();
-                weapon.then_some((id, item.index, item.clip == -1))
+                weapon.then_some((id, item.index, item.clip))
             })
             .collect();
+        let host = &mut self.host;
+        let counts: Vec<i32> = self.vm.with_cx(|cx| {
+            let count = cx.intern_folded("count");
+            items
+                .iter()
+                .map(|&(id, ..)| match host.get_field(cx, id, count) {
+                    Value::Int(n) => n,
+                    _ => 0,
+                })
+                .collect()
+        });
         items
             .into_iter()
-            .filter_map(|(id, w, empty)| Some((w, self.entity_origin_of(id)?, empty)))
+            .zip(counts)
+            .filter_map(|((id, w, clip), count)| {
+                Some((w, self.entity_origin_of(id)?, clip < 0 && count < 0))
+            })
             .collect()
     }
 
@@ -5162,6 +5179,7 @@ mod tests {
             takedamage: true,
         };
         for (name, s) in [("m1carbine_mp", 1), ("colt_mp", 3), ("fraggrenade_mp", 4)] {
+            rt.host.precache_items_for_test(&[name]);
             let w = crate::configstrings::weapon_index(name).unwrap();
             let d = rt.host.weapons.get(w).unwrap().clone();
             rt.host.client_weapons[0].give(w, s);
@@ -5322,6 +5340,31 @@ mod tests {
     /// The swap with the use key: the carbine lands on the panzerfaust's own
     /// origin, carries its rounds and its dropper, and the `"trigger"` notify
     /// names the player and the carbine, in that order.
+    /// A drop with an empty clip and a reserve still has rounds to take;
+    /// only a count and a clip both written empty (-1) read as empty.
+    #[test]
+    fn a_weapon_item_with_a_reserve_behind_an_empty_clip_is_not_empty() {
+        let mut rt = pickup_rig();
+        let placed = rt.place_item("mpweapon_m1carbine", [0.0, 0.0, 30.0], 0);
+        let reserve = rt.place_item("mpweapon_m1carbine", [100.0, 0.0, 30.0], 30);
+        let empty = rt.place_item("mpweapon_m1carbine", [200.0, 0.0, 30.0], -1);
+        for id in [reserve, empty] {
+            rt.host
+                .ents
+                .get_mut(id)
+                .unwrap()
+                .item
+                .as_mut()
+                .unwrap()
+                .clip = -1;
+        }
+        let items = rt.weapon_items();
+        let at = |x: f32| items.iter().find(|i| i.1[0] == x).unwrap().2;
+        assert!(!at(0.0), "{placed:?} unset counts are filled at the pickup");
+        assert!(!at(100.0), "a reserve behind an empty clip");
+        assert!(at(200.0));
+    }
+
     #[test]
     fn the_use_key_swaps_and_the_trigger_notify_names_the_drop() {
         let mut rt = pickup_rig();
@@ -5488,6 +5531,33 @@ mod tests {
             Ok(Value::Entity(id)) => id,
             v => panic!("{v:?}"),
         }
+    }
+
+    /// `G_TouchTriggers` finds a mount through the area query's mask
+    /// 0x405c0008 alone, so `setContents` takes it out of the touch pass
+    /// or puts it back: retail UO's `probe_mounttouch` fired 57 times a
+    /// second spawned (0x401c4008), 2 under 0x4000 and under 0, 55 under
+    /// 0x400000 and under 0x40000000 (coduo-movement.md 11).
+    #[test]
+    fn set_contents_moves_a_mount_in_and_out_of_the_touch_pass() {
+        let mut rt = pickup_rig();
+        let mount = spawn_mount(&mut rt, [-40.0, -40.0, -10.0], [40.0, 40.0, 80.0], false);
+        let touched = |rt: &mut ScriptRuntime, contents: Option<i32>| {
+            rt.with_host(|host, cx| {
+                if let Some(c) = contents {
+                    let recv = Some(Target::Entity(mount));
+                    crate::game::builtins::uo::set_contents(host, cx, recv, &[Value::Int(c)])
+                        .unwrap();
+                }
+                crate::game::trigger::touched(host, cx, [0.0; 3]).contains(&mount)
+            })
+        };
+        assert!(touched(&mut rt, None));
+        assert!(!touched(&mut rt, Some(0x4000)));
+        assert!(touched(&mut rt, Some(0x40_0000)));
+        assert!(!touched(&mut rt, Some(0)));
+        assert!(touched(&mut rt, Some(0x4000_0000)));
+        assert!(touched(&mut rt, Some(0x401c_4008)));
     }
 
     /// A held LMG hints 7 where its probe, 15 ahead and 1 up, is inside a

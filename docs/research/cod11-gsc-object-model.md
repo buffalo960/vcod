@@ -916,9 +916,28 @@ VERIFIED that every `*_semi_mp`/`*_slow_mp` bit in both captures above sits
 at the `WEAPON_LIST` index immediately after its base weapon's bit
 (`bar_mp`/`bar_slow_mp`, `fg42_mp`/`fg42_semi_mp`, `mp44_mp`/
 `mp44_semi_mp`, `ppsh_mp`/`ppsh_semi_mp`, `thompson_mp`/
-`thompson_semi_mp`), which is the adjacency rule `Items::register`'s
-`alt_weapon_index` derives from `WEAPON_LIST` rather than a second
-hardcoded pairing table.
+`thompson_semi_mp`). VERIFIED, the stock files: each of the five names
+the other in `altWeapon` (`bar_mp` and `bar_slow_mp`, `thompson_mp` and
+`thompson_semi_mp`, ...), so `Items::register` walks the parsed
+`WeaponDef::alt_index` (`WeaponTable::alt_chain`), not the list's
+adjacency.
+
+**M4, a registration after the first wait.** VERIFIED, the instructions
+of `RegisterItem` (0x4e504): an item already registered returns at once
+(0x4e518); otherwise a clear `level.initializing` (`level+0x1c`,
+0x4e521) formats `"game tried to register the item '%s' after
+initialization finished\n"` (0x74de0) and calls `Scr_Error` (0x4e577).
+The name is `bg_itemlist`'s +0x18 (`Small Health`, `Med Health`, `Large
+Health`, `Stielhandgranate_mp Ammo Open` / `Closed`, read with
+`gameso.py`), or for a weapon row, whose +0x18 is blank, the weapon
+file's internal name (`def+4`, what `BG_GetWeaponIndexForName` compares).
+VERIFIED, the 1.5b and UO decompiles carry the same branch (UO's flag at
+`level+0x20`). `BG_GivePlayerWeapon` (0x36a38) calls `RegisterItem` on a
+weapon it gives (VERIFIED decompile), so `giveWeapon` and
+`setWeaponSlotWeapon` of a weapon nobody precached fail there past the
+first wait. vcod: `GameHost::register_item` returns the error, and the
+two builtins register what they give
+(`giving_an_unregistered_weapon_past_initialization_is_an_error`).
 
 **M3, the item's own models.** The same `RegisterItem` precaches two
 further model fields for *every* item, at offsets 0x8 and 0xc of its

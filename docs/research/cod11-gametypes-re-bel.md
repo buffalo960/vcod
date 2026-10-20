@@ -585,15 +585,29 @@ or a swap without a non-playing snapshot were never counted.
   which runs in `G_RunFrame`'s first `Scr_RunCurrentThreads` on the new
   `level.time`, ahead of the probe's `wait 0.05` due that frame (gsc
   language doc, "Engine notifies and the trigger queue").
-- VERIFIED, vcod measurement: ours runs the menu thread in the packet pass
-  on the last frame's clock (`ScriptRuntime::run_threads`' `run_runnable`
-  ahead of the clock), so ours logs `spawned` 6700 and `placed` 6750 for
-  the same answer, and the body thinks a frame at the pick before the move.
-  Queuing the notify in `GameHost::engine_notifies` instead makes ours log
-  both on one time, as retail does, but moves eleven `vcod-server` tests,
-  `turret_ab`'s spawn, hitgrid and victim captures among them (their
-  bodies settle a unit or two off retail's), so it is not in; the menu
-  answer's clock is open.
+- VERIFIED, vcod measurement (2026-10-20, after the packet pass change in
+  the gsc language doc, "The packet pass"): `ScriptRuntime::menu_response`
+  only notifies, from the move pass, and the menu thread runs in the next
+  frame's first round on its new `level.time`. Ours logs the first pick
+  on the first playing snapshot's time and places it on the same time,
+  as retail does: `gametypes_ab`'s `spawn clock` rows, per role, the first
+  pick's `getTime()` against the role's first playing snapshot (+0 on
+  both) and each pick against its `PROBE placed` (+0 off a menu answer,
+  +50 off `respawn`'s thread, the same seven on both). Stepping the woken
+  threads inside `menu_response` on the last frame's clock reads the
+  first pick -50 and fails both rows.
+- VERIFIED, vcod measurement, why the first attempt at the new clock
+  (queuing the notify in `GameHost::engine_notifies`, before the packet
+  pass change) moved eleven tests: the in-process join harness answers
+  both clients' menus in one frame, and the first round runs the last
+  woken thread first, so client B spawned ahead of A and took A's spawn
+  point. On today's code, `common::join_pair_stamped` sending A's packets
+  first instead of B's (`step_pair_b_first`) fails the same eleven and
+  nothing else: `combat.rs` 4, `killcam.rs` 1, `player_clip.rs` 3 and
+  `turret_ab.rs`'s spawn, hitgrid and victim captures. With B's packets
+  first, A's thread runs first and A spawns first, as on retail, and all
+  eleven pass; the three `turret_ab` rows are retail captures, so their
+  spawns are re-proven against retail's.
 - VERIFIED, the gate: ours' seven `PROBE spawned` origins equal retail's to
   the hundredth, and the marker matches retail's but for one mean, y -900
   where retail reads -901 (a truncation edge, `objective_position`'s
