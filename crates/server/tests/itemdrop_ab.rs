@@ -43,7 +43,7 @@ const FIXTURE: &str = "tests/fixtures/items/mp_carentan-dm-itemdrop.txt";
 const ET_ITEM: i32 = 3;
 const FRAME_MS: i32 = 50;
 /// The most a landing sits above the sweep's end: `G_BounceItem`'s lift is
-/// `0.5 + 0.5 * neg_unit()`, in (0, 0.5].
+/// 1.1d's `0.5 + 0.5 * rand() * -2^-31`, in (0, 0.5] (items doc 14.2).
 const LIFT_MAX: f32 = 0.5;
 /// Where the two sides' start positions may differ: a player resting a fifth
 /// of a unit off retail's (items doc 13.4).
