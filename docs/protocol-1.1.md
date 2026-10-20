@@ -1308,6 +1308,41 @@ did not move; "jerk" the mean and largest |drawn step - local step| in ms.
 VERIFIED, those runs. The public server's one 53 ms step is a FAST adjust
 right after the connect.
 
+### The server's frame cadence
+
+vcod-server runs its frames on a fixed grid (`Schedule` in
+`crates/server/src/main.rs`): slot `n` starts `n * 50` ms after the first,
+a tick runs every frame owed at its start, and the loop waits on the socket
+until the next slot. A late wake or a long tick moves only that snapshot;
+the next one goes out on its own slot. A stall over 5 s restarts the grid.
+INFERRED from `SV_Frame`'s residual loop, map-cycle doc 4.7.
+
+The 2026-10-09 table above set vcod-server's netsim gaps (+-14.2) beside
+retail's loopback ones (+-4.6), which read as a noisy server cadence. That
+spread was the netsim's own 20 ms jitter: under the same conditions the two
+servers match. Measured 2026-10-20 with `vcod --net-probe ADDR
+--probe-clock` (release client), each server on mp_carentan alone on
+loopback, on a machine at load 45 of 30 cores. `--probe-cmd-ms` is the
+probe's poll period, which quantizes the arrival times it reports.
+
+| Server | Probe | Run | Snapshot gaps, ms |
+|---|---|---|---|
+| retail 1.1d | `--probe-cmd-ms 8` | 40 s | 50.0 +-5.5, max 66 |
+| vcod-server (release) | `--probe-cmd-ms 8` | 40 s | 50.0 +-4.1, max 68 |
+| vcod-server (debug) | `--probe-cmd-ms 8` | 40 s | 50.0 +-5.5, max 69 |
+| retail 1.1d | `--probe-cmd-ms 1` | 30 s | 50.0 +-2.4, max 56 |
+| vcod-server (release) | `--probe-cmd-ms 1` | 30 s | 50.0 +-1.5, max 71 |
+| retail 1.1d | `VCOD_NETSIM=ping=100,jitter=20,loss=2`, 8 ms | 60 s | 50.9 +-12.0, max 114, 20 lost |
+| vcod-server (release) | same | 60 s | 50.9 +-11.6, max 139, 20 lost |
+
+VERIFIED, those runs. The debug server's ticks took 3.5-6 ms (`--trace`)
+and its cadence still matched retail's. Two more 1 ms runs each, after the
+loop's grid moved into `Schedule`: vcod +-1.1 and +-1.0, retail +-2.4 both
+times. One earlier vcod run read +-8.0 with a 217 ms gap and 5 snapshots
+"lost": at load 60 the process went unscheduled for a quarter second and
+the next tick ran the five owed frames under one snapshot, as `SV_Frame`
+does. A gap of that kind is the host, not the loop.
+
 ### The client's send rate
 
 `CL_ReadyToSendPacket` (CoDMP.exe `0x40b940`) sends a packet every frame
