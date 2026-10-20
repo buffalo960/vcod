@@ -20,14 +20,17 @@ itself, so neighbouring seeds don't replay one match.
 Knobs: `MAP=` (mp_carentan), `GAMETYPE=` (tdm), `BOTS=` (6), `TICKS=`,
 `JOBS=`, `SET=name=value,...` (any cvar, e.g. `scr_tdm_timelimit=5`),
 `UO=1` (a United Offensive server: `COD_DIR` at a UO install),
-`VERBOSE=1` (every kill line).
+`VERBOSE=1` (every kill line). `AXIS_SKILL=` / `ALLIES_SKILL=` add the
+`BOTS` through `addbot <side> <n> skill <level>`, half a side; `SKILLS=a,b,...`
+adds one bot per entry by balance (for `dm`). Without them the bots join
+as `--bots` does, at `vc_bot_skill`.
 
 Everything it counts comes off the script's `logPrint` lines, the same
 `games_mp.log` lines a retail server writes:
 
 | Column | From | Meaning |
 |---|---|---|
-| kills, deaths | `K;` | A kill by another player. A suicide (attacker is the victim or the world, `-1`) and a team kill (same team, not `dm`) are counted apart and are not kills. |
+| kills, deaths | `K;` | A kill by another player. A suicide (attacker is the victim or the world, `-1`; on the victim's row) and a team kill (same team, not `dm`) are counted apart and are not kills. World damage (a fall) is left out. |
 | damage | `D;`, `K;` | Damage dealt to others. A non-lethal hit logs `D;`, the lethal one `K;` alone. |
 | ttk | `D;`, `K;` | Time to kill: from the attacker's first hit on that victim in the victim's life to the kill, in ms. A one-hit kill is 0. Mean and median; the mean carries the long tails of a fight broken off and resumed. |
 | wins | `W;` | The winning team per line: one per round in `sd` and `re`, one per match in the others (`dm` names the player). |
@@ -53,3 +56,67 @@ six bots, seeds 1..=8, 12000 ticks, none ended):
 
 1212 kills over 80 minutes of play, 88 stalled bot-ticks. No suicides and
 no team kills.
+
+## 3. Skill levels
+
+`vc_bot_skill` (0-3, default 1) and `addbot ... skill N` pick one of four
+presets of `bots::Skill` (`bots/skill.rs`). Level 1 is `Skill::default()`,
+field for field (`the_default_level_is_the_default_skill`), and its hearing
+scale of 1.0 multiplies a noise's radius exactly, so a default server plays
+bit for bit as before: section 2's eight matches print the same lines on
+the skill branch, before and after merging master.
+
+| Field | 0 easy | 1 normal | 2 hard | 3 expert |
+|---|---|---|---|---|
+| reaction, ticks (min + rand(spread)) | 8 + 6 | 5 + 6 | 3 + 4 | 2 + 2 |
+| turn per tick, degrees | 10 | 15 | 22 | 30 |
+| aim error start, floor (units) | 64, 5 | 48, 4 | 32, 2.5 | 24, 1.5 |
+| error decay per tick | 0.91 | 0.88 | 0.84 | 0.80 |
+| error doubles at range | 900 | 1000 | 1300 | 1600 |
+| error while moving | x1.9 | x1.75 | x1.5 | x1.3 |
+| forget a target, ticks | 16 | 20 | 30 | 40 |
+| remember a spot, a noise, ticks | 70, 140 | 100, 200 | 140, 260 | 180, 300 |
+| hearing scale | 0.75 | 1 | 1.25 | 1.5 |
+
+The trigger only goes down while the gun's line passes within `HIT_RADIUS`
+(10 units) of the target's chest (`Bot::trigger`), so the error floor sets
+the range a bot can fire at at all: `floor * (1 + range / error_range) *
+moving < 10`. A first easy preset with a floor of 10 never met it: in
+`dm` its bots scored 26 kills to 518 deaths over eight matches and stood
+in fights without firing (3566 stalled bot-ticks in an all-easy `tdm`
+against the baseline's 88). The floor of 5 lets an easy bot fire standing
+inside 900 units and almost never on the move.
+
+Measured with `bot_match`, mp_carentan, seeds 1..=8, 12000 ticks:
+
+Mixed `dm`, eight bots, two per level (`GAMETYPE=dm SKILLS=0,1,2,3,0,1,2,3`;
+all eight matches ended at the score limit):
+
+| Level | Kills | Deaths | K/D | Damage | TTK median ms |
+|---|---|---|---|---|---|
+| 0 | 166 | 518 | 0.32 | 20996 | 200 |
+| 1 | 207 | 491 | 0.42 | 32017 | 150 |
+| 2 | 605 | 345 | 1.75 | 74568 | 400 |
+| 3 | 678 | 302 | 2.25 | 93670 | 250 |
+
+The same on mp_depot: 0.31, 0.62, 1.50, 2.37.
+
+`tdm` three against three, one side at a level against normal, both ways
+round to cancel the side bias (allies lead axis 644 to 568 at equal skill,
+section 2). Kills of the side at the level, to the normal side's:
+
+| Level | As axis | As allies |
+|---|---|---|
+| 0 | 354 : 764 | 406 : 715 |
+| 2 | 800 : 346 | 793 : 309 |
+| 3 | 799 : 268 | 800 : 209 |
+
+At one level for all six (`SET=vc_bot_skill=N`), total kills in the 80
+minutes: 1044 at 0, 1212 at 1, 1245 at 2, 1367 at 3; stalled bot-ticks
+364, 88, 95, 38 (levels 2 and 3 ran on the branch before its master
+merge, which leaves level 1's lines unchanged).
+
+Hard and expert sit close in `dm` because both react and settle faster than
+a fight lasts; the gap shows head to head against normal (3 : 1 kills at
+hard, 3.4 : 1 at expert). Nothing here is tuned against a human. How a
+level feels to play against is a hand check (pending-manual-test.md 519).
