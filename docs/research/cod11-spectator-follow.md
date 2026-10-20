@@ -427,19 +427,21 @@ event path.
   `CG_TransitionPlayerState`): slot `i` from the new playerstate's
   `eventSequence - 4` up to it plays when `i >= ` the old one's
   `eventSequence`, or when `i > old - 4` and the slot's event differs
-  from the old playerstate's same slot. INFERRED, that compare and
+  from the old playerstate's same slot. VERIFIED, the same compare in
+  1.5's cgame at `0x30029f50` and UO's at `0x30034ec0` (UO's ring sits 4
+  bytes later, `eventSequence` at 0x88). INFERRED, that compare and
   `cod11-hud-protocol.md`'s note that the follow arm (`0x3002fc6c`) tests
   no `clientNum` first: at the 58000 switch (19 to 0) retail plays
   nothing.
 - VERIFIED, `crates/common/src/net/events.rs` (`EventTracker`, the
-  playerstate arm): vcod plays `(cur - prev) & 0xff` slots, at most four,
-  so it plays the four empty slots there, and a switch onto any player
-  whose sequence is lower than the last one's replays up to four of his
-  old events, shots included. The replay leaves `EV_NONE` out of its
-  pinned counts until the tracker takes `0x30028be0`'s compare. INFERRED,
-  the 8-bit wire field (`fields_v1.rs`) and the raw compare: retail's
-  own ring plays nothing across its 255 to 0 wrap either; no run has
-  measured that.
+  playerstate arm, `ps_slot_plays`): vcod takes that compare, so the
+  replay plays no `EV_NONE` at the switch and a switch onto a lower
+  sequence replays none of the new player's old events. INFERRED, the
+  8-bit wire field (`fields_v1.rs`) and the raw compare: the frame that
+  wraps the playerstate ring from 255 to 0 plays nothing, on retail and
+  on vcod (`the_playerstate_ring_plays_nothing_across_the_wire_wrap`); no
+  run has measured that. The own predicted ring is `PredictedEvents`'
+  (`crates/client/src/play/events.rs`), which compares across the wrap.
 
 ## 12. The killcam
 
