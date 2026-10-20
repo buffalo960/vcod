@@ -23,6 +23,10 @@
 //! `-legs-client-uo.txt` are the walk on retail 1.5b and UO, which start
 //! the run at their own spread phase (cod11-movers.md 15, "The phase on 1.5
 //! and UO"); ours spawns where retail's probe did ([`SPAWN_15`]).
+//! `-legs-stopgo-1.5.txt` and `-legs-stopgo-uo.txt` (client halves
+//! `-legs-client-stopgo-*.txt`) stop and go inside the legs blends, so the
+//! run comes back while it still has weight and keeps its time
+//! (cod11-combat.md 3.1, "The setter on a weighted node").
 //!
 //! `LEGS_REPORT=1` prints every compared frame; `LEGS_IDLE_MS` sweeps the
 //! 1.5 and UO join.
@@ -51,6 +55,10 @@ const SERVER_15: &str = "tests/fixtures/movers/mp_carentan-dm-legs-1.5.txt";
 const CLIENT_15: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-1.5.txt";
 const SERVER_UO: &str = "tests/fixtures/movers/mp_carentan-dm-legs-uo.txt";
 const CLIENT_UO: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-uo.txt";
+const STOPGO_15: &str = "tests/fixtures/movers/mp_carentan-dm-legs-stopgo-1.5.txt";
+const STOPGO_CLIENT_15: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-stopgo-1.5.txt";
+const STOPGO_UO: &str = "tests/fixtures/movers/mp_carentan-dm-legs-stopgo-uo.txt";
+const STOPGO_CLIENT_UO: &str = "tests/fixtures/movers/mp_carentan-dm-legs-client-stopgo-uo.txt";
 
 /// The player's origin, to `logPrint`'s hundredth.
 const ORIGIN_TOL: f32 = 0.02;
@@ -96,6 +104,12 @@ const RETAIL_IDLE_MS_UO: i32 = 3700;
 /// placement): 1.5's and UO's controllers ease from the spawn's view.
 const SPAWN_15: [f32; 2] = [-952.0, 2296.0];
 const SPAWN_UO: [f32; 2] = [720.0, -32.0];
+
+/// The stop-and-go walks' [`RETAIL_IDLE_MS_15`] and [`SPAWN_15`].
+const STOPGO_IDLE_MS_15: i32 = 8200;
+const STOPGO_IDLE_MS_UO: i32 = 3700;
+const STOPGO_SPAWN_15: [f32; 2] = [144.0, 1808.0];
+const STOPGO_SPAWN_UO: [f32; 2] = [776.0, 3488.0];
 
 /// Ours' first snapshot showing the idle comes 800 ms after the client
 /// starts connecting on a fresh server (900 on 1.5 and 1050 on UO, whose
@@ -515,9 +529,118 @@ const GAPS_UO: &[(&str, i32, &str)] = &[(
      0.11 units and 2.9 degrees",
 )];
 
+/// The stop-and-go walk on `fs` (1.5b or UO): retail's capture, exact
+/// past the settle and the first run, and one the old setter misses.
+fn check_stop_and_go(
+    fs: impl Fn() -> vcod_common::pk3::Pk3Fs,
+    server: &str,
+    client: &str,
+    idle_ms: i32,
+    spawn: [f32; 2],
+    gaps: &[(&str, i32, &str)],
+) {
+    let run = ours_walk(fs(), client, idle_ms, spawn).unwrap();
+    let (compared, bad) = walk_rows(&run, server, client, gaps);
+    assert!(compared > 300, "only {compared} frames compared");
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+    // The setter before cod11-combat.md 3.1's "The setter on a weighted
+    // node" restarts the run each go takes back: those rows, and only
+    // rows after the settle, must part from retail's.
+    vcod_common::animclock::restart_weighted_nodes(true);
+    let old = ours_walk(fs(), client, idle_ms, spawn);
+    vcod_common::animclock::restart_weighted_nodes(false);
+    let (_, old_bad) = walk_rows(&old.unwrap(), server, client, gaps);
+    let goes = old_bad
+        .iter()
+        .filter(|r| {
+            STOPGO_TAKEN_BACK
+                .iter()
+                .any(|s| r.contains(&format!(" {s}")))
+        })
+        .count();
+    if report() {
+        println!(
+            "old setter: {} rows differ\n{}",
+            old_bad.len(),
+            old_bad.join("\n")
+        );
+    }
+    assert!(goes > 0, "the old setter matches retail's stop and go");
+}
+
+/// The stop-and-go walks' rows that may miss: as [`GAPS_15`], the probe
+/// dropped from its spawn point, so the settle idle's start is in neither
+/// half and the first run blends out of an idle of unknown phase (0.2
+/// units and 3 degrees on 1.5, 3 and 12 on UO, at any join). From the
+/// first stop on every clip starts on the walk's own clock.
+const STOPGO_GAPS: &[(&str, i32, &str)] = &[
+    ("settle", 26500, "as GAPS_15's settle"),
+    ("run", 26700, "the first run's blend out of the settle idle"),
+];
+
+/// The stop-and-go steps whose legs take back a clip with weight left.
+const STOPGO_TAKEN_BACK: &[&str] = &["back_go", "go2", "go3", "go4", "strafe_right2"];
+
+/// The 1.5b stop-and-go walk: every go inside a blend keeps the run's time.
+#[test]
+fn a_body_stopping_and_going_is_posed_like_retail_on_15() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    check_stop_and_go(
+        || vcod_common::testing::game_fs().unwrap(),
+        STOPGO_15,
+        STOPGO_CLIENT_15,
+        STOPGO_IDLE_MS_15,
+        STOPGO_SPAWN_15,
+        STOPGO_GAPS,
+    );
+}
+
+/// The UO stop-and-go walk, as [`a_body_stopping_and_going_is_posed_like_retail_on_15`].
+#[test]
+fn a_body_stopping_and_going_is_posed_like_retail_on_uo() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    check_stop_and_go(
+        || vcod_common::testing::uo_fs().unwrap(),
+        STOPGO_UO,
+        STOPGO_CLIENT_UO,
+        STOPGO_IDLE_MS_UO,
+        STOPGO_SPAWN_UO,
+        STOPGO_GAPS,
+    );
+}
+
 /// The anim selection and the four bones of `run` against the retail walk
 /// at `server` and `client`; bone rows `gaps` names pass.
 fn check_walk(run: &Ours, server: &str, client: &str, gaps: &[(&str, i32, &str)]) {
+    let (compared, bad) = walk_rows(run, server, client, gaps);
+    assert!(compared > 400, "only {compared} frames compared");
+    assert!(
+        bad.is_empty(),
+        "{} rows differ:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// [`check_walk`]'s compared frames and the rows that differ.
+fn walk_rows(
+    run: &Ours,
+    server: &str,
+    client: &str,
+    gaps: &[(&str, i32, &str)],
+) -> (usize, Vec<String>) {
     let retail = frames(std::fs::read_to_string(server).unwrap().lines());
     let ours = frames(run.log.iter().map(String::as_str));
     let walk = walk(&std::fs::read_to_string(client).unwrap());
@@ -610,13 +733,7 @@ fn check_walk(run: &Ours, server: &str, client: &str, gaps: &[(&str, i32, &str)]
             println!("{label}: worst bone origin {p:.2}, turn {a:.2}");
         }
     }
-    assert!(compared > 400, "only {compared} frames compared");
-    assert!(
-        bad.is_empty(),
-        "{} rows differ:\n{}",
-        bad.len(),
-        bad.join("\n")
-    );
+    (compared, bad)
 }
 
 /// The cgame's copy of the clock (`cgame_mp_x86.dll` 0x30003be0) on

@@ -1567,7 +1567,8 @@ impl ClientSim {
         let linked_idle = self.ps.linked && self.ps.rules.v15();
         // Retail's compare is `xyspeed < 10.0`, so the constant itself is
         // moving.
-        let xyspeed = self.ps.velocity.truncate().length();
+        // What the footsteps read, before the clamp and the snap.
+        let xyspeed = self.ps.footsteps_xyspeed;
         let moving = xyspeed >= ANIM_IDLE_SPEED;
         let stopping = cmd.forward == 0 && cmd.right == 0 && xyspeed <= ANIM_STOP_SPEED;
         let back = self.ps.backwards_run;
@@ -3196,6 +3197,7 @@ mod tests {
             sim.ps.on_ground = true;
             sim.ps.backwards_run = *back;
             sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
+            sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
             let cmd = UserCmd {
                 forward: *forward,
                 right: *right,
@@ -3346,6 +3348,7 @@ mod tests {
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(190.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.update_anims(&inputs, &running, (1000, 1000), &[], &mut 1u64);
         assert_eq!(
             anims.name(sim.anim.legs()),
@@ -3388,6 +3391,7 @@ mod tests {
         sim.ps.on_ground = false;
         sim.ps.on_ladder = true;
         sim.ps.velocity = Vec3::new(0.0, 0.0, 60.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_climbup"));
 
@@ -3420,6 +3424,7 @@ mod tests {
         sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
         assert_eq!(sim.movetype, vcod_common::animscript::Movetype::IdleCr);
         sim.ps.velocity = Vec3::new(60.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         let fwd = UserCmd {
             forward: 127,
             ..NULL_USERCMD
@@ -3427,6 +3432,7 @@ mod tests {
         sim.update_anims(&inputs, &fwd, (1050, 1050), &[], &mut 1u64);
         assert_eq!(sim.movetype, vcod_common::animscript::Movetype::WalkProne);
         sim.ps.velocity = Vec3::ZERO;
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.ps.view_lerp_target = pmove::VIEW_PRONE;
         sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
         assert_eq!(sim.movetype, vcod_common::animscript::Movetype::IdleProne);
@@ -3457,6 +3463,7 @@ mod tests {
         sim.ps.backwards_run = true;
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.update_anims(&inputs, &back, (1000, 1000), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_crouch_run_back"));
 
@@ -3496,6 +3503,7 @@ mod tests {
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         let strafe = UserCmd {
             right: 127,
             ..NULL_USERCMD
