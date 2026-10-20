@@ -355,6 +355,8 @@ header of the fixture it produced.
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
+  It starts 3 s past the weapon pick, after the seat; `--slope-from-spawn`
+  logs from the spawn, whose pick sets the seat's `legsAnim` toggle (13).
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and

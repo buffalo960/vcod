@@ -1,0 +1,19 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-20: the PROBE lines of
+# client-probes/probe_vehicle on mp_peaks beside the --probe-vehicle gun
+# client that wrote playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-spawn-uo.txt
+# in the same run (the fifth of five runs; the probe wrote it as tag
+# jeep-gun-r5 and I renamed it). The spawn picked tdm spawnpoint 277
+# (-3872, 3064, -25.528); `PROBE spawned` is where its think left him.
+# COD_VERSION=uo PORT=34341 SECS=85 tools/run_probe.sh client-probes/probe_vehicle
+#   mp_peaks +set probe_vehicletype willyjeep_mp +set probe_side 75 +set probe_pitch 15
+# vcod --game-dir <UO install> --mod-dir uo --net-probe 127.0.0.1:34341 --probe-team axis
+#   --probe-vehicle gun --save-slope --slope-from-spawn --probe-cmd-ms 8
+#   --capture-tag jeep-gun-r5 --probe-secs 40
+PROBE vehicle 110 willyjeep_mp (-4160.00, 162.00, -110.52) (0.00, 75.00, -0.85)
+PROBE clear 110 0:407.875 45:382.42 90:705.066 135:172.357 180:119.875 225:169.529 270:227.193 315:328.687
+PROBE vehicle 115 horch_mp (1900.00, 1178.00, 16.24) (-4.05, 180.00, 3.88)
+PROBE clear 115 0:251.875 45:245.3 90:477.875 135:893.865 180:402.964 225:213.008 270:145.875 315:206.298
+PROBE spawned 9350 0 (-3872.11, 3064.00, -28.18) (0.00, -105.00, 0.00)
+PROBE place 9350 0 (-4087.56, 142.59, -102.52) 164.998
+PROBE activated 11400 110 seat 1 by 0
+PROBE activated 14050 110 seat 2 by 0
