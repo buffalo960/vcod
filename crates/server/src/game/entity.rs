@@ -665,6 +665,17 @@ impl ObjectTable {
         }
     }
 
+    /// Takes an armed `ThinkFn::Free` off `id`, returning when it was due:
+    /// a missile runs it in its own pool (`Missiles::schedule_free`).
+    pub fn take_free_think(&mut self, id: EntId) -> Option<i32> {
+        let e = self.get_mut(id)?;
+        if e.think != Some(ThinkFn::Free) || e.nextthink <= 0 {
+            return None;
+        }
+        e.think = None;
+        Some(std::mem::take(&mut e.nextthink))
+    }
+
     /// Every due think at once, by entity number: [`ObjectTable::run_think`]
     /// over the table. The server runs each entity's on its own turn in the
     /// entity pass; this is for callers with no pass to run.

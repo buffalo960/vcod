@@ -672,9 +672,8 @@ and runs on its next turn; vcod's `ObjectTable::schedule` and
 holder whose turn ends in `GameHost::run_entity_think`. VERIFIED: 1.1d's
 `G_RunMissile` ends in `G_RunThink` (0x54050, 0x54398). INFERRED: a grenade
 that took a held slot's number loses its fuse to the free and vanishes
-unexploded a frame on. vcod keeps a missile's fuse in `Missiles`, and the
-missile's turn never runs the entity think, so there it flies on and
-explodes; not ported.
+unexploded a frame on. vcod hands that free to the missile pool
+(`Missiles::schedule_free`, `cod11-combat.md` 13.8).
 
 VERIFIED, `G_RunItem` (0x4eb18): a `trap_PointContents` with mask 0x80000000
 (0x4ec47..0x4ec4f) and a `G_FreeEntity` (0x4ec5f). VERIFIED, on a patched
@@ -1385,6 +1384,24 @@ no gate can replay; `worldcopy_ab.rs` hands ours retail's lift through
 `Server::test_item_lifts` and holds each to the (0, 0.5] range, which every
 landing of its two captures meets over a floor ours finds to the hundredth
 (`cod11-movers.md` 20).
+
+VERIFIED, 1.5b `G_BounceItem` (game15 0x5d211) and UO 1.51b's (game.mp.uo
+0x6644a): the lift is `0.5 + 0.5 * (rand() / 2^31)`, a divide by the float at
+0x8a0ec (1.5b) and 0xb056c (UO), both 0x4f000000 (2^31), with 0.5 at 0x8a0f0
+and 0xb0570. INFERRED: where 1.1d's multiply by -2^-31 lifts (0, 0.5], 1.5b's
+and UO's lift [0.5, 1). VERIFIED, the same divide in both modules'
+`Touch_Item` respawn draw (game15 0x89fb4, game.mp.uo 0xb0434), `Drop_Item`'s
+climb (0x89fdc, 0xb045c) and `Drop_Weapon`'s spin (0x89ff0, 0xb0470).
+INFERRED: their `crandom()` reads [-1, 1), so a 1.5b or UO drop climbs at 150
+to 250 units a second and spins either way; no committed capture measures
+one. VERIFIED, `crates/server/tests/fixtures/touchorder/`, three
+`item_health` spawned 16 over mp_pavlov's floor at (-10928.5, 12051), (-10936.5,
+12059) and (-10944.5, 12051): ours' sweeps end at z -29.635, -30.173 and
+-29.880 on all three patches, and retail rests them 0.045, 0.113 and 0.130
+above that on 1.1d, 0.555, 0.513 and 0.840 on 1.5b and 0.555, 0.663 and 0.740
+on UO, each inside its patch's range. As implemented: `item::unit_draw` picks
+the sign by protocol, and `touchorder_ab` hands ours retail's lift, holds it
+to the range and compares every item line.
 
 VERIFIED, `G_SpawnItem` (0x4e6e1..0x4e756): a `giType` 1 row gets bounds
 (-1, -1, -1) to (1, 1, 1), any other (-1, -1, 0) to (1, 1, 0x74e3c).

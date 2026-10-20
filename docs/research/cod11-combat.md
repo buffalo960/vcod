@@ -2370,10 +2370,50 @@ target's own cmds replayed): on UO the target's origin, eight bone marks
 and all 406 rays a frame that stop on him are retail's bits; before the
 port the rays sat 1 to 139 steps off. Every record and world record of
 the gdb dump matches ours. On 1.5b the origin and the marks are
-retail's bits and the rays sit within 3 steps: 1.5b's prone idle moves,
-and the dump's locals sit up to 8 steps off ours where a key is lerped,
-the frame fraction vcod takes off its clip's seconds where the engine
-steps a float time every frame (`RAY_STEPS_15`).
+retail's bits, and since the clip's float time below so is every ray.
+Before that the rays sat within 3 steps (1.5b's prone idle moves, and
+the dump's locals up to 8 steps off ours where a key is lerped).
+
+#### The clip's float time
+
+The frame a 1.5b or UO clip is sampled at is not its seconds times its
+frame rate. VERIFIED, `cod_lnxded` 1.5b 0x80c84f0 (UO `coduo_lnxded`
+0x80bd884, the same code), the leaf arm, reached through syscall 0x70
+from `G_DObjUpdateServerTime` (1.5b game.mp 0x7c5b1, `level+0x1f0`
+times 0.001 passed as a float, 0.05 at `sv_fps 20`): for a node whose
+weight (`+0x3c`) is not 0 the new time is the node's old time (`+0x2c`)
+plus `dtime * rate (+0x40) * frequency (parts +0x8)`, the sum left on
+the x87 stack (`flds`, `fmuls`, `fmuls`, `flds`, `faddp`, 0x80c85ae) and
+stored once as a float. A looping clip then adds or takes 1 until the
+time is in [0, 1), each step stored; any other clip stops at 1 and keeps
+its old time when the sum is at or under 0. A nested node passes its
+children `dtime * rate`. VERIFIED, UO 0x80b816e: the frequency is the
+frame rate over `numframes` (`frame_count - 1`, header frames plus the
+loop bit less one), divided as floats and stored (0x80b83e9), 0 for one
+frame. VERIFIED, the sampler (UO 0x80b9b72, 1.5b 0x80c47de, the same
+instructions): the frame is the time times `numframes` as floats,
+stored, and a key's fraction is taken off that.
+
+VERIFIED, 1.5b game.mp's player anim setter (the `trap_XAnimSetTime`
+calls): a looping movement clip replacing another starts at the old
+clip's `trap_XAnimGetTime`, and a death anim on a body not freshly
+cloned at 1.0. INFERRED, off `G_RunFrame`'s loop over
+`G_DObjUpdateServerTime` while it returns non-zero (cod11-movers.md 15):
+a notetrack due inside a frame splits that frame's step in two, which
+vcod does not model; no stock player clip the gates cover carries one.
+
+vcod: `animclock::Play` keeps the node time beside the seconds, stepped
+in whole 50 ms frames with the sum in `f64` and stored as `f32`
+(`Play::step`), `Layer::time` hands it out, and the server's pose on
+1.5 and UO samples at `time * numframes` (`PoseInputs::node_time`).
+A UO rider's seat leaves and a clip under a node with children (whose
+frequency the clock does not hold) stay on the seconds, and 1.1d keeps
+them throughout: its pose is the glam one, not the stored build.
+VERIFIED, vcod measurement: `pronepose_ab`'s 1.5b mp_brecourt rays, the
+origin and the eight marks are retail's bits (the 3-step `RAY_STEPS_15`
+is gone); the 1.5b mp_carentan prone rest stays one step off, as it was
+on seconds, since that capture logged no cmds (`scriptmodel_ab`'s
+`BACK_NEAR`).
 
 VERIFIED, vcod measurement (`scriptmodel_ab`, the UO mp_brecourt roll):
 the first frag strikes the prone target's legs and rests on the grade
@@ -6400,18 +6440,71 @@ before he connected.
 
 VERIFIED, UO `fire_artillery` (0x5ff4a): a shell fired by a barrage
 (`eType` 0) takes the barrage's `r.ownerNum` and `&g_entities[ownerNum]` as
-`parent` (0x6002d..0x60055). INFERRED: a barrage whose caller left (its
-`ownerNum` swept to 0x3ff) fires shells whose `parent` is entity 1023, not
-NULL, so their splash still walks. vcod does not model that: a barrage keeps
-its caller's slot (`artillery::Barrage::owner`).
+`parent` (0x6002d..0x60055). VERIFIED: `G_FreeEntityRefs` (0x79a06) sweeps
+every entity in use, the barrage among them (0x79a7c..0x79a8a). INFERRED: a
+barrage whose caller left hangs shells with `r.ownerNum` 0x3ff and `parent`
+`&g_entities[1023]`, and the shells already hanging were swept with him. A
+shell goes off on contact through `G_MissileImpact`, whose 0x3ff test
+(0x5dccc) leaves inflictor and attacker NULL: no splash, and a direct hit
+with both undefined. Only `G_DropArtillery`'s 15 s fallback,
+`G_ExplodeMissile`, reads `parent`, and so would walk its splash with entity
+1023 as the attacker; vcod does not model that path for a disowned shell.
+
+VERIFIED, UO `fire_rocket` (0x5fc74): from a vehicle (`eType` 12) the
+rocket's `+0x330` takes the vehicle's own `r.ownerNum` (0x5fd3f, 0x5fd45),
+else 0x3ff (0x5fd50); its `r.ownerNum` and `parent` are the vehicle
+(0x5fd62, 0x5fd6e). INFERRED: the vehicle's `r.ownerNum` is its driver. VERIFIED: `G_MissileImpact` reads `+0x330`
+as the attacker when the owner's `eType` is 12 and it is not 0x3ff
+(0x5dcff..0x5dd1d), and `G_FreeEntityRefs` makes no store into `+0x330`
+(0x79a06..0x79b40). INFERRED: a driver who leaves keeps the credit for a
+shell already fired, and the client who next takes his slot is charged
+with it, as vcod charges the slot (`Missile::owner`, kept by
+`free_owner_refs` for a vehicle's shell). A vehicle freed under its shell
+sweeps the shell's `r.ownerNum` to 0x3ff, which drops the `+0x330` read:
+vcod's `Missiles::free_vehicle_refs`, from `GameHost::free_entity`.
+INFERRED, not modelled: with the slot empty retail charges the freed
+entity, whose number `G_FreeEntity`'s memset zeroed; vcod drops the hit.
+
+VERIFIED, UO: with the owner 0x3ff `G_MissileImpact` keeps the inflictor
+NULL too (0x5dc8e), `G_Damage` hands a client victim to `G_DamageClient`
+(0x4fd4b), which with both NULL reads weapon 0 and passes both on to
+`Scr_PlayerDamage`, whose `GScr_AddEntity` (0x6e92d) pushes NULL as
+undefined. INFERRED: weapon 0's name is `"none"`, as 1.1 measured for a
+fall (`cod11-player-clip.md` 8.8). 1.1's `G_MissileImpact` hands the missile
+as the inflictor whatever the owner. vcod: a UO disowned shell's direct
+hit goes to `deliver_hits` with no inflictor and weapon `"none"`.
 
 vcod: `Missiles::free_owner_refs`, called from `ClientDisconnect`, makes the
 missile's owner `None`; the explode's `Explosion::owner` then skips the
 blast walk and `ScriptRuntime::deliver_hits` hands a direct hit an undefined
 attacker. A UO vehicle's shell is owned by the vehicle in retail
 (`fire_rocket`'s `self`), so it keeps its driver in vcod. Pinned by
-`a_frag_whose_thrower_left_charges_no_one` (`crates/server/tests/combat.rs`)
-and `a_leaver_s_grenade_loses_its_owner_and_a_vehicle_s_shell_does_not`.
+`a_frag_whose_thrower_left_charges_no_one` (`crates/server/tests/combat.rs`),
+`a_leaver_s_grenade_loses_its_owner_and_a_vehicle_s_shell_does_not`,
+`a_shell_whose_vehicle_was_freed_charges_no_one`,
+`a_barrage_whose_caller_left_hangs_shells_nobody_owns` and
+`a_hit_with_no_inflictor_and_no_attacker_reaches_the_callback_undefined`.
+
+### 13.8 A free set on a missile
+
+VERIFIED: 1.1d's `G_RunMissile` ends in `G_RunThink` (0x54050, 0x54398),
+UO's too (0x5f03b, 0x5f5db), and a missile's fuse is its think
+(`G_ExplodeMissile` at `nextthink`, section 11). VERIFIED: the `delete`
+method arms `G_FreeEntity` 100 ms out (1.1d 0x5da14,
+`cod11-gsc-object-model.md` 14; UO 0x68bda, its `nextthink` store at
+0x68c86), and 1.1d's drop ring eviction arms it at `level.time + 1` on
+whatever entity holds the evicted number (`cod11-items.md` 8). INFERRED:
+either replaces the fuse; the grenade flies on until the think is due, then
+goes without an explode, a blast or an event. A shell that strikes on the
+way still goes off in `G_MissileImpact`. INFERRED, from Q3's `G_RunFrame`:
+an exploded missile riding out its event runs no think, so a free set then
+changes nothing. vcod: `ScriptRuntime::run_entity` hands a `ThinkFn::Free`
+armed on a missile's entity to `Missiles::schedule_free` before its turn,
+and the pool frees it on the turn the think is due. Not modelled: a shell
+that strikes on the same turn its free is due is freed by retail before its
+event goes out, and vcod sends the explode. Pinned by
+`a_deleted_grenade_flies_on_and_goes_unexploded` and
+`on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded`.
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 

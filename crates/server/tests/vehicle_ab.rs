@@ -821,20 +821,13 @@ const JEEP_DIE: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-d
 /// The jeep's driver killed in his seat 3.5 s into retail's drive
 /// (`probe_suicide`): out of the seat on the death's frame, `pm_type` 6
 /// with the view's pitch dropped, thrown off the coasting hull a cmd at a
-/// time, then respawned with the seat's `vehType` cleared
+/// time, then respawned with the seat's `vehType` cleared and placed
+/// beside the hull, where the body slides down the slope
 /// (docs/research/coduo-vehicles.md 11.7).
 #[test]
 fn the_jeep_driver_killed_in_his_seat_replays_on_ours() {
     let text = std::fs::read_to_string(JEEP_DIE).unwrap();
-    let mut lines = parse(&text);
-    // Up to the gsc's placement beside the hull after the respawn (retail's
-    // `PROBE place 37050`): the body put there slides on retail and stands
-    // on ours, which is the placement's question, not the death's.
-    let end = lines
-        .iter()
-        .position(|l| matches!(l, Line::Snap(s) if s.t > 37050))
-        .unwrap();
-    lines.truncate(end);
+    let lines = parse(&text);
     let cvars = [
         ("probe_side", "75"),
         ("probe_pitch", "15"),

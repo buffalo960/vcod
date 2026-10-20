@@ -20,6 +20,13 @@
 //! and its touch lines exactly, and checks that every later line is an `f`
 //! pair. `TO_REPORT=1` prints both logs.
 //!
+//! The three items fall onto the floor before the first phase, and each
+//! rests at its sweep's end plus `G_BounceItem`'s random lift, a `rand()`
+//! no seed replays. The gate hands each landing retail's lift (retail's
+//! rest over ours' floor), holds it to the patch's range, (0, 0.5] on
+//! 1.1d and [0.5, 1) on 1.5b and UO (cod11-items.md 14.2), and compares
+//! every item line exactly.
+//!
 //! The `probe_trigqueue` tests fill the queue (see `check_trigqueue`).
 //! Each test runs at its own install's `COD_DIR`: 1.1, 1.5 (a UO install's
 //! `main/` counts) or UO.
@@ -85,7 +92,26 @@ fn first_round(frame: &[String]) -> Vec<String> {
     frame[..end].to_vec()
 }
 
-fn ours(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
+/// Each item's spawned rest in a retail log, `(x, y, z)` per item line.
+fn rests(lines: &[String]) -> Vec<[f32; 3]> {
+    lines
+        .iter()
+        .filter(|l| l.contains(" spawned item "))
+        .map(|l| {
+            let v = &l[l.find('(').unwrap() + 1..l.find(')').unwrap()];
+            let n: Vec<f32> = v.split(", ").map(|c| c.parse().unwrap()).collect();
+            [n[0], n[1], n[2]]
+        })
+        .collect()
+}
+
+/// Ours' run with every item landing handed retail's lift over ours' floor;
+/// the lifts come back beside the log.
+fn ours(
+    fs: vcod_common::pk3::Pk3Fs,
+    proto: &'static Protocol,
+    retail: &[[f32; 3]],
+) -> (Vec<String>, Vec<f32>) {
     let map = "mp_pavlov";
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -95,6 +121,16 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
     sv.overlay_script("maps/mp/gametypes/probe_touchorder", SCRIPT);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let lifts = Rc::new(RefCell::new(Vec::new()));
+    let (seen, retail) = (lifts.clone(), retail.to_vec());
+    sv.test_item_lifts(Box::new(move |_, floor| {
+        let r = retail
+            .iter()
+            .find(|r| r[0] == floor[0] && r[1] == floor[1])
+            .unwrap_or_else(|| panic!("no retail item lands at {floor:?}"));
+        seen.borrow_mut().push(r[2] - floor[2]);
+        r[2] - floor[2]
+    }));
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(common::ClientEnd(q.clone()), now, 0x2001);
@@ -122,16 +158,39 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol) -> Vec<String> {
             break;
         }
     }
-    sv.script_log().to_vec()
+    let lifts = lifts.borrow().clone();
+    (sv.script_log().to_vec(), lifts)
 }
 
 /// Ours against one retail log of the probe.
 fn check(fs: vcod_common::pk3::Pk3Fs, proto: &'static Protocol, retail: &str) {
     let retail: Vec<String> = retail.lines().map(str::to_string).collect();
-    let ours = ours(fs, proto);
+    let (ours, lifts) = ours(fs, proto, &rests(&retail));
     if std::env::var_os("TO_REPORT").is_some() {
         eprintln!("retail:\n{}\nours:\n{}", retail.join("\n"), ours.join("\n"));
+        eprintln!("lifts {lifts:?}");
     }
+    // Every item lands once, inside its patch's lift range; the log prints
+    // to the hundredth, so a lift may read up to 0.005 past either end.
+    let (lo, hi) = if proto.version == PROTOCOL_V1.version {
+        (0.0, 0.5)
+    } else {
+        (0.5, 1.0)
+    };
+    assert_eq!(lifts.len(), 3, "landings {lifts:?}");
+    for l in &lifts {
+        assert!(
+            *l > lo - 0.005 && *l < hi + 0.005,
+            "lift {l} outside ({lo}, {hi}]"
+        );
+    }
+    let items = |log: &[String]| -> Vec<String> {
+        log.iter()
+            .filter(|l| l.contains(" item "))
+            .map(|l| l.trim().to_string())
+            .collect()
+    };
+    assert_eq!(items(&ours), items(&retail), "item rests");
     let (r, o) = (frames(&retail), frames(&ours));
     let shape = |p: &[(String, Vec<Vec<String>>)]| -> Vec<(String, usize, Vec<String>)> {
         p.iter()

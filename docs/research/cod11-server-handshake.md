@@ -1181,6 +1181,43 @@ the game and a socket on 127.0.0.1:20510 standing in for the master.
   change and 0-3 after (`3 0 1 1 0 1 0 1 0 0 1 0 1 0 0 3 0 0 0 0`) with the
   tick still at 11-19 ms mean. VERIFIED by capture.
 
+### A quiet client: `ClientEndFrame`'s dead 0x1000
+
+Q3's `EF_CONNECTION` rule survives in all three game modules and never
+reaches the wire, because the entity's `eFlags` are overwritten from the
+playerstate right after it.
+
+- VERIFIED, game.mp.i386.so 1.1d: `ClientThink` stores `level.time`
+  (`level+0x1e8`) into `gclient+0x21e4` after `trap_GetUsercmd` (0x41592).
+  `ClientEndFrame` (0x40e98) sets byte `ent+0x9` bit 0x10 (`s.eFlags`
+  0x1000) when `level.time - gclient+0x21e4 > 1000` and clears it
+  otherwise (0x4112d..0x41153). The next call on either branch is
+  `BG_PlayerStateToEntityStateExtrapolate` (with `g_smoothClients`) or
+  `BG_PlayerStateToEntityState` (0x41170..0x41191), and both store
+  `ps.eFlags` (`ps+0x80`) over `s.eFlags` whole before they set their own
+  bits. No other instruction in the module sets or clears that bit on a
+  playerstate or entity.
+- VERIFIED, 1.5b game.mp.i386.so: the same rule on `gclient+0x21ec`
+  (`ClientEndFrame` 0x3ab2a, compare at 0x3adfd, `or edx,0x1000` at
+  0x3ae0d), followed by `G_SetClientSound` and the same two copies
+  (0x3ae71, 0x3ae8d); `BG_PlayerStateToEntityState` stores `ps+0x80` into
+  `s.eFlags` whole.
+- VERIFIED, UO 1.51b game.mp.uo.i386.so: the same on `gclient+0x4628`
+  with UO's bit 0x800 (`ClientEndFrame` 0x42f59, compare 0x432ff, `or
+  edx,0x800` 0x4330f), then the copies at 0x43373 / 0x4338f, which store
+  `ps+0x84` into `s.eFlags` whole.
+- VERIFIED by capture, 2026-10-20, mp_carentan under
+  `client-probes/probe_passthru` with `probe_teleport 1`: an axis
+  `--net-probe` stopped with SIGSTOP for 5 s while an allied probe
+  recorded snapshots. On 1.1d its entity's `pos.trTime` held at 26466
+  from 26700 to 31500 (97 snapshots, about 5 s without a cmd) and its
+  `eFlags` read 0x18 throughout; on UO 1.51b `pos.trTime` held at 30300
+  for 97 snapshots and `eFlags` read 0x18 raw throughout, never 0x800.
+- INFERRED: the cgame's disconnected icon (gametypes doc 7.3, "The
+  second sprite") therefore never draws for a lagging player on a stock
+  server. vcod-server leaves the bit off as retail does
+  (`ClientSim::entity_eflags`).
+
 ### Rate (`SV_UserinfoChanged`, 0x8086ab4)
 
 - `cl->rate`, which `status` prints, is 99999 when `Sys_IsLANAddress`
