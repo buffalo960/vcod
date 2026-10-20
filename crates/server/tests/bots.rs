@@ -1178,12 +1178,17 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
     }
     eprintln!(
         "{map}: {bots} bots, shoot {shoot}: first breach at tick {first:?}, round over at {end:?}: \
-         {} breached, {} planted, {} destroyed, {} defused, {} kills",
+         {} breached, {} planted, {} destroyed, {} defused, {} kills, {} boardings",
         count(&sv, "bas_breached"),
         count(&sv, "bas_planted"),
         count(&sv, "bas_destroyed"),
         count(&sv, "bas_defused"),
         kills(&sv).len(),
+        sv.bot_slots()
+            .iter()
+            .filter_map(|s| sv.bot_body(*s))
+            .map(|b| b.boardings)
+            .sum::<u32>(),
     );
     assert!(
         first.is_some_and(|t| t < BAS_BREACH_TICKS),

@@ -23,8 +23,11 @@ const STAND_OFF: f32 = 30.0;
 /// before the bot gives it up.
 const SEEK_TICKS: u32 = 400;
 const PRESS_TICKS: u32 = 40;
-/// Ticks after an exit or a give-up before the bot looks for one again.
+/// Ticks after a give-up before the bot looks for one again.
 const REST_TICKS: u32 = 600;
+/// Ticks after an exit: a ride that ended short of its goal is not taken
+/// again at once from where it left the bot.
+const RIDDEN_TICKS: u32 = 1200;
 /// A ride ends after this long, so the bot gets back to the objective.
 const RIDE_TICKS: u32 = 1800;
 /// Ticks a seat with nothing to drive to, or a gunner's seat with nobody
@@ -182,7 +185,7 @@ impl Bot {
         if self.rider.seated > 0 {
             // Out, by choice or by the vehicle's death.
             self.rider = Rider {
-                rest: REST_TICKS,
+                rest: RIDDEN_TICKS,
                 boarded: self.rider.boarded,
                 ..Rider::default()
             };
