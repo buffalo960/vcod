@@ -269,6 +269,9 @@ pub fn run_cmd(
         });
     } else if predictable(pred.pm_type) {
         pred.ps.linked = pred.pm_type == PM_NORMAL_LINKED;
+        // One `Pmove`: `PM_trace`'s mask holds across the cmd's steps.
+        let pm = crate::movetrace::Pm::default();
+        let world = world.in_pmove(&pm);
         cmd::chop(pred.command_time, cmd, |step, dt| {
             let out = cmd::player_step(
                 &mut pred.ps,
@@ -276,7 +279,7 @@ pub fn run_cmd(
                 &mut pred.ring,
                 step,
                 dt,
-                world,
+                &world,
                 weapons,
             );
             pred.view_lerp_start = out.view_lerp_start;

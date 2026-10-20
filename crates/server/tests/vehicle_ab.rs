@@ -951,7 +951,9 @@ fn the_jeep_driver_s_bones_follow_retail_s() {
 
 /// How far a bone may sit off retail's in one sample: the hands through
 /// the steer's swings (worst 0.55 at 25150, 8 of 2170 samples past 0.3,
-/// mean 0.008).
+/// mean 0.008), in the blend from the driving node into the idle one.
+/// The seat leaves' own node times do not move them (coduo-vehicles.md
+/// 14, "The seat blend's ramp"): it is the weights.
 const BONE_TOLERANCE: f32 = 0.6;
 
 const JEEP_GUN: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt";

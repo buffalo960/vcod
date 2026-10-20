@@ -1022,39 +1022,45 @@ impl ClientSim {
     /// `spawn_think` leaves to a caller with a world: 100 ms of pmove up to
     /// `now_ms` on [`Self::spawn_cmd`]. It is what puts the standing idle on
     /// a player's spawn frame (combat doc, 9.2). The client's own angles stay
-    /// what `set_view_angle` rebases on.
-    pub fn spawn_move(&mut self, world: MoveWorld<'_>, cmd: &UserCmd) {
+    /// what `set_view_angle` rebases on. Returns what the move touched, for
+    /// the think's `ClientImpacts`.
+    pub fn spawn_move(&mut self, world: MoveWorld<'_>, cmd: &UserCmd) -> Vec<u32> {
         if self.pm_type == PmType::Intermission || self.pm_dead {
-            return;
+            return Vec::new();
         }
         let own = self.last_cmd_angles;
         let start = cmd.server_time.wrapping_sub(SPAWN_THINK_MS as i32);
+        let pm = vcod_common::movetrace::Pm::default();
+        let world = world.in_pmove(&pm);
         cmd::chop(start, cmd, |step, dt| {
             self.step(step, dt, Some(world), &[]);
             self.ps.jump_latched
         });
         self.last_cmd_angles = own;
+        if self.pm_type == PmType::Normal {
+            pm.touched()
+        } else {
+            Vec::new()
+        }
     }
 
     /// The spawn's think on [`Self::spawn_cmd`] of `last`, in `world` when
-    /// there is one; returns the cmd it ran. Both the `spawn` builtin's
-    /// fresh sim and the frame's spawn pass run it.
+    /// there is one; returns the cmd it ran and what its move touched. Both
+    /// the `spawn` builtin's fresh sim and the frame's spawn pass run it.
     pub fn spawn_think_on(
         &mut self,
         last: &UserCmd,
         now_ms: i32,
         world: Option<MoveWorld<'_>>,
-    ) -> UserCmd {
+    ) -> (UserCmd, Vec<u32>) {
         let think = self.spawn_cmd(last, now_ms);
         // The think's aim block runs ahead of its `Pmove`, on the spawn's
         // own view and the memset's weapon 0, so the sway's last view is
         // the spawn's yaw when the loadout's first cmd turns off it (combat
         // doc 15.3, "The spawn's view").
         self.aim_on(self.spawn_view, SPAWN_THINK_MS as i32, now_ms, &[]);
-        if let Some(w) = world {
-            self.spawn_move(w, &think);
-        }
-        think
+        let touched = world.map_or_else(Vec::new, |w| self.spawn_move(w, &think));
+        (think, touched)
     }
 
     /// The cmd the spawn's think runs, stamped `now_ms`. 1.1's is zeroed,
@@ -2251,7 +2257,7 @@ impl ClientSim {
                 .seat
                 .as_ref()
                 .and_then(|seat| vcod_common::playerpose::seat_inputs(a, legs, seat));
-            seat_ramp.set(goal, now_ms);
+            seat_ramp.set(goal, now_ms, |leaf| a.leaf_motion(leaf));
             self.pose.seat_ramp = seat_ramp;
         }
     }

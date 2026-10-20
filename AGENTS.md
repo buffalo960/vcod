@@ -682,6 +682,11 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   (`Server::pin_stuck_velocities`, player-clip doc 6.2).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
+- A cmd's `Pmove` is one `movetrace::Pm`, handed to every chopped step's
+  world (`MoveWorld::in_pmove`): 1.5's and UO's `PM_trace` drops bodies
+  from its mask for the rest of the cmd once a trace starts in one, and
+  its touch list is `ClientImpacts`' `"touch"` on both players, all three
+  patches. Make one per cmd, never per step (cod11-player-clip.md 13).
 - A UO vehicle seat's pmove moves nothing: the body is put at the seat
   tag in `ClientEndFrame`, so the predictor keeps the snapshot's origin,
   and the view's 12000 pitch clamp (16000 on foot) and the jeep
@@ -913,7 +918,8 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   through `playerpose::pose_player`: the torso and legs clips blend per bone
   as two tree nodes, weighted 1 and 0.01 under a torso anim. A 1.5 or UO
   server samples a clip at the engine's node time, a float stepped by
-  50 ms frames (`Layer::time`, `PoseInputs::node_time`), not its seconds
+  50 ms frames (`Layer::time`, `PoseInputs::node_time`; a UO seat's leaves
+  each step their own, `SeatRamp::leaf_times`), not its seconds
   (combat doc 3.1, "The clip's float time").
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
