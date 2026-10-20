@@ -1551,6 +1551,52 @@ short, so the change shows only in vcod's tests that set a box down on a
 face; one of them (`a_rebuild_mid_stand_up_from_prone_keeps_the_eye_lerp`)
 now sets its player 0.125 up, the way a spawn does.
 
+### A start in solid on the ground trace
+
+VERIFIED, `game.mp.i386.so` 1.1d, the immediates, offsets and stores
+in this paragraph; INFERRED, the order and the conditions: past the
+all-solid test (0x30526) the ground trace tests the
+trace's startsolid byte (`+0x2f`, `-0x19(%ebp)`, 0x30540) and, set,
+traces again with the start's z replaced by the origin's z less 0.001
+(`.rodata 0x70bac`, 0x3054e-0x30587), the start's x and y and the end
+left as the first trace had them. That trace's startsolid byte set
+(0x3058c) writes `groundEntityNum` 0x3ff (`ps+0x54`) and 0 to
+`pml.groundPlane` and `pml.walking` (`+0x30`, `+0x2c`) and returns
+(0x3065e-0x30680); `fJumpOriginZ` is left alone. Otherwise the retrace is
+the ground trace from there on. VERIFIED, the same in 1.5b
+(`game.mp.i386.so` 0x21e26, decompile of 0x21ccd, `.rodata 0x759a8`,
+which also clears `pml.almostGroundPlane`) and UO 1.51b (decompile of
+0x26823, `.rodata 0x9b848` 0.001).
+
+VERIFIED, the masks and constants in this paragraph, in the same three
+binaries: `eFlags & 0xc000` (1.1 0x304a5 testing byte `+0x81` against
+0xc0, 1.5 the same), `& 0x106000` (UO 0x26887), and the unit (`fld1`,
+1.1 0x304b6; 1.5 `.rodata 0x759a0`, UO 0x9b840). INFERRED, the branch:
+on a mounted gun the first trace runs from the origin to a unit below it
+instead of a quarter above to a quarter below.
+
+INFERRED, from `cod_lnxded` 0x8052a58 and 1.5b's 0x8055aab: a terrain
+clip that starts inside a triangle writes fraction 0 and only the
+startsolid byte (`tw+0xf3`), never all solid, and `CM_BoxTrace`
+(0x8056310) adds nothing after the leaf walk. So a capsule sunk into
+terrain deeper than the 0.25 start lift is read off the ground: the
+retrace starts in solid too. A brush start in solid reads all solid
+whenever the end is inside too, so the arm matters for terrain.
+
+VERIFIED, retail capture (`mp_carentan-dm-slope-8ms-uostates-uo.txt`,
+UO 1.51b): `probe_uostates`'s `linkTo` carries its player 96 units
+along y on a `script_origin` and unlinks him at (902.21, 2019.36,
+-43.60), 6.8 units into the street's terrain (triangle 2839, normal
+(0, -0.071, 0.997)). For 20 s retail reads `groundEntityNum` 1023, the
+body creeping on at air accel with `velocity.z` near 0 (the slide's
+traces start in solid and clip against the face), until the script's
+prone and stand-up bring it out at ct 65444. vcod stood him on the face
+and walked him at full speed: 405 of the run's snapshots were off. vcod:
+`ground_trace` in `crates/common/src/pmove.rs` retraces and leaves the
+ground as above, and takes the mounted reach; `predict_ab`'s
+`predictor_replays_retail_slope_runs_uo` replays the run exactly and
+`a_body_sunk_in_terrain_finds_no_ground` holds all three rules there.
+
 ### A steep plane still steers the fall
 
 After that step the strafe falls back down the 52-degree face to the
