@@ -99,7 +99,8 @@ impl Play {
     /// would leave it at or under 0 is dropped.
     fn step(&self, t: f32) -> f32 {
         let dt = f64::from(STEP_MS as f32 * 0.001);
-        let mut next = (f64::from(t) + dt * f64::from(self.rate) * f64::from(self.frequency)) as f32;
+        let mut next =
+            (f64::from(t) + dt * f64::from(self.rate) * f64::from(self.frequency)) as f32;
         if self.looping {
             while next < 0.0 {
                 next += 1.0;
@@ -776,6 +777,32 @@ fn spread_phase(now_ms: i32, client_num: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_node_time_sums_float_frame_steps_and_wraps() {
+        let mut p = Play {
+            rate: 1.3,
+            frequency: 30.0 / 29.0,
+            looping: true,
+            time_ms: 1000,
+            ..Play::default()
+        };
+        let d = 0.05f32 as f64 * 1.3f32 as f64 * (30.0f32 / 29.0) as f64;
+        let mut t = 0.0f32;
+        for k in 1..40 {
+            t = (t as f64 + d) as f32;
+            if t >= 1.0 {
+                t -= 1.0;
+            }
+            // A step lands only on a whole frame.
+            assert_eq!(p.time(1000 + 50 * k + 49).to_bits(), t.to_bits(), "{k}");
+        }
+        let at = p.time(2950);
+        p.settle(2960);
+        assert_eq!((p.time_ms, p.time(2999)), (2950, at));
+        p.looping = false;
+        assert_eq!(p.time(9000), 1.0);
+    }
 
     #[test]
     fn the_spread_phase_steps_a_tenth_of_a_second_and_a_client() {
