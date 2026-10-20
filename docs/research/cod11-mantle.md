@@ -854,6 +854,22 @@ and each with 0x2 all raised 140 on every cmd and left the body standing.
 `rise_ab` holds `vcod-server` to each phase's settled `pm_flags`,
 `eFlags`, eye target and event ids.
 
+VERIFIED live, 2026-10-20: the same probe and client on 1.5b and UO 1.51b
+(`COD_VERSION=1.5` / `uo tools/run_probe.sh`; fixtures
+`mp_carentan-dm-slope-50ms-rise-1.5.txt`, `-rise-uo.txt`,
+`mp_ship-dm-slope-50ms-rise-1.5.txt` and `-rise-uo.txt`, same directory).
+Every refusal reads as on 1.1d: under the low ceiling the release and the
+crouch keep 0x40001 and raise the prone refusal on every cmd, under the
+mid one the release crouches (0x40002, eye target 40) and then raises the
+crouch refusal, 0x2 silences both, and the ladder keeps 0x40010 standing
+with the stand event on every crouch or prone key, 0x2 or not. The wire ids
+are 1.1's on 1.5b (140, 141, 142) and two up on UO (142, 143, 144;
+`coduo-diff.md`'s event table). Two phases differ from 1.1d, both by
+`cod15-movement.md` 2 and 3: a prone press that fits settles at 0x42001,
+in the street and from the mid ceiling's crouch alike, where 1.1d's read
+0x40001 and 0x40003: the jump penalty's 0x2000 is on, and the prone fit
+clears the crouch latch 0x2 that 1.1d keeps under prone. `rise_ab`'s 1.5 and UO tests hold ours to every phase.
+
 vcod: `pmove::update_stance` is the arms above and `update_prone_pitch` the
 airborne one; `PmInput::stance_held` is `wbuttons` 0x2; `ClientSim::step`
 raises the spectator's 140. The playing client sets its wanted stance off

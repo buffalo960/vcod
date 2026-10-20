@@ -9118,6 +9118,14 @@ in the death's frame (the 25950 snapshot already lacks clip slot 10), the
 first dead cmd's snapshot read 0x10: the ammo test fails. `rise_ab` holds
 ours to both.
 
+VERIFIED live, 2026-10-20: the same probe and client on `COD_VERSION=1.5`
+and `COD_VERSION=uo tools/run_probe.sh mp_carentan` (fixtures
+`mp_carentan-dm-slope-50ms-rise-1.5.txt` and `-rise-uo.txt`, same
+directory) read the same on both deaths: the keeping body's death snapshot
+and its first dead cmd's carry 0x400 and the second's clears it, and the
+stock callback's first dead cmd already reads 0x10. `rise_ab`'s 1.5 and UO
+rows hold ours to both.
+
 ---
 
 ## 17. What a hit, a quake and a lean do to the drawn view
