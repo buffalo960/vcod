@@ -33,8 +33,7 @@ use vcod_common::net::{NetClient, NetEvent};
 
 const SCRIPT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_rise.gsc");
-const CARENTAN: &str =
-    include_str!("fixtures/playerstate/mp_carentan-dm-slope-50ms-rise-1.1.txt");
+const CARENTAN: &str = include_str!("fixtures/playerstate/mp_carentan-dm-slope-50ms-rise-1.1.txt");
 const SHIP: &str = include_str!("fixtures/playerstate/mp_ship-dm-slope-50ms-rise-1.1.txt");
 
 /// Phases whose death snapshots the row reads.
@@ -148,7 +147,11 @@ fn direct_input(tokens: &[String]) -> Option<(u8, u8, i8)> {
 }
 
 /// Ours under the probe: its snapshots and its script log.
-fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, weapon: &str) -> (Vec<(i32, PlayerState)>, Vec<String>) {
+fn ours(
+    fs: vcod_common::pk3::Pk3Fs,
+    map: &str,
+    weapon: &str,
+) -> (Vec<(i32, PlayerState)>, Vec<String>) {
     let p = &PROTOCOL_V1;
     let bsp_path = fs.resolve_map(map).expect("map in the paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -171,7 +174,10 @@ fn ours(fs: vcod_common::pk3::Pk3Fs, map: &str, weapon: &str) -> (Vec<(i32, Play
             break;
         }
         now += frame;
-        let newest = cl.snapshots().newest().map(|s| (s.server_time, s.ps.clone()));
+        let newest = cl
+            .snapshots()
+            .newest()
+            .map(|s| (s.server_time, s.ps.clone()));
         spawned |= newest
             .as_ref()
             .is_some_and(|(_, ps)| ps.field_i32(p, "pm_type") == 0);
@@ -252,7 +258,10 @@ fn check(fixture: &str, map: &str, weapon: &str) {
         }
     }
     assert!(theirs.len() >= 5, "{map}: the capture holds its phases");
-    assert!(bad.is_empty(), "{map}: phases off retail's: {bad:?} (RISE_REPORT=1)");
+    assert!(
+        bad.is_empty(),
+        "{map}: phases off retail's: {bad:?} (RISE_REPORT=1)"
+    );
 }
 
 #[test]
