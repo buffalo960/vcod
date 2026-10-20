@@ -1607,6 +1607,12 @@ VERIFIED, `FireWeapon` `0x68f1e` and `Bullet_Fire` `0x690dc`: the endpoint is
 INFERRED: `spread` is therefore the cone's half-angle in degrees and the trace
 runs 8192 units.
 
+VERIFIED, United Offensive's `BG_Bullet_Endpos` (`game.mp.uo.i386.so`
+0x3011c): the same cone, 10000 units out (0x461c4000), with the forward
+product on the x87 stack. 1.5b's `Bullet_Endpos` (0x6de56) keeps 8192.
+Every UO `Bullet_Fire` and the artillery strike go through it
+(cod11-turrets.md 13.8). vcod: `combat::bullet_range`.
+
 VERIFIED, `FireWeapon` `0x68f2c`: the `damage` argument the shot carries into
 `Bullet_Fire_Extended` is `weaponDef->damage` (`0x1C0`), loaded straight from
 the weapon def with no scaling.
@@ -2319,6 +2325,14 @@ sequence apart from addresses and struct offsets in each pair:
   the strike's start, end and fraction from the same run (1.5b
   0x80d2000's caller, `-0x98(%ebp)` after the call) give retail's next
   start, z 0xc12aabc1, in the kept form and 0xc12aabc2 in the stored one.
+- VERIFIED, 1.1d's end point (`cod_lnxded` 0x8091352, after the bone
+  trace at 0x80912f0): the same form, each component's difference,
+  product and sum on the x87 stack and rounded once (0x8091366,
+  0x8091375, 0x8091387). vcod measurement: replaying the turret
+  captures, 8 of 166 1.1d body traces round a step apart in `f32`: 7
+  grid rays, whose cells print the fraction and not the point, and the
+  `-spawn` capture's wound, whose script logs no point. No fixture shows
+  the difference.
 
 vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
 matrix, the slab), `HitBody::axis_stored` (`DobjStamps::axis_stored`
@@ -2442,13 +2456,99 @@ vcod: `animclock::Play` keeps the node time beside the seconds, stepped
 in whole 50 ms frames with the sum in `f64` and stored as `f32`
 (`Play::step`), `Layer::time` hands it out, and the server's pose on
 1.5 and UO samples at `time * numframes` (`PoseInputs::node_time`).
-A UO rider's seat leaves and a clip under a node with children (whose
-frequency the clock does not hold) stay on the seconds, and 1.1d keeps
-them throughout: its pose is the glam one, not the stored build.
+A clip under a node with children (whose frequency the clock does not
+hold) stays on the seconds, and 1.1d keeps them throughout: its pose is
+the glam one, not the stored build.
+
+A leaf under a plain node keeps its own time. VERIFIED, UO
+`coduo_lnxded` 0x80bd884: a node with children whose flags (`+0xc`) carry
+neither sync bit (`& 3`, 1 `loopsync`, 2 `nonloopsync`) calls itself on
+each child with `dtime * rate (+0x40)`, and only a node whose weight is
+not 0 steps or descends; a sync node steps a time of its own at the
+weighted mean of its children's `frequency * rate` (0x80bb732, children
+with weight and a frequency only) and copies it into every descendant
+(0x80bd7e4). VERIFIED, 0x80c05a2 (the goal-weight setter): a node with
+no info is allocated (0x80bf9be) and its time block zeroed (0x38 bytes
+from `+0xc`) when given a goal weight; VERIFIED, 0x80bcc1e: one whose
+weight and goal both read 0 at the frame's weight step is freed, so set
+again it starts at time 0. VERIFIED, game.mp.uo `G_XAnimUpdate`
+(0x69983): every entity's weight step (`trap_DObjInitServerTime`) runs
+before any time step (`G_XAnimUpdateEnt`), so a time step reads the
+frame's stepped weight. VERIFIED, game.mp.uo disassembly: the seat
+blend `G_PlayerVehiclePositionAndBlend` sets its two leaves and its group
+at rate 1.0 (`movl $0x3f800000,0x10(%esp)` at 0x908ef, 0x909c6 and
+0x90a41, ahead of `trap_XAnimSetGoalWeight`), and the gunner placement
+(0x6ac06) sets every goal weight at rate 1.0; a seat's legs anims carry
+no `moveSpeed`, so their own rate is 1 (INFERRED, the clock's 0x2ada5
+arm). The UO seats' groups (`vehicleJeepDriverIdle` and kin) are
+`: complete` with no sync; the MG42 groups, the tank gunner's seat
+included, are sync (VERIFIED, `animtrees/multiplayer.atr` in
+`pakuo00.pk3`).
+
+vcod: `PlayerAnims::leaf_motion` holds the frequency of each leaf under
+a plain `complete` group, `playerpose::SeatRamp` starts a
+`animclock::LeafTime` at 0 for a leaf set from no weight and keeps it
+while the leaf keeps weight, and the server's 1.5 and UO pose samples a
+seat leaf at it (`PoseInputs::leaf_times`). A sync group's leaves (an
+MG42 gunner's, the tank gunner's seat) stay on the seconds. VERIFIED,
+vcod measurement (2026-10-20): `vehicle_ab`'s jeep driver bones move by
+at most 0.01 on 8 of 2170 samples, and no UO vehicle or turret gate
+changes: every stock seat leaf is a single frame (`c_mp_jeep_driver_turnL`,
+`_turnR`, `c_mp_jeep_gunner_idle`, the MG42 aim leaves), a two-frame clip
+that clamps on its first step (`c_mp_jeep_driver_idle`) or
+`c_mp_jeep_driver_drivingA` (30 frames, looping), whose node the legs
+clock already started at 0 when the leaf was allocated.
 VERIFIED, vcod measurement: `pronepose_ab`'s 1.5b mp_brecourt rays, the
 origin and the eight marks are retail's bits (the 3-step `RAY_STEPS_15`
 is gone); the 1.5b mp_carentan prone rest stays one step off, as it was
 on seconds (next section).
+
+#### The setter on a weighted node
+
+1.5b's and UO's player anim setter (game.mp 0x28ced, UO 0x2ce5f; the
+cgames' 1.5 0x30003870 and UO 0x30003a90 make the same calls, VERIFIED) differs from
+1.1d's in when a new anim's node time is set.
+
+- VERIFIED, 1.5b game.mp 0x28ced and UO 0x2ce5f: for a non-death anim
+  with a `moveSpeed` (`animation_t +0x44`), the setter reads
+  `trap_XAnimGetWeight` of the new node before its
+  `trap_XAnimSetCompleteGoalWeight`, and calls `trap_XAnimSetTime` with
+  the phase only when that weight equals 0.0 (the float at 1.5b 0x83ccc,
+  file offset 0x73ccc, and UO 0xa95ec, file 0x995ec). 1.1d's 0x2a600 sets the phase whenever the anim
+  has a `moveSpeed` (cod11-movers.md 15, "The phase").
+- VERIFIED, the same calls: the goal weight call's restart argument is
+  `!legs` (`legs` is `lf == ci+0x380`, 1.5b 0x28ced's first compare), so
+  the torso setter restarts its node and the legs setter does not. 1.1d
+  passes 1 on both channels. A fresh corpse's death anim (the `param_4`
+  arm) passes 0 on either channel and sets no time.
+- VERIFIED, 1.5b `cod_lnxded`: syscall 99 goes to 0x080cbe66, which sets
+  the node's goal weight (0x080cb20e, raising a zero weight to
+  `0.001 * goal`, 0x080e5b24), raises each ancestor whose weight is 0,
+  then calls 0x080cba7a. That clears the node's server time (0x080cb0c2,
+  `+0x28..+0x32`) when the restart argument is set or 0x080ca848 reads
+  the node inactive: an ancestor at weight 0 (0x080ca6e8) or the node's
+  own weight 0 (0x080ca768). After the goal call neither holds, so with
+  restart 0 the time stays. UO's 0x080c004a, 0x080c0e0e and 0x080bfbdc
+  have the same calls in the same order.
+- VERIFIED, 1.5b `cod_lnxded` 0x080c769e (the server half's weight step):
+  a leaf whose weight and goal weight are 0 on both halves is freed.
+  INFERRED: a node that read weight 0 is a new allocation, zeroed by
+  0x080cb20e's memset, so it starts at 0 and only `XAnimSetTime` moves
+  it.
+
+So on 1.5b and UO a legs anim whose node still has weight (a clip
+blending out and set again, or the same anim re-toggled) keeps playing
+from its own time. A still clip there gets no phase in either case. A
+weighted torso node restarts at 0, even for a movement clip.
+
+vcod: `animclock::ChannelClock::set` under the windowed (1.5/UO) setter
+keeps a fading clip's `Play` when the legs, or a fresh corpse's death,
+take it back. A torso one restarts at 0, and only a node no fading entry
+holds gets the phase (`a_weighted_node_keeps_its_time_on_15`). Not
+modelled (INFERRED edge): a node the other channel holds. A legs anim
+the torso has at weight, or a torso restart of a node the legs set this
+frame, would read the shared node's weight and time. vcod's two lerp
+frames keep separate clocks.
 
 #### The prone strike on mp_carentan
 
@@ -4030,6 +4130,46 @@ residual 3 units are within what one run of each measures, which this pair
 of runs does not settle. `pm_type` 7, a dead player still
 linked, takes `0x34220` and does not move at all: vcod runs
 `dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
+
+### 5.8 A `trigger_hurt` kill and the corpse's fall
+
+VERIFIED, `client-probes/probe_hurtfall` on retail 1.1d, 2026-10-20, three
+runs (`crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtfall.txt`,
+`-hurtlow.txt`, `-hurtland.txt`, recipes in their headers). The probe lifts
+mp_carentan's one `trigger_hurt` (entity 72, `dmg 1000`, model `*1`, the
+kill slab at z -176..-160 under the whole map) by an origin write and drops
+a `--probe-ride` client from z 362 over the street at (900 1930) through
+it. The origin write moves the slab's touch volume: every run killed at the
+lifted height.
+
+- VERIFIED, all three: the damage callback gets the trigger as inflictor
+  and attacker, `dflags` 0, `MOD_TRIGGER_HURT`, weapon `none`, an
+  undefined point and an undefined direction, hitloc `none`; the killed
+  callback's direction prints `(0.00, 0.00, 0.00)`. INFERRED: the undefined
+  pair is `hurt_touch`'s (0x64dc4) null point and direction through
+  `Scr_PlayerDamage` (0x5ca18), the shape the sine crush showed
+  (`cod11-movers.md` 21), so stock `dm.gsc` adds `iDFLAGS_NO_KNOCKBACK`
+  and `finishPlayerDamage` sets no knockback timer (0x43952).
+- VERIFIED, `-hurtfall.txt` (slab at 224..240, kill at z 233): the corpse
+  falls the remaining 276 on the client's cmds, lands at -43.19 at 3450 and
+  then creeps south about 0.05 a frame for 2.5 s, the street's grade under
+  `PM_DeadMove` (5.7).
+- VERIFIED, `-hurtlow.txt` (slab moved to 27..43 at the drop, kill at z 24):
+  the corpse lands 150 ms after the kill at y 1928.90 and creeps the same
+  way. A 120 ms knockback timer on the kill would have slid it on to y
+  1905 (vcod before the fix; `hurtfall_ab` fails on that).
+- VERIFIED, `-hurtland.txt` (slab at -56..-40 from the first frame, its top
+  3 over the street): the kill comes first, at origin -42.00 with the street
+  at -43.17 under it, and the landing's fall damage callback follows in the
+  same frame (both read 3350): 66 points on a body at health 0, which reads
+  -66 from then on, with no second killed callback. INFERRED: the kill is
+  the touch pass of a cmd still airborne and the fall damage the next cmd's
+  `PM_CrashLand` through `ClientEvents` (0x3fda8), the dead player's landing
+  of `cod11-player-clip.md` 8.8.
+
+**As implemented.** `ScriptRuntime::deliver_world_hit` passes the callback
+undefined vectors. `crates/server/tests/hurtfall_ab.rs` replays each
+capture's cmds on vcod-server and holds every `PROBE` line exact.
 
 ---
 
@@ -9099,13 +9239,47 @@ truncated: 1.1d's 92 frames at 30 read 3066, where a rounded 3067 was
 vcod's before 2026-10-19. INFERRED: 1.5b and UO store it the same way
 (their clips here are exact or round down either way).
 
+VERIFIED (capture), 2026-10-20, a death raised inside the packet pass on
+all three servers (`mp_carentan-dm-hit-target-killtimers{,-1.5,-uo}.txt`,
+the `--probe-kill-cmds 1,3` target with `ct`, `legsTimer` and `torsoTimer`
+on each `!trace`): the `kill` runs ahead of its message's cmd, and the
+probe's cmds behind it are 1 ms apart, so the death frame reads the
+clip's length + 50 less 1 or less 3 (949 and 947 for a 900 ms clip; 27
+deaths, each read against its own clip). The hold is set on the last cmd
+ahead of the `kill`, and every cmd behind it runs it down, alive or dead.
+VERIFIED (capture), 1.1d, a bullet death inside the shooter's cmd
+(`mp_carentan-dm-hit-target-paintimers.txt`, ms 26759, index 21, 900 ms):
+`ct + timer` reads 304200, so the hold was set at 303250, between the
+victim's snapshot cmds 303233 and 303284; that is the frame's
+`level.time` too, so this one capture does not split the two clocks; the
+`kill` captures do. VERIFIED (capture), same file: its two surviving
+hits (ms 26200, health 60; ms 26557, health 24) leave both timers at 0
+and `legsAnim` on the idle or the knockback's run.
+
+VERIFIED (disassembly), the event argument at every `BG_AnimScriptEvent`
+call site: 1.1d `game.mp.i386.so` (13 `.rel.text` relocations, 0x2ee1a ..
+0x49b85) passes 1, 2, 3, 4, 5, 6, 7, 10 or 13; 1.5b (16 PLT calls, 0x1fcb8
+.. 0x46f5d) and UO (19, 0x247f7 .. 0x4fb93) the same set, UO adding 14 and
+15. VERIFIED (data), the event name table (8-byte rows: 1.1d 0x7b478,
+1.5b 0x80120, UO 0xa9120) starts `PAIN`, `DEATH`, `FIREWEAPON`, `JUMP`,
+`JUMPBK`, `LAND`, `DROPWEAPON`, `RAISEWEAPON`, `CLIMBMOUNT`,
+`CLIMBDISMOUNT`, `RELOAD`, `CROUCH_TO_PRONE`, `PRONE_TO_CROUCH`,
+`MELEEATTACK` (UO then `LMG_DEPLOY`, `LMG_BREAKDOWN`). So no server game
+module raises `PAIN` (0): a surviving hit sets no anim and no timer, and
+`DEATH` (1) is raised only from `player_die` (1.1d 0x49b85, 1.5b 0x46f5d,
+UO 0x4fb93).
+
 Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
 and UO like any other; `dyingpose_ab::a_dying_body_poses_like_{retail,15,uo}`
 hold every bone of all 60 frames within 0.015 of retail's (the logs'
 rounding). `AnimState::timers` writes `legsTimer` and `torsoTimer` off each
 event's hold, `take_damage` stamps the death's on the client's last cmd
-(`dyingpose_ab::a_death_runs_its_timers_down_like_*`), and
-`xanim::duration_ms` truncates in extended precision.
+(`dyingpose_ab::a_death_runs_its_timers_down_like_*`, and inside the
+packet pass `kill_cmds_ab::a_kills_death_timers_match_*_by_its_cmds`, which
+fail with the frame clock), a surviving hit returns before the anim, and
+`combat.rs::a_shot_takes_health_and_a_second_one_kills` holds a hit's and a
+bullet death's timers on ours, `a_shot_sets_the_victims_timers_as_retail_does`
+on the capture. `xanim::duration_ms` truncates in extended precision.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 

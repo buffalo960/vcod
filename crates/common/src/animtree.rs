@@ -14,6 +14,10 @@ pub struct Node {
     pub children: Vec<usize>,
     /// `: complete loopsync`, as opposed to `nonloopsync`.
     pub loopsync: bool,
+    /// Either `loopsync` or `nonloopsync`: a node whose descendants all take
+    /// its own time, where a plain node's leaves each step their own
+    /// (cod11-combat.md 3.1, "The clip's float time").
+    pub sync: bool,
     /// `: complete`: a group the engine blends its children under, the
     /// MG42 aim groups and UO's vehicle seat groups.
     pub complete: bool,
@@ -92,6 +96,7 @@ impl AnimTree {
                 name: "root".into(),
                 children: Vec::new(),
                 loopsync: false,
+                sync: false,
                 complete: false,
             }],
         };
@@ -135,6 +140,7 @@ impl AnimTree {
                     *i += 1;
                     // Optional `: complete loopsync` modifier list before `{`.
                     let mut loopsync = false;
+                    let mut sync = false;
                     let mut complete = false;
                     while let Some(Tok::Word(w)) = toks.get(*i) {
                         let is_mod = matches!(*w, ":" | "complete" | "loopsync" | "nonloopsync");
@@ -142,6 +148,7 @@ impl AnimTree {
                             break;
                         }
                         loopsync |= w.contains("loopsync") && !w.contains("nonloopsync");
+                        sync |= w.contains("loopsync");
                         complete |= w.contains("complete");
                         *i += 1;
                     }
@@ -150,6 +157,7 @@ impl AnimTree {
                         name,
                         children: Vec::new(),
                         loopsync,
+                        sync,
                         complete,
                     });
                     self.nodes[parent].children.push(idx);
@@ -271,6 +279,31 @@ pub struct PlayerAnims {
     /// Each wire index's clip timing and `moveSpeed`, `None` for a container
     /// or a name the paks carry no clip for.
     motions: Vec<Option<AnimMotion>>,
+    /// [`Self::leaf_motion`]'s table, by node id.
+    leaf_motions: HashMap<usize, (f32, bool)>,
+}
+
+/// The leaves under a `complete` node that are not under a sync one: each
+/// steps its own node time (cod11-combat.md 3.1, "The clip's float time").
+fn own_time_leaves(tree: &AnimTree) -> Vec<usize> {
+    fn walk(tree: &AnimTree, n: usize, under: bool, out: &mut Vec<usize>) {
+        let node = &tree.nodes[n];
+        if node.sync {
+            return;
+        }
+        if node.children.is_empty() {
+            if under {
+                out.push(n);
+            }
+            return;
+        }
+        for &c in &node.children {
+            walk(tree, c, under || node.complete, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, 0, false, &mut out);
+    out
 }
 
 /// What `BG_FinalizePlayerAnims` (`game.mp.i386.so` 0x27d70) keeps of a clip
@@ -279,6 +312,8 @@ pub struct PlayerAnims {
 pub struct AnimMotion {
     /// The loop period in seconds.
     pub duration: f32,
+    /// `XAnimGetLength`, [`crate::xanim::RootMotion::length_ms`].
+    pub length_ms: i32,
     pub looping: bool,
     /// [`crate::xanim::RootMotion::frequency`].
     pub frequency: f32,
@@ -350,6 +385,7 @@ impl PlayerAnims {
                 let move_speed = if death { 0 } else { move_speed };
                 Some(AnimMotion {
                     duration: m.duration,
+                    length_ms: m.length_ms,
                     looping: m.looping,
                     frequency: m.frequency,
                     move_speed,
@@ -359,6 +395,15 @@ impl PlayerAnims {
                 })
             })
             .collect();
+        let leaf_motions = own_time_leaves(&tree)
+            .into_iter()
+            .filter_map(|leaf| {
+                let name = &tree.nodes[leaf].name;
+                let m =
+                    crate::xanim::root_motion(name, &fs.read(&format!("xanim/{name}"))?).ok()?;
+                Some((leaf, (m.frequency, m.looping)))
+            })
+            .collect();
         Ok(PlayerAnims {
             tree,
             index,
@@ -366,6 +411,7 @@ impl PlayerAnims {
             script,
             lengths,
             motions,
+            leaf_motions,
         })
     }
 
@@ -382,6 +428,13 @@ impl PlayerAnims {
     /// The clip timing and `moveSpeed` of the anim a wire value plays.
     pub fn motion(&self, wire: i32) -> Option<AnimMotion> {
         self.motions.get((wire & 511) as usize).copied().flatten()
+    }
+
+    /// [`crate::xanim::RootMotion::frequency`] and looping of a leaf that
+    /// steps a node time of its own under a `complete` group with no sync
+    /// (a UO seat's leaves); `None` for any other node or a missing clip.
+    pub fn leaf_motion(&self, node: usize) -> Option<(f32, bool)> {
+        self.leaf_motions.get(&node).copied()
     }
 
     /// The record flags of the anim a wire value plays; default for an anim
@@ -457,6 +510,22 @@ turning
         assert_eq!(t.nodes[0].children, vec![1, 11]);
     }
 
+    /// A plain `complete` group's leaves keep their own time; a sync
+    /// group's take the group's, and a leaf under no group is the clock's.
+    #[test]
+    fn only_a_plain_complete_group_s_leaves_keep_their_own_time() {
+        let t = AnimTree::parse(
+            "main { legs { pb_walk seat : complete { seat_aim { pb_l pb_r } } \
+             mg : complete nonloopsync { mg_lvl { pb_mg } } } }",
+        )
+        .unwrap();
+        let names: Vec<&str> = own_time_leaves(&t)
+            .iter()
+            .map(|&n| t.nodes[n].name.as_str())
+            .collect();
+        assert_eq!(names, ["pb_l", "pb_r"]);
+    }
+
     #[test]
     fn index_order_is_reversed_and_skips_unreferenced_leaves() {
         let t = AnimTree::parse(SAMPLE).unwrap();
@@ -504,6 +573,7 @@ turning
         let aim = t.index_of("standMG42_aim").unwrap();
         assert_eq!(t.nodes[aim].children.len(), 3);
         assert!(!t.nodes[aim].loopsync); // ": complete nonloopsync"
+        assert!(t.nodes[aim].sync);
         assert!(t.nodes[t.index_of("standMG42_fire").unwrap()].loopsync);
         // engine cap is 512
         assert!(t.nodes.len() < 512, "{} nodes", t.nodes.len());

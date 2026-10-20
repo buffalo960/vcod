@@ -72,8 +72,9 @@ pub enum WeaponScript {
     Aim,
     /// [`Self::Aim`]'s view with the buttons, `wbuttons` and `up` the gsc
     /// last asked for through an `iPrintLn` of `PROBE_IN <buttons>
-    /// <wbuttons> <up>` (`client-probes/probe_leanhit`): the gsc sets the
-    /// lean, the stance and every trigger pull on the server's clock.
+    /// <wbuttons> <up> [<forward> <right>]` (`client-probes/probe_leanhit`,
+    /// `probe_spawnbody`): the gsc sets the lean, the stance, the keys and
+    /// every trigger pull on the server's clock.
     Direct,
     /// [`Self::Smoke`]'s pullback and throw at the newest snapshot's view,
     /// twice, 7 s apart: the grenade part of
@@ -398,9 +399,8 @@ pub struct VehicleProbe {
     follow: bool,
     /// The client command of the step just entered, until taken.
     say: Option<&'static str>,
-    /// [`WeaponScript::Direct`]: the gsc's last `PROBE_IN` buttons,
-    /// `wbuttons` and `up`.
-    direct: Option<(u8, u8, i8)>,
+    /// [`WeaponScript::Direct`]: the gsc's last `PROBE_IN` input.
+    direct: Option<DirectInput>,
     /// Entities seen as missiles, still reported once they explode.
     missiles: std::collections::BTreeSet<i32>,
 }
@@ -426,7 +426,7 @@ impl VehicleProbe {
             script,
             WeaponScript::Aim | WeaponScript::Throw | WeaponScript::Melee | WeaponScript::Direct
         );
-        let direct = (script == WeaponScript::Direct).then_some((0, 0, 0));
+        let direct = (script == WeaponScript::Direct).then_some(DirectInput::default());
         let script = match script {
             WeaponScript::Arty => ARTY,
             WeaponScript::Smoke => SMOKE,
@@ -531,10 +531,12 @@ impl VehicleProbe {
         cmd.right = cur.right;
         cmd.up = cur.up;
         cmd.buttons = cur.buttons;
-        if let Some((buttons, wbuttons, up)) = self.direct {
-            cmd.buttons = buttons;
-            cmd.wbuttons = wbuttons;
-            cmd.up = up;
+        if let Some(d) = self.direct {
+            cmd.buttons = d.buttons;
+            cmd.wbuttons = d.wbuttons;
+            cmd.up = d.up;
+            cmd.forward = d.forward;
+            cmd.right = d.right;
         }
         cmd
     }
@@ -724,16 +726,32 @@ impl VehicleProbe {
 
 const ET_MISSILE: i32 = 4;
 
-/// The buttons, `wbuttons` and `up` of a gsc `iPrintLn` line
-/// `f "PROBE_IN <buttons> <wbuttons> <up>"`.
-pub fn direct_input(cmd: &str) -> Option<(u8, u8, i8)> {
+/// What a gsc `PROBE_IN` line asks [`WeaponScript::Direct`] to hold.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DirectInput {
+    pub buttons: u8,
+    pub wbuttons: u8,
+    pub up: i8,
+    pub forward: i8,
+    pub right: i8,
+}
+
+/// The input of a gsc `iPrintLn` line `f "PROBE_IN <buttons> <wbuttons>
+/// <up> [<forward> <right>]"`; the keys default to 0.
+pub fn direct_input(cmd: &str) -> Option<DirectInput> {
     let rest = cmd.strip_prefix("f ")?.trim_matches('"');
     let mut t = rest.strip_prefix("PROBE_IN ")?.split_whitespace();
-    Some((
-        t.next()?.parse().ok()?,
-        t.next()?.parse().ok()?,
-        t.next()?.parse().ok()?,
-    ))
+    let mut d = DirectInput {
+        buttons: t.next()?.parse().ok()?,
+        wbuttons: t.next()?.parse().ok()?,
+        up: t.next()?.parse().ok()?,
+        ..DirectInput::default()
+    };
+    if let Some(f) = t.next() {
+        d.forward = f.parse().ok()?;
+        d.right = t.next()?.parse().ok()?;
+    }
+    Some(d)
 }
 
 /// ANGLE2SHORT: the wire's 16 bits over a full turn.

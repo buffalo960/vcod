@@ -125,6 +125,38 @@ impl Play {
     }
 }
 
+/// A leaf's own node time under a plain (not sync) group, as a UO seat's
+/// leaves keep it: 0 when the leaf is first given weight, then stepped by
+/// [`Play::step`] at rate 1 each frame (the seat's legs anims carry no
+/// `moveSpeed`, and the groups and leaves are set at rate 1), a nested
+/// node passing its children `dtime * rate` (cod11-combat.md 3.1, "The
+/// clip's float time").
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LeafTime(Play);
+
+impl LeafTime {
+    /// A leaf allocated at level time `start_ms`.
+    pub fn new(start_ms: i32, frequency: f32, looping: bool) -> LeafTime {
+        LeafTime(Play {
+            rate: 1.0,
+            time_ms: start_ms,
+            frequency,
+            looping,
+            ..Play::default()
+        })
+    }
+
+    /// The node time after every whole frame step up to `now_ms`.
+    pub fn at(&self, now_ms: i32) -> f32 {
+        self.0.time(now_ms)
+    }
+
+    /// Steps the time up to `now_ms` and keeps it there.
+    pub fn settle(&mut self, now_ms: i32) {
+        self.0.settle(now_ms);
+    }
+}
+
 /// A node's weight easing to its goal: `XAnimSetGoalWeight` (`cod_lnxded`
 /// 0x080bd674) gives it `|goal - weight| * time` to get there and the
 /// per-frame step (0x080bb130) moves it the remaining distance over the
@@ -400,7 +432,7 @@ impl ChannelClock {
     /// [`blend_ms`], the new one restarting at 0 or, for a looping movement
     /// clip, at the phase of the looping movement clip it replaces, else at
     /// one the level time and the client number spread out (0x2a858..0x2a919,
-    /// `trap_XAnimSetTime` 0x2aa5a). A death anim on a body not freshly
+    /// `trap_XAnimSetTime` 0x2aa5a; 1.5's and UO's [`spread_phase_15`]). A death anim on a body not freshly
     /// cloned goes straight to its last frame at full weight, every other
     /// clip on the channel dropped (0x2a97b..0x2aa5a, cgame 0x3000395d..0x300039f5).
     fn set(
@@ -436,6 +468,11 @@ impl ChannelClock {
             };
         }
         let client_num = seen.client_num;
+        // The windowed setter is 1.5's and UO's, whose spread differs.
+        let spread = |now_ms, client_num| match window.is_some() {
+            false => spread_phase(now_ms, client_num),
+            true => spread_phase_15(now_ms, client_num, old.map_or(1000, |o| o.length_ms + 200)),
+        };
         // The phase in seconds' terms and as the old node's float time
         // (`trap_XAnimGetTime`).
         let (phase, phase_t) = match new {
@@ -445,12 +482,13 @@ impl ChannelClock {
                     self.current.time(now_ms),
                 ),
                 _ => {
-                    let p = spread_phase(now_ms, client_num);
+                    let p = spread(now_ms, client_num);
                     (p, p)
                 }
             },
             _ => (0.0, 0.0),
         };
+        let windowed = window.is_some();
         let blend = match window {
             None => blend_ms(anims, old_index, new_index, legs),
             Some(w) => blend_ms_windowed(anims, old_index, new_index, legs, now_ms, w),
@@ -471,10 +509,11 @@ impl ChannelClock {
             .collect();
         // A node already blending out comes back from the weight it had, in
         // the part of the blend time that distance takes.
-        let from = match fading.iter().position(|(p, _)| p.index == new_index) {
-            Some(i) => fading.remove(i).1.at(now_ms),
-            None => 0.0,
-        };
+        let back = fading
+            .iter()
+            .position(|(p, _)| p.index == new_index)
+            .map(|i| fading.remove(i));
+        let from = back.map_or(0.0, |(_, w)| w.at(now_ms));
         fading.sort_by(|a, b| b.1.at(now_ms).total_cmp(&a.1.at(now_ms)));
         fading.truncate(FADES);
         self.fading = [None; FADES];
@@ -482,16 +521,34 @@ impl ChannelClock {
             *slot = Some(f);
         }
         self.anim = wire;
-        self.current = Play {
-            index: new_index,
-            base_ms: now_ms,
-            base_s: phase * new.map_or(0.0, |n| n.duration),
-            // The goal weight call's own rate; the updater sets the real one.
-            rate: 1.0,
-            time_ms: now_ms,
-            time_t: phase_t,
-            frequency: new.map_or(0.0, |n| n.frequency),
-            looping: new.is_some_and(|n| n.looping),
+        // 1.5's and UO's setter (1.5b 0x28ced, UO 0x2ce5f) sets the phase
+        // only on a node whose weight read 0, and restarts a weighted one
+        // only from the torso (a fresh corpse's death never), so a weighted
+        // legs clip plays on from where it stands (cod11-combat.md 3.1,
+        // "The setter on a weighted node").
+        let (phase, phase_t) = if windowed && back.is_some() {
+            (0.0, 0.0)
+        } else {
+            (phase, phase_t)
+        };
+        self.current = match back {
+            Some((p, _)) if windowed && (legs || new.is_some_and(|n| n.death)) => Play {
+                base_ms: now_ms,
+                base_s: p.seconds(now_ms),
+                rate: 1.0,
+                ..p
+            },
+            _ => Play {
+                index: new_index,
+                base_ms: now_ms,
+                base_s: phase * new.map_or(0.0, |n| n.duration),
+                // The goal weight call's own rate; the updater sets the real one.
+                rate: 1.0,
+                time_ms: now_ms,
+                time_t: phase_t,
+                frequency: new.map_or(0.0, |n| n.frequency),
+                looping: new.is_some_and(|n| n.looping),
+            },
         };
         self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
         if !legs {
@@ -776,6 +833,16 @@ fn spread_phase(now_ms: i32, client_num: i32) -> f32 {
     ((now_ms / 100 + client_num * 360) % 1000) as f32 * 0.001
 }
 
+/// 1.5b's and UO's spread (`game.mp` 1.5b 0x18fa2..0x19036, UO
+/// 0x1d114..0x1d1a8): `clientNum * 0.36f + (bg.time % period) / period`
+/// stored as a float, less its integer part. `period` is the old anim's
+/// `XAnimGetLength` + 200, or 1000 when the old anim is no clip (none).
+/// The sum runs on the x87 stack; `f64` here.
+fn spread_phase_15(now_ms: i32, client_num: i32, period: i32) -> f32 {
+    let x = ((now_ms % period) as f64 / period as f64 + client_num as f64 * 0.36f32 as f64) as f32;
+    x - x.trunc()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -814,6 +881,21 @@ mod tests {
             spread_phase(99_999, 3),
             (999 + 1080) as f32 % 1000.0 * 0.001
         );
+    }
+
+    #[test]
+    fn the_15_spread_phase_runs_on_the_old_clips_period() {
+        // Values the sum gives rounded to a float once, off exact rationals.
+        let cases = [
+            (12_345, 0, 1000, 0x3eb0a3d7),
+            (12_345, 3, 1000, 0x3ed9999c),
+            (25_050, 5, 1466, 0x3f6326ea),
+            (99_999, 63, 2133, 0x3f0fd5e0),
+        ];
+        for (now, client, period, bits) in cases {
+            let p = spread_phase_15(now, client, period);
+            assert_eq!(p.to_bits(), bits, "{now} {client} {period}: {p}");
+        }
     }
 
     #[test]
@@ -909,6 +991,35 @@ mod tests {
             },
         );
         assert_eq!(c.rate(), 200.0 / speed);
+    }
+
+    /// A run out of the idle starts at the spread phase: 1.1's off the
+    /// tenth of a second, 1.5's and UO's off the idle's own length.
+    #[test]
+    fn a_run_out_of_the_idle_starts_at_the_protocols_spread() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let idle = anims.wire_of("pb_stand_alert").unwrap();
+        let run = anims.wire_of("pb_combatrun_forward_loop").unwrap();
+        let period = anims.motion(idle).unwrap().length_ms + 200;
+        for windowed in [false, true] {
+            let mut c = ChannelClock::default();
+            let mut window = 0;
+            for (t, wire) in [(1000, idle), (12_350, run)] {
+                let at = Times::end_frame(t);
+                match windowed {
+                    false => c.update(&anims, true, wire, &seen(0.0, 0), at),
+                    true => c.update_windowed(&anims, true, wire, &seen(0.0, 0), at, &mut window),
+                }
+            }
+            let want = match windowed {
+                false => spread_phase(12_350, 3),
+                true => spread_phase_15(12_350, 3, period),
+            };
+            assert_eq!(c.current.time_t, want, "{windowed}");
+        }
     }
 
     /// A death anim plays from its start on a body `cloneplayer` just made
@@ -1009,6 +1120,52 @@ mod tests {
         let mut plain = ChannelClock::default();
         plain.update(&anims, false, fire, &seen(0.0, 0), at(2100));
         assert_eq!(weight(&plain, 2130), 1.0);
+    }
+
+    /// 1.5's and UO's setter keeps the time of a legs node that still has
+    /// weight, where 1.1's restarts it at the spread phase; the torso's
+    /// restarts it at 0 (1.5b 0x28ced, UO 0x2ce5f).
+    #[test]
+    fn a_weighted_node_keeps_its_time_on_15() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let anims = PlayerAnims::load(&fs).unwrap();
+        let (run, stand) = (
+            anims.wire_of("pb_combatrun_forward_loop").unwrap(),
+            anims.wire_of("pb_stand_alert").unwrap(),
+        );
+        let at = |t| Times::end_frame(t);
+        let time_of = |c: &ChannelClock, i: i32, t| {
+            c.layers(t)
+                .iter()
+                .find(|l| l.index == i)
+                .and_then(|l| l.time)
+                .unwrap()
+        };
+        let back = |windowed: bool, legs: bool| {
+            let (mut c, mut window) = (ChannelClock::default(), 0);
+            let mut set = |c: &mut ChannelClock, wire, t| {
+                if windowed {
+                    c.update_windowed(&anims, legs, wire, &seen(0.0, 0), at(t), &mut window);
+                } else {
+                    c.update(&anims, legs, wire, &seen(0.0, 0), at(t));
+                }
+            };
+            set(&mut c, run, 1000);
+            set(&mut c, stand, 2000);
+            // The run is still blending out.
+            let fading = time_of(&c, run, 2100);
+            set(&mut c, run, 2100);
+            (fading, time_of(&c, run, 2100))
+        };
+        let (fading, kept) = back(true, true);
+        assert!(fading > 0.0);
+        assert_eq!(kept.to_bits(), fading.to_bits());
+        let (fading, spread) = back(false, true);
+        assert_eq!(spread, spread_phase(2100, 3));
+        assert_ne!(spread, fading);
+        assert_eq!(back(true, false).1, 0.0);
     }
 
     /// A `FIREWEAPON` anim carries its own 30 ms blend (0x2888d).

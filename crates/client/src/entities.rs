@@ -1755,6 +1755,7 @@ pub fn build_instances(
                         turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
                         seat_leaves: st.seat.next(goal),
                         controllers,
+                        leaf_times: Vec::new(),
                         node_time: false,
                     };
                     st.pose = pose_player(&assembly.skeleton, &inputs, |n| load_clip(clips, fs, n));
