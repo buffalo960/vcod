@@ -1117,6 +1117,29 @@ above are the reshuffle, not a speed change. Before the cone fix the
 same branch's sweep had mp_kursk 11 end at 19799 with the own-rocket
 kill of section 7.2 and the other 35 pass (mean 12541 over the 35).
 
+The weapon rules of 2026-10-20 (the draw before a tap, reserve drops,
+the charge press close-in; VERIFIED, measured, ours, release, UO
+install, master a5c81855 against branch fix/bots-bas-weapons, the
+four-bot shooting gate, all five maps, seeds 1 to 11 odd, 30 runs
+each): all 60 end on their bases. Before, mp_foy 10359 to 14239,
+mp_italy 9979 to 15059, mp_kursk 10399 to 16259, mp_ponyri 10379 to
+13819, mp_rhinevalley 9979 to 11779, mean 12032; after, 10359 to 14239,
+9979 to 15059, 11339 to 16299, 10379 to 16939, 9879 to 14219, mean
+12496. A logged count of every swap pickup (taken, dropped, the rounds
+of each) found 61 swaps before and 56 after, every one dropping an
+empty weapon, and no plant or defuse settled on a weapon's cursor hint
+in either sweep: the gun-for-gun trade and the bas swap at a charge
+did not come up on these seeds, and their rules rest on unit tests.
+What moved runs is the launcher list: an empty launcher (count and clip
+both -1) is no longer fetched. On mp_rhinevalley seed 5 an allied bot
+holding an empty bazooka tapped another empty bazooka three times (a
+grab of no ammo for a weapon held), then the unreachable one at
+(1938, -2254, 2017) three times; without the first it reached the
+fight earlier, and the allies' third breach waited on the axis
+sniper's kills (8234 to 12953) where before it came at 8012. Toggling
+the old list back alone restores master's ticks on mp_rhinevalley
+seeds 1 and 5 (10179, 10039).
+
 VERIFIED (measured, ours, 2026-10-17, release, UO install,
 `scr_bas_basehealth 3000`, the rules above): before this round's
 changes, four bots with shoot off on mp_foy, seeds 3 and 7, planted 97
