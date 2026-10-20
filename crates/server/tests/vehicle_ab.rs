@@ -204,8 +204,20 @@ fn board(map: &str, vehicletype: &str, cvars: &[(&str, &str)]) -> Option<Boarded
     board_with(map, vehicletype, cvars, &Setup::default(), |_| {})
 }
 
+/// Each map's first spawn when a [`Setup`] pins none: a flat
+/// `mp_teamdeathmatch_spawn`, whose think starts the idle on the spawn
+/// frame, where the seeded draw's sloped point slides and sets a walk
+/// first. Every mp_cassino capture's `legsAnim` toggle reads the flat
+/// spawn's (coduo-vehicles.md 13, "The driver's idle"); on mp_peaks the
+/// seeded draw already reads retail's, `JEEP_GUN`'s aside.
+const FLAT_SPAWNS: &[(&str, Spot)] = &[("mp_cassino", ([64.0, 152.0, 0.125], [0.0, 270.0, 0.0]))];
+
+/// A spawn pin's origin and angles.
+type Spot = ([f32; 3], [f32; 3]);
+
 /// What a replay changes on the server before the load: the seed, for a
-/// death clip's random draw, and the spawn picks, for a respawn's.
+/// death clip's random draw, and the spawn picks, for a respawn's (none:
+/// the map's [`FLAT_SPAWNS`] entry).
 #[derive(Default)]
 struct Setup {
     seed: Option<u64>,
@@ -236,7 +248,14 @@ fn board_with(
         Some(seed) => vcod_server::Server::with_seed(cfg, now, seed),
         None => vcod_server::Server::new(cfg, now),
     };
-    sv.pin_spawns(setup.pins.clone());
+    let pins = match (
+        setup.pins.is_empty(),
+        FLAT_SPAWNS.iter().find(|(m, _)| *m == map),
+    ) {
+        (true, Some((_, pin))) => vec![vec![Some(*pin)]],
+        _ => setup.pins.clone(),
+    };
+    sv.pin_spawns(pins);
     sv.set_protocol(p);
     sv.overlay_script(
         "maps/mp/gametypes/probe_vehicle",
@@ -655,8 +674,8 @@ const PS_FIELDS: &[(&str, Kind)] = &[
     ("origin[1]", Kind::Float(0.5)),
     ("origin[2]", Kind::Float(0.5)),
     ("fWeaponPosFrac", Kind::Float(0.001)),
-    ("legsAnim", Kind::Mask(511)),
-    ("torsoAnim", Kind::Mask(511)),
+    ("legsAnim", Kind::Int),
+    ("torsoAnim", Kind::Int),
     ("weapon", Kind::Int),
     ("aimSpreadScale", Kind::Float(0.001)),
     ("weaponstate", Kind::Int),
@@ -926,15 +945,14 @@ fn the_jeep_driver_s_bones_follow_retail_s() {
     let mean = sum / n.max(1) as f32;
     eprintln!("{n} bone samples, mean {mean:.3}, worst {worst:?}");
     assert!(n > 2000, "only {n} samples in common");
-    assert!(mean <= 0.2, "the bones sit {mean} off retail's on average");
+    assert!(mean <= 0.02, "the bones sit {mean} off retail's on average");
     assert!(worst.0 <= BONE_TOLERANCE, "{worst:?} off retail's");
 }
 
-/// How far a bone may sit off retail's in one sample: the hands in a frame
-/// whose steer changes side swap the blend's end child, and the whole body
-/// rides the moving jeep a frame's clock apart (up to 3.6 units, 21 of
-/// 2175 samples past 1).
-const BONE_TOLERANCE: f32 = 4.0;
+/// How far a bone may sit off retail's in one sample: the hands through
+/// the steer's swings (worst 0.55 at 25150, 8 of 2170 samples past 0.3,
+/// mean 0.008).
+const BONE_TOLERANCE: f32 = 0.6;
 
 const JEEP_GUN: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt";
 
@@ -946,8 +964,20 @@ fn the_jeep_gun_replays_on_ours() {
     let Some(ours) = ours("mp_peaks", "willyjeep_mp", &cvars, &lines) else {
         return;
     };
-    tally(&lines, &ours).assert_within(&[]);
+    tally(&lines, &ours).assert_within(JEEP_GUN_GAPS);
 }
+
+/// The capture opens in the seat, so its spawn is not in evidence. Its
+/// `legsAnim` toggle reads one set more than ours from the first snapshot
+/// (606 to our 94, the same clip): retail's spawn set a walk before the
+/// idle, as a sloped point's think does (coduo-vehicles.md 13, "The
+/// driver's idle"). None of the map's 32 tdm spawns, pinned, reproduces
+/// both that toggle and the event ring retail's seat carries.
+const JEEP_GUN_GAPS: &[Gap] = &[Gap {
+    field: "legsAnim",
+    snaps: 0..=usize::MAX,
+    why: "retail's unrecorded spawn set one clip more",
+}];
 
 const TANK_GUN: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-gun-uo.txt";
 const TANK_GUN_BONES: &str = "tests/fixtures/vehicles/mp_cassino-tank-gun-bones-uo.txt";
@@ -974,21 +1004,9 @@ fn the_tank_rider_s_bones_follow_retail_s_in_both_seats() {
     let text = std::fs::read_to_string(TANK_GUN).unwrap();
     let lines = parse(&text);
     // Retail's spawn did not slide: its seat's `legsAnim` 697 is the idle
-    // with the toggle on, one set since the spawn. Ours draws a sloped
-    // point, whose 100 ms think slides and sets a walk first; a flat
-    // `mp_teamdeathmatch_spawn` starts the idle on the spawn frame.
-    let setup = Setup {
-        pins: vec![vec![Some(([64.0, 152.0, 0.125], [0.0, 270.0, 0.0]))]],
-        ..Setup::default()
-    };
-    let Some(ours) = replay_with(
-        "mp_cassino",
-        "panzeriv_mp",
-        &[("probe_bones", "1")],
-        &lines,
-        &setup,
-        |_| {},
-    ) else {
+    // with the toggle on, one set since the spawn, as ours on mp_cassino's
+    // `FLAT_SPAWNS` point.
+    let Some(ours) = replay("mp_cassino", "panzeriv_mp", &[("probe_bones", "1")], &lines) else {
         return;
     };
     let retail: Vec<String> = std::fs::read_to_string(TANK_GUN_BONES)

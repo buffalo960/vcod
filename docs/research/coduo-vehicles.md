@@ -1856,6 +1856,17 @@ face.
       reads every driver mark to the print (0.00) and every gunner mark
       within 0.01 (VERIFIED, replay, 2026-10-20). Nothing in the server
       changed: the lag was the replay's boarding, not the body.
+      Every mp_cassino `vehicle_ab` replay now spawns on that flat point
+      (`FLAT_SPAWNS`), and the gates compare `legsAnim` and `torsoAnim`
+      with the toggle: all four tank playerstate captures read retail's
+      toggle on every snapshot (VERIFIED, replay, 2026-10-20). On
+      mp_peaks the seeded draw already reads it in every jeep capture
+      the gates tally but one: `mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt` opens seated
+      with 606 where ours sends 94, one set more, as a sloped spawn's
+      walk gives (INFERRED); the capture holds no spawn, and none of the
+      map's 32 tdm spawns pinned reproduces both the toggle and the event
+      ring retail's seat carries (VERIFIED, replay), so its `legsAnim`
+      is a named gap.
     - **The tank driver's link offset.** The seat link
       (0x8998d) links the player with `G_EntLinkToWithOffset` at
       `BG_GetVehiclePosOffset(type, requested slot)` (0x230e5): a use
@@ -2237,9 +2248,9 @@ face.
   `bip01 spine2`, left foot; UO has no `getTagOrigin`) and logs them every
   frame while a `--probe-vehicle drive` client drives the Willys.
   `vehicle_ab`'s `the_jeep_driver_s_bones_follow_retail_s` replays the
-  drive on ours: past the links' first frame the 2170 samples sit 0.16
-  units off retail's on average and none past 3.9, the worst at the
-  steer's change of side and in the moving jeep (VERIFIED, replay).
+  drive on ours: past the links' first frame the 2170 samples sit 0.008
+  units off retail's on average and none past 0.55, the hands at the
+  steer's swings, 8 samples past 0.3 (VERIFIED, replay, 2026-10-20).
   Without the ramp the frames after each steer change read up to 0.9
   off where they read 0.01 to 0.55 with it (VERIFIED,
   replay).

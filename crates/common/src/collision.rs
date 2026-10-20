@@ -2686,7 +2686,8 @@ impl CollisionWorld {
             && (NEAR_TIE.get()
                 || trace.fraction <= 0.0
                     && (sweep.boxed || trace.allsolid || self.ties_at_zero(&sweep, trace))
-                || self.terrain_off_the_walk(&sweep, trace));
+                || self.terrain_off_the_walk(&sweep, trace)
+                || self.brush_off_the_walk(&sweep, trace));
         if (walk.patch_met.get() || tied)
             && let Some(leaves) = &self.leaf_walk
         {
@@ -2746,6 +2747,49 @@ impl CollisionWorld {
             |leaf, _| {
                 listed |= lists(leaf);
                 // A listing ends the walk.
+                if listed { 0.0 } else { trace.fraction }
+            },
+        );
+        !listed
+    }
+
+    /// Whether the trace stopped on a model-0 brush that no leaf the walk
+    /// enters short of the contact lists. A leaf lists a brush only where
+    /// the brush's volume reaches, and a sweep can meet its pushed-out
+    /// planes past an edge with no bevel, outside every such leaf: retail
+    /// never clips it there (bsp-ibsp59-format.md, "The leaf walk").
+    fn brush_off_the_walk(&self, sw: &TraceInput, trace: &Trace) -> bool {
+        let (Some(Prim::Brush(b)), Some(leaves)) = (trace.hit, &self.leaf_walk) else {
+            return false;
+        };
+        if self.brushes[b as usize].model != 0 {
+            return false;
+        }
+        let item = Item::Brush(b);
+        let lists = |leaf: u32| leaves.lists(leaf, item);
+        // A unit past the face the sweep stopped on is inside a brush it
+        // really touched, in a leaf that lists it; only a miss walks.
+        let dir = sw.end - sw.start;
+        let centre = sw.start + dir * trace.fraction + sw.capsule.center;
+        let below = if trace.normal.z > 0.0 {
+            -sw.capsule.offset
+        } else {
+            sw.capsule.offset
+        };
+        let inside = centre + below - trace.normal * (sw.capsule.radius + 1.0);
+        if lists(leaves.leaf_at(inside.to_array())) {
+            return false;
+        }
+        let mid = (sw.mins + sw.maxs) * 0.5;
+        let mut listed = false;
+        leaves.visit(
+            (sw.start + mid).to_array(),
+            (sw.end + mid).to_array(),
+            (sw.maxs - mid).to_array(),
+            sw.mins == Vec3::ZERO && sw.maxs == Vec3::ZERO,
+            trace.fraction,
+            |leaf, _| {
+                listed |= lists(leaf);
                 if listed { 0.0 } else { trace.fraction }
             },
         );
@@ -5901,6 +5945,26 @@ mod tests {
             return;
         }
         assert_eq!(check_leaf_fixture(&fs, "neuvilleleaf-15.txt"), 6);
+    }
+
+    /// 1.5's mp_neuville: `placeSpawnpoint`'s ceiling check over entity 90
+    /// meets caulk brush 2647's pushed-out underside past its roof slope's
+    /// unbevelled edge, 40 units off the brush, where no leaf lists it.
+    /// Retail 1.5b's drop starts the full 128 up
+    /// (`tests/fixtures/spawnpoints/placebits-retail.txt`).
+    #[test]
+    fn a_brush_no_leaf_on_the_walk_lists_never_clips() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let Some(data) = fs.read("maps/mp/mp_neuville.bsp") else {
+            return;
+        };
+        let world = CollisionWorld::build(&crate::bsp::parse(&data).unwrap(), &[]);
+        let start = Vec3::new(-14688.0, 5072.0, 8.0);
+        let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+        let up = world.box_trace(start, start + Vec3::Z * 128.0, mins, maxs);
+        assert_eq!((up.fraction, up.hit), (1.0, None));
     }
 
     /// Every model-0 lump-24 partition no leaf lists on the stock 1.1

@@ -1090,19 +1090,21 @@ test, and most of the last-bit residuals. The capsule's centre and sphere
 offset (35 and 20 against 36 and 21) round differently, and a slope
 contact reads that rounding. What that left, 17 last-bit residuals on 1.1d
 (mp_brecourt, mp_dawnville, mp_hurtgen, mp_rocket; 64 to 256 2^-24ths),
-16.3 closes. 1.5b's mp_neuville 90 (128) is still open. It drops from
-(-14688, 5072, 8) onto terrain tri 4736's face, (-14752, 5032, 8),
-(-14739.33, 5120.77, 0), (-14648, 5032, 0), and the 128 2^-24ths are one
-float step of the drop's fraction, ours 3.323574e-4 (bits 967721025)
-and retail's a step under. VERIFIED, `cod_lnxded` 1.5b 0x8055bea..
-0x8056059: the face clip stores the end's and start's distances, their
-difference and the fraction (`fstps` to -0x20, -0x1c, -0x88 and -0x24),
-as vcod's stored arm does, so the step is not that clip's arithmetic.
-INFERRED, a recomputation with exact rationals: a plane whose normal z
-reads a bit lower gives retail's height; no variant of the plane build
-tried (cross product order, which vertex the distance reads, a stored or
-kept square, length and reciprocal) does. The 1.5b plane build itself is
-the next thing to read.
+16.3 closes. The last, 1.5b's mp_neuville 90 (128 2^-24ths low), was
+never the terrain. VERIFIED, vcod measurement 2026-10-20: ours' ceiling
+check from (-14688, 5072, 8) stopped at fraction 0.6396 on caulk brush
+2647 (x -15152..-14624, y 4720..5088, z 160..312, roofed by two 45-degree
+planes, so at z 160 and above it reaches only y 5032). The capsule meets
+the pushed-out underside past the roof slope's unbevelled edge, 40 units
+off the brush, and no leaf the sweep enters lists it, so retail never
+clips it there (bsp-ibsp59-format.md, "The leaf walk"). VERIFIED, the
+same recomputation: the drop from the full 128 up lands on retail's
+2 + 12574720/2^24, and from ours' 89.875 on 12574592. The face clip and
+the plane build were right: an x87 80-bit recomputation of 1.5b's
+`PlaneFromPoints` (0x806aa54, `CrossProduct` 0x80667a1, `VectorNormalize`
+0x8066845) and of the face clip gives vcod's plane and fraction to the
+bit. With the brush rule `placespawn_ab` places every spawnpoint of all
+three servers to the bit.
 
 Every reader of the two globals in 1.1d, from the `R_386_32` relocations
 onto 0x7dce8 and 0x7dcf4 (`readelf -r`, `annotate_func.py`):
