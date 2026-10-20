@@ -947,6 +947,12 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   bots let the key go while the body slides away from the rungs' middle.
 - A bot backs down a drop the way `Gait::Creep` walks (`Bot::steer`), not
   `Gait::Backward`; re-prove a backed drop with the creep.
+- A bot on a jump edge jumps by the walk's own rule (`nav::PinJump`:
+  two pinned ticks, a bob, or right under the top; no `jump_clear` room
+  test) and steers at `NavGraph::aim`. Every non-leap jump edge is
+  walked again that way, aimed there (`NavGraph::reprove_jumps`,
+  `nav::as_a_bot`); a change to the bot's jump goes in `PinJump`, or the
+  bot and the graph part.
 - A following bot runs at the graph's 190 units/s: on the ground its keys
   are cut by the weapon's `moveSpeedScale` (`nav::paced_key`), never on a
   jump's tick, in the air or on the rungs. A probe that runs the bot's

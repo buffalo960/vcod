@@ -4600,6 +4600,12 @@ impl Server {
                     }
                     view.jump = follower.jump_cued(&g);
                     view.leap = follower.leaping(&g);
+                    // A jump edge proved aimed beside its top: steer there.
+                    if let (true, Some(w), Some(p)) =
+                        (view.jump, view.waypoint, follower.jump_aim(&g))
+                    {
+                        view.waypoint = Some([p.x, p.y, w[2]]);
+                    }
                     view.stop = follower.holding(&g);
                     if let Some(foot) = ps.as_ref().and_then(|ps| follower.jump_wait(&g, at, ps)) {
                         view.waypoint = Some(foot);
@@ -5207,6 +5213,7 @@ impl Server {
             back_face: None,
             on_ground: sim.ps.on_ground,
             jump: false,
+            sliding: sim.ps.sliding(),
             leap: false,
             lip: false,
             crouch_jump: false,

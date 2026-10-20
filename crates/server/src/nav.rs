@@ -95,7 +95,7 @@ pub struct NavGraph {
     /// off a ledge has no edge back.
     pub edges: Vec<Vec<u32>>,
     /// The edges a walk proved only with a jump; a bot following one jumps
-    /// the way the walk did ([`jump_cue`]).
+    /// where the walk did ([`PinJump`], [`leap_cue`]).
     pub jumps: HashSet<(u32, u32)>,
     /// The jump edges proved from a standstill at their foot, jumping at the
     /// lip ([`NavGraph::link_leaps`]): a bot comes to rest at the foot first.
@@ -104,6 +104,10 @@ pub struct NavGraph {
     /// jump until the body lands ([`Gait::CrouchJump`]), through a window
     /// too low for a standing body ([`NavGraph::link_pockets`]).
     pub crouch_jumps: HashSet<(u32, u32)>,
+    /// The jump edges whose walk lands only aimed [`SIDESTEP`] to one side
+    /// of their top ([`NavGraph::reprove_jumps`]), and the point it aimed
+    /// at: a bot on one steers there ([`NavGraph::aim`]).
+    pub aims: HashMap<(u32, u32), glam::Vec2>,
     /// Drops deeper than a jump whose walk from 4 units aside of their node
     /// falls, and walks down beside a fall that hurts whose forward walk
     /// does: a plan takes one only where there
@@ -190,6 +194,7 @@ impl NavGraph {
             jumps: HashSet::new(),
             leaps: HashSet::new(),
             crouch_jumps: HashSet::new(),
+            aims: HashMap::new(),
             risky: HashSet::new(),
             perches: HashSet::new(),
             spacing: spacing.clamp(SPACING_MIN, SPACING_MAX),
@@ -219,6 +224,7 @@ impl NavGraph {
         g.flood(world, hazards, &inside, ends);
         g.link_back(world);
         g.link_leaps(world);
+        g.reprove_jumps(world);
         g.link_pockets(world, hazards, &inside);
         g.mark_risky(world);
         g.mark_perches(world);
@@ -765,6 +771,55 @@ impl NavGraph {
                 self.leaps.insert((a, b));
             }
         }
+    }
+
+    /// Walks every jump edge but the leaps again node to node, aimed at
+    /// its top, where a bot steers, jumping as a bot does ([`as_a_bot`]).
+    /// The flood proved its jumps aimed at a column's centre and
+    /// [`Self::link_back`] some 8 units aside, and from the node such a walk
+    /// can bob under the top and never land: a bot in mp_depot's pit at
+    /// (-1569, 2087, 212) jumped at the step at (-1533, 2112, 239) again and
+    /// again (bot-navigation.md, "Jumps"). An edge that lands only aimed
+    /// [`SIDESTEP`] to one side keeps that aim ([`Self::aims`]); one that
+    /// lands at none is dropped.
+    fn reprove_jumps(&mut self, world: &CollisionWorld) {
+        let mut jobs: Vec<(u32, u32)> = self
+            .jumps
+            .iter()
+            .copied()
+            .filter(|e| !self.leaps.contains(e))
+            .collect();
+        jobs.sort_unstable();
+        let walked = par_map(&jobs, |&(a, b)| {
+            let (from, to) = (self.nodes[a as usize], self.nodes[b as usize]);
+            let across = (to - from).truncate().perp().normalize_or_zero() * SIDESTEP;
+            [0.0, 1.0, -1.0].into_iter().find_map(|k| {
+                let target = to.truncate() + across * k;
+                let w = as_a_bot(|| walk_as(world, from, target, Some(to.z), Gait::Forward));
+                matches!(w, Walked::Arrived(..)).then_some((k != 0.0).then_some(target))
+            })
+        });
+        for (&(a, b), aim) in jobs.iter().zip(walked) {
+            match aim {
+                Some(Some(p)) => {
+                    self.aims.insert((a, b), p);
+                }
+                Some(None) => {}
+                None => {
+                    self.edges[a as usize].retain(|&m| m != b);
+                    self.jumps.remove(&(a, b));
+                }
+            }
+        }
+    }
+
+    /// Where a bot on edge `a -> b` steers: `b`'s spot, or the point
+    /// beside it the edge's jump was proved at ([`Self::aims`]).
+    pub fn aim(&self, a: u32, b: u32) -> glam::Vec2 {
+        self.aims
+            .get(&(a, b))
+            .copied()
+            .unwrap_or_else(|| self.nodes[b as usize].truncate())
     }
 
     /// The nodes `hops` edges or fewer from `a`.
@@ -1335,6 +1390,7 @@ impl NavGraph {
             jumps: HashSet::new(),
             leaps: HashSet::new(),
             crouch_jumps: HashSet::new(),
+            aims: HashMap::new(),
             risky: HashSet::new(),
             perches: HashSet::new(),
             spacing: SPACING_MIN,
@@ -2366,17 +2422,13 @@ impl Follower {
         {
             return false;
         }
+        let target = if jump {
+            g.aim(edge.0, edge.1)
+        } else {
+            b.truncate()
+        };
         let walk = |at: Vec3, trail: &mut Trail| {
-            let w = walk_sliding(
-                world,
-                at,
-                Some(pace),
-                1.0,
-                b.truncate(),
-                Some(b.z),
-                gait,
-                trail,
-            );
+            let w = walk_sliding(world, at, Some(pace), 1.0, target, Some(b.z), gait, trail);
             match w {
                 Walked::Arrived(_, jumped) if jump || !jumped => Some(jumped),
                 _ => None,
@@ -3180,6 +3232,14 @@ impl Follower {
         self.jumping(g) && (self.walked_jump.is_none() || self.walked_jump != into)
     }
 
+    /// On a jump edge proved aimed beside its top ([`NavGraph::aims`]),
+    /// the point to steer at in place of the top.
+    pub fn jump_aim(&self, g: &NavGraph) -> Option<glam::Vec2> {
+        let i = self.next.checked_sub(1)?;
+        let (a, b) = (*self.path.get(i)?, *self.path.get(self.next)?);
+        g.aims.get(&(a, b)).copied()
+    }
+
     /// Whether the way to the current waypoint is a crouched jump edge: the
     /// bot holds crouch from the cmd after its jump until it lands, as
     /// [`Gait::CrouchJump`] proved it.
@@ -3483,6 +3543,20 @@ thread_local! {
     /// Set inside [`walk_to`]: a forward run that stalls bobbing on a steep
     /// face jumps on its next tick on the ground ([`walk_sliding`]).
     static BOB: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set inside [`as_a_bot`]: a pinned walk jumps without
+    /// [`jump_clear`]'s room test, as a bot on a jump edge does.
+    static ROOMLESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs the walk `f` with a bot's jump on a jump edge: out of a bob too
+/// ([`BOB`]), and pinned with no room test ([`ROOMLESS`]).
+fn as_a_bot<R>(f: impl FnOnce() -> R) -> R {
+    BOB.set(true);
+    ROOMLESS.set(true);
+    let r = f();
+    BOB.set(false);
+    ROOMLESS.set(false);
+    r
 }
 
 /// Runs `f` with every walk's body moving by `rules`: a graph built for
@@ -4272,7 +4346,6 @@ fn walk_sliding(
     if gait == Gait::Creep {
         budget += CREEP_TICKS;
     }
-    let mut stalled = 0;
     let mut creep = Creep::default();
     let mut climbed = false;
     // The highest the body held on the rungs: a walk to a floor no higher
@@ -4294,7 +4367,7 @@ fn walk_sliding(
     let mut jumped = false;
     let mut jump = false;
     let mut fell_before_jump = false;
-    let mut bobbing = false;
+    let mut pin = PinJump::default();
     let mut crouched = false;
     // A body in the air when the budget runs out is let land: a drop down
     // a steep companionway is slower than the run it replaced.
@@ -4382,33 +4455,21 @@ fn walk_sliding(
             }
             return Walked::Arrived(ps.origin, jumped);
         }
-        // Right under a floor more than a step up, the jump a bot makes
-        // there (`jump_cue`): re-aimed at a point overhead, the run only
-        // jitters and never stalls.
-        if matches!(gait, Gait::Forward | Gait::CrouchJump)
-            && !jumped
-            && ps.on_ground
-            && floor.is_some_and(|f| f - ps.origin.z > vcod_common::pmove::STEPSIZE)
-            && target.distance(ps.origin.truncate()) < JUMP_UNDER
-            && jump_clear(world, &ps, target, gait == Gait::CrouchJump)
-        {
-            jumped = true;
-            jump = true;
-            fell_before_jump = fell;
-            stalled = 0;
-            let rest = run_ticks(target.distance(ps.origin.truncate()));
-            budget = budget.max(tick + JUMP_TICKS + rest);
-            continue;
-        }
-        // Pinned under a face too steep to stand on, the step lifts the
-        // body onto it and it slides back down, so it is on the ground one
-        // tick in a few: it jumps on the next one (mp_berlin's roof gutter,
+        // Right under a floor more than a step up: re-aimed at a point
+        // overhead, the run only jitters and never stalls. Or pinned under
+        // a face too steep to stand on, where the step lifts the body onto
+        // it and it slides back down, so it is on the ground one tick in a
+        // few: it jumps on the next one (mp_berlin's roof gutter,
         // bot-navigation.md "Jumps").
-        if bobbing && !jumped && ps.on_ground && jump_clear(world, &ps, target, false) {
+        let armed = matches!(gait, Gait::Forward | Gait::CrouchJump) && !jumped;
+        let under = floor
+            .is_some_and(|f| jump_under(target.distance(ps.origin.truncate()), f - ps.origin.z));
+        let roomless = ROOMLESS.get();
+        let clear = || roomless || jump_clear(world, &ps, target, gait == Gait::CrouchJump);
+        if pin.before(armed, ps.on_ground, under, clear) {
             jumped = true;
             jump = true;
             fell_before_jump = fell;
-            stalled = 0;
             let rest = run_ticks(target.distance(ps.origin.truncate()));
             budget = budget.max(tick + JUMP_TICKS + rest);
             continue;
@@ -4428,33 +4489,27 @@ fn walk_sliding(
         // off a ledge and turns back, keeps its budget, and so does one
         // hanging in the air at the top of a ladder before it tips over.
         climbed |= ps.on_ladder;
-        let least = if forward.abs() < 127 { 0.5 } else { 2.0 };
+        let least = if forward.abs() < 127 { 0.5 } else { PINNED };
         let hanging = (climbed || jumped) && !ps.on_ground && !ps.on_ladder;
-        if moved < least && !hanging {
-            stalled += 1;
-            if stalled == 2 {
-                if matches!(gait, Gait::Forward | Gait::CrouchJump)
-                    && !jumped
-                    && ps.on_ground
-                    && jump_clear(world, &ps, target, gait == Gait::CrouchJump)
-                {
-                    jumped = true;
-                    jump = true;
-                    fell_before_jump = fell;
-                    stalled = 0;
-                    let rest = run_ticks(target.distance(ps.origin.truncate()));
-                    budget = budget.max(tick + JUMP_TICKS + rest);
-                    continue;
-                }
-                if gait == Gait::Forward && !jumped && !bobbing && ps.sliding() && BOB.get() {
-                    bobbing = true;
-                    stalled = 0;
-                    continue;
-                }
-                break;
+        let bob = gait == Gait::Forward && BOB.get();
+        let clear = || roomless || jump_clear(world, &ps, target, gait == Gait::CrouchJump);
+        match pin.after(
+            armed,
+            moved < least && !hanging,
+            ps.on_ground,
+            ps.sliding(),
+            bob,
+            clear,
+        ) {
+            PinTick::Go => {}
+            PinTick::Stuck => break,
+            PinTick::Jump => {
+                jumped = true;
+                jump = true;
+                fell_before_jump = fell;
+                let rest = run_ticks(target.distance(ps.origin.truncate()));
+                budget = budget.max(tick + JUMP_TICKS + rest);
             }
-        } else {
-            stalled = 0;
         }
     }
     if jumped {
@@ -4473,19 +4528,97 @@ const JUMP_UNDER: f32 = 16.0;
 /// The ticks a jump stays in the air: 2 * 249.8 / 800 s.
 const JUMP_TICKS: usize = 13;
 
-/// Whether a body on a jump edge jumps now, its target `flat` away and
-/// `rise` above. A leap jumps at the lip ([`lip_ahead`]), as its walk did;
-/// any other jump where the walk stalled, pinned (closing on the target
-/// under [`PINNED`] units a tick), or right under a target above it
-/// ([`JUMP_UNDER`]). Never once standing on the top.
-pub fn jump_cue(leap: bool, lip: bool, closing: f32, flat: f32, rise: f32) -> bool {
-    use vcod_common::pmove::STEPSIZE;
-    if flat < REACH && rise.abs() < JUMP_PASS {
-        false
-    } else if leap {
-        lip
-    } else {
-        closing < PINNED || (flat < JUMP_UNDER && rise > STEPSIZE)
+/// Whether a body standing `flat` from a jump edge's top and `rise` under
+/// it jumps whatever its pace ([`JUMP_UNDER`]).
+pub fn jump_under(flat: f32, rise: f32) -> bool {
+    flat < JUMP_UNDER && rise > vcod_common::pmove::STEPSIZE
+}
+
+/// Whether a leap jumps now, its top `flat` away and `rise` above: at the
+/// lip ([`lip_ahead`]), as its walk did, and never once on the top.
+pub fn leap_cue(lip: bool, flat: f32, rise: f32) -> bool {
+    lip && !on_jump_top(flat, rise)
+}
+
+/// Whether a body `flat` from a jump edge's top and `rise` under it
+/// already stands on it: no jump from there.
+pub fn on_jump_top(flat: f32, rise: f32) -> bool {
+    flat < REACH && rise.abs() < JUMP_PASS
+}
+
+/// The forward walk's jump ([`walk_sliding`]), one tick at a time: on the
+/// ground right under a floor above ([`jump_under`]), on the ground out
+/// of a bob, or after two ticks pinned (moved under [`PINNED`] units, half
+/// one creeping), each only where [`jump_clear`] passes. A bot on a jump
+/// edge runs the same rule without the room test (`Bot::think`), and
+/// every jump edge is walked again that way ([`NavGraph::reprove_jumps`],
+/// [`as_a_bot`]), so it jumps where the walk that proved the edge did.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PinJump {
+    stalled: u32,
+    bobbing: bool,
+}
+
+/// What a [`PinJump`] makes of a tick.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PinTick {
+    /// Jump on the next cmd.
+    Jump,
+    /// Run on.
+    Go,
+    /// Pinned with no jump: the walk gives up.
+    Stuck,
+}
+
+impl PinJump {
+    /// The jumps that read before the tick's progress: right `under` the
+    /// target floor, or out of a bob. `armed` is false once the walk has
+    /// jumped or in a gait that never jumps.
+    pub fn before(
+        &mut self,
+        armed: bool,
+        on_ground: bool,
+        under: bool,
+        clear: impl Fn() -> bool,
+    ) -> bool {
+        let jump = armed && on_ground && (under || self.bobbing) && clear();
+        if jump {
+            *self = Self::default();
+        }
+        jump
+    }
+
+    /// The tick's progress: `stalled` when it moved under the pinned
+    /// pace, not hanging in the air off a jump or a climb. A stall that
+    /// cannot jump turns into a bob once where `bob` allows it and the
+    /// body slides on a steep face.
+    pub fn after(
+        &mut self,
+        armed: bool,
+        stalled: bool,
+        on_ground: bool,
+        sliding: bool,
+        bob: bool,
+        clear: impl Fn() -> bool,
+    ) -> PinTick {
+        if !stalled {
+            self.stalled = 0;
+            return PinTick::Go;
+        }
+        self.stalled += 1;
+        if self.stalled < 2 {
+            return PinTick::Go;
+        }
+        if armed && on_ground && clear() {
+            *self = Self::default();
+            PinTick::Jump
+        } else if armed && bob && !self.bobbing && sliding {
+            self.bobbing = true;
+            self.stalled = 0;
+            PinTick::Go
+        } else {
+            PinTick::Stuck
+        }
     }
 }
 
@@ -6180,22 +6313,53 @@ mod tests {
         assert!(!g.jumps.contains(&(2, 4)), "a plain edge stays plain");
     }
 
+    /// The walk's jump: two pinned ticks where a jump has room, a bob
+    /// first where it has none and the body slides, then the next tick on
+    /// the ground; right under the top at once.
+    #[test]
+    fn the_walks_jump_needs_two_pinned_ticks_and_room() {
+        let (yes, no) = (|| true, || false);
+        let mut p = PinJump::default();
+        assert_eq!(p.after(true, true, true, false, false, yes), PinTick::Go);
+        assert_eq!(
+            p.after(true, false, true, false, false, yes),
+            PinTick::Go,
+            "moved"
+        );
+        assert_eq!(p.after(true, true, true, false, false, yes), PinTick::Go);
+        assert_eq!(p.after(true, true, true, false, false, yes), PinTick::Jump);
+        let mut p = PinJump::default();
+        p.after(true, true, true, false, false, no);
+        assert_eq!(
+            p.after(true, true, true, false, false, no),
+            PinTick::Stuck,
+            "no room"
+        );
+        let mut p = PinJump::default();
+        p.after(true, true, false, true, true, no);
+        assert_eq!(
+            p.after(true, true, false, true, true, no),
+            PinTick::Go,
+            "a bob"
+        );
+        assert!(!p.before(true, false, false, yes), "off the ground");
+        assert!(p.before(true, true, false, yes), "out of the bob");
+        let mut p = PinJump::default();
+        assert!(p.before(true, true, true, yes), "right under the top");
+        assert!(!p.before(false, true, true, yes), "disarmed");
+    }
+
     #[test]
     fn a_leap_jumps_only_at_the_lip() {
         // flat, rise: the top 40 off and 32 up.
-        assert!(!jump_cue(true, false, 0.0, 40.0, 32.0), "pinned is no cue");
-        assert!(jump_cue(true, true, 9.5, 40.0, 32.0));
-        // A jump onto a ledge: pinned at its face, or right under the top.
-        assert!(jump_cue(false, false, 0.5, 30.0, 32.0));
-        assert!(
-            !jump_cue(false, false, 9.5, 30.0, 32.0),
-            "still running at it"
-        );
-        assert!(jump_cue(false, false, 9.5, 10.0, 32.0));
-        assert!(!jump_cue(false, false, 9.5, 10.0, 10.0), "under a step");
+        assert!(!leap_cue(false, 40.0, 32.0), "pinned is no cue");
+        assert!(leap_cue(true, 40.0, 32.0));
+        // Right under a ledge's top, not under a step.
+        assert!(jump_under(10.0, 32.0));
+        assert!(!jump_under(30.0, 32.0), "still short of it");
+        assert!(!jump_under(10.0, 10.0), "under a step");
         // On the top: no more jumping.
-        assert!(!jump_cue(false, false, 0.0, 10.0, 2.0));
-        assert!(!jump_cue(true, true, 0.0, 10.0, 2.0));
+        assert!(!leap_cue(true, 10.0, 2.0));
         assert_eq!(jump_key(true, true, false), 127);
         assert_eq!(jump_key(true, true, true), 0, "a held key is refused");
         assert_eq!(jump_key(false, true, false), 0);
@@ -6646,7 +6810,7 @@ mod tests {
             ps.velocity = ((top - foot).truncate().normalize() * 190.0).extend(0.0);
             for tick in 1..30 {
                 let to = top.truncate() - ps.origin.truncate();
-                let cue = jump_cue(false, false, 9.5, to.length(), top.z - ps.origin.z);
+                let cue = jump_under(to.length(), top.z - ps.origin.z);
                 let cmd = UserCmd {
                     server_time: tick * FRAME_MS,
                     forward: 127,
@@ -7230,6 +7394,98 @@ mod tests {
             f.edge_holds(Some(w), at, pace, &g),
             "onto the ladder's foot"
         );
+    }
+
+    /// mp_depot's pit, seed 1145: the flood proved the jump from
+    /// (-1569, 2087, 212) to the step at (-1533.2, 2112, 239.1) running at
+    /// the column's centre (-1536, 2112). Aimed at the node, where a bot
+    /// steers, the walk bobs under the step and never lands, nor aimed 8
+    /// units either side: the re-proof drops the edge, and the bot goes
+    /// round.
+    #[test]
+    fn a_jump_edge_that_lands_only_off_where_a_bot_steers_is_dropped() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            return;
+        };
+        let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_depot").unwrap()).unwrap())
+            .unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let w = &world.collision;
+        let pit = settle(w, Vec3::new(-1569.0, 2087.0, 230.0), 0.0).unwrap();
+        let step = settle(w, Vec3::new(-1533.2, 2112.0, 250.0), 0.0).unwrap();
+        let at =
+            |target: glam::Vec2| as_a_bot(|| walk_as(w, pit, target, Some(step.z), Gait::Forward));
+        assert!(
+            !matches!(at(step.truncate()), Walked::Arrived(..)),
+            "lands aimed at the node"
+        );
+        let flood = walk(w, &[], pit, glam::Vec2::new(-1536.0, 2112.0));
+        assert!(
+            flood.is_some_and(|(p, jumped)| jumped && (p.z - step.z).abs() < 1.0),
+            "the flood's jump"
+        );
+        let mut g = NavGraph::from_parts(vec![pit, step], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        g.reprove_jumps(w);
+        assert!(g.edges[0].is_empty() && g.jumps.is_empty() && g.aims.is_empty());
+    }
+
+    /// mp_depot's step at (-1731, 32, 11): the jump to it from (-1760, 71,
+    /// -24) lands only aimed 8 units aside of the node, and the re-proof
+    /// keeps that aim, which a bot on the edge steers at.
+    #[test]
+    fn a_jump_edge_that_lands_only_aimed_aside_keeps_its_aim() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            return;
+        };
+        let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_depot").unwrap()).unwrap())
+            .unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let w = &world.collision;
+        let foot = settle(w, Vec3::new(-1760.0, 71.0, 0.0), 0.0).unwrap();
+        let top = settle(w, Vec3::new(-1731.0, 32.0, 30.0), 0.0).unwrap();
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        g.reprove_jumps(w);
+        let aim = g.aims.get(&(0, 1)).copied().expect("aimed aside");
+        assert!((aim.distance(top.truncate()) - SIDESTEP).abs() < 0.01);
+        assert!(g.edges[0] == [1] && g.jumps.contains(&(0, 1)));
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        assert_eq!(f.jump_aim(&g), Some(aim));
+    }
+
+    /// mp_dawnville's spawns 88 and 154 at (145, -15311, 7) are reached
+    /// only by the jump from (-96, -15409, -13) to (-89, -15360, 19), which
+    /// `link_back` proved 8 units aside. Aimed at the node the run pins on
+    /// the wall at y -15375, where `jump_clear` finds no room; a bot jumps
+    /// there anyway and lands, and so does the re-proof, which jumps as a
+    /// bot does: the edge stays, aimed at its node.
+    #[test]
+    fn a_jump_edge_is_proved_again_by_the_bots_jump() {
+        let Some(fs) = vcod_common::testing::game_fs_11() else {
+            return;
+        };
+        let bsp =
+            vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_dawnville").unwrap()).unwrap())
+                .unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let w = &world.collision;
+        let foot = settle(w, Vec3::new(-96.0, -15409.0, 0.0), 0.0).unwrap();
+        let top = settle(w, Vec3::new(-89.0, -15360.0, 30.0), 0.0).unwrap();
+        let roomed = walk_as(w, foot, top.truncate(), Some(top.z), Gait::Forward);
+        assert!(
+            !matches!(roomed, Walked::Arrived(..)),
+            "the walk with the room test"
+        );
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        g.reprove_jumps(w);
+        assert!(g.edges[0] == [1] && g.jumps.contains(&(0, 1)) && g.aims.is_empty());
+        assert_eq!(g.aim(0, 1), top.truncate());
     }
 
     /// mp_ship's stair stringer by the hull crates: the jump edge from
