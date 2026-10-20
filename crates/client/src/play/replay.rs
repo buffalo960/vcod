@@ -753,13 +753,11 @@ fn a_1_1_follow_capture_plays_each_shot_once() {
     // 17 rounds and the clip's last (161), a reload (152), 21 impacts (three
     // on the target's torso, 18 on the grass past him), two pains with no
     // sound (cod11-sound-system.md's `EV_PAIN` row) and the kill's
-    // obituary. The switch onto the respawned target (sequence 19 to 0)
-    // also plays his four empty slots, where retail's compare plays none
-    // (cod11-spectator-follow.md 11.1); 0 is left out until that matches.
-    let mut played = t.played.clone();
-    played.remove(&0);
+    // obituary. No `EV_NONE`: the switch onto the respawned target
+    // (sequence 19 to 0) plays none of his empty slots, as retail's compare
+    // (cod11-spectator-follow.md 11.1).
     let expected = BTreeMap::from([(152, 1), (159, 17), (161, 1), (174, 21), (187, 2), (201, 1)]);
-    assert_eq!(played, expected);
+    assert_eq!(t.played, expected);
     assert_eq!((t.fires, t.kicks), (18, 18));
     if weapons.is_empty() {
         assert_eq!(t.cues, BTreeMap::from([(174, 21)]));
