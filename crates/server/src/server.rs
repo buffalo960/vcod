@@ -4589,7 +4589,7 @@ impl Server {
                     if view.fatigue.is_some() {
                         view.sprint_room = follower.straight_run(&g, at.into());
                     }
-                    view.jump = follower.jumping(&g);
+                    view.jump = follower.jump_cued(&g);
                     view.leap = follower.leaping(&g);
                     view.stop = follower.holding(&g);
                     if let Some(foot) = ps.as_ref().and_then(|ps| follower.jump_wait(&g, at, ps)) {
