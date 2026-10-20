@@ -338,8 +338,9 @@ fn entity_origin(host: &mut GameHost, cx: &mut Cx, id: EntId, origin: Atom) -> [
 }
 
 /// An entity's absolute box: a registered trigger's submodel box around its
-/// current origin, a client's player box, and a point box for everything
-/// else, which is what an unset `r.mins`/`r.maxs` gives retail.
+/// current origin, a client's player box as its last cmd's stance left it
+/// (`GameHost::client_box`), and a point box for everything else, which is
+/// what an unset `r.mins`/`r.maxs` gives retail.
 pub fn entity_abs_bounds(host: &mut GameHost, cx: &mut Cx, id: EntId) -> ([f32; 3], [f32; 3]) {
     let origin = cx.intern_folded("origin");
     abs_bounds_with_atom(host, cx, id, origin)
@@ -357,7 +358,7 @@ fn abs_bounds_with_atom(
     }
     let is_client = host.ents.get(id).is_some_and(|e| e.client.is_some());
     let (mins, maxs) = if is_client {
-        (PLAYER_MINS, PLAYER_MAXS)
+        host.client_box(id.0 as usize)
     } else {
         ([0.0; 3], [0.0; 3])
     };
@@ -450,15 +451,17 @@ pub(crate) fn capsule_contacts_hulls(
     })
 }
 
-/// Everything a client standing at `origin` touches, in the order
+/// Everything client `slot` standing at `origin` touches, in the order
 /// `G_TouchTriggers` (0x3f88c) meets it: the `trap_EntitiesInBox` walk of the
 /// area tree around the origin with mask 0x405c0008 (combat doc 14.7), then
 /// per entity its own test. An item (`eType` 3) is touched by
 /// `BG_PlayerTouchesItem`'s proximity box (`pickup::touches`); anything else
 /// by `trap_EntityContact`, the client's own clip box against the trigger's
-/// *brushes* (docs/research/cod11-gsc-object-model.md section 22). Neither
-/// box contains the other -- the candidate reaches 52 below the feet and the
-/// clip box 70 above them -- so both have to hold.
+/// *brushes* (docs/research/cod11-gsc-object-model.md section 22). The clip
+/// box is `r.mins`/`r.maxs`, which `ClientThink_real` copies from pmove's
+/// stance box ahead of the pass (22.3): 70, 50 or 30 high. Neither box
+/// contains the other -- the candidate reaches 52 below the feet and a
+/// standing clip box 70 above them -- so both have to hold.
 ///
 /// Only an entity with a touch function is touched (0x3f9cd): a
 /// `trigger_damage` sets none, and a `trigger_lookat` or `trigger_use` has
@@ -470,14 +473,15 @@ pub(crate) fn capsule_contacts_hulls(
 ///
 /// A trigger whose model has no brushes decoded (script-registered, or a map
 /// loaded without a BSP) keeps the box as its exact test.
-pub fn touched(host: &mut GameHost, cx: &mut Cx, origin: [f32; 3]) -> Vec<EntId> {
+pub fn touched(host: &mut GameHost, cx: &mut Cx, slot: usize, origin: [f32; 3]) -> Vec<EntId> {
     let origin_atom = cx.intern_folded("origin");
     let candidate = offset_bounds(
         origin,
         [-TOUCH_BOX[0], -TOUCH_BOX[1], -TOUCH_BOX[2]],
         TOUCH_BOX,
     );
-    let exact = offset_bounds(origin, PLAYER_MINS, PLAYER_MAXS);
+    let (mins, maxs) = host.client_box(slot);
+    let exact = offset_bounds(origin, mins, maxs);
     let lo = Vec3::from_array(exact.0);
     let hi = Vec3::from_array(exact.1);
     let centre = (lo + hi) * 0.5;
@@ -958,7 +962,38 @@ mod tests {
             let at_feet = place(&mut host, cx, 4.0);
             place(&mut host, cx, 65.0);
             place(&mut host, cx, -30.0);
-            assert_eq!(touched(&mut host, cx, [0.0; 3]), vec![at_feet]);
+            assert_eq!(touched(&mut host, cx, 0, [0.0; 3]), vec![at_feet]);
+        });
+    }
+
+    /// The touch pass's clip box is the stance box the cmd's pmove left in
+    /// `r.maxs` (gsc object model doc 22.3): a trigger whose bottom sits 40
+    /// up is touched standing (70) and crouched (50), not prone (30).
+    #[test]
+    fn the_touch_pass_clip_box_follows_the_stance() {
+        use vcod_common::pmove::Stance;
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let id = host.ents.spawn(cx).unwrap();
+            host.set_field(cx, id, origin, Value::Vector([0.0, 0.0, 48.0]))
+                .unwrap();
+            host.triggers.register(
+                id,
+                TriggerKind::Multiple,
+                TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+                crate::game::trigger::MULTIPLE_DEFAULT_WAIT_MS,
+            );
+            host.link_trigger(cx, id);
+            for (stance, hit) in [
+                (Stance::Stand, true),
+                (Stance::Crouch, true),
+                (Stance::Prone, false),
+            ] {
+                host.client_height[0] = stance.height();
+                let want = if hit { vec![id] } else { vec![] };
+                assert_eq!(touched(&mut host, cx, 0, [0.0; 3]), want, "{stance:?}");
+            }
         });
     }
 
@@ -981,7 +1016,7 @@ mod tests {
             };
             let multiple = place(&mut host, cx, TriggerKind::Multiple);
             place(&mut host, cx, TriggerKind::LookAt);
-            assert_eq!(touched(&mut host, cx, [0.0; 3]), vec![multiple]);
+            assert_eq!(touched(&mut host, cx, 0, [0.0; 3]), vec![multiple]);
         });
     }
 
@@ -1072,7 +1107,7 @@ mod tests {
         let (mut vm, mut host) = crate::game::testing::fixture();
         vm.with_cx(|cx| {
             let zone = place_wedge(&mut host, cx);
-            let at = |host: &mut GameHost, cx: &mut Cx, p: [f32; 3]| touched(host, cx, p);
+            let at = |host: &mut GameHost, cx: &mut Cx, p: [f32; 3]| touched(host, cx, 0, p);
             assert_eq!(
                 at(&mut host, cx, [60.0, 60.0, 4.0]),
                 vec![zone],
@@ -1154,7 +1189,7 @@ mod tests {
                 0,
             );
             host.link_trigger(cx, zone);
-            let at = |host: &mut GameHost, cx: &mut Cx, p: [f32; 3]| touched(host, cx, p);
+            let at = |host: &mut GameHost, cx: &mut Cx, p: [f32; 3]| touched(host, cx, 0, p);
             assert_eq!(at(&mut host, cx, inside), vec![zone], "at {inside:?}");
             assert!(
                 at(&mut host, cx, bulge).is_empty(),

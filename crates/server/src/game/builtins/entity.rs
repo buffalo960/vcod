@@ -257,7 +257,7 @@ fn client_spawn(
     // so the spawning thread reads the origin the think left. The sim moves
     // in the frame's spawn pass (`Server`); this is the same think on a
     // fresh sim, for script and the link.
-    let (moved, view_yaw, cone) = spawn_think(host, slot, mode, origin, angles[1]);
+    let (moved, view_yaw, cone, height) = spawn_think(host, slot, mode, origin, angles[1]);
     host.client_prone_cone[slot] = cone;
     let origin_field = cx.intern_folded("origin");
     host.set_field(cx, id, origin_field, Value::Vector(moved))?;
@@ -300,6 +300,9 @@ fn client_spawn(
         0
     };
     let playing = mode == SpawnMode::Player;
+    // `ClientSpawn` writes the standing `playerMaxs` (0x427a5) and its think
+    // copies pmove's box over it (gsc object model doc 22.3).
+    host.client_height[slot] = height;
     host.link_client(slot, moved, host.client_box(slot), contents, playing);
     host.client_spawns.push(SpawnRequest {
         slot,
@@ -350,14 +353,16 @@ fn spawn_think(
     mode: SpawnMode,
     origin: [f32; 3],
     yaw_deg: f32,
-) -> ([f32; 3], f32, Option<vcod_common::pmove::ProneCone>) {
+) -> ([f32; 3], f32, Option<vcod_common::pmove::ProneCone>, f32) {
     let last = host.client_last_cmd[slot];
     let mut sim = crate::spectate::ClientSim::spectator(origin, yaw_deg, last.angles);
     sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(host.defs.proto);
     match mode {
         SpawnMode::Player => sim.become_player(origin, yaw_deg, last.angles),
         SpawnMode::Spectator => sim.become_spectator(origin, yaw_deg, last.angles),
-        SpawnMode::Intermission => return (origin, yaw_deg, None),
+        SpawnMode::Intermission => {
+            return (origin, yaw_deg, None, vcod_common::pmove::HEIGHT_STAND);
+        }
     }
     let world = host
         .world
@@ -367,7 +372,13 @@ fn spawn_think(
     let think = sim.spawn_think_on(&last, host.level_time_ms, world);
     let view = vcod_common::pmove::cmd::view_angles(think.angles, sim.delta_angles());
     let cone = vcod_common::pmove::ProneCone::of(&sim.ps);
-    (if moved { sim.origin() } else { origin }, view[1], cone)
+    let height = sim.ps.box_height();
+    (
+        if moved { sim.origin() } else { origin },
+        view[1],
+        cone,
+        height,
+    )
 }
 
 /// `spawn(classname, origin [, spawnflags])` (0x5d268): a live entity with
@@ -1785,6 +1796,54 @@ mod tests {
             place(&mut host, cx, b, [10.0, 0.0, 0.0]);
             host.area.set_contents(1, 0);
             assert_eq!(touching(&mut host, cx), Ok(Value::Int(0)), "no contents");
+        });
+    }
+
+    /// A client's side of `istouching` is the stance box its last cmd left
+    /// in `r.maxs` (object-model doc 22.3): a trigger 60 up meets a
+    /// standing player only, and a player stacked 60 over a crouched or
+    /// prone one clears it.
+    #[test]
+    fn is_touching_follows_the_stance_box() {
+        use vcod_common::pmove::{HEIGHT_STAND, Stance};
+        let (mut vm, mut host) = crate::game::testing_world_fixture();
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let zone = host.ents.spawn(cx).unwrap();
+            host.set_field(cx, zone, origin, Value::Vector([0.0, 0.0, 60.0]))
+                .unwrap();
+            host.triggers.register(
+                zone,
+                crate::game::trigger::TriggerKind::Multiple,
+                crate::game::trigger::TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+                crate::game::trigger::MULTIPLE_DEFAULT_WAIT_MS,
+            );
+            host.link_trigger(cx, zone);
+            let a = host.ents.spawn_client(cx, 0, None).unwrap();
+            let b = host.ents.spawn_client(cx, 1, None).unwrap();
+            let place = |host: &mut GameHost, cx: &mut Cx, id: EntId, at: [f32; 3]| {
+                host.set_field(cx, id, origin, Value::Vector(at)).unwrap();
+                let slot = id.0 as usize;
+                host.link_client(slot, at, host.client_box(slot), 0x0200_0000, true);
+            };
+            place(&mut host, cx, a, [0.0; 3]);
+            place(&mut host, cx, b, [0.0, 0.0, 60.0]);
+            let touching = |host: &mut GameHost, cx: &mut Cx, other: EntId| {
+                is_touching(host, cx, Some(Target::Entity(a)), &[Value::Entity(other)])
+            };
+            assert_eq!(touching(&mut host, cx, zone), Ok(Value::Int(1)), "standing");
+            assert_eq!(touching(&mut host, cx, b), Ok(Value::Int(1)), "standing");
+            for stance in [Stance::Crouch, Stance::Prone] {
+                host.client_height[0] = stance.height();
+                assert_eq!(
+                    touching(&mut host, cx, zone),
+                    Ok(Value::Int(0)),
+                    "{stance:?}"
+                );
+                assert_eq!(touching(&mut host, cx, b), Ok(Value::Int(0)), "{stance:?}");
+            }
+            host.client_height[0] = HEIGHT_STAND;
+            assert_eq!(touching(&mut host, cx, zone), Ok(Value::Int(1)));
         });
     }
 

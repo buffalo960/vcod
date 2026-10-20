@@ -964,6 +964,17 @@ impl PlayerState {
         Vec3::new(-HALF_WIDTH, -HALF_WIDTH, 0.0)
     }
 
+    /// The height of the box `ClientThink_real` leaves in `r.maxs` after
+    /// this state's move: the stance box's, or for a spectator the standing
+    /// one `ClientSpawn` wrote, which `SpectatorThink` never copies over
+    /// (docs/research/cod11-gsc-object-model.md 22.3).
+    pub fn box_height(&self) -> f32 {
+        if self.spectator {
+            return HEIGHT_STAND;
+        }
+        self.maxs().z - self.mins().z
+    }
+
     pub fn maxs(&self) -> Vec3 {
         if self.spectator {
             return SPECTATOR_MAXS;
