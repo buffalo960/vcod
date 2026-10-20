@@ -470,6 +470,9 @@ pub struct PlayInput {
     /// United Offensive's `wbuttons` 0x1 while the flame report holds
     /// (uo cgame trap 0x58, `fx::flame::FlameSystem::report`).
     pub in_flame: bool,
+    /// `buttons` 0x2 (`BUTTON_TALK`) while a key catcher is up, set each
+    /// frame from [`talking`].
+    pub talking: bool,
     /// This frame's turn caps per axis [pitch, yaw], degrees, with the
     /// motion summed and the part let through so far: `CL_MouseMove`
     /// (CoDMP.exe 0x40b240) clamps a frame's turn under a shellshock.
@@ -833,6 +836,9 @@ impl PlayInput {
         if held.sprint_button && self.down.contains(&Action::Sprint) {
             buttons |= msg::BUTTON_SPRINT_V22;
         }
+        if self.talking {
+            buttons |= msg::BUTTON_TALK;
+        }
 
         // `CL_MouseMove` adds its counts after the keys, each clamped to a
         // signed byte (0x40b412, 0x40b5d9).
@@ -859,6 +865,14 @@ impl PlayInput {
             ..Default::default()
         }
     }
+}
+
+/// `CL_CmdButtons`' talk bit (CoDMP.exe 0x40b600, 1.5 0x40c130, UO
+/// 0x40c700): any key catcher up (the console, a menu, the chat line) with
+/// `cl_bypassMouseInput` 0, so the quick message menus, which set it to 1,
+/// never send it (docs/research/cod11-console.md, "The talk button").
+pub fn talking(console: bool, menus: bool, chat: bool, bypass_mouse: i32) -> bool {
+    (console || menus || chat) && bypass_mouse == 0
 }
 
 /// The cycle's pick (cgame 0x30038570), from the selection `from`. With
@@ -1532,6 +1546,32 @@ mod tests {
 
     /// Under a shellshock's caps a frame's turn is its summed motion held
     /// inside the cap, so a swing past it and back nets nothing.
+    #[test]
+    fn a_key_catcher_talks_unless_the_mouse_is_bypassed() {
+        assert!(!talking(false, false, false, 0));
+        assert!(talking(true, false, false, 0));
+        assert!(talking(false, true, false, 0));
+        assert!(talking(false, false, true, 0));
+        // A quick message menu sets `cl_bypassMouseInput` 1.
+        assert!(!talking(false, true, false, 1));
+        assert!(!talking(true, false, true, 1));
+    }
+
+    #[test]
+    fn talking_adds_the_talk_bit_to_the_held_buttons() {
+        let mut i = PlayInput::default();
+        i.key(Action::Attack, true);
+        let held = held(10);
+        assert_eq!(i.build(0, &held).buttons & msg::BUTTON_TALK, 0);
+        i.talking = true;
+        let c = i.build(8, &held);
+        assert_eq!(c.buttons & msg::BUTTON_TALK, msg::BUTTON_TALK);
+        // `CL_CmdButtons` ORs it over the keys; the server masks the rest.
+        assert_ne!(c.buttons & msg::BUTTON_ATTACK, 0);
+        i.talking = false;
+        assert_eq!(i.build(16, &held).buttons & msg::BUTTON_TALK, 0);
+    }
+
     #[test]
     fn shellshock_caps_a_frames_turn() {
         let mut i = PlayInput::default();

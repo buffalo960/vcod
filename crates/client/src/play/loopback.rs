@@ -530,3 +530,42 @@ fn every_slot_name_switches_the_held_weapon() {
         }
     );
 }
+
+/// A cmd built under a key catcher carries `BUTTON_TALK`, and the server
+/// lights `EF_TALK` on the player for it, clearing it on the next cmd
+/// without (cod15-movement.md 5, "The talk button").
+#[test]
+fn a_key_catcher_lights_the_talk_flag() {
+    use super::input::{Held, PlayInput};
+    use vcod_common::net::flags::EF_TALK;
+    let Some((fs, p)) = setup() else {
+        return;
+    };
+    let bsp_path = fs.resolve_map("mp_carentan").expect("mp_carentan");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let fs = Rc::new(fs);
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", "dm"), now);
+    sv.set_protocol(p);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs.clone()).expect("load the scripts");
+    let q = Rc::new(RefCell::new(common::Queues::default()));
+    let (mut net, _) = common::join(&mut sv, &q, &mut now, "axis", "kar98k_mp");
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, net.configstring(7));
+    let mut input = PlayInput::default();
+    input.new_gamestate();
+    let mut talk = |talking: bool| {
+        input.talking = talking;
+        for _ in 0..10 {
+            now += Duration::from_millis(50);
+            let s = net.snapshots().newest().unwrap();
+            let cmd = input.build(0, &Held::from_ps(&s.ps, p, &weapons));
+            net.send_frame(&cmd);
+            common::step(&mut sv, &q, &mut net, now);
+        }
+        net.snapshots().newest().unwrap().ps.field_i32(p, "eFlags") & EF_TALK
+    };
+    assert_eq!(talk(false), 0, "no catcher, no talk flag");
+    assert_eq!(talk(true), EF_TALK, "a catcher up lights the talk flag");
+    assert_eq!(talk(false), 0, "the flag clears once it is down");
+}
