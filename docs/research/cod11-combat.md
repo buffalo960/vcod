@@ -1607,6 +1607,12 @@ VERIFIED, `FireWeapon` `0x68f1e` and `Bullet_Fire` `0x690dc`: the endpoint is
 INFERRED: `spread` is therefore the cone's half-angle in degrees and the trace
 runs 8192 units.
 
+VERIFIED, United Offensive's `BG_Bullet_Endpos` (`game.mp.uo.i386.so`
+0x3011c): the same cone, 10000 units out (0x461c4000), with the forward
+product on the x87 stack. 1.5b's `Bullet_Endpos` (0x6de56) keeps 8192.
+Every UO `Bullet_Fire` and the artillery strike go through it
+(cod11-turrets.md 13.8). vcod: `combat::bullet_range`.
+
 VERIFIED, `FireWeapon` `0x68f2c`: the `damage` argument the shot carries into
 `Bullet_Fire_Extended` is `weaponDef->damage` (`0x1C0`), loaded straight from
 the weapon def with no scaling.
@@ -2319,6 +2325,14 @@ sequence apart from addresses and struct offsets in each pair:
   the strike's start, end and fraction from the same run (1.5b
   0x80d2000's caller, `-0x98(%ebp)` after the call) give retail's next
   start, z 0xc12aabc1, in the kept form and 0xc12aabc2 in the stored one.
+- VERIFIED, 1.1d's end point (`cod_lnxded` 0x8091352, after the bone
+  trace at 0x80912f0): the same form, each component's difference,
+  product and sum on the x87 stack and rounded once (0x8091366,
+  0x8091375, 0x8091387). vcod measurement: replaying the turret
+  captures, 8 of 166 1.1d body traces round a step apart in `f32`: 7
+  grid rays, whose cells print the fraction and not the point, and the
+  `-spawn` capture's wound, whose script logs no point. No fixture shows
+  the difference.
 
 vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
 matrix, the slab), `HitBody::axis_stored` (`DobjStamps::axis_stored`
