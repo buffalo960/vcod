@@ -2779,12 +2779,19 @@ fn seat_read<'a>(mut log: impl Iterator<Item = &'a str>) -> Option<String> {
     Some(l[l.find('(')?..].trim_end().to_string())
 }
 
+/// [`seat_read`]'s `PROBE seatnext`, the read a frame after the spawn.
+fn seatnext_read<'a>(mut log: impl Iterator<Item = &'a str>) -> Option<String> {
+    let l = log.find(|l| l.starts_with("PROBE seatnext "))?;
+    Some(l[l.find('(')?..].trim_end().to_string())
+}
+
 /// `ClientSpawn` lets go of the gun before its think (turrets doc 8.1): a
 /// gunner the script spawns off the gun reads the spawn's think origin in
 /// the spawning thread, as retail's, and his spawn frame carries the
 /// release's teleport pair. Its angles are the think's view
 /// (cod11-gametypes-re-bel.md 8.6): 0 on 1.1, the yaw through
-/// `SHORT2ANGLE` on UO.
+/// `SHORT2ANGLE` on UO. A frame later, on the cmds retail's next frame ran,
+/// the script reads retail's `PROBE seatnext`.
 fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) {
     let mut rig = build_on(
         fs,
@@ -2837,6 +2844,44 @@ fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) 
         .map(|e| e.0)
         .collect();
     assert_eq!(temps, [200, 199], "the release's teleport pair");
+    // The next frame on retail's cmds: the ones its `commandTime` says that
+    // frame ran, each as far past the spawn as on retail, at its view.
+    let traces: Vec<BTreeMap<&str, &str>> = fixture
+        .lines()
+        .filter_map(|l| l.strip_prefix("!trace "))
+        .map(kv)
+        .collect();
+    let at = |m: &BTreeMap<&str, &str>, k: &str| m[k].parse::<i32>().unwrap();
+    let spawn = traces
+        .iter()
+        .position(|m| m["eFlags"] == "24")
+        .expect("retail's spawn frame");
+    let (spawn_t, ran) = (
+        at(&traces[spawn], "serverTime"),
+        at(&traces[spawn + 1], "ct"),
+    );
+    let weapon = holding(&rig.gunner).weapon;
+    let cmds: Vec<UserCmd> = fixture
+        .lines()
+        .filter_map(|l| l.strip_prefix("!cmd "))
+        .map(kv)
+        .filter(|m| (spawn_t + 1..=ran).contains(&at(m, "st")))
+        .flat_map(|m| {
+            let cmd = UserCmd {
+                weapon,
+                angles: ints(m["view"]),
+                ..NULL_USERCMD
+            };
+            let st = at(&m, "st") - spawn_t + s.t;
+            common::stamped(&rig.gunner, &cmd, &[st], i32::MIN, i32::MAX)
+        })
+        .collect();
+    assert!(!cmds.is_empty(), "retail ran cmds in the frame after");
+    rig.gunner.send_cmds(&cmds);
+    rig.frame_at(&[]);
+    let theirs = seatnext_read(fixture.lines()).expect("retail's PROBE seatnext");
+    let mine = seatnext_read(rig.sv.script_log().iter().map(String::as_str)).expect("our seatnext");
+    assert_eq!(mine, theirs, "the script's read a frame after the spawn");
 }
 
 #[test]
