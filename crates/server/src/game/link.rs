@@ -256,32 +256,6 @@ fn client_bone_stored(host: &mut GameHost, slot: usize, tag: &str) -> Option<(Ve
     Some((b.origin, b.axes))
 }
 
-/// `AnglesToAxis` as 1.5b's and UO's engines run it (UO 0x806a46e over
-/// `AngleVectors` 0x80674ad): each angle's float radians, its sine and
-/// cosine stored, each component stored, the left the right negated.
-fn angles_to_axis_stored(a: [f32; 3]) -> [Vec3; 3] {
-    let st = |x: f64| x as f32;
-    let sc = |deg: f32| {
-        let r = f64::from(st(f64::from(deg) * (std::f64::consts::PI / 180.0)));
-        (f64::from(st(r.sin())), f64::from(st(r.cos())))
-    };
-    let ((sp, cp), (sy, cy), (sr, cr)) = (sc(a[0]), sc(a[1]), sc(a[2]));
-    let right = [
-        st(-sr * sp * cy + -cr * -sy),
-        st(-sr * sp * sy + -cr * cy),
-        st(-sr * cp),
-    ];
-    [
-        Vec3::new(st(cp * cy), st(cp * sy), st(-sp)),
-        Vec3::new(-right[0], -right[1], -right[2]),
-        Vec3::new(
-            st(cr * sp * cy + -sr * -sy),
-            st(cr * sp * sy + -sr * cy),
-            st(cr * cp),
-        ),
-    ]
-}
-
 /// [`client_bone`] in the model's own frame, before the body's yaw: what
 /// a link holds in the parent entity's `angles` (`G_CalcTagParentAxis`
 /// multiplies the tag's model-space matrix by the parent's axis).
@@ -400,7 +374,7 @@ fn tag_frame(
             // stored axis, each element rounded once.
             let angles = vector(host, cx, parent, "angles");
             let base = Frame {
-                axis: angles_to_axis_stored(angles),
+                axis: crate::game::combat::angles_to_axis_stored(angles),
                 origin: base.origin,
             };
             Some(Frame { axis, origin: o }.within_stored(&base))
