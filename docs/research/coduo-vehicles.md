@@ -1238,6 +1238,21 @@ face.
   disassembly 0x3dc9e), and terrain meets the hull's half box as a
   capsule of its half width (VERIFIED, replay: the min-radius capsule
   lands the Panzer 0.63 low on the first slope).
+- **The sway pack's last bit.** 0x86735 builds the jolt's angle as a
+  double, `phase * pi / 180` with `pi` and 180 loaded as doubles
+  (`fldl` at 0x867a8 and 0x867b0, rodata 0xa6c60 and 0xa6c68), so a
+  half turn's sine is 1.2e-16, not the -8.7e-8 an f32 `pi` gives; the
+  sine is stored as an f32 (VERIFIED disassembly). The pack then sums
+  `127 + 127 * deg / 30` on the x87 stack and stores it as a double
+  before `floor` (0x86864..0x86920, 127 and 30 as floats at 0xa6c78 and
+  0xa6c7c), so a sway a hair under 0 packs 126 where an f32 sum rounds
+  to 127 (VERIFIED disassembly). The two sit on the body's `tag_body`
+  pose, so the seat tag and every rider's origin ride them: vcod packed
+  in f32 with an f32 `pi`, and the tank seats replay's driver missed
+  retail by up to 0.39 on 2 snapshots (msg 305, 352: our roll byte 127,
+  retail's 126) and 0.47 on 7 others once the pack alone was fixed. With
+  both, the tank seats, drive and gun replays hold the rider's origin
+  to 0.01 on every snapshot (VERIFIED, `vehicle_ab`).
 - The probes and the slide meet vehicle clip brushes (contents 0x200),
   which only the vehicle clipmask 0x201 holds: where retail's tank
   bounced at mp_cassino's slope the brush is one (VERIFIED, replay; vcod's
