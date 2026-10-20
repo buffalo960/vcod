@@ -36,7 +36,8 @@ something, the bullet links it.
 - Opens on the stock main menu and server browser, drawn from the game's own
   `ui_mp/*.menu` files. The browser's three sources are retail's: Local
   (a `getinfo` broadcast to ports 28960-28963), Internet (what
-  `codmaster.activision.com` knows) and Favorites (kept in `servercache.dat`
+  `codmaster.activision.com` knows, `coduomaster.activision.com` with
+  `--mod-dir uo`) and Favorites (kept in `servercache.dat`
   beside `CoDMP.exe`, the file retail uses). It pings, filters (by game
   type too), shows when each source was last refreshed, sorts by
   column, joins on double-click, and runs the stock password, server info,

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use vcod_common::net::connectionless::{build_oob, parse_oob};
 use vcod_common::net::master::{
-    GETINFO, GETSERVERS, LAN_PORTS, LAN_ROUNDS, MASTER_HOST, MASTER_PORT, ServerInfo,
-    parse_address, parse_servers_response,
+    GETINFO, GETSERVERS, LAN_PORTS, LAN_ROUNDS, MASTER_PORT, ServerInfo, parse_address,
+    parse_servers_response,
 };
 use vcod_common::net::server_cache::{self, Entry, MAX_FAVORITES};
 
@@ -153,6 +153,8 @@ pub struct Browser {
     socket: Option<UdpSocket>,
     resolve: Option<mpsc::Receiver<Option<SocketAddr>>>,
     master: Option<SocketAddr>,
+    /// The install's master host ([`vcod_common::net::protocol::Protocol::master`]).
+    pub master_host: &'static str,
     started: Option<Instant>,
     pub source: Source,
     /// Indexed by [`Source`].
@@ -180,6 +182,7 @@ impl Default for Browser {
             socket: None,
             resolve: None,
             master: None,
+            master_host: vcod_common::net::protocol::PROTOCOL_V1.master,
             started: None,
             source: Source::Local,
             lists: Default::default(),
@@ -266,8 +269,9 @@ impl Browser {
         match self.source {
             Source::Internet => {
                 let (tx, rx) = mpsc::channel();
+                let host = self.master_host;
                 std::thread::spawn(move || {
-                    let addr = (MASTER_HOST, MASTER_PORT)
+                    let addr = (host, MASTER_PORT)
                         .to_socket_addrs()
                         .ok()
                         .and_then(|mut a| a.find(SocketAddr::is_ipv4));
@@ -373,7 +377,7 @@ impl Browser {
                     self.master = Some(addr);
                 }
                 _ => {
-                    log::warn!("browser: cannot resolve {MASTER_HOST}");
+                    log::warn!("browser: cannot resolve {}", self.master_host);
                     self.status = Status::Failed;
                     self.socket = None;
                 }

@@ -84,7 +84,8 @@ vcod-server mp_carentan --port 28960 --hostname "my server" --gametype tdm
   and in the retail clients. `g_motd` reaches the client as configstring
   14 (UO 15), which no retail client draws, so it shows nowhere.
 - `dedicated` defaults to 1, not retail's 2, so dev runs stay off the master
-  list. `--set dedicated=2` heartbeats `codmaster.activision.com` every three
+  list. `--set dedicated=2` heartbeats `codmaster.activision.com`
+  (`coduomaster.activision.com` on UO) every three
   minutes and sends a flatline on Ctrl-C or `quit`.
 - `--bots <n>` adds `n` bots in real client slots. The nav graph builds on
   its own thread on the first tick (a second or two on big maps); bots

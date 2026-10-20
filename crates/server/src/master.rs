@@ -14,7 +14,10 @@ pub const HEARTBEAT_MS: i32 = 180_000;
 /// `strstr(":", name)` has its arguments swapped, so a port in the cvar is
 /// parsed and then overwritten.
 pub const MASTER_PORT: u16 = 20510;
-/// `sv_master1`'s default; `sv_master2..5` default empty.
+/// `sv_master1`'s default until the protocol's ([`Protocol::master`],
+/// `Server::set_protocol`); `sv_master2..5` default empty.
+///
+/// [`Protocol::master`]: vcod_common::net::protocol::Protocol::master
 pub const DEFAULT_MASTER: &str = "codmaster.activision.com";
 pub const HEARTBEAT_GAME: &str = "COD-1";
 pub const FLATLINE: &str = "flatline";
@@ -62,9 +65,19 @@ impl Masters {
         (1..=MAX_MASTERS).contains(&n).then(|| n - 1)
     }
 
+    /// `sv_master<i + 1>`'s host.
+    #[cfg(test)]
+    pub(crate) fn name(&self, i: usize) -> &str {
+        &self.names[i]
+    }
+
+    /// An unchanged name keeps its resolved address, as an unchanged cvar
+    /// stays unmodified.
     pub fn set(&mut self, i: usize, name: &str) {
-        self.names[i] = name.to_string();
-        self.dirty[i] = true;
+        if self.names[i] != name {
+            self.names[i] = name.to_string();
+            self.dirty[i] = true;
+        }
     }
 
     /// `SV_Heartbeat_f` (0x8084bd0): the next frame sends.

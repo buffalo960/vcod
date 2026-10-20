@@ -43,6 +43,9 @@ pub struct Protocol {
     /// The server's `shortversion`, which a connect refused for the wrong
     /// protocol names (`EXE_SERVER_IS_DIFFERENT_VER\x15<this>`).
     pub short_version: &'static str,
+    /// The master server the browser asks and a heartbeat goes to (the
+    /// client's and the server's binaries name it).
+    pub master: &'static str,
     pub max_configstrings: usize,
     pub entity_fields: &'static [NetField],
     /// Protocol 22's second entity table: an entity whose `eType` is
@@ -118,6 +121,7 @@ const HUD_V1: HudWire = HudWire {
 pub const PROTOCOL_V1: Protocol = Protocol {
     version: 1, // reported by cod_lnxded 1.1d getstatus, 2026-08-23
     short_version: "1.1",
+    master: "codmaster.activision.com",
     max_configstrings: 2048, // codextended/src/shared.h:141
     entity_fields: crate::net::fields_v1::ENTITY_FIELDS,
     vehicle_fields: &[],
@@ -156,6 +160,7 @@ pub const PROTOCOL_V1: Protocol = Protocol {
 pub const PROTOCOL_V6: Protocol = Protocol {
     version: 6, // cod_lnxded 1.5b getinfo and getstatus, 2026-10-13
     short_version: "1.5",
+    master: "codmaster.activision.com",
     max_configstrings: 2048,
     entity_fields: crate::net::fields_v1::ENTITY_FIELDS,
     vehicle_fields: &[],
@@ -204,6 +209,7 @@ const HEX_PAK_NUMBERS: &[&str] = &[
 pub const PROTOCOL_V22: Protocol = Protocol {
     version: 22, // coduo_lnxded 1.51b getinfo and getstatus, 2026-10-13
     short_version: "1.51",
+    master: "coduomaster.activision.com",
     max_configstrings: 2048, // CoDUOMP.exe 0x4014c6
     entity_fields: crate::net::fields_v22::ENTITY_FIELDS,
     vehicle_fields: crate::net::fields_v22::VEHICLE_FIELDS,

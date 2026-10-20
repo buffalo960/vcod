@@ -5843,6 +5843,14 @@ impl Server {
     /// side"). Set before the first level loads.
     pub fn set_protocol(&mut self, p: &'static Protocol) {
         self.proto = p;
+        // `sv_master1` defaults to the binary's own master unless set.
+        if !self
+            .cvar_overrides
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("sv_master1"))
+        {
+            self.masters.set(0, p.master);
+        }
         if let Some(w) = &self.world {
             w.collision
                 .set_arith(vcod_common::patch::Arith::for_protocol(p));
@@ -16263,6 +16271,18 @@ mod tests {
     /// over rcon"): a master the heartbeat resolved first is named and sent
     /// nothing; one the command resolves itself gets the serverinfo with
     /// the argument as `challenge` and a line per player.
+    /// A UO server heartbeats UO's master unless `sv_master1` says otherwise.
+    #[test]
+    fn sv_master1_defaults_to_the_protocols_master() {
+        let t = Instant::now();
+        let mut sv = Server::new(cfg(), t);
+        sv.set_protocol(&PROTOCOL_V22);
+        assert_eq!(sv.masters.name(0), "coduomaster.activision.com");
+        sv.set_cvar("sv_master1", "127.0.0.1");
+        sv.set_protocol(&PROTOCOL_V22);
+        assert_eq!(sv.masters.name(0), "127.0.0.1");
+    }
+
     #[test]
     fn game_complete_status_reaches_only_the_masters_it_resolved() {
         let t = Instant::now();
