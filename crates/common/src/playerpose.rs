@@ -1006,7 +1006,9 @@ fn layer_clips(
         if let Some((_, leaves)) = inputs.seat_leaves.iter().find(|(n, _)| Some(*n) == node) {
             for &(leaf, w) in leaves {
                 if let Some(anim) = clip(&inputs.anims.tree.nodes[leaf].name) {
-                    let frame = layer_frame(inputs, l, &anim);
+                    // Each leaf under the seat's node steps a time of its
+                    // own, which the channel clock does not keep.
+                    let frame = anim.frame_pos(l.seconds, anim.looping);
                     out.push((anim, frame, l.weight * w));
                 }
             }
@@ -1027,10 +1029,9 @@ fn layer_clips(
 /// [`PoseInputs::node_time`] the node time times `numframes`, stored, as
 /// the sampler takes it (UO `coduo_lnxded` 0x80b9b72).
 fn layer_frame(inputs: &PoseInputs, l: &crate::animclock::Layer, anim: &XAnim) -> f32 {
-    if inputs.node_time {
-        l.time * anim.frame_count.saturating_sub(1) as f32
-    } else {
-        anim.frame_pos(l.seconds, anim.looping)
+    match l.time.filter(|_| inputs.node_time) {
+        Some(t) => t * anim.frame_count.saturating_sub(1) as f32,
+        None => anim.frame_pos(l.seconds, anim.looping),
     }
 }
 

@@ -210,8 +210,10 @@ pub struct Layer {
     pub index: i32,
     /// The clip's time in seconds, unwrapped; the pose wraps a looping clip.
     pub seconds: f32,
-    /// The engine's node time, the fraction of the clip played, wrapped.
-    pub time: f32,
+    /// The engine's node time, the fraction of the clip played, wrapped;
+    /// `None` for a node the clock knows no leaf frequency for (a node
+    /// with children, as a clip name the group pitch picks under).
+    pub time: Option<f32>,
     pub weight: f32,
 }
 
@@ -285,7 +287,7 @@ impl ChannelClock {
         let layer = |p: &Play, w: &Ramp| Layer {
             index: p.index,
             seconds: p.seconds(now_ms),
-            time: p.time(now_ms),
+            time: (p.frequency > 0.0).then(|| p.time(now_ms)),
             weight: w.at(now_ms),
         };
         self.fading

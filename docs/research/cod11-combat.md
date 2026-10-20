@@ -2406,7 +2406,9 @@ vcod: `animclock::Play` keeps the node time beside the seconds, stepped
 in whole 50 ms frames with the sum in `f64` and stored as `f32`
 (`Play::step`), `Layer::time` hands it out, and the server's pose on
 1.5 and UO samples at `time * numframes` (`PoseInputs::node_time`).
-1.1d keeps the seconds: its pose is the glam one, not the stored build.
+A UO rider's seat leaves and a clip under a node with children (whose
+frequency the clock does not hold) stay on the seconds, and 1.1d keeps
+them throughout: its pose is the glam one, not the stored build.
 VERIFIED, vcod measurement: `pronepose_ab`'s 1.5b mp_brecourt rays, the
 origin and the eight marks are retail's bits (the 3-step `RAY_STEPS_15`
 is gone); the 1.5b mp_carentan prone rest stays one step off, as it was
