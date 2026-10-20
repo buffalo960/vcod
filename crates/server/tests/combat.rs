@@ -1452,6 +1452,122 @@ fn a_thrown_grenade_damages_a_player_in_its_blast() {
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
 
+/// `G_FreeEntity`'s sweep (combat doc 13.7): a thrower who leaves mid-fuse
+/// takes his frag's `parent` and `r.ownerNum` with him, and `G_RadiusDamage`
+/// with a NULL attacker walks nobody. The client that reconnects into his
+/// slot is not charged with the blast, and the player beside it is unhurt.
+#[test]
+fn a_frag_whose_thrower_left_charges_no_one() {
+    use vcod_common::net::msg::{BUTTON_ATTACK, NULL_USERCMD, UserCmd};
+
+    let Some(pair) = two_placed(|sv, spot| {
+        assert!(sv.test_clear_line(spot, 0.0, 150.0));
+        [spot[0] + 150.0, spot[1], spot[2]]
+    }) else {
+        eprintln!("COD_DIR unset or has no main/: skipping");
+        return;
+    };
+    let Pair {
+        mut sv,
+        mut ca,
+        mut cb,
+        qa,
+        qb,
+        mut now,
+    } = pair;
+    let p = &PROTOCOL_V1;
+    let num = |c: &Client| c.snapshots().newest().unwrap().ps.field_i32(p, "clientNum") as usize;
+    let thrower = num(&ca);
+    let facing_a = UserCmd {
+        angles: [0, angle_short(180.0), 0],
+        ..NULL_USERCMD
+    };
+    let mut step = |sv: &mut vcod_server::Server, a: &mut Client, b: &mut Client| {
+        now += Duration::from_millis(50);
+        common::step_pair(sv, (&qa, a), (&qb, b), now);
+    };
+    for _ in 0..40 {
+        ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
+        step(&mut sv, &mut ca, &mut cb);
+    }
+    let frag = frag_index();
+    let aimed = UserCmd {
+        angles: [angle_short(80.0), angle_short(180.0), 0],
+        weapon: frag,
+        ..NULL_USERCMD
+    };
+    raise_frag(
+        &mut sv, &mut step, &mut ca, &mut cb, &facing_a, &aimed, frag,
+    );
+    let cook = UserCmd {
+        buttons: BUTTON_ATTACK,
+        ..aimed
+    };
+    for cmd in [cook; 20].into_iter().chain([aimed; 10]) {
+        ca.send_frame(&crate::common::echo_weapon(&ca, &cmd));
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
+        step(&mut sv, &mut ca, &mut cb);
+    }
+    assert!(
+        cb.snapshots()
+            .newest()
+            .unwrap()
+            .entities
+            .values()
+            .any(|e| e.field_i32(p, "eType") == 4),
+        "the frag is not in the air"
+    );
+    ca.disconnect();
+    // The slot is a zombie for 2 s (`ZOMBIE_TIME`) before it is free.
+    for _ in 0..44 {
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
+        step(&mut sv, &mut ca, &mut cb);
+    }
+    drop(step);
+    assert!(sv.pending_explosions().is_empty(), "it went off too soon");
+    // The next client into the server takes the thrower's slot.
+    let qc = Rc::new(RefCell::new(Queues::default()));
+    let mut cc =
+        vcod_common::net::NetClient::start_with_qport(common::ClientEnd(qc.clone()), now, 0x2003);
+    let mut went_off = None;
+    for _ in 0..200 {
+        cb.send_frame(&crate::common::echo_weapon(&cb, &facing_a));
+        if cc.state() == vcod_common::net::NetState::Active {
+            cc.send_frame(&common::holding(&cc));
+        }
+        now += Duration::from_millis(50);
+        common::step_trio(
+            &mut sv,
+            (common::ADDR, &qa, &mut ca),
+            (common::ADDR_B, &qb, &mut cb),
+            (common::ADDR_C, &qc, &mut cc),
+            now,
+        );
+        if went_off.is_none() {
+            went_off = sv.pending_explosions().first().map(|x| x.owner);
+        } else {
+            break;
+        }
+    }
+    assert_eq!(
+        cc.snapshots()
+            .newest()
+            .unwrap()
+            .ps
+            .field_i32(p, "clientNum") as usize,
+        thrower,
+        "the newcomer did not take the thrower's slot"
+    );
+    assert_eq!(
+        cb.snapshots().newest().unwrap().ps.health(),
+        100,
+        "the blast hurt the player beside it"
+    );
+    assert_eq!(went_off, Some(None), "the blast kept an owner");
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
 /// A grenade's walk measures each victim on its turn (combat doc 14.5):
 /// the first victim's damage callback sets the other down out of reach,
 /// and the walk passes it by. Retail, `client-probes/probe_blastmove`:

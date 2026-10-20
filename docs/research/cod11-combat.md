@@ -6368,6 +6368,51 @@ gun's fire, rewrites it to 5 (0x7b6c8). VERIFIED, live (retail UO 1.51b,
 reads `trType` 2 and climbs an even 137 a frame. Before 2026-10-17 vcod
 flew every UO rocket on `trType` 5.
 
+### 13.7 A missile whose thrower left
+
+VERIFIED, `game.mp.i386.so` 1.1d: `G_FreeEntity`'s sweep (0x66ad1..0x66b13,
+which `ClientDisconnect` reaches at 0x42bfc) stores 0 into `+0x198` where it
+holds the freed entity (0x66add, 0x66ae5) and 0x3ff into `r.ownerNum`
+(`+0x14c`) where it holds its number (0x66aef, 0x66af7), on every entity in
+use. VERIFIED, 1.5b and UO: `G_FreeEntityRefs` makes the same two stores
+(`+0x1a0` and `+0x150` on 1.5b, `+0x1a8` and `+0x154` on UO;
+`cod11-turrets.md` 8). INFERRED: `+0x198` is `parent`, which `fire_grenade`
+and `fire_rocket` write with the thrower (UO 0x5f8c0, 0x5fd6e).
+
+VERIFIED: every missile splash hands `G_RadiusDamage` its attacker off
+`parent`: 1.1d `G_ExplodeMissile` 0x53f52 and `G_MissileImpact` 0x53d47
+(`+0x198`), 1.5b 0x54986 and 0x545e7 (`+0x1a0`). UO's `G_ExplodeMissile`
+takes `parent` (0x5e2fc..0x5e30e), swapped for its gunner when it is a
+turret (`eType` 11) with an owner (0x5e314..0x5e342); its `G_MissileImpact`
+takes NULL when `r.ownerNum` is 0x3ff (0x5dc8e) and `g_entities[ownerNum]`
+otherwise (0x5dc9e..0x5dcb7). VERIFIED: `G_RadiusDamage` returns 0 before
+its walk when that argument is NULL (1.1d 0x4a40d, 1.5b 0x47b2d, UO
+0x509ac). VERIFIED, 1.1d: `G_Damage` (0x49dac) on a client passes a NULL attacker on
+to `Scr_PlayerDamage` (0x5ca18), which pushes it as undefined, and on anything else
+substitutes `g_entities[1022]` (`g_entities` 0x21df80 plus 1022 entities of
+0x314 is the 0x2e2958 it loads).
+
+INFERRED, from the above: once the thrower is gone his frag or rocket is
+passed by nothing (its traces pass 0x3ff), its splash hurts no one at all,
+and a direct hit reaches `CodeCallback_PlayerDamage` with `eAttacker`
+undefined. The next client into the slot is never charged: the sweep ran
+before he connected.
+
+VERIFIED, UO `fire_artillery` (0x5ff4a): a shell fired by a barrage
+(`eType` 0) takes the barrage's `r.ownerNum` and `&g_entities[ownerNum]` as
+`parent` (0x6002d..0x60055). INFERRED: a barrage whose caller left (its
+`ownerNum` swept to 0x3ff) fires shells whose `parent` is entity 1023, not
+NULL, so their splash still walks. vcod does not model that: a barrage keeps
+its caller's slot (`artillery::Barrage::owner`).
+
+vcod: `Missiles::free_owner_refs`, called from `ClientDisconnect`, makes the
+missile's owner `None`; the explode's `Explosion::owner` then skips the
+blast walk and `ScriptRuntime::deliver_hits` hands a direct hit an undefined
+attacker. A UO vehicle's shell is owned by the vehicle in retail
+(`fire_rocket`'s `self`), so it keeps its driver in vcod. Pinned by
+`a_frag_whose_thrower_left_charges_no_one` (`crates/server/tests/combat.rs`)
+and `a_leaver_s_grenade_loses_its_owner_and_a_vehicle_s_shell_does_not`.
+
 ## 14. `G_RadiusDamage` and `CanDamage`
 
 ### 14.1 The walk and the falloff
