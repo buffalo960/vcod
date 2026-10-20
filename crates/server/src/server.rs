@@ -1392,7 +1392,7 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
 /// `G_RunClient` (game.mp.uo 0x41dfc) on a seated rider: `G_SetFixedLink`
 /// mode 2 puts `r.currentOrigin` and `ps.origin` at the seat tag of the
 /// vehicle as it stands, shifted by the link's own offset, and links him
-/// there. His end frame puts `ps.origin` and `r.currentOrigin` back on the
+/// there unsnapped. His end frame puts `ps.origin` and `r.currentOrigin` back on the
 /// seat (coduo-vehicles.md 13, "The tank driver's link offset").
 fn run_rider_link(
     rt: &mut script::ScriptRuntime,
@@ -1408,7 +1408,7 @@ fn run_rider_link(
     }) else {
         return;
     };
-    sim.ps.origin = at;
+    sim.seat_linked_at(at);
     rt.set_client_origin(slot, at.to_array());
     link_client(rt, slot, sim);
 }
@@ -4783,6 +4783,7 @@ impl Server {
         sim.ps.rules = vcod_common::pmove::MoveRules::for_protocol(proto);
         client.sim = Some(sim);
         client.last_processed_st = sv_time_ms;
+        client.last_usercmd_st = sv_time_ms;
         log::info!("client {slot} {name:?} connected (test client)");
         *entry = Some(client);
     }
@@ -7460,6 +7461,7 @@ impl Server {
                 self.sv_time_ms.wrapping_add(200),
             )
         });
+        c.last_usercmd_st = entering.map_or(c.last_processed_st, |c| c.server_time);
         log::info!("client {slot} {:?} begin (spectator)", c.name);
         // `ClientBegin`: the notify that releases the connect callback's
         // `waittill("begin")`. The event queues rather than fires here, so it
@@ -8708,6 +8710,10 @@ impl Server {
                 continue;
             }
             let mut cmd = c.pending.remove(0).cmd;
+            let fresh = cmd.server_time > c.last_usercmd_st;
+            if fresh {
+                c.last_usercmd_st = cmd.server_time;
+            }
             // `ClientThink_real` holds the cmd's clock within 1000 ms behind
             // and 200 ms ahead of the `level.time` it runs on, the last
             // frame's (player-clip doc 8.12).
@@ -8719,6 +8725,9 @@ impl Server {
             // rather than clamped away.
             let dt_ms = cmd.server_time.wrapping_sub(c.last_processed_st);
             if dt_ms <= 0 {
+                if let Some(sim) = c.sim.as_mut().filter(|_| fresh) {
+                    sim.stale_cmd(&cmd);
+                }
                 continue;
             }
             let sim = c.sim.as_mut().unwrap();

@@ -375,6 +375,7 @@ fn replay_with(
     let mut pending: Vec<(UserCmd, [i32; 3])> = Vec::new();
     let mut da = first_da;
     let mut last_seat = 0;
+    let mut last_eflags = 0;
     let mut started = false;
     for line in lines {
         match line {
@@ -391,6 +392,7 @@ fn replay_with(
                 if !started {
                     started = true;
                     last_seat = seat;
+                    last_eflags = s.wire.get("eFlags").copied().unwrap_or(0);
                     out.push(sample(&cl));
                     continue;
                 }
@@ -400,8 +402,16 @@ fn replay_with(
                 reanchor |= change;
                 last_seat = seat;
                 let want = s.t + offset;
-                // The cmds retail's frame had run by this snapshot.
-                let ran = s.ct + offset;
+                // The cmds retail's frame had run by this snapshot. A spawn
+                // (`eFlags` 0x8 flips) thinks at the frame's own time, so a
+                // `commandTime` there is no cmd's: the frame ran those before.
+                let eflags = s.wire.get("eFlags").copied().unwrap_or(0);
+                let spawned = std::mem::replace(&mut last_eflags, eflags) & 8 != eflags & 8;
+                let ran = if spawned && s.ct == s.t {
+                    s.t - 1
+                } else {
+                    s.ct
+                } + offset;
                 for _ in 0..40 {
                     if cl
                         .snapshots()
@@ -942,6 +952,93 @@ fn the_jeep_gun_replays_on_ours() {
     tally(&lines, &ours).assert_within(&[]);
 }
 
+const TANK_GUN: &str = "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-gun-uo.txt";
+const TANK_GUN_BONES: &str = "tests/fixtures/vehicles/mp_cassino-tank-gun-bones-uo.txt";
+
+/// `GUN` on a Panzer IV: the driver's seat by use, `nextvehslot` to the
+/// gunner's, the gun swept past its spans on `tag_secondary_player`'s
+/// base, then out (coduo-vehicles.md 8). Every field of every snapshot.
+#[test]
+fn the_tank_gun_replays_on_ours() {
+    let text = std::fs::read_to_string(TANK_GUN).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = ours("mp_cassino", "panzeriv_mp", &[("probe_bones", "1")], &lines) else {
+        return;
+    };
+    tally(&lines, &ours).assert_within(&[]);
+}
+
+/// The same run's marks linked to the rider's bones, every frame of both
+/// stints. Through the first, a driver boarded by use is linked with no
+/// seat offset, so every mark reads 20 above the seat until the
+/// `nextvehslot` (coduo-vehicles.md 13, "The tank driver's link offset").
+#[test]
+fn the_tank_rider_s_bones_follow_retail_s_in_both_seats() {
+    let text = std::fs::read_to_string(TANK_GUN).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = replay("mp_cassino", "panzeriv_mp", &[("probe_bones", "1")], &lines) else {
+        return;
+    };
+    let retail: Vec<String> = std::fs::read_to_string(TANK_GUN_BONES)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let seat_of = |log: &[String], offset: i32| -> BTreeMap<i32, i32> {
+        log.iter()
+            .filter_map(|l| l.trim().strip_prefix("PROBE bone "))
+            .map(|r| {
+                let t: Vec<&str> = r.split_whitespace().collect();
+                (t[0].parse::<i32>().unwrap() - offset, t[2].parse().unwrap())
+            })
+            .collect()
+    };
+    let (r, o) = (bones(&retail, 0), bones(&ours.log, ours.offset));
+    let seats = seat_of(&retail, 0);
+    let first = r.keys().map(|(t, _)| *t).min().unwrap_or(0) + 50;
+    let report = std::env::var("VEHICLE_REPORT").is_ok();
+    // Per seat: samples, their sum, and the worst (miss, time, tag).
+    type Worst = (f32, i32, String);
+    let mut per_seat: BTreeMap<i32, (usize, f32, Worst)> = BTreeMap::new();
+    for ((t, tag), a) in r.iter().filter(|((t, _), _)| *t > first) {
+        let Some(b) = o.get(&(*t, tag.clone())) else {
+            continue;
+        };
+        let d = (0..3).map(|i| (a[i] - b[i]).abs()).fold(0.0, f32::max);
+        if report {
+            eprintln!("{t} {tag}: retail {a:?} ours {b:?} off {d:.2}");
+        }
+        let e = per_seat
+            .entry(seats[t])
+            .or_insert((0, 0.0, (0.0, 0, String::new())));
+        e.0 += 1;
+        e.1 += d;
+        if d > e.2.0 {
+            e.2 = (d, *t, tag.clone());
+        }
+    }
+    for (seat, (n, sum, worst)) in &per_seat {
+        eprintln!(
+            "seat {seat}: {n} samples, mean {:.3}, worst {worst:?}",
+            sum / *n as f32
+        );
+    }
+    for (seat, mean_tol, worst_tol) in TANK_BONE_TOLERANCE {
+        let (n, sum, worst) = per_seat.get(&seat).cloned().unwrap_or_default();
+        assert!(n > 200, "seat {seat}: only {n} samples in common");
+        let mean = sum / n as f32;
+        assert!(mean <= mean_tol, "seat {seat}: mean {mean} off");
+        assert!(worst.0 <= worst_tol, "seat {seat}: {worst:?} off retail's");
+    }
+}
+
+/// Per seat, the mean and worst miss of one bone sample. The driver's
+/// (measured 0.19, 0.83): from 300 ms after the use boarding, his hands and
+/// head move as retail's did 50 to 150 ms earlier (16050 to 18150, worst
+/// at 16250), not traced (coduo-vehicles.md 13, "The tank driver's link
+/// offset"). The gunner's (0.006, 0.91): the change's glide, 18450 to 18600.
+const TANK_BONE_TOLERANCE: [(i32, f32, f32); 2] = [(1, 0.2, 0.9), (2, 0.01, 1.0)];
+
 /// The client's own gunner draws his gun off his view, turned into the
 /// hull and clamped to `fTorsoPitch`/`fWaistPitch` (cgame 0x300207c0): once
 /// retail's server gun has settled on the same view, the two agree.
@@ -1059,6 +1156,93 @@ fn a_driver_spawned_out_of_the_seat_reads_retail_s_origin() {
         mine, theirs,
         "origin and angles the script reads after the spawn"
     );
+}
+
+/// What the entity pass finds of a tank driver boarded by use: his turn
+/// links him with no seat offset, 20 above the seat his end frame puts
+/// `ps.origin` on (coduo-vehicles.md 13, "The tank driver's link offset"),
+/// so the area tree a later entity's blast or missile queries, and the body
+/// such a round traces, sit at the link through the first stint, and on
+/// the seat once a `nextvehslot` has asked for the slot it takes.
+#[test]
+fn a_tank_driver_boarded_by_use_sits_in_the_area_tree_at_his_link() {
+    let Some(mut b) = board("mp_cassino", "panzeriv_mp", &[]) else {
+        return;
+    };
+    let p = &PROTOCOL_V22;
+    // Held still long enough for the turret to settle, whose turn moves
+    // the seat between the link and the end frame.
+    let lift = |b: &mut Boarded| {
+        for _ in 0..100 {
+            let c = holding(&b.cl, 0);
+            b.frame(c);
+        }
+        let ps = &b.cl.snapshots().newest().unwrap().ps;
+        let (mins, _) = b.sv.test_area_link(0).expect("the driver is linked");
+        let mins_z = f(ps.field_i32(p, "mins[2]"));
+        let origin_z = ps.origin(p)[2];
+        mins[2] - mins_z - origin_z
+    };
+    let first = lift(&mut b);
+    // A link box is grown a unit each way (`SV_LinkEntity`).
+    assert!(
+        (first - 19.0).abs() < 1e-3,
+        "first stint: {first} above the seat"
+    );
+    for seat in [2, 1] {
+        b.cl.send_reliable("nextvehslot");
+        for _ in 0..60 {
+            let c = holding(&b.cl, 0);
+            b.frame(c);
+            if b.cl.snapshots().newest().unwrap().ps.field_i32(p, "vehPos") == seat {
+                break;
+            }
+        }
+    }
+    let back = lift(&mut b);
+    assert!(
+        (back + 1.0).abs() < 1e-3,
+        "back in the driver's seat: {back}"
+    );
+}
+
+const TANK_RESPAWN: &str =
+    "tests/fixtures/playerstate/mp_cassino-tdm-slope-8ms-tank-respawn-uo.txt";
+
+/// The same spawn on the capture's own cmds: the frame after it the
+/// spawned driver has fallen and walked as far as those cmds' clock took
+/// him, which `PROBE seatnext` reads (retail 31.96 here, 33.15 in
+/// `mp_cassino-tank-uo.txt`'s run); then every snapshot on foot.
+#[test]
+fn a_driver_spawned_out_of_the_seat_moves_on_retail_s_cmds() {
+    let text = std::fs::read_to_string(TANK_RESPAWN).unwrap();
+    let lines = parse(&text);
+    let Some(ours) = replay(
+        "mp_cassino",
+        "panzeriv_mp",
+        &[("probe_respawn", "3")],
+        &lines,
+    ) else {
+        return;
+    };
+    let fixture = include_str!("fixtures/seatspawn/mp_cassino-tank-cmds-uo.txt");
+    let read = |log: &mut dyn Iterator<Item = &str>, offset: i32| -> Vec<String> {
+        log.filter(|l| l.starts_with("PROBE seat"))
+            .map(|l| {
+                let t: Vec<&str> = l.splitn(4, ' ').collect();
+                let at = t[2].parse::<i32>().unwrap() - offset;
+                format!("{} {at} {}", t[1], t[3])
+            })
+            .collect()
+    };
+    let theirs = read(&mut fixture.lines(), 0);
+    let mine = read(&mut ours.log.iter().map(String::as_str), ours.offset);
+    assert_eq!(theirs.len(), 2, "retail's seat and seatnext");
+    assert_eq!(
+        mine, theirs,
+        "what the script reads after the spawn and a frame later"
+    );
+    tally(&lines, &ours.samples).assert_within(&[]);
 }
 
 /// Every impact in the order it first showed on a snapshot.

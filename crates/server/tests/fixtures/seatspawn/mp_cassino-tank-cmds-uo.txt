@@ -1,0 +1,14 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-20: client-probes/probe_vehicle on
+# mp_cassino with probe_respawn 3, as mp_cassino-tank-uo.txt, the probe's cmds
+# and snapshots saved beside it in
+# playerstate/mp_cassino-tdm-slope-8ms-tank-respawn-uo.txt (an 8 ms cmd clock).
+# COD_DIR=<UO install> COD_VERSION=uo COD_LNXDED_HOME=<abs> PORT=33822 SECS=50 tools/run_probe.sh client-probes/probe_vehicle mp_cassino +set probe_respawn 3
+# vcod --net-probe 127.0.0.1:33822 --game-dir <UO install> --mod-dir uo --probe-team axis --probe-vehicle ram --save-slope --probe-cmd-ms 8 --capture-tag tank-respawn-uo --probe-secs 30   # 12 s after the server
+PROBE vehicle 186 panzeriv_mp (4676.00, -1979.00, -7.88) (0.00, 180.00, 0.00)
+PROBE clear 186 0:804.161 45:604.451 90:282.875 135:390.146 180:494.823 225:1406.97 270:232.875 315:329.335
+PROBE vehicle 191 shermantank_mp (-274.00, -288.00, -7.87) (0.00, 270.00, 0.00)
+PROBE clear 191 0:297.86 45:667.332 90:807.961 135:678.646 180:493.875 225:378.832 270:1173.23 315:280.825
+PROBE place 13500 0 (4676.00, -1869.00, 0.12) 270
+PROBE activated 15550 186 seat 1 by 0
+PROBE seat 18550 0 (4677.49, -2179.00, 36.12) (0.00, 0.00, 0.00)
+PROBE seatnext 18600 0 (4678.31, -2179.24, 31.96) (0.00, -90.00, 0.00)

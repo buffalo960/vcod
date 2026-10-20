@@ -458,6 +458,16 @@ pitch spans both ways, round both sides and behind, and a 300 ms flick,
 each sweep held a second; then out. Its `veh=` lines carry the jeep's
 whole entity state, the gun's `angles2[2]` and `origin2[1]` included.
 
+`mp_cassino-tdm-slope-8ms-tank-gun-uo.txt`, retail UO 1.51b, 2026-10-20:
+`GUN` on the Panzer IV (`+set probe_vehicletype panzeriv_mp +set
+probe_bones 1`, `--capture-tag tank-gun-uo`), the gun on
+`tag_secondary_player`'s base with the tank's 50-up span. The same run's
+`PROBE bone` lines are `fixtures/vehicles/mp_cassino-tank-gun-bones-uo.txt`.
+`vehicle_ab`'s `the_tank_gun_replays_on_ours` matches every field of all
+923 snapshots, the gun's included (VERIFIED, replay), and
+`the_tank_rider_s_bones_follow_retail_s_in_both_seats` the marks of both
+stints (section 13, "The tank driver's link offset").
+
 ## 9. What vcod does
 
 - **Prediction.** `pmove::VehicleSeat` (`PlayerState::seat`) is read off
@@ -974,6 +984,26 @@ as `self.origin` and `self.angles` straight after the `spawn`: 1.49
 along the spawn's yaw and the 100 ms fall. vcod's `spawn` builtin runs
 the same think on a fresh sim, which holds no seat, and reads the same
 text (`vehicle_ab`'s `a_driver_spawned_out_of_the_seat_reads_retail_s_origin`).
+
+A frame later the script's read (`PROBE seatnext`) is wherever the
+client's next cmds took him: 33.15 in that run, 31.96 in a second one
+with an 8 ms cmd clock (`fixtures/seatspawn/mp_cassino-tank-cmds-uo.txt`,
+its cmds and snapshots in
+`playerstate/mp_cassino-tdm-slope-8ms-tank-respawn-uo.txt`), and the yaw
+-90, the view the probe kept across the spawn's new `delta_angles`
+(VERIFIED, capture). The spawn frame's `commandTime` is 18550, the
+frame's own time, not a cmd's: the probe's cmd stamped 18550 sits on the
+spawn's `delta_angles` (13653 against the seat's 62805) and its weapon
+echoes the spawn's, so it went out after that snapshot and ran in the
+next frame, where `ClientThink_real` drops it (its clock is not past
+`commandTime`) and it is still the next cmd's `pers.oldcmd`
+(cod11-combat.md 2.1) (VERIFIED, capture). Replayed that way,
+`a_driver_spawned_out_of_the_seat_moves_on_retail_s_cmds` reads retail's
+`seatnext` text and matches every snapshot after it on foot (VERIFIED,
+replay). The replay used to run the cmds up to a snapshot's
+`commandTime` before its frame, which on a spawn frame sent that cmd
+ahead of the spawn: its angles then based the spawn's `delta_angles`,
+and the yaw read 0.
 
 ### 11.6 A body inside a vehicle
 
@@ -1796,7 +1826,31 @@ not measured.
       `ps.origin`: an untagged link and every bone link to him read 20
       high (129.08 against 109.08), and from the first `nextvehslot`,
       which requests the slot it takes, they read level (VERIFIED,
-      `tank` run). The jeep's offsets are all zero and its links read
+      `tank` run; again in the 2026-10-20 tank gun run, whose driver's
+      marks `vehicle_ab`'s
+      `the_tank_rider_s_bones_follow_retail_s_in_both_seats` gates, 20
+      high through the first stint on both). In that run the driver
+      boards facing 90 off the hull, and from 300 ms after the use his
+      hands and head move as retail's did 50 to 150 ms earlier (16050 to
+      18150, worst 0.83 at 16250; feet within 0.06) (VERIFIED, replay);
+      the turret's ramp matches frame for frame, so the lag is in the
+      body, and it is not traced. The relink after the write links
+      at `r.currentOrigin` as written, unsnapped, where `ClientThink_real`'s
+      own link takes the snapped origin: `G_RunClient` (0x41dfc) runs
+      `G_SetFixedLink(ent, 2)`, `G_SetOrigin(ent, r.currentOrigin)`,
+      `trap_LinkEntity` and then copies `r.currentOrigin` into `ps.origin`,
+      with no snap on the way (VERIFIED decompile), so
+      through the first stint `r.absmin` sits 20 above the seat's
+      `ps.origin` less the box's unit and, once a `nextvehslot` asked for
+      the slot, level with it. vcod linked the rider at the truncated
+      origin until 2026-10-20 (0.08 low in the first stint, 0.63 back in
+      the driver's seat on mp_cassino); `vehicle_ab`'s
+      `a_tank_driver_boarded_by_use_sits_in_the_area_tree_at_his_link`
+      pins it. Every entity-pass trace (a missile's move, a blast's walk)
+      builds its bodies off the sims after his turn, so its broad box and
+      bones sit at the link too (INFERRED, read of `server.rs`'s entity
+      pass); a script trace or a turret round, before the pass or after
+      the end frame, finds him on the seat. The jeep's offsets are all zero and its links read
       level in every stint (VERIFIED, `jeep` run). vcod runs the refresh
       on the rider's turn of the entity pass, his vehicle first
       (`run_rider_link` in `server.rs`, 2026-10-18): `r.currentOrigin` and
