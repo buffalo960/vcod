@@ -26,6 +26,10 @@
 //	With `probe_bones` set, every frame each seated player's bones:
 //
 //	PROBE bone <time> <client> <seat> <tag> <origin>
+//
+//	Clients 0 and 1 log where the spawn left them as they are placed:
+//
+//	PROBE spawned <time> <entity number> <origin> <angles>
 
 main()
 {
@@ -143,6 +147,8 @@ try_place(veh)
 		logPrint("PROBE place " + gettime() + " " + self getEntityNumber() + " " + spot + " " + yaw + "\n");
 		return;
 	}
+	//	Where the spawn left him, before the placement moves him.
+	logPrint("PROBE spawned " + gettime() + " " + self getEntityNumber() + " " + self.origin + " " + self.angles + "\n");
 	side = getcvarint("probe_side");
 	if (side == 0)
 		side = 110;

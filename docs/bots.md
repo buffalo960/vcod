@@ -135,6 +135,11 @@ Bots play on 1.1, 1.5 and United Offensive servers, in every stock gametype:
 `dm`, `tdm`, `sd`, `re` and `bel`, and UO's `ctf`, `dom`, `hq` and `bas`.
 They are not very good. They find their way around stock maps, play each
 gametype's objectives, and fight when `vc_bot_shoot` is on.
+On objective gametypes a team spreads its bots over different routes,
+reshuffles who guards what each round, sends all its S&D attackers to one
+site and covers a planter, and in Retrieval escorts the carrier and holds
+the goal ahead of him
+([research/bot-objectives.md](research/bot-objectives.md) section 9).
 
 ## Known limits
 

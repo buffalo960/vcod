@@ -458,6 +458,16 @@ pitch spans both ways, round both sides and behind, and a 300 ms flick,
 each sweep held a second; then out. Its `veh=` lines carry the jeep's
 whole entity state, the gun's `angles2[2]` and `origin2[1]` included.
 
+`mp_peaks-tdm-slope-8ms-jeep-gun-spawn-uo.txt`, retail UO 1.51b,
+2026-10-20: the same `GUN` recipe with `--slope-from-spawn`. The log
+starts at the first playing snapshot, not 3 s past the weapon pick, so
+the spawn's think, the placement's fall and the boarding are in it. The
+probe wrote it as `--capture-tag jeep-gun-r5`, the fifth of five runs and
+the only one whose spawn (tdm spawnpoint 277) gave the seat 606. I
+renamed it. The run's `PROBE` lines, `PROBE spawned` among them, are
+`fixtures/vehicles/mp_peaks-jeep-gun-spawn-uo.txt` (section 13, "The
+driver's idle").
+
 `mp_cassino-tdm-slope-8ms-tank-gun-uo.txt`, retail UO 1.51b, 2026-10-20:
 `GUN` on the Panzer IV (`+set probe_vehicletype panzeriv_mp +set
 probe_bones 1`, `--capture-tag tank-gun-uo`), the gun on
@@ -1866,12 +1876,36 @@ face.
       with the toggle: all four tank playerstate captures read retail's
       toggle on every snapshot (VERIFIED, replay, 2026-10-20). On
       mp_peaks the seeded draw already reads it in every jeep capture
-      the gates tally but one: `mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt` opens seated
-      with 606 where ours sends 94, one set more, as a sloped spawn's
-      walk gives (INFERRED); the capture holds no spawn, and none of the
-      map's 32 tdm spawns pinned reproduces both the toggle and the event
-      ring retail's seat carries (VERIFIED, replay), so its `legsAnim`
-      is a named gap.
+      the gates tally but one: `mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt`
+      opens seated with 606 where the seeded draw sends 94, one set
+      more. Five retail `GUN` runs logged from the spawn
+      (`--slope-from-spawn`, `probe_vehicle`'s `PROBE spawned` line,
+      2026-10-20) settle it (VERIFIED, captures). The spawn and the
+      placement fall on one frame in all five (`PROBE spawned` and
+      `PROBE place` carry the same time). Four spawns (tdm spawnpoints
+      260, 263, 268, 272) open on foot with 697, the idle with the
+      toggle, and seat with 94. The fifth spawned on spawnpoint 277,
+      placed at (-3872, 3064, -25.528) (`placebits-retail.txt`). Its
+      think left him at (-3872.11, 3064.00, -28.18), and its snapshot
+      carries velocity (-12, 0, -3) and `legsAnim` 640, which is 128
+      (`pb_crouch_walk_forward_unarmed` in vcod's index) with the
+      toggle. The fall ends on the 277 slope, and the clip leaves a
+      slide, so the think's `PM_Footsteps` picks a walk with empty
+      hands (INFERRED). He lands from the placement with 185 and no
+      toggle and seats with 606, the old capture's value. A capsule
+      rests 2.65 under the spawnpoint's box drop there, and the same
+      think on 260 and 272, also sloped, leaves no slide (VERIFIED,
+      captures). Ours with spawnpoint 277 pinned leaves the same
+      velocity and 640 on the spawn frame. On that pin
+      `the_jeep_gun_from_a_logged_spawn_replays_on_ours` matches
+      every field of the new capture
+      (`mp_peaks-tdm-slope-8ms-jeep-gun-spawn-uo.txt`) from 900 ms
+      into the seat, and `the_jeep_gun_replays_on_ours` matches every
+      field of the old one, with no gap (VERIFIED, replay,
+      2026-10-20). Nothing in the server changed. The old capture's
+      own spawn is not in evidence. Of the map's 32 tdm spawns pinned
+      on it, 277 and (-1328, -160) match every field, and the other 30
+      miss only the toggle (VERIFIED, replay).
     - **The tank driver's link offset.** The seat link
       (0x8998d) links the player with `G_EntLinkToWithOffset` at
       `BG_GetVehiclePosOffset(type, requested slot)` (0x230e5): a use
