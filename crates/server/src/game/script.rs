@@ -667,16 +667,17 @@ impl ScriptRuntime {
             mod_,
             "none",
             None,
+            None,
         );
     }
 
-    /// Damage from `[inflictor, attacker]`, neither a player, with no
-    /// direction: [`Self::deliver_world_hit`]'s shape with a weapon and a
-    /// point, as a driverless vehicle's `VEH_PlayerDamage` passes them
-    /// (coduo-vehicles.md 11.6). The callback reads the missing direction,
-    /// and a missing point, as undefined (`Scr_PlayerDamage`, game.mp
-    /// 0x5ca18), so the stock gametypes add `DAMAGE_NO_KNOCKBACK`: no
-    /// knockback timer (cod11-movers.md 21, "The sine crush").
+    /// Damage from `[inflictor, attacker]`, neither a player:
+    /// [`Self::deliver_world_hit`]'s shape with a weapon, a point and a
+    /// direction, as a driverless vehicle's `VEH_PlayerDamage` passes them
+    /// (a zero direction, coduo-vehicles.md 11.6). `None` reaches the
+    /// callback undefined (`Scr_PlayerDamage`, game.mp 0x5ca18), and an
+    /// undefined direction makes the stock gametypes add
+    /// `DAMAGE_NO_KNOCKBACK` (cod11-movers.md 21, "The sine crush").
     #[allow(clippy::too_many_arguments)]
     pub fn deliver_unowned_hit(
         &mut self,
@@ -687,6 +688,7 @@ impl ScriptRuntime {
         mod_: &str,
         weapon: &str,
         point: Option<[f32; 3]>,
+        dir: Option<[f32; 3]>,
     ) {
         if !self.client_vitals(victim_slot).takedamage {
             return;
@@ -716,7 +718,7 @@ impl ScriptRuntime {
             Value::String(mod_),
             Value::String(weapon),
             point.map_or(Value::Undefined, Value::Vector),
-            Value::Undefined,
+            dir.map_or(Value::Undefined, Value::Vector),
             Value::String(hitloc),
         ];
         if let Err(e) = self.start_with_args(
