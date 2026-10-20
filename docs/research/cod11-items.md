@@ -672,9 +672,8 @@ and runs on its next turn; vcod's `ObjectTable::schedule` and
 holder whose turn ends in `GameHost::run_entity_think`. VERIFIED: 1.1d's
 `G_RunMissile` ends in `G_RunThink` (0x54050, 0x54398). INFERRED: a grenade
 that took a held slot's number loses its fuse to the free and vanishes
-unexploded a frame on. vcod keeps a missile's fuse in `Missiles`, and the
-missile's turn never runs the entity think, so there it flies on and
-explodes; not ported.
+unexploded a frame on. vcod hands that free to the missile pool
+(`Missiles::schedule_free`, `cod11-combat.md` 13.8).
 
 VERIFIED, `G_RunItem` (0x4eb18): a `trap_PointContents` with mask 0x80000000
 (0x4ec47..0x4ec4f) and a `G_FreeEntity` (0x4ec5f). VERIFIED, on a patched

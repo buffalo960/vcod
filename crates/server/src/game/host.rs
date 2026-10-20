@@ -1614,6 +1614,7 @@ impl GameHost {
         // `G_FreeVehicle`: the sound-blend entities join the free list
         // ahead of the vehicle.
         crate::game::vehicle::free(self, id);
+        self.missiles.free_vehicle_refs(id);
         self.triggers.remove(id);
         self.looped_fx.remove(&id);
         self.script_takedamage.remove(&id);

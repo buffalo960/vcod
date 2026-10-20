@@ -7926,6 +7926,22 @@ impl Server {
                     .unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
                 // A shell's direct hit lands before its splash, which skips
                 // the client it struck (`G_MissileImpact`, coduo-diff.md 21).
+                // UO's `G_MissileImpact` drops the inflictor with the owner
+                // (game.mp.uo 0x5dc8e), so `G_DamageClient` names weapon 0
+                // (combat doc 13.7); 1.1's hands the missile on.
+                let uo = self.proto.version == vcod_common::net::protocol::PROTOCOL_V22.version;
+                let (inflictor, weapon) = if x.owner.is_none() && uo {
+                    (None, "none")
+                } else {
+                    (
+                        Some(x.inflictor),
+                        crate::items::item_name(
+                            crate::defs::Defs::of(self.proto),
+                            x.weapon as usize,
+                        )
+                        .unwrap_or_default(),
+                    )
+                };
                 if let Some((victim, damage)) = x.direct
                     && rt.client_vitals(victim).takedamage
                     && sims.iter().any(|(slot, _)| *slot == victim)
@@ -7933,16 +7949,11 @@ impl Server {
                     let hit = crate::game::combat::Hit {
                         victim,
                         attacker,
-                        inflictor: Some(x.inflictor),
+                        inflictor,
                         damage,
                         dflags: 0,
                         mod_: x.direct_mod,
-                        weapon: crate::items::item_name(
-                            crate::defs::Defs::of(self.proto),
-                            x.weapon as usize,
-                        )
-                        .unwrap_or_default()
-                        .to_string(),
+                        weapon: weapon.to_string(),
                         point: x.at.into(),
                         // `BG_EvaluateTrajectoryDelta` at the contact: an
                         // artillery shell's is straight down.

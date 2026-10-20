@@ -1212,6 +1212,39 @@ impl Missiles {
         }
     }
 
+    /// The same sweep for a freed UO vehicle: its shells' `r.ownerNum` (the
+    /// vehicle) goes to 0x3ff and `parent` to NULL, so they charge nobody.
+    /// The driver they keep in `+0x330` is read only through a live owner
+    /// (`G_MissileImpact`, game.mp.uo 0x5dc8e..0x5dd33; combat doc 13.7).
+    pub fn free_vehicle_refs(&mut self, vehicle: EntId) {
+        for m in &mut self.live {
+            if m.shell.is_some_and(|s| s.vehicle == Some(vehicle)) {
+                m.owner = None;
+            }
+        }
+    }
+
+    /// `G_RunMissile` ends in `G_RunThink` (1.1d 0x54050, 0x54398, UO's
+    /// alike), and a missile's fuse is its think: a `G_FreeEntity` think set
+    /// on its entity (a script `delete`, the 1.1 drop ring's eviction)
+    /// replaces the fuse, and the missile flies on until `at_ms`, then goes
+    /// unexploded (combat doc 13.8). A popped smoke grenade's own free is
+    /// such a think too; one that exploded rides out its event.
+    pub fn schedule_free(&mut self, id: EntId, at_ms: i32) {
+        if let Some(m) = self
+            .live
+            .iter_mut()
+            .find(|m| m.id == id && (m.exploded_ms.is_none() || m.free_at_ms.is_some()))
+        {
+            m.free_at_ms = Some(at_ms);
+        }
+    }
+
+    /// `r.ownerNum` of a live missile: `Some(None)` once nobody owns it.
+    pub fn owner_of(&self, id: EntId) -> Option<Option<usize>> {
+        self.live.iter().find(|m| m.id == id).map(|m| m.owner)
+    }
+
     /// A throw's `trDelta`: `velocity` truncated per axis, plus the
     /// thrower's `carried` velocity along it. 1.1d's `FireWeapon`
     /// (0x6900c-0x6909c) normalizes `velocity` in place and keeps the dot
@@ -1355,6 +1388,8 @@ impl Missiles {
             Some(s) if s.takedamage && m.exploded_ms.is_none() => {
                 s.takedamage = false;
                 m.explode_at_ms = level_ms + GRENADE_DIE_MS;
+                // The think is one slot: the explode replaces a pending free.
+                m.free_at_ms = None;
                 true
             }
             _ => false,
@@ -1399,13 +1434,15 @@ impl Missiles {
 
     /// `fire_artillery` (0x5ff4a): a shell hanging 1000 above `at`, sent to
     /// nobody, dropped `delay_ms` on at `shell.speed` straight down. `at` is
-    /// already the barrage's 1000 up from the strike point.
+    /// already the barrage's 1000 up from the strike point. `owner` is the
+    /// barrage's: `None` when its caller left, and the shell then charges
+    /// nobody on contact (combat doc 13.7).
     #[allow(clippy::too_many_arguments)]
     pub fn fire_artillery(
         &mut self,
         ents: &mut ObjectTable,
         cx: &mut Cx,
-        owner: usize,
+        owner: Option<usize>,
         weapon: u8,
         at: Vec3,
         shell: Shell,
@@ -1430,7 +1467,7 @@ impl Missiles {
         };
         self.live.push(Missile {
             id,
-            owner: Some(owner),
+            owner,
             weapon,
             model: 0,
             traj: Trajectory {
@@ -1598,9 +1635,16 @@ impl Missiles {
         let i = self.live.iter().position(|m| m.id == id)?;
         let m = &mut self.live[i];
         if let Some(free_at) = m.free_at_ms {
-            // A popped smoke grenade flies on; `G_FreeEntity` is its think.
+            // A popped smoke grenade, or one whose fuse a free replaced
+            // ([`Missiles::schedule_free`]), flies on; `G_FreeEntity` is its
+            // think.
             let stepped = m.step(world, sims, models, bones, &mut self.draws, now_ms);
             self.splashes.extend(m.splash.take());
+            if let Stepped::Struck(c) = stepped {
+                // A shell still goes off on contact and rides out its event.
+                m.free_at_ms = None;
+                return Some(Turn::Exploded(m.impact(world, c, now_ms)));
+            }
             if now_ms >= free_at || stepped == Stepped::Freed {
                 self.live.remove(i);
                 return Some(Turn::Freed);
@@ -1984,6 +2028,31 @@ mod tests {
         assert_eq!(ms.missiles()[1].owner, Some(0));
         let frame = ms.run(None, &[], &[], None, 14_000);
         assert_eq!(frame.exploded[0].owner, None);
+    }
+
+    /// The vehicle is the shell's `r.ownerNum`: freeing it sweeps that to
+    /// 0x3ff, and `G_MissileImpact` reads the driver only through a live
+    /// owner (UO 0x5dc8e), so the shell charges nobody (13.7).
+    #[test]
+    fn a_shell_whose_vehicle_was_freed_charges_no_one() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles::default();
+        let tank = EntId(200, 0);
+        let shell = Shell {
+            drop_at_ms: None,
+            speed: 3000.0,
+            damage: 300,
+            vehicle: Some(tank),
+        };
+        let ents = &mut host.ents;
+        vm.with_cx(|cx| {
+            ms.fire_rocket(ents, cx, 0, 42, Vec3::Z * 40.0, Vec3::X, shell, 6, true, 0)
+        })
+        .unwrap();
+        ms.free_vehicle_refs(EntId(201, 0));
+        assert_eq!(ms.missiles()[0].owner, Some(0), "another entity's free");
+        ms.free_vehicle_refs(tank);
+        assert_eq!(ms.missiles()[0].owner, None);
     }
 
     /// Section 13 and the capture: the explode flips `eType` to 0, adds 178
@@ -2955,7 +3024,16 @@ mod tests {
         let ents = &mut host.ents;
         let id = vm
             .with_cx(|cx| {
-                ms.fire_artillery(ents, cx, 0, 6, Vec3::new(0.0, 0.0, 1000.0), shell, 4, 0)
+                ms.fire_artillery(
+                    ents,
+                    cx,
+                    Some(0),
+                    6,
+                    Vec3::new(0.0, 0.0, 1000.0),
+                    shell,
+                    4,
+                    0,
+                )
             })
             .unwrap();
         assert_eq!(ms.entities(p).count(), 0, "unsent while it hangs");
