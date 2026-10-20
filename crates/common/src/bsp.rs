@@ -179,10 +179,14 @@ pub struct Node {
     pub maxs: [i32; 3],
 }
 
-/// The other seven ints (area, leaf surface/brush/light ranges) are skipped.
+/// The other six ints (leaf surface/brush/light ranges) are skipped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Leaf {
     pub cluster: i32,
+    /// -1 in solid leafs, where `cluster` is -1 too on every stock map.
+    /// Areas join only through area portals, which no stock map opens, so
+    /// two leafs connect when they share it ([`areas_connected`]).
+    pub area: i32,
     /// -1 in solid leafs.
     pub cell: i32,
 }
@@ -374,6 +378,7 @@ impl Visibility {
             }],
             leafs: vec![Leaf {
                 cluster: 0,
+                area: 0,
                 cell: 0,
             }],
             pvs: None,
@@ -416,6 +421,12 @@ impl Visibility {
         self.leaf_at(p).map_or(-1, |l| l.cluster)
     }
 
+    /// The area a point falls in, -1 for a solid leaf. A missing tree reads
+    /// as area 0, so a server with no map culls nothing.
+    pub fn area_at(&self, p: [f32; 3]) -> i32 {
+        self.leaf_at(p).map_or(0, |l| l.area)
+    }
+
     /// Whether a viewer in `from` is shown something in `to`. A map with no
     /// lump 28 hides nothing.
     pub fn visible(&self, from: i32, to: i32) -> bool {
@@ -437,7 +448,19 @@ impl Visibility {
             last_leaf: 0,
         };
         self.box_leafs(0, mins, maxs, &mut walk, 0);
-        let mut out = LinkClusters::default();
+        let mut out = LinkClusters {
+            areas: [-1; 2],
+            ..LinkClusters::default()
+        };
+        // A box over a third area keeps the last as its second (`Object %i
+        // touching 3 areas`, coduo_lnxded 0x8099dee).
+        for leaf in walk.leafs.iter().filter_map(|&l| self.leafs.get(l)) {
+            match leaf.area {
+                -1 => {}
+                a if out.areas[0] == -1 || out.areas[0] == a => out.areas[0] = a,
+                a => out.areas[1] = a,
+            }
+        }
         let cluster = |i: usize| self.leafs.get(i).map_or(-1, |l| l.cluster);
         for &leaf in &walk.leafs {
             let c = cluster(leaf);
@@ -523,6 +546,26 @@ pub struct LinkClusters {
     /// The box reached a leaf at all; the engine unlinks an entity whose box
     /// lists none.
     pub linked: bool,
+    /// `areanum` and `areanum2`: the first two areas the listed leafs carry,
+    /// -1 for none. The snapshot cull sends an entity only when one of them
+    /// connects to the viewer's ([`areas_connected`]).
+    pub areas: [i32; 2],
+}
+
+/// `CM_AreasConnected` (cod_lnxded 0x8053f44, coduo_lnxded 0x8057abd): no
+/// area -1, and both in one flood. Areas flood only through a portal
+/// `trap_AdjustAreaPortalState` opened, which only a binary mover calls
+/// (`Reached_BinaryMover`, game.mp.uo 0x721ae), and no stock MP map has one,
+/// so a flood is one area.
+pub fn areas_connected(a: i32, b: i32) -> bool {
+    a >= 0 && b >= 0 && a == b
+}
+
+impl LinkClusters {
+    /// Whether one of the entity's areas connects to `area`.
+    pub fn in_area(&self, area: i32) -> bool {
+        self.areas.iter().any(|&a| areas_connected(area, a))
+    }
 }
 
 struct LeafWalk {
@@ -966,6 +1009,7 @@ pub fn parse(data: &[u8]) -> Result<Bsp> {
     })?;
     let leafs = records(lump(data, &dir, LUMP_LEAFS)?, 36, "leafs", |b| Leaf {
         cluster: le_i32(b, 0),
+        area: le_i32(b, 4),
         cell: le_i32(b, 24),
     })?;
     let leaf_lights = lump(data, &dir, LUMP_LEAFS)?
@@ -1881,6 +1925,7 @@ mod pvs_tests {
         let leafs = (0..=n)
             .map(|i| Leaf {
                 cluster: i as i32 + 1,
+                area: 0,
                 cell: 0,
             })
             .collect();
@@ -1961,5 +2006,43 @@ mod pvs_tests {
             pvs.cluster_count
         );
         assert!(pvs.row_bytes * 8 >= pvs.cluster_count);
+    }
+
+    /// `SV_LinkEntity` keeps the first area its leafs carry and the last
+    /// other one, a solid leaf's -1 counting for neither (coduo_lnxded
+    /// 0x8099dee), and the cull needs one of them to be the eye's.
+    #[test]
+    fn a_link_keeps_its_first_area_and_its_last_other() {
+        let plane = |dist| Plane {
+            normal: [1.0, 0.0, 0.0],
+            dist,
+        };
+        let node = |plane, children| Node {
+            plane,
+            children,
+            mins: [0; 3],
+            maxs: [0; 3],
+        };
+        // Front child first: the walk meets leafs 3, 2, 1, 0.
+        let leaf = |cluster, area| Leaf {
+            cluster,
+            area,
+            cell: 0,
+        };
+        let vis = Visibility {
+            planes: vec![plane(0.0), plane(10.0), plane(20.0)],
+            nodes: vec![node(0, [1, -1]), node(1, [2, -2]), node(2, [-4, -3])],
+            leafs: vec![leaf(0, 2), leaf(1, 0), leaf(2, 1), leaf(-1, -1)],
+            pvs: None,
+            models: Vec::new(),
+        };
+        let link = vis.link_clusters([-5.0, -1.0, -1.0], [25.0, 1.0, 1.0]);
+        assert_eq!(link.areas, [1, 2]);
+        assert!(link.in_area(1) && link.in_area(2));
+        assert!(!link.in_area(0) && !link.in_area(-1));
+        assert_eq!(vis.area_at([-5.0, 0.0, 0.0]), 2);
+        assert_eq!(vis.area_at([25.0, 0.0, 0.0]), -1);
+        let solid = vis.link_clusters([21.0, -1.0, -1.0], [25.0, 1.0, 1.0]);
+        assert_eq!((solid.areas, solid.clusters.len()), ([-1, -1], 0));
     }
 }

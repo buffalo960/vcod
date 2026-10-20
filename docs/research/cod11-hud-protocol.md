@@ -2200,6 +2200,32 @@ one of the entity's clusters is set in the eye's row. INFERRED: those are
 `r.linked`, `SVF_NOCLIENT`, the broadcast flags and the snapshot cull's
 own PVS test, so the answer is whether a snapshot built from the eye would
 carry the entity, except that an entity in no cluster counts as carried.
+VERIFIED, 1.5b's and United Offensive's `SV_inSnapshot` (1.5b `0x808d5d2`,
+`coduo_lnxded` `0x808e3a9`, syscall `0x32`'s handler; `trap_InSnapshot`
+game.mp.uo `0x844e0`): after the same `r.linked`, `SVF_NOCLIENT` and `0x18`
+tests it returns 1 for a non-zero `r.broadcastTime` (1.5b `+0xfc`, UO
+`+0x100`), whatever its value; then 0 unless the eye's area connects to
+one of the entity's two, 0 for an entity in no cluster, the cluster test,
+and last the fog (`cod15-protocol-diff.md` 15). Against 1.1 an entity in
+no cluster now counts as not carried, and the area test comes first.
+VERIFIED disassembly: only the snapshot builder clears it, on the first
+snapshot it builds whose `svs.time` is past it (`coduo_lnxded`
+`0x8096d53`, 1.5b `0x8095dc6`). INFERRED, from that and the end frame
+running before the snapshots: a sounded teammate is off the compass for
+one end frame longer than he rides snapshots. VERIFIED decompile: on UO
+`G_GetNonPVSFriendlyInfo` (`0x55762`) and `G_GetNonPVSTankInfo`
+(`0x9bf6d`) are its only callers.
+
+VERIFIED live, `client-probes/probe_snapcull` on mp_carentan, 2026-10-20,
+retail 1.1d and UO 1.51b (`tests/fixtures/entities/snapcull-carentan-*.txt`,
+gated by `uocull_ab`): slot 0 at (976, -864) reads allied slot 1 at
+(-992, 2328), out of its PVS, as `0x00ff9881` on both. Held 1000 units under
+the map (no cluster, area -1), slot 1 reads 0 on 1.1 and stays `0x00ff9881`
+on UO. After `playSound` on slot 1 the word reads 0 for the rest of the run
+on 1.1 (`SVF_BROADCAST`, and slot 1 rides slot 0's snapshots); on UO it
+reads 0 from the sound's frame through the frame 350 ms later, the one
+whose snapshot first leaves slot 1 out, and the word is back 400 ms after
+the sound.
 VERIFIED, `BG_PlayerStateToEntityState` (`0x2cbe8`): `s.eType` is 1 when
 the playerstate's `pm_flags` has `0x10000` or `0x40000` and 7 otherwise.
 

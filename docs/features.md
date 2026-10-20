@@ -282,7 +282,10 @@ something, the bullet links it.
   and UO the entity cull follows those engines: a sounded entity rides
   past the PVS for 300 ms, a looping one while it loops, a sounded
   `script_origin` never, and cull fog drops whatever lies past its far
-  distance, matched against live 1.5b and UO runs (same doc, 15).
+  distance, matched against live 1.5b and UO runs (same doc, 15). The
+  compass reads each engine's `SV_inSnapshot`: a teammate off the map
+  shows on UO and not on 1.1, a sounded one leaves it. An eye in a solid
+  leaf is sent no entities, on all three, as retail does.
 - Hosts United Offensive 1.51 (protocol 22) from a UO install with
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,
   means of death and event numbering, and UO's stock `dm`, `tdm`, `sd`,

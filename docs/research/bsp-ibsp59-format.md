@@ -224,7 +224,7 @@ leaf: i32 cluster; i32 area; i32 first_leaf_surface, leaf_surface_count;
       i32 first_light_index, light_index_count
 ```
 
-VERIFIED: every plane, child, brush and lump-24 reference is in range; `cluster` runs to `cluster_count - 1` of lump 28 (665 on mp_pavlov), `cell` to the cell count minus one, -1 for solid leafs. The tree reaches leafs 0..1753 on mp_pavlov; the 34 leafs after them belong to the 34 submodels, as in Q3. `area` is -1 or 0 on every stock map.
+VERIFIED: every plane, child, brush and lump-24 reference is in range; `cluster` runs to `cluster_count - 1` of lump 28 (665 on mp_pavlov), `cell` to the cell count minus one, -1 for solid leafs. The tree reaches leafs 0..1753 on mp_pavlov; the 34 leafs after them belong to the 34 submodels, as in Q3. `area` is -1 exactly where `cluster` is -1, and -1 or 0 on every stock 1.1 MP map; UO's mp_berlin, mp_ponyri, mp_rhinevalley and mp_uo_stanjel and 1.5's mp_bocage hold a few leafs in areas 1 to 7, as do several 1.1 single-player maps (VERIFIED, lump 21 of every stock map). The snapshot cull reads it (`docs/protocol-1.1.md`, "Which entities a client is sent").
 
 ### Lump 28, PVS
 

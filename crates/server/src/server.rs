@@ -1858,11 +1858,14 @@ fn fog_cull_of(p: &Protocol, configstrings: &[String]) -> Option<f32> {
 /// slot and its ping bit, or `Some(None)` for nobody. The viewer needs a
 /// team other than none or spectator; a candidate is a playing client on
 /// it whose entity is not in a snapshot from the viewer's leaned eye.
+/// `broadcast` is [`script::ScriptRuntime::in_snapshot_broadcast`] by slot.
+#[allow(clippy::too_many_arguments)]
 fn compass_friend(
     clients: &[Option<Client>],
     slot: usize,
     sessions: &[Option<follow::SessionState>],
     teams: &[i32],
+    broadcast: &[bool],
     cull: Option<(&vcod_common::bsp::Visibility, Option<f32>)>,
     time: i32,
     p: &Protocol,
@@ -1887,7 +1890,7 @@ fn compass_friend(
         // No map: nothing to cull against, so everything is in view.
         let (vis, fog) = cull?;
         let e = other.to_entity(p, n, c.last_processed_st);
-        if crate::world::in_snapshot(vis, eye, &e, time, p, fog) {
+        if crate::world::in_snapshot(vis, eye, &e, broadcast[n], time, p, fog) {
             return None;
         }
         pinged = other.ping;
@@ -8197,6 +8200,9 @@ impl Server {
                 .map(|slot| rt.client_team(slot))
                 .collect();
             let fog = fog_cull_of(self.proto, rt.configstrings());
+            let broadcast: Vec<bool> = (0..self.clients.len())
+                .map(|slot| rt.in_snapshot_broadcast(slot as u32))
+                .collect();
             for slot in 0..self.clients.len() {
                 let Some(sim) = self.clients[slot].as_mut().and_then(|c| c.sim.as_mut()) else {
                     continue;
@@ -8208,6 +8214,7 @@ impl Server {
                     slot,
                     &sessions,
                     &teams,
+                    &broadcast,
                     self.world.as_ref().map(|w| (&w.vis, fog)),
                     self.sv_time_ms,
                     self.proto,
@@ -9856,6 +9863,10 @@ impl Server {
     /// and written per client.
     fn send_snapshots(&mut self, moved: &[MoveSummary], wall_ms: Option<f32>) {
         let live = self.build_world_frame();
+        let svs_ms = self.svs_time_ms();
+        if let Some(rt) = self.script.as_mut() {
+            rt.expire_broadcast_times(svs_ms);
+        }
         let collision_vis = self.world.as_ref().map(|w| &w.vis);
         let teams: Vec<i32> = (0..self.clients.len())
             .map(|slot| {
