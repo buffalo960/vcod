@@ -82,6 +82,21 @@ serverCommand 29: i "^1Revive:^7 Join our Discord server Cod1.net/^6Discord"
 and re-reads the applied table via `trap_GetGameState` (`0x4f`), exactly as Q3's
 `CG_ConfigStringModified` does.
 
+`v` sets the client's own cvar, the one the console, the HUD and the
+config read; there is no separate store for server-set cvars. VERIFIED:
+the `v` arm of 1.1's `CG_ServerCommand` copies argv[1] and passes it with
+argv[2] to `0x30030550`, which is trap 9; UO's arm calls `0x3003d570`,
+also trap 9. VERIFIED: CoDMP.exe's cgame trap dispatcher (`0x401e22`,
+table at `0x4041f0`) sends trap 9 to `0x402331`, which calls `Cvar_Set2`
+(`0x439650`) with `eax` 1, the `force` path: no read-only, cheat or latch
+check, and an unregistered name is made with no flags (cod11-console.md
+5). INFERRED that UO's engine does the same (no CoDUOMP.exe trap table was
+read). INFERRED, off Q3's `cvar_modifiedFlags`: a `v` of a userinfo cvar
+sends a userinfo change and one of an archived cvar rewrites the config.
+The 140/204 mirror's writer (`0x3002bc60`, section 5) is a trap 9 too;
+vcod keeps the mirror apart (`play::cvars::ClientCvars`) and lets a name
+the server set with `v` this connection win over it.
+
 ### 0.1 The script menu handshake
 
 Measured on 2026-08-31 against the retail 1.1d dedicated server, dm on
