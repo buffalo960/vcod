@@ -962,10 +962,11 @@ struct WorldCopy {
 }
 
 impl WorldCopy {
+    /// [`ModelPose::to_local`]'s turn, with no spawn origin.
     fn to_local(self, p: Vec3) -> Vec3 {
         let d = p - self.origin;
         match self.axis {
-            Some([f, l, u]) => Vec3::new(f.dot(d), l.dot(d), u.dot(d)),
+            Some(axis) => Vec3::from(axis.map(|a| crate::x87::dot(a, d) as f32)),
             None => d,
         }
     }
@@ -1105,11 +1106,13 @@ impl ModelPose {
     }
 
     /// A world point in the frame the brushes were built in: turned back
-    /// about the pose's origin and put at the spawn origin.
+    /// about the pose's origin and put at the spawn origin. Each dot stays
+    /// on the x87 stack and is stored once (`cod_lnxded` 0x8056a7d..
+    /// 0x8056bc6); at ten thousand units out a rounded product moves the
+    /// point a few thousandths (movers doc 22).
     fn to_local(self, p: Vec3, spawn: Vec3) -> Vec3 {
         let d = p - self.origin;
-        let [f, l, u] = self.axis;
-        Vec3::new(f.dot(d), l.dot(d), u.dot(d)) + spawn
+        Vec3::from(self.axis.map(|a| crate::x87::dot(a, d) as f32)) + spawn
     }
 
     /// A plane of the brush as built, `n·p <= d` at the spawn `origin`, moved
