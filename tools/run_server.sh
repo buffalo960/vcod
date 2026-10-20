@@ -18,15 +18,19 @@
 #   COD_LNXDED       server binary (default private/reference/cod-lnxded-1.1d/cod_lnxded,
 #                    cod-lnxded-1.5b/cod_lnxded for 1.5,
 #                    coduo-lnxded-1.51b/coduo_lnxded for uo)
-#   COD_LNXDED_HOME  homepath holding main/game.mp.i386.so (default private/server,
-#                    private/server-1.5 for 1.5), or uo/game.mp.uo.i386.so
-#                    (default private/server-uo for uo)
+#   COD_LNXDED_HOME  homepath holding main/game.mp.i386.so, or uo/game.mp.uo.i386.so.
+#                    Unset, the module comes from private/server (private/server-1.5,
+#                    private/server-uo) and the server runs in a homepath of its port's
+#                    own, private/homes/<that name>-<port>, with a fresh archived
+#                    config each start (tools/retail_home.sh); games_mp.log is there.
 #
 # The 1.5b and UO binaries link libstdc++.so.5 (gcc 3.2), which current
 # distributions no longer ship; the script puts the binary's lib/ directory
 # (private/reference/cod-lnxded-1.5b/lib, coduo-lnxded-1.51b/lib) on
 # LD_LIBRARY_PATH, so drop a 32-bit copy there (Debian's libstdc++5 i386).
 #   PORT             UDP port (default 28960)
+#   PRE_MAP_ARGS     engine arguments placed before +map, as shell words; the ones
+#                    after the map land after the load, too late for sv_pure 1
 #
 #   tools/run_server.sh [map] [+set cvar value ...]
 #     map defaults to mp_carentan (mp_cassino for uo); anything after it is passed to the engine
@@ -50,23 +54,23 @@ case "${COD_VERSION:-1.1}" in
 esac
 [ -d "$REF/lib" ] && export LD_LIBRARY_PATH="$PWD/$REF/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 BIN="${COD_LNXDED:-$REF/$EXE}"
-HOMEPATH="${COD_LNXDED_HOME:-$HOME_DEFAULT}"
 MAP="${1:-$MAP_DEFAULT}"
 [ -x "$BIN" ] || { echo "server binary $BIN missing or not executable; set COD_LNXDED" >&2; exit 1; }
-[ -f "$HOMEPATH/$MODULE" ] || {
-    echo "no game module at $HOMEPATH/$MODULE; set COD_LNXDED_HOME" >&2; exit 1; }
 if [ ! -e /lib/ld-linux.so.2 ]; then
     echo "32-bit loader /lib/ld-linux.so.2 missing; the server needs a 32-bit glibc" >&2
     exit 1
 fi
-HOMEPATH="$(cd "$HOMEPATH" && pwd)"
+GAMEDIR="${MODULE%%/*}" PORT_USED="${PORT:-28960}"
+. tools/retail_home.sh
+eval "PRE_ARGS=(${PRE_MAP_ARGS:-})"
 exec "$BIN" \
     +set dedicated 1 \
     +set fs_basepath "$COD_DIR" \
     +set fs_homepath "$HOMEPATH" \
-    +set net_port "${PORT:-28960}" \
+    +set net_port "$PORT_USED" \
     +set sv_maxclients 8 \
     +set sv_pure 0 \
     +set sv_allowDownload 1 \
+    "${PRE_ARGS[@]}" \
     +map "$MAP" \
     "${@:2}"

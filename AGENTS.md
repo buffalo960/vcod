@@ -243,7 +243,12 @@ check.
   `client-probes/probe_*`) installed as the gametype and prints its `PROBE`
   lines; `COD_VERSION` picks the server as `run_server.sh` does (UO's
   gametypes and log live under the homepath's `uo/`). A worktree has no
-  `private/`; link the main checkout's in (it is gitignored). The retail engine runs at most 32 `+`
+  `private/`; link the main checkout's in (it is gitignored). Without
+  `COD_LNXDED_HOME` both scripts run in a homepath of the port's own,
+  `private/homes/<server>-<port>` (printed on stderr; `games_mp.log` is
+  there), so two runs on two ports share no log, and its archived config
+  is dropped each start. `PRE_MAP_ARGS` holds `+set`s that must land
+  before `+map`. The retail engine runs at most 32 `+`
   commands and folds the rest of the line into the 32nd's value;
   `run_probe.sh` spends twelve, so a recipe gets twenty `+set`s.
   `tools/capture_probes.sh > .../retail-captures.txt` reruns the
@@ -548,8 +553,8 @@ dropped, so test such a builtin through `ScriptRuntime`.
   opens with the paks of `uo_cgame_mp_x86.dll` and `uo_ui_mp_x86.dll`
   (`Protocol::pure_dlls`), not 1.1's modules its `main/` still holds. Extra
   arguments to `tools/run_server.sh` land after `+map`, so `+set sv_pure 1`
-  there leaves `sv_paks` empty yet still drops; pass it before the map to
-  test a pure server.
+  there leaves `sv_paks` empty yet still drops; pass it before the map
+  (`PRE_MAP_ARGS='+set sv_pure 1'`) to test a pure server.
 - Cvars: every `L` cvar latches until the next load, so a latched
   `g_gametype` must not reach serverinfo early. `devmap` sets `sv_cheats 1`
   after the load and `map` sets it back. The server ignores an OOB
