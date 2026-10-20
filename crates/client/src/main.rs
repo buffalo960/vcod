@@ -550,7 +550,8 @@ struct Args {
     /// Every referenced pak no installed pak matches by checksum is fetched
     /// into DIR/<game>/ (a scratch directory, never the install), named as
     /// retail names it, then `donedl`; each prints its checksum beside the
-    /// server's `sv_referencedPaks` entry. Writes no fixture.
+    /// server's `sv_referencedPaks` entry. Writes no fixture. Under
+    /// --vanilla it fetches nothing and searches only the stock paks.
     #[arg(long, value_name = "DIR")]
     probe_download: Option<std::path::PathBuf>,
     /// Walk the --probe-slope route and write every usercmd sent and every
