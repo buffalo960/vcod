@@ -1781,16 +1781,6 @@ fn oob_argv(raw: &[u8], n: usize) -> String {
 /// `CsRange::Menu`'s 32 slots.
 const MAX_MENUS: i64 = 31;
 
-/// `Cmd_MenuResponse_f` (0x486d8) on `mr <serverId> <menuIndex> <response>`,
-/// tokenized as `Cmd_TokenizeString` does (quotes group). The menu and the
-/// response the `menuresponse` notify carries, or `None` for a stale
-/// serverId, the one shape retail drops (gsc language doc 6):
-///
-/// - any argument count but four is the menu `""` and the response `"bad"`,
-///   which is what a client's `mr <index> noop` and `mr <index> bad` reach;
-/// - an index `strtol` reads past 31 (unsigned, so a negative one too) names
-///   the menu by its own text;
-/// - otherwise the menu is the slot's configstring, empty if unset.
 /// UO's `Cmd_FlameDamageClient_f` (game.mp.uo 0x4ee2c) on `fdc`'s
 /// arguments: exactly one, read into a 4-byte buffer (so its first three
 /// characters) and `atoi`'d, then kept when it lies in `0..=maxclients`
@@ -1807,6 +1797,16 @@ fn fdc_inflictor(args: &str, max_clients: usize) -> Option<u32> {
         .filter(|&n| n as usize <= max_clients)
 }
 
+/// `Cmd_MenuResponse_f` (0x486d8) on `mr <serverId> <menuIndex> <response>`,
+/// tokenized as `Cmd_TokenizeString` does (quotes group). The menu and the
+/// response the `menuresponse` notify carries, or `None` for a stale
+/// serverId, the one shape retail drops (gsc language doc 6):
+///
+/// - any argument count but four is the menu `""` and the response `"bad"`,
+///   which is what a client's `mr <index> noop` and `mr <index> bad` reach;
+/// - an index `strtol` reads past 31 (unsigned, so a negative one too) names
+///   the menu by its own text;
+/// - otherwise the menu is the slot's configstring, empty if unset.
 fn parse_menu_response(cmd: &str, server_id: i32) -> Option<(MenuRef, String)> {
     let args = crate::game::say::tokenize(cmd);
     let [_, sid, index, response] = args.as_slice() else {
