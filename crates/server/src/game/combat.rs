@@ -1236,6 +1236,8 @@ pub struct BodyPose {
     pub slope: vcod_common::playerpose::BodySlope,
     /// A gunner's legs blend, the turret placement's leaves.
     pub turret_leaves: Option<Vec<(usize, f32)>>,
+    /// `ClientSim::gunner_left`.
+    pub turret_left: Option<(usize, Vec<(usize, f32)>)>,
     /// A UO rider's seat: the frame the body is posed in and the
     /// controllers' rider branch (docs/research/coduo-vehicles.md 11.4).
     pub seat: Option<vcod_common::playerpose::BodySeat>,
@@ -1268,6 +1270,11 @@ impl BodyPose {
             // placement blend descends an aim group.
             group_pitch: vcod_common::pmove::aim::angle_normalize_180(self.input.view[0]),
             turret_leaves: self.turret_leaves.as_deref().filter(|_| mounted),
+            turret_left: self
+                .turret_left
+                .as_ref()
+                .map(|(n, l)| (*n, l.as_slice()))
+                .filter(|_| mounted),
             controllers: self.eased.or_else(|| self.target_controllers()),
             seat_leaves: match self.seat_ramp.at(now_ms) {
                 ramped if !ramped.is_empty() => ramped,

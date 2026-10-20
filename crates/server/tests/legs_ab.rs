@@ -504,6 +504,7 @@ fn drawn_feet(draw_ms: i32) -> Option<(usize, f32)> {
             nodes: torso.node_weights(now),
             group_pitch: 0.0,
             turret_leaves: None,
+            turret_left: None,
             seat_leaves: Vec::new(),
             controllers: None,
             leaf_times: Vec::new(),
