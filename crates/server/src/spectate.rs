@@ -1988,9 +1988,9 @@ impl ClientSim {
         self.damage.taken += damage;
         self.damage.from = has_dir.then_some(dir);
         if !fatal {
-            // No `pain` animscript event: retail's server raises none for a
-            // surviving hit, and the hit frame keeps `legsAnim` 634 and
-            // `torsoAnim` 0 in both captures (combat doc, 8.4 and 3.4). The
+            // No `pain` animscript event: no server game module raises one
+            // (combat doc 16.4), and the hit frame keeps `legsAnim` 634,
+            // `torsoAnim` 0 and both timers in the captures (8.4, 3.4). The
             // stock clause would put `pb_crouch_pain_holdStomach` on a
             // standing player for 1.35 s, doubling it under the next shot.
             return;
