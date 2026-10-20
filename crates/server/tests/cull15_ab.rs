@@ -182,3 +182,24 @@ fn the_15_cull_matches_retail_step_for_step() {
         }
     }
 }
+
+/// 1.5b's `SV_inSnapshot` on `client-probes/probe_snapcull`, as UO's: an
+/// eye in a solid leaf is sent nothing, a teammate in no cluster is on the
+/// compass, a sounded one is off it until the snapshot after his broadcast
+/// time runs out, and one in the PVS past a cull fog is on it and off it
+/// again while sounded (docs/research/cod11-hud-protocol.md 9).
+#[test]
+fn the_15_solid_eye_fog_and_compass_match_retail() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        eprintln!("COD_DIR is not a 1.5 install: skipping");
+        return;
+    }
+    common::snapcull::matches(
+        "tests/fixtures/entities/snapcull-carentan-15.txt",
+        fs,
+        &PROTOCOL_V6,
+    );
+}

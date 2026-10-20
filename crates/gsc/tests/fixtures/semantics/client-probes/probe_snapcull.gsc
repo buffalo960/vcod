@@ -1,20 +1,22 @@
 //	What the snapshot builder sends an eye in a solid leaf, and what the
 //	compass's `trap_InSnapshot` makes of a teammate in no cluster and of
 //	one `playSound` touched (cod11-hud-protocol.md 9, cod15-protocol-diff.md
-//	15). 1.1 and UO, mp_carentan. Slot 0, the compass viewer, stands at
+//	15). 1.1, 1.5 and UO, mp_carentan. Slot 0, the compass viewer, stands at
 //	(976, -864); slot 1, the subject, at (-992, 2328), out of its PVS, both
 //	on allies. The script holds the subject 1000 units under the map (a
 //	solid leaf, no cluster) for three seconds, puts him back, then sounds
-//	him. Logs:
+//	him. Then it moves him into slot 0's PVS 1300 units off, sets a
+//	1000-unit cull fog, sounds him inside it and clears it with exponential
+//	fog. Logs:
 //
 //		PROBE begin <num>
 //		PROBE step <name> <time>
 //
-//	Recipe: `[COD_VERSION=uo] SECS=40 tools/run_probe.sh
+//	Recipe: `[COD_VERSION=1.5|uo] SECS=60 tools/run_probe.sh
 //	client-probes/probe_snapcull mp_carentan`, then the viewer `vcod
-//	--net-probe <addr> --probe-compass --probe-team allies --probe-secs 30`
+//	--net-probe <addr> --probe-compass --probe-team allies --probe-secs 45`
 //	(UO: `--game-dir <UO install> --mod-dir uo`) and two seconds later the
-//	subject `--probe-edge watch --probe-secs 28`. The viewer's `COMPASS`
+//	subject `--probe-edge watch --probe-secs 43`. The viewer's `COMPASS`
 //	lines and the subject's `EDGE ents` lines are the measurement
 //	(crates/server/tests/uocull_ab.rs).
 
@@ -87,6 +89,18 @@ script()
 	wait 3;
 	step("sound");
 	self playSound("MP_bomb_plant");
+	wait 3;
+	step("near");
+	self setOrigin((1120, 432, 0));
+	wait 3;
+	step("fog");
+	setCullFog(0, 1000, .5, .5, .5, 0);
+	wait 3;
+	step("fog_sound");
+	self playSound("MP_bomb_plant");
+	wait 3;
+	step("exp_fog");
+	setExpFog(.0002, .5, .5, .5, 0);
 	wait 3;
 	step("done");
 }

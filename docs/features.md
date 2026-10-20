@@ -284,7 +284,8 @@ something, the bullet links it.
   `script_origin` never, and cull fog drops whatever lies past its far
   distance, matched against live 1.5b and UO runs (same doc, 15). The
   compass reads each engine's `SV_inSnapshot`: a teammate off the map
-  shows on UO and not on 1.1, a sounded one leaves it. An eye in a solid
+  shows on 1.5 and UO and not on 1.1, one past a cull fog shows on 1.5
+  and UO, a sounded one leaves it. An eye in a solid
   leaf is sent no entities, on all three, as retail does.
 - Hosts United Offensive 1.51 (protocol 22) from a UO install with
   `--mod-dir uo`: UO's queries, cvars, configstring layout, 63 weapons,

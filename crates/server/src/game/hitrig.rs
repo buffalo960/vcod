@@ -149,8 +149,8 @@ fn build(fs: &Pk3Fs, assembly: &Assembly) -> Option<Rc<Skeleton>> {
         .enumerate()
         .filter_map(|(i, (name, tag))| {
             let mut model = xmodel::load(fs, name).ok()?;
-            // `G_DObjUpdate` (1.5b 0x6b71c) hands the flag to the engine with
-            // the model; that the trace then skips its boxes is INFERRED.
+            // The engine's hit-box walk skips a flagged model's boxes
+            // (docs/research/cod15-protocol-diff.md, `getAttachIgnoreCollision`).
             if assembly.ignore_collision >> i & 1 != 0 {
                 for b in &mut model.bones {
                     b.hit_mins = glam::Vec3::ZERO;
