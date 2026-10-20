@@ -67,8 +67,9 @@ shader, efx, weapon, menu, sound alias, gsc) from a scratch harness.
   `coduoauthorize.activision.com` (strings in `CoDUOMP.exe` and
   `coduo_lnxded`, VERIFIED). Live, 2026-10-20: the master answers on
   20510, `getservers 21`, `22` and `24 full empty` with an empty
-  `getserversResponse` and `getservers 23 full empty` with 6 addresses
-  (VERIFIED). Which protocol those 6 speak, and which one the retail UO
+  `getserversResponse`, `getservers 23 full empty` with 6 addresses, and
+  `getservers 1` and `6` with 46 and 69, so it also lists 1.1 and 1.5
+  servers (VERIFIED). Which protocol those 6 speak, and which one the retail UO
   browser asks for, is open; vcod's browser still sends `getservers 1`
   and `6` to whichever master the install names.
 
