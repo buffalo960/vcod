@@ -54,8 +54,9 @@ const PACED_DROP: f32 = 200.0;
 const COAST_TICKS: usize = 16;
 /// How high over a drop's landing [`a_miss_hurts`] looks out from.
 const MISS_EYE: f32 = 48.0;
-/// How far either side of the body a run off a drop whose miss can hurt
-/// has to land from too ([`Follower::edge_holds`]).
+/// How far either side of the body a run off a drop, or a run on that
+/// leaves the ground, whose miss can hurt has to land from too
+/// ([`Follower::edge_holds`]).
 const ASIDE_DROP: f32 = 2.0;
 /// An edge whose ends differ by less than this in height is level, and a
 /// walk one way stands in for the walk back.
@@ -1679,6 +1680,10 @@ pub struct Follower {
     /// The last drop asked about, and whether a miss of it hurts
     /// ([`Self::miss_hurts`]).
     miss_hurt: Option<((u32, u32), bool)>,
+    /// A jump edge whose walk on from where the body passed its first node
+    /// arrived without the jump ([`Self::edge_holds`]): the bot runs it
+    /// as that walk did ([`Self::jump_cued`]).
+    walked_jump: Option<(u32, u32)>,
     /// The last edge asked about, and whether only a creep proved it
     /// ([`Self::creeps_off`]).
     creep_off: Option<((u32, u32), bool)>,
@@ -2287,6 +2292,7 @@ impl Follower {
         };
         let jump = g.jumps.contains(&(a, b));
         let edge = (a, b);
+        self.walked_jump = None;
         // A crouched jump's walk is the gait that proved it: no other gets
         // through the window.
         let gait = if g.crouch_jumps.contains(&edge) {
@@ -2360,10 +2366,51 @@ impl Follower {
         {
             return false;
         }
-        match walk_with(world, at, Some(pace), b.truncate(), Some(b.z), gait) {
-            Walked::Arrived(_, jumped) => jump || !jumped,
-            _ => false,
+        let walk = |at: Vec3, trail: &mut Trail| {
+            let w = walk_sliding(
+                world,
+                at,
+                Some(pace),
+                1.0,
+                b.truncate(),
+                Some(b.z),
+                gait,
+                trail,
+            );
+            match w {
+                Walked::Arrived(_, jumped) if jump || !jumped => Some(jumped),
+                _ => None,
+            }
+        };
+        let mut trail = Trail::default();
+        let Some(jumped) = walk(at, &mut trail) else {
+            return false;
+        };
+        // A jump edge the walk on runs without its jump: the bot does not
+        // jump either. Off mp_ship's stair stringer at (5823, 567, 92) the
+        // walk on to (5792, 576, 76) slides along the stringer's end where
+        // the bot, pinned on it, jumped on its cue and fell back, again and
+        // again (seed 2553 on 1080e30d, bot-navigation.md section 3).
+        if jump && !jumped {
+            self.walked_jump = Some(edge);
         }
+        // A run on, neither a jump nor down a step, that comes down off
+        // the ground under where it set off, where a miss can hurt: a run
+        // a couple of units either side may not fall deeper than a jump.
+        // Off mp_ship's dome crest at (3615, -345, 635) the walk on from
+        // where a bot passed the node dips 7 onto the south face, the same
+        // walk two units across flies off it, and the bot flew off it to
+        // the hold at 56 (seed 4231, bot-navigation.md section 3).
+        let across = pace.truncate().perp().normalize_or_zero().extend(0.0) * ASIDE_DROP;
+        let flies = |at: Vec3| {
+            let mut trail = Trail::default();
+            walk(at, &mut trail).is_none() && trail.dip > vcod_common::pmove::JUMP_HEIGHT
+        };
+        jump || trail.dip <= 0.0
+            || b.z < a.z - vcod_common::pmove::STEPSIZE
+            || across == Vec3::ZERO
+            || !self.miss_hurts(world, edge, b)
+            || !(flies(at + across) || flies(at - across))
     }
 
     /// Whether a body faster than the walk's run, at `pace` and its
@@ -2456,7 +2503,6 @@ impl Follower {
         to: Vec3,
         gait: Gait,
     ) -> Walked {
-        let mut slid = Vec::new();
         walk_sliding(
             world,
             at,
@@ -2465,7 +2511,7 @@ impl Follower {
             to.truncate(),
             Some(to.z),
             gait,
-            &mut slid,
+            &mut Trail::default(),
         )
     }
 
@@ -3121,6 +3167,17 @@ impl Follower {
             (Some(&a), Some(&b)) => g.jumps.contains(&(a, b)),
             _ => false,
         }
+    }
+
+    /// Whether the bot jumps on the way to the current waypoint: a jump
+    /// edge, unless its walk on from where the body passed the edge's
+    /// first node ran it without the jump ([`Self::walked_jump`]).
+    pub fn jump_cued(&self, g: &NavGraph) -> bool {
+        let into = self
+            .next
+            .checked_sub(1)
+            .and_then(|i| Some((*self.path.get(i)?, *self.path.get(self.next)?)));
+        self.jumping(g) && (self.walked_jump.is_none() || self.walked_jump != into)
     }
 
     /// Whether the way to the current waypoint is a crouched jump edge: the
@@ -4112,10 +4169,13 @@ fn walk_with(
     floor: Option<f32>,
     gait: Gait,
 ) -> Walked {
-    let mut slid = Vec::new();
-    let walked = walk_sliding(world, from, pace, 1.0, target, floor, gait, &mut slid);
+    let mut trail = Trail::default();
+    let walked = walk_sliding(world, from, pace, 1.0, target, floor, gait, &mut trail);
     let proving = pace.is_none() && matches!(gait, Gait::Forward | Gait::Backward);
-    if proving && matches!(walked, Walked::Arrived(..)) && slid.iter().any(|&p| drains(world, p)) {
+    if proving
+        && matches!(walked, Walked::Arrived(..))
+        && trail.slid.iter().any(|&p| drains(world, p))
+    {
         return Walked::Blocked;
     }
     walked
@@ -4166,9 +4226,17 @@ const CLIENT_SPLITS: [[i32; 3]; 3] = [[16, 17, 17], [17, 16, 17], [17, 17, 16]];
 const SETTLE_TICKS: usize = 40;
 const HELD_TICKS: usize = 10;
 
+/// What a walk passed over: the spots where the body was off the ground
+/// against a plane too steep to stand on, and the deepest it went under its
+/// start off the ground and off the rungs.
+#[derive(Default)]
+struct Trail {
+    slid: Vec<Vec3>,
+    dip: f32,
+}
+
 /// [`walk_with`] without the crease test, the body's weapon moving it at
-/// `move_scale`; `slid` gathers the spots where the body was off the
-/// ground against a plane too steep to stand on.
+/// `move_scale`; `trail` gathers what it passed over.
 #[allow(clippy::too_many_arguments)]
 fn walk_sliding(
     world: &CollisionWorld,
@@ -4178,7 +4246,7 @@ fn walk_sliding(
     target: glam::Vec2,
     floor: Option<f32>,
     gait: Gait,
-    slid: &mut Vec<Vec3>,
+    trail: &mut Trail,
 ) -> Walked {
     let dist = target.distance(from.truncate());
     let on_floor = |z: f32| floor.is_none_or(|f| (z - f).abs() < ARRIVE);
@@ -4287,11 +4355,12 @@ fn walk_sliding(
             rung_top = rung_top.max(ps.origin.z);
         }
         if ps.sliding() && !ps.on_ladder {
-            slid.push(ps.origin);
+            trail.slid.push(ps.origin);
         }
         let held = ps.on_ground || ps.on_ladder;
         if !held {
             fell = true;
+            trail.dip = trail.dip.max(from.z - ps.origin.z);
             fall_top = fall_top.max(ps.origin.z);
         }
         let deep = match pace {
@@ -4978,7 +5047,7 @@ mod tests {
                 ledge.truncate(),
                 Some(ledge.z),
                 Gait::Forward,
-                &mut Vec::new(),
+                &mut Trail::default(),
             )
         };
         assert!(matches!(run(1.0), Walked::Arrived(..)));
@@ -5669,7 +5738,7 @@ mod tests {
         assert!(!drains(w, Vec3::new(383.21103, 2802.2563, -42.117294)));
         let node = |x: f32, y: f32, z: f32| settle(w, Vec3::new(x, y, z + 2.0), 0.0).unwrap();
         let (top, patch) = (node(385.2, 2831.8, -22.2), node(385.6, 2785.7, -52.6));
-        let mut slid = Vec::new();
+        let mut trail = Trail::default();
         let straight = walk_sliding(
             w,
             top,
@@ -5678,9 +5747,9 @@ mod tests {
             patch.truncate(),
             None,
             Gait::Forward,
-            &mut slid,
+            &mut trail,
         );
-        assert!(matches!(straight, Walked::Arrived(..)) && !slid.is_empty());
+        assert!(matches!(straight, Walked::Arrived(..)) && !trail.slid.is_empty());
         let walked = walk_with(w, top, None, patch.truncate(), None, Gait::Forward);
         assert!(!matches!(walked, Walked::Arrived(..)));
     }
@@ -7100,6 +7169,99 @@ mod tests {
         assert!(coasts_off(w, mast, Vec3::new(-176.0, -72.0, 0.0)));
         let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
         assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
+    }
+
+    /// mp_ship's dome crest: a bot climbing the dome passed the node at
+    /// (3615, -345, 635) at `REACH`, turned for (3584, -349, 640), left
+    /// the ground over the crest and flew off the south face to the hold
+    /// at 56 (seed 4231 on 1080e30d; body and pace as the follower read
+    /// them). The walk on from the body lands; two units across it flies
+    /// off, so the edge does not hold from there. From the node it does,
+    /// and so does a walk whose runs aside miss without falling.
+    #[test]
+    fn a_run_on_that_leaves_the_ground_over_a_fall_lands_from_either_side() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let a = Vec3::new(3615.4631, -344.67303, 635.2741);
+        let b = Vec3::new(3583.9604, -348.952, 640.3489);
+        let g = NavGraph::from_parts(vec![a, b], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let at = Vec3::new(3636.6252, -336.76816, 628.8017);
+        let pace = Vec3::new(-122.0, -124.0, 31.0);
+        let mut trail = Trail::default();
+        let on = walk_sliding(
+            w,
+            at,
+            Some(pace),
+            1.0,
+            b.truncate(),
+            Some(b.z),
+            Gait::Forward,
+            &mut trail,
+        );
+        assert!(matches!(on, Walked::Arrived(_, false)) && trail.dip > 0.0);
+        assert!(a_miss_hurts(w, b));
+        assert!(
+            !f.edge_holds(Some(w), at, pace, &g),
+            "from where the bot passed"
+        );
+        let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
+        assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
+        assert!(f.edge_holds(Some(w), a, Vec3::ZERO, &g), "from rest on it");
+        // The crow's nest ladder's foot at 692: the walk hops a lip and its
+        // runs aside never arrive, but neither falls.
+        let (a, b) = (
+            Vec3::new(4992.056, 97.13228, 692.125),
+            Vec3::new(4959.0, 64.0, 692.125),
+        );
+        let g = NavGraph::from_parts(vec![a, b], vec![vec![1], vec![]]);
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let at = Vec3::new(5006.1475, 115.67403, 692.125);
+        let pace = Vec3::new(-42.0, -172.0, 0.0);
+        assert!(
+            f.edge_holds(Some(w), at, pace, &g),
+            "onto the ladder's foot"
+        );
+    }
+
+    /// mp_ship's stair stringer by the hull crates: the jump edge from
+    /// (5829, 544, 92) to (5792, 576, 76) was proved with a jump from its
+    /// node, and a bot passed the node on the stringer's top at (5823,
+    /// 567, 92), where the walk on slides off without one. Pinned on the
+    /// stringer, the bot jumped on its cue and fell back for 140 ticks
+    /// (seed 2553 on 1080e30d). From there it is not cued to jump; run
+    /// from the node, as the graph's walk proved it, it still is.
+    #[test]
+    fn a_jump_edge_walked_on_without_its_jump_cues_no_jump() {
+        let Some(world) = map_world("mp_ship") else {
+            return;
+        };
+        let w = &world.collision;
+        let a = Vec3::new(5829.127, 544.00085, 92.125);
+        let b = Vec3::new(5792.3965, 576.17664, 76.125);
+        let mut g = NavGraph::from_parts(vec![a, b], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        let mut f = Follower {
+            path: vec![0, 1],
+            ..Follower::default()
+        };
+        let at = Vec3::new(5823.3916, 567.12866, 92.125);
+        assert!(f.edge_holds(Some(w), at, Vec3::new(22.0, 0.0, 0.0), &g));
+        f.next = 1;
+        assert!(f.jumping(&g) && !f.jump_cued(&g), "from the stringer");
+        f.next = 0;
+        let run = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
+        assert!(f.edge_holds(Some(w), a, run, &g));
+        f.next = 1;
+        assert!(f.jump_cued(&g), "from the node at a run");
     }
 
     /// mp_ship's hull corridor at (3825, -800, -64): a beam's end stands
