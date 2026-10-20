@@ -1576,8 +1576,9 @@ replayed through `run_flight` from its own wire trajectory (each nudge on the
 same frame to the hundredth, each landing on the same frame and spot, up to
 the half unit of lift, and to 0.05 degrees), and the probe on our server
 with a client that holds the carbine and a zero view, held to retail's lines
-per item: what is sent and when, from `PROBE start`, with the drops' climb,
-spin and tag start held to their ranges.
+per item: what is sent and when, from `PROBE start`, with retail's draws
+pinned so each climb and spin is retail's (14.7), and the tag start held
+against the dropper. It runs each patch's capture at its install.
 
 ### 14.7 The launch on 1.5b and UO
 
