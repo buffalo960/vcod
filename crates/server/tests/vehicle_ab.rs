@@ -257,8 +257,11 @@ fn board_with(
     // A cmd's clock rides as a delta on the last one's, so it must not go
     // back.
     let mut last_sent = 0;
-    // Join, wait for the gsc's placement, settle two seconds, tap use for
-    // 150 ms as the probe does, and wait for the seat.
+    // Join, wait for the gsc's placement, tap use for 150 ms from 2050 ms
+    // after it, and wait for the seat. The probe settles 2 s from the
+    // placed snapshot and its use lands a frame later: every retail
+    // capture's `PROBE activated` is 2050 past its `PROBE place`
+    // (coduo-vehicles.md 13, "The driver's idle").
     for i in 0..2000i64 {
         now += frame;
         let noboard = std::env::var("VEHICLE_NOBOARD").is_ok();
@@ -267,7 +270,7 @@ fn board_with(
         }
         let tap = !noboard
             && placed_at.is_some_and(|at| {
-                (i - at) * common::FRAME_MS >= 2000 && (i - at) * common::FRAME_MS < 2150
+                (i - at) * common::FRAME_MS >= 2050 && (i - at) * common::FRAME_MS < 2200
             });
         if cl.snapshots().newest().is_some() {
             let mut cmd = holding(&cl, if tap { BUTTON_USE } else { 0 });
@@ -976,7 +979,22 @@ fn the_tank_gun_replays_on_ours() {
 fn the_tank_rider_s_bones_follow_retail_s_in_both_seats() {
     let text = std::fs::read_to_string(TANK_GUN).unwrap();
     let lines = parse(&text);
-    let Some(ours) = replay("mp_cassino", "panzeriv_mp", &[("probe_bones", "1")], &lines) else {
+    // Retail's spawn did not slide: its seat's `legsAnim` 697 is the idle
+    // with the toggle on, one set since the spawn. Ours draws a sloped
+    // point, whose 100 ms think slides and sets a walk first; a flat
+    // `mp_teamdeathmatch_spawn` starts the idle on the spawn frame.
+    let setup = Setup {
+        pins: vec![vec![Some(([64.0, 152.0, 0.125], [0.0, 270.0, 0.0]))]],
+        ..Setup::default()
+    };
+    let Some(ours) = replay_with(
+        "mp_cassino",
+        "panzeriv_mp",
+        &[("probe_bones", "1")],
+        &lines,
+        &setup,
+        |_| {},
+    ) else {
         return;
     };
     let retail: Vec<String> = std::fs::read_to_string(TANK_GUN_BONES)
@@ -1032,12 +1050,9 @@ fn the_tank_rider_s_bones_follow_retail_s_in_both_seats() {
     }
 }
 
-/// Per seat, the mean and worst miss of one bone sample. The driver's
-/// (measured 0.19, 0.83): from 300 ms after the use boarding, his hands and
-/// head move as retail's did 50 to 150 ms earlier (16050 to 18150, worst
-/// at 16250), not traced (coduo-vehicles.md 13, "The tank driver's link
-/// offset"). The gunner's (0.006, 0.91): the change's glide, 18450 to 18600.
-const TANK_BONE_TOLERANCE: [(i32, f32, f32); 2] = [(1, 0.2, 0.9), (2, 0.01, 1.0)];
+/// Per seat, the mean and worst miss of one bone sample: both seats read
+/// retail's marks to the print's 0.01 (driver 0, gunner 0.01 at 18500).
+const TANK_BONE_TOLERANCE: [(i32, f32, f32); 2] = [(1, 0.001, 0.02), (2, 0.001, 0.02)];
 
 /// The client's own gunner draws his gun off his view, turned into the
 /// hull and clamped to `fTorsoPitch`/`fWaistPitch` (cgame 0x300207c0): once
