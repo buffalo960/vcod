@@ -165,7 +165,14 @@ objective, since its rising edge also picks up weapons and mounts turrets.
   2026-10-18). Not seen in a run yet: in 8 six-bot shoot-on `mp_carentan`
   S&D runs (`ship_stalls`, seeds 1-15 odd, 6000 ticks) no bot killed
   another, so no weapon lay by a bomb.
-  The bas defuse is unchanged.
+  The `bas` plant and defuse press the same key on the same edge
+  (`bas.gsc` 3184, 3702: `useButtonPressed` while the `trigger_lookat`
+  fires) and keep back the same way, closing in to 16 units of the
+  charge's model (section 7.2; since 2026-10-20). In six four-bot
+  shooting mp_foy rounds no bot settled on a charge with a weapon
+  hint, so it is covered by
+  `bots::tests::a_bas_planter_closes_in_rather_than_take_a_weapon_by_the_charge`
+  only.
 - A death sits out the round. VERIFIED (`maps/MP/gametypes/sd.gsc`
   `Callback_PlayerKilled` 756, `spawnSpectator` at 856; `re.gsc` 838, 973,
   `pak5.pk3`): after the 2 s `wait`, the dead player gets the killcam or a
@@ -696,7 +703,8 @@ first everywhere.
   breached one with no charge on it is planted: walk within 112 of the
   objective model, rest the view on the trigger's middle, hold use
   15.5 s (S&D's defuse, section 3, with its reach and hold as
-  parameters). A charged one is guarded from within 250 units of the
+  parameters, the close-in over a weapon lying by the charge included).
+  A charged one is guarded from within 250 units of the
   charge, in its room or the bunker over it, the way any defuser has to
   come, while `countdowntime` reads more than 20 s; then from outside the
   blast, 520 to 670 units off, the bot leaving the room by the graph's
@@ -739,9 +747,15 @@ first everywhere.
   one in hand first, else any) walks to the nearest launcher lying about
   (`BasView::launchers`, off `ScriptRuntime::weapon_items`) and taps use
   on it, the retrieval pickup's tap (section 4.2): walking over a weapon
-  it does not carry takes nothing (`cod11-items.md` 1). The pickup's
-  swap drops the weapon in hand (`cod11-items.md` 5), so a bot carrying
-  an empty launcher draws it before it taps. When the rocket read only
+  it does not carry takes nothing (`cod11-items.md` 1). With both
+  primary slots full the pickup's swap drops the weapon in hand, or
+  slot 1's with the pistol out, never the pistol (`cod11-items.md` 5,
+  case 2 and 4), so the bot draws the primary it would rather lose
+  before it taps (`Bot::swap_out`, `BotView::primaries`): an empty one
+  before a loaded one, then one of the kind it fetches, then not the
+  gun it fights with; with a slot free it draws nothing. Before
+  2026-10-20 only an empty launcher was drawn, and a bot fetching with
+  its gun out traded the gun. When the rocket read only
   the first launcher held, an empty bazooka beside a loaded panzerschreck
   read as none, and with its gun out at each tap one bot traded the gun,
   then launcher after launcher, for five minutes with no breach (mp_foy,
@@ -788,8 +802,11 @@ first everywhere.
   (`bots::tests::a_bas_attacker_with_a_rocket_walks_to_a_stand_and_fires`.)
   A bot with both its weapons spent draws the gun it still has; one
   with no round anywhere first fetches the nearest weapon lying within
-  1500 units, a drop with a round in its clip or a launcher
-  (`BasView::guns`, `DRY_FETCH`), and uses `kill` after 10 s only with
+  1500 units, a gun or launcher with a round in its clip or its
+  reserve (`BasView::guns`, `DRY_FETCH`; `ScriptRuntime::weapon_items`
+  reads a drop empty only when its count and clip both hold -1,
+  `cod11-items.md` 8; before 2026-10-20 an empty clip alone read as
+  empty, and a drop with only a reserve was passed over), and uses `kill` after 10 s only with
   none in reach or once that fetch is given up. Every shoot-on `kill` in
   six mp_foy rounds was a dry one, and two were a planter dry in its
   charge's room whose charge was then defused (seeds 1 and 7). A
