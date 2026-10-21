@@ -966,6 +966,10 @@ pub struct PoseInputs<'a> {
     /// placement gave them (`turretpose::GunnerPlacement::leaves`), in
     /// place of the legs clip.
     pub turret_leaves: Option<&'a [(usize, f32)]>,
+    /// The turret group a gunner's legs last left, and the leaf weights its
+    /// placement last gave it, which it blends out on
+    /// (cod11-turrets.md 13.9).
+    pub turret_left: Option<(usize, &'a [(usize, f32)])>,
     /// `None` for a mounted or dead body.
     pub controllers: Option<Controllers>,
     /// A UO rider's [`seat_leaves`]: each node they were set under with its
@@ -1003,15 +1007,40 @@ pub fn pose_player(
     // The legs clips, or a gunner's placement leaves.
     let legs: Vec<(Rc<XAnim>, f32, f32)> = match inputs.turret_leaves {
         Some(leaves) => {
-            let t = inputs.legs_layers.last().map_or(0.0, |l| l.seconds);
-            leaves
-                .iter()
-                .filter_map(|&(leaf, w)| {
-                    let anim = tree.nodes.get(leaf).and_then(|n| clip(&n.name))?;
-                    let frame = anim.frame_pos(t, anim.looping);
-                    Some((anim, frame, w))
-                })
-                .collect()
+            // The current clip is the turret anim's group, the leaves its
+            // placement weighted; a turret group still blending out keeps
+            // the leaves its own placement left (`turret_left`), any other
+            // clip blends out as itself. Every leaf takes its group's time
+            // (UO 0x80bd7e4).
+            let layers = &inputs.legs_layers;
+            let mut out = Vec::new();
+            for (i, l) in layers.iter().enumerate() {
+                let node = inputs.anims.index.node_id(l.index);
+                let group = if i + 1 == layers.len() {
+                    Some(leaves)
+                } else {
+                    inputs
+                        .turret_left
+                        .filter(|(n, _)| Some(*n) == node)
+                        .map(|(_, w)| w)
+                };
+                let Some(group) = group else {
+                    out.extend(layer_clips(inputs, std::slice::from_ref(l), &mut clip));
+                    continue;
+                };
+                let node_t = l.time.filter(|_| inputs.node_time);
+                for &(leaf, w) in group {
+                    let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
+                        continue;
+                    };
+                    let frame = match node_t {
+                        Some(nt) => nt * anim.frame_count.saturating_sub(1) as f32,
+                        None => anim.frame_pos(l.seconds, anim.looping),
+                    };
+                    out.push((anim, frame, l.weight * w));
+                }
+            }
+            out
         }
         None => layer_clips(inputs, &inputs.legs_layers, &mut clip),
     };

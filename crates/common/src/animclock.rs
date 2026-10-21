@@ -88,6 +88,9 @@ struct Play {
     /// [`AnimMotion::frequency`] and looping, which the step reads.
     frequency: f32,
     looping: bool,
+    /// A sync group's node (an MG42 gunner's turret anim), whose step
+    /// stores its increment before the sum ([`Play::step`]).
+    sync: bool,
 }
 
 /// The server frame the engine steps a node time by: `level.frametime`
@@ -109,10 +112,18 @@ impl Play {
     /// node time plus `dtime * rate * frequency` on the x87 stack, stored;
     /// a looping clip wraps by 1, any other stops at 1, and a step that
     /// would leave it at or under 0 is dropped.
+    ///
+    /// A sync node's arm (1.5b 0x80c86dc..0x80c86f8) stores the increment
+    /// `frequency * rate * dtime` as a float first, then the sum.
     fn step(&self, t: f32) -> f32 {
         let dt = f64::from(STEP_MS as f32 * 0.001);
-        let mut next =
-            (f64::from(t) + dt * f64::from(self.rate) * f64::from(self.frequency)) as f32;
+        let inc = dt * f64::from(self.rate) * f64::from(self.frequency);
+        let inc = if self.sync {
+            f64::from(inc as f32)
+        } else {
+            inc
+        };
+        let mut next = (f64::from(t) + inc) as f32;
         if self.looping {
             while next < 0.0 {
                 next += 1.0;
@@ -301,6 +312,21 @@ impl ChannelClock {
         }
     }
 
+    /// The current clip is a sync group's node stepping at `frequency` from
+    /// `now_ms` on: the weighted mean its leaves' weights gave at this end
+    /// frame (`turretpose::GunnerPlacement::frequency`), which the next
+    /// frame's step reads (cod11-turrets.md 13.9); `looping` is the node's
+    /// `loopsync`. A clip other than `index` is left alone.
+    pub fn set_sync_frequency(&mut self, index: i32, now_ms: i32, frequency: f32, looping: bool) {
+        if self.current.index != index & !TOGGLE {
+            return;
+        }
+        self.current.settle(now_ms);
+        self.current.frequency = frequency;
+        self.current.looping = looping;
+        self.current.sync = true;
+    }
+
     /// The wire value last set, toggle included (`lf+0x10`).
     pub fn anim(&self) -> i32 {
         self.anim
@@ -471,6 +497,7 @@ impl ChannelClock {
                 time_t: 1.0,
                 frequency: n.frequency,
                 looping: n.looping,
+                sync: false,
             };
             self.weight = Ramp::new(1.0, 1.0, now_ms, 0.0);
             self.fading = [None; FADES];
@@ -561,6 +588,7 @@ impl ChannelClock {
                 time_t: phase_t,
                 frequency: new.map_or(0.0, |n| n.frequency),
                 looping: new.is_some_and(|n| n.looping),
+                sync: false,
             },
         };
         self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
@@ -884,6 +912,25 @@ mod tests {
         assert_eq!((p.time_ms, p.time(2999)), (2950, at));
         p.looping = false;
         assert_eq!(p.time(9000), 1.0);
+    }
+
+    #[test]
+    fn a_sync_group_steps_its_mean_frequency_with_a_stored_increment() {
+        let mut c = ChannelClock::started(95, 0);
+        // Another clip's frequency leaves this one alone.
+        c.set_sync_frequency(608, 100, 6.0, true);
+        assert_eq!(c.layers(400)[0].time, None);
+        let f = 5.9999995f32;
+        c.set_sync_frequency(95, 100, f, true);
+        // Steps land at 150, 200 and 250, each adding the stored product.
+        let inc = (f64::from(0.05f32) * f64::from(f)) as f32;
+        let mut t = 0.0f32;
+        for _ in 0..3 {
+            t = (f64::from(t) + f64::from(inc)) as f32;
+        }
+        assert_eq!(c.layers(299)[0].time.map(f32::to_bits), Some(t.to_bits()));
+        // A loopsync group wraps.
+        assert!(c.layers(1000)[0].time.unwrap() < 1.0);
     }
 
     #[test]

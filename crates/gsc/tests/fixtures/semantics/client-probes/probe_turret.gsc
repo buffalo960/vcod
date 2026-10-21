@@ -16,6 +16,7 @@ main()
 	thread watch_respawn();
 	thread watch_hitlog();
 	thread watch_spawns();
+	thread watch_gungrid();
 	maps\mp\gametypes\dm::main();
 }
 
@@ -295,6 +296,62 @@ whole(x)
 			n = n + b;
 	}
 	return n;
+}
+
+//	With `probe_gungrid 1`: every frame the allied gunner is off his
+//	placement spot (on the gun), a 5 by 5 grid of `bulletTrace`s
+//	(hitCharacters on) along the gun's base forward, 6 units apart across
+//	it, rows 30..54 over his origin, each from 40 behind the column to 40
+//	past it. A cell is the distance to where the ray stopped on him, as
+//	fine1 prints it, or `-`; the rows read the pose his turret anim gave
+//	him, the fire leaves included (cod11-turrets.md 13.9):
+//
+//	PROBE gungrid <time> <entity number> <cell>...
+watch_gungrid()
+{
+	if (getcvar("probe_gungrid") != "1")
+		return;
+	wait 1;
+	gun = probe_gun();
+	if (!isdefined(gun))
+		return;
+	fwd = anglestoforward(gun.angles);
+	right = (fwd[1], 0 - fwd[0], 0);
+	for (;;)
+	{
+		players = getentarray("player", "classname");
+		for (i = 0; i < players.size; i++)
+			players[i] gungrid(fwd, right);
+		wait 0.05;
+	}
+}
+
+gungrid(fwd, right)
+{
+	if (!isdefined(self.probe_spot))
+		return;
+	if (self.pers["team"] != "allies")
+		return;
+	if (self.sessionstate != "playing")
+		return;
+	d = self.origin - self.probe_spot;
+	if (d[0] * d[0] + d[1] * d[1] < 16)
+		return;
+	line = "PROBE gungrid " + gettime() + " " + self getEntityNumber();
+	for (i = 0; i < 5; i++)
+	{
+		for (j = -2; j <= 2; j++)
+		{
+			c = self.origin + (right[0] * j * 6, right[1] * j * 6, 30 + i * 6);
+			start = c - (fwd[0] * 40, fwd[1] * 40, 0);
+			tr = bullettrace(start, c + (fwd[0] * 40, fwd[1] * 40, 0), true, undefined);
+			if (!isdefined(tr["entity"]) || tr["entity"] != self || tr["fraction"] >= 1)
+				line = line + " -";
+			else
+				line = line + " " + fine1(tr["fraction"] * 80);
+		}
+	}
+	logPrint(line + "\n");
 }
 
 //	With `probe_respawn 1`: a second after the allied gunner is on the gun

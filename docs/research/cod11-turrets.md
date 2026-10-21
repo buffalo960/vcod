@@ -2267,6 +2267,88 @@ vcod: `combat::bullet_range` (`UO_BULLET_RANGE` on UO), `combat::bullet_end`,
 to the bit. Each gate names the rows it tolerates (`MUZZLE_GAP`,
 `KNOCKBACK_GAP`), and those stay within `HIT_NEAR` (0.02).
 
+### 13.9 The gunner's own pose: the sync group's time and the blend out
+
+The fire and aim groups are sync nodes (`standMG42_fire` `loopsync`,
+`standMG42_aim` `nonloopsync`, section 10). VERIFIED, 1.5b `cod_lnxded`
+0x80c84f0 and UO `coduo_lnxded` 0x80bd884, the arm for a node whose flags
+carry a sync bit: the node steps its own time by `dtime` times the
+weighted mean 0x80c639e (UO 0x80bb732) returns times its rate, wraps a
+`loopsync` node by 1 and stops a `nonloopsync` one at 1, then copies the
+time into every descendant (UO 0x80bd7e4). VERIFIED, 1.5b disassembly
+0x80c86dc..0x80c86f8: the product `mean * rate * dtime` is stored as a
+float (`fstps 0xc(%ebp)`) before the sum with the old time is stored.
+VERIFIED, 0x80c639e: over the children in order, one with weight and a
+non-zero mean of its own adds its weight to one stored float sum and
+`mean * frequency * rate` to another; the quotient is stored, 0 with no
+child counted; a leaf returns its frequency. VERIFIED, `pakuo00.pk3` and
+1.1's paks (vcod's xanim reader): every `pb_*MG42gunner_fire_*` leaf has
+five frames at 30 fps, frequency 6, looping; the aim leaves one frame,
+frequency 0. So the fire group's time runs at 6 a second, a float step
+off where the stored sums round (two leaves at 0.9995 and 0.0005 give
+5.9999995).
+
+VERIFIED, game.mp.uo 0x6ac06 (the placement): its first
+`trap_XAnimClearTreeGoalWeightsStrict` takes the legs anim's node, then
+it sets the goal weights of that node's rows and leaves at rate 1.0.
+INFERRED: a group the legs leave (aim to fire as the trigger goes down,
+fire to aim as it comes up) keeps the leaf weights its last placement
+set while the anim setter fades it out, since nothing else touches them.
+
+vcod: `turretpose::GunnerPlacement` carries the group (`node`), its
+mean frequency (`frequency`, `turretpose::sync_mean` over the rows and
+their leaves) and `looping`; the placement hands them to
+`ClientSim::set_gunner_blend`, which puts the frequency on the legs
+clock's current clip (`ChannelClock::set_sync_frequency`, stepped with
+the stored increment), and keeps the group last left with its leaves
+(`gunner_left`). `playerpose::pose_player` poses each legs layer: the
+current one by the placement's leaves, a turret group fading out by the
+leaves it was left with (`PoseInputs::turret_left`), any other clip as
+itself; under `node_time` (1.5 and UO) every leaf samples its group's
+node time. The client draws with the current group's leaves only.
+
+#### The captures
+
+VERIFIED live, 2026-10-20: `mp_carentan-dm-turret-gungrid-uo.txt` (UO
+1.51b) and `-gungrid-15.txt` (1.5b), each with `-script.txt` and
+`-target.txt`: the 13.6 hit-grid recipe with `probe_gungrid 1`, which
+casts, on every frame the gunner stands off his placement spot, a 5 by 5
+grid of `bulletTrace`s through his back along the gun's base forward
+(rows 30..54 over his origin, 6 apart) and logs each cell's distance to
+him (`probe_turret.gsc` gungrid). `turret_ab`'s
+`the_gunner_grid_capture_matches_*` replay them on retail's clock and
+hold every cell on a mounted frame within `GRID_NEAR` (0.1). A first
+1.5b take had a 200 ms client stall at 27600 and a second the gunner off
+the gun by 4.8 at the first snapshot; both were discarded (the captures
+are the third).
+
+vcod measurement, UO: before the change every cell of the fire phase
+sat within 0.01 of retail's but the three frames after the aim-to-fire
+change (2.6 to 8.8 off) and the three after fire-to-aim in the target
+phase (0.2 to 2.2); the mount's eight frames were 9 to 24 off. With the
+blend out on the group's own leaves the fire and target phases are
+within 0.02 throughout, and the mount 1 to 10. Shifting the fire
+leaves' node time by 0.02 (a third of a frame's step) puts fire-phase
+cells 0.27 off and by 0.05 2.2 off, so the leaves' time is retail's
+to well under a step. At the grid's resolution the node time and the
+old seconds read alike: every fire leaf has frequency 6, so the mean
+differs from 6 only in the last bit and `time * 5` frames tracks
+`seconds * 30`.
+
+#### What is left
+
+- vcod measurement: the eight frames after a mount (and the crouch
+  phase's re-mount) stay 1 to 10 off, every cell: the legs blending from
+  the idle into the aim group. Not run down; candidates are the idle
+  clip's weight curve under the setter and the leaves' first weights
+  (a leaf set from 0 starts at `0.001 * goal`).
+- vcod measurement: one cell (row 42, 12 to the right) reads 2.45 nearer
+  on ours on every frame the barrel rests at the yaw sweep's right arc,
+  on 1.5b and UO alike (37.2635 against 34.81). The pose elsewhere on
+  those frames matches to 0.02, so it is one box's edge.
+- vcod measurement: single cells on single frames of the sweeps, 0.1 to
+  1.6 off (UO 21100, 24850, 24950; 1.5b 20200, 20450).
+
 ## 14. The client
 
 How `cgame_mp_x86.dll` (1.1, image base 0x30000000) draws a turret, puts a
