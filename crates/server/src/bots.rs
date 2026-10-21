@@ -8,9 +8,15 @@
 //! [`BotView`] the server fills. Everything wire- and VM-shaped stays in
 //! `server.rs`.
 
+pub(crate) mod cover;
+
 use crate::server::FRAME_MS;
 pub mod team;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
+pub(crate) use vehicle::SEEK_RANGE as VEHICLE_SEEK_RANGE;
+pub use vehicle::{SeatView, VehicleSpot};
+
+mod vehicle;
 
 mod skill;
 pub use skill::{DEFAULT_LEVEL, MAX_LEVEL};
@@ -127,6 +133,9 @@ pub struct BotView {
     /// The eye has reached its stance's height. While it eases between
     /// stances the round leaves from a height the aim was not taken at.
     pub eye_settled: bool,
+    /// Where a lean puts the eye, and the muzzle with it, off the upright
+    /// eye (`aim::lean_offset`): the aim is taken from there.
+    pub lean_offset: [f32; 3],
     /// `ps.delta_angles`, so the bot's absolute aim lands right after a spawn.
     pub delta_angles: [i32; 3],
     /// `ps.viewangles`, degrees, wire convention (pitch positive down).
@@ -181,6 +190,9 @@ pub struct BotView {
     /// on the graph from whose eye the round would pass the teammate
     /// ([`crate::nav::NavGraph::sidestep`]); the bot steps to it.
     pub sidestep: Option<[f32; 3]>,
+    /// With [`Self::enemy`] in sight, a graph node near that hides the
+    /// body from its eye and peeks at it ([`cover::find`]).
+    pub cover: Option<cover::Spot>,
     /// The cursor hint the end frame left is a weapon lying in reach: a
     /// use press from this view takes it (`Cmd_Activate_f` picks what
     /// `G_GetActivateEnt` scores best) and swaps the held weapon away.
@@ -314,6 +326,11 @@ pub struct BotView {
     /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
     /// on rather than `kill` itself.
     pub one_life: bool,
+    /// United Offensive vehicles the bot could board, on foot only
+    /// (`vehicle`).
+    pub vehicles: Vec<VehicleSpot>,
+    /// The vehicle seat the bot sits in.
+    pub seat: Option<SeatView>,
 }
 
 /// Behind Enemy Lines as the bot plays it (docs/research/bot-objectives.md,
@@ -687,12 +704,18 @@ pub struct BotBody {
     /// Tracking an enemy it saw within the last second: a scoped or
     /// sighted shot at range stands still on purpose.
     pub engaged: bool,
+    /// The UO vehicle (entity number) and seat it sits in.
+    pub seat: Option<(u32, i32)>,
+    /// Times it got into a vehicle.
+    pub boardings: u32,
 }
 
 pub struct Bot {
     pub name: String,
     shoot: bool,
     pub skill: Skill,
+    /// Fighting from cover ([`cover`]).
+    pub cover: cover::Cover,
     /// The team the team menu is answered with.
     team: String,
     /// The menu retail last named in `v g_scriptMainMenu`; the `t` that
@@ -840,6 +863,8 @@ pub struct Bot {
     pub(crate) last_seen_seq: i32,
     /// The client-command sequence the bot's own replies use.
     pub(crate) next_command_seq: i32,
+    /// Boarding, driving and leaving a vehicle (`vehicle`).
+    rider: vehicle::Rider,
 }
 
 /// The enemy the bot is engaging and how settled its aim on it is.
@@ -1066,6 +1091,7 @@ impl Bot {
             name: String::new(),
             shoot,
             skill: Skill::default(),
+            cover: cover::Cover::default(),
             main_menu: String::new(),
             answered: Vec::new(),
             heading: 0.0,
@@ -1126,6 +1152,7 @@ impl Bot {
             marker_reached: None,
             last_seen_seq: 0,
             next_command_seq: 1,
+            rider: Default::default(),
             team: team.to_string(),
             rng: seed | 1,
         }
@@ -1269,6 +1296,9 @@ impl Bot {
         }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
+        }
+        if let Some(g) = self.vehicle_goal(view) {
+            return g;
         }
         if let Some(bel) = view.bel.as_ref() {
             return self.bel_goal(view, bel);
@@ -2288,6 +2318,7 @@ impl Bot {
             self.disengage();
             self.recall = None;
             self.end_life();
+            self.vehicle_life_over();
             // The stock death flow polls the use key only after its own
             // `wait 2` (dm.gsc, `waitRespawnButton`), so a one-shot press
             // lands before any poll reads it; retry every second, the way
@@ -2307,6 +2338,9 @@ impl Bot {
             return cmd;
         }
         self.respawn_ticks = 0;
+        if let Some(cmd) = self.think_vehicle(view, cmd) {
+            return cmd;
+        }
         if self.wedged(view) && !view.one_life {
             self.kill = true;
         }
@@ -2366,7 +2400,8 @@ impl Bot {
             cmd.forward = (d.cos() * 127.0).round() as i8;
             cmd.right = (-d.sin() * 127.0).round() as i8;
             cmd.up = 0;
-            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
+            cmd.wbuttons &=
+                !(msg::WBUTTON_CROUCH | msg::WBUTTON_LEAN_LEFT | msg::WBUTTON_LEAN_RIGHT);
         }
     }
 
@@ -2691,6 +2726,11 @@ impl Bot {
                 cmd.forward = 0;
                 cmd.right = 0;
                 [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
+            } else if view.enemy.is_none()
+                && !clearing
+                && let Some(look) = self.cover_unseen(view, &mut cmd)
+            {
+                [pitch, yaw] = look;
             }
         }
         self.flee(view, &mut cmd, yaw);
@@ -2931,7 +2971,10 @@ impl Bot {
     /// for `forget_ticks` is dropped.
     fn track(&mut self, enemy: Option<EnemyView>) {
         let Some(e) = enemy else {
-            if let Some(t) = self.target.as_mut() {
+            // Out of sight behind its own cover the bot still knows where
+            // the target is.
+            let covering = self.covering();
+            if let Some(t) = self.target.as_mut().filter(|_| !covering) {
                 t.lost += 1;
                 if t.lost > self.skill.forget_ticks {
                     self.disengage();
@@ -3051,6 +3094,8 @@ impl Bot {
             cmd.buttons &= !msg::BUTTON_ADS;
             cmd.wbuttons &= !msg::WBUTTON_CROUCH;
             cmd.up = 0;
+        } else {
+            self.cover_engage(view, e, dist, aim[1], cmd);
         }
         Some(aim)
     }
@@ -3201,9 +3246,9 @@ impl Bot {
         self.sprint_leg
     }
 
-    /// Tracking an enemy ([`BotBody::engaged`]).
+    /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
-        self.target.is_some()
+        self.target.is_some() || self.seated_fight()
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
@@ -3530,9 +3575,10 @@ pub(crate) fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// Wire pitch is positive down (protocol doc, "View angles"), so a target
 /// below the eye aims positive.
 fn aim_angles(view: &BotView, at: [f32; 3]) -> (f32, f32) {
-    let dx = at[0] - view.origin[0];
-    let dy = at[1] - view.origin[1];
-    let dz = at[2] - (view.origin[2] + view.eye_height);
+    let l = view.lean_offset;
+    let dx = at[0] - (view.origin[0] + l[0]);
+    let dy = at[1] - (view.origin[1] + l[1]);
+    let dz = at[2] - (view.origin[2] + view.eye_height + l[2]);
     let horiz = (dx * dx + dy * dy).sqrt().max(1.0);
     let pitch = (-dz.atan2(horiz).to_degrees()).clamp(-80.0, 80.0);
     let yaw = dy.atan2(dx).to_degrees();
@@ -3707,7 +3753,7 @@ mod tests {
 
     /// A shooting bot with no reaction delay, already looking at an enemy
     /// 100 units down +x.
-    fn engaged(seed: u64) -> (Bot, BotView) {
+    pub(super) fn engaged(seed: u64) -> (Bot, BotView) {
         let mut bot = Bot::new("allies", true, seed);
         bot.skill.reaction_min = 0;
         bot.skill.reaction_spread = 0;
@@ -3721,11 +3767,12 @@ mod tests {
         (bot, v)
     }
 
-    fn view() -> BotView {
+    pub(super) fn view() -> BotView {
         BotView {
             origin: [0.0, 0.0, 64.0],
             eye_height: vcod_common::pmove::VIEW_STAND,
             eye_settled: true,
+            lean_offset: [0.0; 3],
             delta_angles: [0; 3],
             view: [0.0, 90.0, 0.0],
             gun_offset: [0.0; 2],
@@ -3749,6 +3796,7 @@ mod tests {
             enemy: None,
             friend_in_line: false,
             sidestep: None,
+            cover: None,
             use_takes_weapon: false,
             grenade: Some(6),
             grenade_cooks: false,
@@ -3791,6 +3839,8 @@ mod tests {
             bel: None,
             uo: None,
             one_life: false,
+            vehicles: Vec::new(),
+            seat: None,
         }
     }
 

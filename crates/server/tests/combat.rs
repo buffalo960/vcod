@@ -2309,6 +2309,7 @@ struct Followed {
     cb: Client,
     now: Instant,
     nb: usize,
+    joined: bool,
 }
 
 impl Followed {
@@ -2332,6 +2333,7 @@ impl Followed {
             cb,
             now,
             nb: 0,
+            joined: false,
         };
         let mut ja = common::Join::new("allies", "m1carbine_mp");
         let mut jb = common::Join::new("allies", "m1carbine_mp");
@@ -2353,6 +2355,7 @@ impl Followed {
             ja.settled(r.now) && jb.settled(r.now),
             "the pair never joined"
         );
+        r.joined = true;
         let num = |c: &Client| {
             c.snapshots()
                 .newest()
@@ -2423,12 +2426,18 @@ impl Followed {
         self.cs.send_frame(&crate::common::echo_weapon(&self.cs, s));
         self.ca.send_frame(&crate::common::echo_weapon(&self.ca, a));
         self.cb.send_frame(&crate::common::echo_weapon(&self.cb, b));
-        let (es, ea, eb) = common::step_trio(
+        // Once A and B are both in, B's packets go ahead of A's while they
+        // join, so A answers and spawns first (`common::join_pair_stamped`).
+        let joining = self.ca.state() == vcod_common::net::NetState::Active
+            && self.cb.state() == vcod_common::net::NetState::Active
+            && !self.joined;
+        let (es, ea, eb) = common::step_trio_ordered(
             &mut self.sv,
             (common::ADDR_C, &self.q[0], &mut self.cs),
             (common::ADDR, &self.q[1], &mut self.ca),
             (common::ADDR_B, &self.q[2], &mut self.cb),
             self.now,
+            if joining { [0, 2, 1] } else { [0, 1, 2] },
         );
         [es, ea, eb]
     }

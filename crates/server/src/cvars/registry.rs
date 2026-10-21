@@ -325,4 +325,5 @@ pub const VCOD_ONLY: &[(&str, &str, &str)] = &[
     ("vc_bot_names", "", "1"),
     ("vc_bot_shoot", "", "1"),
     ("vc_bot_skill", "", "1"),
+    ("vc_bot_vehicles", "", "1"),
 ];

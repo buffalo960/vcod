@@ -23,6 +23,7 @@ use crate::spectate::{ClientSim, PmType};
 use crate::world::{TestEntities, World};
 
 mod bot_admin;
+mod bot_vehicles;
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
@@ -78,6 +79,8 @@ const FLOOD_WINDOW_MS: i32 = 800;
 /// How often a bot re-runs its enemy search (range gate + LOS traces).
 /// The cached verdict is at most this stale.
 const ENEMY_REFRESH_MS: i32 = 100;
+/// How often a fighting bot re-checks its cover spot, or looks for one.
+const COVER_REFRESH_MS: i32 = 250;
 /// How long the script's brush links hold still before the bots' graph
 /// is rebuilt over them (`Server::relink_nav`).
 const NAV_RELINK_MS: i32 = 2000;
@@ -1543,6 +1546,9 @@ pub struct Server {
     outbox: Vec<(SocketAddr, Vec<u8>)>,
     limiter: RateLimiter,
     rng: u64,
+    /// Test-facing: the next rockets' `gunrandom` pairs, a retail
+    /// capture's, in place of `rng`'s ([`Server::pin_spread_draws`]).
+    spread_draws: std::collections::VecDeque<(f32, f32)>,
     /// The next level's script seed, `G_InitGame`'s `Rand_Init` argument:
     /// retail passes the wall clock at every load and restart, so no level
     /// repeats the last one's draws (map-cycle doc 4.8). Stepped at every
@@ -1677,6 +1683,9 @@ pub struct Server {
     /// nearest spot moved with the body and a moving teammate's line, and
     /// the bot jittered between spots.
     bot_sidesteps: BTreeMap<usize, ([f32; 3], i32)>,
+    /// Per fighting bot, `(sv_time of the last look, the cover spot it
+    /// found)` ([`crate::bots::BotView::cover`]).
+    bot_covers: BTreeMap<usize, (i32, Option<crate::bots::cover::Spot>)>,
     /// The level's navigation graph, built on the first tick with bots.
     nav: Option<std::sync::Arc<crate::nav::NavGraph>>,
     /// The build of `nav` under way, and whether the tick waits for it or
@@ -1693,6 +1702,8 @@ pub struct Server {
     creases: std::cell::RefCell<crate::nav::Creases>,
     /// Per bot, its walk along `nav`.
     bot_paths: BTreeMap<usize, crate::nav::Follower>,
+    /// Bots' routes in a UO vehicle's driver's seat.
+    bot_drives: bot_vehicles::BotDrives,
     /// Each bombzone's `(mins, maxs)` and the stand `site_stand` picked in
     /// it, for the life of the nav graph.
     bot_sites: Vec<([f32; 3], [f32; 3], [f32; 3])>,
@@ -2086,6 +2097,7 @@ impl Server {
             outbox: Vec::new(),
             limiter: RateLimiter::new(now),
             rng: seed,
+            spread_draws: Default::default(),
             level_seed: seed,
             spawn_pins: None,
             stuck_rand: None,
@@ -2127,6 +2139,7 @@ impl Server {
             test_client_counter: 0,
             bot_enemies: BTreeMap::new(),
             bot_sidesteps: BTreeMap::new(),
+            bot_covers: BTreeMap::new(),
             nav: None,
             nav_job: None,
             nav_links: 0,
@@ -2135,6 +2148,7 @@ impl Server {
             nav_background: false,
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
+            bot_drives: Default::default(),
             bot_sites: Vec::new(),
             bot_breach_stands: Vec::new(),
             bot_noises: Vec::new(),
@@ -3680,6 +3694,12 @@ impl Server {
         }
     }
 
+    /// Test-facing: the `gunrandom` pairs the next rockets' spread takes,
+    /// read off retail under gdb (combat doc 13.6).
+    pub fn pin_spread_draws(&mut self, draws: Vec<(f32, f32)>) {
+        self.spread_draws = draws.into();
+    }
+
     /// Test-facing: the next rockets' `trDelta`, a retail capture's
     /// (`Missiles::pin_rocket_deltas`).
     pub fn pin_rocket_deltas(&mut self, deltas: Vec<[f32; 3]>) {
@@ -4411,6 +4431,7 @@ impl Server {
                         self.bot_sidesteps.insert(*slot, (p, since));
                     }
                 }
+                view.cover = self.bot_cover(*slot, enemy);
                 Some((*slot, view))
             })
             .collect();
@@ -4485,6 +4506,7 @@ impl Server {
                 });
             }
         }
+        self.bot_vehicle_views(&mut views);
         let breach_models = if views.iter().any(|(_, v)| v.rocket.is_some()) {
             self.bot_breach_models(uo.as_ref())
         } else {
@@ -4611,7 +4633,14 @@ impl Server {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
             };
-            if let Some(g) = self.nav.clone() {
+            // A seat leaves the walk's follower alone; a driver steers along
+            // a route its hull fits (`drive_waypoint`).
+            if let Some(s) = view.seat.filter(|s| s.seat == 1) {
+                view.waypoint = self.drive_waypoint(slot, goal, &s);
+            } else {
+                self.bot_drives.forget(slot);
+            }
+            if let Some(g) = self.nav.clone().filter(|_| view.seat.is_none()) {
                 let mut follower = self.bot_paths.remove(&slot).unwrap_or_default();
                 follower.crowd = match teams.get(slot) {
                     Some(&t) if Self::team_objective(&view) => {
@@ -4648,7 +4677,8 @@ impl Server {
                 // readable and written back below.
                 let mut rng = self.bots.get(&slot).map_or(1, |b| b.rng);
                 let mut rand = || rand_from(&mut rng);
-                let at = view.origin;
+                // A seat plans from the vehicle on the ground under it.
+                let at = view.seat.map_or(view.origin, |s| s.origin);
                 let world = self.world.as_ref().map(|w| &w.collision);
                 let others =
                     |all: &[(usize, glam::Vec3, glam::Vec3)]| -> Vec<(glam::Vec3, glam::Vec3)> {
@@ -5208,6 +5238,7 @@ impl Server {
             origin: sim.ps.origin.into(),
             eye_height: sim.ps.view_height(),
             eye_settled: sim.ps.view_height_settled(),
+            lean_offset: vcod_common::pmove::aim::lean_offset(sim.ps.yaw, sim.ps.lean).into(),
             delta_angles: sim.delta_angles(),
             view: sim.view_angles(),
             gun_offset: sim.gun_offset(),
@@ -5233,6 +5264,7 @@ impl Server {
             // Checked in pass 2 against this tick's teammates.
             friend_in_line: false,
             sidestep: None,
+            cover: None,
             use_takes_weapon: sim.cursor_hint >= self.proto.cursor_hints.weapon,
             grenade,
             grenade_cooks: grenade
@@ -5324,6 +5356,9 @@ impl Server {
                 .level_cvars
                 .as_ref()
                 .is_some_and(|(g, _)| g == "sd" || g == "re"),
+            // Filled for the level's vehicles in pass 2.
+            vehicles: Vec::new(),
+            seat: None,
         })
     }
 
@@ -5711,6 +5746,10 @@ impl Server {
             .filter(|(i, _)| *i != slot && teams.get(*i).copied() == Some(my_team))
             .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
             .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            // A crew mate in the bot's own vehicle sits beside its gun.
+            .filter(|o| {
+                me.seat.is_none() || o.seat.map(|s| s.vehicle) != me.seat.map(|s| s.vehicle)
+            })
             .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
             .collect();
         let eye = crate::game::combat::muzzle_point(&me.ps);
@@ -5732,6 +5771,63 @@ impl Server {
         }
         let step = g.sidestep(me.ps.origin, target - me.ps.origin, clear);
         (true, step.map(Into::into))
+    }
+
+    /// [`crate::bots::BotView::cover`] for the bot in `slot` fighting
+    /// `enemy`: the spot it holds while that still hides and peeks, else
+    /// the nearest that does ([`crate::bots::cover::find`]), looked at
+    /// every [`COVER_REFRESH_MS`].
+    fn bot_cover(
+        &mut self,
+        slot: usize,
+        enemy: Option<crate::bots::EnemyView>,
+    ) -> Option<crate::bots::cover::Spot> {
+        use crate::bots::cover;
+        let Some(e) = enemy.filter(|_| self.bots.get(&slot).is_some_and(|b| b.cover.enabled))
+        else {
+            self.bot_covers.remove(&slot);
+            return None;
+        };
+        let held = self.bot_covers.get(&slot).copied();
+        if let Some((t, spot)) = held
+            && self.sv_time_ms.wrapping_sub(t) < COVER_REFRESH_MS
+        {
+            return spot;
+        }
+        let me = self.clients[slot].as_ref()?.sim.as_ref()?;
+        let threat = self.clients[e.slot].as_ref()?.sim.as_ref()?;
+        let (g, w) = (self.nav.as_ref()?, self.world.as_ref()?);
+        let spot = if crate::bots::dist_sq(me.ps.origin.into(), e.origin)
+            < cover::MIN_RANGE * cover::MIN_RANGE
+        {
+            None
+        } else {
+            let clear = |a: glam::Vec3, b: glam::Vec3| w.collision.shot_trace(a, b).fraction >= 1.0;
+            // `PM_UpdateLean`'s sphere from the eye toward the full lean.
+            let lean_room = |a: glam::Vec3, b: glam::Vec3| {
+                let r = glam::Vec3::splat(8.0);
+                w.collision
+                    .move_trace(a, b, -r, r, vcod_common::collision::MASK_PLAYERSOLID)
+                    .fraction
+            };
+            let sight = cover::Sight {
+                threat_eye: threat.ps.view().eye,
+                target: e.origin.into(),
+                lean: if me.ps.rules.v15() { 0.5 } else { 1.0 },
+                clear: &clear,
+                lean_room: &lean_room,
+            };
+            held.and_then(|(_, s)| s)
+                .and_then(|s| {
+                    Some(cover::Spot {
+                        peek: sight.peek(s.at.into())?,
+                        ..s
+                    })
+                })
+                .or_else(|| cover::find(g, me.ps.origin, &sight))
+        };
+        self.bot_covers.insert(slot, (self.sv_time_ms, spot));
+        spot
     }
 
     /// Test-facing: the shots and blasts the bots hear next tick.
@@ -5763,7 +5859,22 @@ impl Server {
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
             deployed: sim.ps.deployed(),
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
+            seat: sim.seat.map(|s| (s.vehicle, s.pos)),
+            boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
         })
+    }
+
+    /// Test-facing: whether a bot fights from cover (`bots::cover`).
+    pub fn test_bot_cover(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.cover.enabled = on;
+        }
+    }
+
+    /// Test-facing: whether a bot holds a cover spot, and its `ps.lean`.
+    pub fn bot_cover_state(&self, slot: usize) -> Option<(bool, f32)> {
+        let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
+        Some((self.bots.get(&slot)?.holds_cover(), sim.ps.lean))
     }
 
     /// Test-facing: pins a bot's goal to a point (`Bot::force_goal`).
@@ -5825,6 +5936,7 @@ impl Server {
         self.bot_sites.clear();
         self.bot_breach_stands.clear();
         self.bot_noises.clear();
+        self.bot_covers.clear();
         self.creases = Default::default();
     }
 
@@ -9421,8 +9533,9 @@ impl Server {
     }
 
     /// `Weapon_RocketLauncher_Fire` (0x68c40, combat doc 13.6): a rocket from
-    /// the muzzle along the bullet's spread aim, stamped with the `level.time`
-    /// a cmd runs under, then the shooter pushed 64 back along the view.
+    /// the muzzle along the spread aim 16 out (`combat::rocket_aim`), stamped
+    /// with the `level.time` a cmd runs under, then the shooter pushed 64
+    /// back along the view.
     fn launch(&mut self, shot: Shot, weapons: &crate::weapons::WeaponTable) {
         let Some(def) = weapons.get(shot.weapon as usize) else {
             return;
@@ -9433,16 +9546,13 @@ impl Server {
         else {
             return;
         };
-        let (muzzle, forward, end) = crate::game::combat::aim_end(
-            sim,
-            def,
-            shot.ads,
-            &shot.stance,
-            shot.aim,
-            crate::game::combat::BULLET_RANGE,
-            None,
-            &mut self.rng,
-        );
+        let rng = &mut self.rng;
+        let draw = self
+            .spread_draws
+            .pop_front()
+            .unwrap_or_else(|| crate::game::combat::gun_random(rng));
+        let (muzzle, forward, dir) =
+            crate::game::combat::rocket_aim(sim, def, shot.ads, &shot.stance, shot.aim, draw);
         sim.ps.velocity += forward * ROCKET_KICK;
         let level_ms = self.sv_time_ms.wrapping_sub(FRAME_MS);
         let Some(rt) = self.script.as_mut() else {
@@ -9462,7 +9572,7 @@ impl Server {
                 shot.slot,
                 shot.weapon,
                 muzzle,
-                (end - muzzle).normalize_or_zero(),
+                dir,
                 shell,
                 kind,
                 false,
