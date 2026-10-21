@@ -571,7 +571,9 @@ fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime
                     vehicle,
                     pos: seat,
                     kind,
-                    motion: 1,
+                    // `VEH_LinkPlayer` leaves `vehMotion` as the last ride
+                    // or the spawn's memset left it; the end frame sets it.
+                    motion: sim.veh_motion,
                     angles,
                     hull_view: true,
                     overheated: false,
