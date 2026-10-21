@@ -5099,9 +5099,9 @@ impl Server {
     /// line, frags flew on to a median 1.8 times the range and went off a
     /// median 490 units from where they went (bot-combat.md 12). A throw
     /// whose early arc meets a body is not taken: a UO frag bounces off one
-    /// at full speed. None while a live teammate stands within the frag's
-    /// `explosionRadius` of `target` or of the burst: friendly fire may be
-    /// on.
+    /// at full speed. With friendly fire on, None while a live teammate,
+    /// where he stands or where his pace takes him, is within the frag's
+    /// `explosionRadius` of `target` or of where it may go off.
     fn lob_probe(
         &self,
         slot: usize,
@@ -5180,7 +5180,8 @@ impl Server {
         let (lo, hi) = (sim.ps.origin + sim.ps.mins(), sim.ps.origin + sim.ps.maxs());
         let half_g = 0.5 * DEFAULT_GRAVITY;
         // Where a throw along `aim` goes off, and whether it stays clear of
-        // the thrower from `earliest` on; None when the flight is cut
+        // the thrower and the teammates from `earliest` on, wherever a cook
+        // that long or short leaves the burst; None when the flight is cut
         // short (out of the world, or onto the sky).
         let fly = |aim: [f32; 2]| {
             let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
@@ -5197,7 +5198,7 @@ impl Server {
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| (*i as i32 + 1) * FRAME_MS >= earliest)
-                .all(|(_, p)| p.clamp(lo, hi).distance(*p) > radius);
+                .all(|(_, p)| p.clamp(lo, hi).distance(*p) > radius && !mate_near(*p));
             Some((burst, clear))
         };
         let mut best: Option<([f32; 2], f32)> = None;
@@ -5237,7 +5238,7 @@ impl Server {
                 continue;
             };
             let miss = burst.distance(target);
-            if miss >= LOB_MISS || mate_near(burst) {
+            if miss >= LOB_MISS {
                 continue;
             }
             // The release may be `LOB_SLACK` off the probed pitch: a frag

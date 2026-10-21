@@ -73,6 +73,7 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | mate, packed | bodies | How close a team keeps. Each bot-tick playing with a teammate playing adds its distance to the nearest one (3D, units): `mate` is the mean. `packed` is the share of those bot-ticks with two or more teammates within 400 units, the bot and two others in one room. Bots only; a corpse or spectator is left out. `dm` has no teammates and prints 0. |
 | grenades thrown | bodies | Frags let go (`BotBody::throws`, counted at the release; a throw put back is not one). |
 | grenade hits, kills | `D;`, `K;` | Lines with means of death `MOD_GRENADE_SPLASH` on another player, by the thrower; kills are the `K;` ones. A frag that kills its own thrower is a suicide. |
+| own, team | `K;` | Of the `MOD_GRENADE_SPLASH` kills, those of the thrower himself (also in `suicides`) and those of a teammate (also in `teamkills`). A cook dropped by a dying thrower counts as his. |
 | engagements, clip at start | bodies | `BotBody::engaged` going from off to on with a bullet weapon in hand, and the mean of its clip over its `clipSize` on that tick. |
 | shots | bodies | Rounds fired: each tick's drop in the held clip while the weapon stays the same bullet gun (`weaponType bullet`, `BotBody::gun`). Grenades, rockets and a mounted MG's rounds are not counted. |
 | hits | `D;`, `K;` | Lines on another player whose means of death is a bullet (`MOD_RIFLE_BULLET`, `MOD_PISTOL_BULLET`, `MOD_HEAD_SHOT`). A mounted MG's hits land here too; bots seldom use one. |
@@ -633,7 +634,8 @@ to the end of its fuse (`Missiles::predict_flight`: `Missile::step` against
 the world, no bodies or models), stays farther than its `explosionRadius`
 from the thrower's box at every frame the fuse can end on: from
 `COOK_MOST_MS` (2250 ms) short of the full fuse for a UO cook, at the full
-fuse elsewhere. The arc check alone ends at the first contact.
+fuse elsewhere. The arc check alone ends at the first contact. Section
+12 replaced the arc check with the flight to the burst.
 
 - VERIFIED (measured, ours, release, stock UO paks, `ship_stalls` with a
   per-tick dump, seed 19 `tdm` on 2180b31d): a stick grenade lobbed from
@@ -1272,3 +1274,137 @@ same pair again within 10 s is still 385 and 405 against master's 226
 and 189; its cause is not traced. Without the hand-back
 `bots::tests::the_walking_view_takes_the_path_at_once_after_a_fight`
 fails.
+
+## 12. Frags that leave the hand and land where thrown (2026-10-21)
+
+`bot_match` on the seeds of 6.5: 1.1 `tdm` with 12 bots on mp_carentan,
+mp_harbor, mp_depot and mp_brecourt, seeds 1..=4; `dm` with 10 on
+mp_carentan, mp_harbor and mp_depot, seeds 1..=4; UO `tdm` with 10 on
+mp_cassino and mp_kursk, seeds 1..=8 and 9..=16, at stock UO paks.
+Before is the branch's base (3135508b), after the branch tip. Over the
+`tdm` table before, 297 frags hit 5 players and killed 1.
+
+### 12.1 Why they missed
+
+I dumped every release, every live frag's spawn and every
+`MOD_GRENADE_SPLASH` blast with the bodies around it from `bot_match`
+(temporary, since removed).
+
+- VERIFIED (measured, ours, mp_harbor `tdm` seed 1): of 31 releases, 1
+  frag left the hand. The 1.1 hold ran 6 to 13 ticks from the tick
+  `ps.weapon` showed the frag. A release throws only once the raise
+  (`raiseTime 0.25`) and the pullback's `holdFireTime 0.6` have run
+  (`weapons/mp/fraggrenade_mp` in `pak0.pk3`; `cod11-combat.md` 1.11).
+  Released sooner, the throw waits for the pin, and the next tick's cmd
+  asked for the rifle, whose switch cancels the pullback with the clip
+  unspent (1.14). UO's hold of 24 to 33 ticks outlasts the raise and
+  its `holdFireTime 0.5` (`stielhandgranate_mp` in `pakuo04.pk3`), so
+  UO frags left, and the pin fix alone leaves UO's `bot_match` lines
+  bit for bit.
+- VERIFIED (measured, ours, the `tdm` seeds with the pin fixed and the
+  old probe, 229 throws): a frag went off a median 494 units from the
+  point it was thrown at, a median 1.8 times the range out. A frag
+  leaves at `projectileSpeed 960` plus `projectileSpeedUp 120`
+  (`fraggrenade_mp`) at any pitch, so the probe's lobs of 5 to 40
+  degrees over the line, picked for a clear arc, came down past 1 100
+  units on flat ground and rolled on.
+- VERIFIED (measured, ours, the same dumps with the landing fixed, the
+  `tdm` seeds, 47 throws at an enemy in sight): an enemy facing the
+  thrower within 60 degrees and fighting him took 81.5 damage a throw
+  (20 throws), one facing him and fighting another 69.5 (11), one
+  facing away 26.9 (10). INFERRED: a frag off a high lob comes down
+  from above, and an enemy dug in against the thrower stays put, so I
+  added no rule on where the enemy looks.
+
+### 12.2 What changed
+
+- The hold keeps the trigger down until the pin is out
+  (`BotView::grenade_ready`: `grenadeTimeLeft` set, `weaponDelay` 1 or
+  less; `Bot::think_cook`). A pin not out `PIN_WAIT_TICKS` (30) past
+  the hold puts the frag back.
+- `Server::lob_probe` tries throws from 10 degrees down to 85 up, every
+  5 (the view's pitch clamp is now 85, `PITCH_MOST`). Each whose open
+  arc comes down within `LOB_REACH_SLACK` (250) of the range is flown
+  by `Missiles::predict_flight` to its burst: the full fuse on 1.1 and
+  1.5, `COOK_MEAN_MS` (1 250) short of it on UO. The one going off
+  nearest the target is taken, within `LOB_MISS` (150).
+- The self-burst refusal stays, and also holds for the pitch
+  `LOB_SLACK` (2 degrees) either side, the release's slack. VERIFIED
+  (measured, ours, UO mp_cassino seed 3, a per-tick dump): a bot let go
+  at pitch -34.45 with the probe's lob at -35; the frag went 110 units
+  out, rose to z 233, came back and went off 220 behind him, killing
+  him and a teammate. Bodies in the early arc are grown 24 units
+  (`LOB_BODY_GROW`).
+- The teammate check stays while `scr_friendlyfire` is non-zero, and
+  now covers each mate where his pace takes him 1 and 2 s on
+  (`MATE_LEAD_S`) and every point the frag may go off at under UO's
+  spread of cooks. VERIFIED (`maps/mp/gametypes/tdm.gsc` in
+  `pak5.pk3`): 1.1's `tdm` sets `scr_friendlyfire` "0" when unset.
+- The view goes to the lob less the gun's offset off it, and the release
+  waits for the view plus the offset on the lob, as a shot does
+  (`BotView::gun_offset`). VERIFIED (measured, ours, UO mp_cassino seed
+  13 of `uo_tdm_games_that_stalled_or_never_sprinted`, a per-tick dump):
+  a blast at tick 1130 kicked a bot's gun 17.3 degrees up; it let go at
+  1137 with its view on the probe's lob at 70 degrees up, the frag left
+  at about 87, came down on it and killed it.
+- A cook dropped by a thrower killed holding it (`Missile::dropped`) is
+  run from by every bot in reach, seen or not. VERIFIED (measured, ours,
+  UO mp_cassino seed 7, the kill lines): a thrower died at tick 7785
+  and his frag killed a teammate at 7856, 3.55 s on. INFERRED: a frag a
+  bot lets go has at most 2.75 s left (`COOK_MEAN_MS` and more burnt),
+  so this one fell from the hand.
+- `GRENADE_RANGE` 600 to 800, `COVER_THROW_TICKS` 30 to 20 (1 s in
+  sight with no round at him). The 10 s cooldown stays.
+
+VERIFIED (measured, ours, the seeds above, thrown, hits and grenade
+kills; before the slack, mate, gun offset and dropped rules):
+
+| Arm | `tdm` | `dm` | UO 1..=8 |
+|---|---|---|---|
+| pin and probe, range 600, cover 30 | 181 / 188 / 49 | 234 / 73 / 24 | 73 / 51 / 17 |
+| range 800 | 445 / 430 / 108 | 684 / 245 / 83 | 196 / 127 / 37 |
+| and cover 20 | 509 / 458 / 125 | 767 / 296 / 118 | 243 / 174 / 53 |
+| and cooldown 120 | 541 / 503 / 135 | 829 / 312 / 108 | 240 / 165 / 55 |
+
+The 120 cooldown is not taken: little gain, and one own frag in `tdm`.
+Tried and dropped (VERIFIED, measured, the same seeds): picking the lob
+nearest the view's pitch (`tdm` grenade kills 118 to 83; it takes low
+throws that roll), scoring a second on the ground as 100 units of miss
+(no clear gain, 2 own and team frags on UO), and holding the release
+while the body moves (no change).
+
+### 12.3 Before and after
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | Thrown | Hits | Grenade kills | Own | Team | Kills | Suicides | Teamkills | Life s |
+|---|---|---|---|---|---|---|---|---|---|
+| `tdm` before | 297 | 5 | 1 | 0 | 0 | 2977 | 0 | 0 | 27.6 |
+| `tdm` after | 492 | 421 | 102 | 0 | 0 | 2963 | 0 | 0 | 27.4 |
+| `dm` before | 298 | 0 | 0 | 0 | 0 | 3076 | 0 | 0 | 20.3 |
+| `dm` after | 721 | 264 | 99 | 0 | 0 | 3070 | 0 | 0 | 20.4 |
+| UO 1..=8 before | 74 | 23 | 3 | 0 | 1 | 1649 | 35 | 18 | 45.4 |
+| UO 1..=8 after | 181 | 100 | 34 | 0 | 0 | 1636 | 59 | 12 | 44.6 |
+| UO 9..=16 before | 60 | 15 | 1 | 0 | 0 | 1627 | 44 | 13 | 44.4 |
+| UO 9..=16 after | 180 | 126 | 34 | 0 | 1 | 1644 | 44 | 8 | 46.8 |
+| `tdm`, `scr_friendlyfire 1`, before | 251 | 12 | 0 | 0 | 4 | 2963 | 2 | 34 | 27.1 |
+| `tdm`, `scr_friendlyfire 1`, after | 321 | 374 | 90 | 0 | 1 | 2924 | 0 | 24 | 27.9 |
+
+- VERIFIED (measured, the dumps, the first arm of 12.2's table): a
+  frag goes off a median 50 units from its target in `tdm`, 47 in `dm`
+  and 86 on UO.
+- Kills per life hold (every player is a bot: kills match deaths), and
+  `tdm` ends on the score limit, so frags take kills from the guns:
+  102 of 2963.
+- VERIFIED (measured, the kill lines): UO's suicides rise 35 to 59 on
+  seeds 1..=8, none of them a frag: `MOD_SUICIDE` (the bot's `kill`
+  when dry or wedged) 21 to 44, spread over seven mp_cassino seeds, the
+  rest vehicle blasts and crushes. On seeds 9..=16 `MOD_SUICIDE` is 33
+  against 32. VERIFIED (measured, a dump of each `kill` on an earlier
+  build of the branch, seeds 1..=8): 30 of 33 were the dry rule, every
+  one with a frag and a pistol in the kit and nothing loaded. Why more
+  bots run dry on those seeds is not traced.
+- The one team frag left (UO mp_cassino seed 16, tick 2758) went off
+  299 units from where the teammate stood at the release; its cause is
+  not traced. INFERRED: the mate ran into it, or the frag met a
+  vehicle, which `predict_flight` does not fly against.

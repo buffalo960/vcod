@@ -3921,7 +3921,12 @@ impl Bot {
     /// pointed, often into a wall at the thrower's feet.
     fn lob_angles(&self, view: &BotView) -> [i32; 3] {
         let aim = match self.throw_target(view) {
-            Some(_) if let Some(aim) = view.lob => self.turn_toward(view, aim),
+            // The throw leaves along the aim, the view and the gun's
+            // offset off it, as a round does ([`BotView::gun_offset`]).
+            Some(_) if let Some(aim) = view.lob => {
+                let g = view.gun_offset;
+                self.turn_toward(view, [aim[0] - g[0], aim[1] - g[1]])
+            }
             // Turning away to throw it clear, no lob found yet: up and behind.
             _ if let Some(yaw) = self.throw_away => self.turn_toward(view, [AWAY_PITCH, yaw]),
             Some(at) => {
@@ -3998,8 +4003,9 @@ impl Bot {
         let blocked = target.is_some() && view.lob.is_none();
         let off = match lob {
             Some(l) => {
-                yaw_diff(l[0], yaw_diff(view.view[0], 0.0)).abs() > LOB_SLACK
-                    || yaw_diff(l[1], view.view[1]).abs() > LOB_SLACK
+                let g = view.gun_offset;
+                yaw_diff(l[0], yaw_diff(view.view[0] + g[0], 0.0)).abs() > LOB_SLACK
+                    || yaw_diff(l[1], view.view[1] + g[1]).abs() > LOB_SLACK
             }
             None => yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG),
         };
@@ -7052,6 +7058,33 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "held past the pin");
         assert_eq!(bot.throws(), 1);
+    }
+
+    /// The view on the lob with the gun kicked 17 degrees up off it (a
+    /// blast's knock): the release waits until the view plus the offset is
+    /// on the lob. UO mp_cassino seed 13 let go there, the frag went up
+    /// at 87 degrees and came down on its thrower.
+    #[test]
+    fn a_throw_waits_for_the_aim_not_the_view() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        v.view = [-70.0, 173.0, 0.0];
+        v.gun_offset = [-17.0, 0.0];
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [-300.0, 40.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        v.lob = Some([-70.0, 173.0]);
+        bot.stage = Stage::Cook { left: 1, spoon: 0 };
+        let cmd = bot.think(&v);
+        assert_ne!(cmd.buttons & BUTTON_ATTACK, 0, "let go off the aim");
+        let pitch = cmd.angles[0] as f32 / ANGLE2SHORT;
+        assert!(pitch > -70.0, "the view goes down under the kick: {pitch}");
+        v.view = [-53.0, 173.0, 0.0];
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "held on the aim");
     }
 
     /// A pin that never comes out (the raise refused) puts the frag back.

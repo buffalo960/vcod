@@ -433,13 +433,15 @@ something, the bullet links it.
   there, and a hurt one walks to a health pack lying near. A clip under
   half reloads once the fight goes quiet. A frag goes at an enemy behind
   cover the gun cannot reach, or where a standing one was lost from
-  sight, never by a teammate, and a bot runs from a live frag it sees or
-  hears land near. They are still
+  sight, lobbed so the missile code's own flight bursts on him, never by
+  a teammate with friendly fire on, and a bot runs from a live frag it
+  sees or hears land near, or one a dying player dropped. They are still
   bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from
   UO's weapon menus and deploy a light machine gun's bipod to fire it, cook
-  their frags, throw one only along a flight that clears walls and bodies
+  their frags so they burst near landing, throw one only along a flight
+  that clears bodies and goes off clear of the thrower
   and run from live ones, and play
   the objectives of UO's `sd`, `ctf` (take, carry, return), `dom` (stand
   in the flag zones), `hq` (take and neutralize the radio) and `bas`
