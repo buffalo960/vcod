@@ -176,3 +176,4 @@ the goal ahead of him
 - Skill levels change how bots aim, react and remember, not how they move
   or what they choose to do: an expert takes the same routes and plays the
   objectives the same way as an easy bot.
+- A bot picks its cover against the one enemy it is fighting; another enemy may still see it there. It takes no cover while planting, carrying or holding a capture zone, nor within 300 units of the enemy.
