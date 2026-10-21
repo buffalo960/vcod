@@ -5,7 +5,8 @@
 //! `--probe-vehicle ram`, meets client 0 150 units ahead of it.
 //! `VEH_PlayerCollision`'s run-over damage, knock and `vehicle_hit_person`
 //! (docs/research/coduo-vehicles.md 13), and a prone body under the hull
-//! taking `ClientThink_real`'s 10 points a cmd (11.6).
+//! taking `ClientThink_real`'s 10 points a cmd (11.6). The victim's fall
+//! from his first placement is compared too (`compare_first_drop`).
 //!
 //! `RUNOVER_REPORT=1` prints both sides' lines, `RUNOVER_DUMP=<path>`
 //! writes ours. Needs `COD_DIR` at a UO
@@ -375,6 +376,92 @@ const CORPSE: Drift = Drift {
     why: "the probe client's cmd clock in the corpse's flight",
 };
 
+fn words(l: &str) -> Vec<String> {
+    l.split([' ', '(', ')', ','])
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Two lines' words equal, decimals within `tol`.
+fn same(a: &str, b: &str, tol: f32) -> bool {
+    let (wa, wb) = (words(a), words(b));
+    wa.len() == wb.len()
+        && wa.iter().zip(&wb).all(|(x, y)| {
+            match (x.contains('.'), x.parse::<f32>(), y.parse::<f32>()) {
+                (true, Ok(x), Ok(y)) => (x - y).abs() <= tol,
+                _ => x == y,
+            }
+        })
+}
+
+/// The victim's lines from his first placement up to the second
+/// (`PROBE victim`, `v`), each time made relative to the placement.
+fn first_drop(lines: &[String]) -> Vec<String> {
+    let at = |head: &str| {
+        lines
+            .iter()
+            .find(|l| l.starts_with(head))
+            .and_then(|l| time(l))
+            .unwrap_or_else(|| panic!("a {head}line"))
+    };
+    let (placed, replaced) = (at("PROBE victim "), at("PROBE replace "));
+    lines
+        .iter()
+        .filter(|l| l.starts_with("PROBE victim ") || l.starts_with("PROBE v "))
+        .filter_map(|l| {
+            let t = time(l)?;
+            (placed..replaced).contains(&t).then(|| {
+                let mut w: Vec<&str> = l.split(' ').collect();
+                let rel = format!("+{}", t - placed);
+                w[2] = &rel;
+                w.join(" ")
+            })
+        })
+        .collect()
+}
+
+/// The first drops no gate can replay: the captures logged no `CMDS`
+/// lines, and the drop from the placement rides the probe client's cmd
+/// clock (stand, prone under a teammate) and the velocity his spawn left
+/// (bail) (coduo-vehicles.md 11.6, "The first drop").
+const FIRST_DROP_GAPS: &[(&str, &str)] = &[
+    (
+        "stand",
+        "two, four and eight of the probe client's cmds by the first three frames, not two, five and eight",
+    ),
+    (
+        "prone-team",
+        "one, six and seven of the probe client's cmds by the first three frames, not two, five and eight",
+    ),
+    ("bail", "13.9 units/s across the ground the spawn left him"),
+];
+
+/// The victim's first drop on ours against retail's, line for line to the
+/// hundredth, unless [`FIRST_DROP_GAPS`] names `capture`: then at least one
+/// line must differ.
+fn compare_first_drop(capture: &str, retail: &[String], ours: &[String]) {
+    let (r, o) = (first_drop(retail), first_drop(ours));
+    assert_eq!(
+        r.len(),
+        o.len(),
+        "first drop line counts\nretail {r:#?}\nours {o:#?}"
+    );
+    let differ: Vec<String> = r
+        .iter()
+        .zip(&o)
+        .filter(|(a, b)| !same(a, b, 0.01))
+        .map(|(a, b)| format!("retail {a}\nours   {b}"))
+        .collect();
+    match FIRST_DROP_GAPS.iter().find(|(c, _)| *c == capture) {
+        None => assert!(differ.is_empty(), "the first drop\n{}", differ.join("\n")),
+        Some((_, why)) => assert!(
+            !differ.is_empty(),
+            "the first drop matches retail's; drop its gap ({why})"
+        ),
+    }
+}
+
 /// Retail's lines against ours one for one: whole words (times, damage,
 /// health, alias indices) equal, decimals within 0.01 up to `drift.after`
 /// ms past the first hit and within `drift.within` from there.
@@ -393,27 +480,11 @@ fn compare(retail: &[String], ours: &[String], upto: i32, drift: Drift) {
             eprintln!("ours   {l}");
         }
     }
-    let words = |l: &str| -> Vec<String> {
-        l.split([' ', '(', ')', ','])
-            .filter(|w| !w.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
     let hit = r
         .iter()
         .find(|l| l.starts_with("PROBE dmg "))
         .map(|l| time_rel(l))
         .expect("retail's first hit");
-    let same = |a: &str, b: &str, tol: f32| {
-        let (wa, wb) = (words(a), words(b));
-        wa.len() == wb.len()
-            && wa.iter().zip(&wb).all(|(x, y)| {
-                match (x.contains('.'), x.parse::<f32>(), y.parse::<f32>()) {
-                    (true, Ok(x), Ok(y)) => (x - y).abs() <= tol,
-                    _ => x == y,
-                }
-            })
-    };
     let mut drifted = false;
     for (a, b) in r.iter().zip(&o) {
         if same(a, b, 0.01) {
@@ -441,6 +512,7 @@ fn a_jeep_runs_over_a_standing_player_twice() {
     let Some(o) = ours("stand", "axis", &[], false) else {
         return;
     };
+    compare_first_drop("stand", &r, &o);
     compare(&r, &o, 1000, FLIGHT);
     compare_impacts(&r, &o);
 }
@@ -451,6 +523,7 @@ fn a_prone_player_under_a_jeep_takes_ten_a_cmd() {
     let Some(o) = ours("prone", "axis", &[], false) else {
         return;
     };
+    compare_first_drop("prone", &r, &o);
     compare(&r, &o, 1000, CREEP);
     compare_impacts(&r, &o);
 }
@@ -464,6 +537,7 @@ fn a_teammate_s_jeep_makes_a_prone_player_hurt_himself() {
     let Some(o) = ours("prone", "allies", &[("scr_friendlyfire", "0")], false) else {
         return;
     };
+    compare_first_drop("prone-team", &r, &o);
     compare(&r, &o, 1000, LIE_DOWN);
     compare_impacts(&r, &o);
 }
@@ -479,6 +553,7 @@ fn a_driverless_jeep_runs_over_a_standing_player() {
     let Some(o) = ours("stand", "axis", &[("probe_victim_ahead", "300")], true) else {
         return;
     };
+    compare_first_drop("bail", &r, &o);
     compare(&r, &o, 1000, CORPSE);
     compare_impacts(&r, &o);
 }
