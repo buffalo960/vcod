@@ -692,6 +692,12 @@ footwork side's score less the other's per match:
   better. With the moving error linear in speed it gave up 5. Neither
   back-off nor prone alone accounts for the gap (-6.2 +- 4.2 without the
   back-off, -4.8 +- 3.7 without prone, both on the linear build).
+- VERIFIED (measured, the merged tip with team spread, grenades and
+  awareness, `tdm` seeds 1..=4, 16 matches): 2899 kills, allies k/d
+  1.09, life 26.5 s, 74% of wounded dead in 5 s, TTK mean 1803 ms,
+  accuracy 32.6%, sight to shot 960 / 750 ms with 56% of acquisitions
+  fired on, 95% of hits turned on and 45% answered, 10% of deaths
+  blindsided, stalled 514 per 1000 ticks.
 - VERIFIED (measured): `stalled` rises a fifth in `tdm`; cover holds rise
   by a quarter (921k to 1150k bot-ticks) and dry retreats from 193 to 507.
   INFERRED: twice the rounds empty twice the clips, and a dry clip holds
@@ -1002,20 +1008,21 @@ stands still, never backs off and never lies down.
 ### 9.4 What the UO bot gates found
 
 VERIFIED (measured, ours, `tests/bots.rs` ignored tests at a stock UO
-install, 2026-10-21): with this change two pinned games fail.
+install, 2026-10-21). Before master's `fix/uo-bot-pins`, this change
+made `four_shooting_uo_bots_end_a_bas_round` (mp_foy, seed 7) die of its
+own panzerschreck off `Bot::think_armor`, and
+`uo_tdm_games_that_stalled_or_never_sprinted` stall seeds 25 and 33 at
+mp_cassino's axis roof pin, (4939, -1410, 280). That fix's muzzle check
+clears the first. Merged with it, team spread and awareness, two pinned
+games still stall, both passing on master alone:
 
-- `uo_tdm_games_that_stalled_or_never_sprinted`: seeds 25 and 33 (and 21,
-  27 and 51 of twelve fresh seeds, all of which pass on master) hold a
-  bot 12 s near mp_cassino's axis spawn. In seed 27 the bot stands (eye
-  60), not engaged, no body within 120 units, keys at 108 toward the
-  waypoint (4896, -1384, 280) and pinned at (4939, -1410, 280) for most
-  of the window: a nav stall the new fights route bots into, not a hold
-  of the brain's. Turning off footwork, the off-cone trigger, the target
-  lag or the skill retune one at a time, or all four, still fails two to
-  five of the nineteen games.
-- `four_shooting_uo_bots_end_a_bas_round` (mp_foy, seed 7): a bot dies
-  of its own panzerschreck's splash. Its last rocket came from
-  `Bot::think_armor` at an enemy vehicle about 1300 units off, which
-  checks a teammate in the line but nothing near the muzzle. INFERRED:
-  the reshuffled draws put the shooter behind close cover; the rocket
-  path itself is unchanged.
+- Seed 25: the same roof pin. The bot, standing and not engaged, keys
+  forward at 115 toward the waypoint (4896, -1384, 280) and bounces
+  between (4939, -1410) and (4957, -1405) for the whole window, never
+  jumping and never at rest long enough for `Follower::rest_jump_fails`.
+- Seed 17: on the steps at (1440, -700..-725) the waypoint flips each
+  time the body crosses a step, between (1440, -725, 13) and (1440, -669,
+  56) or (1441, -761, 25), and the bot walks back and forth over it.
+
+Both are the follower's; the new fights only route bots into them. The
+seeds stay pinned.
