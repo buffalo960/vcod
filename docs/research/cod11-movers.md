@@ -774,8 +774,39 @@ to rest 95 to 107 units apart before the slab moves (1.5:
 its direction mostly the 15 units between them (1.5 slot 1
 (-189.88, -6.76) at 20950). In both phases the slab still holds at 0
 through the four logged frames and the half second after, and neither
-player moves. Which body blocks it this far apart is not traced; ours
-stalls on the same frames.
+player moves.
+
+VERIFIED, the 1.5b and UO game modules: `G_MoverPush` (1.5b 0x560d7, UO
+0x60c1b) keeps 1.1's shape: the candidate's `G_TestEntityPosition` (1.5b
+0x56590, UO 0x610d4) must return the pusher, `G_TryPushingEntity` (1.5b
+0x566ab, UO 0x611ef) runs on each kept entity, and a player it cannot
+place returns the blocker unless the pusher is `TR_SINE`.
+`G_TryPushingEntity` (1.5b 0x55aa1, UO 0x605e5) tests the carried spot
+(1.5b 0x55bff, UO 0x60743), the jitter (z 0 then -4, 4; x and y -4, 4
+while under `maxs.x * 0.5`; 1.5b 0x55eb7, UO 0x609fb) and its own spot
+(1.5b 0x5609a, UO 0x60bde), each through `G_TestEntityPosition` (1.5b
+0x55834, UO 0x60378), which calls `trap_Trace` over `r.mins`/`r.maxs`
+(1.5b 0x558cb and 0x5590e, UO 0x6040f and 0x60452), not
+`trap_TraceCapsule`, which both modules also import.
+
+INFERRED, off ours replaying both captures and retail's logged rest
+spots: the partner does not block the slab. One of each pair comes to
+rest under `*5`'s clip_metal brush 4277 (lump 4), whose underside slopes
+down to z 7.5 over the street: his capsule, which the shove's `Pmove`
+slid there, is clear of it (0.1 to 1.9 units), while his box overlaps it
+by 2.9 to 3.5. So the box candidate trace names the slab and keeps him,
+and every spot `G_TryPushingEntity` tries for him is inside 4277, the
+plate 4281 under it, its neighbour 4279 or the street's terrain (the z
+-4 row). The push fails and the slab stalls on every frame, as 1.1's
+stacked pair stalls it. 1.5b's stacked pair: slot 2 at (-190.04,
+2449.83, -31.88); half pair: slot 2 at (-182.08, 2430.91). UO's: slot 1
+at (-181.90, 2437.40, -32.00) and slot 2 at (-182.08, 2431.90).
+
+vcod: ours stalls on the same frames for the same reason.
+`push::tests::on_15_and_uo_a_body_whose_box_is_under_the_slab_stalls_it`
+reads both captures' rest spots and checks each fact above: one of each
+pair has his box in the slab and his capsule clear, and `try_push`, with
+no other body linked, finds him no spot; the lone player is carried 8.
 
 vcod: `push_candidate_ab` replays both captures as it does 1.1's, and
 draws each push's jitter from glibc's `rand()` under the seed recovered off
