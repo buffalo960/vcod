@@ -421,7 +421,8 @@ something, the bullet links it.
 - `--bots` adds bots that join through the stock menus and roam a nav graph
   built from pmove runs, ladders and jumps. They play the objectives: S&D
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
-  hunts. With `--bots-shoot` they fight back, with a reaction delay, a turn
+  hunts. Only the two teammates nearest a shot go to it, so a big team
+  spreads out instead of moving as one. With `--bots-shoot` they fight back, with a reaction delay, a turn
   cap and aim that settles on target, from behind a low wall they duck
   under to reload or round a corner they lean out of. A hurt bot, or one whose clip ran
   dry, backs off to a spot out of its enemy's sight, reloads and waits

@@ -3807,6 +3807,14 @@ Two goals sit between a visible enemy and `Roam`, both kept by the brain
   units at run speed) and is replaced by any newer one, but never replaces the
   spot of a seen enemy.
 
+- Answering. On a side, with team play on, a bot hears only the noises
+  fewer than `team::ANSWERS` (2) teammates stand nearer, the noise's own
+  shooter not counted (`team::answers`, the server's view pass); the
+  rest of the team keeps to its roam. VERIFIED (measured, ours,
+  `bot_match`, `bot-combat.md` 7): before it, every teammate in range
+  went to the same shot, and in a six-a-side `tdm` 72% of bot-ticks had
+  two or more teammates within 400 units.
+
 Ranges: `HEAR_GUNFIRE` 2000 and `HEAR_BLAST` 1500 units. VERIFIED
 (`soundaliases/iw_sound.csv` in `pak1.pk3`): every rifle, pistol and gun
 `weap_*_fire` alias has `dist_max` 7800 (one `airfield` variant of the MP40

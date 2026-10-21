@@ -4440,6 +4440,20 @@ impl Server {
             .script
             .as_mut()
             .map_or(Vec::new(), |rt| rt.health_items());
+        // Every playing client on a side, by slot, team and feet: who stands
+        // nearer a noise than a bot (`team::answers`).
+        let on_side: Vec<(usize, i32, [f32; 3])> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, c)| {
+                let sim = c.as_ref()?.sim.as_ref()?;
+                let team = teams.get(slot).copied()?;
+                let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
+                (playing && (team == script::TEAM_AXIS || team == script::TEAM_ALLIES))
+                    .then(|| (slot, team, sim.ps.origin.into()))
+            })
+            .collect();
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -4459,7 +4473,25 @@ impl Server {
                     enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
                 let hearing = self.bots.get(slot).map_or(1.0, |b| b.skill.hearing);
-                view.noise = crate::bots::loudest(&noises, *slot, view.origin, hearing);
+                // On a side with team play on, only the teammates nearest a
+                // noise go to it.
+                let mine = on_side.iter().find(|c| c.0 == *slot).map(|c| c.1);
+                let heard: Vec<crate::bots::Noise> = match mine {
+                    Some(mine) if self.bots.get(slot).is_some_and(|b| b.team_play) => {
+                        let mates: Vec<(usize, [f32; 3])> = on_side
+                            .iter()
+                            .filter(|(s, t, _)| s != slot && *t == mine)
+                            .map(|(s, _, p)| (*s, *p))
+                            .collect();
+                        noises
+                            .iter()
+                            .filter(|n| crate::bots::team::answers(view.origin, n, &mates))
+                            .copied()
+                            .collect()
+                    }
+                    _ => noises.clone(),
+                };
+                view.noise = crate::bots::loudest(&heard, *slot, view.origin, hearing);
                 view.survive.heal = crate::bots::retreat::nearest_pack(&view, &packs);
                 let held = self.bot_sidesteps.remove(slot);
                 if let Some(e) = enemy {

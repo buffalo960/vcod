@@ -32,8 +32,9 @@ balance (for `dm`). Without them the bots join as `--bots` does, at
 Feature arms: `COVER=` (section 4, `Server::test_bot_cover`), `RETREAT=`
 (section 5, `test_bot_retreat`) and `TEAMPLAY=` (`bot-objectives.md` 9,
 `test_bot_team_play`: off, a bot ranks by slot, every attacker keeps by
-an `re` carrier, nobody covers a planter, plans pay no crowd cost and a
-carrier fights as any bot, the brain before team play) each take `all`
+an `re` carrier, nobody covers a planter, plans pay no crowd cost, a
+carrier fights as any bot and every noise draws the bot, the brain
+before team play; section 7) each take `all`
 (the default), `none`, `axis`, `allies` or `alt` (axis on odd seeds,
 allies on even, so the map's own asymmetry cancels over an even seed
 count). A default arm never calls its hook, so an all-default run plays

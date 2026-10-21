@@ -677,7 +677,8 @@ pub struct Noise {
 /// The noise `listener` hears loudest from `at`: the one nearest relative
 /// to its range scaled by `hearing` ([`Skill::hearing`]), first in recorded
 /// order on a tie. Teammates' fights count too: a friend shooting means an
-/// enemy close to him.
+/// enemy close to him. The server leaves out those its teammates nearer the
+/// noise answer instead (`team::answers`).
 pub(crate) fn loudest(
     noises: &[Noise],
     listener: usize,

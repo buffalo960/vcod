@@ -14,6 +14,11 @@ pub const COVER_INNER: f32 = 96.0;
 /// The attackers nearest a retrieval carrier who escort him; the rest
 /// hold the ring round the goal he is making for.
 pub const ESCORTS: usize = 1;
+/// Teammates who go to a noise: those nearer it than this many others
+/// (its shooter not counted). The rest of the team ignores it and keeps to
+/// its own way, or the whole side converged on every shot
+/// (bot-combat.md 7).
+pub const ANSWERS: usize = 2;
 
 impl super::Bot {
     /// The bot carries a retrieval objective: it keeps running for the
@@ -78,6 +83,18 @@ pub fn crowd(paths: &[TeamPath], slot: usize, team: i32) -> Vec<(u32, u32)> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// Whether a bot at `at` goes to `noise`: fewer than [`ANSWERS`] of its
+/// teammates (`mates`, each slot and feet, the bot itself left out) stand
+/// nearer it, the one who made it aside.
+pub fn answers(at: [f32; 3], noise: &super::Noise, mates: &[(usize, [f32; 3])]) -> bool {
+    let d = dist_sq(at, noise.at);
+    mates
+        .iter()
+        .filter(|(s, p)| *s != noise.source && dist_sq(*p, noise.at) < d)
+        .count()
+        < ANSWERS
 }
 
 /// The nearest teammate within [`COVER_RANGE`] the script holds at a plant
@@ -153,6 +170,21 @@ mod tests {
         ];
         assert_eq!(crowd(&paths, 4, 1), vec![(3, 4), (3, 9)]);
         assert_eq!(crowd(&paths, 3, 2), vec![]);
+    }
+
+    #[test]
+    fn the_teammates_nearest_a_noise_answer_it() {
+        let noise = super::super::Noise {
+            at: [0.0; 3],
+            source: 9,
+            radius: 2000.0,
+        };
+        let mates = [(9, [10.0, 0.0, 0.0]), (2, [100.0, 0.0, 0.0])];
+        // The shooter does not count: one nearer, so the second answers.
+        assert!(answers([200.0, 0.0, 0.0], &noise, &mates));
+        let mates = [(3, [50.0, 0.0, 0.0]), (2, [100.0, 0.0, 0.0])];
+        assert!(!answers([200.0, 0.0, 0.0], &noise, &mates));
+        assert!(answers([75.0, 0.0, 0.0], &noise, &mates));
     }
 
     #[test]
