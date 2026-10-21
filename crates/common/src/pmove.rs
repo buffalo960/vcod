@@ -4055,19 +4055,28 @@ fn wish(
     let (forward, right) = view_vectors(ps);
     let v15 = ps.rules.v15();
     // 1.5b's walk (0x2008c-0x203f5) clips and normalizes through its
-    // stored `PM_ClipVelocity` and `VectorNormalize`.
+    // stored `PM_ClipVelocity` and `VectorNormalize`; the Windows cgames'
+    // `VectorNormalize` stores alike (1.1 0x30039cc0), and their inline
+    // clip takes the reciprocal overclip (cod15-movement.md 8).
     let norm = |v: Vec3| {
-        if v15 {
+        if v15 || msvc {
             x87::normalize_stored(v)
         } else {
             x87::normalize(v)
         }
     };
-    let flat = |v: Vec3| norm(clip_velocity(v.with_z(0.0), ps.ground_normal, v15));
+    let clip = |v: Vec3| {
+        if msvc {
+            clip_velocity_msvc(v, ps.ground_normal)
+        } else {
+            clip_velocity(v, ps.ground_normal, v15)
+        }
+    };
+    let flat = |v: Vec3| norm(clip(v.with_z(0.0)));
     let (forward, right) = (flat(forward), flat(right));
     let wishvel = (forward.as_dvec3() * fd + right.as_dvec3() * rd).as_vec3();
     let sq = x87::dot(wishvel, wishvel);
-    let len = if v15 {
+    let len = if v15 || msvc {
         f64::from(sq as f32).sqrt() as f32
     } else {
         sq.sqrt() as f32
@@ -4299,6 +4308,42 @@ fn clip_velocity(vel: Vec3, normal: Vec3, stored: bool) -> Vec3 {
     (v - n * backoff).as_vec3()
 }
 
+/// The Windows cgames' `PM_ClipVelocity` as `PM_WalkMove` and `PM_AirMove`
+/// inline it (1.1 `cgame_mp_x86.dll` 0x30008397, 0x30008016; 1.5
+/// 0x30008bb3; UO 0x30009595): the dot summed `(z + y) + x` and kept, a
+/// positive one times the float `1 / 1.001` (1.1 rodata 0x30069750,
+/// 0x3f7fbe87) instead of divided by 1.001, each component rounded once
+/// (cod15-movement.md 8).
+fn clip_velocity_msvc(vel: Vec3, normal: Vec3) -> Vec3 {
+    let (v, n) = (vel.as_dvec3(), normal.as_dvec3());
+    let dot = (v.z * n.z + v.y * n.y) + v.x * n.x;
+    let backoff = if dot < 0.0 {
+        dot * f64::from(OVERCLIP)
+    } else {
+        dot * f64::from(1.0 / OVERCLIP)
+    };
+    (v - n * backoff).as_vec3()
+}
+
+/// The Windows cgames' `PM_Accelerate` (1.1 `cgame_mp_x86.dll` 0x30007560,
+/// 1.5 0x30007cb0, UO 0x300085d0), which every move calls with a stored
+/// wish speed and accel: the speed along the wish summed `(z + y) + x` and
+/// kept, the lack `wishspeed - dot` stored, the rate `(max(wishspeed, 100)
+/// * frametime) * accel` kept and capped at the stored lack, each component
+/// rounded once. Its `1 / ps.friction` with a ground entity is 1, as in
+/// [`accelerate_stored`] (cod15-movement.md 8).
+fn accelerate_msvc(ps: &mut PlayerState, wishdir: Vec3, wishspeed: f32, accel: f32, dt: f32) {
+    let (v, d) = (ps.velocity.as_dvec3(), wishdir.as_dvec3());
+    let dot = (v.z * d.z + v.y * d.y) + d.x * v.x;
+    let add = (f64::from(wishspeed) - dot) as f32;
+    if add <= 0.0 {
+        return;
+    }
+    let control = f64::from(wishspeed.max(PM_STOPSPEED));
+    let speed = (control * f64::from(dt) * f64::from(accel)).min(f64::from(add));
+    ps.velocity = (d * speed + v).as_vec3();
+}
+
 /// Q3 `bg_pmove.c` `PM_WalkMove`.
 fn walk_move(
     ps: &mut PlayerState,
@@ -4310,7 +4355,8 @@ fn walk_move(
     events: Option<&mut Vec<PmEvent>>,
 ) {
     // along the slope, so it costs no speed
-    let arith = if world.world.arith() == crate::patch::Arith::Msvc {
+    let msvc = world.world.arith() == crate::patch::Arith::Msvc;
+    let arith = if msvc {
         WishArith::Msvc
     } else if ps.rules.v15() {
         WishArith::Stored
@@ -4334,8 +4380,11 @@ fn walk_move(
     // at the wish (docs/research/cod11-mantle.md, "The walk's accel floor").
     // All of it on the x87 stack, the velocity rounded once per component
     // (0x2f4e4-0x2f57c). 1.5b stores the wish speed (0x203f5) and calls its
-    // `PM_Accelerate`.
-    if ps.rules.v15() {
+    // `PM_Accelerate`, and so do the Windows cgames (1.1 0x30008253,
+    // 0x3000830f) with their own.
+    if msvc {
+        accelerate_msvc(ps, dir, wishspeed as f32, accel as f32, dt);
+    } else if ps.rules.v15() {
         accelerate_stored(ps, dir, wishspeed as f32, accel as f32, dt);
     } else {
         let add = wishspeed - x87::dot(ps.velocity, dir);
@@ -4354,10 +4403,21 @@ fn walk_move(
     // velocity pointing the same way (0x2f5b8-0x2f6b3), so a landing that
     // still carries its fall turns it into ground speed.
     let before = ps.velocity;
-    let speed = x87::dot(before, before).sqrt() as f32;
-    ps.velocity = clip_velocity(ps.velocity, ps.ground_normal, ps.rules.v15());
+    // The 1.5 cgame sums the speed `(z + y) + x` (0x30008b5c-0x30008b70).
+    let sq = if msvc && ps.rules == MoveRules::V1_5 {
+        let v = before.as_dvec3();
+        (v.z * v.z + v.y * v.y) + v.x * v.x
+    } else {
+        x87::dot(before, before)
+    };
+    let speed = sq.sqrt() as f32;
+    ps.velocity = if msvc {
+        clip_velocity_msvc(ps.velocity, ps.ground_normal)
+    } else {
+        clip_velocity(ps.velocity, ps.ground_normal, ps.rules.v15())
+    };
     if x87::dot(ps.velocity, before) > 0.0 {
-        let dir = if ps.rules.v15() {
+        let dir = if ps.rules.v15() || msvc {
             x87::normalize_stored(ps.velocity)
         } else {
             x87::normalize(ps.velocity)
@@ -4653,12 +4713,27 @@ fn ladder_move(
             wishvel[i] = r32(side * f64::from(right[i]) + f64::from(wishvel[i]));
         }
     }
+    let msvc = world.world.arith() == crate::patch::Arith::Msvc;
     if v15 {
         let sq = r32(x87::dot(wishvel, wishvel));
         let wishspeed = r32(f64::from(sq).sqrt());
         let wishdir = x87::normalize_stored(wishvel);
         // `PM_Accelerate` (1.5 0x1ed62 from 0x27a7e, UO 0x2379e from 0x2d0f4).
-        accelerate_stored(ps, wishdir, wishspeed, LADDER_ACCELERATE, dt);
+        if msvc {
+            accelerate_msvc(ps, wishdir, wishspeed, LADDER_ACCELERATE, dt);
+        } else {
+            accelerate_stored(ps, wishdir, wishspeed, LADDER_ACCELERATE, dt);
+        }
+    } else if msvc {
+        // The 1.1 cgame's ladder calls its `PM_Accelerate` (0x3000c1cc).
+        let wishspeed = r32(x87::dot(wishvel, wishvel).sqrt());
+        accelerate_msvc(
+            ps,
+            x87::normalize(wishvel),
+            wishspeed,
+            LADDER_ACCELERATE,
+            dt,
+        );
     } else {
         let wishspeed = f64::from(r32(x87::dot(wishvel, wishvel).sqrt()));
         let wishdir = x87::normalize(wishvel);
@@ -4754,7 +4829,12 @@ fn air_move(
     // its sub-unit stop and the water term can bite.
     friction(ps, world, dt);
     let (dir, len, scale) = wish_air(ps, input);
-    if ps.rules.v15() {
+    let msvc = world.world.arith() == crate::patch::Arith::Msvc;
+    if msvc {
+        // The Windows cgames store the product too (1.1 0x30007fce) and
+        // call their `PM_Accelerate` (0x30007fd7).
+        accelerate_msvc(ps, dir, len * scale, PM_AIRACCELERATE, dt);
+    } else if ps.rules.v15() {
         // 1.5b stores the product (0x1ffbb) and accelerates through the
         // walk's `PM_Accelerate`, floor and all (0x1ffd7).
         accelerate_stored(ps, dir, len * scale, PM_AIRACCELERATE, dt);
@@ -4763,7 +4843,11 @@ fn air_move(
     }
     // A plane too steep to stand on still steers the fall (0x2f1d3).
     if let Some(n) = ps.ground_plane {
-        ps.velocity = clip_velocity(ps.velocity, n, ps.rules.v15());
+        ps.velocity = if msvc {
+            clip_velocity_msvc(ps.velocity, n)
+        } else {
+            clip_velocity(ps.velocity, n, ps.rules.v15())
+        };
     }
     step_slide_move(ps, world, dt, true, mask, events);
     set_movement_dir(ps, input, dt);
@@ -5273,6 +5357,38 @@ mod tests {
     /// scale's product before the stance's, where 1.1d rounds once: a
     /// crouched diagonal run wishes a float step less on every protocol's
     /// client (cod15-movement.md 8, "The walk's cmd scale").
+    /// The Windows cgames' `PM_Accelerate` (1.1 0x30007560) caps the rate
+    /// at the lack stored as a float, where 1.1d's inline one keeps it.
+    #[test]
+    fn the_windows_accelerate_stores_the_lack() {
+        let dir = x87::normalize_stored(Vec3::new(1.0, 1.0, 0.0));
+        let mut ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        ps.velocity = Vec3::new(150.0, 0.0, 0.0);
+        let mut kept = ps;
+        accelerate_msvc(&mut ps, dir, 110.0, PM_ACCELERATE, 0.05);
+        // 1.1d's walk (0x2f4e4-0x2f57c): the lack is under the rate of 49.5.
+        let add = 110.0 - x87::dot(kept.velocity, dir);
+        kept.velocity = (dir.as_dvec3() * add + kept.velocity.as_dvec3()).as_vec3();
+        assert_eq!(ps.velocity, Vec3::new(152.78175, 2.7817473, 0.0));
+        assert_eq!(kept.velocity, Vec3::new(152.78175, 2.781747, 0.0));
+    }
+
+    /// The Windows walk's inline clip multiplies a positive dot by the float
+    /// `1 / 1.001` (1.1 rodata 0x30069750), a last bit off the division.
+    #[test]
+    fn the_windows_walk_clip_takes_the_reciprocal_overclip() {
+        let n = x87::normalize_stored(Vec3::new(0.3, 0.1, 1.0));
+        let v = Vec3::new(101.76, 30.0, 0.0);
+        assert_eq!(
+            clip_velocity_msvc(v, n),
+            Vec3::new(92.62514, 26.955044, -30.44955)
+        );
+        assert_eq!(
+            clip_velocity(v, n, false),
+            Vec3::new(92.62514, 26.955046, -30.44955)
+        );
+    }
+
     #[test]
     fn the_windows_walk_scale_stores_the_run_product() {
         let run = PmInput {
