@@ -423,7 +423,8 @@ something, the bullet links it.
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
   hunts. Only the two teammates nearest a shot go to it, so a big team
   spreads out instead of moving as one. With `--bots-shoot` they fight back, with a reaction delay, a turn
-  cap and aim that settles on target. They spot new enemies in a sight
+  cap and aim that settles on target and trails a target crossing their
+  view, firing before it settles and strafing on their sights. They spot new enemies in a sight
   cone, keep their target, and turn on whoever shoots them. They fight from behind a low wall they duck
   under to reload or round a corner they lean out of, change how they
   peek from one peek to the next, and go after a lost enemy from a spot

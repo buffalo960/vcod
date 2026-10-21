@@ -285,6 +285,48 @@ The dlight pass in detail, all CoDMP.exe 1.1:
 - VERIFIED, same function: each vertex gets an outcode (s below 0 or
   above 1, t likewise, z above `r` or below `-r`), and a triangle is kept
   unless its three vertices share a bit. A kept triangle draws whole.
+  The depth bits test `|z|` only, so a vertex behind the surface's plane
+  (`z < 0`, the light on its far side) is kept like one in front.
+- VERIFIED, the light's colour: 0x5008a0 fills the colour array GL draws
+  from (0x186ff60, `glColorPointer` at 0x500ba0) per stage through
+  0x4ffa60, switching on the stage's rgbGen (`+0x664`): 2 (`identity`)
+  writes 0xffffffff, 5 (`exactVertex`) copies 0x181ff60, 6 (`vertex`)
+  copies it shifted right by 0x16c55b8, and unlisted values (1,
+  `identityLighting`) the identityLight byte 0x16c55b4. 0x500a82..0x500a8c
+  hands 0x4ff690 0x181ff60 for its colours. 0x4fc440 gives both stages of
+  a lightmapped surface rgbGen 2 (0x11e6f84, 0x11e760c), and 0x4fb3c0
+  copies stage 0 whole (0x1a2 words) before it swaps bundle 1 for the
+  dlight image and the low byte of the state word for 0x22 or 0x25. So the
+  copy draws texture times dlight image times 255: on a lightmapped
+  surface neither the light's colour nor the depth falloff is drawn.
+  `dlightshader`'s `rgbGen exactVertex` draws both.
+- VERIFIED, fog: the shader finalize ORs 0x200000 into every stage's state
+  word (`+0x684`, 0x4fbc71) unless the shader has flag 0x400 (`nofog`)
+  and the stage lacks flag 4. GL_State (0x4d57b0) turns GL fog on for a
+  state with that bit (0x4d2a80) and off without it, and after it sets the
+  blend (0x4d5b85) calls 0x4d2ad0, which loads a black `GL_FOG_COLOR` when
+  the state's destination nibble is 0x20 (`GL_ONE`) and the fog colour
+  times identityLight otherwise. The copy keeps stage 0's state word, so a
+  fogged surface's copy fogs towards black: its light scales by the fog
+  factor. `dlightshader` is `nofog` (`scripts/gfx.shader`), so the blob
+  draws unfogged, and a `perLight` stage fogs as its own shader does.
+- VERIFIED, which surfaces a light reaches: the world walk (0x4e4c10)
+  visits the cells the portals show (0x4e44d0), tests each surface against
+  the frustum and portal planes (0x4e3070, 0x4e4120) and hands it to
+  0x4e1760, which for surface kinds above 0x17 (every soup's vertex
+  storage kind, 0x18..0x1c at 0x4da980) keeps a light when the box test
+  0x4e16d0 passes: the origin within the intensity of the box on every
+  axis (`o + r > min`, `o - r < max`, the record's `+0x74` and `+0x78`).
+  The bits go to the surface's `+0x08`, which 0x5122f2 ORs into the batch
+  mask. Nothing tests the light's own cell, the surface's plane or which
+  way it faces. INFERRED: so retail lights the visible face of any wall
+  whose box the light's cube reaches, from behind the wall too, and on a
+  lightmapped surface at full strength (the copy drops the falloff).
+- VERIFIED, 0x4907f0: the efx `Light` colour lerps from `rgb start` to
+  `end` only under the curve's `linear` flag (bit 0x10 of `+0x18`);
+  without it the colour holds `start`. `fx/explosions/grenade2.efx` (the
+  frag's default `grenade_explode` row) is `rgb { start 0.8392 0.8118
+  0.6627 end ... }`, unflagged, and `size { start 800 flags linear }`.
 - VERIFIED, 0x515680, called from the soup loader 0x4da2e0: the tangent
   frame is built once per soup at load. Per triangle, 0x5155d0 takes
   `(t1 - t2) P0 + (t2 - t0) P1 + (t0 - t1) P2` (t the base texture's
@@ -357,9 +399,13 @@ axis (`dlight::soup_s_axes`, a second vertex buffer), and the fragment
 shader drops what a culled triangle would have covered: an outcode bit
 interpolates to 1 only where all three vertices carry it. The pass
 writes no depth; positions are `@invariant` so `depthFunc equal`
-matches the base pass. It draws unfogged, as RTCW-MP's
-`ProjectDlightTexture` turns fog off (INFERRED for CoD: its fog state
-in the pass is not traced). Before 2026-10-12 vcod dropped `perLight`
+matches the base pass. A dlight stage whose shader is not `nofog` (the
+copy, a fogged material's `perLight` stages) fogs towards black, its
+colour times one minus the fog amount (`fs_dlight`); the blob is
+`dlightshader`'s own stage under its `nofog` (`dlight::stage_shaders`).
+Before 2026-10-21 the pass drew unfogged, as RTCW-MP's
+`ProjectDlightTexture` does, so a light in fog added its full
+brightness. Before 2026-10-12 vcod dropped `perLight`
 stages and added its own fx-light falloff to every lightmap instead.
 A `nextbundle`'s `blendFunc` is now the bundle's texture environment
 (`TexEnv`; `fs_stage` adds or decals by the flags); before, it replaced

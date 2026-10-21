@@ -83,7 +83,7 @@ const LEAN_CROUCH: f32 = 0.5;
 /// A wary bot's hold at a spot, per `vc_bot_skill` level: the ticks it
 /// outlives the threat's last sighting as (least, spread), and the chance
 /// in 8 that ducking back to reload moves it to the neighbouring spot
-/// (bot-combat.md 9).
+/// (bot-combat.md 10).
 struct Wary {
     wait: (u32, u32),
     shift: u32,
@@ -410,7 +410,10 @@ impl Bot {
         let flat = to[0].hypot(to[1]);
         let hide = view.clip == 0 || view.busy_ms > HIDE_BUSY_MS;
         cmd.up = 0;
-        cmd.wbuttons &= !(msg::WBUTTON_CROUCH | msg::WBUTTON_LEAN_LEFT | msg::WBUTTON_LEAN_RIGHT);
+        cmd.wbuttons &= !(msg::WBUTTON_CROUCH
+            | msg::WBUTTON_PRONE
+            | msg::WBUTTON_LEAN_LEFT
+            | msg::WBUTTON_LEAN_RIGHT);
         if flat > ARRIVE {
             self.cover.showing = false;
             let d = yaw_diff(to[1].atan2(to[0]).to_degrees(), yaw).to_radians();

@@ -689,7 +689,7 @@ fn vehicle_fire(
             .weapons
             .get(shot.weapon)
             .map(crate::game::combat::Falloff::of);
-        // `CMD_VEH_FireTurret` and kin pass the vehicle (0x7ee02): the
+        // `CMD_VEH_FireTurret` and kin pass the vehicle (0x8ee02): the
         // round skips it and its riders, owned by it.
         let pass = crate::game::combat::Pass {
             ent: id.0,
@@ -716,12 +716,12 @@ fn vehicle_fire(
                 &mut rt.host.dobj_posed,
                 vcod_common::patch::Arith::for_protocol(rt.host.defs.proto),
             );
-            crate::game::combat::bullet_fire_from(
+            crate::game::combat::bullet_fire_to(
                 shot.attacker,
                 pass,
                 shot.muzzle,
+                shot.end,
                 shot.dir,
-                crate::game::combat::bullet_range(rt.host.defs.proto),
                 shot.damage,
                 shot.rifle_bullet,
                 falloff,
@@ -6118,6 +6118,11 @@ impl Server {
                 let d = self.weapon_table.get(sim.ps.weapon as usize);
                 d.map_or(-1, |d| sim.ps.ammoclip[d.clip_index])
             },
+            weapon: sim.ps.weapon,
+            gun: self
+                .weapon_table
+                .get(sim.ps.weapon as usize)
+                .is_some_and(|d| d.weapon_type == "bullet"),
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
@@ -6164,6 +6169,13 @@ impl Server {
     pub fn test_bot_cover(&mut self, slot: usize, on: bool) {
         if let Some(bot) = self.bots.get_mut(&slot) {
             bot.cover.enabled = on;
+        }
+    }
+
+    /// Test-facing: whether a bot moves while it fights (`Bot::footwork`).
+    pub fn test_bot_footwork(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.footwork = on;
         }
     }
 

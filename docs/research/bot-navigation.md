@@ -489,6 +489,27 @@ that proved it jumped (`nav::PinJump`, `nav::leap_cue`, `nav::jump_key`):
   then a jump edge (`Follower::jump_start`). mp_cassino's roof dent at
   (4948, -1413, 280), 23 under the roof round it and with no node in it,
   held a bot 12 s before (bot-objectives.md 10.6).
+- A level edge (both ends within a step) that is no jump, left off its
+  side: a body that lands more than a step under both ends plans again
+  round the edge from a node a walk or jump reaches (`Follower::follow`,
+  `nav::tests::a_landing_under_a_level_edge_plans_again_round_it`). Every
+  stuck replan starts there too. mp_cassino's roof dent took a bot off
+  such an edge and held it 4 s (seed 25, bot-objectives.md 10.6).
+- A goal that flickers. A point goal that moves past `RETARGET` and comes
+  back within `PARK_TICKS` (1 s) takes up the plan it left, node, closest
+  approach and idle count included (`Follower`'s `Parked`,
+  `nav::tests::a_goal_back_within_a_second_takes_up_its_old_plan`).
+  VERIFIED (measured, ours, release, stock UO paks, seed 17 `tdm` on
+  `feat/bot-aim-footwork` 6b2ab6d1, a per-tick dump of bot 0's goal and
+  follower): on mp_cassino's stair from (1440, -725, 13) to (1440, -669,
+  56) the body at (1440, -698, 24) saw an enemy for one or two ticks, so
+  `Bot::goal` went from `To(1273, -911, 137)` to `To(1703, -651, 1)` and
+  back. Each move dropped the path, and the replan back started at
+  `NavGraph::nearest`, the node (1441, -761, 26) behind the body (score 68
+  against 68 for (1440, -725, 13) and 160 for the stair's top). The keys
+  reversed, the body walked back down to z 8, turned, climbed to the same
+  spot and saw the enemy again, ten times over 12 s (ticks 920 to 1128).
+  With the parked plan the bot climbs on.
 - A pinned walk jumps under a ceiling lower than the jump's 39 units too:
   `jump_clear` looks for room ahead at the height the body rises to, not
   at the full jump's. A floor-bound walk (node to node) also jumps where

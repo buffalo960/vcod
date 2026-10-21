@@ -3940,6 +3940,21 @@ fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32, spectator: bool) {
     ps.velocity = x87::scale(ps.velocity, scale);
 }
 
+/// How a build's walk cmd scale rounds its steps (cod15-movement.md 8,
+/// "The walk's cmd scale").
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WishArith {
+    /// 1.1d: the whole product on the x87 stack.
+    Kept,
+    /// 1.5b's and UO's Linux builds (0x1f08b): the max, the length, the
+    /// base scale and each factor's product stored.
+    Stored,
+    /// The Windows cgames (1.1 0x300076e0, 1.5 0x30007e40, UO 0x30008770):
+    /// the strafe product and the walk, run or sprint product stored, the
+    /// rest kept at 53 bits.
+    Msvc,
+}
+
 /// Desired direction (world space, unit or zero) and speed.
 /// The walk mover's wish direction and speed, retail's `PM_CmdScale`
 /// (game.mp.i386.so 0x2e690, called from `PM_WalkMove` at 0x2f2bf): Q3's
@@ -3963,23 +3978,30 @@ fn wish(
     ps: &PlayerState,
     input: &PmInput,
     weapon: Option<&WeaponDef>,
-    stored: bool,
+    arith: WishArith,
 ) -> (Vec3, f64) {
     let (f, r) = (
         (input.forward * 127.0).round(),
         (input.right * 127.0).round(),
     );
     let (fd, rd) = (f64::from(f), f64::from(r));
-    // `stored`: 1.5b's walk scale (0x1f08b), which UO shares, stores the
-    // max, the length, the base scale and each factor's product; 1.1d and
-    // the Windows cgames keep the product on the x87 stack.
+    let stored = arith == WishArith::Stored;
+    let msvc = arith == WishArith::Msvc;
     let st = |x: f64| if stored { f64::from(x as f32) } else { x };
+    // The two steps the Windows cgames store as well.
+    let st_win = |x: f64| {
+        if stored || msvc {
+            f64::from(x as f32)
+        } else {
+            x
+        }
+    };
     let back = st(if f < 0.0 {
         (fd * f64::from(SCALE_BACK)).abs()
     } else {
         fd.abs()
     });
-    let max = back.max(st((rd * f64::from(SCALE_STRAFE)).abs()));
+    let max = back.max(st_win((rd * f64::from(SCALE_STRAFE)).abs()));
     if max == 0.0 {
         return (Vec3::ZERO, 0.0);
     }
@@ -3988,14 +4010,23 @@ fn wish(
     // UO walks an LMG's breakdown (0x23af5).
     let breakdown = ps.lmg && ps.weaponstate == weapon::WEAPON_BREAKDOWN;
     if ps.walking || input.walk_slow || breakdown && ps.rules == MoveRules::Uo {
-        scale = st(scale * f64::from(SCALE_WALK));
+        scale = st_win(scale * f64::from(SCALE_WALK));
     } else if ps.lean != 0.0 {
-        scale = st(scale * f64::from(SCALE_LEAN));
+        // 1.1's Windows cgame stores the run scale's product before the
+        // lean's (0x30007791); 1.5's and UO's take a lean as the walk.
+        if msvc && ps.rules == MoveRules::V1_1 {
+            scale = st_win(scale);
+        }
+        scale = st_win(scale * f64::from(SCALE_LEAN));
     } else if ps.sprinting {
-        scale = st(scale * f64::from(SCALE_SPRINT));
+        scale = st_win(scale * f64::from(SCALE_SPRINT));
+    } else {
+        // The run scale, 1.0.
+        scale = st_win(scale);
     }
-    // 1.5b blends a stance leg's two scales on the stack (0x1f2b5, 0x1f335).
-    let stance = if stored {
+    // 1.5b and the Windows cgames blend a stance leg's two scales on the
+    // stack (0x1f2b5, 0x1f335; 1.5 cgame 0x30007f79).
+    let stance = if stored || msvc {
         stance_speed_scale_kept(ps)
     } else {
         f64::from(stance_speed_scale(ps))
@@ -4004,7 +4035,12 @@ fn wish(
         scale = st(scale * stance);
     }
     if ps.water_level > 0 {
-        let wade = st(f64::from(ps.water_level) / 3.0);
+        // The Windows cgames multiply by the float 1/3 (1.5 cgame 0x30008008).
+        let wade = if msvc {
+            f64::from(ps.water_level) * f64::from(1.0f32 / 3.0)
+        } else {
+            st(f64::from(ps.water_level) / 3.0)
+        };
         scale = st(scale * st(1.0 - wade * f64::from(WADE_SCALE)));
     }
     // A sprint leaves the weapon's scale out (UO 0x23af5).
@@ -4119,7 +4155,8 @@ fn cmd_scale_x87(ps: &PlayerState, input: &PmInput) -> f64 {
 /// all call: the speed along the wish and what it still lacks stored as
 /// floats, the rate floored at `pm_stopspeed` (100) and stored once, capped
 /// at the lack, and each component rounded once. The ground term's
-/// `1 / ps.friction` is 1 (cod11-mantle.md, "The walk's accel floor").
+/// `1 / ps.friction` is 1: only `ClientSpawn` writes the field, 1.0
+/// (cod15-movement.md 8, "The walk's cmd scale").
 fn accelerate_stored(ps: &mut PlayerState, wishdir: Vec3, wishspeed: f32, accel: f32, dt: f32) {
     let current = x87::dot(ps.velocity, wishdir) as f32;
     let add = wishspeed - current;
@@ -4273,8 +4310,14 @@ fn walk_move(
     events: Option<&mut Vec<PmEvent>>,
 ) {
     // along the slope, so it costs no speed
-    let stored = ps.rules.v15() && world.world.arith() != crate::patch::Arith::Msvc;
-    let (dir, wishspeed) = wish(ps, input, weapon, stored);
+    let arith = if world.world.arith() == crate::patch::Arith::Msvc {
+        WishArith::Msvc
+    } else if ps.rules.v15() {
+        WishArith::Stored
+    } else {
+        WishArith::Kept
+    };
+    let (dir, wishspeed) = wish(ps, input, weapon, arith);
     // Slick ground or a hit's knockback (0x2f492, 0x2f58c).
     let sliding = on_slick(ps) || ps.knockback_flags & PMF_TIME_DAMAGE != 0;
     let mut accel = f64::from(match move_stance(ps) {
@@ -5200,8 +5243,8 @@ mod tests {
             shellshock: true,
             ..run
         };
-        let (_, free) = wish(&ps, &run, None, false);
-        let (_, slow) = wish(&ps, &shocked, None, false);
+        let (_, free) = wish(&ps, &run, None, WishArith::Kept);
+        let (_, slow) = wish(&ps, &shocked, None, WishArith::Kept);
         assert!((slow - free * 0.4).abs() < 1e-4, "{slow} {free}");
     }
 
@@ -5220,10 +5263,37 @@ mod tests {
             ..Default::default()
         };
         let len = f64::from(32258f32.sqrt());
-        let (_, kept) = wish(&ps, &run, None, false);
-        let (_, stored) = wish(&ps, &run, None, true);
+        let (_, kept) = wish(&ps, &run, None, WishArith::Kept);
+        let (_, stored) = wish(&ps, &run, None, WishArith::Stored);
         assert_eq!(kept / len, f64::from(f32::from_bits(0x3f87687d)));
         assert_eq!(stored / len, f64::from(f32::from_bits(0x3f87687e)));
+    }
+
+    /// The Windows cgames' walk scale (1.5 0x30007e40) stores the run
+    /// scale's product before the stance's, where 1.1d rounds once: a
+    /// crouched diagonal run wishes a float step less on every protocol's
+    /// client (cod15-movement.md 8, "The walk's cmd scale").
+    #[test]
+    fn the_windows_walk_scale_stores_the_run_product() {
+        let run = PmInput {
+            forward: 1.0,
+            right: 1.0,
+            ..Default::default()
+        };
+        let len = f64::from(32258f32.sqrt());
+        let base = 190.0 * 127.0 / (32258f64.sqrt() * 127.0);
+        let crouch = f64::from(SCALE_CROUCH);
+        for rules in [MoveRules::V1_1, MoveRules::V1_5, MoveRules::Uo] {
+            let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.1), 0.0);
+            ps.rules = rules;
+            ps.settle_stance(Stance::Crouch);
+            let (_, kept) = wish(&ps, &run, None, WishArith::Kept);
+            let (_, msvc) = wish(&ps, &run, None, WishArith::Msvc);
+            assert_eq!(kept / len, f64::from((base * crouch) as f32), "{rules:?}");
+            let windows = (f64::from(base as f32) * crouch) as f32;
+            assert_eq!(msvc / len, f64::from(windows), "{rules:?}");
+            assert_ne!(kept, msvc, "{rules:?}");
+        }
     }
 
     /// `PM_WalkMove`'s accel and `PM_Friction`'s ground control both scale

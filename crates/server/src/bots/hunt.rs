@@ -1,4 +1,4 @@
-//! Going after a lost enemy (docs/research/bot-combat.md 9). A wary bot
+//! Going after a lost enemy (docs/research/bot-combat.md 10). A wary bot
 //! does not walk onto the spot a seen enemy was lost at: the server picks a
 //! graph node near it whose eye sees the spot ([`vantage`]), the bot walks
 //! there with its view on the spot, and gives up on the spot sooner the
