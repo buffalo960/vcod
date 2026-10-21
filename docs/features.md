@@ -422,7 +422,8 @@ something, the bullet links it.
   built from pmove runs, ladders and jumps. They play the objectives: S&D
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
   hunts. With `--bots-shoot` they fight back, with a reaction delay, a turn
-  cap and aim that settles on target, from behind a low wall they duck
+  cap and aim that settles on target. They spot new enemies in a sight
+  cone, keep their target, and turn on whoever shoots them. They fight from behind a low wall they duck
   under to reload or round a corner they lean out of. A hurt bot, or one whose clip ran
   dry, backs off to a spot out of its enemy's sight, reloads and waits
   there, and a hurt one walks to a health pack lying near. They are still

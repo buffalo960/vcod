@@ -33,7 +33,10 @@ Feature arms: `COVER=` (section 4, `Server::test_bot_cover`), `RETREAT=`
 (section 5, `test_bot_retreat`) and `TEAMPLAY=` (`bot-objectives.md` 9,
 `test_bot_team_play`: off, a bot ranks by slot, every attacker keeps by
 an `re` carrier, nobody covers a planter, plans pay no crowd cost and a
-carrier fights as any bot, the brain before team play) each take `all`
+carrier fights as any bot, the brain before team play) and `AWARE=`
+(section 7, `test_bot_aware`: off, a bot sees all round, fights the
+nearest enemy in sight, pays the full reaction and error on every
+switch and ignores hits from out of sight) each take `all`
 (the default), `none`, `axis`, `allies` or `alt` (axis on odd seeds,
 allies on even, so the map's own asymmetry cancels over an even seed
 count). A default arm never calls its hook, so an all-default run plays
@@ -60,6 +63,8 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | wounds, dead in 5 s | bodies | A life's first tick under 50 health while `BotBody::engaged`, and the share of those whose bot died within 5 s. |
 | retreats hurt, dry | bodies | `BotBody::retreating` going from 0 to 1 (hurt) or 2 (dry): retreats started (section 5). |
 | cover hold, lean | `bot_cover_state` | Bot-ticks playing on a held cover spot, and with `ps.lean` off zero (section 4). |
+| answered | `D;`, bodies | Of the hits a bot takes from an enemy (one per attacker until it is answered or 1 s passes), the share it answers within 1 s: a tick after the hit's with `BotBody::firing` and that attacker as `BotBody::target`. Fire at someone else does not count; a bot killed inside the second has not answered. Printed with the hit count. |
+| blindsided | `K;`, bodies | Of a bot's deaths to an enemy, the share whose killer was never its `BotBody::target` that life, reaction delay included. Printed with the death count. |
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
@@ -101,6 +106,7 @@ the skill branch, before and after merging master.
 | forget a target, ticks | 16 | 20 | 30 | 40 |
 | remember a spot, a noise, ticks | 70, 140 | 100, 200 | 140, 260 | 180, 300 |
 | hearing scale | 0.75 | 1 | 1.25 | 1.5 |
+| sight cone for a new target, degrees across | 100 | 120 | 140 | 160 |
 
 The trigger only goes down while the gun's line passes within `HIT_RADIUS`
 (10 units) of the target's chest (`Bot::trigger`), so the error floor sets
@@ -397,9 +403,13 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
 | | control | 2903 | 3125 | 0.93 | 20.7 | 2377 | 85% | 1833 | |
 | one side `vc_bot_skill 2` | hard | 3790 | 1747 | 2.17 | 36.7 | 1228 | 66% | 1150 | +31.9 +- 1.6 |
 | | normal | 1747 | 3790 | 0.46 | 17.0 | 2672 | 80% | 3080 | |
+| `AWARE=alt` (section 7) | aware | 2882 | 2330 | 1.24 | 27.7 | 1719 | 72% | 1882 | +8.7 +- 1.6 |
+| | control | 2326 | 2890 | 0.80 | 22.6 | 2188 | 75% | 2035 | |
 
 The skill row is two runs: `AXIS_SKILL=2` on seeds 1..=8 and
-`ALLIES_SKILL=2` on 9..=16 (the other side at 1), summed.
+`ALLIES_SKILL=2` on 9..=16 (the other side at 1), summed. The `AWARE`
+row is a later tip (branch `feat/bot-awareness`), whose `AWARE=none` run
+prints 5265 kills, the stock run's figure after the dry-retreat fix below.
 
 - VERIFIED (measured, the table): skill is the one large effect: a hard side outscores a normal one 2.2
   to 1, as section 3's three-a-side runs found (2.3 to 2.6).
@@ -517,3 +527,111 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   starts go from 261 to 241 (allies 116, axis 125); kills 5237 to 5265,
   lives 24.8 s to 24.7 s. 1.1's four maps nearly always had cover, so
   little flapped there. The tables above predate the fix.
+
+## 7. Target choice and sight (2026-10-21)
+
+Before this, `Server::bot_enemy` handed a bot the nearest enemy within
+`SHOOT_RANGE` whose chest or eye its eye line reached, all round, picked
+afresh every `ENEMY_REFRESH_MS` (100); `Bot::track` gave every change of
+slot the full reaction delay and `error_start`, and a hit told the brain
+nothing. A bot between two enemies at like range swapped targets, paying
+the delay each time, and one shot from out of sight ignored it.
+
+Now (`crates/server/src/bots.rs`, `server.rs`, `spectate.rs`):
+
+- `ClientSim::last_hit`: each `SimOp::Damaged` with another client as
+  attacker and damage above 0 records his slot, the frame's `sv_time` and
+  the damage direction; a spawn clears it. `Server::bot_hurt` hands it to
+  the brain as `BotView::hurt` for `HURT_MS` (2 s) while the attacker
+  plays.
+- `bots::pick_enemy`: the attacker of that hit when the eye line reaches
+  him, else a new enemy nearer than `RETARGET_RATIO` (0.6) of the tracked
+  target's range, else the tracked target while in sight, else the
+  nearest.
+- A sight cone, `Skill::fov_deg` across (100, 120, 140, 160 by level,
+  section 3), about the view (`bots::in_sight_cone`, on the chest), for
+  every other enemy; the tracked target and the attacker pass it on any
+  bearing. A bot in a vehicle seat sees all round: its view is the
+  seat's, and with the cone the tank driver of
+  `a_bot_fires_rockets_at_an_enemy_tank` (`tests/bot_vehicles.rs`) no
+  longer held still for the rocket man behind his hull, and the tank
+  survived the rocket.
+- `Bot::track`: a target let go of within `forget_ticks` (`Bot::prior`)
+  is taken again on a third of the drawn reaction and its old error times
+  1.25, between `error_floor` and `error_start`; the attacker of the hit
+  on half the reaction and 0.75 of `error_start`; anyone else on the full
+  ones, as before.
+- `Bot::face_hurt`: with nothing in sight, a hit in the last
+  `HURT_LOOK_MS` (1.5 s) turns the view back along the damage direction
+  at `turn_deg`, the path's keys rotated to keep the path; the cone
+  sweeps over the shooter.
+- Hearing has no cone (`bots::loudest`, bot-navigation.md section 4): a
+  shot behind the bot pulls it as one ahead does.
+- `Bot::aware` off (`AWARE=`, `Server::test_bot_aware`) restores all of
+  the before.
+
+### 7.1 Before and after
+
+`AWARE=none` replays master line for line: both sets below print master's
+match lines (kills, deaths, damage, ticks, stalls) with it, so it is the
+before and supplies the `turned` column master's harness lacks.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21): `tdm`, 12 bots,
+mp_carentan, mp_harbor, mp_depot and mp_brecourt, seeds 1..=4 (16
+matches, all ended); `dm`, 10 bots, mp_carentan, mp_harbor and mp_depot,
+seeds 1..=4 (12 matches, none ended in 12000 ticks):
+
+| Run | Kills | K/D | Life s | TTK mean / median ms | Wounds | Dead in 5 s | Turned | Answered | Blindsided | Cover hold | Stalled |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `tdm` before | 2908 | 1.00 | 22.0 | 1270 / 0 | 2160 | 76% | 63% | 17% of 4324 | 12% of 2908 | 483913 | 65863 |
+| `tdm` after | 2935 | 1.00 | 22.0 | 1357 / 0 | 2179 | 74% | 92% | 19% of 4237 | 13% of 2935 | 642973 | 127392 |
+| `dm` before | 3116 | 1.00 | 20.1 | 1253 / 300 | 2333 | 74% | 92% | 37% of 3726 | 2% of 3116 | 635254 | 45053 |
+| `dm` after | 2895 | 1.00 | 21.7 | 1136 / 350 | 2275 | 79% | 96% | 28% of 3406 | 14% of 2895 | 574948 | 30322 |
+
+`Turned` is the share of hits whose attacker the bot targeted within 1 s;
+`answered` (section 1) adds the trigger down.
+
+- VERIFIED (measured, the table): in `tdm` the attacker becomes the
+  target within 1 s after 92% of hits, from 63%.
+- VERIFIED (measured, the table): `answered` barely moves (17% to 19% in
+  `tdm`). INFERRED (`Bot::trigger`): the trigger waits until the aim's
+  miss falls inside the 10-unit cone, and 0.75 of `error_start` (36
+  units) decays under it in about 13 ticks at 360 units standing, longer
+  moving; the turn and that wait, not the choice, hold the answer past a
+  second.
+- VERIFIED (measured, the table): in `dm` the share blindsided goes from
+  2% to 14% and `answered` falls from 37% to 28%. INFERRED: before, a
+  `dm` bot saw every player all round and was on the nearest; with the
+  cone a shot from behind lands before a 180 degree turn (12 ticks at 15
+  degrees a tick).
+- VERIFIED (measured, the table): `tdm` stalls nearly double, `dm` stalls
+  fall a third. On the branch with the parts switched off one at a time
+  (mp_carentan, mp_depot, mp_brecourt, `tdm`, 12 bots, seeds 1..=4),
+  stalled bot-ticks with no target fell from 6793 to 2903 and those
+  holding cover against a target rose from 41k to 80k, all on versus all
+  off; on seeds 1..=8 the reacquire and hit-by discounts each raised the
+  total alone (124k off, 141k and 143k each alone, 178k both). INFERRED:
+  the extra stalls are bots fighting longer from cover, not lost bots.
+- VERIFIED (measured, release, stock UO paks): `uo_bots_fight_and_sprint_in_tdm`
+  seeds 1 and 19 now stall a bot on mp_cassino's roofs
+  (bot-objectives.md 10.6); its default seed is 3 and the replay list
+  plays 23 for 19.
+
+### 7.2 One-sided
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21): `AWARE=alt`, `tdm`,
+12 bots, the four maps above, seeds 1..=16 (64 matches, all ended):
+
+| Arm | Kills | Deaths | K/D | Life s | Dead in 5 s | Turned | Answered | Blindsided | Wins |
+|---|---|---|---|---|---|---|---|---|---|
+| aware | 6386 | 4351 | 1.47 | 26.7 | 71% | 91% | 21% | 13% | 62 |
+| control | 4344 | 6399 | 0.68 | 18.0 | 75% | 59% | 13% | 14% | 2 |
+
+- VERIFIED (measured, the table): the aware side scores 31.9 +- 1.9 more
+  a match and wins 62 of 64, as large as a skill level (6.1's `vc_bot_skill
+  2` row, +31.9 +- 1.6); in 6.1's shorter eight-bot matches it is +8.7 +-
+  1.6.
+- VERIFIED (measured, the table): a blindsided death is no likelier on
+  the aware side (13% against 14%) though it sees a cone. INFERRED: it
+  turns on its attacker and keeps its target where the control flips to
+  the nearest.
