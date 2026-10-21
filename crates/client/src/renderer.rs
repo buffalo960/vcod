@@ -229,7 +229,8 @@ fn fx_stage_draw(sh: &Shader, st: &Stage) -> (FxBlend, u32) {
 /// sprite's colour times identityLight, `exactVertex` as it is; `const` and
 /// `wave` ignore it. The parser gives `rgbGen vertex` and `exactVertex`
 /// `alphaGen vertex` (0x4f8d4f), so their stages fade with the sprite, and
-/// alphaGen identity is opaque elsewhere (0x4ffa60's alpha case 0). A
+/// alphaGen identity is opaque elsewhere (0x4ffa60's alpha case 0, which
+/// leaves `rgbGen vertex`'s copied alpha at identityLight 1). A
 /// stage blending `GL_ONE GL_ONE` reads no source alpha; `fs_additive`
 /// scales by it, so it gets 1.
 fn fx_stage_rgba(stage: Option<&Stage>, v: [f32; 4], identity_light: f32, t: f32) -> [f32; 4] {
@@ -250,10 +251,10 @@ fn fx_stage_rgba(stage: Option<&Stage>, v: [f32; 4], identity_light: f32, t: f32
         RgbGen::Wave(w) if w.form == WaveForm::Noise => [rgb_wave_value(w, t).clamp(0.0, 1.0); 3],
         RgbGen::Wave(w) => [(rgb_wave_value(w, t) * il).clamp(0.0, 1.0); 3],
     };
-    let vertex_rgb = matches!(st.rgb_gen, RgbGen::Vertex | RgbGen::ExactVertex);
     let alpha = match &st.alpha_gen {
         AlphaGen::Vertex | AlphaGen::Entity => a,
-        AlphaGen::Identity if vertex_rgb => a,
+        // case 0 keeps what `rgbGen vertex` copied only at identityLight 1
+        AlphaGen::Identity if st.rgb_gen == RgbGen::Vertex && il == 1.0 => a,
         AlphaGen::Identity => 1.0,
         AlphaGen::Const(c) => c.clamp(0.0, 1.0),
         AlphaGen::Wave(w) => wave_value(w, t).clamp(0.0, 1.0),
@@ -1281,6 +1282,8 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         }
     }
     let alpha = match &st.alpha_gen {
+        // `rgbGen vertex` and `exactVertex` imply it unless an alphaGen was
+        // set first (the parser, shader doc 3)
         AlphaGen::Vertex => {
             flags |= STAGE_FLAG_VERTEX_ALPHA;
             1.0
@@ -8069,6 +8072,13 @@ mod tests {
             rgba("{ map a.tga blendfunc blend rgbGen vertex alphaGen const 0.25 }"),
             [0.4, 0.3, 0.2, 0.25]
         );
+        // an `alphaGen identity` after the rgbGen stays; case 0 drops the
+        // copied alpha unless identityLight is 1
+        let late = parse_fx("{ map a.tga blendfunc blend rgbGen vertex alphaGen identity }");
+        assert_eq!(fx_stage_rgba(Some(&late.stages[0]), v, 0.5, 0.0)[3], 1.0);
+        assert_eq!(fx_stage_rgba(Some(&late.stages[0]), v, 1.0, 0.0)[3], 0.5);
+        let late = parse_fx("{ map a.tga blendfunc blend rgbGen exactVertex alphaGen identity }");
+        assert_eq!(fx_stage_rgba(Some(&late.stages[0]), v, 1.0, 0.0)[3], 1.0);
         // GL_ONE GL_ONE reads no source alpha
         assert_eq!(
             rgba("{ map a.tga blendFunc add rgbGen vertex }"),
@@ -8476,6 +8486,28 @@ mod tests {
         assert!(!flagged(Some((SrcAlpha, One)), None));
         assert!(!flagged(Some((DstColor, Zero)), None));
         assert!(!flagged(Some((Zero, OneMinusSrcColor)), Some(SORT_BLEND)));
+    }
+
+    /// A world stage with `rgbGen vertex` or `exactVertex` and no earlier
+    /// alphaGen reads the vertex alpha (CoDMP.exe 0x4f8d70): mp_bocage's
+    /// rockface decals and mp_sicily's shoreline fade by it.
+    #[test]
+    fn stage_params_reads_vertex_alpha_under_a_vertex_rgbgen() {
+        let flags = |body: &str| stage_params(&parse_fx(body), 0, 0.0).unwrap().flags;
+        for body in [
+            "{ map a.tga blendFunc blend rgbGen exactVertex }",
+            "{ map a.tga alphaFunc GE128 rgbGen vertex }",
+            "{ map a.tga blendFunc GL_SRC_ALPHA GL_ONE alphaGen identity rgbGen vertex }",
+        ] {
+            assert_ne!(flags(body) & STAGE_FLAG_VERTEX_ALPHA, 0, "{body}");
+        }
+        for body in [
+            "{ map a.tga blendFunc blend rgbGen exactVertex alphaGen identity }",
+            "{ map a.tga blendFunc blend alphaGen const 0.5 rgbGen vertex }",
+            "{ map a.tga blendFunc blend rgbGen identity }",
+        ] {
+            assert_eq!(flags(body) & STAGE_FLAG_VERTEX_ALPHA, 0, "{body}");
+        }
     }
 
     #[test]

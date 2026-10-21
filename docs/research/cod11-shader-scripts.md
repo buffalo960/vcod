@@ -338,6 +338,42 @@ The dlight pass in detail, all CoDMP.exe 1.1:
   is still 0; `alphaGen identity` stores 0 (0x4f9009). INFERRED: so every
   stock fx stage, all `rgbGen vertex` or `exactVertex`, takes the sprite's
   vertex alpha, as Q3's parser does.
+- vcod: the shared parse applies the rule (`shader::apply_gen`,
+  `vertex_alpha_unless_set`), so the world's, the marks' and the fx
+  pass's stages agree. An `alphaGen identity` before the rgbGen is
+  overridden, one after it stays, and `const` or `wave` either side
+  stays. Before 2026-10-21 only the fx pass applied it, and
+  `stage_params` drew such a stage at alpha 1. The entity and viewmodel
+  passes read no vertex colour, the static props' stage path draws with
+  `vs_prop`'s alpha 1, the cloud dome's vertices are white and the HUD
+  draws no script stages, so none of them changes.
+- VERIFIED, the stock 1.1, 1.5 and UO `scripts/`, `fxshaders/` and
+  `shadertypes/` blocks parsed both ways (2026-10-21): no stock stage
+  writes `alphaGen identity` after a vertex rgbGen, so 0x4ffa60's
+  identityLight-1 case below never arises. The world materials whose
+  changed stage reads alpha (a `GL_SRC_ALPHA` blend factor or an
+  alphaFunc) on a stock `maps/mp/` map, with lump-8 vertex alphas read
+  off each map's soups: mp_bocage's
+  `textures/normandy/ground/decal_rockface_blades1`..`3` (1064 of 2861
+  vertices under 255, down to 0) and `textures/global_use/cratered_ground`
+  (62 of 1301, down to 223), mp_rhinevalley's
+  `textures/sfx/shoreline_ripple_rv` (111 of 212, down to 0, `GL_SRC_ALPHA
+  GL_ONE`) and mp_sicily's `textures/sfx/wave_shorline_a` (all 300, down
+  to 0, `GL_SRC_ALPHA GL_ONE`). The others, mp_ship's railings, doors and
+  bridge windows, the foliage cards on mp_brecourt, mp_bocage,
+  mp_neuville, mp_tigertown, mp_cassino, mp_foy, mp_italy, mp_kursk and
+  mp_ponyri, `128windowborder01`, `neuville_window`, mp_berlin's
+  `mpberlinwater`, mp_rhinevalley's `truck_single` and mp_uo_stanjel's
+  `dove_anim`, carry alpha 255 on every vertex and draw as before.
+- VERIFIED, the stock `.efx` `Decal` elements' shader lists (2026-10-21):
+  every stock mark material changes but UO's `impact/bullet_sand_a`
+  (`rgbgen identity`): 1.1's `gfx/impact/bullethit_*`, `bullethole1`,
+  `2`, `cratered*`, `stone_piece1`, `stone_singleshot1`, UO's
+  `impact/bullet_*`, `impact/scorch_*` and `misc/lamp_oil`, all `rgbGen
+  vertex` under `GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA`. INFERRED, with
+  `CG_AddMarks` (events-and-fx 9.3): their alpha fade now draws, where
+  vcod held them opaque to the end of their life, and so does the
+  corona's `zfadeout` ramp (`flareShader`, section 8).
 - vcod, the fx pass (`renderer::fx_stage_draw`, `fx.wgsl`): a stage draws
   straight alpha, additive onto `GL_ONE` (the texture's alpha read only
   under `GL_SRC_ALPHA GL_ONE`), `GL_ONE GL_ONE_MINUS_SRC_COLOR`
@@ -1463,7 +1499,9 @@ flares. None of the 1.1 flare machinery draws them.
 
 vcod (`crate::corona`, `bsp::coronas`): the same sprite each frame through
 the marks' stage path (`mark_pass::MarkPass::set_sprites`), so it takes
-the shader's sort in the frame's draw list. The cull is the frustum and
+the shader's sort in the frame's draw list, its alpha the sprite's
+(before 2026-10-21 the parse left `alphaGen identity`, so the
+`zfadeout` ramp never drew; section 3). The cull is the frustum and
 the visited cells' bounds (`Vis::prop_visible`), not retail's portal
 planes.
 

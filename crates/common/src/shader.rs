@@ -1621,6 +1621,16 @@ fn read_triple(args: &[&str], start: usize) -> ([f32; 3], usize) {
     (c, k)
 }
 
+/// `rgbGen vertex` and `exactVertex` give the stage `alphaGen vertex` while
+/// its alphaGen is still unset, and `alphaGen identity` stores unset, so
+/// it is overridden too; a later `alphaGen` line wins (CoDMP.exe
+/// 0x4f8d70..0x4f8d7e, 0x4f9009; shader doc 3).
+fn vertex_alpha_unless_set(sb: &mut StageBuf) {
+    if matches!(sb.alpha_gen, None | Some(AlphaGen::Identity)) {
+        sb.alpha_gen = Some(AlphaGen::Vertex);
+    }
+}
+
 /// rgbGen/alphaGen share vertex, identity and wave; the const forms differ in
 /// arity, so `rgb` picks both the target field and the spelling set.
 fn apply_gen(
@@ -1639,6 +1649,7 @@ fn apply_gen(
         "vertex" => {
             if rgb {
                 sb.rgb_gen = Some(RgbGen::Vertex);
+                vertex_alpha_unless_set(sb);
             } else {
                 sb.alpha_gen = Some(AlphaGen::Vertex);
             }
@@ -1664,6 +1675,7 @@ fn apply_gen(
         }
         "exactvertex" if rgb => {
             sb.rgb_gen = Some(RgbGen::ExactVertex);
+            vertex_alpha_unless_set(sb);
             1
         }
         "identitylighting" if rgb => {
@@ -3325,6 +3337,30 @@ textures/sfx/test_water
                 DepthFunc::LessEqual
             ]
         );
+    }
+
+    #[test]
+    fn vertex_rgbgen_takes_vertex_alpha_unless_alphagen_was_set() {
+        let alpha = |s: &str| {
+            parse_one(&format!("t {{ {{ map a.tga {s} }} }}")).stages[0]
+                .alpha_gen
+                .clone()
+        };
+        assert_eq!(alpha("rgbGen vertex"), AlphaGen::Vertex);
+        assert_eq!(alpha("rgbGen exactVertex"), AlphaGen::Vertex);
+        // identity stores retail's unset 0, so the rgbGen still overrides it
+        assert_eq!(alpha("alphaGen identity rgbGen vertex"), AlphaGen::Vertex);
+        assert_eq!(alpha("rgbGen vertex alphaGen identity"), AlphaGen::Identity);
+        assert_eq!(
+            alpha("alphaGen const 0.5 rgbGen vertex"),
+            AlphaGen::Const(0.5)
+        );
+        assert_eq!(
+            alpha("rgbGen exactVertex alphaGen const 0.5"),
+            AlphaGen::Const(0.5)
+        );
+        assert_eq!(alpha("rgbGen identity"), AlphaGen::Identity);
+        assert_eq!(alpha("rgbGen identityLighting"), AlphaGen::Identity);
     }
 
     #[test]
