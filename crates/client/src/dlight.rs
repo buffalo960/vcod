@@ -7,7 +7,7 @@ use crate::renderer::{DEPTH_FORMAT, MSAA_SAMPLES, upload_image};
 use glam::Vec3;
 use vcod_common::assets;
 use vcod_common::bsp::{Bsp, DrawVert, TriangleSoup};
-use vcod_common::shader::{BlendFactor, DLIGHT_IMAGE, Stage};
+use vcod_common::shader::{BlendFactor, DLIGHT_IMAGE, DlightDraw, Shader, Stage};
 use vcod_common::static_light::SceneLight;
 
 /// `RE_AddLightToScene`'s queue (0x4e9b00), which is also the dlight
@@ -100,6 +100,32 @@ pub fn soup_bounds(bsp: &Bsp) -> Vec<(Vec3, Vec3)> {
                 })
         })
         .collect()
+}
+
+/// The single-stage shaders the pass draws over a material's surfaces
+/// (`Shader::dlight_draw`), each keeping the material's deform and
+/// culling. Fog is the drawn stage's own state bit (0x200000, set at
+/// 0x4fbc71 unless the shader is `nofog`): a `perLight` stage or the copy
+/// keeps the material's, `dlightshader`'s blob takes that shader's
+/// `nofog` (shader doc 3).
+pub fn stage_shaders(material: &Shader, blob: Option<&Shader>) -> Vec<Shader> {
+    let single = |st: Stage, nofog: bool| Shader {
+        stages: vec![st],
+        per_light: Vec::new(),
+        nofog,
+        ..material.clone()
+    };
+    match material.dlight_draw() {
+        None => Vec::new(),
+        Some(DlightDraw::Stages(st)) => st
+            .into_iter()
+            .map(|st| single(st, material.nofog))
+            .collect(),
+        Some(DlightDraw::Blob) => blob
+            .and_then(|b| Some(single(b.stages.first()?.clone(), b.nofog)))
+            .into_iter()
+            .collect(),
+    }
 }
 
 /// `Dlight` in shader.wgsl, one dynamic-offset slot per light.
@@ -446,6 +472,51 @@ mod tests {
         // the corner of a cube, not a sphere
         let corner = Vec3::splat(99.0);
         assert!(reaches(&l, l.origin, corner, corner + 1.0));
+    }
+
+    fn shader(text: &str) -> Shader {
+        use vcod_common::shader::{WarnSet, parse_shader, split_blocks};
+        let (name, body) = split_blocks(text).into_iter().next().expect("a block");
+        parse_shader(&name, &body, &mut WarnSet::new())
+    }
+
+    /// The copy and `perLight` stages fog as their material does; the blob
+    /// is `dlightshader`'s stage under that shader's `nofog`, whatever the
+    /// material says.
+    #[test]
+    fn a_dlight_stage_fogs_by_its_own_shader() {
+        let blob = shader(
+            "dlightshader { nofog { map $dlight rgbGen exactVertex \
+             blendFunc GL_DST_COLOR GL_ONE texGen lightmap depthFunc equal } }",
+        );
+        let copy = "{ map $lightmap rgbGen identity } \
+                    { map a.tga blendFunc filter rgbGen identity }";
+        let fogged = stage_shaders(&shader(&format!("t {{ {copy} }}")), Some(&blob));
+        assert_eq!(fogged.len(), 1);
+        assert!(!fogged[0].nofog);
+        assert_eq!(
+            fogged[0].stages[0].bundles[1].image,
+            vcod_common::shader::ImageRef::Path(DLIGHT_IMAGE.into())
+        );
+        let unfogged = stage_shaders(&shader(&format!("t {{ nofog {copy} }}")), Some(&blob));
+        assert!(unfogged[0].nofog);
+        // three stages: no copy, so the blob, unfogged on a fogged material
+        let three = shader(
+            "t { { map $lightmap } { map a.tga blendFunc filter } { map g.tga blendFunc add } }",
+        );
+        let b = stage_shaders(&three, Some(&blob));
+        assert_eq!(b.len(), 1);
+        assert!(b[0].nofog && !three.nofog);
+        assert_eq!(b[0].stages[0].blend, blob.stages[0].blend);
+        assert!(stage_shaders(&three, None).is_empty());
+        // a perLight stage keeps the material's fog
+        let per = shader("t { { map a.tga } { map b.tga blendFunc GL_ONE GL_ONE perLight } }");
+        let p = stage_shaders(&per, Some(&blob));
+        assert_eq!(p.len(), 1);
+        assert!(!p[0].nofog);
+        assert!(
+            stage_shaders(&shader("t { surfaceparm sky { map a.tga } }"), Some(&blob)).is_empty()
+        );
     }
 
     #[test]

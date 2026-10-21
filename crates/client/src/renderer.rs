@@ -27,9 +27,9 @@ use vcod_common::net::FogParams;
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
-    AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, Deform, DepthFunc, DlightDraw,
-    DrawClass, ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE,
-    Shader, ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
+    AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, Deform, DepthFunc, DrawClass,
+    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
+    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
     has_animated_tcmods, rgb_wave_value, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
@@ -3148,20 +3148,9 @@ impl Renderer {
         // keep the material's deform and culling, then the implicit
         // surfaces' copy (texture times the dlight image, rgbGen identity),
         // the same alpha-tested for masked overlays, and `dlightshader`.
-        let blob_stage = self
-            .shader_lib
-            .get("dlightshader")
-            .and_then(|sh| sh.stages.first().cloned());
+        let blob = self.shader_lib.get("dlightshader");
         let mut dl_shaders: Vec<Shader> = Vec::new();
         let mut dl_of_material: HashMap<u16, Vec<u32>> = HashMap::new();
-        let single = |sh: Shader, st: Stage, out: &mut Vec<Shader>| {
-            out.push(Shader {
-                stages: vec![st],
-                per_light: Vec::new(),
-                ..sh
-            });
-            out.len() as u32 - 1
-        };
         for (mi, mat) in bsp.materials.iter().enumerate() {
             let Some(sh) = self.shader_lib.get(&mat.name) else {
                 continue;
@@ -3169,13 +3158,9 @@ impl Renderer {
             if sh.stages.is_empty() {
                 continue;
             }
-            let stages = match sh.dlight_draw() {
-                None => continue,
-                Some(DlightDraw::Stages(st)) => st,
-                Some(DlightDraw::Blob) => blob_stage.iter().cloned().collect(),
-            };
-            for st in stages {
-                let i = single(sh.clone(), st, &mut dl_shaders);
+            for syn in dlight::stage_shaders(sh, blob) {
+                dl_shaders.push(syn);
+                let i = dl_shaders.len() as u32 - 1;
                 dl_of_material.entry(mi as u16).or_default().push(i);
             }
         }
@@ -3197,12 +3182,24 @@ impl Renderer {
             rgb_gen: RgbGen::Identity,
             alpha_gen: AlphaGen::Identity,
         };
+        // the copies fog as the implicit surface does; the blob as
+        // `dlightshader` (`nofog`)
+        let implicit = |st: Stage, nofog: bool| Shader {
+            stages: vec![st],
+            nofog,
+            ..Shader::default()
+        };
         let dl_implicit = [
-            Some(implicit_copy(None)),
-            Some(implicit_copy(Some(AlphaFunc::Ge128))),
-            blob_stage.clone(),
+            Some(implicit(implicit_copy(None), false)),
+            Some(implicit(implicit_copy(Some(AlphaFunc::Ge128)), false)),
+            blob.and_then(|b| Some(implicit(b.stages.first()?.clone(), b.nofog))),
         ]
-        .map(|st| st.map(|st| single(Shader::default(), st, &mut dl_shaders)));
+        .map(|syn| {
+            syn.map(|syn| {
+                dl_shaders.push(syn);
+                dl_shaders.len() as u32 - 1
+            })
+        });
         let dl_first_slot = stage_slots.len() as u32;
 
         let align = device.limits().min_uniform_buffer_offset_alignment as u64;
