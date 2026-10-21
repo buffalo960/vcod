@@ -17,7 +17,9 @@
 //! printed to the ten-thousandth (`-1.5.txt` and `-uo.txt` on 1.5b and
 //! UO), and `-sinecrush.txt` crushes the player
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
-//! beside a turned submodel as it lifts.
+//! beside a turned submodel as it lifts. `mp_harbor-dm-tiltslab*.txt` and
+//! `mp_depot-dm-rollramp.txt` drop him onto a pitched or rolled submodel,
+//! the latter onto a non-axial side (movers doc 22).
 //!
 //! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
@@ -60,6 +62,9 @@ const TILT: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab.txt";
 const TILT_RIDE: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-ride.txt";
 const PROBE_TILT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
+const ROLL: &str = "tests/fixtures/movers/mp_depot-dm-rollramp.txt";
+const PROBE_ROLL: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_rollramp.gsc");
 const PROBE_CRUSH: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
 
@@ -246,6 +251,12 @@ fn ours_tilt_ride() -> Option<&'static Ours> {
         .as_ref()
 }
 
+fn ours_roll() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| run_ours("mp_depot", "probe_rollramp", PROBE_ROLL, ROLL, true))
+        .as_ref()
+}
+
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| run_ours(MAP, "probe_sinecrush", PROBE_CRUSH, CRUSH, true))
@@ -363,11 +374,11 @@ fn run_once(
     }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
-    // mp_harbor's allies are Russian.
-    let weapon = if map == "mp_harbor" {
-        "mosin_nagant_mp"
-    } else {
-        "m1carbine_mp"
+    // mp_harbor's allies are Russian, mp_depot's British.
+    let weapon = match map {
+        "mp_harbor" => "mosin_nagant_mp",
+        "mp_depot" => "enfield_mp",
+        _ => "m1carbine_mp",
     };
     let mut join = Join::new("allies", weapon);
     let mut present: Option<std::collections::BTreeSet<u32>> = None;
@@ -850,6 +861,14 @@ fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
 #[test]
 fn a_capsule_lands_on_a_tilted_submodel_like_retail_again() {
     tilt_matches(TILT_RIDE, ours_tilt_ride());
+}
+
+/// `probe_rollramp`'s capture: a player dropped onto a rolled submodel's
+/// non-axial side, where the turned sphere offset's `-l.z` sign picks the
+/// sphere (movers doc 22, "A rolled submodel's non-axial side").
+#[test]
+fn a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail() {
+    tilt_matches(ROLL, ours_roll());
 }
 
 #[test]

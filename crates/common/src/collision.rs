@@ -1676,10 +1676,9 @@ impl CollisionWorld {
     /// Model `span` at `origin` and `angles`, with the world box it then
     /// covers.
     fn model_pose(span: ModelSpan, origin: Vec3, angles: Vec3) -> ModelPose {
-        let [f, l, u] = crate::pmove::aim::angles_to_axis(angles.to_array());
         let mut pose = ModelPose {
             origin,
-            axis: [Vec3::from(f), Vec3::from(l), Vec3::from(u)],
+            axis: crate::x87::angles_to_axis(angles),
             turned: angles != Vec3::ZERO,
             lo: Vec3::splat(f32::MAX),
             hi: Vec3::splat(f32::MIN),
@@ -1765,10 +1764,7 @@ impl CollisionWorld {
         let mut copies = self.copies.write().unwrap_or_else(|e| e.into_inner());
         copies.retain(|c| c.entity != entity);
         if let Some((origin, angles, contents)) = pose {
-            let axis = (angles != Vec3::ZERO).then(|| {
-                let [f, l, u] = crate::pmove::aim::angles_to_axis(angles.to_array());
-                [Vec3::from(f), Vec3::from(l), Vec3::from(u)]
-            });
+            let axis = (angles != Vec3::ZERO).then(|| crate::x87::angles_to_axis(angles));
             copies.push(WorldCopy {
                 entity,
                 origin,
