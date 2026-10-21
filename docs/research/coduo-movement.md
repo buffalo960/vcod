@@ -767,3 +767,36 @@ the legs' bend reads -49.7 at y 599.9 to -49.9 at 600.34, inside 1.5's
 the pillar run matches all 372 snapshots (`moves_ab.rs`,
 `the_predictor_replays_walks_against_patches`, no gap rows;
 `pmove::tests::a_uo_body_refuses_legs_bent_up_past_45_degrees`).
+
+## 18. The stance box
+
+VERIFIED, disassembly, `PM_CheckDuck` (0x27e16): after the eye's target
+steps, UO calls `PM_GetEffectiveStance` (0x28d66; 1 for the prone target
+`ps+0x574`, 2 for the crouch target `ps+0x578`) and writes the box's top
+(`pm->maxs[2]`, `pm+0xec`) off both it and `pm_flags` 0x1 (prone) and
+0x2 (crouch):
+
+| Target | Flags 0x3 clear | 0x1 alone | 0x2 |
+|---|---|---|---|
+| prone | `ps+0x570`, 70 (0x28d9e) | 30 (0x28ddc) | 50 (0x28dc8) |
+| crouch | `ps+0x570`, 70 (0x28e61) | 50 (0x28e77) | 50 (0x28e77) |
+| stand | `ps+0x570`, 70 (0x28edb) | 70 | 70 |
+
+VERIFIED, decompile: 1.5b's writes 30, 50 or `ps+0x338` off the target
+alone (game15.so, the same tail; `cod15-movement.md` 3). `eFlags` 0x40
+and 0x20 follow the target on both. INFERRED: a UO box grows the cmd the
+flags rise, and the flags rise only through the stance traces' fit test
+(`cod15-movement.md` 3), so it never grows into a ceiling; a 1.5 box grows
+when the target next steps, up to 200 ms past the test, and a body that
+moved under a low ceiling in between stands up into it, all solid, held
+in the air with no ground.
+
+vcod: `PlayerState::maxs` under `MoveRules::Uo` (pinned by
+`pmove::tests::a_uo_rise_sizes_the_box_off_the_flags`). Before
+2026-10-21 UO sized the box as 1.5 does. VERIFIED (measured, ours,
+`bot_match` UO `tdm`, 10 bots, mp_cassino seeds 1..=8, master 589516ea):
+three bots were held all solid in a caulk or clip brush for 100 ticks
+and typed `kill` (`Bot::wedged`). Two were traced cmd by cmd: one's box
+grew from 50 to 70 and the other's from 30 to 50 on a cmd that moved
+neither, as the target stepped. With the UO box none was held
+(`bot-combat.md` 12.3).

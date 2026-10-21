@@ -1444,6 +1444,19 @@ fix, the kill lines):
 
 mp_kursk's matches play out bit for bit alike (237 kills, 10
 suicides): no vehicle round landed with a spawn queued there.
+
+The `MOD_SUICIDE`s left: VERIFIED (measured, ours, `bot_match` UO `tdm`,
+10 bots, mp_cassino seeds 1..=8, master 589516ea, each `kill` logged with
+its reason): four, none dry. Three were `Bot::wedged` (seed 3 ticks 1229
+and 7330, seed 4 tick 3518): bodies held all solid in a caulk or clip
+brush, which a stance rise's late box put them in (`coduo-movement.md`
+18, a server bug, fixed 2026-10-21). One was `BotView::stranded` (seed 4
+tick 8957, a ledge at (937, -947, 108) off the graph), the wander's
+intended out. No script `suicide()`, no cooked frag and no prone body
+under a vehicle. With the UO box the same seeds end with 0
+`MOD_SUICIDE` (1352 kills, 2 suicides, both a tank's
+`MOD_EXPLOSIVE` death blast: one charged to the victim, one to the
+world).
 - The one team frag left (UO mp_cassino seed 16, tick 2758) went off
   299 units from where the teammate stood at the release; its cause is
   not traced. INFERRED: the mate ran into it, or the frag met a
