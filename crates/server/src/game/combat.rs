@@ -1369,10 +1369,10 @@ pub struct BodyPose {
     pub input: vcod_common::playerpose::BodyInput,
     pub angles: vcod_common::playerpose::BodyAngles,
     pub slope: vcod_common::playerpose::BodySlope,
-    /// A gunner's legs blend, the turret placement's leaves.
-    pub turret_leaves: Option<Vec<(usize, f32)>>,
+    /// A gunner's legs blend, the turret placement's rows.
+    pub turret_leaves: Option<Vec<vcod_common::turretpose::TurretRow>>,
     /// `ClientSim::gunner_left`.
-    pub turret_left: Option<(usize, Vec<(usize, f32)>)>,
+    pub turret_left: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
     /// A UO rider's seat: the frame the body is posed in and the
     /// controllers' rider branch (docs/research/coduo-vehicles.md 11.4).
     pub seat: Option<vcod_common::playerpose::BodySeat>,
@@ -1385,6 +1385,24 @@ pub struct BodyPose {
     pub seat_ramp: vcod_common::playerpose::SeatRamp,
     /// `bg.frametime` at the end frame, each ease's step.
     pub ease_ms: i32,
+    /// The entity fields the controllers' hook reads off `s` as the
+    /// client's last `BG_PlayerStateToEntityState` wrote them, which runs
+    /// after each cmd's move and in `SetClientOrigin` as well as in the end
+    /// frame (docs/research/coduo-vehicles.md 13, "The weapon-swap frame").
+    pub es: HookEs,
+    /// The record's seat angles (`+0x3f4`): the last seat tag an end frame
+    /// placed the rider by, kept past an exit, zero from the connect.
+    pub ci_seat_angles: [f32; 3],
+}
+
+/// What [`BodyPose::es`] holds: whether the entity rides (`eFlags`
+/// 0x100000) with its vehicle's kind and seat (`s+0x88`), and its `weapon`
+/// (`s+0xcc`).
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct HookEs {
+    /// `(kind, seat)`, `None` on foot.
+    pub seat: Option<(i32, i32)>,
+    pub weapon: i32,
 }
 
 impl BodyPose {
@@ -1425,14 +1443,22 @@ impl BodyPose {
         }
     }
 
-    /// The controls the hook aims at this frame: a rider's off his seat,
-    /// anyone else's off the swings; `None` for a mounted one under 1.1. A
-    /// dead body runs them too, its `tag_origin` turned by the legs' world
-    /// yaw on top of the body's frame (combat doc 16.4, "The dying body").
+    /// The controls the hook aims at now: a rider's off his seat, anyone
+    /// else's off the swings; `None` for a mounted one under 1.1. A dead body
+    /// runs them too, its `tag_origin` turned by the legs' world yaw on top
+    /// of the body's frame (combat doc 16.4, "The dying body"). Whether he
+    /// rides, where and armed or not come off the entity as his last cmd
+    /// left it, the angles off the record as the end frame wrote it
+    /// (coduo-vehicles.md 13, "The weapon-swap frame").
     pub fn target_controllers(&self) -> Option<vcod_common::playerpose::Controllers> {
-        use vcod_common::playerpose::Controllers;
-        match &self.seat {
-            Some(seat) => Some(Controllers::rider(&self.input, seat, &self.slope)),
+        use vcod_common::playerpose::{BodySeat, Controllers};
+        match self.es.seat {
+            Some((kind, pos)) => {
+                let steer = self.seat.map_or(0.0, |s| s.steer);
+                let seat =
+                    BodySeat::new(self.ci_seat_angles, kind, pos, steer).armed(self.es.weapon);
+                Some(Controllers::rider(&self.input, &seat, &self.slope))
+            }
             None => Controllers::target(self.rules, &self.angles, &self.input, &self.slope),
         }
     }

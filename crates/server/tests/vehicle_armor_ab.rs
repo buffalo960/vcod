@@ -87,6 +87,25 @@ fn place_of(fixture: &str) -> i64 {
         .expect("the target's placement")
 }
 
+/// The target's first spawn in a fixture, as the replay pins it: the
+/// origin and angles of the spawn point retail's script picked, `PROBE
+/// spawn <time> 0 (x, y, z) (pitch, yaw, roll)`. The spawn's think there
+/// starts the legs clip the tank driver still idles on in his seat
+/// (coduo-vehicles.md 13, "The tank driver's idle").
+fn logged_spawn(fixture: &str) -> ([f32; 3], [f32; 3]) {
+    let l = fixture
+        .lines()
+        .find(|l| l.starts_with("PROBE spawn ") && l.split(' ').nth(3) == Some("0"))
+        .expect("the target's spawn");
+    let v: Vec<f32> = l
+        .split(['(', ')'])
+        .filter(|s| s.contains(", "))
+        .flat_map(|s| s.split(", ").map(|x| x.parse::<f32>().unwrap()))
+        .collect();
+    assert_eq!(v.len(), 6, "the spawn point's origin and angles: {l}");
+    ([v[0], v[1], v[2]], [v[3], v[4], v[5]])
+}
+
 /// The shooter's placement time in a fixture.
 fn shooter_place_of(fixture: &str) -> i64 {
     fixture
@@ -194,8 +213,11 @@ struct Capture<'a> {
     /// shooter's placement.
     shooter_ms: i64,
     /// Text whose `target` and `shooter` `CMDS` lines set each client's
-    /// cmd times.
+    /// cmd times, and the shooter's buttons cmd by cmd.
     cmds: Option<&'a str>,
+    /// The target's spawn, `(origin, angles)`, where the script's pick
+    /// would take a random point.
+    spawn: Option<([f32; 3], [f32; 3])>,
 }
 
 /// [`ours_after`] with the shooter and the cmds as `capture` has them.
@@ -208,7 +230,9 @@ fn ours_after_late(
     at: Option<Schedule>,
     capture: Capture,
 ) -> Option<Vec<String>> {
-    let Capture { shooter_ms, cmds } = capture;
+    let Capture {
+        shooter_ms, cmds, ..
+    } = capture;
     let fs = vcod_common::testing::uo_fs()?;
     let bsp_path = fs.resolve_map(map).expect("map in the UO paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -225,6 +249,9 @@ fn ours_after_late(
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    if let Some(spot) = capture.spawn {
+        sv.pin_spawns(vec![vec![Some(spot)]]);
+    }
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS + late_ms);
     let (qa, qb) = (
         Rc::new(RefCell::new(Queues::default())),
@@ -251,6 +278,7 @@ fn ours_after_late(
     };
     // A capture's `CMDS` lines: each client's cmds on the times its net
     // probe sent them, so a fall or a use tap runs retail's cmd split.
+    let shooter_in = cmds.map_or(Vec::new(), |text| common::cmds_inputs(text, "shooter"));
     if let Some(text) = cmds {
         for (h, who) in [(&mut hold, "shooter"), (&mut target, "target")] {
             h.framed = true;
@@ -311,7 +339,16 @@ fn ours_after_late(
         // The shooter is `--probe-uo-weapon hold` from its placement on.
         let (ea, eb) = if let Some(sh) = sh.as_mut() {
             if shooter_placed && sh.state() == vcod_common::net::NetState::Active {
-                sh.send_cmds(&hold.cmds(sh, BUTTON_ATTACK | BUTTON_ADS));
+                let mut cmds = hold.cmds(sh, BUTTON_ATTACK | BUTTON_ADS);
+                // A capture's shooter presses on its own cmd: the net probe
+                // holds the trigger a second past its placement.
+                if !shooter_in.is_empty() {
+                    for c in &mut cmds {
+                        let i = shooter_in.partition_point(|e| e.0 <= c.server_time);
+                        c.buttons = i.checked_sub(1).map_or(0, |i| shooter_in[i].1.0);
+                    }
+                }
+                sh.send_cmds(&cmds);
             } else if let Some(c) = sh.send_frame(&UserCmd::default()) {
                 hold.last = c.server_time;
             }
@@ -667,6 +704,16 @@ fn compare_silhouettes(map: &str, fixture: &str, ours: &[String]) {
 /// time, so the silhouettes replay on retail's.
 const LATE_MS: i64 = 16_600;
 
+/// The target's placement in the capture [`LATE_MS`] was set on.
+const LATE_PLACE_MS: i64 = 19_300;
+
+/// The join that puts ours' placement of the target on `fixture`'s level
+/// time, `late_ms` being the one for a placement at [`LATE_PLACE_MS`]: a
+/// rider's clips run on level time.
+fn late_for(fixture: &str, late_ms: i64) -> i64 {
+    late_ms + place_of(fixture) - LATE_PLACE_MS
+}
+
 fn silhouettes(map: &str, vehicletype: &str, fixture: &str, late_ms: i64) {
     let mut cvars = vec![("probe_aim_sweep", "1"), ("probe_profile", "1")];
     if vehicletype == "willyjeep_mp" {
@@ -678,19 +725,13 @@ fn silhouettes(map: &str, vehicletype: &str, fixture: &str, late_ms: i64) {
     let alt = std::env::var("ARMOR_FIXTURE")
         .ok()
         .map(|p| std::fs::read_to_string(p).unwrap());
-    // Another capture's target joined on its own level time: shift the
-    // join by its placement's, or every clip runs off retail's phase.
-    let late_ms = late_ms
-        + alt
-            .as_deref()
-            .map_or(0, |a| place_of(a) - place_of(fixture));
     let fixture = alt.as_deref().unwrap_or(fixture);
+    let late_ms = late_for(fixture, late_ms);
+    let spawn = Some(logged_spawn(fixture));
     let late_ms = std::env::var("ARMOR_LATE").map_or(late_ms, |v| v.parse().unwrap());
-    // Another capture's shooter joins as late as its own did: the aim
-    // sweep's traces stamp the rider's bones on its clock.
-    let shooter_ms = alt
-        .as_deref()
-        .map_or(0, |a| shooter_place_of(a) - place_of(a));
+    // The capture's shooter joins as late as it did and both clients send
+    // its cmds: the aim sweep's traces stamp the rider's bones on its clock.
+    let shooter_ms = shooter_place_of(fixture) - place_of(fixture);
     let Some(log) = ours_after_late(
         map,
         vehicletype,
@@ -700,7 +741,8 @@ fn silhouettes(map: &str, vehicletype: &str, fixture: &str, late_ms: i64) {
         Some(schedule_of(fixture)),
         Capture {
             shooter_ms,
-            cmds: alt.as_deref(),
+            cmds: Some(fixture),
+            spawn,
         },
     ) else {
         return;
@@ -762,8 +804,7 @@ fn bones(log: &[String]) -> BTreeMap<(i32, String), [f32; 3]> {
 #[test]
 fn the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail() {
     let fixture = include_str!("fixtures/vehicles/mp_cassino-tank-glide-uo.txt");
-    let silhouette = include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt");
-    let late_ms = LATE_MS + place_of(fixture) - place_of(silhouette);
+    let late_ms = late_for(fixture, LATE_MS);
     let cvars = [
         ("probe_aim_sweep", "1"),
         ("probe_profile", "1"),
@@ -782,6 +823,7 @@ fn the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail() {
         Capture {
             shooter_ms,
             cmds: None,
+            spawn: Some(logged_spawn(fixture)),
         },
     ) else {
         return;
@@ -828,8 +870,7 @@ fn ours_on_capture(
     map: &str,
     vehicletype: &str,
     fixture: &str,
-    base: &str,
-    base_late: i64,
+    late_ms: i64,
 ) -> Option<Vec<String>> {
     let mut cvars = vec![
         ("probe_aim_sweep", "1"),
@@ -844,18 +885,19 @@ fn ours_on_capture(
         vehicletype,
         &cvars,
         true,
-        base_late + place_of(fixture) - place_of(base),
+        late_for(fixture, late_ms),
         Some(schedule_of(fixture)),
         Capture {
             shooter_ms: shooter_place_of(fixture) - place_of(fixture),
             cmds: Some(fixture),
+            spawn: Some(logged_spawn(fixture)),
         },
     )
 }
 
-/// Every bone and body sample of `fixture` against ours, but the frames
-/// `gaps` names: each within the print's 0.01 either side.
-fn compare_glide(fixture: &str, ours: &[String], gaps: &[i32]) {
+/// Every bone and body sample of `fixture` against ours, each within the
+/// print's 0.01 either side.
+fn compare_glide(fixture: &str, ours: &[String]) {
     let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
     let near = |a: &[f32; 3], b: Option<&[f32; 3]>| {
         b.is_some_and(|b| (0..3).all(|i| (a[i] - b[i]).abs() <= 0.021))
@@ -863,14 +905,10 @@ fn compare_glide(fixture: &str, ours: &[String], gaps: &[i32]) {
     let (rb, ob) = (bones(&retail), bones(ours));
     let (rp, op) = (bodies(&retail), bodies(ours));
     let mut misses = Vec::new();
-    let mut gapped = std::collections::BTreeSet::new();
     for ((t, tag), r) in &rb {
         let o = ob.get(&(*t, tag.clone()));
         if !near(r, o) {
-            match gaps.contains(t) {
-                true => _ = gapped.insert(*t),
-                false => misses.push(format!("{t} {tag}: retail {r:?}, ours {o:?}")),
-            }
+            misses.push(format!("{t} {tag}: retail {r:?}, ours {o:?}"));
         }
     }
     for (t, r) in &rp {
@@ -879,45 +917,34 @@ fn compare_glide(fixture: &str, ours: &[String], gaps: &[i32]) {
         }
     }
     assert!(misses.is_empty(), "{}", misses.join("\n"));
-    // A gap that closed comes off the list.
-    let open: Vec<_> = gaps.iter().filter(|t| !gapped.contains(t)).collect();
-    assert!(open.is_empty(), "gap frames now within the print: {open:?}");
 }
-
-/// The first frame after a seat change that hides or shows the rider's own
-/// weapon (`BG_UpdatePlayerDObj` rebuilds the DObj on a weapon change:
-/// boarding, the passenger's seat, the exit) and, for the exit, the frame
-/// after: the upper body parts from retail's, the legs and body do not
-/// (coduo-vehicles.md 13, "The glides on the jeep").
-const JEEP_GLIDE_GAPS: [i32; 4] = [29800, 53950, 65950, 66000];
 
 /// The jeep's rider into each seat and out, against retail's bones: the
 /// boarding glide waits on the end frame's `vehMotion` (11.4), each change
-/// blends over the stance window, and the exit's fall runs retail's cmd
-/// split (coduo-vehicles.md 13, "The glides on the jeep").
+/// blends over the stance window, the frame of a change poses the controls
+/// off the entity his last cmd left (whether and where he rides, his
+/// weapon) and the exit's fall runs retail's cmd split (coduo-vehicles.md
+/// 13, "The glides on the jeep", "The weapon-swap frame").
 #[test]
 fn the_jeep_rider_glides_into_each_seat_and_falls_out_as_on_retail() {
     let fixture = include_str!("fixtures/vehicles/mp_peaks-jeep-glide-uo.txt");
-    let base = include_str!("fixtures/vehicles/mp_peaks-jeep-silhouette-uo.txt");
-    let Some(log) = ours_on_capture("mp_peaks", "willyjeep_mp", fixture, base, LATE_MS - 50) else {
+    let Some(log) = ours_on_capture("mp_peaks", "willyjeep_mp", fixture, LATE_MS - 50) else {
         return;
     };
-    compare_glide(fixture, &log, &JEEP_GLIDE_GAPS);
+    compare_glide(fixture, &log);
 }
 
-/// The exit's two first frames, as [`JEEP_GLIDE_GAPS`]'s.
-const TANK_EXIT_GAPS: [i32; 2] = [65750, 65800];
-
-/// The Panzer IV's driver out over the hull: the body's fall frame for
-/// frame on retail's cmd split, the bones but the exit's first two frames.
+/// The Panzer IV's driver idling in his seat on the clip his spawn
+/// started, then out over the hull: the body's fall frame for frame on
+/// retail's cmd split, every bone of it (coduo-vehicles.md 13, "The tank
+/// driver's idle", "The weapon-swap frame").
 #[test]
-fn the_tank_driver_falls_off_the_hull_as_on_retail() {
+fn the_tank_driver_idles_and_falls_off_the_hull_as_on_retail() {
     let fixture = include_str!("fixtures/vehicles/mp_cassino-tank-exit-uo.txt");
-    let base = include_str!("fixtures/vehicles/mp_cassino-tank-silhouette-uo.txt");
-    let Some(log) = ours_on_capture("mp_cassino", "panzeriv_mp", fixture, base, LATE_MS) else {
+    let Some(log) = ours_on_capture("mp_cassino", "panzeriv_mp", fixture, LATE_MS) else {
         return;
     };
-    compare_glide(fixture, &log, &TANK_EXIT_GAPS);
+    compare_glide(fixture, &log);
 }
 
 /// Every profile of a target that never boards, ray for ray at the

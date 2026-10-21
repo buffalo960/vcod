@@ -38,6 +38,8 @@ fn main() {
     let gametype = std::env::var("GAMETYPE").unwrap_or_else(|_| "dm".into());
     let bots: usize = std::env::var("BOTS").map_or(6, |t| t.parse().expect("BOTS"));
     let shoot = std::env::var("SHOOT").is_ok_and(|v| v == "1");
+    // The server's 8 client slots, more when more bots are asked for.
+    let slots = bots.max(8);
     let trace: Option<(Vec<usize>, usize, usize)> = std::env::var("TRACE").ok().map(|t| {
         let v: Vec<&str> = t.split(':').collect();
         let slots = v[0].split(',').map(|x| x.parse().expect("TRACE")).collect();
@@ -61,7 +63,7 @@ fn main() {
         let cfg = vcod_server::ServerConfig {
             map: map.clone(),
             hostname: "stalls".into(),
-            max_clients: 8,
+            max_clients: slots,
             gametype: gametype.clone(),
             test_entities: 0,
             trace: false,
@@ -83,12 +85,12 @@ fn main() {
         }
         sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
         sv.load_scripts(fs.clone()).expect("load the scripts");
-        let mut hist: [VecDeque<[f32; 3]>; 8] = Default::default();
-        let mut stalled = [false; 8];
-        let mut spell: [Option<[f32; 3]>; 8] = [None; 8];
-        let mut was = [false; 8];
+        let mut hist: Vec<VecDeque<[f32; 3]>> = vec![VecDeque::new(); slots];
+        let mut stalled = vec![false; slots];
+        let mut spell: Vec<Option<[f32; 3]>> = vec![None; slots];
+        let mut was = vec![false; slots];
         let (mut count, mut falls, mut deaths, mut sprints) = (0, 0, 0, 0);
-        let mut died = [false; 8];
+        let mut died = vec![false; slots];
         for tick in 0..ticks {
             now += Duration::from_millis(50);
             sv.tick(now);
@@ -196,10 +198,11 @@ fn main() {
                             })
                             .fold(f32::INFINITY, f32::min);
                         println!(
-                            "  seed {seed} t{tick} bot {slot} stalled at {:?} (12 s at {:?}) lad {} wp {:?} next {:?} bot {:.0} away",
+                            "  seed {seed} t{tick} bot {slot} stalled at {:?} (12 s at {:?}) lad {} seat {} wp {:?} next {:?} bot {:.0} away",
                             b.origin.map(|x| x.round()),
                             first.map(|x| x.round()),
                             b.on_ladder as u8,
+                            b.seat.map_or(0, |s| s.1),
                             wp.map(|p| p.map(|x| x.round())),
                             next.map(|p| p.map(|x| x.round())),
                             other,
@@ -214,7 +217,8 @@ fn main() {
         );
         if shoot {
             // victim guid, num, team, name, attacker guid, num, team, name,
-            // weapon, damage, means of death, hit location
+            // weapon, damage, means of death, hit location; `dm` logs no
+            // teams, so its lines are two fields short.
             let kills: Vec<Vec<String>> = sv
                 .script_log()
                 .iter()
@@ -225,10 +229,16 @@ fn main() {
                         .filter(|(pre, _)| !pre.ends_with(|c: char| c.is_ascii_alphanumeric()))
                         .map(|(_, k)| k)
                 })
-                .map(|k| k.split(';').map(str::to_string).collect())
+                .map(|k| k.split(';').map(str::to_string).collect::<Vec<_>>())
+                .filter(|k| k.len() >= 10)
                 .collect();
-            let frag = |k: &Vec<String>| k[10].starts_with("MOD_GRENADE");
-            let own: Vec<&Vec<String>> = kills.iter().filter(|k| frag(k) && k[1] == k[5]).collect();
+            let frag = |k: &Vec<String>| k[k.len() - 2].starts_with("MOD_GRENADE");
+            // The attacker's number: after the victim's guid, number,
+            // team (`tdm`) and name and the attacker's guid.
+            let own: Vec<&Vec<String>> = kills
+                .iter()
+                .filter(|k| frag(k) && k[1] == k[k.len() / 2 - 1])
+                .collect();
             for k in &own {
                 println!("  seed {seed} own frag: {}", k.join(";"));
             }

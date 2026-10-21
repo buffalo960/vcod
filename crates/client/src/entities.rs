@@ -20,7 +20,7 @@ use vcod_common::net::trajectory::{TR_INTERPOLATE, TR_LINEAR_STOP, Trajectory};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::playerpose::{
     BG_SWING_SPEED, BodyAngles, BodyInput, BodySeat, BodySlope, Controllers, PoseInputs,
-    pose_player, seat_inputs,
+    SeatWeapon, pose_player, seat_inputs,
 };
 use vcod_common::pmove::MoveRules;
 use vcod_common::pmove::movers::SnapshotMovers;
@@ -1704,11 +1704,25 @@ pub fn build_instances(
                         // the legs, torso and torso pitch after the lerped
                         // view every frame, then reads the legs anim's
                         // record, as the server's `BG_PlayerAnimation` does.
+                        let surf_type = ent.field_i32(p, "surfType");
                         let input = BodyInput {
                             view: angles.to_array(),
                             movement_dir: ent.field_f32(p, "angles2[1]"),
                             eflags,
                             legs: anims.record(legs_wire),
+                            // UO's updater reads the seat off `surfType`;
+                            // the record's seat yaw is the seat tag's this
+                            // frame (0x30033a77).
+                            seat_weapon: if rules == MoveRules::Uo {
+                                SeatWeapon::of(
+                                    surf_type >> 3 & 7,
+                                    vehiclepose::rider_seat(surf_type),
+                                    ent.field_i32(p, "weapon"),
+                                    rider.as_ref().map_or(0.0, |s| s.angles[1]),
+                                )
+                            } else {
+                                SeatWeapon::Barred
+                            },
                         };
                         st.body.step(&input, frametime_ms, *swing_speed);
                         st.body.update_conditions(&input);
@@ -1752,7 +1766,7 @@ pub fn build_instances(
                         torso_layers: st.torso.layers(render_time),
                         nodes: st.torso.node_weights(render_time),
                         group_pitch: pitch,
-                        turret_leaves: placed.as_ref().map(|g| g.leaves.as_slice()),
+                        turret_leaves: placed.as_ref().map(|g| g.rows.as_slice()),
                         turret_left: None,
                         seat_leaves: st.seat.next(goal),
                         controllers,
@@ -2802,6 +2816,7 @@ mod tests {
                         movement_dir: e.field_f32(p, "angles2[1]"),
                         eflags,
                         legs: anims.record(legs),
+                        seat_weapon: SeatWeapon::of(v.pose.kind, seat, weapon, served.angles[1]),
                     };
                     let slope = BodySlope {
                         lean: e.field_f32(p, "leanf"),
@@ -2818,6 +2833,11 @@ mod tests {
                             steer_full: STEER_FULL_CGAME,
                             ..served
                         }),
+                        es: vcod_server::game::combat::HookEs {
+                            seat: Some((v.pose.kind, seat)),
+                            weapon,
+                        },
+                        ci_seat_angles: served.angles,
                         ..Default::default()
                     };
                     let server = body.pose_inputs(&anims, s.server_time);

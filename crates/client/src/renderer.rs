@@ -28,9 +28,9 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, Deform, DepthFunc, DrawClass,
-    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
-    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
-    has_animated_tcmods, rgb_wave_value, wave_value,
+    ImageRef, PolygonOffset, RgbGen, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib,
+    Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb, has_animated_tcmods,
+    rgb_wave_value, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -80,6 +80,9 @@ const MAX_HUD_GLYPHS: usize = 1024;
 
 /// `fx::sim::MAX_PARTICLES` and room for the head icons.
 const MAX_FX_QUADS: usize = 2048 + 256;
+/// Quads the fx buffers hold once each is drawn once per stage: the stock
+/// effect materials have at most two base stages.
+const MAX_FX_DRAWN: usize = MAX_FX_QUADS * 2;
 
 const MAX_HUD_QUADS: usize = 16384;
 
@@ -92,10 +95,201 @@ struct FxVert {
     rgba: [f32; 4],
     /// The quad's smaller half-extent; scales the `vc_softParticles` fade.
     size: f32,
+    /// `FX_VERT_*` bits, the stage's (`fx_stage_draw`).
+    flags: u32,
 }
 
 // The vertex layout below hardcodes this stride.
-const _: () = assert!(std::mem::size_of::<FxVert>() == 40);
+const _: () = assert!(std::mem::size_of::<FxVert>() == 44);
+
+/// `fx.wgsl`: the material is `nofog`.
+const FX_VERT_NOFOG: u32 = 1;
+/// `fx.wgsl`: an additive draw scales by the texture's alpha
+/// (`GL_SRC_ALPHA GL_ONE`).
+const FX_VERT_TEX_ALPHA: u32 = 2;
+/// `fx.wgsl`: the stage's `alphaFunc`, tested on texture alpha times the
+/// gen's: `GT0`, `LT128`, `GE128`.
+const FX_VERT_ALPHA_GT0: u32 = 4;
+const FX_VERT_ALPHA_LT128: u32 = 8;
+const FX_VERT_ALPHA_GE128: u32 = 16;
+/// `tex_samplers.wgsl`'s `F_CLAMP_S`, `F_CLAMP_T`: bundle 0 clamps that axis.
+const FX_VERT_CLAMP_S: u32 = STAGE_FLAG_CLAMP_S;
+const FX_VERT_CLAMP_T: u32 = STAGE_FLAG_CLAMP_T;
+
+/// The fx pass's blend states, retail's `glBlendFunc` for each stage
+/// (GL_State 0x4d57b0 maps the script's pair straight through;
+/// cod11-shader-scripts.md section 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FxBlend {
+    /// `GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA`, and any pair not below.
+    Alpha,
+    /// Onto `GL_ONE`, drawn premultiplied as `GL_ONE GL_ONE`.
+    Add,
+    /// `GL_ONE GL_ONE_MINUS_SRC_COLOR` (UO's `flamethrowerFire*`).
+    Screen,
+    /// No blend (or `GL_ONE GL_ZERO`): writes depth, as the gib and debris
+    /// materials' `alphaFunc GE128` stages do.
+    Opaque,
+}
+
+/// One draw of an fx material: a stage's image (the anim frame at the
+/// frame's shader time), blend, `FX_VERT_*` bits and texture matrix. The
+/// fx pass draws a run's quads once per stage, stage by stage, as retail's
+/// stage loop does (0x500b30).
+struct FxStageDraw<'a> {
+    image: &'a str,
+    blend: FxBlend,
+    flags: u32,
+    /// bundle 0's tcMods folded (`bundle_affine`); identity without a script.
+    uv: [f32; 6],
+    /// `None` for a material without a script (`rgbGen vertex`).
+    stage: Option<&'a Stage>,
+}
+
+/// The stages the fx pass draws for a material, in order. Retail's base loop
+/// (0x500b30) draws every stage not flagged `perLight` (vcod parks those in
+/// `Shader::per_light`), each through 0x5008a0 with its own colours
+/// (0x4ffa60), texture coordinates (0x500400), image (0x4fe0e0) and state
+/// (0x4d57b0). Bundle 1 is not drawn: a `$lightmap` there is the white
+/// image under a registered material's lightmap index -4 (0x4f3699). A stage
+/// whose bundle 0 is not an image file draws nothing here. A stage wraps
+/// its image unless the bundle says `clamp` (image flags 0x10, 0x20;
+/// 0x4ec6e9). A material without a script draws its name as the image,
+/// straight alpha and clamped, as the pass always drew it.
+fn fx_stage_draws<'a>(shader: Option<&'a Shader>, name: &'a str, t: f32) -> Vec<FxStageDraw<'a>> {
+    let Some(sh) = shader else {
+        return vec![FxStageDraw {
+            image: name,
+            blend: FxBlend::Alpha,
+            flags: FX_VERT_CLAMP_S | FX_VERT_CLAMP_T,
+            uv: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            stage: None,
+        }];
+    };
+    sh.stages
+        .iter()
+        .filter_map(|st| {
+            let b0 = st.bundles.first()?;
+            let image = match (&b0.anim, &b0.image) {
+                (Some(anim), _) if !anim.paths.is_empty() => {
+                    anim.paths[anim_frame_index(anim.fps, anim.paths.len(), t)].as_str()
+                }
+                (_, ImageRef::Path(p)) => p.as_str(),
+                _ => return None,
+            };
+            let (blend, mut flags) = fx_stage_draw(sh, st);
+            if b0.clamp.s {
+                flags |= FX_VERT_CLAMP_S;
+            }
+            if b0.clamp.t {
+                flags |= FX_VERT_CLAMP_T;
+            }
+            Some(FxStageDraw {
+                image,
+                blend,
+                flags,
+                uv: bundle_affine(&b0.tcmods, t),
+                stage: Some(st),
+            })
+        })
+        .collect()
+}
+
+/// How the fx pass draws one stage: its blend and its `FX_VERT_*` bits.
+/// Retail fogs a stage unless the shader is `nofog` (0x4fbc71), towards
+/// black when it blends onto `GL_ONE` (0x4d2ad0); the colour that reaches
+/// the blend is texture times the gen's colour under `GL_MODULATE`, so a
+/// `GL_SRC_ALPHA` source reads the texture's alpha.
+fn fx_stage_draw(sh: &Shader, st: &Stage) -> (FxBlend, u32) {
+    use BlendFactor as F;
+    let mut flags = if sh.nofog { FX_VERT_NOFOG } else { 0 };
+    flags |= match st.alpha_func {
+        None => 0,
+        Some(AlphaFunc::Gt0) => FX_VERT_ALPHA_GT0,
+        Some(AlphaFunc::Lt128) => FX_VERT_ALPHA_LT128,
+        Some(AlphaFunc::Ge128) => FX_VERT_ALPHA_GE128,
+    };
+    let blend = match st.blend.as_ref() {
+        None | Some((F::One, F::Zero)) => FxBlend::Opaque,
+        Some((F::SrcAlpha, F::One)) => {
+            flags |= FX_VERT_TEX_ALPHA;
+            FxBlend::Add
+        }
+        Some((_, F::One)) => FxBlend::Add,
+        Some((F::One, F::OneMinusSrcColor)) => FxBlend::Screen,
+        _ => FxBlend::Alpha,
+    };
+    (blend, flags)
+}
+
+/// A stage's vertex colour for a sprite whose own colour is `v` (the efx
+/// `rgb` and `alpha` curves, CoDMP.exe 0x48e640, 0x48e7d0), as 0x4ffa60
+/// computes it: `identity` is white and `identityLighting` identityLight
+/// flat, both opaque, whatever the sprite's colour; `vertex` takes the
+/// sprite's colour times identityLight, `exactVertex` as it is; `const` and
+/// `wave` ignore it. The parser gives `rgbGen vertex` and `exactVertex`
+/// `alphaGen vertex` (0x4f8d4f), so their stages fade with the sprite, and
+/// alphaGen identity is opaque elsewhere (0x4ffa60's alpha case 0, which
+/// leaves `rgbGen vertex`'s copied alpha at identityLight 1). A
+/// stage blending `GL_ONE GL_ONE` reads no source alpha; `fs_additive`
+/// scales by it, so it gets 1.
+fn fx_stage_rgba(stage: Option<&Stage>, v: [f32; 4], identity_light: f32, t: f32) -> [f32; 4] {
+    let [r, g, b, a] = v;
+    let il = identity_light;
+    let Some(st) = stage else {
+        return [r * il, g * il, b * il, a];
+    };
+    let rgb = match &st.rgb_gen {
+        RgbGen::Identity => [1.0; 3],
+        RgbGen::IdentityLighting => [il; 3],
+        RgbGen::Vertex | RgbGen::LightingDiffuse => [r * il, g * il, b * il],
+        RgbGen::ExactVertex | RgbGen::LightingPrecalc => [r, g, b],
+        RgbGen::Const(c) => *c,
+        RgbGen::ConstLighting(c) => c.map(|x| x * il),
+        // a table wave clamps after its identityLight scale; the noise
+        // glow skips the scale (0x514c00)
+        RgbGen::Wave(w) if w.form == WaveForm::Noise => [rgb_wave_value(w, t).clamp(0.0, 1.0); 3],
+        RgbGen::Wave(w) => [(rgb_wave_value(w, t) * il).clamp(0.0, 1.0); 3],
+    };
+    let alpha = match &st.alpha_gen {
+        AlphaGen::Vertex | AlphaGen::Entity => a,
+        // case 0 keeps what `rgbGen vertex` copied only at identityLight 1
+        AlphaGen::Identity if st.rgb_gen == RgbGen::Vertex && il == 1.0 => a,
+        AlphaGen::Identity => 1.0,
+        AlphaGen::Const(c) => c.clamp(0.0, 1.0),
+        AlphaGen::Wave(w) => wave_value(w, t).clamp(0.0, 1.0),
+    };
+    let alpha = if st.blend == Some((BlendFactor::One, BlendFactor::One)) {
+        1.0
+    } else {
+        alpha
+    };
+    [rgb[0], rgb[1], rgb[2], alpha]
+}
+
+/// The wgpu blend of each [`FxBlend`] pipeline. `fs_additive` and
+/// `fs_screen` write alpha 0, so their alpha component leaves the target's
+/// alpha alone.
+fn fx_blend_state(blend: FxBlend) -> Option<wgpu::BlendState> {
+    let component = |src_factor, dst_factor| wgpu::BlendComponent {
+        src_factor,
+        dst_factor,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let add = component(wgpu::BlendFactor::One, wgpu::BlendFactor::One);
+    match blend {
+        FxBlend::Alpha => Some(wgpu::BlendState::ALPHA_BLENDING),
+        FxBlend::Add => Some(wgpu::BlendState {
+            color: add,
+            alpha: add,
+        }),
+        FxBlend::Screen => Some(wgpu::BlendState {
+            color: component(wgpu::BlendFactor::One, wgpu::BlendFactor::OneMinusSrc),
+            alpha: add,
+        }),
+        FxBlend::Opaque => None,
+    }
+}
 
 /// The world batches' pipelines. Layers (polygonOffset terrain blends) and
 /// overlays (decals, masked cutouts) are coplanar with the world and draw
@@ -518,7 +712,7 @@ enum Emit {
     World { set: usize, bound: Option<Bound> },
     Ent { inst: u32, bound: Option<usize> },
     Gun { part: u32, bound: Option<usize> },
-    Fx { additive: bool },
+    Fx { blend: FxBlend },
 }
 
 /// Copies the visible `ranges` out of `src` batch by batch into `out`, one
@@ -1088,6 +1282,8 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
         }
     }
     let alpha = match &st.alpha_gen {
+        // `rgbGen vertex` and `exactVertex` imply it unless an alphaGen was
+        // set first (the parser, shader doc 3)
         AlphaGen::Vertex => {
             flags |= STAGE_FLAG_VERTEX_ALPHA;
             1.0
@@ -1499,23 +1695,31 @@ fn stage_bind_groups(
     (mat, stage)
 }
 
-/// World-space fx quads. Two pipelines that differ only in blend state:
-/// straight alpha, and `GL_ONE GL_ONE` for [`assets::Shaders::is_additive`]
-/// materials. One draw call per contiguous same-shader run.
+/// World-space fx quads. One pipeline per [`FxBlend`], and the same four
+/// with the `vc_softParticles` fade. One draw call per stage of each
+/// contiguous same-shader run.
 struct FxPass {
-    pipeline: wgpu::RenderPipeline,
-    additive_pipeline: wgpu::RenderPipeline,
-    /// The pair with the `vc_softParticles` fade; group 2 is
+    /// Indexed by `FxBlend as usize`.
+    pipelines: [wgpu::RenderPipeline; 4],
+    /// The `vc_softParticles` four; group 2 is
     /// `SoftParticles::fx_bind_group`.
-    soft_pipeline: wgpu::RenderPipeline,
-    soft_additive_pipeline: wgpu::RenderPipeline,
+    soft_pipelines: [wgpu::RenderPipeline; 4],
     vertex_buf: wgpu::Buffer,
-    index_buf: wgpu::Buffer, // static quad pattern, MAX_FX_QUADS * 6, u32
-    /// shader name -> bind group; None = failed to resolve, warned already.
+    index_buf: wgpu::Buffer, // static quad pattern, MAX_FX_DRAWN * 6, u32
+    /// image name -> bind group; None = failed to resolve, warned already.
     textures: HashMap<String, Option<wgpu::BindGroup>>,
-    /// (shader, additive, quad count, material sort) runs in draw order,
-    /// by sort first.
-    runs: Vec<(String, bool, usize, f32)>,
+    /// Draws in order, by sort first.
+    runs: Vec<FxRun>,
+}
+
+/// One stage of a same-shader run of fx quads.
+struct FxRun {
+    /// Key into `FxPass::textures`.
+    image: String,
+    blend: FxBlend,
+    quads: usize,
+    /// The material's sort.
+    sort: f32,
 }
 
 /// Debug-HUD text over an embedded font atlas; drawn last, ignoring depth.
@@ -3934,11 +4138,11 @@ impl Renderer {
         self.vis_counts = VisCounts::default();
     }
 
-    /// Quads in draw order (already back-to-front). Unseen shader names
-    /// resolve lazily; an unresolvable one warns once and is cached as
-    /// `None`. Additive materials (see `Shaders::is_additive`) go on the
-    /// additive pipeline, everything else on straight alpha.
-    pub fn set_fx_quads(&mut self, fs: &Pk3Fs, quads: Vec<FxQuad>) {
+    /// Quads in draw order (already back-to-front); `time` is the shader
+    /// clock in seconds (tcMod, animMap, wave gens). Unseen images resolve
+    /// lazily; an unresolvable one warns once and is cached as `None`. Each
+    /// run draws once per stage (`fx_stage_draws`).
+    pub fn set_fx_quads(&mut self, fs: &Pk3Fs, quads: Vec<FxQuad>, time: f32) {
         // build_quads is capped by construction; the vertex buffer is sized
         // exactly, so truncate anyway.
         let quads = if quads.len() > MAX_FX_QUADS {
@@ -3953,67 +4157,78 @@ impl Renderer {
 
         // Retail's draw list keys an effect's polygons by material sort
         // first (shader doc 5); within a sort they keep the sim's
-        // back-to-front order. An fx material without a script sorts as
-        // its blend does.
+        // back-to-front order. An fx material without a script is
+        // implicit, straight alpha, and sorts as a blend.
         let mut sorts: HashMap<&str, f32> = HashMap::new();
         for quad in quads {
             sorts.entry(&quad.shader).or_insert_with(|| {
                 self.shader_lib
                     .get(&quad.shader)
-                    .map(Shader::sort_value)
-                    .unwrap_or(if self.shaders.is_additive(&quad.shader) {
-                        SORT_ADDITIVE
-                    } else {
-                        SORT_BLEND
-                    })
+                    .map_or(SORT_BLEND, Shader::sort_value)
             });
         }
         let mut order: Vec<&FxQuad> = quads.iter().collect();
         order.sort_by(|a, b| sorts[a.shader.as_str()].total_cmp(&sorts[b.shader.as_str()]));
         let mut verts: Vec<FxVert> = Vec::with_capacity(quads.len() * 4);
-        let mut runs: Vec<(String, bool, usize, f32)> = Vec::new();
-        for quad in order {
-            if !self.fx.textures.contains_key(&quad.shader) {
-                let sh = self.shader_lib.get(&quad.shader);
-                let bg = resolve_fx_texture(
-                    &self.device,
-                    &self.queue,
-                    &self.vm_pass.skin_layout,
-                    fs,
-                    self.shaders.image_map(),
-                    &quad.shader,
-                    FxImage {
-                        gamma: self.image_gamma.as_ref(),
-                        picmip: self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip)),
-                        store: self.textures.store(),
-                        mipmap: !sh.is_some_and(|sh| sh.nomipmaps),
-                    },
-                );
-                self.fx.textures.insert(quad.shader.clone(), bg);
-            }
-
-            let sh = self.shader_lib.get(&quad.shader);
-            let k = colour_scale(sh, self.identity_light);
-            let [r, g, b, mut a] = quad.rgba;
-            if ignores_vertex_alpha(sh) {
-                a = 1.0;
-            }
-            let size = quad_half_extent(&quad.verts);
-            for i in 0..4 {
-                verts.push(FxVert {
-                    pos: quad.verts[i],
-                    uv: quad.uvs[i],
-                    rgba: [r * k, g * k, b * k, a],
-                    size,
-                });
-            }
-            match runs.last_mut() {
-                Some((name, _, count, _)) if *name == quad.shader => *count += 1,
-                _ => {
-                    let additive = self.shaders.is_additive(&quad.shader);
-                    let sort = sorts[quad.shader.as_str()];
-                    runs.push((quad.shader.clone(), additive, 1, sort));
+        let mut runs: Vec<FxRun> = Vec::new();
+        let mut rest = &order[..];
+        'runs: while let Some(first) = rest.first() {
+            let name = first.shader.as_str();
+            let len = rest.iter().take_while(|q| q.shader == name).count();
+            let (group, tail) = rest.split_at(len);
+            rest = tail;
+            let sh = self.shader_lib.get(name);
+            for draw in fx_stage_draws(sh, name, time) {
+                if verts.len() / 4 + group.len() > MAX_FX_DRAWN {
+                    log::warn!("fx: stage draws exceed the {MAX_FX_DRAWN} quad cap, truncating");
+                    break 'runs;
                 }
+                if !self.fx.textures.contains_key(draw.image) {
+                    // a scripted stage names its image file; a material
+                    // without a script resolves through the image map
+                    let no_map = HashMap::new();
+                    let images = if draw.stage.is_some() {
+                        &no_map
+                    } else {
+                        self.shaders.image_map()
+                    };
+                    let bg = resolve_fx_texture(
+                        &self.device,
+                        &self.queue,
+                        &self.vm_pass.skin_layout,
+                        fs,
+                        images,
+                        draw.image,
+                        FxImage {
+                            gamma: self.image_gamma.as_ref(),
+                            picmip: self.textures.world_picmip(sh.is_some_and(|sh| sh.nopicmip)),
+                            store: self.textures.store(),
+                            mipmap: !sh.is_some_and(|sh| sh.nomipmaps),
+                        },
+                    );
+                    self.fx.textures.insert(draw.image.to_string(), bg);
+                }
+                let [a, b, c, d, tx, ty] = draw.uv;
+                for quad in group {
+                    let rgba = fx_stage_rgba(draw.stage, quad.rgba, self.identity_light, time);
+                    let size = quad_half_extent(&quad.verts);
+                    for i in 0..4 {
+                        let [s, t] = quad.uvs[i];
+                        verts.push(FxVert {
+                            pos: quad.verts[i],
+                            uv: [a * s + c * t + tx, b * s + d * t + ty],
+                            rgba,
+                            size,
+                            flags: draw.flags,
+                        });
+                    }
+                }
+                runs.push(FxRun {
+                    image: draw.image.to_string(),
+                    blend: draw.blend,
+                    quads: group.len(),
+                    sort: sorts[name],
+                });
             }
         }
 
@@ -5609,7 +5824,7 @@ impl Renderer {
             // only worth the split when an fx run draws after it
             let soft_on = self.soft.on()
                 && self.world.is_some()
-                && self.fx.runs.iter().any(|r| r.3 > SORT_DECAL);
+                && self.fx.runs.iter().any(|r| r.sort > SORT_DECAL);
             let split = ssao_on || shadow_on || soft_on;
             let mut pass = targets.begin(&mut encoder, true, !split);
             pass.set_bind_group(0, &self.camera_bg, &[]);
@@ -5704,14 +5919,14 @@ impl Renderer {
             let (vw, vh) = (self.config.width as f32, self.config.height as f32);
             let world_sorts: Vec<f32> = world_list.iter().map(|w| w.0).collect();
             let model_sorts: Vec<f32> = ent_draws.iter().map(|d| d.sort).collect();
-            let fx_sorts: Vec<f32> = self.fx.runs.iter().map(|r| r.3).collect();
+            let fx_sorts: Vec<f32> = self.fx.runs.iter().map(|r| r.sort).collect();
             let fx_firsts: Vec<usize> = self
                 .fx
                 .runs
                 .iter()
                 .scan(0, |first, run| {
                     let at = *first;
-                    *first += run.2;
+                    *first += run.quads;
                     Some(at)
                 })
                 .collect();
@@ -5890,14 +6105,19 @@ impl Renderer {
                     }
                     SortedItem::Fx(fi) => {
                         let fx = &self.fx;
-                        let (shader, additive, count, _) = &fx.runs[fi];
-                        let Some(Some(bg)) = fx.textures.get(shader) else {
+                        let FxRun {
+                            image,
+                            blend,
+                            quads: count,
+                            ..
+                        } = &fx.runs[fi];
+                        let Some(Some(bg)) = fx.textures.get(image) else {
                             continue;
                         };
                         // only after the split is the depth copy this frame's
                         let soft = soft_on && split_at.is_some_and(|at| k >= at);
                         let bound = match emit {
-                            Emit::Fx { additive } => Some(additive),
+                            Emit::Fx { blend } => Some(blend),
                             other => {
                                 if matches!(other, Emit::Gun { .. }) {
                                     pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
@@ -5914,21 +6134,19 @@ impl Renderer {
                                 None
                             }
                         };
-                        if bound != Some(*additive) {
-                            pass.set_pipeline(match (soft, *additive) {
-                                (false, false) => &fx.pipeline,
-                                (false, true) => &fx.additive_pipeline,
-                                (true, false) => &fx.soft_pipeline,
-                                (true, true) => &fx.soft_additive_pipeline,
-                            });
+                        if bound != Some(*blend) {
+                            let set = if soft {
+                                &fx.soft_pipelines
+                            } else {
+                                &fx.pipelines
+                            };
+                            pass.set_pipeline(&set[*blend as usize]);
                         }
                         pass.set_bind_group(1, bg, &[]);
                         let start = (fx_firsts[fi] * 6) as u32;
                         let end = ((fx_firsts[fi] + count) * 6) as u32;
                         pass.draw_indexed(start..end, 0, 0..1);
-                        emit = Emit::Fx {
-                            additive: *additive,
-                        };
+                        emit = Emit::Fx { blend: *blend };
                     }
                 }
             }
@@ -6315,13 +6533,13 @@ fn create_fx_pass(
 ) -> FxPass {
     let vertex_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fx vertices"),
-        size: (MAX_FX_QUADS * 4 * std::mem::size_of::<FxVert>()) as u64,
+        size: (MAX_FX_DRAWN * 4 * std::mem::size_of::<FxVert>()) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    // Quad n spans vertices 4n..4n+4. u32 because MAX_FX_QUADS * 4 can
+    // Quad n spans vertices 4n..4n+4. u32 because MAX_FX_DRAWN * 4 can
     // exceed u16::MAX.
-    let indices: Vec<u32> = (0..MAX_FX_QUADS)
+    let indices: Vec<u32> = (0..MAX_FX_DRAWN)
         .flat_map(|q| {
             let b = (q * 4) as u32;
             [b, b + 1, b + 2, b, b + 2, b + 3]
@@ -6347,8 +6565,8 @@ fn create_fx_pass(
         bind_group_layouts: &[Some(camera_layout), Some(texture_layout), Some(soft_layout)],
         immediate_size: 0,
     });
-    // The pipelines must differ only in blend, layout and fragment entry so
-    // runs can interleave within one pass.
+    // The pipelines differ only in blend (with the depth write it implies),
+    // layout and fragment entry, so runs can interleave within one pass.
     let make = |label, fs_entry, blend, soft: bool| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -6369,6 +6587,7 @@ fn create_fx_pass(
                         1 => Float32x2, // uv
                         2 => Float32x4, // rgba
                         3 => Float32, // size
+                        4 => Uint32, // flags
                     ],
                 })],
             },
@@ -6378,7 +6597,7 @@ fn create_fx_pass(
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(blend),
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -6391,8 +6610,9 @@ fn create_fx_pass(
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                // The world must occlude fx quads, but overlapping quads must all draw.
-                depth_write_enabled: Some(false),
+                // The world must occlude fx quads, but overlapping blended
+                // quads must all draw; an unblended stage writes depth.
+                depth_write_enabled: Some(blend.is_none()),
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
@@ -6407,42 +6627,35 @@ fn create_fx_pass(
         })
     };
 
-    let pipeline = make(
-        "fx pipeline",
-        "fs_main",
-        wgpu::BlendState::ALPHA_BLENDING,
-        false,
-    );
-    // `GL_ONE GL_ONE`, as the effect materials' blendFunc. The fragment
-    // writes alpha 0 so additive quads never inflate the target's alpha.
-    let add = wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    };
-    let additive = wgpu::BlendState {
-        color: add,
-        alpha: add,
-    };
-    let additive_pipeline = make("fx additive pipeline", "fs_additive", additive, false);
-    let soft_pipeline = make(
-        "fx soft pipeline",
-        "fs_soft",
-        wgpu::BlendState::ALPHA_BLENDING,
-        true,
-    );
-    let soft_additive_pipeline = make(
-        "fx soft additive pipeline",
-        "fs_soft_additive",
-        additive,
-        true,
-    );
+    let [alpha, additive, screen, opaque] = [
+        FxBlend::Alpha,
+        FxBlend::Add,
+        FxBlend::Screen,
+        FxBlend::Opaque,
+    ]
+    .map(fx_blend_state);
+    let pipelines = [
+        make("fx pipeline", "fs_main", alpha, false),
+        make("fx additive pipeline", "fs_additive", additive, false),
+        make("fx screen pipeline", "fs_screen", screen, false),
+        make("fx opaque pipeline", "fs_main", opaque, false),
+    ];
+    let soft_pipelines = [
+        make("fx soft pipeline", "fs_soft", alpha, true),
+        make(
+            "fx soft additive pipeline",
+            "fs_soft_additive",
+            additive,
+            true,
+        ),
+        make("fx soft screen pipeline", "fs_soft_screen", screen, true),
+        // nothing to fade into: an opaque stage writes its own depth
+        make("fx soft opaque pipeline", "fs_main", opaque, true),
+    ];
 
     FxPass {
-        pipeline,
-        additive_pipeline,
-        soft_pipeline,
-        soft_additive_pipeline,
+        pipelines,
+        soft_pipelines,
         vertex_buf,
         index_buf,
         textures: HashMap::new(),
@@ -6464,21 +6677,6 @@ fn colour_scale(shader: Option<&Shader>, identity_light: f32) -> f32 {
         Some(RgbGen::Identity | RgbGen::ExactVertex | RgbGen::Const(_)) => 1.0,
         _ => identity_light,
     }
-}
-
-/// Whether the material's image stage blends `GL_ONE GL_ONE`, which reads
-/// no source alpha: a `useAlpha` sprite's vertex alpha changes nothing
-/// there (the fx pass's additive draw scales by it otherwise).
-fn ignores_vertex_alpha(shader: Option<&Shader>) -> bool {
-    shader
-        .and_then(|sh| {
-            sh.stages.iter().find(|st| {
-                st.bundles
-                    .iter()
-                    .any(|b| matches!(b.image, ImageRef::Path(_)))
-            })
-        })
-        .is_some_and(|st| st.blend == Some((BlendFactor::One, BlendFactor::One)))
 }
 
 /// A HUD colour is a display value; `scale` (`colour_scale`) takes it into
@@ -7630,7 +7828,7 @@ mod tests {
     use super::*;
     use glam::Mat4;
     use vcod_common::shader::{
-        BlendFactor, Bundle, DepthFunc, PolygonOffset, Stage, TcMod, Wave, WaveForm,
+        BlendFactor, Bundle, DepthFunc, PolygonOffset, SORT_ADDITIVE, Stage, TcMod, Wave, WaveForm,
     };
 
     #[test]
@@ -7727,6 +7925,194 @@ mod tests {
             colour_scale(Some(&with(RgbGen::IdentityLighting)), 1.0),
             1.0
         );
+    }
+
+    /// `body` is a block's inside; newlines end a line as in a script.
+    fn parse_fx(body: &str) -> Shader {
+        let text = format!("t {{\n{body}\n}}");
+        let (name, toks) = vcod_common::shader::split_blocks(&text).remove(0);
+        vcod_common::shader::parse_shader(&name, &toks, &mut vcod_common::shader::WarnSet::new())
+    }
+
+    /// The fx pass draws each stage on its own blendFunc and fogs it unless
+    /// the material is `nofog`; only `GL_SRC_ALPHA GL_ONE` reads the
+    /// texture's alpha among the additive ones, and an unblended stage is
+    /// opaque (CoDMP.exe 0x4d57b0, 0x4fbc71).
+    #[test]
+    fn fx_stage_draw_follows_the_stage_blend_and_nofog() {
+        let draw = |body: &str| {
+            let sh = parse_fx(body);
+            fx_stage_draw(&sh, &sh.stages[0])
+        };
+        assert_eq!(
+            draw("{ map a.tga blendFunc blend rgbGen vertex }"),
+            (FxBlend::Alpha, 0)
+        );
+        assert_eq!(
+            draw("{ map a.tga blendFunc GL_ONE GL_ONE rgbGen vertex }"),
+            (FxBlend::Add, 0)
+        );
+        assert_eq!(
+            draw("{ map a.tga blendFunc add rgbGen vertex }"),
+            (FxBlend::Add, 0)
+        );
+        assert_eq!(
+            draw("{ map a.tga blendFunc GL_SRC_ALPHA GL_ONE rgbGen vertex }"),
+            (FxBlend::Add, FX_VERT_TEX_ALPHA)
+        );
+        // UO's flamethrowerFire* and flameSmoke*
+        assert_eq!(
+            draw("nofog { map a.dds blendFunc GL_ONE GL_ONE_MINUS_SRC_COLOR rgbGen vertex }"),
+            (FxBlend::Screen, FX_VERT_NOFOG)
+        );
+        assert_eq!(
+            draw(
+                "nofog { map a.dds blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA \
+                 alphaGen vertex rgbGen vertex }"
+            ),
+            (FxBlend::Alpha, FX_VERT_NOFOG)
+        );
+        // UO's smoke/smk_t_fire_*: additive and nofog
+        assert_eq!(
+            draw("nofog { map a.dds blendFunc add rgbGen vertex }"),
+            (FxBlend::Add, FX_VERT_NOFOG)
+        );
+        // gfx/impact/bark_gib and the other debris: unblended, cut at 128
+        assert_eq!(
+            draw("{ map a.tga rgbGen vertex alphaGen vertex alphaFunc GE128 depthWrite }"),
+            (FxBlend::Opaque, FX_VERT_ALPHA_GE128)
+        );
+    }
+
+    /// Every base stage draws, in order, on its own image and tcMods; a
+    /// `perLight` stage is the dlight pass's and a `$lightmap` bundle 1 is
+    /// not drawn (CoDMP.exe 0x500b30, 0x4f3699).
+    #[test]
+    fn fx_stage_draws_every_base_stage() {
+        assert_eq!(fx_stage_draws(None, "gfx/x", 0.0).len(), 1);
+        assert_eq!(fx_stage_draws(None, "gfx/x", 0.0)[0].image, "gfx/x");
+        let clamp = FX_VERT_CLAMP_S | FX_VERT_CLAMP_T;
+        assert_eq!(fx_stage_draws(None, "gfx/x", 0.0)[0].flags, clamp);
+        // gfx/impact/bullethit_plaster: the perLight overlay stays out
+        let hit = parse_fx(
+            "{ map gfx/impact/bullethit_plaster blendfunc blend rgbGen vertex \
+             nextbundle map $lightmap } \
+             { perlight map gfx/impact/bullethit_plaster blendfunc GL_SRC_ALPHA GL_ONE \
+             rgbGen vertex nextbundle map $dlight }",
+        );
+        let draws = fx_stage_draws(Some(&hit), "t", 0.0);
+        assert_eq!(draws.len(), 1);
+        assert_eq!(draws[0].image, "gfx/impact/bullethit_plaster");
+        assert_eq!(draws[0].blend, FxBlend::Alpha);
+        // no `clamp`: the image wraps
+        assert_eq!(draws[0].flags, 0);
+        // gfx/effects/smoke/roller: two blended stages, each turning
+        let roller = parse_fx(
+            "sort additive \
+             { map clamp /gfx/effects/smoke/roller blendfunc blend rgbGen vertex tcMod rotate -90 } \
+             { map clamp /gfx/effects/smoke/smoke_frnt blendfunc blend rgbGen vertex tcMod rotate 80 }",
+        );
+        let draws = fx_stage_draws(Some(&roller), "t", 0.25);
+        assert_eq!(draws.len(), 2);
+        assert_eq!(draws[0].image, "gfx/effects/smoke/roller");
+        assert_eq!(draws[1].image, "gfx/effects/smoke/smoke_frnt");
+        assert_eq!(draws[0].flags, clamp);
+        assert_eq!(draws[0].uv, bundle_affine(&[TcMod::Rotate(-90.0)], 0.25));
+        assert_eq!(draws[1].uv, bundle_affine(&[TcMod::Rotate(80.0)], 0.25));
+        // UO's impact/bullet_fabric_a: a blended stage and an additive glow
+        let fabric = parse_fx(
+            "{ map a.dds blendfunc blend rgbGen vertex nextbundle map $lightmap } \
+             { map glow.dds blendFunc add rgbGen wave sin .90 .25 .5 .5 } \
+             { perlight map a.dds blendfunc blend rgbGen identity nextbundle map $dlight }",
+        );
+        let blends: Vec<FxBlend> = fx_stage_draws(Some(&fabric), "t", 0.0)
+            .iter()
+            .map(|d| d.blend)
+            .collect();
+        assert_eq!(blends, [FxBlend::Alpha, FxBlend::Add]);
+        // gfx/effects/animated/animfire: the frame at the shader time
+        let fire = parse_fx(
+            "{\nanimMap 4\nmap a.tga\nmap b.tga\nmap c.tga\nblendFunc add\nrgbGen vertex\n}",
+        );
+        let image = |t| fx_stage_draws(Some(&fire), "t", t)[0].image;
+        assert_eq!(image(0.0), "a.tga");
+        assert_eq!(image(0.5), "c.tga");
+        assert_eq!(image(0.8), "a.tga");
+    }
+
+    /// A stage's colour follows its gens, not the sprite's colour alone
+    /// (CoDMP.exe 0x4ffa60): identity is opaque white, vertex the sprite's
+    /// colour times identityLight with its alpha, a wave ignores the sprite.
+    #[test]
+    fn fx_stage_rgba_follows_the_stage_gens() {
+        let v = [0.8, 0.6, 0.4, 0.5];
+        let rgba = |body: &str| {
+            let sh = parse_fx(body);
+            fx_stage_rgba(Some(&sh.stages[0]), v, 0.5, 0.0)
+        };
+        assert_eq!(fx_stage_rgba(None, v, 0.5, 0.0), [0.4, 0.3, 0.2, 0.5]);
+        assert_eq!(
+            rgba("{ map a.tga blendfunc blend rgbGen vertex }"),
+            [0.4, 0.3, 0.2, 0.5]
+        );
+        assert_eq!(
+            rgba("{ map a.tga blendfunc blend rgbGen exactVertex }"),
+            [0.8, 0.6, 0.4, 0.5]
+        );
+        // UO's impact/bullet_sand_a: the sprite's fade never reaches it
+        assert_eq!(
+            rgba("{ map a.dds blendfunc blend rgbgen identity }"),
+            [1.0, 1.0, 1.0, 1.0]
+        );
+        assert_eq!(
+            rgba("{ map a.tga blendfunc blend rgbGen identityLighting }"),
+            [0.5, 0.5, 0.5, 1.0]
+        );
+        assert_eq!(
+            rgba("{ map a.tga blendfunc blend rgbGen vertex alphaGen const 0.25 }"),
+            [0.4, 0.3, 0.2, 0.25]
+        );
+        // an `alphaGen identity` after the rgbGen stays; case 0 drops the
+        // copied alpha unless identityLight is 1
+        let late = parse_fx("{ map a.tga blendfunc blend rgbGen vertex alphaGen identity }");
+        assert_eq!(fx_stage_rgba(Some(&late.stages[0]), v, 0.5, 0.0)[3], 1.0);
+        assert_eq!(fx_stage_rgba(Some(&late.stages[0]), v, 1.0, 0.0)[3], 0.5);
+        let late = parse_fx("{ map a.tga blendfunc blend rgbGen exactVertex alphaGen identity }");
+        assert_eq!(fx_stage_rgba(Some(&late.stages[0]), v, 1.0, 0.0)[3], 1.0);
+        // GL_ONE GL_ONE reads no source alpha
+        assert_eq!(
+            rgba("{ map a.tga blendFunc add rgbGen vertex }"),
+            [0.4, 0.3, 0.2, 1.0]
+        );
+        // a table wave is scaled by identityLight, then clamped; alpha 1
+        let sh = parse_fx("{ map a.tga blendFunc add rgbGen wave sin .90 .25 .5 .5 }");
+        let RgbGen::Wave(w) = &sh.stages[0].rgb_gen else {
+            panic!("wave gen");
+        };
+        let k = (rgb_wave_value(w, 0.3) * 0.5).clamp(0.0, 1.0);
+        assert_eq!(
+            fx_stage_rgba(Some(&sh.stages[0]), v, 0.5, 0.3),
+            [k, k, k, 1.0]
+        );
+    }
+
+    /// Each fx pipeline's colour blend is retail's glBlendFunc for its
+    /// `FxBlend`; the additive two leave the target's alpha alone.
+    #[test]
+    fn fx_blend_states_match_the_gl_pairs() {
+        use wgpu::BlendFactor as W;
+        let pair = |b: FxBlend| {
+            let c = fx_blend_state(b).unwrap().color;
+            (c.src_factor, c.dst_factor)
+        };
+        assert_eq!(pair(FxBlend::Alpha), (W::SrcAlpha, W::OneMinusSrcAlpha));
+        assert_eq!(pair(FxBlend::Add), (W::One, W::One));
+        assert_eq!(pair(FxBlend::Screen), (W::One, W::OneMinusSrc));
+        assert_eq!(fx_blend_state(FxBlend::Opaque), None);
+        for b in [FxBlend::Add, FxBlend::Screen] {
+            let a = fx_blend_state(b).unwrap().alpha;
+            assert_eq!((a.src_factor, a.dst_factor), (W::One, W::One));
+        }
     }
 
     #[test]
@@ -7877,6 +8263,41 @@ mod tests {
         assert_eq!(
             hud_texture_path("gfx/hud/hud@health.tga", &HashMap::new(), &fs),
             HudTex::Path("gfx/hud/hud@health.dds".to_string())
+        );
+    }
+
+    /// UO's `nofog` fx materials (`scripts/flamethrower.shader`,
+    /// `fxshaders/smoke.shader`) draw unfogged, each on its own blend; the
+    /// impacts draw their base stages, not the `perLight` overlay
+    /// (`fxshaders/impact.shader`).
+    #[test]
+    fn uo_fx_materials_draw_their_base_stages_on_their_blends() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let lib = ShaderLib::load(&fs);
+        let alpha = (FxBlend::Alpha, 0);
+        for (name, want) in [
+            ("flamethrowerFire12", vec![(FxBlend::Screen, FX_VERT_NOFOG)]),
+            ("flameSmoke1", vec![(FxBlend::Alpha, FX_VERT_NOFOG)]),
+            ("smoke/smk_t_fire_a", vec![(FxBlend::Add, FX_VERT_NOFOG)]),
+            ("impact/bullet_dirt_a", vec![alpha]),
+            ("impact/bullet_sand_a", vec![alpha]),
+            ("impact/bullet_fabric_a", vec![alpha, (FxBlend::Add, 0)]),
+        ] {
+            let sh = lib.get(name);
+            assert!(sh.is_some(), "{name} has no script");
+            let got: Vec<(FxBlend, u32)> = fx_stage_draws(sh, name, 0.0)
+                .iter()
+                .map(|d| (d.blend, d.flags & !(FX_VERT_CLAMP_S | FX_VERT_CLAMP_T)))
+                .collect();
+            assert_eq!(got, want, "{name}");
+        }
+        // rgbgen identity: white and opaque whatever the sprite's fade
+        let sand = lib.get("impact/bullet_sand_a").unwrap();
+        assert_eq!(
+            fx_stage_rgba(Some(&sand.stages[0]), [0.5, 0.5, 0.5, 0.2], 0.5, 0.0),
+            [1.0; 4]
         );
     }
 
@@ -8065,6 +8486,28 @@ mod tests {
         assert!(!flagged(Some((SrcAlpha, One)), None));
         assert!(!flagged(Some((DstColor, Zero)), None));
         assert!(!flagged(Some((Zero, OneMinusSrcColor)), Some(SORT_BLEND)));
+    }
+
+    /// A world stage with `rgbGen vertex` or `exactVertex` and no earlier
+    /// alphaGen reads the vertex alpha (CoDMP.exe 0x4f8d70): mp_bocage's
+    /// rockface decals and mp_sicily's shoreline fade by it.
+    #[test]
+    fn stage_params_reads_vertex_alpha_under_a_vertex_rgbgen() {
+        let flags = |body: &str| stage_params(&parse_fx(body), 0, 0.0).unwrap().flags;
+        for body in [
+            "{ map a.tga blendFunc blend rgbGen exactVertex }",
+            "{ map a.tga alphaFunc GE128 rgbGen vertex }",
+            "{ map a.tga blendFunc GL_SRC_ALPHA GL_ONE alphaGen identity rgbGen vertex }",
+        ] {
+            assert_ne!(flags(body) & STAGE_FLAG_VERTEX_ALPHA, 0, "{body}");
+        }
+        for body in [
+            "{ map a.tga blendFunc blend rgbGen exactVertex alphaGen identity }",
+            "{ map a.tga blendFunc blend alphaGen const 0.5 rgbGen vertex }",
+            "{ map a.tga blendFunc blend rgbGen identity }",
+        ] {
+            assert_eq!(flags(body) & STAGE_FLAG_VERTEX_ALPHA, 0, "{body}");
+        }
     }
 
     #[test]

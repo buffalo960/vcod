@@ -8,7 +8,8 @@ use crate::pmove::MoveRules;
 use crate::pmove::aim::{
     angle_normalize_180, angle_normalize_360 as angle_mod, angle_subtract, lean_fraction,
 };
-use crate::skeleton::{AnimBinding, PoseBuffer, Record, Skeleton};
+use crate::skeleton::{AnimBinding, Blend, PoseBuffer, Record, Skeleton};
+use crate::turretpose::TurretRow;
 use crate::xanim::XAnim;
 use glam::{Quat, Vec3};
 use std::rc::Rc;
@@ -108,6 +109,38 @@ pub struct BodyInput {
     pub eflags: i32,
     /// The legs anim's record (`BG_ParseCommands`' flags).
     pub legs: crate::animscript::AnimRecord,
+    /// UO: what the rider's seat lets him hold. Read only under a rider
+    /// bit; 1.1's and 1.5's updaters have no such test.
+    pub seat_weapon: SeatWeapon,
+}
+
+/// UO's seat test in the angle updater (game.mp.uo 0x1dbac, uo cgame
+/// 0x30004550): `BG_AllowPlayerWeaponAtVehiclePos` on the entity's seat
+/// (`s+0x88`: a four-wheel's seat 3) and the entity's `weapon` (`s+0xcc`).
+/// coduo-vehicles.md 13, "The angle updater on a rider".
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub enum SeatWeapon {
+    /// On foot, on a turret, or in a seat that holds no weapon: a rider
+    /// here swings all three angles every frame.
+    #[default]
+    Barred,
+    /// The weapon seat, empty handed.
+    Allowed,
+    /// The weapon seat with a weapon in hand: the legs swing toward the
+    /// seat tag's yaw (the record's `+0x3f8`) before the rider's yaw
+    /// overwrites them.
+    Held { seat_yaw: f32 },
+}
+
+impl SeatWeapon {
+    /// The test off the seat's `(kind, seat)` and the entity's `weapon`.
+    pub fn of(kind: i32, seat: i32, weapon: i32, seat_yaw: f32) -> Self {
+        match (kind == 1 && seat == 3, weapon != 0) {
+            (false, _) => SeatWeapon::Barred,
+            (true, false) => SeatWeapon::Allowed,
+            (true, true) => SeatWeapon::Held { seat_yaw },
+        }
+    }
 }
 
 impl BodyInput {
@@ -116,6 +149,24 @@ impl BodyInput {
     }
     fn mounted(&self) -> bool {
         self.eflags & EF_MOUNTED != 0
+    }
+    /// On a turret or, on UO, in a vehicle seat: UO's updater tests
+    /// `eFlags & 0x106000` (game.mp.uo 0x1dbac, uo cgame 0x30004550), 1.1's
+    /// and 1.5's `0xc000` (cgame 0x300040e0, 1.5 cgame 0x30004330).
+    fn rides(&self) -> bool {
+        self.eflags & (EF_MOUNTED | crate::net::flags::EF_IN_VEHICLE_V22) != 0
+    }
+    /// A rider the updater swings all three angles for: any but one in the
+    /// seat that allows his weapon.
+    fn rides_bare(&self) -> bool {
+        self.rides() && self.seat_weapon == SeatWeapon::Barred
+    }
+    /// The seat yaw a rider's legs swing toward instead of the view's.
+    fn held_seat_yaw(&self) -> Option<f32> {
+        match self.seat_weapon {
+            SeatWeapon::Held { seat_yaw } if self.rides() => Some(seat_yaw),
+            _ => None,
+        }
     }
     fn prone(&self) -> bool {
         self.eflags & EF_PRONE != 0
@@ -165,13 +216,16 @@ impl BodyAngles {
     /// The angle updater (`game.mp.i386.so` 0x2af78, cgame 0x300040e0) for
     /// one frame of `frametime_ms`: the torso yaw toward the view (less 0.3
     /// of the legs' heading off it), the legs toward their heading once 40
-    /// degrees off it, the torso pitch toward 0.6 of the view's.
+    /// degrees off it, the torso pitch toward 0.6 of the view's. A rider
+    /// faces the view with no pitch; the UO server's and cgame's copies
+    /// (game.mp.uo 0x1dbac, uo cgame 0x30004550) add the seat test of
+    /// [`SeatWeapon`].
     pub fn step(&mut self, input: &BodyInput, frametime_ms: i32, swing_speed: f32) {
         let ft = frametime_ms as f32;
         let m = input.movement_dir;
         let yaw = angle_mod(input.view[1]);
         let climbing = self.movetype & MOVETYPE_CLIMB != 0;
-        if !input.mounted() && !climbing && self.movetype & MOVETYPE_IDLE != 0 {
+        if !input.rides_bare() && !climbing && self.movetype & MOVETYPE_IDLE != 0 {
             if self.firing {
                 self.torso_yawing = true;
                 self.pitching = true;
@@ -216,8 +270,11 @@ impl BodyAngles {
                 &mut a.legs_yawing,
             );
         };
+        // An armed rider's legs swing toward the seat, which only moves
+        // their flag: the rider's yaw below overwrites the angle.
+        let seat = input.held_seat_yaw();
         if input.dead() {
-            legs(yaw, 0.0, self);
+            legs(seat.unwrap_or(yaw), 0.0, self);
         } else if input.prone() {
             self.legs_yawing = false;
             self.legs_yaw = m + yaw;
@@ -225,11 +282,11 @@ impl BodyAngles {
             self.legs_yawing = false;
             legs(yaw, 0.0, self);
         } else if self.legs_yawing {
-            legs(yaw + m, 0.0, self);
+            legs(seat.unwrap_or(yaw + m), 0.0, self);
         } else {
-            legs(yaw + m, 40.0, self);
+            legs(seat.unwrap_or(yaw + m), 40.0, self);
         }
-        if input.mounted() {
+        if input.rides() {
             self.torso_yaw = yaw;
             self.legs_yaw = yaw;
         } else if climbing {
@@ -237,7 +294,7 @@ impl BodyAngles {
             self.legs_yaw = yaw + m;
         }
 
-        let pitch_dest = if input.dead() || input.mounted() || climbing {
+        let pitch_dest = if input.dead() || input.rides() || climbing {
             0.0
         } else {
             let p = input.view[0];
@@ -1012,14 +1069,14 @@ pub struct PoseInputs<'a> {
     /// Engine degrees, down positive: what an MG42 aim group descends by
     /// when no placement blend is given.
     pub group_pitch: f32,
-    /// A gunner's legs: the turret anim's leaves and the weights the body
-    /// placement gave them (`turretpose::GunnerPlacement::leaves`), in
-    /// place of the legs clip.
-    pub turret_leaves: Option<&'a [(usize, f32)]>,
-    /// The turret group a gunner's legs last left, and the leaf weights its
+    /// A gunner's legs: the turret anim's rows and leaves and the weights
+    /// the body placement gave them (`turretpose::GunnerPlacement::rows`),
+    /// in place of the legs clip.
+    pub turret_leaves: Option<&'a [TurretRow]>,
+    /// The turret group a gunner's legs last left, and the rows its
     /// placement last gave it, which it blends out on
     /// (cod11-turrets.md 13.9).
-    pub turret_left: Option<(usize, &'a [(usize, f32)])>,
+    pub turret_left: Option<(usize, &'a [TurretRow])>,
     /// `None` for a mounted or dead body.
     pub controllers: Option<Controllers>,
     /// A UO rider's [`seat_leaves`]: each node they were set under with its
@@ -1054,20 +1111,22 @@ pub fn pose_player(
 ) -> PoseBuffer {
     let mut pose = PoseBuffer::new(skel);
     let tree = &inputs.anims.tree;
-    // The legs clips, or a gunner's placement leaves.
-    let legs: Vec<(Rc<XAnim>, f32, f32)> = match inputs.turret_leaves {
-        Some(leaves) => {
-            // The current clip is the turret anim's group, the leaves its
+    // The legs clips, or a gunner's placement rows as nodes of their own
+    // under the turret group.
+    let mut legs: Vec<(Rc<XAnim>, f32, f32)> = Vec::new();
+    let mut shape: Vec<LegsShape> = Vec::new();
+    match inputs.turret_leaves {
+        Some(rows) => {
+            // The current clip is the turret anim's group, the rows its
             // placement weighted; a turret group still blending out keeps
-            // the leaves its own placement left (`turret_left`), any other
+            // the rows its own placement left (`turret_left`), any other
             // clip blends out as itself. Every leaf takes its group's time
             // (UO 0x80bd7e4).
             let layers = &inputs.legs_layers;
-            let mut out = Vec::new();
             for (i, l) in layers.iter().enumerate() {
                 let node = inputs.anims.index.node_id(l.index);
                 let group = if i + 1 == layers.len() {
-                    Some(leaves)
+                    Some(rows)
                 } else {
                     inputs
                         .turret_left
@@ -1075,36 +1134,75 @@ pub fn pose_player(
                         .map(|(_, w)| w)
                 };
                 let Some(group) = group else {
-                    out.extend(layer_clips(inputs, std::slice::from_ref(l), &mut clip));
+                    for c in layer_clips(inputs, std::slice::from_ref(l), &mut clip) {
+                        shape.push(LegsShape::Clip(legs.len()));
+                        legs.push(c);
+                    }
                     continue;
                 };
                 let node_t = l.time.filter(|_| inputs.node_time);
-                for &(leaf, w) in group {
-                    let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
-                        continue;
-                    };
-                    let frame = match node_t {
-                        Some(nt) => nt * anim.frame_count.saturating_sub(1) as f32,
-                        None => anim.frame_pos(l.seconds, anim.looping),
-                    };
-                    out.push((anim, frame, l.weight * w));
+                let mut group_rows = Vec::new();
+                for (rw, leaves) in group {
+                    let mut ids = Vec::new();
+                    for &(leaf, w) in leaves {
+                        let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
+                            continue;
+                        };
+                        let frame = match node_t {
+                            Some(nt) => nt * anim.frame_count.saturating_sub(1) as f32,
+                            None => anim.frame_pos(l.seconds, anim.looping),
+                        };
+                        ids.push(legs.len());
+                        legs.push((anim, frame, w));
+                    }
+                    group_rows.push((*rw, ids));
                 }
+                shape.push(LegsShape::Group(l.weight, group_rows));
             }
-            out
         }
-        None => layer_clips(inputs, &inputs.legs_layers, &mut clip),
-    };
+        None => {
+            for c in layer_clips(inputs, &inputs.legs_layers, &mut clip) {
+                shape.push(LegsShape::Clip(legs.len()));
+                legs.push(c);
+            }
+        }
+    }
     let torso = layer_clips(inputs, &inputs.torso_layers, &mut clip);
     let bind = |clips: &[(Rc<XAnim>, f32, f32)]| -> Vec<_> {
         clips.iter().map(|(a, ..)| skel.bind(a)).collect()
     };
     let (legs_bind, torso_bind) = (bind(&legs), bind(&torso));
     let (legs, torso) = (clips_at(&legs, &legs_bind), clips_at(&torso, &torso_bind));
-    pose.blend_nodes(&[(&legs, inputs.nodes.legs), (&torso, inputs.nodes.torso)]);
+    let legs_node = shape
+        .iter()
+        .map(|s| match s {
+            LegsShape::Clip(i) => Blend::Clip(legs[*i]),
+            LegsShape::Group(w, rows) => Blend::Node(
+                *w,
+                rows.iter()
+                    .map(|(rw, ids)| {
+                        Blend::Node(*rw, ids.iter().map(|&i| Blend::Clip(legs[i])).collect())
+                    })
+                    .collect(),
+            ),
+        })
+        .collect();
+    let torso_node = torso.iter().map(|&c| Blend::Clip(c)).collect();
+    pose.blend_tree(&[
+        Blend::Node(inputs.nodes.legs, legs_node),
+        Blend::Node(inputs.nodes.torso, torso_node),
+    ]);
     if let Some(c) = &inputs.controllers {
         apply_controllers(&mut pose, skel, c);
     }
     pose
+}
+
+/// The legs node's children by index into its clips: a clip, or a turret
+/// group at its weight over its rows, each a weight over its leaves.
+enum LegsShape {
+    Clip(usize),
+    Group(f32, Vec<(f32, Vec<usize>)>),
 }
 
 fn clips_at<'a>(
@@ -1492,6 +1590,46 @@ main
         assert!(near(s.legs_yaw, 200.0) && near(s.torso_yaw, 200.0));
         assert_eq!(s.pitch, 0.0);
         assert!(Controllers::new(&s, &mounted, &BodySlope::default()).is_none());
+    }
+
+    /// UO's updater swings all three angles for a rider unless his seat
+    /// allows his weapon, and an armed one's legs toward the seat's yaw:
+    /// only the legs' flag shows it, on the frame he gets out.
+    #[test]
+    fn a_uo_riders_seat_decides_whether_his_legs_swing_out() {
+        use crate::net::flags::EF_IN_VEHICLE_V22;
+        let legs_after_exit = |seat_weapon| {
+            let mut s = BodyAngles {
+                legs_yaw: 100.0,
+                torso_yaw: 100.0,
+                movetype: MOVETYPE_IDLE,
+                ..Default::default()
+            };
+            let seated = BodyInput {
+                view: [0.0, 100.0, 0.0],
+                movement_dir: 30.0,
+                eflags: EF_IN_VEHICLE_V22,
+                seat_weapon,
+                ..Default::default()
+            };
+            s.step(&seated, 50, BG_SWING_SPEED);
+            assert!(near(s.legs_yaw, 100.0) && near(s.torso_yaw, 100.0));
+            let out = BodyInput {
+                eflags: 0,
+                seat_weapon: SeatWeapon::Barred,
+                ..seated
+            };
+            s.step(&out, 50, BG_SWING_SPEED);
+            s.legs_yaw
+        };
+        // Forced, the flag outlives the seat: 15 of the 30 off the view.
+        assert!(near(legs_after_exit(SeatWeapon::Barred), 115.0));
+        // Inside the 40 degree tolerance the legs never start.
+        assert!(near(legs_after_exit(SeatWeapon::Allowed), 100.0));
+        let held = SeatWeapon::of(1, 3, 5, 190.0);
+        assert_eq!(held, SeatWeapon::Held { seat_yaw: 190.0 });
+        assert!(near(legs_after_exit(held), 115.0));
+        assert_eq!(SeatWeapon::of(1, 2, 5, 0.0), SeatWeapon::Barred);
     }
 
     /// The split: the back takes the torso pitch 0.2 / 0.3 / 0.5 and its yaw

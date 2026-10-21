@@ -1227,6 +1227,11 @@ mark. Addresses are `cgame_mp_x86.dll` 1.1 unless they say `CoDMP.exe`.
   syscall 0x40.
 - VERIFIED: `CG_PlayerShadow` 0x30027630 is the cgame's one other
   caller (0x3002778d); section 9.7.
+- vcod (`marks::Mark::rgba_at`, `mark_pass`): the faded alpha reaches the
+  screen through the mark shader's `alphaGen vertex`, which its `rgbGen
+  vertex` implies (cod11-shader-scripts.md section 3). Before 2026-10-21
+  the parse missed that, and a scripted mark stayed opaque until it was
+  freed.
 
 ### 9.4 `R_MarkFragments` (`CoDMP.exe` 0x4e8db0)
 

@@ -12,8 +12,9 @@
 //! (grenade kills come off the `K;` lines), and its aim: rounds fired (a
 //! bullet gun's clip drops), bullet hits off the `D;`/`K;` lines, and the
 //! time from acquiring a target with none tracked to the first round at
-//! it. It also counts stalled
-//! bot-ticks as `ship_stalls` does (12 s within 150 units), how close
+//! it. It also counts the bot-ticks 12 s within 150 units, as
+//! `ship_stalls` does, split into `held` (holding still on purpose,
+//! `BotBody::holds`) and `stalled` (the rest), how close
 //! a team keeps: each playing bot-tick's distance to its nearest teammate
 //! and whether two or more stand within 400 units, the hits bots answer
 //! with fire at the attacker within 1 s and the deaths to a killer the
@@ -385,7 +386,9 @@ struct Match {
     arm_wins: BTreeMap<String, u32>,
     arm_actions: BTreeMap<String, u32>,
     actions: BTreeMap<String, u32>,
+    /// 12 s stall ticks with no hold, and those holding on purpose.
     stalled: u32,
+    held: u32,
     log: Vec<String>,
     dm: bool,
 }
@@ -492,7 +495,7 @@ fn main() {
             a
         });
         println!(
-            "{} seed {}: ticks {} ended {} wins {:?} score axis {} allies {} stalled {} {} actions {:?}",
+            "{} seed {}: ticks {} ended {} wins {:?} score axis {} allies {} stalled {} held {} {} actions {:?}",
             m.map,
             m.seed,
             m.ticks,
@@ -501,6 +504,7 @@ fn main() {
             m.scores[0],
             m.scores[1],
             m.stalled,
+            m.held,
             all.line(),
             m.actions,
         );
@@ -523,7 +527,7 @@ fn summarize(what: &str, results: &[&Match]) {
     let mut wins: BTreeMap<String, u32> = BTreeMap::new();
     let mut arm_wins: BTreeMap<String, u32> = BTreeMap::new();
     let mut arm_actions: BTreeMap<String, u32> = BTreeMap::new();
-    let (mut stalled, mut ended, mut scores) = (0, 0, [0i64; 2]);
+    let (mut stalled, mut held, mut ended, mut scores) = (0, 0, 0, [0i64; 2]);
     for m in results {
         for (k, t) in &m.by_team {
             by_team.entry(k.clone()).or_default().add(t);
@@ -548,6 +552,7 @@ fn summarize(what: &str, results: &[&Match]) {
         }
         ended += u32::from(m.ended);
         stalled += m.stalled;
+        held += m.held;
         scores[0] += i64::from(m.scores[0]);
         scores[1] += i64::from(m.scores[1]);
     }
@@ -570,7 +575,7 @@ fn summarize(what: &str, results: &[&Match]) {
     }
     println!("  ended {ended}  wins {wins:?}");
     println!(
-        "  score axis {} allies {}  actions {actions:?}  stalled {stalled}",
+        "  score axis {} allies {}  actions {actions:?}  stalled {stalled} held {held}",
         scores[0], scores[1]
     );
 }
@@ -871,7 +876,11 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                     (0..3).map(|i| (p[i] - first[i]).powi(2)).sum::<f32>() < RADIUS * RADIUS
                 })
             {
-                m.stalled += 1;
+                if b.holds() {
+                    m.held += 1;
+                } else {
+                    m.stalled += 1;
+                }
             }
         }
     }

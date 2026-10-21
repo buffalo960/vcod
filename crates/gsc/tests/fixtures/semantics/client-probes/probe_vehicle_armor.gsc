@@ -187,13 +187,27 @@ watch_places()
 }
 
 //	`PROBE spawn <time> <client>` on each of the client's spawns, the
-//	frame its idle clip starts from.
+//	frame its idle clip starts from; a playing spawn adds the origin and
+//	angles of the `mp_teamdeathmatch_spawn` tdm's `spawnPlayer` picked.
+//	The waiter runs once `spawnPlayer` has returned, so the pick is the
+//	point nearest the body: the spawn's think moves him a step at most.
 log_spawns()
 {
 	for (;;)
 	{
 		self waittill("spawned");
-		logPrint("PROBE spawn " + gettime() + " " + self getEntityNumber() + "\n");
+		line = "PROBE spawn " + gettime() + " " + self getEntityNumber();
+		if (self.sessionstate == "playing")
+		{
+			spots = getentarray("mp_teamdeathmatch_spawn", "classname");
+			best = undefined;
+			for (i = 0; i < spots.size; i++)
+				if (!isdefined(best) || distance(spots[i].origin, self.origin) < distance(best.origin, self.origin))
+					best = spots[i];
+			if (isdefined(best))
+				line = line + " " + best.origin + " " + best.angles;
+		}
+		logPrint(line + "\n");
 	}
 }
 

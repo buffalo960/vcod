@@ -62,7 +62,7 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | wins | `W;` | The winning team per line: one per round in `sd` and `re`, one per match in the others (`dm` names the player). |
 | score | `getTeamScore` | Axis and allies at the end (before `exitLevel` zeroes them). Rounds won in `sd` and `re`. |
 | actions | `A;` | Objective actions by team: `bomb_plant`, `bomb_defuse`, `re_pickup`, `re_capture`, UO's `ctf_take` and kin. |
-| stalled | bodies | Bot-ticks whose last 12 s lie within 150 units of the first, as `ship_stalls` counts them. With fire on this also counts a bot holding a spot on purpose (an `sd` defender at its site), so read it against a baseline, not as zero. |
+| stalled, held | bodies | Bot-ticks whose last 12 s lie within 150 units of the first, as `ship_stalls` counts them (playing, bipod up; a bipod down clears the window). `held` is those whose bot holds still on purpose on that tick (`BotBody::holds`): engaged, on a held cover spot, retreating or at the retreat's cover, in a vehicle seat or holding the hull for crew, or on its objective (a plant or defuse under way, the script holding the body, or standing at its objective: a guard ring, a site, the HQ radio; `BotBody::on_objective`). `stalled` is the rest. A hunt's vantage is no hold: arriving drops the recall and the bot walks on. Before 2026-10-21 `stalled` was the two summed. |
 | ended | `exitLevel` | Matches that reached their end inside `TICKS`. |
 | life | bodies | Mean life: bot-ticks playing over the lives they made up (a life still running at the end is left out). |
 | wounds, dead in 5 s | bodies | A life's first tick under 50 health while `BotBody::engaged`, and the share of those whose bot died within 5 s. |
@@ -90,6 +90,18 @@ the grenades and the clip, the peeks and hunts, then the walking view.
 
 A change to bot behaviour reports its before and after on the same seeds,
 map and gametype, in this doc's section for it.
+
+The split (2026-10-21). VERIFIED (measured, release `bot_match`,
+`COD_DIR` at 1.1, master 3135508b with the split, normal skill): `tdm`
+12 bots seeds 1..=4, stalled / held: mp_carentan 925 / 16 428,
+mp_harbor 605 / 10 330, mp_depot 1 340 / 36 393, mp_brecourt 322 /
+7 074, total 3 192 / 70 225. `dm` 10 bots seeds 1..=4: mp_carentan
+852 / 10 687, mp_harbor 498 / 6 024, mp_depot 598 / 9 786, total
+1 948 / 26 497. The largest single match, mp_depot `tdm` seed 2, is
+528 / 20 574. VERIFIED (measured, the same runs): 96% of the old column
+(`tdm`) and 93% (`dm`) was bots holding on purpose. INFERRED: the
+before and afters in sections 6.6, 10.1 and 11 that cite it moved mostly
+through holds.
 
 ## 2. Baseline
 
@@ -662,6 +674,7 @@ Section 9's change, before (master d82876e1) and after on the same seeds.
 mp_carentan, mp_harbor, mp_depot, `BOTS=10`, seeds 1..=4 (12 matches, none
 ended). "Sight" is sight to shot, mean / median ms; "fired" the share of
 acquisitions fired on (section 1). Stalled is per 1000 match ticks.
+Stalled here is the column before 2026-10-21, holds included (section 1).
 
 VERIFIED (measured, ours, `bot_match`, 2026-10-21):
 
@@ -1094,7 +1107,7 @@ master's kills, deaths, damage, ticks and stalls with it.
 VERIFIED (measured, ours, `bot_match`, 2026-10-21): `tdm`, 12 bots,
 mp_carentan, mp_harbor, mp_depot and mp_brecourt, seeds 1..=4 (16
 matches); `dm`, 10 bots, mp_carentan, mp_harbor and mp_depot, seeds
-1..=4 (12 matches, none ended):
+1..=4 (12 matches, none ended). `Stalled` here is the column before 2026-10-21, holds included (section 1).
 
 | Run | Kills | Life s | Dead in 5 s | Peeks | dead in 2 s | Re-peeks | dead in 2 s | Hunts | dead in 2 s | Frags thrown | Stalled |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -1189,7 +1202,8 @@ VERIFIED (measured, release `bot_match`, `COD_DIR` at 1.1, 12 bots
 on the first three, normal skill; master d3b03cb0 with the section 1
 columns, then this change with 11.4's hand-back). Turn is the walking
 view's mean yaw change a tick, snaps the walking ticks it turned more
-than 30 degrees.
+than 30 degrees. Stalled, here and in 11.4, is the column before
+2026-10-21, holds included (section 1).
 
 | run | kills | life s | accuracy | walking ticks | turn deg | snaps | stalled |
 |---|---|---|---|---|---|---|---|

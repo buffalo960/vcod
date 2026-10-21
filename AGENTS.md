@@ -234,7 +234,7 @@ check.
   `TEAMPLAY=`, `AWARE=`, `FOOTWORK=`, `WARY=` arms) and prints kills,
   deaths, damage, time-to-kill, wins, objective actions, lives, wounds
   survived, retreats, cover holds, peeks and hunts and the deaths after
-  them, hits answered, deaths blindsided, stalls, shots, hits, accuracy
+  them, hits answered, deaths blindsided, stalls (split from deliberate holds), shots, hits, accuracy
   and sight to first shot per team, skill and arm. It is the one bot measuring tool:
   extend it rather than add another example. A bot behaviour change
   reports its before and after on the same seeds in
@@ -958,7 +958,11 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   each step their own, `SeatRamp::leaf_times`, and stand still with
   their weights while their legs node is faded out, `SeatRamp::fade_held`; an MG42 gunner's
   fire group its leaves' weighted mean, `set_sync_frequency`), not its seconds
-  (combat doc 3.1, "The clip's float time").
+  (combat doc 3.1, "The clip's float time"). A gunner's turret group is a
+  node over row nodes (`skeleton::Blend`), each row normalized to its
+  weight, and on 1.5 and UO the rows the placement walked past stand at
+  0.001 beside them (`GunnerPlacement::posed_rows`, turrets doc 13.9,
+  "The rows").
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
   the material's gen (`colour_scale`) in the HUD pass.
@@ -1049,6 +1053,11 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   builds two graphs, and one that deletes a brush mid-level waits on a
   build. `bas` breaches delete a base's walls; a UO bot test on a `bas`
   map runs a second build.
+- A vehicle moved since the build does not rebuild the graph: once it
+  holds still 20 ticks its nodes are blocked for the followers
+  (`Server::park_vehicles`, `Follower::blocked`), and a bot hemmed in by
+  them reads as stranded. A test that parks a vehicle by hand waits those
+  ticks before the bots see it.
 
 ## Reverse engineering
 

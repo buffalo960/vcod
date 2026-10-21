@@ -1000,6 +1000,69 @@ multiplied in with one store (0x1f2e8, 0x1f368); `f` is the float
   the springfield 1.1 capture goes from 0 to 2 last-bit corrections, every
   other own-body capture reads as before (1.5 moves 44, turns 14, UO
   sprint 126, 1.1 moves 3), none past 0.1.
+- The Windows cgames' `PM_Accelerate` (1.1 `cgame_mp_x86.dll` 0x30007560,
+  1.5 0x30007cb0, UO `uo_cgame_mp_x86.dll` 0x300085d0) is one instruction
+  sequence in all three, UO's with its own playerstate offsets: the wish
+  direction in `edx`, the wish speed and the accel as float arguments. The
+  dot `(vz * dz + vy * dy) + dx * vx` stays on the stack, the lack
+  `wishspeed - dot` is stored (`fst [esp+4]`, 1.1 0x30007583) and tested
+  `<= 0` on the stack; the control `max(wishspeed, 100)` (rodata
+  0x300610a4, UO 0x300715ec) times `pml.frametime` times the accel stays
+  on the stack (0x300075b5-0x300075bb), is capped at the stored lack, then
+  with a ground entity multiplied by `1.0 / ps.friction` (0x300075d9,
+  `ps+0x37c`, UO `ps+0x5c0`) and capped again; each component
+  `rate * dir + velocity` is rounded once (0x300075f8-0x30007617). No
+  `fldcw`. VERIFIED, disassembly. 1.1d's inline accelerate keeps the wish
+  speed and the lack, 1.5b's stores the dot, the lack and the rate; the floor and
+  the accels (9, 12, 19, 1 at 1.1 rodata 0x300610bc-0x300610c8, the
+  knockback's 0.25 at 0x3006950c, its product stored at 0x300082fd) are
+  the Linux builds'. VERIFIED. Callers: 1.1 `PM_WalkMove` (0x3000830f),
+  `PM_AirMove` (0x30007fd7, accel 1.0), `PM_LadderMove` (0x3000c1cc, the
+  decompiled `FUN_3000c060`) and three moves vcod has no use for (0x30007ee0,
+  0x30008693, 0x300089c4); 1.5 `PM_WalkMove` 0x30008b2b and `PM_AirMove`
+  0x30008777, UO 0x30009510 and 0x30009150, six callers each. VERIFIED.
+  INFERRED, off the order: 1.5's 0x3000cf3c and UO's 0x3000dddd are their
+  ladder moves' calls.
+- The Windows `PM_WalkMove` around the call (1.1 0x300080df-0x3000841e,
+  1.5 0x3000892a-0x30008be3, UO 0x30009313-0x300095c8): the flattened
+  forward and right go through the cgame's `VectorNormalize` (1.1
+  0x30039cc0, 1.5 0x3003b3d0, UO 0x30049700), which stores the squared
+  length, the length and its reciprocal as 1.5b's does; the wish
+  vector's components are stored and normalized the same way, and the
+  length that call returns times the stored scale is stored as the wish
+  speed (1.1 0x30008253, 1.5 0x30008aa4, UO 0x3000948d). The accel the
+  stance picks, times 0.25 under a knockback, is stored (1.1 0x300082fd).
+  After the call: the speed `sqrt` kept and stored (1.1 0x3000835e), summed
+  `(vx^2 + vy^2) + vz^2` on 1.1 and UO and `(vz^2 + vy^2) + vx^2` on 1.5
+  (0x30008b5c-0x30008b70); the clip onto the ground; a velocity that still
+  points the same way normalized through the stored `VectorNormalize`
+  (1.1 0x300083f0) and scaled by the stored speed. VERIFIED, disassembly.
+- The walk's three clips and the air move's ground-plane clip are inline
+  `PM_ClipVelocity`s that sum the dot `(z + y) + x` and multiply a dot
+  `>= 0` by the float `1 / 1.001` (1.1 rodata 0x30069750, 1.5 0x3006b9b8,
+  UO 0x3007c248, all 0x3f7fbe87, `(float)(1 / 1.001f)`) where the Linux
+  builds divide by 1.001; a negative one takes 1.001 (1.1 0x30069540).
+  1.1 0x30008114, 0x30008185, 0x3000839f, 0x3000801e; 1.5 0x30008967,
+  0x300089d8, 0x30008bbb, 0x300087be; UO 0x30009350, 0x300093c1,
+  0x3000959d, 0x30009197. VERIFIED. The slide move's clips divide (1.1
+  0x3000cf90, 1.5 0x3000dd6e, UO 0x3000ed44). VERIFIED.
+  vcod, under `Arith::Msvc` only: `pmove::accelerate_msvc` in the walk,
+  the air and the ladder moves, `pmove::clip_velocity_msvc` in the walk
+  and the air, the stored `VectorNormalize` and length in `pmove::wish`
+  and after the walk's clip on every protocol
+  (`pmove::tests::the_windows_accelerate_stores_the_lack`,
+  `the_windows_walk_clip_takes_the_reciprocal_overclip`). The 1.1 ladder
+  keeps 1.1d's wish ahead of the call: its `VectorNormalize2`
+  (0x30039ef0) is not read. Measured 2026-10-21 with
+  `play::replay::the_windows_build_draws_no_new_correction`: 1.5 moves
+  44, turns 14 and UO sprint 126 read as before; 1.1 moves goes from 3
+  to 4, turns from 0 to 3, springfield from 2 to 0, none past 0.1.
+  Taken out one at a time, the accelerate and the clip constant move no
+  capture; the wish's stored normalize takes springfield's 2 away and
+  the stored normalize after the walk's clip adds moves' one and turns'
+  three. VERIFIED (measured). The captures are Linux servers', so the
+  count measures the Windows build's distance from them, not its
+  fidelity.
 - `pm_type` 2 and 3 in the walk scale: 1.5b multiplies the walk or run
   product by 3.0 (rodata 0x756b8, 0x1f221-0x1f229) or 6.0 (0x756bc,
   0x1f244-0x1f24c), stored, and skips the stance and wade factors; the

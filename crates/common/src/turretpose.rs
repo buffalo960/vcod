@@ -36,9 +36,16 @@ pub struct GunnerPlacement {
     /// The body's world rotation: the blend's root yaw plus `tag_weapon`'s,
     /// carried by the gun's axis.
     pub rot: Quat,
-    /// The turret anim's leaves (animtree node ids) and the goal weights the
-    /// placement gives them, summing to 1.
-    pub leaves: Vec<(usize, f32)>,
+    /// The turret anim's rows the placement weights, in engine child order:
+    /// each row's goal weight and its leaves (animtree node ids) with theirs,
+    /// the rows' weights and each row's leaves' summing to 1. The tree walk
+    /// normalizes each row to its weight before the group sums them
+    /// (cod11-turrets.md 13.9, "The rows").
+    pub rows: Vec<TurretRow>,
+    /// The rows the search's first pass weighted and walked past, before
+    /// [`Self::rows`] in engine child order, with that pass's goals: 1 and
+    /// the row's column pair.
+    pub passed: Vec<TurretRow>,
     /// The turret anim's group node the leaves sit under.
     pub node: usize,
     /// The group's node time step a second at rate 1 those weights give:
@@ -49,7 +56,31 @@ pub struct GunnerPlacement {
     pub looping: bool,
 }
 
+/// One row of a turret anim's group: its weight and its leaves' weights.
+pub type TurretRow = (f32, Vec<(usize, f32)>);
+
 impl GunnerPlacement {
+    /// The rows a 1.5b or UO server (`strict`) poses the gunner by until his
+    /// next placement, or [`Self::rows`] alone: on those the first pass's
+    /// goal raises each row it walked past to 0.001 and its leaves to 0.001
+    /// times their goal, and the strict clear leaves those weights standing
+    /// (cod11-turrets.md 13.9, "The rows").
+    pub fn posed_rows(&self, strict: bool) -> Vec<TurretRow> {
+        let raised = |goal: f32| (f64::from(0.001f32) * f64::from(goal)) as f32;
+        let passed = self.passed.iter().filter(|_| strict).map(|(rw, w)| {
+            let leaves = w.iter().map(|&(l, x)| (l, raised(x))).collect();
+            (raised(*rw), leaves)
+        });
+        passed.chain(self.rows.iter().cloned()).collect()
+    }
+
+    /// Every leaf with its row's weight times its own.
+    pub fn leaves(&self) -> impl Iterator<Item = (usize, f32)> + '_ {
+        self.rows
+            .iter()
+            .flat_map(|(rw, w)| w.iter().map(move |&(l, x)| (l, x * rw)))
+    }
+
     /// The body's world yaw in degrees, `AxisToAngles`' yaw of [`Self::rot`].
     pub fn yaw(&self) -> f32 {
         let f = self.rot * Vec3::X;
@@ -123,6 +154,8 @@ pub fn place_gunner(
     type Row = (f32, Vec<(usize, f32)>);
     let mut below: Option<(Vec<(usize, f32)>, f32)> = None;
     let mut rows: Option<Vec<Row>> = None;
+    // The rows the search set and walked past, each at its pass's goals.
+    let mut passed: Vec<Row> = Vec::new();
     for row in children(node) {
         let w = row_weights(row)?;
         let z = delta(&w)?.0.z;
@@ -136,7 +169,9 @@ pub fn place_gunner(
             });
             break;
         }
-        below = Some((w, z));
+        if let Some((bw, _)) = below.replace((w, z)) {
+            passed.push((1.0, bw));
+        }
     }
     let rows = rows.or(below.map(|(w, _)| vec![(1.0, w)]))?;
     // The flattened blend, the row above first.
@@ -168,7 +203,8 @@ pub fn place_gunner(
     Some(GunnerPlacement {
         origin: turret.0 + turret.1 * local,
         rot: turret.1 * Quat::from_rotation_z((rot_yaw + gun_yaw).to_radians()),
-        leaves: weights,
+        rows,
+        passed,
         node,
         frequency,
         looping: tree.nodes[node].loopsync,
@@ -307,10 +343,10 @@ mod tests {
                 15.0,
             )
             .unwrap();
-            let sum: f32 = g.leaves.iter().map(|l| l.1).sum();
+            let sum: f32 = g.leaves().map(|l| l.1).sum();
             assert!((sum - 1.0).abs() < 1e-4, "yaw {yaw}: weights sum {sum}");
-            for (leaf, w) in &g.leaves {
-                let name = &anims.tree.nodes[*leaf].name;
+            for (leaf, w) in g.leaves() {
+                let name = &anims.tree.nodes[leaf].name;
                 assert!(name.ends_with("_15up"), "yaw {yaw}: {name}");
                 assert!(
                     cols.iter().any(|c| name.contains(&format!("_aim_{c}_"))),
