@@ -943,7 +943,8 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   as two tree nodes, weighted 1 and 0.01 under a torso anim. A 1.5 or UO
   server samples a clip at the engine's node time, a float stepped by
   50 ms frames (`Layer::time`, `PoseInputs::node_time`; a UO seat's leaves
-  each step their own, `SeatRamp::leaf_times`; an MG42 gunner's
+  each step their own, `SeatRamp::leaf_times`, and stand still with
+  their weights while their legs node is faded out, `SeatRamp::fade_held`; an MG42 gunner's
   fire group its leaves' weighted mean, `set_sync_frequency`), not its seconds
   (combat doc 3.1, "The clip's float time").
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
