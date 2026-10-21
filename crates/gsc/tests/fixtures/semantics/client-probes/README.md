@@ -2041,7 +2041,10 @@ The 2026-10-20 runs are
 `crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt` (before the
 `PROBE r` line) and `-tiltslab-ride.txt`, each the `PROBE` lines and then the
 client's `CMDS` lines (`--probe-ride` logs them);
-`crates/server/tests/worldcopy_ab.rs` replays both.
+`crates/server/tests/worldcopy_ab.rs` replays both. The same recipe under
+`COD_VERSION=1.5` and `COD_VERSION=uo`, the client given the install as
+`--game-dir` (UO's with `--mod-dir uo`), wrote `-tiltslab-1.5.txt` and
+`-tiltslab-uo.txt` (2026-10-21), replayed by the same file.
 
 ## probe_moverreads
 

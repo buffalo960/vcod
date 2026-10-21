@@ -19,7 +19,8 @@
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
 //! beside a turned submodel as it lifts. `mp_harbor-dm-tiltslab*.txt` and
 //! `mp_depot-dm-rollramp.txt` drop him onto a pitched or rolled submodel,
-//! the latter onto a non-axial side (movers doc 22).
+//! the latter onto a non-axial side (movers doc 22); `-tiltslab-1.5.txt`
+//! and `-tiltslab-uo.txt` are the first on 1.5b and UO.
 //!
 //! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
@@ -37,7 +38,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6};
+use vcod_common::net::protocol::PROTOCOL_V6;
 use vcod_common::net::{NetClient, NetEvent};
 use vcod_common::pk3::Pk3Fs;
 
@@ -60,6 +61,8 @@ const PROBE_SLAB: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_turnedslab.gsc");
 const TILT: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab.txt";
 const TILT_RIDE: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-ride.txt";
+const TILT_15: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-1.5.txt";
+const TILT_UO: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-uo.txt";
 const PROBE_TILT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
 const ROLL: &str = "tests/fixtures/movers/mp_depot-dm-rollramp.txt";
@@ -249,6 +252,28 @@ fn ours_tilt_ride() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| run_ours("mp_harbor", "probe_tiltslab", PROBE_TILT, TILT_RIDE, true))
         .as_ref()
+}
+
+/// The capture on retail 1.5b, `None` unless `COD_DIR`'s `main/` is 1.5's
+/// (a UO install's is).
+fn ours_tilt_15() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        let (map, name) = ("mp_harbor", "probe_tiltslab");
+        run_ours_on(fs_15, map, name, PROBE_TILT, TILT_15, true)
+    })
+    .as_ref()
+}
+
+/// The capture on retail United Offensive 1.51b, `None` off a UO install.
+fn ours_tilt_uo() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        let (map, name) = ("mp_harbor", "probe_tiltslab");
+        let paks = vcod_common::testing::uo_fs;
+        run_ours_on(paks, map, name, PROBE_TILT, TILT_UO, true)
+    })
+    .as_ref()
 }
 
 fn ours_roll() -> Option<&'static Ours> {
@@ -490,7 +515,7 @@ fn send_at_probe_rate(cl: &mut NetClient<ClientEnd>) {
     let da = cl
         .snapshots()
         .newest()
-        .map(|s| vcod_common::net::DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(&PROTOCOL_V1, n)));
+        .map(|s| vcod_common::net::DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(cl.protocol(), n)));
     let cmds = [now - 34, now - 17, now].map(|t| {
         let mut c = input;
         c.server_time = t;
@@ -869,6 +894,19 @@ fn a_capsule_lands_on_a_tilted_submodel_like_retail_again() {
 #[test]
 fn a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail() {
     tilt_matches(ROLL, ours_roll());
+}
+
+/// The same capture on retail 1.5b: its `Reached_ScriptMover` truncates the
+/// angles as 1.1d's does (movers doc 22).
+#[test]
+fn a_capsule_lands_on_a_tilted_submodel_like_retail_on_1_5() {
+    tilt_matches(TILT_15, ours_tilt_15());
+}
+
+/// And on United Offensive 1.51b.
+#[test]
+fn a_capsule_lands_on_a_tilted_submodel_like_retail_on_uo() {
+    tilt_matches(TILT_UO, ours_tilt_uo());
 }
 
 #[test]
