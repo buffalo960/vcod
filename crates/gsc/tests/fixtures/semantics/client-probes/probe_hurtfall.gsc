@@ -19,6 +19,12 @@
 //	probe_spawn) before the drop. Under either, every damage callback also
 //	spawns and deletes a script_origin and logs its number (PROBE spawned),
 //	and PROBE done comes 6 s after the drop if nothing kills by then.
+//	+set probe_use <ms> (with probe_spawn) logs every "trigger" notify on
+//	the spawned hurt (PROBE trigger) and calls its useby with the player
+//	<ms> and 2 * <ms> after the drop (PROBE use), hurt_use's toggle of its
+//	touch. +set probe_write 1 tries a write of the spawned hurt's
+//	spawnflags, classname and model at the drop, each in its own thread
+//	(PROBE write, then PROBE wrote only if the write did not end it).
 //	Run by tools/run_probe.sh client-probes/probe_hurtfall mp_carentan
 //	with a --probe-team allies --probe-ride client.
 
@@ -75,6 +81,17 @@ run()
 					hurt = spawn("trigger_hurt", (900, 1930, -20), getcvarint("probe_spawn"));
 					if (getcvar("probe_dmg") != "")
 						hurt.dmg = getcvarint("probe_dmg");
+					if (getcvar("probe_use") != "")
+					{
+						hurt thread probe_triggered();
+						hurt thread probe_use(p, getcvarint("probe_use"));
+					}
+					if (getcvar("probe_write") != "")
+					{
+						hurt thread probe_write_spawnflags();
+						hurt thread probe_write_classname();
+						hurt thread probe_write_model();
+					}
 				}
 				if (level.probe_rate)
 					logPrint("PROBE fields " + hurt getEntityNumber() + " dmg " + hurt.dmg + " spawnflags " + hurt.spawnflags + "\n");
@@ -140,4 +157,44 @@ probe_killed(eInflictor, eAttacker, iDamage, sMeansOfDeath, sWeapon, vDir, sHitL
 	logPrint("PROBE killed " + getTime() + " inflictor " + show_ent(eInflictor) + " attacker " + show_ent(eAttacker) + " damage " + iDamage + " mod " + sMeansOfDeath + " weapon " + sWeapon + " dir " + show(vDir) + " hitloc " + sHitLoc + " origin " + self.origin + "\n");
 	level.probe_dead = getTime();
 	[[level.probe_killed]](eInflictor, eAttacker, iDamage, sMeansOfDeath, sWeapon, vDir, sHitLoc);
+}
+
+probe_triggered()
+{
+	for (;;)
+	{
+		self waittill("trigger", who);
+		logPrint("PROBE trigger " + getTime() + " " + show_ent(who) + "\n");
+	}
+}
+
+probe_use(p, ms)
+{
+	wait ms / 1000;
+	logPrint("PROBE use " + getTime() + "\n");
+	self useby(p);
+	wait ms / 1000;
+	logPrint("PROBE use " + getTime() + "\n");
+	self useby(p);
+}
+
+probe_write_spawnflags()
+{
+	logPrint("PROBE write spawnflags " + getTime() + "\n");
+	self.spawnflags = 0;
+	logPrint("PROBE wrote spawnflags " + show(self.spawnflags) + "\n");
+}
+
+probe_write_classname()
+{
+	logPrint("PROBE write classname " + getTime() + "\n");
+	self.classname = "trigger_multiple";
+	logPrint("PROBE wrote classname " + show(self.classname) + "\n");
+}
+
+probe_write_model()
+{
+	logPrint("PROBE write model " + getTime() + "\n");
+	self.model = "";
+	logPrint("PROBE wrote model " + show(self.model) + "\n");
 }

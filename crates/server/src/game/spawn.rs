@@ -353,7 +353,8 @@ fn trigger_hurt_sound(block: &std::collections::HashMap<String, String>) -> Stri
 ///
 /// A `trigger_hurt` takes no `wait`: its cadence, damage and damage flags
 /// come from its `dmg` and `spawnflags` fields at each touch, which
-/// `Triggers::register_hurt` documents; it keeps its sound alias.
+/// `Triggers::register_hurt` documents; it keeps its sound alias, `START_OFF`
+/// and `life`.
 fn register_trigger(
     host: &mut GameHost,
     block: &std::collections::HashMap<String, String>,
@@ -381,7 +382,12 @@ fn register_trigger(
     };
     if kind == crate::game::trigger::TriggerKind::Hurt {
         let sound = crate::game::trigger::hurt_sound_index(host, &trigger_hurt_sound(block));
-        host.triggers.register_hurt(id, shape, sound);
+        let key = |k: &str| block.get(k).map(|v| v.trim());
+        let spawnflags = key("spawnflags").and_then(|v| v.parse().ok()).unwrap_or(0);
+        // `atof(G_SpawnString("life", "0"))`.
+        let life = key("life").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        host.triggers
+            .register_hurt(id, shape, sound, spawnflags, life);
         return;
     }
     if kind == crate::game::trigger::TriggerKind::Damage {

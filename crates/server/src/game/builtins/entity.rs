@@ -47,6 +47,7 @@ pub const NAMES: &[(&str, Builtin)] = &[
     ("enablegrenadetouchdamage", enable_grenade_touch_damage),
     ("disablegrenadetouchdamage", disable_grenade_touch_damage),
     ("sethintstring", set_hint_string),
+    ("useby", use_by),
 ];
 
 pub fn lookup(folded: &str) -> Option<Builtin> {
@@ -108,6 +109,31 @@ fn set_hint_string(
     };
     if let Some(t) = host.triggers.get_mut(id) {
         t.hint_string = index;
+    }
+    Ok(Value::Undefined)
+}
+
+/// `ent useBy(user)` (1.1d 0x5d774, 1.5b 0x5d413, UO 0x68698): notifies
+/// `"trigger"` on `ent` with `user` on the spot, then calls `ent->use`. Of
+/// the use functions only a `trigger_hurt`'s `hurt_use` is modelled: it
+/// toggles the touch, and under a `life` key arms `hurt_think`'s free
+/// (cod11-combat.md 5.9).
+fn use_by(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    recv: Option<Target>,
+    args: &[Value],
+) -> Result<Value, ErrorKind> {
+    let id = entity_receiver(recv)?;
+    let Some(&Value::Entity(user)) = args.first() else {
+        return Err(ErrorKind::BadType("not an entity"));
+    };
+    let trigger = cx.intern_folded("trigger");
+    cx.notify(Target::Entity(id), trigger, vec![Value::Entity(user)]);
+    let now = host.level_time_ms;
+    if let Some(Some(end)) = host.triggers.use_hurt(id, now) {
+        let first = now + crate::game::entity::HURT_LIFE_FIRST_THINK_MS;
+        host.ents.schedule(id, ThinkFn::HurtLife(end), first);
     }
     Ok(Value::Undefined)
 }

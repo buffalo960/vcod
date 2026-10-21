@@ -1834,6 +1834,7 @@ impl GameHost {
             ThinkFn::ClearOwner
             | ThinkFn::RespawnItem
             | ThinkFn::Concussive(_)
+            | ThinkFn::HurtLife(_)
             | ThinkFn::MultiWait => {}
         }
     }
@@ -2233,6 +2234,30 @@ impl Host for GameHost {
             self.link_entity(cx, ent);
         }
         Ok(())
+    }
+
+    /// `classname`, `model` and `spawnflags` (and UO's `vehicletype`) carry
+    /// the read-only setter (1.1d 0x6262c, 1.5b 0x65344, UO 0x71480): a
+    /// script write is an error and leaves the field alone
+    /// (cod11-combat.md 5.9).
+    fn store_field(
+        &mut self,
+        cx: &mut Cx,
+        ent: EntId,
+        field: Atom,
+        value: Value,
+    ) -> Result<(), ErrorKind> {
+        if ent.0 < FIRST_HUD_ELEM {
+            let name = cx.resolve_folded(field);
+            if matches!(name, "classname" | "model" | "spawnflags")
+                || (name == "vehicletype" && self.is_uo())
+            {
+                return Err(ErrorKind::Custom(
+                    "Tried to set a read only entity field".to_string(),
+                ));
+            }
+        }
+        self.set_field(cx, ent, field, value)
     }
 }
 

@@ -65,8 +65,12 @@ pub struct Trigger {
     pub next_fire_ms: i32,
     /// A `trigger_multiple` or `trigger_once` whose `wait` was not above 0
     /// has fired: `Touch_Multi` cleared its touch function and its free is
-    /// scheduled. A `Hurt` with spawnflag 0x20 has hurt once.
+    /// scheduled. A `Hurt` has no touch function: spawned `START_OFF`
+    /// (spawnflag 1), hurt once under 0x20, or toggled off by `hurt_use`.
     pub spent: bool,
+    /// A `Hurt`'s `life` key in seconds (`ent+0x274`, 0 when none), which
+    /// `hurt_use` turns into a free.
+    pub life: f32,
     /// A `Hurt`'s spawnflags as its last touch read them.
     pub hurt_flags: i32,
     /// A `Hurt`'s sound alias (`ent+0x16e`), counted from `CS_SOUNDS` as
@@ -130,6 +134,7 @@ pub const CONTENTS_USE: i32 = 0x20_0000;
 /// The `dmg` default, the spawnflags and the two touch intervals, from
 /// docs/research/cod11-gsc-object-model.md 8.1 and cod11-combat.md 5.9.
 pub const HURT_DEFAULT_DAMAGE: i32 = 5;
+const HURT_START_OFF: i32 = 0x1;
 pub const HURT_SILENT: i32 = 0x4;
 const HURT_NO_PROTECTION: i32 = 0x8;
 const HURT_SLOW: i32 = 0x10;
@@ -157,6 +162,7 @@ impl Triggers {
                 next_fire_ms: 0,
                 spent: false,
                 hurt_flags: 0,
+                life: 0.0,
                 sound: 0,
                 cursor_hint: if kind == TriggerKind::Use {
                     HINT_ACTIVATE
@@ -177,19 +183,42 @@ impl Triggers {
         }
     }
 
-    /// A `trigger_hurt` with its sound alias (`SP_trigger_hurt`, 0x64ef8).
-    /// Its damage, cadence and flags are not kept here: `hurt_touch`
-    /// (0x64dc4) reads the entity's `dmg` and `spawnflags` at every touch
-    /// ([`Triggers::arm_hurt`], cod11-combat.md 5.9).
+    /// A `trigger_hurt` with its sound alias and `life` key
+    /// (`SP_trigger_hurt`, 0x64ef8), touchable unless its spawnflags hold
+    /// `START_OFF` (1). Its damage, cadence and flags are not kept here:
+    /// `hurt_touch` (0x64dc4) reads the entity's `dmg` and `spawnflags` at
+    /// every touch ([`Triggers::arm_hurt`], cod11-combat.md 5.9).
     ///
     /// Not modelled, and docs/research/cod11-gsc-object-model.md 8.1 says
     /// why: `hurt_touch` tests a byte on the *toucher* before its timestamp,
     /// so ours hurts a dead player where retail may not.
-    pub fn register_hurt(&mut self, id: EntId, shape: TriggerShape, sound: i32) {
+    pub fn register_hurt(
+        &mut self,
+        id: EntId,
+        shape: TriggerShape,
+        sound: i32,
+        spawnflags: i32,
+        life: f32,
+    ) {
         self.register(id, TriggerKind::Hurt, shape, HURT_INTERVAL_MS);
         if let Some(t) = self.rows.get_mut(&id) {
             t.sound = sound;
+            t.spent = spawnflags & HURT_START_OFF != 0;
+            t.life = life;
         }
+    }
+
+    /// `hurt_use` (1.1d 0x65b94, 1.5b 0x7a605, UO 0x868da): toggles the
+    /// hurt's touch function and, under a non-zero `life`, returns the
+    /// level time past which `hurt_think` frees it. `None` for anything
+    /// that is not a `Hurt`.
+    pub fn use_hurt(&mut self, id: EntId, now_ms: i32) -> Option<Option<f32>> {
+        let t = self
+            .rows
+            .get_mut(&id)
+            .filter(|t| t.kind == TriggerKind::Hurt)?;
+        t.spent = !t.spent;
+        Some((t.life != 0.0).then(|| now_ms as f32 + t.life * 1000.0))
     }
 
     /// `hurt_touch`'s read of the trigger's `spawnflags` ahead of
@@ -314,7 +343,8 @@ pub fn spawn_scripted_hurt(host: &mut GameHost, cx: &mut Cx, id: EntId, spawnfla
         model: Some(0),
     };
     let sound = hurt_sound_index(host, "world_hurt_me");
-    host.triggers.register_hurt(id, shape, sound);
+    host.triggers
+        .register_hurt(id, shape, sound, spawnflags, 0.0);
     default_hurt_dmg(host, cx, id);
     link(host, cx, id, spawnflags);
 }
@@ -964,7 +994,7 @@ mod tests {
     fn a_hurt_rearms_off_its_spawnflags() {
         let mut t = Triggers::default();
         let id = EntId(80, 0);
-        t.register_hurt(id, TriggerShape::boxed([0.0; 3], [0.0; 3]), 1);
+        t.register_hurt(id, TriggerShape::boxed([0.0; 3], [0.0; 3]), 1, 0, 0.0);
         assert_eq!(t.arm_hurt(id, 0), 0);
         assert!(t.fire(id, 100, false).fired());
         assert!(!t.fire(id, 150, false).fired());
@@ -978,6 +1008,31 @@ mod tests {
         t.arm_hurt(id, 0x20);
         assert!(t.fire(id, 1300, false).fired());
         assert!(!t.fire(id, 5000, false).fired(), "0x20 cleared the touch");
+        assert_eq!(t.use_hurt(id, 5000), Some(None), "hurt_use sets it back");
+        assert!(t.fire(id, 5000, false).fired());
+    }
+
+    /// `START_OFF` leaves the touch unset until `hurt_use` toggles it, and a
+    /// `life` arms the free at the use (cod11-combat.md 5.9).
+    #[test]
+    fn a_start_off_hurt_waits_for_its_use() {
+        let mut t = Triggers::default();
+        let id = EntId(80, 0);
+        t.register_hurt(id, TriggerShape::boxed([0.0; 3], [0.0; 3]), 1, 0x11, 2.5);
+        t.arm_hurt(id, 0x11);
+        assert!(!t.fire(id, 100, false).fired());
+        assert_eq!(t.use_hurt(id, 1000), Some(Some(3500.0)));
+        assert!(t.fire(id, 1000, false).fired());
+        assert_eq!(t.use_hurt(id, 1500), Some(Some(4000.0)));
+        assert!(!t.fire(id, 2000, false).fired());
+        let other = EntId(81, 0);
+        t.register(
+            other,
+            TriggerKind::Multiple,
+            TriggerShape::boxed([0.0; 3], [0.0; 3]),
+            0,
+        );
+        assert_eq!(t.use_hurt(other, 0), None);
     }
 
     /// the plant onward.
@@ -990,6 +1045,7 @@ mod tests {
             next_fire_ms: 0,
             spent: false,
             hurt_flags: 0,
+            life: 0.0,
             sound: 0,
             cursor_hint: 0,
             hint_string: -1,

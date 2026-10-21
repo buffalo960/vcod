@@ -2118,6 +2118,16 @@ probe_dmg 30 +set probe_drop -30`), `-hurtslow*.txt` (`+set probe_spawn 16
 probe_spawn 44 +set probe_dmg 10 +set probe_drop -30`), each with a
 `--probe-secs 12` client; `docs/research/cod11-combat.md` 5.9 reads them.
 
+`probe_use <ms>` logs every `"trigger"` on the spawned hurt and calls its
+`useBy` with the player `<ms>` and twice that after the drop; `probe_write 1`
+writes the spawned hurt's `spawnflags`, `classname` and `model`, one thread
+each. A read-only write is fatal at `developer 1`, so that run takes
+`PRE_MAP_ARGS='+set developer 0'`. The 2026-10-21 runs on all three servers
+are `mp_carentan-dm-hurtuse*.txt` (`+set probe_spawn 17 +set probe_dmg 25
++set probe_drop -30 +set probe_use 1000`) and `-hurtwrite*.txt` (`+set
+probe_spawn 17 +set probe_drop -30 +set probe_write 1`); UO's write run
+ends at the first write, where the server aborts.
+
 ## probe_linkto2
 
 `linkTo`'s second round on mp_carentan. Once an allied player has spawned it

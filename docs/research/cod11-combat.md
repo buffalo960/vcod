@@ -4307,8 +4307,57 @@ times.
   171, the next number after the trigger.
 - VERIFIED, 1.1d: a script write of `spawnflags` is the runtime error
   `Tried to set a read only entity field`, so the slow and once flags are
-  only reachable through a map's key or `spawn`'s third argument. vcod
-  does not raise that error (Open, below).
+  only reachable through a map's key or `spawn`'s third argument.
+
+#### `START_OFF`, `hurt_use` and the read-only fields
+
+`SP_trigger_hurt` (1.1d 0x64ef8, 1.5b 0x7a6ac, UO 0x86981) stores
+`hurt_use` as the entity's `use` on every hurt and `hurt_touch` as its
+touch only when spawnflag 1 is clear, then reads `atof` of the spawn key
+`life` (default `"0"`; 1.1d `.rodata` 0x799a0 holds `life`) into a float
+(gentity+0x274 on 1.1, +0x27c on 1.5, +0x284 on UO) (VERIFIED, three
+decompiles). `hurt_use` (1.1d 0x65b94, 1.5b 0x7a605, UO 0x868da) sets the
+touch when it is unset and clears it otherwise; when `life` is not 0 it
+also sets `think = hurt_think`, `nextthink = level.time + 50` (1.1d
+0x65bdd) and stores `(float)level.time + life * 1000.0` (1.1d `.rodata`
+0x79ad4 holds 1000.0) (VERIFIED). `hurt_think` (1.1d 0x65b5c, 1.5b 0x7a5aa,
+UO 0x8687f) re-arms 100 ms on and calls `G_FreeEntity` once that float is
+below `(float)level.time` (VERIFIED). A map hurt with `life` so turns into
+a timed hazard at its first use. INFERRED from the three: the toggle also
+re-arms a hurt the once flag (0x20) spent.
+
+The use reaches script through `useBy` (entity method 11, 1.1d 0x5d774;
+1.5b 0x5d413, UO 0x68698 off `tools/re/dump_builtins.py`): `Scr_GetEntity(0)`,
+a `"trigger"` notify on the receiver with that entity, then `ent->use(ent,
+other, other)` when set (VERIFIED, 1.1d decompile).
+
+The entity field table gives `classname`, `model` and `spawnflags` one
+setter on all three (1.1d 0x6262c, 1.5b 0x65344, UO 0x71480), whose body
+is `Scr_Error("Tried to set a read only entity field")`; UO gives its
+`vehicletype` the same one (VERIFIED, `tools/re/dump_script_fields.py` and
+the 1.1d decompile).
+
+The captures are `client-probes/probe_hurtfall` under `probe_use` and
+`probe_write`, 2026-10-21, ports 34733-34738
+(`crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtuse.txt` and
+`-hurtwrite.txt`, each with a `-1.5` and a `-uo` twin):
+
+- VERIFIED, `-hurtuse`, all three: a spawned hurt with spawnflags 17
+  (`START_OFF` and slow) and `dmg` 25 under the body hurts nothing for
+  the first second. The `useBy` at drop + 1000 logs its `"trigger"` with
+  the player in the same frame, the next cmd's touch hurts (its callback
+  reads the same `getTime()`) and plays its sound, and that touch's
+  queued `"trigger"` comes a frame later. The second `useBy` 1000 later
+  lands before the slow cadence's next touch: no more damage to the end
+  of the run.
+- VERIFIED, `-hurtwrite` on 1.1d and 1.5b at `developer 0`
+  (`PRE_MAP_ARGS='+set developer 0'`): writes of `spawnflags`,
+  `classname` and `model` each leave the field as it was (17,
+  `trigger_hurt`, `""`) and their threads run on. At `developer 1` the
+  first write ends the server with `script runtime error` (VERIFIED,
+  1.1d). On UO at `developer 0` the first write aborts the server
+  process (SIGABRT), as a builtin's error does there
+  (`cod11-gsc-language.md`, "Runtime errors below developer 1").
 
 INFERRED, from the model-0 reading of a scripted `trigger_damage` (14.8):
 the spawned trigger links inline model 0, a copy of the world at its
@@ -4322,9 +4371,23 @@ there too, and the hurt plays its alias on a PVS temp entity at the
 toucher's `origin` field before the damage (`ScriptRuntime::add_sound_at`).
 `trigger::spawn_scripted_hurt` is the script spawn's `SP_trigger_hurt`, and
 both spawns write `dmg` 5 over a 0 (`default_hurt_dmg`).
-`crates/server/tests/hurtfall_ab.rs` replays the nine captures. Open: the
-read-only `spawnflags` guard, `START_OFF` (spawnflag 1, no touch until
-`hurt_use`) and `hurt_use` itself are not modelled and not measured.
+`Triggers::register_hurt` leaves a `START_OFF` hurt without its touch
+and keeps its `life`; the `useby` builtin notifies and runs
+`Triggers::use_hurt`, which toggles the touch and returns the free time
+`ThinkFn::HurtLife` runs to. `GameHost::store_field` refuses a script
+write of a read-only field with retail's error, which vcod's VM recovers
+from on UO as on 1.1d. `crates/server/tests/hurtfall_ab.rs` replays the
+fifteen captures (on UO's write, the lines before the abort). Open:
+`useBy` runs no other entity's `use` (`Use_Multi`, `Use_BinaryMover`,
+`Use_Static`, `Use_trigger_damage`, `misc_spawner_use`, a turret's
+mount), the 1.5b write capture's body drifts to (900.16, 1930.16) in the first
+50 ms of its fall and lands at (901.00, 1930.84), where ours falls
+straight down, so `hurtfall_ab` holds that run's lines but not its
+frames. The 1.5b use run, with the same spawn, the same 150 ms from the
+client's first snapshot to the drop and no write, falls straight on both,
+so why the body moves is not measured; and no capture measures `life`, since a script spawn has no keys and
+no hurt in the stock 1.1 or UO paks carries one, nor an MP map's hurt
+spawnflag 1 (VERIFIED, entity lumps, 2026-10-21).
 
 ---
 

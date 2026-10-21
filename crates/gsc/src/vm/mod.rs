@@ -445,6 +445,18 @@ pub trait Host {
         value: Value,
     ) -> Result<(), ErrorKind>;
 
+    /// A script's own `ent.field = value`, which a host may refuse where its
+    /// own [`Host::set_field`] calls may not (retail's read-only fields).
+    fn store_field(
+        &mut self,
+        cx: &mut Cx,
+        ent: EntId,
+        field: Atom,
+        value: Value,
+    ) -> Result<(), ErrorKind> {
+        self.set_field(cx, ent, field, value)
+    }
+
     /// Whether `ent` still names the object it was handed out for. A handle
     /// that does not is retail's dead entity: `isDefined` reads 0 on it and
     /// a field access or method call on it is fatal, which the VM raises
