@@ -1024,5 +1024,10 @@ games still stall, both passing on master alone:
   time the body crosses a step, between (1440, -725, 13) and (1440, -669,
   56) or (1441, -761, 25), and the bot walks back and forth over it.
 
-Both are the follower's; the new fights only route bots into them. The
-seeds stay pinned.
+Both are the follower's; the new fights only route bots into them. Both
+are fixed on `fix/uo-bot-pins2` (bot-objectives.md 10.6, bot-navigation.md
+"Jumps", "A goal that flickers"): seed 25 by a replan on landing under a
+level edge, seed 17 by a plan parked for a goal that comes back. Seed 17's
+cause is the goal, not the node pick: an enemy seen for a tick or two from
+the step flipped `Bot::goal` and back, and each replan began at the node
+behind the body.
