@@ -18,6 +18,7 @@ pub use vehicle::{SeatView, VehicleSpot};
 
 mod vehicle;
 
+pub(crate) mod retreat;
 mod skill;
 pub use skill::{DEFAULT_LEVEL, MAX_LEVEL};
 
@@ -326,6 +327,8 @@ pub struct BotView {
     /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
     /// on rather than `kill` itself.
     pub one_life: bool,
+    /// Health, clip size and cover, for the retreat (`bots/retreat.rs`).
+    pub survive: retreat::Vitals,
     /// United Offensive vehicles the bot could board, on foot only
     /// (`vehicle`).
     pub vehicles: Vec<VehicleSpot>,
@@ -704,6 +707,9 @@ pub struct BotBody {
     /// Tracking an enemy it saw within the last second: a scoped or
     /// sighted shot at range stands still on purpose.
     pub engaged: bool,
+    /// Breaking contact (`bots/retreat.rs`): 1 hurt, 2 dry, 3 at the
+    /// cover, 0 not.
+    pub retreating: u8,
     /// The UO vehicle (entity number) and seat it sits in.
     pub seat: Option<(u32, i32)>,
     /// Times it got into a vehicle.
@@ -863,6 +869,11 @@ pub struct Bot {
     pub(crate) last_seen_seq: i32,
     /// The client-command sequence the bot's own replies use.
     pub(crate) next_command_seq: i32,
+    /// The retreat (`bots/retreat.rs`): whether this bot retreats at all,
+    /// the one under way, and the health the last hurt one started at.
+    retreat_on: bool,
+    retreat: Option<retreat::Retreat>,
+    hurt_at: i32,
     /// Boarding, driving and leaving a vehicle (`vehicle`).
     rider: vehicle::Rider,
 }
@@ -1155,6 +1166,9 @@ impl Bot {
             rider: Default::default(),
             team: team.to_string(),
             rng: seed | 1,
+            retreat_on: true,
+            retreat: None,
+            hurt_at: i32::MAX,
         }
     }
 
@@ -1294,8 +1308,14 @@ impl Bot {
         {
             return g;
         }
+        if let Some(g) = self.retreat_goal(view) {
+            return g;
+        }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
+        }
+        if let Some(g) = self.heal_goal(view) {
+            return g;
         }
         if let Some(g) = self.vehicle_goal(view) {
             return g;
@@ -2202,6 +2222,8 @@ impl Bot {
         }
         self.switch_to = None;
         self.calm_ticks = 0;
+        self.retreat = None;
+        self.hurt_at = i32::MAX;
     }
 
     /// The remembered spot not yet reached, else this tick's noise. The same
@@ -2338,6 +2360,10 @@ impl Bot {
             return cmd;
         }
         self.respawn_ticks = 0;
+        // A seat ends any retreat: the vehicle is the bot's cover now.
+        if view.seat.is_some() {
+            self.retreat = None;
+        }
         if let Some(cmd) = self.think_vehicle(view, cmd) {
             return cmd;
         }
@@ -2442,7 +2468,7 @@ impl Bot {
         self.lmg_rest = self.lmg_rest.saturating_sub(1);
         self.lmg_linger = self.lmg_linger.saturating_sub(1);
         // A bipod down holds the body; it means to stay put.
-        let standing = self.objective_standing(view) || view.deployed;
+        let standing = self.objective_standing(view) || view.deployed || self.holding_cover(view);
         self.stall_ticks += 1;
         self.stall_reach = self
             .stall_reach
@@ -2707,6 +2733,7 @@ impl Bot {
         // blast to the end (seed 5). A retrieval carrier runs on the same
         // way (`team`'s `carrying`).
         let clearing = Self::blast_near(view).is_some() || self.carrying(view);
+        let path = ((cmd.forward, cmd.right, cmd.up, cmd.wbuttons), yaw);
         if self.shoot {
             self.track(view.enemy);
             let keys = (cmd.forward, cmd.right, cmd.up, cmd.wbuttons);
@@ -2733,6 +2760,7 @@ impl Bot {
                 [pitch, yaw] = look;
             }
         }
+        [pitch, yaw] = self.retreat_keys(view, &mut cmd, path.0, path.1, [pitch, yaw]);
         self.flee(view, &mut cmd, yaw);
         // A switch ends when it lands, or when the weapon is gone (dropped,
         // or swapped at a pickup) and the byte would read as a holster for
@@ -2760,6 +2788,7 @@ impl Bot {
         {
             cmd.wbuttons |= msg::WBUTTON_RELOAD;
         }
+        self.retreat_update(view);
         cmd.angles = cmd_angles(view, [pitch, yaw]);
         cmd
     }
@@ -3839,6 +3868,7 @@ mod tests {
             bel: None,
             uo: None,
             one_life: false,
+            survive: Default::default(),
             vehicles: Vec::new(),
             seat: None,
         }
@@ -4097,7 +4127,7 @@ mod tests {
 
     /// A view on an `re` level: one objective lying 30 units ahead (its
     /// pickup trigger's middle on the floor), its goal far off.
-    fn re_view(role: ObjRole) -> BotView {
+    pub(super) fn re_view(role: ObjRole) -> BotView {
         let mut v = view();
         v.view = [0.0, 0.0, 0.0];
         v.re = Some(ReView {
