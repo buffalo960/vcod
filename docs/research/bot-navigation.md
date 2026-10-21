@@ -460,8 +460,10 @@ over the 18-unit step. Two kinds of edge use it, kept in
   from rest on the foot a body reads pinned on its first tick (closing
   0), so the pinned cue needs a move key held the tick before
   (`bots::tests::a_bot_set_off_from_rest_is_not_pinned`).
-- A body more than 8 units over the foot, and under a step, waits where
-  it stands instead (`nav::tests::a_jump_edge_is_waited_on_from_a_ledge_above_its_foot`).
+- A body more than 8 units over the foot, under a step, with the top
+  still more than a step over it, waits where it stands instead (one on
+  the top's own floor beside a top 16 over its foot, as on mp_cassino's
+  `ctf` at (5065, -1274, 256), still goes back to the foot) (`nav::tests::a_jump_edge_is_waited_on_from_a_ledge_above_its_foot`).
   VERIFIED (measured, `uo_bots_fight_and_sprint_in_tdm` `SEED=17`, UO
   rules, 2026-10-21): mp_cassino's edge from (3648, -1249, 111.4) to
   (3698, -1200, 128.1) is a jump edge; the graph's walk steps up 17 onto

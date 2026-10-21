@@ -3253,12 +3253,14 @@ impl Follower {
         if rise.abs() >= vcod_common::pmove::STEPSIZE {
             return None;
         }
-        // Stepped up off the foot's floor on the way to the top, it waits
-        // where it stands: the walk jumped from up there too, and one sent
-        // back down off mp_cassino's ledge at (3667, -1240, 128) jumped
-        // again from the foot 53 under the top, into the penalty, and
-        // back for good (bot-navigation.md "Jumps").
-        Some(if rise > ARRIVE { at } else { foot.into() })
+        // Stepped up off the foot's floor onto a ledge the top still needs
+        // a jump from, it waits where it stands: the walk jumped from up
+        // there too, and one sent back down off mp_cassino's ledge at
+        // (3667, -1240, 128) jumped again from the foot 53 under the top,
+        // into the penalty, and back for good (bot-navigation.md "Jumps").
+        let top = g.nodes[self.path[self.next] as usize];
+        let ledge = rise > ARRIVE && top.z - at[2] > vcod_common::pmove::STEPSIZE;
+        Some(if ledge { at } else { foot.into() })
     }
 
     /// Where a walked-out point goal is headed: the point, or the
@@ -6804,6 +6806,17 @@ mod tests {
         assert_eq!(f.jump_wait(&g, at, &ps), Some(at));
         let at = [-4.0, 0.0, 2.0];
         assert_eq!(f.jump_wait(&g, at, &ps), Some(foot.into()));
+        // On the top's own floor, beside it: back to the foot, as before
+        // (mp_cassino's ctf at (5065, -1274, 256), a top 16 over its foot).
+        let mut low = NavGraph::from_parts(
+            vec![foot, Vec3::new(48.0, 0.0, 16.0)],
+            vec![vec![1], vec![]],
+        );
+        low.jumps.insert((0, 1));
+        assert_eq!(
+            f.jump_wait(&low, [-20.0, 0.0, 16.0], &ps),
+            Some(foot.into())
+        );
     }
 
     /// The sprint's room runs along a straight, level line of plain edges
