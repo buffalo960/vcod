@@ -33,6 +33,9 @@ const RIDE_TICKS: u32 = 1800;
 /// Ticks a seat with nothing to drive to, or a gunner's seat with nobody
 /// driving, is held before the bot gets out.
 const IDLE_TICKS: u32 = 100;
+/// A leaving rider's use press lands on one frame in this many, its
+/// seat's: no two seats of a vehicle exit on one frame.
+const EXIT_FRAMES: i32 = 4;
 /// A rider with nobody to shoot gets out of a vehicle nobody drives this
 /// soon: the driver gave it up.
 const UNDRIVEN_TICKS: u32 = 40;
@@ -143,6 +146,8 @@ pub struct SeatView {
     /// break, ms; seven seconds of it destroy the vehicle
     /// (coduo-vehicles.md 12, "Self-damage").
     pub contact_ms: i32,
+    /// `level.time`, ms: which frames this seat's exit press may land on.
+    pub level_ms: i32,
 }
 
 /// Teammates on foot round a driven hull: a body the hull rolls into is
@@ -233,7 +238,8 @@ pub(crate) struct Rider {
     reverse_forward: i8,
     stalls: u32,
     progress_from: [f32; 3],
-    /// Driving ticks since the ride last made [`PROGRESS`].
+    /// Driving ticks (a rider's: ticks with nobody to shoot) since the
+    /// ride last made [`PROGRESS`].
     unmade: u32,
     /// Boardings and exits, for the gates.
     pub(crate) boarded: u32,
@@ -476,6 +482,21 @@ impl Bot {
         } else {
             self.rider.idle += 1;
         }
+        // A rider gives up a ride that makes no headway as its driver does:
+        // a gunner who waited for the driver to leave first, then out the
+        // undriven seat's wait, sat 10 s in a hull shuffling round one spot
+        // and walked off it past the 12 s stall gate (seed 45).
+        if seat.seat > 1 {
+            let r = &mut self.rider;
+            if super::dist_sq(seat.origin, r.progress_from) > PROGRESS * PROGRESS {
+                r.progress_from = seat.origin;
+                r.unmade = 0;
+            }
+            if enemy.is_none() {
+                r.unmade += 1;
+            }
+        }
+        let headless = seat.seat > 1 && self.rider.unmade > PROGRESS_TICKS;
         if let Some((at, vel)) = enemy {
             // A seat's gun leads a moving target by its round's flight; a
             // passenger's own weapon aims as on foot.
@@ -514,14 +535,24 @@ impl Bot {
         // sliding, is about to destroy itself and everyone in it.
         let wedged = seat.contact_ms >= LEAVE_CONTACT_MS;
         let abandoned = seat.seat > 1 && !seat.driven && self.rider.idle > UNDRIVEN_TICKS;
-        let done =
-            self.rider.seated > RIDE_TICKS || self.rider.idle > IDLE_TICKS || wedged || abandoned;
+        let done = self.rider.seated > RIDE_TICKS
+            || self.rider.idle > IDLE_TICKS
+            || wedged
+            || abandoned
+            || headless;
         if done || self.rider.leaving {
             self.rider.leaving = true;
             cmd.forward = 0;
             cmd.right = 0;
             cmd.buttons &= !msg::BUTTON_ATTACK;
-            self.rider.pressed = !self.rider.pressed;
+            // Each seat presses on its own frames, one in `EXIT_FRAMES`:
+            // two riders out of one tank on one frame lose the second's
+            // `deactivated` to stock `_tankdrive_gmi::deactivated`'s loop,
+            // whose old HUD thread then reads the destroyed fire icons
+            // (bot-objectives.md 10.6, seed 15).
+            let frame = seat.level_ms / super::FRAME_MS;
+            self.rider.pressed =
+                frame.rem_euclid(EXIT_FRAMES) == (seat.seat as i32 - 1) % EXIT_FRAMES;
             if self.rider.pressed {
                 cmd.buttons |= msg::BUTTON_USE;
             }
@@ -545,6 +576,12 @@ impl Bot {
         let Some(to) = to.filter(|_| !hold) else {
             r.stall = 0;
             r.idle = if hold { 0 } else { r.idle + 1 };
+            // Ground made counts from where a hold left the hull: from an
+            // older spot, the way back across it after a fight read as
+            // headway and a tank dithered 12 s round one place (seed 25).
+            if hold {
+                r.progress_from = seat.origin;
+            }
             return;
         };
         r.idle = 0;
