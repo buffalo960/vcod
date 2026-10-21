@@ -1988,7 +1988,18 @@ fn hud_color_word(e: &crate::game::entity::GEntity) -> u32 {
 /// to match. A free function so the bullet spread (`crate::game::combat`)
 /// draws from `Server`'s state the same way.
 pub fn rand_unit(state: &mut u64) -> f32 {
-    vcod_common::rng::xorshift(state) as f32 / u64::MAX as f32
+    u64_to_f32(vcod_common::rng::xorshift(state)) / u64::MAX as f32
+}
+
+/// `x as f32` without a `u64` to `f32` cast: LLVM 23's instruction selection
+/// for x86_64-pc-windows-msvc ran out of memory on `combat::aim_end` with
+/// `rand_unit`'s cast inlined into it. Above `i64::MAX` the halving keeps the
+/// low bit (round to odd), so the signed cast rounds as the unsigned one.
+fn u64_to_f32(x: u64) -> f32 {
+    match i64::try_from(x) {
+        Ok(v) => v as f32,
+        Err(_) => ((x >> 1 | x & 1) as i64 as f32) * 2.0,
+    }
 }
 
 /// A glibc-`rand()`-shaped draw, `0..=0x7fff_ffff`.
@@ -2608,6 +2619,28 @@ fn type_accepts(ty: FieldType, v: Value) -> bool {
 mod tests {
     use super::*;
     use crate::game::testing::fixture;
+
+    /// The workaround cast rounds as `as f32` does, ties and the top included.
+    #[test]
+    fn u64_to_f32_rounds_as_the_cast() {
+        let mut s = 0x1234_5678_9abc_def1u64;
+        let edges = [
+            0,
+            1,
+            (1 << 24) + 1,
+            i64::MAX as u64,
+            1 << 63,
+            (1 << 63) + (1 << 39),
+            (1 << 63) + (1 << 39) + 1,
+            (1 << 63) + (3 << 39),
+            u64::MAX - (1 << 39),
+            u64::MAX,
+        ];
+        let draws = (0..100_000).map(|_| vcod_common::rng::xorshift(&mut s));
+        for x in edges.into_iter().chain(draws) {
+            assert_eq!(u64_to_f32(x).to_bits(), (x as f32).to_bits(), "{x:#x}");
+        }
+    }
 
     /// `mp_pavlov.gsc` opens with exactly these two calls, and they are the
     /// only configstrings the script writes so far: slot 12 from setCullFog
