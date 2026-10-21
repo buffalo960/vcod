@@ -945,16 +945,18 @@ fn the_jeep_driver_s_bones_follow_retail_s() {
     let mean = sum / n.max(1) as f32;
     eprintln!("{n} bone samples, mean {mean:.3}, worst {worst:?}");
     assert!(n > 2000, "only {n} samples in common");
-    assert!(mean <= 0.02, "the bones sit {mean} off retail's on average");
+    assert!(
+        mean <= 0.002,
+        "the bones sit {mean} off retail's on average"
+    );
     assert!(worst.0 <= BONE_TOLERANCE, "{worst:?} off retail's");
 }
 
-/// How far a bone may sit off retail's in one sample: the hands through
-/// the steer's swings (worst 0.55 at 25150, 8 of 2170 samples past 0.3,
-/// mean 0.008), in the blend from the driving node into the idle one.
-/// The seat leaves' own node times do not move them (coduo-vehicles.md
-/// 14, "The seat blend's ramp"): it is the weights.
-const BONE_TOLERANCE: f32 = 0.6;
+/// How far a bone may sit off retail's in one sample: all 2170 read
+/// retail's marks to the print's 0.01 but one 0.02 (17550, the hand on the
+/// first steer), through the driving and idle nodes' toggles
+/// (coduo-vehicles.md 14, "The seat blend's ramp").
+const BONE_TOLERANCE: f32 = 0.05;
 
 const JEEP_GUN: &str = "tests/fixtures/playerstate/mp_peaks-tdm-slope-8ms-jeep-gun-uo.txt";
 
