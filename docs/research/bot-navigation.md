@@ -3807,6 +3807,56 @@ merge, the same detector; ship seeds in three blocks of 768):
   the pit's exits, a bot bobbing up the slope at (-1280, 2100) to
   (-1280, 2148, 227), a plain edge).
 
+### String-pulling
+
+`Follower::pull` (`nav.rs`) takes the waypoint one node further along
+the plan a tick, so a bot crossing open floor heads straight for a node
+up to `PULL_STEPS` (3) grid steps off instead of stepping the grid's 45
+degree kinks (bot-combat.md section 10). A pull needs all of:
+
+- The body on the ground, off the rungs, past the plan's first node
+  (`proved_start` and `jump_start` keep their meaning), no point goal
+  walked out, no edge held (`Follower::held`), and not the tick it
+  lands (the landing replan reads the edge under way).
+- The edge into the waypoint, the edge on and the one after that plain
+  (`NavGraph::plain_edge`: no jump, leap, crouched jump or risky edge,
+  ends within a step in height) and none of them avoided. So a jump, a
+  ladder, a drop or a risky edge is still met along the edge the graph
+  proved, from the node it leaves.
+- The pulled node within a step of the body's height and the skipped
+  node within `PULL_SLACK` (0.75) steps of the line to it: off the line
+  the grid went round something.
+- `straight_floor`: the standing capsule swept a step up from the body
+  to the node clears, and every 16 units along the line a point trace
+  a step either side meets ground a body stands on (normal z 0.7 and
+  up). Then the walk from the body at its pace and move scale
+  (`walk_sliding`, `Gait::Forward`) arrives on the node's floor
+  without a jump, dipping no more than a step, never sliding.
+
+While a pulled waypoint is ahead the line to it is checked again each
+tick (`straight_floor` alone); a check that fails falls back to the
+furthest node it skipped that the body still reaches, else the node it
+was pulled from. A failed try or a fall back waits `PULL_RETRY` (4)
+ticks. Stuck detection runs on the pulled waypoint as on any other: a
+pull resets `best`, and a waypoint not closed on in 40 ticks avoids the
+edge into it, which is the plan's own edge from the node before.
+Reaching a node, by reach or by passing it, ends the pull
+(`a_waypoint_is_pulled_along_a_clear_straight_line`).
+
+VERIFIED (measured, release `ship_stalls`, master d3b03cb0 then this
+change with the walking view's turn limit too): `mp_ship` at 1.1,
+seeds 1 to 31 odd, stalled 0 / 0, falls 0 / 0. `mp_cassino` at a stock
+UO install (`UO=1`), seeds 1 to 31 odd, stalled 1 / 174, falls 1 / 2;
+seeds 33 to 63 odd, 196 / 34 and 0 / 0; together 197 / 208. Each total
+is one spell or two. The 172 of seed 23 are a bot held off the ground
+in a crease at (426, -958, 60), 5 units from the node (431, -964, 57),
+on plain edges into it; no pull ran within 150 units of it all game
+(VERIFIED, a temporary log), so the pull only changed which bot went
+there. The crease is the follower's to fix, and open. `mp_depot`
+without fire, seeds 1 to 31 odd: 0 / 0, and 0 with either half alone.
+`nav_census` passes at 1.1 and at UO (both halves are the follower's;
+the graph is untouched).
+
 ## 4. Memory and hearing
 
 Two goals sit between a visible enemy and `Roam`, both kept by the brain
