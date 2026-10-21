@@ -338,15 +338,15 @@ The dlight pass in detail, all CoDMP.exe 1.1:
   is still 0; `alphaGen identity` stores 0 (0x4f9009). INFERRED: so every
   stock fx stage, all `rgbGen vertex` or `exactVertex`, takes the sprite's
   vertex alpha, as Q3's parser does.
-- vcod, the fx pass (`renderer::fx_draw`, `fx.wgsl`): a material draws on
-  the blend of the stage carrying its first image: straight alpha,
-  additive onto `GL_ONE` (the texture's alpha read only under
-  `GL_SRC_ALPHA GL_ONE`), or `GL_ONE GL_ONE_MINUS_SRC_COLOR`
-  (`fs_screen`), and a `nofog` material is never fogged. Before
-  2026-10-21 the pass fogged every sprite, drew `GL_ONE
-  GL_ONE_MINUS_SRC_COLOR` as straight alpha and dropped the texture's
-  alpha under `GL_SRC_ALPHA GL_ONE`. vcod ignores the stage flag 4 that
-  0x4fbc6b also tests, as the world's `STAGE_FLAG_NOFOG` does.
+- vcod, the fx pass (`renderer::fx_stage_draw`, `fx.wgsl`): a stage draws
+  straight alpha, additive onto `GL_ONE` (the texture's alpha read only
+  under `GL_SRC_ALPHA GL_ONE`), `GL_ONE GL_ONE_MINUS_SRC_COLOR`
+  (`fs_screen`) or unblended with depth written, and a `nofog` material
+  is never fogged. Before 2026-10-21 the pass fogged every sprite, drew
+  `GL_ONE GL_ONE_MINUS_SRC_COLOR` as straight alpha and dropped the
+  texture's alpha under `GL_SRC_ALPHA GL_ONE`. vcod ignores the stage
+  flag 4 that 0x4fbc6b also tests, as the world's `STAGE_FLAG_NOFOG`
+  does.
 - VERIFIED, string search of the stock 1.1, 1.5 and UO paks' `scripts/`
   and `fxshaders/` blocks against the `.efx` `shaders` lists and
   `fx::flame`'s names (2026-10-21): the fx materials that change are
@@ -355,10 +355,92 @@ The dlight pass in detail, all CoDMP.exe 1.1:
   `fx::flame` draws 2..44), `flameSmoke1`..`6` there (blend, `nofog`) and
   the nine `.efx` materials `smoke/smk_{p_out,p_top,t}_fire_{a,b,c}`
   (`pakuo00.pk3` `fxshaders/smoke.shader`, `add`, `nofog`). No stock
-  `.efx` material has `GL_SRC_ALPHA GL_ONE` on its image stage; 57 carry
-  it on a second stage over a blended first (`gfx/impact/bullethit_*`,
-  UO's `impact/bullet_*` and `impact/scorch_*`), and the fx pass draws
-  only the first.
+  `.efx` material has `GL_SRC_ALPHA GL_ONE` on a base stage. The 57 that
+  carry it on a second stage over a blended first (`gfx/impact/bullethit_*`,
+  `bullethole*`, `cratered*`, `stone_singleshot1`, UO's `impact/bullet_*`
+  and `impact/scorch_*`, `misc/lamp_oil`) flag that stage `perLight`
+  with `$dlight` in bundle 1, so it is a dlight-pass stage, never the
+  base loop's (below).
+
+The fx pass's stage loop, all CoDMP.exe 1.1:
+
+- VERIFIED, the sprite emitter 0x50fe20 (efx-grammar.md R4) writes its
+  quad's indices into the batch's index array at 0x17a7f60, flushing
+  through 0x5027c0 and restarting through 0x4ff570 when 4 more vertices
+  or 6 more indices would pass 0x2000 or 0xc000. 0x500d3a hands that same
+  array to the base loop. INFERRED: an effect sprite draws through the
+  generic stage iterator 0x500ba0, as a world or model surface does.
+- VERIFIED, the base loop 0x500b30: it walks the batch's stage pointers
+  (0x19bffc4, at most 8, a null one ends it), skips a stage whose first
+  byte has its top bit (`cmp byte [esi],0`, `js`; the `perLight` flag
+  0x80 that 0x4fb3c0 sets), and draws every other one through 0x5008a0.
+  `r_lightmap` (0x16c36d4) stops it after the first stage that reads the
+  lightmap. So every base stage of an effect material draws, in script
+  order, once each over the whole batch.
+- VERIFIED, 0x5008a0, one stage: colours (0x4ffa60), texture coordinates
+  with the bundle's tcGen and tcMods (0x500400), then for a single-bundle
+  stage the image (0x4fe0e0) and GL_State on the stage's state word
+  (`+0x684`) before the draw (0x4fe070). Each stage has its own blend,
+  colour gen, image and tcMods.
+- VERIFIED, 0x4ffa60, the colour gens (`+0x664`): 2 (`identity`) fills
+  0xffffffff, alpha included; 5 (`exactVertex`) copies the vertex colour;
+  6 (`vertex`) copies it with rgb shifted right by the overbright bits
+  (0x16c55b8) and alpha kept; 0xc (`const`) the stage's colour word
+  (`+0x680`); unlisted values (0, 1 `identityLighting`) the identityLight
+  byte (0x16c55b4) in all four bytes. The alpha gens (`+0x67c`): 0 sets
+  alpha 255 unless the rgbGen is 2, or 6 with identityLight 1.0; 4
+  (`vertex`) copies the vertex alpha unless the rgbGen is 6, which kept
+  it already; 9 (`const`) the colour word's alpha byte (`+0x683`).
+  INFERRED, with the parser rule above (0x4f8d4f): a `vertex` or
+  `exactVertex` stage fades with the sprite, and an `identity` or
+  `identityLighting` stage ignores the sprite's colour and fade (UO's
+  `impact/bullet_sand_a`, `rgbgen identity`, draws full strength until
+  the sprite dies).
+- VERIFIED, 0x4f3660..0x4f36a2: `$lightmap` in a material whose
+  lightmap index (0x11e67b8) is negative binds the white image
+  (0x16c4de8). An effect material registers at index -4 (refexport
+  0x4fca80), so the impacts' `nextbundle map $lightmap` modulates by
+  white and changes nothing.
+- VERIFIED, 0x4fe0e0, the image: an `animMap` bundle with more than one
+  frame picks `fistp(shaderTime (0x197ff98) * fps * 1024) >> 10`, at
+  least 0, modulo the frame count (or held on the last frame when byte
+  `+0xc6` is set).
+- vcod: `renderer::fx_stage_draws` lists a material's base stages and
+  `set_fx_quads` writes each run's quads once per stage, the stages back
+  to back, each with the stage's image (the anim frame at the frame's
+  shader time), blend, `alphaFunc` (`FX_VERT_ALPHA_*`), bundle 0's wrap
+  (repeat unless `clamp`, so `jh_animfire`'s `tcMod scale -1 1` mirrors;
+  a material without a script stays clamped) and bundle 0's tcMods
+  folded on the CPU (`bundle_affine`; `turb` is not drawn); the
+  colour is the stage's gens over the sprite's colour
+  (`fx_stage_rgba`), an alphaGen identity under `rgbGen vertex` or
+  `exactVertex` taking the vertex alpha as the parser rule gives it. An
+  unblended stage (`FxBlend::Opaque`) writes depth. A stage whose bundle 0
+  is not an image file (`$whiteimage`, `$lightmap`) draws nothing, and
+  bundle 1 is never drawn. Blended stages keep `LessEqual` with no depth
+  write: no stock effect stage has `depthFunc` or a blended `depthWrite`.
+  The quad buffers hold `MAX_FX_DRAWN`, twice the sim's quad cap. Before
+  2026-10-21 the pass drew only the first image stage, with the first
+  stage's colour scale times the sprite's colour.
+- VERIFIED, string search of the 1.1, 1.5 and UO paks' `.efx` materials
+  (2026-10-21), what the stage loop changes in vcod: the second stage
+  draws on `gfx/effects/smoke/roller` and `smoke_bck` (two blended
+  layers) and UO's `impact/bullet_fabric_a` and `_b` (an additive glow,
+  `rgbGen wave`); the tcMods draw on those, `smoke_frnt` (`rotate`),
+  `gfx/effects/mg42_m`, `gfx/effects/misc/cloudflash_stalingradm`,
+  `gfx/misc/rocketplume` (`transform -1 0 0 1 1 0`, mirrored) and
+  `gfx/effects/animated/jh_animfire` (`scale -1 1`);
+  `gfx/effects/animated/animfire`, `jh_animfire` and `jh_animfire2`
+  animate; the debris (`bark_gib`,
+  `bark_gib2`, `foliage_stick`, `grass_piece1`, `grass_piece2`,
+  `stonegib1`, `c47_singledetail`, `c47formation1`, `parachute1`, all
+  `alphaFunc GE128` and `depthWrite`, unblended) cut out at 128 and
+  write depth, as `gfx/impact/dusty` (`alphaFunc GE128`) cuts out; and
+  `impact/bullet_sand_a` draws white and unfaded.
+- Open: whether a blended effect sprite's `perLight` stages draw. They
+  take 0x500d3a's second branch (sort above 5), whose light list
+  (0x16d8e5c) 0x50fe68 reloads from 0x197ff9c at a flush; what an effect
+  batch leaves there is not traced. vcod draws none on fx quads.
 - VERIFIED, which surfaces a light reaches: the world walk (0x4e4c10)
   visits the cells the portals show (0x4e44d0), tests each surface against
   the frustum and portal planes (0x4e3070, 0x4e4120) and hands it to

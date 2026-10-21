@@ -4194,6 +4194,7 @@ impl ApplicationHandler for App {
                         r.set_fx_quads(
                             &self.fs,
                             self.fx.build_quads(cam.pos, cam_right, cam_up, time),
+                            time,
                         );
                         r.set_marks(
                             &self.fs,
@@ -6290,7 +6291,7 @@ impl ApplicationHandler for App {
                                         ));
                                         fx::sim::sort_back_to_front(&mut fx_quads, cam.pos);
                                     }
-                                    r.set_fx_quads(&self.fs, fx_quads);
+                                    r.set_fx_quads(&self.fs, fx_quads, time);
                                     r.set_marks(
                                         &self.fs,
                                         &self.fx.take_marks(time),
@@ -6628,6 +6629,7 @@ impl ApplicationHandler for App {
                         r.set_fx_quads(
                             &self.fs,
                             self.fx.build_quads(v.eye, eye_right, eye_up, time),
+                            time,
                         );
                         r.set_marks(
                             &self.fs,

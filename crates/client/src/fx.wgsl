@@ -1,8 +1,9 @@
-// World-space fx quads: depth-tested, never writing depth. Per-vertex rgba
-// multiplies the texture; `Renderer::set_fx_quads` has already scaled it by
-// the material's gen. One entry point per `FxBlend` (`renderer::fx_draw`):
-// `fs_main` straight alpha, `fs_additive` onto `GL_ONE`, `fs_screen`
-// `GL_ONE GL_ONE_MINUS_SRC_COLOR`.
+// World-space fx quads: depth-tested, writing depth only unblended. Each
+// quad is drawn once per stage of its material, and its per-vertex rgba is
+// that stage's gen colour (`renderer::fx_stage_rgba`), which multiplies the
+// texture. One entry point per `FxBlend` (`renderer::fx_stage_draw`):
+// `fs_main` straight alpha and unblended, `fs_additive` onto `GL_ONE`,
+// `fs_screen` `GL_ONE GL_ONE_MINUS_SRC_COLOR`.
 
 // Same uniform as shader.wgsl; the fog fields are documented there.
 struct Camera {
@@ -28,6 +29,11 @@ struct SoftParams {
 // renderer::FX_VERT_*
 const FX_VERT_NOFOG: u32 = 1u;
 const FX_VERT_TEX_ALPHA: u32 = 2u;
+const FX_VERT_ALPHA_GT0: u32 = 4u;
+const FX_VERT_ALPHA_LT128: u32 = 8u;
+const FX_VERT_ALPHA_GE128: u32 = 16u;
+// F_CLAMP_S and F_CLAMP_T (tex_samplers.wgsl) ride the flags too, so
+// sample_image reads them straight off.
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -71,10 +77,23 @@ fn fog_amount(in: VsOut) -> f32 {
     return clamp((d - camera.fog_range.x) / span, 0.0, 1.0);
 }
 
+// The stage's alphaFunc on the fragment's alpha, texture times gen
+// (GL_ALPHA_TEST after GL_MODULATE).
+fn alpha_test(in: VsOut, a: f32) {
+    let f = in.flags;
+    let k = 128.0 / 255.0;
+    if (((f & FX_VERT_ALPHA_GT0) != 0u && a <= 0.0)
+        || ((f & FX_VERT_ALPHA_LT128) != 0u && a >= k)
+        || ((f & FX_VERT_ALPHA_GE128) != 0u && a < k)) {
+        discard;
+    }
+}
+
 // Fogged like the surface a decal sits on, so bullet holes and smoke
 // take the same colour as the wall behind them.
 fn shade(in: VsOut) -> vec4<f32> {
-    let t = sample_image(tex, in.uv, F_CLAMP);
+    let t = sample_image(tex, in.uv, in.flags);
+    alpha_test(in, t.a * in.rgba.a);
     let rgb = mix(t.rgb * in.rgba.rgb, camera.fog_color_density.rgb, fog_amount(in));
     return vec4(rgb, t.a * in.rgba.a);
 }
@@ -88,7 +107,8 @@ fn shade(in: VsOut) -> vec4<f32> {
 // 0x4d2ad0): adding fog colour would brighten glows the further into the
 // fog they sit.
 fn shade_additive(in: VsOut) -> vec4<f32> {
-    let t = sample_image(tex, in.uv, F_CLAMP);
+    let t = sample_image(tex, in.uv, in.flags);
+    alpha_test(in, t.a * in.rgba.a);
     var a = in.rgba.a;
     if ((in.flags & FX_VERT_TEX_ALPHA) != 0u) {
         a = a * t.a;
@@ -101,7 +121,8 @@ fn shade_additive(in: VsOut) -> vec4<f32> {
 // behind by itself, so black draws nothing; alpha is never read. Its
 // destination is not `GL_ONE`, so it fogs toward the fog colour.
 fn shade_screen(in: VsOut) -> vec4<f32> {
-    let t = sample_image(tex, in.uv, F_CLAMP);
+    let t = sample_image(tex, in.uv, in.flags);
+    alpha_test(in, t.a * in.rgba.a);
     let rgb = mix(t.rgb * in.rgba.rgb, camera.fog_color_density.rgb, fog_amount(in));
     return vec4(rgb, 0.0);
 }

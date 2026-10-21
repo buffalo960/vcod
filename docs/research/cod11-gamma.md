@@ -211,9 +211,10 @@ Divergences:
   in both modes. INFERRED: retail does the same, since `0x4d9af0` is called
   only for lightmap pages (section 3); the BSP vertex-colour load is not
   traced.
-- The HUD and fx scale is picked from the material's first stage; a
-  scripted material whose later stages use other gens is drawn with the
-  first one's. Debug text (F3) draws raw.
+- The HUD scale is picked from the material's first stage; a scripted
+  material whose later stages use other gens is drawn with the first
+  one's. The fx pass takes each stage's own gens
+  (`cod11-shader-scripts.md` section 3). Debug text (F3) draws raw.
 - A `vid_restart` does not reload the world, so a gamma change waits for the next map load, where retail's
   `vid_restart` reloads every image.
 - `r_overBrightBits` is not registered; vcod uses its default 1.
