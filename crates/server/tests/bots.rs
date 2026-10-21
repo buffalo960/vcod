@@ -1218,6 +1218,92 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
     Some(sv)
 }
 
+/// The same seeded bas match twice in one process, the second beside a
+/// match without shooting on the map and a busy thread, all three on one
+/// nav cache: both play out alike. The cache once keyed a rebuild on the
+/// brush links alone, so a gate got the graph whichever test beside it
+/// reached those links first had built round its own vehicles
+/// (bot-navigation.md, "Build times"). Needs `COD_DIR` at a UO install.
+#[test]
+#[ignore = "builds mp_foy's UO graph and its rebuilds, runs three 4-bot matches of 4 min of game time, ~10 min in release; run with --ignored"]
+fn a_seeded_bas_match_replays_beside_another() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    vcod_server::nav::clear_cache();
+    let first = bas_fingerprint(true);
+    vcod_server::nav::clear_cache();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let again = std::thread::scope(|s| {
+        s.spawn(|| bas_fingerprint(false));
+        s.spawn(|| {
+            let mut x = 1u64;
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+            }
+        });
+        let again = bas_fingerprint(true);
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        again
+    });
+    assert_eq!(
+        first.len(),
+        again.len(),
+        "the matches ran different lengths"
+    );
+    let diverged = first.iter().zip(&again).position(|(a, b)| a != b);
+    assert_eq!(
+        diverged,
+        None,
+        "the replay diverged at {:?}",
+        diverged.map(|i| (&first[i], &again[i]))
+    );
+}
+
+/// Four bots on mp_foy's bas round, seed 7, shooting or not, for
+/// `BAS_FINGERPRINT_TICKS`: every 20 ticks each bot's origin and health,
+/// then each new script log line.
+fn bas_fingerprint(shoot: bool) -> Vec<String> {
+    let fs = vcod_common::testing::uo_fs().expect("a UO install");
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_foy").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(4, shoot, "bas");
+    cfg.map = "mp_foy".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+    sv.test_seed_rng(7);
+    sv.set_cvar("scr_bas_basehealth", "3000");
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let mut out = Vec::new();
+    let mut logged = 0;
+    for tick in 0..BAS_FINGERPRINT_TICKS {
+        run(&mut sv, &mut now, 1);
+        let log = sv.script_log();
+        if log.len() < logged {
+            logged = 0;
+        }
+        out.extend(
+            log[logged..]
+                .iter()
+                .map(|l| format!("{tick}: {}", l.trim_end())),
+        );
+        logged = log.len();
+        if tick % 20 == 0 {
+            for slot in sv.bot_slots() {
+                if let Some(b) = sv.bot_body(slot) {
+                    out.push(format!("{tick}: bot {slot} {:?} {}", b.origin, b.health));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Four minutes: past the first breaches and the rebuilds after them.
+const BAS_FINGERPRINT_TICKS: usize = 4 * 60 * 20;
+
 /// `scr_bas_roundlength` is 30 minutes; the round ends by then whatever
 /// the bases did, so the gate stops short of it.
 const BAS_ROUND_TICKS: usize = 29 * 60 * 20;

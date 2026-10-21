@@ -1369,6 +1369,7 @@ type CacheKey = (
     Vec<[u32; 3]>,
     Vec<[u32; 3]>,
     Vec<bool>,
+    Vec<u32>,
 );
 static CACHE: std::sync::Mutex<Vec<(CacheKey, Arc<NavGraph>)>> = std::sync::Mutex::new(Vec::new());
 
@@ -1376,6 +1377,10 @@ static CACHE: std::sync::Mutex<Vec<(CacheKey, Arc<NavGraph>)>> = std::sync::Mute
 /// test world built without the static props is a different graph from the
 /// real one, and which submodels clip: each gametype deletes the others'
 /// brushes (`_gameobjects.gsc`), so one map's graph differs by gametype.
+/// Where the movers, world copies and vehicles stand is in it as well: a
+/// rebuild walks round them, and two servers on one map hold them apart,
+/// so a graph keyed without them made a gate's result ride which test
+/// built first.
 fn cache_key(
     map: &str,
     c: &CollisionWorld,
@@ -1400,6 +1405,7 @@ fn cache_key(
             .map(|p| p.map(f32::to_bits))
             .collect(),
         (0..c.model_count()).map(|m| c.model_linked(m)).collect(),
+        c.placements(),
     )
 }
 
@@ -1420,8 +1426,23 @@ fn cached(key: CacheKey, build: impl FnOnce() -> NavGraph) -> Arc<NavGraph> {
         g.spacing,
         t.elapsed().as_millis()
     );
+    // A rebuild keys on where the vehicles stood, so it is seldom asked
+    // for again; the oldest go once the cache holds CACHE_GRAPHS.
+    if cache.len() >= CACHE_GRAPHS {
+        cache.remove(0);
+    }
     cache.push((key, g.clone()));
     g
+}
+
+/// The most graphs [`cached`] keeps.
+const CACHE_GRAPHS: usize = 24;
+
+/// Test hook: forgets every cached graph, so a gate can run a match as a
+/// fresh process would after another match filled the cache.
+#[doc(hidden)]
+pub fn clear_cache() {
+    CACHE.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 /// `map`'s graph under the rules in force ([`with_rules`]), built on
@@ -8594,5 +8615,35 @@ mod tests {
         assert_eq!(g.nearest([30.0, 2.0, 10.0]), Some(1));
         assert_eq!(g.nearest([30.0, 2.0, 140.0]), Some(5));
         assert_eq!(g.nearest([5000.0, 0.0, 0.0]), None);
+    }
+
+    /// A rebuild walks round the vehicles, movers and world copies where
+    /// they stand, so the cache keys on each: keyed without them, a bas
+    /// gate got whichever graph a test beside it built first.
+    #[test]
+    fn the_cache_key_covers_every_placement() {
+        let Some(world) = map_world("mp_carentan") else {
+            return;
+        };
+        let c = &world.collision;
+        let key = |c: &CollisionWorld| cache_key("mp_carentan", c, &world, MoveRules::V1_1);
+        let bare = key(c);
+        let at = |x: f32| Some((Vec3::new(x, 0.0, 0.0), Vec3::ZERO, 1));
+        c.set_model_instance(300, 1, at(0.0));
+        let parked = key(c);
+        assert_ne!(parked, bare);
+        c.set_model_instance(300, 1, at(64.0));
+        assert_ne!(key(c), parked, "a vehicle that moved");
+        c.set_model_instance(300, 1, None);
+        assert_eq!(key(c), bare);
+        c.set_model_pose(1, Vec3::new(0.0, 0.0, 512.0), Vec3::ZERO);
+        assert_ne!(key(c), bare, "a mover off its spawn");
+        c.reset_model_pose(1);
+        assert_eq!(key(c), bare);
+        c.set_world_copy(301, Some((Vec3::ZERO, Vec3::ZERO, 1)));
+        assert_ne!(key(c), bare, "a world copy");
+        c.set_world_copy(301, None);
+        c.set_arith(vcod_common::patch::Arith::Stored);
+        assert_ne!(key(c), bare, "another engine's arithmetic");
     }
 }
