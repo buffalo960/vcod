@@ -390,6 +390,16 @@ pub struct Physics {
 }
 
 impl Physics {
+    /// How long the hull has been striking something with no second's break,
+    /// ms: the clock the stuck kill reads at 7000 (`stuck_clock`, 0x857dd).
+    pub fn contact_ms(&self, now: i32) -> i32 {
+        if self.last_hit < now - 1000 {
+            0
+        } else {
+            (now - self.stuck_clock).max(0)
+        }
+    }
+
     /// The record as `G_SpawnVehicle` leaves it.
     pub fn spawn(origin: Vec3, angles: Vec3, model: VehicleModel) -> Physics {
         let s = State {

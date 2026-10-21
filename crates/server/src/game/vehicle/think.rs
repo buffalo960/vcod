@@ -499,6 +499,9 @@ fn self_damage(
                 "MOD_COLLISION",
             );
             landed |= !notifies.is_empty();
+            if amount == STUCK_KILL && !notifies.is_empty() {
+                host.vehicles.stuck_kills += 1;
+            }
             for (event, args) in notifies {
                 host.engine_notifies.push((id, event, args));
             }

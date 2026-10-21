@@ -1,13 +1,14 @@
 //! Bots and United Offensive vehicles: per seed, one game with
 //! `vc_bot_vehicles 0` and one with 1, each printing the kills, those off a
-//! vehicle's guns, the boardings, the bot-ticks spent seated, and how far
-//! the driven vehicles went. The measurement behind
+//! vehicle's guns, the boardings, the bot-ticks spent seated, how far
+//! the driven vehicles went, the stuck kills and the drivers stalled 12 s.
+//! The measurement behind
 //! docs/research/bot-objectives.md section 10.
 //! Run: COD_DIR=<UO install> cargo run --release -p vcod-server --example bot_vehicles [seed...]
 //! `MAP=` picks the map (mp_cassino), `GAMETYPE=` the gametype (tdm),
 //! `BOTS=` how many (6), `TICKS=` the length (3600, 3 min), `ON_ONLY=1`
 //! skips the games with vehicles off, `VEH_LOG=1` prints the crush and
-//! rocket lines.
+//! rocket lines and each stalled driver.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -29,6 +30,10 @@ struct Tally {
     /// Rockets fired on foot at enemy vehicles, and vehicles gone.
     rockets: u32,
     wrecks: usize,
+    /// Vehicles the stuck kill destroyed, and the 12 s spells a driver's
+    /// hull stayed within 150 units of one spot with no enemy in range.
+    stuck_kills: u32,
+    stuck_drivers: usize,
 }
 
 fn game(
@@ -60,16 +65,44 @@ fn game(
     sv.load_scripts(fs.clone()).expect("load the scripts");
     let mut t = Tally::default();
     let mut last: std::collections::HashMap<u32, [f32; 3]> = Default::default();
-    for _ in 0..ticks {
+    let mut spells: std::collections::HashMap<usize, Vec<[f32; 3]>> = Default::default();
+    for tick in 0..ticks {
         now += Duration::from_millis(50);
         sv.tick(now);
         let mut driven = Vec::new();
         for slot in sv.bot_slots() {
-            if let Some((v, seat)) = sv.bot_body(slot).and_then(|b| b.seat) {
+            let body = sv.bot_body(slot);
+            if let Some((v, seat)) = body.as_ref().and_then(|b| b.seat) {
                 t.seated += 1;
                 if seat == 1 {
                     driven.push(v);
                 }
+            }
+            // `uo_bots_fight_and_sprint_in_tdm`'s stall, for drivers.
+            let h = spells.entry(slot).or_default();
+            match body.filter(|b| b.seat.is_some_and(|s| s.1 == 1)) {
+                Some(b) if !b.engaged && !b.crew_wait => {
+                    h.push(b.origin);
+                    if h.len() == 240 {
+                        let first = h[0];
+                        if h.iter().all(|p| {
+                            (p[0] - first[0])
+                                .hypot(p[1] - first[1])
+                                .hypot(p[2] - first[2])
+                                < 150.0
+                        }) {
+                            t.stuck_drivers += 1;
+                            if std::env::var("VEH_LOG").is_ok() {
+                                eprintln!("stuck driver: tick {tick} slot {slot} at {first:?}");
+                            }
+                            h.clear();
+                        } else {
+                            h.remove(0);
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => h.clear(),
             }
         }
         let now_live = sv.test_vehicles();
@@ -86,6 +119,7 @@ fn game(
             }
         }
     }
+    t.stuck_kills = sv.test_stuck_kills();
     for slot in sv.bot_slots() {
         t.boardings += sv.bot_body(slot).map_or(0, |b| b.boardings);
         t.rockets += sv.bot_body(slot).map_or(0, |b| b.rockets_at_armor);
@@ -151,7 +185,7 @@ fn main() {
     }
     println!(
         "seed vehicles kills gun_kills gun_hits crush_team crush_team_dmg crush_enemy rockets wrecks \
-         boardings seated_ticks driven"
+         boardings seated_ticks driven stuck_kills stuck_drivers"
     );
     for seed in seeds {
         let modes: &[bool] = if std::env::var("ON_ONLY").is_ok() {
@@ -162,7 +196,7 @@ fn main() {
         for &on in modes {
             let t = game(&fs, &bsp, seed, on);
             println!(
-                "{seed} {} {} {} {} {} {} {} {} {} {} {} {:.0}",
+                "{seed} {} {} {} {} {} {} {} {} {} {} {} {:.0} {} {}",
                 u8::from(on),
                 t.kills,
                 t.gun_kills,
@@ -174,7 +208,9 @@ fn main() {
                 t.wrecks,
                 t.boardings,
                 t.seated,
-                t.driven
+                t.driven,
+                t.stuck_kills,
+                t.stuck_drivers
             );
         }
     }

@@ -185,7 +185,10 @@ its sight. Bots get out when they arrive, when stuck, or after 90 seconds
 - `status` shows a bot's address as `127.0.0.1:-1`.
 - In UO, bots drive vehicles along the infantry graph over ground the hull
   fits, so a tank can still wedge itself; a driver backs off and gets out
-  after four stalls. They never change seats, use the hatch or drive a
+  after four stalls or 10 s without headway, and every rider gets out of a
+  hull that has scraped something for 5 s, before the engine's 7 s stuck
+  kill. A tank sliding into a wall with nobody aboard still destroys
+  itself. They never change seats, use the hatch or drive a
   vehicle at an enemy to run him over. A bot fires rockets at a vehicle
   only with a launcher already in hand; outside `bas` none fetches one.
 - Skill levels change how bots aim, react and remember, not how they move
