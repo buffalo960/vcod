@@ -2559,7 +2559,9 @@ release takes the run back 100-200 ms into its blend to the idle. On
 both servers the run's bones then go on from the run's own time:
 `legs_ab`'s `a_body_stopping_and_going_is_posed_like_retail_on_15` /
 `_on_uo` match every row from the first stop on to 0.05 units and 0.3
-degrees, and with `animclock::restart_weighted_nodes` forcing 1.1's
+degrees (and, since 2026-10-21, the settle and the first run too, with
+the spawn idle dated as cod11-movers.md 15, "The spawn idle on 1.5 and
+UO", has it), and with `animclock::restart_weighted_nodes` forcing 1.1's
 restart the same replays miss 83 (1.5b) and 78 (UO) rows from the first
 go on, up to 29 units and 97 degrees. A strafe swap (right, 150 ms
 left, right) takes the right strafe back the same way.
