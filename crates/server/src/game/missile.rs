@@ -214,6 +214,11 @@ pub struct Missile {
     /// left: `G_FreeEntity`'s sweep stores 0x3ff there and NULL in `parent`
     /// (combat doc 13.7), so nothing is passed and nothing is charged.
     pub owner: Option<usize>,
+    /// With no owner, `parent` is `&g_entities[1023]` rather than NULL: a
+    /// shell a barrage hung after its caller left (`fire_artillery` takes
+    /// the barrage's swept 0x3ff). Only the fuse's `G_ExplodeMissile` reads
+    /// `parent`, and walks its splash charged to it (combat doc 13.7).
+    parent_unspawned: bool,
     /// `s.weapon`, the 1-based configstring 7 index. The client draws the
     /// projectile off it.
     pub weapon: u8,
@@ -294,6 +299,8 @@ pub struct Explosion {
     /// `parent` (the splash's attacker) and `r.ownerNum` (the direct hit's):
     /// `None` when the thrower left before it went off, and then
     /// `G_RadiusDamage` returns before its walk (combat doc 13.7).
+    /// [`crate::game::host::ZEROED_ENTITY`] for a fuse's blast charged to
+    /// `&g_entities[1023]`.
     pub owner: Option<usize>,
     pub inflictor: EntId,
     pub weapon: u8,
@@ -607,6 +614,9 @@ impl Missile {
                 return Stepped::Flew;
             }
             shell.drop_at_ms = None;
+            // `G_DropArtillery` (0x5eabe) makes `G_ExplodeMissile` the think
+            // 15 s on (0x5eadc): a shell that strikes nothing goes off then.
+            self.explode_at_ms = now_ms + SHELL_FALLBACK_MS;
             self.traj = Trajectory {
                 tr_type: TR_GRAVITY,
                 tr_time: now_ms - FRAME_BEHIND_MS,
@@ -997,14 +1007,29 @@ impl Missile {
             }
             _ => org,
         };
+        // The splash is charged to `parent` (UO 0x5e2fc): a shell hung
+        // after its caller left has `&g_entities[1023]` there, which walks
+        // (13.7). Its means of death is the spawn's `splashMethodOfDeath`
+        // (`+0x25c`: `fire_rocket` 6, `fire_artillery` 14).
+        let owner = match self.owner {
+            None if self.parent_unspawned => Some(crate::game::host::ZEROED_ENTITY),
+            owner => owner,
+        };
+        let (mod_, direct_mod) = if self.rocket {
+            ("MOD_PROJECTILE_SPLASH", "MOD_PROJECTILE")
+        } else if self.shell.is_some() {
+            ("MOD_ARTILLERY_SPLASH", "MOD_ARTILLERY")
+        } else {
+            ("MOD_GRENADE_SPLASH", "MOD_GRENADE")
+        };
         Explosion {
-            owner: self.owner,
+            owner,
             inflictor: self.id,
             weapon: self.weapon,
             at,
-            mod_: "MOD_GRENADE_SPLASH",
+            mod_,
             direct: None,
-            direct_mod: "MOD_GRENADE",
+            direct_mod,
             concussive: !self.uo,
             struck: None,
             contact: org,
@@ -1179,6 +1204,8 @@ const SHELL_EFLAGS_V22: i32 = 0x8000;
 
 /// `G_DropArtillery` backs the fall's `trTime` one frame off the drop.
 const FRAME_BEHIND_MS: i32 = 50;
+/// `G_DropArtillery`'s `G_ExplodeMissile` think past the drop (0x5eadc).
+const SHELL_FALLBACK_MS: i32 = 15_000;
 /// A rocket's `G_ExplodeMissile` think after the launch: UO's 15 s, 1.1's
 /// and 1.5's 30 s (combat doc 13.6).
 const ROCKET_LIFE_MS: i32 = 15_000;
@@ -1317,6 +1344,7 @@ impl Missiles {
         self.live.push(Missile {
             id,
             owner: Some(owner),
+            parent_unspawned: false,
             weapon,
             model,
             traj: Trajectory {
@@ -1468,6 +1496,7 @@ impl Missiles {
         self.live.push(Missile {
             id,
             owner,
+            parent_unspawned: owner.is_none(),
             weapon,
             model: 0,
             traj: Trajectory {
@@ -1544,6 +1573,7 @@ impl Missiles {
         self.live.push(Missile {
             id,
             owner: Some(owner),
+            parent_unspawned: false,
             weapon,
             model: 0,
             traj: Trajectory {
@@ -2303,6 +2333,7 @@ mod tests {
             owner: None,
             takes_damage: false,
             body: false,
+            bounds: None,
         };
         for falls in [false, true] {
             let (mut vm, mut host) = crate::game::testing::fixture();
@@ -2360,6 +2391,7 @@ mod tests {
                 owner: None,
                 takes_damage: false,
                 body,
+                bounds: None,
             };
             let (mut vm, mut host) = crate::game::testing::fixture();
             let mut ms = Missiles {
@@ -3058,6 +3090,141 @@ mod tests {
             vcod_common::net::flags::eflags_v1_to_v22(e.field_i32(p, "eFlags")),
             SHELL_EFLAGS_V22
         );
+    }
+
+    /// `G_DropArtillery` (0x5eabe) arms `G_ExplodeMissile` 15 s past the
+    /// drop: a shell that strikes nothing goes off then, its splash charged
+    /// to `parent` (13.7): the caller, NULL once his leave swept it, and
+    /// `&g_entities[1023]` for a shell a barrage hung after he left.
+    #[test]
+    fn a_shell_that_strikes_nothing_goes_off_fifteen_seconds_past_its_drop() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let shell = Shell {
+            drop_at_ms: Some(100),
+            speed: 1000.0,
+            damage: 2000,
+            vehicle: None,
+        };
+        let ents = &mut host.ents;
+        let ids: Vec<EntId> = [Some(0), Some(1), None]
+            .into_iter()
+            .map(|owner| {
+                vm.with_cx(|cx| {
+                    ms.fire_artillery(ents, cx, owner, 6, Vec3::Z * 1000.0, shell, 4, 0)
+                })
+                .unwrap()
+            })
+            .collect();
+        ms.free_owner_refs(1);
+        let mut went = Vec::new();
+        for f in 1..=400 {
+            for &id in &ids {
+                if let Some(Turn::Exploded(x)) = ms.run_one(id, None, &[], &[], None, f * 50) {
+                    went.push((f * 50, x.owner, x.mod_));
+                }
+            }
+        }
+        let splash = "MOD_ARTILLERY_SPLASH";
+        assert_eq!(
+            went,
+            [
+                (15_100, Some(0), splash),
+                (15_100, None, splash),
+                (15_100, Some(crate::game::host::ZEROED_ENTITY), splash),
+            ]
+        );
+    }
+
+    /// A rocket's fuse blast is its `splashMethodOfDeath`, which
+    /// `fire_rocket` sets to 6 (`MOD_PROJECTILE_SPLASH`; UO 0x5fc74, 1.1d
+    /// 0x54614, combat doc 13.6).
+    #[test]
+    fn a_rocket_that_strikes_nothing_blasts_as_a_projectile() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let shell = Shell {
+            drop_at_ms: None,
+            speed: 1000.0,
+            damage: 300,
+            vehicle: None,
+        };
+        let ents = &mut host.ents;
+        let id = vm
+            .with_cx(|cx| ms.fire_rocket(ents, cx, 0, 42, Vec3::ZERO, Vec3::X, shell, 6, false, 0))
+            .unwrap();
+        let x = (1..=400)
+            .find_map(|f| match ms.run_one(id, None, &[], &[], None, f * 50) {
+                Some(Turn::Exploded(x)) => Some((f * 50, x.mod_)),
+                _ => None,
+            })
+            .expect("its fuse ran out");
+        assert_eq!(x, (ROCKET_LIFE_MS, "MOD_PROJECTILE_SPLASH"));
+    }
+
+    /// A shell that strikes on the very turn a script free is due still
+    /// goes off: `G_RunMissile` returns after `G_MissileImpact` turns the
+    /// `eType` (UO 0x5f574, 1.1d 0x54354) before `G_RunThink`, and
+    /// `G_RunEntity` runs no think on a `freeAfterEvent` entity (UO
+    /// 0x59b5c), so it rides out its event (combat doc 13.8).
+    #[test]
+    fn a_shell_striking_as_its_free_falls_due_rides_out_its_event() {
+        let world = vcod_common::collision::test_world(&[]);
+        let fire = |ms: &mut Missiles| {
+            let (mut vm, mut host) = crate::game::testing::fixture();
+            let shell = Shell {
+                drop_at_ms: Some(50),
+                speed: 10_000.0,
+                damage: 2000,
+                vehicle: None,
+            };
+            let ents = &mut host.ents;
+            vm.with_cx(|cx| ms.fire_artillery(ents, cx, Some(0), 6, Vec3::Z * 1000.0, shell, 4, 0))
+                .unwrap()
+        };
+        let new = || Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let strike = |ms: &mut Missiles, id: EntId| {
+            (1..=60)
+                .find(|f| {
+                    matches!(
+                        ms.run_one(id, Some(&world), &[], &[], None, f * 50),
+                        Some(Turn::Exploded(_))
+                    )
+                })
+                .map(|f| f * 50)
+        };
+        let mut ms = new();
+        let id = fire(&mut ms);
+        let at = strike(&mut ms, id).expect("it struck the floor");
+        let mut ms = new();
+        let id = fire(&mut ms);
+        ms.schedule_free(id, at);
+        assert_eq!(strike(&mut ms, id), Some(at), "the free did not take it");
+        for t in (at + 50..=at + EVENT_VALID_MS).step_by(50) {
+            assert!(
+                matches!(
+                    ms.run_one(id, Some(&world), &[], &[], None, t),
+                    Some(Turn::Flew)
+                ),
+                "{t}"
+            );
+        }
+        assert!(matches!(
+            ms.run_one(id, Some(&world), &[], &[], None, at + EVENT_VALID_MS + 50),
+            Some(Turn::Freed)
+        ));
     }
 
     /// One snapshot of a missile as a net probe's `VEH missile` line logs
