@@ -207,6 +207,14 @@ impl Server {
         Some(host.vehicles.info_of(v).kind)
     }
 
+    /// Test-facing: vehicles the seven-second stuck kill destroyed this
+    /// level.
+    pub fn test_stuck_kills(&self) -> u32 {
+        self.script
+            .as_ref()
+            .map_or(0, |rt| rt.host.vehicles.stuck_kills)
+    }
+
     /// Test-facing: each live vehicle in pool order, as a bot would see it.
     pub fn test_vehicles(&self) -> Vec<VehicleSpot> {
         let Some(rt) = self.script.as_ref() else {
@@ -271,6 +279,7 @@ fn seat_view(
         boarding: targets.iter().any(|&(s, n)| s != slot && n == id.0),
         gun_speed,
         crowd: Crowd::default(),
+        contact_ms: v.phys.contact_ms(host.level_time_ms),
     })
 }
 

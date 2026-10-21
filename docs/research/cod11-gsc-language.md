@@ -463,7 +463,9 @@ and each is worth knowing before writing another probe:
   clients shows. `print` and `println` produce nothing on the console even
   with `developer 1`; `iPrintLn` needs a client. `logPrint` writes to
   `games_mp.log` with a leading `m:ss ` stamp.
-- **A script runtime error terminates the server**, not just the thread:
+- **A script runtime error terminates the server** at `developer 1`,
+  the probes' (below it the thread runs on: "Runtime errors below
+  developer 1"), not just the thread:
   the console prints a `******* script runtime error *******` block with the
   file, line and a caret under the offending token, then `ERROR: script
   runtime error` and `----- Server Shutdown -----`. This is why each probe
@@ -1105,6 +1107,53 @@ no step in between. The stock jeep self-destruct timer depends on it
 `crates/server/tests/fixtures/vehicles/mp_foy-jeep-deactivate-uo.txt`):
 a jeep destroyed while it waits is deleted, and retail's server runs past
 the timer's `dodamage` line with nothing in its console.
+
+### Runtime errors below developer 1
+
+Every probe capture in this section was taken at `developer 1`
+(`tools/run_probe.sh`), where a runtime error is fatal (section 9's
+opening list). A server below `developer 1`, which is retail's default
+and vcod-server's, runs on past one.
+
+- `Scr_Init` takes its two flags from cvars at each level's script init:
+  coduo_lnxded 0x80714f1 passes `developer || logfile`, `developer_script`
+  and `developer` to 0x80aa818, which stores them at 0x829fa00, 0x829fa04
+  and 0x829fa08 (VERIFIED decompile). `RuntimeError` (0x80a3f4a) prints
+  only when the first or the terminal flag (0x8433eac) is set, and calls
+  `Com_Error` only when `developer` (0x829fa08) or the terminal flag is
+  (VERIFIED decompile). `Scr_TerminalError` (0x80b055c) sets the terminal
+  flag; its callers are the variable-pool exhaustion
+  (`exceeded maximum number of script variables`) and `potential infinite
+  loop in script` (VERIFIED decompile).
+- Below that, `VM_Execute`'s error arm (the switch on the failed opcode
+  after 0x80ab5ac's dispatch) frees the instruction's operands, leaves its
+  result undefined, steps past its operand bytes, and the loop runs on: a
+  conditional jump pops its condition and is not taken (VERIFIED
+  decompile; INFERRED, read off the arms, that every arm has this shape).
+- `client-probes/probe_undef_if` at `developer 0` (VERIFIED, 1.1d on
+  mp_carentan and UO 1.51b on mp_cassino, port 34631/34632, 2026-10-21):
+  `if (level.unset)` and `if (!level.unset)` both take their branch, the
+  statements after them run, `level.unset + 1`, `!level.unset` and
+  `level.unset_struct.field` read undefined, `wait level.unset` returns at
+  once (0 ms), and the thread and another thread both run on. A builtin's
+  own error (`distance(undefined, ...)`) reads undefined on 1.1d; on UO
+  1.51b it aborts the server process (SIGABRT) instead (VERIFIED, both
+  runs). At `developer 1` the same probe dies on the first `if` with
+  `cannot cast undefined to bool` and `ERROR: script runtime error`
+  (VERIFIED, UO).
+
+vcod's VM takes the mode from `developer` at the load
+(`Vm::set_recover_errors`, `ScriptRuntime::load_from`): on, a failed
+instruction leaves `stack_effect`'s results undefined and the thread runs
+on (`Vm::step_frames`); the error is still recorded in `Vm::aborts`.
+vcod's own errors (a builtin it lacks, its instruction cap, a wait in
+`call_now`) still end the thread, and a builtin's error recovers on UO
+as on 1.1d rather than ending the process. A gate that replays a
+`run_probe.sh` capture runs at `developer 1` (`semantics_ents.rs`'s
+`probe_cvars`, `linkto_ab.rs`). Stock UO `tdm.gsc` 815 is the case that
+shows in play: a death to no player (a tank its own attacker,
+coduo-vehicles.md 11.6) reads the unset `level.teamkill_penalty`, takes
+the branch, and costs the victim's team a point.
 
 ### The map-cycle builtins, and the `sd` connect race
 
