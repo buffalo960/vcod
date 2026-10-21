@@ -648,7 +648,9 @@ dropped, so test such a builtin through `ScriptRuntime`.
   upright. The turn takes `AngleVectors`' stored rounding
   (`x87::rotation_matrix`; `x87::angles_to_axis` for `AnglesToAxis`),
   the same in every engine and game module of the three servers, never
-  `pmove::aim::angles_to_axis`'s float products. A trace an entity's clip cuts short of the world's ends where
+  float products. pmove's turns take the move world's `Arith`
+  (`x87::angle_vectors_in`): the Windows cgames multiply by a float
+  `pi / 180` and store `sr * sp` (movers doc 22, "pmove's turns"). A trace an entity's clip cuts short of the world's ends where
   `SV_Trace` puts it, off the unshifted points (`sv_trace_endpos`), not
   where `CM_BoxTrace` would (movers doc 21, 22).
 - A fall onto a slope slides as far as its cmd split lets it: a cmd that

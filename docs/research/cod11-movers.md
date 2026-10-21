@@ -3024,8 +3024,91 @@ product to a float (`pmove::aim::angles_to_axis`,
 them onto the stored rounding moved no row of `movers_ab`, `push_ab`,
 `push_candidate_ab`, `push_order_ab`, `worldcopy_ab`, `ride_ab`,
 `sine_ab`, `linkto_ab`, `turret_ab`, `scriptmodel_ab` or the vehicle
-gates at the 1.1 and UO installs. `pmove::aim::angles_to_axis` stays the
-client's and pmove's.
+gates at the 1.1 and UO installs. pmove's own turns are below.
+
+**pmove's turns.** VERIFIED, the relocations against `AngleVectors` in
+1.1d `game.mp.i386.so` and the PLT calls in 1.5b's and UO's (0x13b00,
+0x175b4): the player move turns through the game module's `AngleVectors`
+in `PmoveSingle` (1.1d 0x34120, 1.5b 0x284ec, UO 0x2dbdd: `ps.viewangles`,
+forward, right and up), `BG_CheckProneValid` (0x2d5e0, 0x1d1d4, 0x21955:
+`(0, yaw - 180, 0)`, forward) and `AddLeanToPosition` (0x6bae5, 0x71ae8,
+UO 0x946f4: `(0, yaw, f * rollscale)`, right), and on UO only
+`PM_UpdateAimDownSightFlag` (0x32e3c: `(0, viewangles[YAW], 0)`, forward,
+the LMG mount probe 15 ahead and 1 up). VERIFIED, 1.1d's
+`PM_UpdateViewAngles` call (0x32fc5) sits behind `g_debugProneCheck`'s
+`integer` (0x32f94, the relocation names the cvar) and only feeds
+`G_DebugLine`. INFERRED: 1.5b's (0x26459) and UO's (0x2b75e) are the same,
+behind the same test of a cvar's `+0xc` (0x26401, 0x2b703).
+VERIFIED, `ClientThink_real`'s aim block builds both axes through
+`AnglesToAxis` (0x4037e, 0x40394), and 1.5b's `CalcMuzzlePoint` calls
+`AngleVectors` (0x6ea7b). INFERRED: every one of them rounds as the
+engine's above, since each calls the one `AngleVectors` of its module.
+
+VERIFIED, `AddLeanToPosition` 1.1d 0x6ba9c: `f = (2 - |leanf|) * leanf`
+kept on the stack (the 2.0 at 0x7a344) and saved as a ten-byte value
+(`fstp TBYTE` 0x6bae2), the roll `f * rollscale` stored as a float
+(0x6bad6), then each `pos[i] + right[i] * (f * dist)` summed on the
+stack and stored once (0x6baea..0x6bb0a). 1.5b 0x71a7c and UO 0x94688
+store `GetLeanFraction`'s result (0x71ab2, 0x946be; 1.5b's
+`GetLeanFraction` 0x71a17 returns `(2 - |f|) * f` off the stack), the
+roll (0x71ac8, 0x946d4) and `f * dist` (0x71af3, 0x946ff), then sum each
+component on the stack and store it once.
+
+VERIFIED, the Windows cgames' `AngleVectors` (1.1 `cgame_mp_x86.dll`
+0x3003a790, 1.5 `cgame_mp15.dll` 0x3003bea0, UO `uo_cgame_mp_x86.dll`
+0x3004a200; fastcall, angles in `edx`, forward, right and up in `esi`,
+`edi`, `ebx`) are one body: each angle times the float at 0x30069390 /
+0x3006b608 / 0x3007bd70 (bytes `35 fa 8e 3c`, `pi / 180` rounded to a
+float once, not the servers' double) stored as a float, `fsincos` on it
+with both results stored, forward `cp * cy`, `cp * sy`, `-sp` each one
+product; `sr * sp` stored as a float (0x3003a865) before right's
+`cr * sy - t * cy`, `cr * cy * -1 - t * sy` and `sr * cp * -1`, and
+`cr * sp` stored (0x3003a8b5) before up's `t * cy + sr * sy`,
+`t * sy - sr * cy` and `cr * cp`, each remaining sum kept at the CRT's
+53 bits until its one store. VERIFIED, the 1.1 cgame's `PmoveSingle`
+(0x3000c440) and `BG_CheckProneValid` (0x300062a0, mask 0x810011) call
+it (0x3000c718, 0x3000648c). INFERRED from the call order: 1.5's
+0x3000d4ad and 0x3000699f and UO's 0x3000e39e and 0x30007074 are the
+same two calls. VERIFIED, the cgames' `AddLeanToPosition` (1.1
+0x3003f4e0, 1.5 0x30040df0) inlines that body: the fraction
+`(2 - |leanf|) * leanf` stored (0x3003f523), the roll and the radians
+stored, `sr * sp` stored, then `f * dist` stored (0x3003f611) and each
+`right[i] * d + pos[i]` stored once.
+
+INFERRED: on a shorts-grid angle the server's radians and the cgame's
+part in the last bit on 6052 of the 65536 shorts
+(`x87::the_windows_radians_are_not_the_servers`); with no roll the two
+builds' products then agree. A roll (the lean's, the gun's tilt in the
+aim block) also parts them by the stored `sr * sp`.
+
+vcod: `x87::angle_vectors_of_radians` takes the sim's radians, which are
+the Linux builds' own (`cmd::apply_view`), and `x87::angle_vectors_msvc`
+is the cgames' body; `x87::angle_vectors_in` picks by `Arith`.
+`pmove::view_vectors` (`PmoveSingle`'s, through the fly, walk and ladder
+moves), `check_prone`, the UO mount probe and `aim::add_lean` turn by the
+move world's `Arith`, so the client predictor (`Arith::Msvc`) takes the
+cgame's rounding; `PlayerState::view` and `combat::muzzle_point_in` take
+the rules' server. `aim::angles_to_axis` (the aim block) and
+`aim::add_muzzle_bob` are the servers'; the client draws through
+`aim::angles_to_axis_msvc` and `aim::eye_bob` the cgame's. Before this
+`aim::angles_to_axis` rounded every product to a float and its radians
+to Rust's `to_radians`, and the lean, the prone sweep and the mount probe
+took float sines of float radians.
+
+VERIFIED, vcod measurement 2026-10-21, before and after on the same
+tree at the 1.1 and UO installs: of `predict_ab`, `moves_ab`,
+`moveshot_ab`, `legs_ab`, `turret_ab`, `leanhit_ab` and the fourteen
+`vehicle*_ab` gates only `leanhit_ab`'s round directions moved. Its
+leaning rounds (`t_left`, `t_crouch_left`, `t_prone_left`, `t_back`) sat
+4 to 9 ten-millionths off retail's print on one axis and now match it to
+the print, so `DIR_NEAR` went from 2e-5 to 3e-7; at 3e-7 the old turn
+missed 7 rounds at the 1.1 install and 8 at UO. `nav_census` printed the
+same lines at both installs. The client's
+`the_windows_build_draws_no_new_correction` counts did not move (1.5
+moves 44, turns 14, UO autofire 0, sprint 126 with 98 past 0.1, 1.1
+moves 4, turns 3, springfield 0). INFERRED: the slope captures neither
+lean nor lie down, so of the turns above only `PmoveSingle`'s reaches
+them, and its radians part from the server's on few of their views.
 
 **The rolled ramp.** The `probe_rollramp` recipe above ran on the retail
 1.5b and UO 1.51b Linux servers on 2026-10-21 (ports 34661 and 34662, a

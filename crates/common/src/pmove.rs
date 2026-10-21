@@ -1076,11 +1076,18 @@ impl PlayerState {
         }
     }
 
-    /// The eye, `AddLeanToPosition` applied as `G_AddLean` does, and the
-    /// view angles. A lean moves the eye and never rolls the view.
+    /// The eye, `AddLeanToPosition` applied as `G_AddLean` does on the
+    /// rules' Linux server, and the view angles. A lean moves the eye and
+    /// never rolls the view.
     pub fn view(&self) -> ViewParams {
+        let arith = if self.rules.v15() {
+            crate::patch::Arith::Stored
+        } else {
+            crate::patch::Arith::Kept
+        };
+        let eye = self.origin + Vec3::Z * self.view_height();
         ViewParams {
-            eye: self.origin + Vec3::Z * self.view_height() + aim::lean_offset(self.yaw, self.lean),
+            eye: aim::add_lean(eye, self.yaw, self.lean, arith),
             yaw: self.yaw,
             pitch: self.pitch,
         }
@@ -1479,7 +1486,9 @@ fn ads_flag(
     }
     let view_yaw = ps.yaw.to_degrees();
     let (sin, cos) = ps.yaw.sin_cos();
-    let probe = ps.origin + Vec3::new(cos, sin, 0.0) * 15.0 + Vec3::Z;
+    // 15 along `AngleVectors` of (0, yaw, 0) (0x32e3c), then 1 up.
+    let fwd = yaw_forward(ps, world.world.arith());
+    let probe = (ps.origin.as_dvec3() + fwd.as_dvec3() * 15.0).as_vec3() + Vec3::Z;
     let contents = world.point_contents(probe) & CONTENTS_HMG;
     let mount = if contents == 0 {
         ps.mount_hint
@@ -2143,9 +2152,10 @@ pub fn spectator_move(
 ) -> Vec<PmEvent> {
     let dt = dt.min(MAX_FRAME_MS / 1000.0);
     ps.on_ground = false;
+    let arith = world.map_or(crate::patch::Arith::Kept, |w| w.world.arith());
     if ps.rules.v15() {
         spectator_friction_stored(ps, dt);
-        fly_accelerate_stored(ps, forward, right, up, wbuttons, dt);
+        fly_accelerate_stored(ps, forward, right, up, wbuttons, dt, arith);
         return spectator_slide(ps, world, dt);
     }
     // `PM_Friction` (0x2e460): a spectator is never walking, so only its
@@ -2161,7 +2171,7 @@ pub fn spectator_move(
         let scale = (speed - drop).max(0.0) / speed;
         ps.velocity = (ps.velocity.as_dvec3() * scale).as_vec3();
     }
-    fly_accelerate(ps, forward, right, up, wbuttons, dt);
+    fly_accelerate(ps, forward, right, up, wbuttons, dt, arith);
     spectator_slide(ps, world, dt)
 }
 
@@ -2187,7 +2197,15 @@ fn spectator_slide(ps: &mut PlayerState, world: Option<&MoveWorld>, dt: f32) -> 
 /// (0x2ef19..0x2ef4a). No wish leaves the velocity alone, signed zeros
 /// included. The accelerate is 8 (0x708e4) times a wish speed of at least
 /// 100 (0x708e8).
-fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt: f32) {
+fn fly_accelerate(
+    ps: &mut PlayerState,
+    f: f32,
+    r: f32,
+    u: f32,
+    wbuttons: u8,
+    dt: f32,
+    arith: crate::patch::Arith,
+) {
     let max = f.abs().max(r.abs()).max(u.abs());
     let lean_down = if wbuttons & crate::net::msg::WBUTTON_LEAN_RIGHT != 0 {
         512.0
@@ -2208,7 +2226,7 @@ fn fly_accelerate(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt
         let total = (f * f + r * r + u * u).sqrt();
         let scale = (f64::from(ps.speed) * f64::from(max) / (127.0 * total)) as f32;
         let scale = f64::from(scale);
-        let (fwd, right) = view_vectors(ps);
+        let (fwd, right) = view_vectors(ps, arith);
         let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());
         wishvel = (fwd * scale * f + right * scale * r).as_vec3();
         wishvel.z = (f64::from(wishvel.z) + scale * u) as f32;
@@ -2248,14 +2266,22 @@ fn spectator_friction_stored(ps: &mut PlayerState, dt: f32) {
 /// `VectorNormalize` and `PM_Accelerate` (UO 0x2379e) at
 /// `pm_flyaccelerate` 8. The run scale `PM_CmdScale` multiplies in is 1 on
 /// a spectator.
-fn fly_accelerate_stored(ps: &mut PlayerState, f: f32, r: f32, u: f32, wbuttons: u8, dt: f32) {
+fn fly_accelerate_stored(
+    ps: &mut PlayerState,
+    f: f32,
+    r: f32,
+    u: f32,
+    wbuttons: u8,
+    dt: f32,
+    arith: crate::patch::Arith,
+) {
     let max = f.abs().max(r.abs()).max(u.abs());
     let mut wishvel = Vec3::ZERO;
     if max != 0.0 && ps.speed != 0.0 {
         let (fd, rd, ud) = (f64::from(f), f64::from(r), f64::from(u));
         let total = (ud * ud + fd * fd + rd * rd).sqrt();
         let scale = f64::from(((f64::from(max) * f64::from(ps.speed)) / (127.0 * total)) as f32);
-        let (fwd, right) = view_vectors(ps);
+        let (fwd, right) = view_vectors(ps, arith);
         let (fwd, right) = (fwd.as_dvec3(), right.as_dvec3());
         wishvel = (right * (rd * scale) + fwd * (fd * scale)).as_vec3();
         wishvel.z = (f64::from(wishvel.z) + ud * scale) as f32;
@@ -2728,8 +2754,10 @@ pub fn check_prone(world: &MoveWorld, q: ProneQuery) -> Option<ProneBody> {
     }
     let half = Vec3::splat(PRONE_BODY_HALF_BOX);
     let trace = |a: Vec3, b: Vec3| world.box_trace(a, b, -half, half, MASK);
-    let back = (q.yaw_deg - 180.0).to_radians();
-    let fwd = Vec3::new(back.cos(), back.sin(), 0.0);
+    // `AngleVectors` of (0, yaw - 180, 0) (0x2d5e0, 1.5 0x1d1d4, UO
+    // 0x21955; the Windows cgames' own, cod11-movers.md 22).
+    let back = Vec3::new(0.0, q.yaw_deg - 180.0, 0.0);
+    let fwd = x87::angle_vectors_in(world.world.arith(), back)[0];
     let h = HEIGHT_PRONE - PRONE_BODY_HALF_BOX;
     let sweep = q.length - PRONE_BODY_HALF_BOX;
     // The sweep behind the facing: clear, or clear far enough (`reach`).
@@ -2934,7 +2962,7 @@ fn normalize180_accurate(mut deg: f32) -> f32 {
 /// `AngleNormalize180/360`), which the radians miss by up to 0.005 of a
 /// short near 360 degrees: one under the grid truncates a whole short away
 /// in `AngleDelta`. An angle further off the grid is kept.
-fn view_deg(rad: f32) -> f32 {
+pub(crate) fn view_deg(rad: f32) -> f32 {
     let deg = rad.to_degrees();
     let shorts = f64::from(deg) * (65536.0 / 360.0);
     let grid = shorts.round();
@@ -3503,7 +3531,7 @@ fn update_lean(ps: &mut PlayerState, input: &PmInput, alive: bool, world: &MoveW
     // keeps no more than the fraction the sphere got (0x32c97-0x32d50).
     let start = ps.origin + Vec3::Z * ps.view_height();
     let side = ps.lean.signum();
-    let end = start + aim::lean_offset(ps.yaw, side);
+    let end = aim::add_lean(start, ps.yaw, side, world.world.arith());
     let t = world.box_trace(
         start,
         end,
@@ -4052,7 +4080,12 @@ fn wish(
     }
     let scale = scale as f32;
 
-    let (forward, right) = view_vectors(ps);
+    let turn = if msvc {
+        crate::patch::Arith::Msvc
+    } else {
+        crate::patch::Arith::Kept
+    };
+    let (forward, right) = view_vectors(ps, turn);
     let v15 = ps.rules.v15();
     // 1.5b's walk (0x2008c-0x203f5) clips and normalizes through its
     // stored `PM_ClipVelocity` and `VectorNormalize`; the Windows cgames'
@@ -4084,22 +4117,34 @@ fn wish(
     (norm(wishvel), f64::from(len) * f64::from(scale))
 }
 
-/// `AngleVectors`' forward and right (game.mp 0x3b228) for the view yaw and
-/// pitch: each angle rounded to a float in radians, its sine and cosine
-/// (`fsincos`) stored as floats, the products rounded once. No roll.
-fn view_vectors(ps: &PlayerState) -> (Vec3, Vec3) {
-    let (sy, cy) = (
-        f64::from(ps.yaw).sin() as f32,
-        f64::from(ps.yaw).cos() as f32,
-    );
+/// `PmoveSingle`'s `AngleVectors` of `ps.viewangles` (game.mp 0x34120,
+/// 1.5 0x284ec, UO 0x2dbdd; the Windows cgames' at 1.1 0x3000c718), forward
+/// and right. No roll. The sim's radians are the Linux builds' own; a
+/// Windows cgame turns the degrees by its float constant instead
+/// ([`x87::radians_msvc`]).
+fn view_vectors(ps: &PlayerState, arith: crate::patch::Arith) -> (Vec3, Vec3) {
     // The sim's pitch is positive up; the view's is positive down.
-    let (sp, cp) = (
-        f64::from(-ps.pitch).sin() as f32,
-        f64::from(-ps.pitch).cos() as f32,
-    );
-    let forward = Vec3::new(cp * cy, cp * sy, -sp);
-    let right = Vec3::new(sy, -cy, 0.0);
-    (forward, right)
+    let [f, r, _] = if arith == crate::patch::Arith::Msvc {
+        x87::angle_vectors_msvc_of_radians(Vec3::new(
+            x87::radians_msvc(view_deg(-ps.pitch)),
+            x87::radians_msvc(view_deg(ps.yaw)),
+            0.0,
+        ))
+    } else {
+        x87::angle_vectors_of_radians(Vec3::new(-ps.pitch, ps.yaw, 0.0))
+    };
+    (f, r)
+}
+
+/// `AngleVectors` of `(0, viewangles[YAW], 0)`'s forward, as `arith`'s
+/// build turns it (see [`view_vectors`]).
+fn yaw_forward(ps: &PlayerState, arith: crate::patch::Arith) -> Vec3 {
+    if arith == crate::patch::Arith::Msvc {
+        let rad = x87::radians_msvc(view_deg(ps.yaw));
+        x87::angle_vectors_msvc_of_radians(Vec3::new(0.0, rad, 0.0))[0]
+    } else {
+        x87::angle_vectors_of_radians(Vec3::new(0.0, ps.yaw, 0.0))[0]
+    }
 }
 
 /// The air mover's wish, retail's Q3-shaped scale (0x2e5bc, called from
@@ -4685,7 +4730,7 @@ fn ladder_move(
     // 1.5b (0x27846) and UO (0x2cebc) store every variable
     // (cod11-mantle.md, "Ladders", "The ladder move's arithmetic").
     let r32 = |x: f64| x as f32;
-    let (forward, right) = view_vectors(ps);
+    let (forward, right) = view_vectors(ps, world.world.arith());
     let upscale =
         r32((f64::from(forward.z) + f64::from(LADDER_UPSCALE_BIAS))
             * f64::from(LADDER_UPSCALE_GAIN))

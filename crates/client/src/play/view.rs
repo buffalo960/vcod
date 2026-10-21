@@ -218,7 +218,7 @@ pub fn pose_transform(pose: scope::GunPose) -> Mat4 {
 /// `AnglesToAxis(angles)` in the view's frame (`0x30037480`-`0x300374aa`
 /// multiply it onto the view's axis), at `pos`.
 fn gun_transform(pos: Vec3, angles: [f32; 3]) -> Mat4 {
-    let [f, l, u] = aim::angles_to_axis(angles).map(|r| view_from_ful(Vec3::from(r)));
+    let [f, l, u] = aim::angles_to_axis_msvc(angles).map(|r| view_from_ful(Vec3::from(r)));
     Mat4::from_translation(pos)
         * Mat4::from_cols(f.extend(0.0), l.extend(0.0), u.extend(0.0), glam::Vec4::W)
 }

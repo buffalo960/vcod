@@ -1593,7 +1593,7 @@ impl AudioSystem {
             let mut axes: HashMap<u32, Mat3> = entity_angles
                 .iter()
                 .map(|(&n, a)| {
-                    let [f, l, u] = vcod_common::pmove::aim::angles_to_axis(a.to_array());
+                    let [f, l, u] = vcod_common::pmove::aim::angles_to_axis_msvc(a.to_array());
                     (n, Mat3::from_cols(f.into(), l.into(), u.into()))
                 })
                 .collect();

@@ -2415,7 +2415,7 @@ mod tests {
         let model = EntityVisual::Model("xmodel/prop".into());
         for a in [[30.0, 0.0, 0.0], [-20.0, 135.0, 0.0], [715.0, 40.0, 370.0]] {
             let q = model_rotation(&model, Vec3::from(a));
-            let axis = vcod_common::pmove::aim::angles_to_axis(a);
+            let axis = vcod_common::pmove::aim::angles_to_axis_msvc(a);
             for (v, want) in [Vec3::X, Vec3::Y, Vec3::Z].into_iter().zip(axis) {
                 assert!(
                     (q * v).abs_diff_eq(Vec3::from(want), 1e-4),

@@ -8,7 +8,7 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet, VecDeque};
 use vcod_common::collision::{CONTENTS_SOLID, CollisionWorld};
 use vcod_common::pk3::Pk3Fs;
-use vcod_common::pmove::aim::angles_to_axis;
+use vcod_common::pmove::aim::angles_to_axis_msvc;
 
 pub const MAX_PARTICLES: usize = 2048;
 /// How many effects deep a chain of `playfx`, `emitfx`, `impactfx` and
@@ -881,7 +881,7 @@ fn step_pool(pool: &mut VecDeque<Particle>, cx: &StepCx, rng: &mut Rng, chains: 
         if let Some(mut e) = p.emit.take() {
             let now_ms = (now * 1000.0).round() as i64;
             let forward = p.debris.as_ref().map_or(Vec3::X, |d| {
-                Vec3::from(angles_to_axis(d.angles.to_array())[0])
+                Vec3::from(angles_to_axis_msvc(d.angles.to_array())[0])
             });
             for pos in emit_along(&mut e, p.accel, now_ms, rng) {
                 let (pos, dir) = match frame {
@@ -1636,7 +1636,7 @@ impl FxSystem {
                 let frame = p.bolt.and_then(|id| self.bolts.get(&id)).copied();
                 let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
                 let scale = lerp(p.size0, p.size1, t);
-                let axis = angles_to_axis(d.angles.to_array()).map(|a| {
+                let axis = angles_to_axis_msvc(d.angles.to_array()).map(|a| {
                     let a = Vec3::from(a) * scale;
                     frame.map_or(a, |f| f.rotate(a))
                 });

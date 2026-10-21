@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn a_tag_voice_turns_with_its_entity() {
         let axis = |yaw: f32| {
-            let [f, l, u] = vcod_common::pmove::aim::angles_to_axis([0.0, yaw, 0.0]);
+            let [f, l, u] = vcod_common::pmove::aim::angles_to_axis_msvc([0.0, yaw, 0.0]);
             Mat3::from_cols(f.into(), l.into(), u.into())
         };
         let mut t = VoiceTable::new();

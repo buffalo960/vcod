@@ -5247,7 +5247,12 @@ impl ApplicationHandler for App {
                                     {
                                         cam.pos.z += view.land_dip(now);
                                     }
-                                    cam.pos += pmove::aim::lean_offset(cam.yaw, view_lean);
+                                    cam.pos = pmove::aim::add_lean(
+                                        cam.pos,
+                                        cam.yaw,
+                                        view_lean,
+                                        vcod_common::patch::Arith::Msvc,
+                                    );
                                     if pm_type != 5
                                         && let Some(z) = feet_z
                                     {
@@ -5529,7 +5534,7 @@ impl ApplicationHandler for App {
                                         _ => None,
                                     };
                                     let world_up = {
-                                        let [f, l, u] = pmove::aim::angles_to_axis([
+                                        let [f, l, u] = pmove::aim::angles_to_axis_msvc([
                                             -cam.pitch.to_degrees(),
                                             cam.yaw.to_degrees(),
                                             view_roll.to_degrees(),

@@ -5,7 +5,7 @@
 
 use crate::fx::sim::TagPose;
 use glam::{Mat3, Vec3};
-use vcod_common::pmove::aim::angles_to_axis;
+use vcod_common::pmove::aim::angles_to_axis_msvc;
 
 /// `centity` +0x88, the vehicle entity's `surfType`: its file's type.
 pub const CLASS_FOUR_WHEEL: i32 = 1;
@@ -232,7 +232,7 @@ pub fn camera(
         None => tf * -200.0 + tu * 32.0,
     };
     let local = Vec3::new(offset.dot(tf), offset.dot(tl), offset.dot(tu));
-    let [rf, rl, ru] = angles_to_axis([view[0], view[1], 0.0]).map(Vec3::from);
+    let [rf, rl, ru] = angles_to_axis_msvc([view[0], view[1], 0.0]).map(Vec3::from);
     let mut rotated = rf * local.x + rl * local.y + ru * local.z;
     if seat.class == CLASS_TANK {
         rotated.z *= 0.75;
@@ -379,7 +379,7 @@ pub fn axis_to_angles(axis: [Vec3; 3]) -> [f32; 3] {
     let [f, l, _] = axis;
     let yaw = f.y.atan2(f.x).to_degrees();
     let pitch = -f.z.atan2((f.x * f.x + f.y * f.y).sqrt()).to_degrees();
-    let [_, l0, u0] = angles_to_axis([pitch, yaw, 0.0]).map(Vec3::from);
+    let [_, l0, u0] = angles_to_axis_msvc([pitch, yaw, 0.0]).map(Vec3::from);
     let roll = l.dot(u0).atan2(l.dot(l0)).to_degrees();
     [pitch, yaw, roll]
 }
@@ -409,10 +409,10 @@ impl FourWheelTurn {
         sight_down: bool,
         hull_yaw: bool,
     ) -> Option<[f32; 2]> {
-        let cur = mat(angles_to_axis(vehicle_angles).map(Vec3::from));
+        let cur = mat(angles_to_axis_msvc(vehicle_angles).map(Vec3::from));
         let prev = self.prev.replace(cur)?;
         // Rows are the axes: V' = V * prev^T * cur.
-        let v = mat(angles_to_axis(view).map(Vec3::from));
+        let v = mat(angles_to_axis_msvc(view).map(Vec3::from));
         let turned = v * prev.transpose() * cur;
         let rows = [turned.row(0), turned.row(1), turned.row(2)];
         let [pitch, yaw, _] = axis_to_angles(rows);
@@ -471,14 +471,14 @@ mod tests {
     fn pose(origin: Vec3, angles: [f32; 3]) -> TagPose {
         TagPose {
             origin,
-            axis: angles_to_axis(angles).map(Vec3::from),
+            axis: angles_to_axis_msvc(angles).map(Vec3::from),
         }
     }
 
     #[test]
     fn axis_to_angles_inverts_angles_to_axis() {
         for a in [[10.0, 30.0, 0.0], [-20.0, -150.0, 15.0], [5.0, 90.0, -40.0]] {
-            let b = axis_to_angles(angles_to_axis(a).map(Vec3::from));
+            let b = axis_to_angles(angles_to_axis_msvc(a).map(Vec3::from));
             for i in 0..3 {
                 assert!((a[i] - b[i]).abs() < 1e-3, "{a:?} {b:?}");
             }
