@@ -19,8 +19,9 @@
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
 //! beside a turned submodel as it lifts. `mp_harbor-dm-tiltslab*.txt` and
 //! `mp_depot-dm-rollramp.txt` drop him onto a pitched or rolled submodel,
-//! the latter onto a non-axial side (movers doc 22); `-tiltslab-1.5.txt`
-//! and `-tiltslab-uo.txt` are the first on 1.5b and UO.
+//! the latter onto a non-axial side (movers doc 22); `-tiltslab-1.5.txt`,
+//! `-tiltslab-uo.txt`, `-rollramp-1.5.txt` and `-rollramp-uo.txt` are both
+//! on 1.5b and UO.
 //!
 //! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
@@ -66,6 +67,8 @@ const TILT_UO: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-uo.txt";
 const PROBE_TILT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
 const ROLL: &str = "tests/fixtures/movers/mp_depot-dm-rollramp.txt";
+const ROLL_15: &str = "tests/fixtures/movers/mp_depot-dm-rollramp-1.5.txt";
+const ROLL_UO: &str = "tests/fixtures/movers/mp_depot-dm-rollramp-uo.txt";
 const PROBE_ROLL: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_rollramp.gsc");
 const PROBE_CRUSH: &str =
@@ -286,6 +289,27 @@ fn ours_roll() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| run_ours("mp_depot", "probe_rollramp", PROBE_ROLL, ROLL, true))
         .as_ref()
+}
+
+/// `probe_rollramp` on retail 1.5b, `None` unless `COD_DIR`'s `main/` is 1.5's.
+fn ours_roll_15() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        let (map, name) = ("mp_depot", "probe_rollramp");
+        run_ours_on(fs_15, map, name, PROBE_ROLL, ROLL_15, true)
+    })
+    .as_ref()
+}
+
+/// `probe_rollramp` on retail United Offensive 1.51b, `None` off a UO install.
+fn ours_roll_uo() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        let (map, name) = ("mp_depot", "probe_rollramp");
+        let paks = vcod_common::testing::uo_fs;
+        run_ours_on(paks, map, name, PROBE_ROLL, ROLL_UO, true)
+    })
+    .as_ref()
 }
 
 fn ours_crush() -> Option<&'static Ours> {
@@ -917,6 +941,21 @@ fn a_capsule_lands_on_a_tilted_submodel_like_retail_again() {
 #[test]
 fn a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail() {
     tilt_matches(ROLL, ours_roll());
+}
+
+/// The rolled ramp on retail 1.5b: its engine's `AngleVectors` rounds the
+/// turn as 1.1d's does, and a trace the ramp cuts short ends where
+/// `SV_Trace` puts it, its delta stored (movers doc 22, "On 1.5b and United
+/// Offensive").
+#[test]
+fn a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail_on_1_5() {
+    tilt_matches(ROLL_15, ours_roll_15());
+}
+
+/// And on United Offensive 1.51b.
+#[test]
+fn a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail_on_uo() {
+    tilt_matches(ROLL_UO, ours_roll_uo());
 }
 
 /// The same capture on retail 1.5b: its `Reached_ScriptMover` truncates the
