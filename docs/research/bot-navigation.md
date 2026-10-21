@@ -476,6 +476,19 @@ that proved it jumped (`nav::PinJump`, `nav::leap_cue`, `nav::jump_key`):
   down to the foot; from the foot, 53 under the block, its jump peaks at
   150 and lands it on the ledge again, penalty and all, for 12 s (ticks
   760 to 999).
+- Under 1.5's and UO's jump penalty the wait leaves the body at rest on
+  the foot, and an edge the graph's walk proved only with its running
+  start can miss from there: mp_cassino's from (4992, -1338, 295) over a
+  trench at 256 to (4938, -1393, 303) (bot-objectives.md 10.6). A bot held
+  for its jump walks it again from the wait's spot at rest, once per edge,
+  and plans round one that misses (`Follower::rest_jump_fails`); one
+  already avoided is waited on.
+- A body off the graph that no plain walk takes to a node may still jump
+  out: `NavGraph::walkable_start` walks a bot's jump from rest to each of
+  the nearest few nodes more than a step up, and the plan's first leg is
+  then a jump edge (`Follower::jump_start`). mp_cassino's roof dent at
+  (4948, -1413, 280), 23 under the roof round it and with no node in it,
+  held a bot 12 s before (bot-objectives.md 10.6).
 - A pinned walk jumps under a ceiling lower than the jump's 39 units too:
   `jump_clear` looks for room ahead at the height the body rises to, not
   at the full jump's. A floor-bound walk (node to node) also jumps where

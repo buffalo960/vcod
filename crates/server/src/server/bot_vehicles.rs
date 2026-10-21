@@ -83,8 +83,21 @@ impl Server {
         if crewed.is_empty() {
             return;
         }
+        // What a rocket meets by the muzzle besides the world: the script
+        // models and the hulls.
+        let models = if views
+            .iter()
+            .any(|(_, v)| v.seat.is_none() && v.rocket.is_some())
+        {
+            self.script
+                .as_mut()
+                .map(|rt| rt.shot_models())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         for (slot, view) in views.iter_mut() {
-            view.armor = self.armor_view(*slot, view, &crewed, teams);
+            view.armor = self.armor_view(*slot, view, &crewed, teams, &models);
         }
     }
 
@@ -140,12 +153,15 @@ impl Server {
         view: &crate::bots::BotView,
         crewed: &[Crewed],
         teams: &[i32],
+        models: &[crate::game::combat::PlacedModel],
     ) -> Option<ArmorView> {
         if !self.bot_admin.shoot || !view.playing || view.dead {
             return None;
         }
-        let (min, max, speed) = match view.seat {
-            Some(s) if s.seat == 1 && s.tank => (0.0, crate::bots::VEHICLE_GUN_RANGE, s.gun_speed),
+        let (min, max, speed, launcher) = match view.seat {
+            Some(s) if s.seat == 1 && s.tank => {
+                (0.0, crate::bots::VEHICLE_GUN_RANGE, s.gun_speed, None)
+            }
             Some(_) => return None,
             None => {
                 let r = view.rocket?;
@@ -154,6 +170,7 @@ impl Server {
                     crate::bots::VEHICLE_ROCKET_MIN,
                     crate::bots::VEHICLE_ROCKET_RANGE,
                     def.projectile_speed,
+                    Some(def),
                 )
             }
         };
@@ -166,6 +183,20 @@ impl Server {
         let me = self.clients[slot].as_ref()?.sim.as_ref()?;
         let eye = glam::Vec3::from(me.eye_origin());
         let world = self.world.as_ref().map(|w| &w.collision);
+        // Along the view and the hip cone round it as a shot this cmd
+        // would spread (`Bot::think_armor` fires from the hip), nothing
+        // within the rocket's splash of the muzzle.
+        let muzzle_clear = match (launcher, world) {
+            (Some(def), Some(w)) => super::cone_clear(
+                w,
+                models,
+                crate::game::combat::muzzle_point(&me.ps),
+                crate::game::combat::aim_frame([view.view[0], view.view[1]])[0],
+                crate::game::combat::hip_spread_now(def, me),
+                def.explosion_radius + crate::bots::ROCKET_CLEAR_MARGIN,
+            ),
+            _ => true,
+        };
         crewed
             .iter()
             .filter(|c| {
@@ -197,6 +228,7 @@ impl Server {
                 friend_in_line: self
                     .bot_friend_in_line(slot, c.spot.centre(), teams, None)
                     .0,
+                muzzle_clear,
             })
     }
 

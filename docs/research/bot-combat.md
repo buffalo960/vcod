@@ -606,6 +606,31 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   stand through a throw's switch and hold, and through a reload they
   did not do before; read it against this row, not the older tables.
 
+A probed lob is flown on to its burst (2026-10-21). `Server::lob_probe`
+takes a lob only when the frag, flown by the missile code from the release
+to the end of its fuse (`Missiles::predict_flight`: `Missile::step` against
+the world, no bodies or models), stays farther than its `explosionRadius`
+from the thrower's box at every frame the fuse can end on: from
+`COOK_MOST_MS` (2250 ms) short of the full fuse for a UO cook, at the full
+fuse elsewhere. The arc check alone ends at the first contact.
+
+- VERIFIED (measured, ours, release, stock UO paks, `ship_stalls` with a
+  per-tick dump, seed 19 `tdm` on 2180b31d): a stick grenade lobbed from
+  (2583, -925, 0) at an enemy 550 off met a wall about 310 out, past the
+  arc check's 60 per cent, came back and rolled to (2558, -1126, 2); the
+  wounded thrower ran from it to (2518, -791, 4), 337 off, and died of its
+  9 points.
+- VERIFIED (`weapons/mp/stielhandgranate_mp` in `pakuo04.pk3`):
+  `explosionRadius 350`, `explosionInnerDamage 120`,
+  `explosionOuterDamage 5`, `fuseTime 4`.
+- VERIFIED (measured, ours, release, stock UO paks, burst test off and
+  on): `ship_stalls` with `UO=1 MAP=mp_cassino GAMETYPE=tdm SHOOT=1
+  TICKS=1800` over seeds 1 to 63 odd, own frags 1 to 0, frag kills 4 to
+  3, kills 502 to 507; `bot_match` with `UO=1
+  MAPS=mp_cassino,mp_kursk BOTS=10` over seeds 1 to 8, thrown 176 to 151,
+  hits 74 to 46, grenade kills 7 to 5, kills 1613 to 1586. Its `suicides`
+  (43 and 47) counts every self-kill and is not split by cause.
+
 ## 7. A side spread over the map (2026-10-21)
 
 A playtest report: with many bots in `tdm` nearly a whole team moved

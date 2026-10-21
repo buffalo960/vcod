@@ -1398,6 +1398,71 @@ impl Missiles {
         Ok(id)
     }
 
+    /// Where a grenade [`Self::fire_grenade`] would throw from `origin` at
+    /// `velocity` (the thrower moving at `carried`) stands after each frame
+    /// of its flight up to `fuse_ms`, flown by [`Missile::step`] against
+    /// the world alone: no bodies, no script models, no launch tumble.
+    /// Cut short where its move ends on the sky. A bot's lob probe reads
+    /// the burst off it (`Server::lob_probe`).
+    pub fn predict_flight(
+        &self,
+        world: &CollisionWorld,
+        weapon: u8,
+        origin: Vec3,
+        velocity: Vec3,
+        carried: Vec3,
+        fuse_ms: i32,
+    ) -> Vec<Vec3> {
+        let mut m = Missile {
+            id: EntId(0, 0),
+            owner: None,
+            parent_unspawned: false,
+            weapon,
+            model: 0,
+            traj: Trajectory {
+                tr_type: TR_GRAVITY,
+                tr_time: 0,
+                tr_duration: 0,
+                base: origin,
+                delta: self.carry(velocity, carried),
+            },
+            apos: Trajectory {
+                tr_type: TR_STATIONARY,
+                tr_time: 0,
+                tr_duration: 0,
+                base: Vec3::ZERO,
+                delta: Vec3::ZERO,
+            },
+            explode_at_ms: fuse_ms,
+            origin,
+            events: EventRing::default(),
+            last_run_ms: 0,
+            surf_type: 0,
+            ground: ENTITYNUM_NONE as i32,
+            exploded_ms: None,
+            uo: self.uo,
+            falls: self.falls,
+            explosion_type: 0,
+            eflags: 0,
+            shell: None,
+            rocket: false,
+            free_at_ms: None,
+            shootable: None,
+            splash: None,
+        };
+        let mut draws = Draws::default();
+        let mut at = Vec::new();
+        let mut now = 0;
+        while now < fuse_ms {
+            now += crate::server::FRAME_MS;
+            if m.step(Some(world), &[], &[], None, &mut draws, now) == Stepped::Freed {
+                break;
+            }
+            at.push(m.origin);
+        }
+        at
+    }
+
     /// Sets what UO's `fire_grenade` (0x5f7ad) reads off the weapon file
     /// for a missile just armed: `projExplosionType`'s index (type 1 arms
     /// `G_ExplodeSmokeGrenade`) and, for a `takeDamage` grenade whose fuse

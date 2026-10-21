@@ -1555,7 +1555,7 @@ driven back and forth over 350 units near (-150, -400) whose ground made
 from the anchor reached 300 on each reversal, then the driver's walk in
 the same spot. 63 is a bot's own frag. Not traced further.
 `uo_tdm_games_that_stalled_or_never_sprinted` replays seeds 43, 17, 13,
-25 and 33 with vehicles and 1 and 31 without.
+19, 25 and 33 with vehicles and 1 and 31 without.
 
 VERIFIED (measured, release, stock UO paks, 2026-10-21): with the sight
 cone and target choice of `bot-combat.md` 8 alone, seeds 1 and 19 pinned
@@ -1566,6 +1566,78 @@ no hit, keys held at the waypoint (4896, -1384, 280) from (4938 to
 seed 19's game ends on a bot's own frag; seed 13, the other game pre-aim
 starved of sprint legs, takes its place (331 bot-ticks on sprint legs,
 330 sprinted, the fewest of seeds 3, 5, 7, 13, 21 and 23).
+
+The roofs, traced. VERIFIED (measured, ours, release, stock UO paks,
+2026-10-21; `ship_stalls` with `UO=1 MAP=mp_cassino GAMETYPE=tdm SHOOT=1
+TICKS=1800` and a temporary per-tick dump of seed 17's bot 3 on 973e0e94,
+the edges from `nav_build`'s `NEAR=` with `EDGES=1`): the 12 s spell holds
+two faults, each a way the graph's walk proves that the bot's own run
+does not reproduce.
+
+- The jump edge from the roof at (4992, -1338, 295) to (4938, -1393, 303)
+  crosses a trench at 256 between the two roofs. The graph's walk (a
+  bot's, `as_a_bot`, with the walks' running start) lands it; the same
+  walk from rest on the foot runs into the trench and falls (both walked
+  under UO's rules). A bot that jumped onto that roof waits out UO's jump
+  penalty at rest on the foot (`Follower::jump_wait`, bot-navigation.md
+  "Jumps"), sets off from rest, drops into the trench and jumps at the
+  roof's face 47 over it until the follower plans round the edge (ticks
+  1544 to 1596). Now a bot held for a jump walks it again from the wait's
+  spot at rest, once per edge (`Follower::rest_jump_fails`), and plans
+  round one that does not land from there; an edge already avoided had no
+  way round and is waited on as before.
+- The dent in the roof at (4942 to 4954, -1404 to -1422, 280): a box set
+  down anywhere in it stands 23 under the roof round it (box drops on a
+  6-unit grid), more than a step, and no point of the 48-unit grid falls
+  in it, so it has no node. The walk from (4938, -1393, 303) to (4991,
+  -1440, 303) crosses its corner; the bot, passing the first node 8 units
+  off it, dropped in (tick 1702). From inside no walk reaches a node
+  without a jump, so `NavGraph::nearest_walkable` fell back to the nearest
+  node, (4896, -1384, 280), behind the dent's west wall, and the bot
+  pressed at it, ran an unstick spell and pressed again until the 12 s ran
+  out (ticks 1708 to 1745, pinned at (4938.8, -1410.0, 280.1)). Now
+  `NavGraph::walkable_start` tries, once no plain walk arrives, a bot's
+  walk from rest up to each of the nearest few nodes more than a step over
+  the body, and a plan from one it reaches with a jump runs that first leg
+  as a jump edge (`Follower::jumping`), its penalty wait included.
+  `tests/bots.rs`'s `a_uo_bot_in_mp_cassinos_roof_dent_jumps_out` sets a
+  bot down in the dent at two spots: on 973e0e94 it held at (4938.8,
+  -1410.0) for all 15 s, now it is out of both.
+
+After, VERIFIED (measured, the same detector, seeds 1 to 63 odd): on
+973e0e94 seed 17 was the only stall in the roofs' box (4800 to 5000, -1200
+to -1500); on 2180b31d with both fixes no seed stalls there, and
+`uo_bots_fight_and_sprint_in_tdm` passes `SEED=17` and seeds 1, 19, 21,
+25, 27, 33 and 51. Neither fix touches the graph build. A build with the
+dent's fix alone stalled seed 59 in the same box: a bot turning onto the
+jump edge from (4899, -1296, 256) to (4896, -1337, 280) still carried its
+190 units/s away from the top, which `Bot::think`'s jump cue reads as
+pinned (under 2 units a tick of closing pace), and jumped 17 short of the
+step with no pace on and fell back (INFERRED from the per-tick dump: the
+jump key on the second cmd after the waypoint changed, at 93 then 8
+units/s). A cue that left out a tick whose closing pace still gained moved
+every game and raised the 32 games' stalled bot-ticks from 5917 to 7024,
+two of its stalls in this box (VERIFIED, measured); it was dropped.
+
+Rockets by the muzzle (2026-10-21). INFERRED (reported on another
+branch's draws for `four_shooting_uo_bots_end_a_bas_round`, mp_foy seed 7,
+not reproduced here): a bot died of its own panzerschreck fired from
+`Bot::think_armor` at an enemy vehicle about 1300 off. `Server::armor_view`
+checked a clear line from the eye to the hull's middle and a teammate
+across it, but the rocket leaves the muzzle along the view, led, and
+spread from the hip. VERIFIED (`weapons/mp/panzerschreck_mp`,
+`bazooka_mp` and `panzerfaust_mp` in `pakuo04.pk3`): `explosionRadius 256`
+on all three, `hipSpreadStandMin` 7 and `hipSpreadMax` 12 for the first
+two, 5.5 and 7 for the panzerfaust. `ArmorView::muzzle_clear` now traces
+the view and eight rays round the cone at the spread the next shot takes
+(`combat::hip_spread_now`) out to the splash and `ROCKET_CLEAR_MARGIN`
+(32), against the world, the script models and the hulls (`cone_clear`,
+the breach stand's sighted check made general); with it shut no rocket
+goes and the keys keep the walk. The bots' other rocket paths: a breach
+(`Bot::breach`) fires sighted only from stands whose cone is clear to
+`BREACH_CLEAR` (320) (`breach_aim`), `Bot::trigger` fires no launcher at a
+player, and 1.1's and 1.5's panzerfaust has no bot path that fires it (no
+vehicles, no `bas`).
 
 ### 10.7 Two exits on one frame
 
