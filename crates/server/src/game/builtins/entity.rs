@@ -309,9 +309,13 @@ fn client_spawn(
     // with it; the next frame's filter refills only the live records
     // (docs/research/cod11-gametypes-re-bel.md, 8.4).
     host.reset_client_objectives(slot);
-    // `ClientSpawn` gives the sim a fresh playerstate, ammo included; the
-    // script's gives that follow land on this.
-    host.client_ammo[slot] = crate::game::host::AmmoArrays::default();
+    // `ClientSpawn`'s memset empties the ammo here, in the call, and the
+    // script's gives that follow land on it. It goes in the weapon op queue
+    // so it stays ordered with them: a pass that drains the queue before the
+    // frame's spawn pass (a vehicle round's callbacks) has already applied
+    // the loadout, which the spawn pass then keeps (cod11-gsc-object-model.md
+    // 20, "The spawn's memset and the weapon op queue").
+    host.weapon_op(slot, crate::game::host::WeaponOp::TakeAll);
     host.client_shellshock[slot] = [0; 3];
     // `ClientSpawn` never writes `ent->health` (combat doc 5.6): a spawn in
     // any mode keeps what the entity held, a spectator spawned after a death

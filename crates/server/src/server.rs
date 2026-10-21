@@ -8254,8 +8254,9 @@ impl Server {
             );
             // `self spawn(origin, angles)` moves the sim, which no builtin
             // can reach; this is where the queue lands. Before the weapons,
-            // because a spawn resets the whole playerstate and would wipe the
-            // clip the same frame's `giveWeapon` just handed out.
+            // because a spawn resets the playerstate; the ammo arrays are
+            // the weapon ops' alone, so the loadout survives the reset
+            // whichever pass applied it.
             for s in rt.take_client_spawns() {
                 let Some(c) = self.clients.get_mut(s.slot).and_then(Option::as_mut) else {
                     continue;
@@ -8296,6 +8297,10 @@ impl Server {
                         rt.push_temp_entity(te);
                     }
                 }
+                // The ammo is the weapon op queue's: the builtin queued the
+                // memset's emptying there ahead of the loadout, and a queue
+                // drained before this pass already landed both.
+                let ammo = (sim.ps.ammo, sim.ps.ammoclip);
                 match s.mode {
                     SpawnMode::Player => {
                         sim.become_player(s.origin, s.yaw_deg, cmd_angles);
@@ -8352,6 +8357,7 @@ impl Server {
                         sim.become_intermission(s.origin, s.yaw_deg, cmd_angles, self.sv_time_ms)
                     }
                 }
+                (sim.ps.ammo, sim.ps.ammoclip) = ammo;
                 // The spawn's own think runs a player or a spectator up to
                 // the frame's clock; the intermission arm runs no pmove.
                 if s.mode != SpawnMode::Intermission {
@@ -14080,6 +14086,52 @@ mod tests {
         let (_, body) = rt.host.bodies.entities().next().expect("no corpse");
         let at = body.origin(sv.proto);
         assert_eq!([at[0], at[1]], [snapped.x, snapped.y]);
+    }
+
+    /// A spawn and its loadout whose weapon ops something applies ahead of
+    /// the frame's spawn pass (here the move pass, after the damage
+    /// callback; on UO a vehicle round's callbacks) keep the loadout: the
+    /// spawn's emptying of the ammo is queued with them, in call order, and
+    /// the spawn pass leaves the arrays alone (cod11-gsc-object-model.md 20,
+    /// "The spawn's memset and the weapon op queue").
+    #[test]
+    fn a_loadout_applied_before_the_spawn_pass_survives_it() {
+        let rt = crate::game::script::ScriptRuntime::for_test_at(
+            crate::game::script::CALLBACK_SETUP,
+            "main() {}\n\
+             CodeCallback_PlayerDamage(inflictor, attacker, damage, flags, mod, weapon, point, \
+             dir, hitloc) { self spawn((400, 0, 64), (0, 0, 0)); \
+             self giveWeapon(\"fraggrenade_mp\"); }\n",
+        );
+        let Some((mut sv, st, frag)) = last_frag_in_hand_under(rt) else {
+            return;
+        };
+        let def = sv.weapon_table.get(frag).unwrap().clone();
+        let rt = sv.script.as_mut().unwrap();
+        let hurt = rt.spawn_map_entity_for_test([0.0, 0.0, 0.0]);
+        rt.register_hurt_for_test(
+            hurt,
+            crate::game::trigger::TriggerShape::boxed([-64.0, -64.0, -8.0], [64.0, 64.0, 64.0]),
+            10,
+        );
+        let cmd = UserCmd {
+            server_time: st + 50,
+            weapon: frag as u8,
+            ..NULL_USERCMD
+        };
+        sv.clients[0].as_mut().unwrap().pending.push(cmd.into());
+        sv.replay_moves();
+        fn sim(sv: &Server) -> &ClientSim {
+            sv.clients[0].as_ref().unwrap().sim.as_ref().unwrap()
+        }
+        let full = def.clip_size as i16;
+        assert_eq!(sim(&sv).ps.ammoclip[def.clip_index], full, "the give");
+        assert_eq!(sv.script.as_ref().unwrap().host.client_spawns.len(), 1);
+        sv.tick(Instant::now() + Duration::from_millis(50));
+        assert!(sv.script.as_ref().unwrap().host.client_spawns.is_empty());
+        let at = sim(&sv).origin();
+        assert!(at[0] > 300.0, "no spawn ran: {at:?}");
+        assert_eq!(sim(&sv).ps.ammoclip[def.clip_index], full, "emptied");
     }
 
     /// The take happens once, at the cmd's touch: a frag the script gives
