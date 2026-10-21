@@ -3007,7 +3007,15 @@ impl Bot {
                 // moved instead, a bot sliding along the rail over mp_ship's
                 // stair drop at (5402, 321, 344) jumped late, past it, into
                 // the crease at (5445, 355, 292) (bot-navigation.md, "The
-                // jump cue and the re-proof").
+                // jump cue and the re-proof"). On the ground the body has to
+                // be slow too, as the walk measures it: one that struck the
+                // slanted face of mp_ship's crate at (6207, -74, 80) and slid
+                // along it at 2.6 a tick jumped where the walk slid on to the
+                // corner, and came down on the crate beside it (seed 661);
+                // read so off the ground as well, bots sliding on the hull's
+                // curve at (2200, -300, -45) never jumped and stuck in its
+                // crease (bot-navigation.md section 3, "The recheck's
+                // leftovers").
                 let held = self.pressed == Some(w);
                 if !held {
                     self.pin = crate::nav::PinJump::default();
@@ -3019,7 +3027,12 @@ impl Bot {
                 let to = glam::Vec2::new(w[0] - view.origin[0], w[1] - view.origin[1]);
                 let v = glam::Vec2::new(view.velocity[0], view.velocity[1]);
                 let closing = v.dot(to.normalize_or_zero()) * (FRAME_MS as f32 / 1000.0);
-                let stalled = held && closing < crate::nav::PINNED && !self.pin_air;
+                let moved = self.pin_from.map_or(f32::INFINITY, |p| {
+                    glam::Vec3::from(p).distance(glam::Vec3::from(view.origin))
+                });
+                let slow = closing < crate::nav::PINNED
+                    && !(view.on_ground && moved >= crate::nav::PINNED);
+                let stalled = held && slow && !self.pin_air;
                 self.pin.before(armed, view.on_ground, under, || true)
                     || self
                         .pin
@@ -3368,7 +3381,12 @@ impl Bot {
         let across = (to[0] - from[0]) * n[0] + (to[1] - from[1]) * n[1];
         let over_top = dz > -vcod_common::pmove::STEPSIZE
             && (-vcod_common::pmove::HALF_WIDTH..-1.0).contains(&across);
-        if (dz < -BACK_DOWN_HEIGHT && !view.run_off) || (view.on_ladder && dz < 0.0 && !over_top) {
+        // A jump edge was proved by a forward run whatever its drop: backed
+        // off mp_ship's stair at (5402, 321, 344) for the floor 140 under
+        // it, a bot jumped backwards onto the stair and slid down it
+        // (seed 1275, bot-navigation.md section 3).
+        let backs = dz < -BACK_DOWN_HEIGHT && !view.run_off && !view.jump;
+        if backs || (view.on_ladder && dz < 0.0 && !over_top) {
             let flat = (to[0] - from[0]).hypot(to[1] - from[1]);
             let forward = crate::nav::back_move(flat, view.on_ladder);
             // Off the head of a ladder whose fall kills, the creep faces
@@ -5515,23 +5533,25 @@ mod tests {
         assert_eq!(ups, [0, 127]);
     }
 
-    /// Sliding along a ledge's face at a run, across the way to the top,
-    /// is pinned: the bot jumps where it meets the face, not where it comes
-    /// to rest.
+    /// Sliding along a ledge's face on the ground at a run, across the
+    /// way to the top, is no pin, as the graph's walk measures it: the bot
+    /// slides on to where it comes to rest and jumps there, where the walk
+    /// jumped.
     #[test]
-    fn a_bot_sliding_along_a_ledges_face_is_pinned() {
+    fn a_bot_sliding_along_a_ledges_face_jumps_where_it_comes_to_rest() {
         let mut bot = Bot::new("allies", false, 1);
         let mut v = view();
         v.jump = true;
         v.waypoint = Some([20.0, 10.0, 96.0]);
         v.velocity = [0.0, 190.0, 0.0];
-        let ups: Vec<i8> = (0..3)
-            .map(|i| {
-                v.origin = [0.0, 9.5 * i as f32, 64.0];
+        let ups: Vec<i8> = [0.0, 9.5, 19.0, 28.5, 29.0, 29.0]
+            .into_iter()
+            .map(|y| {
+                v.origin = [0.0, y, 64.0];
                 bot.think(&v).up
             })
             .collect();
-        assert_eq!(ups, [0, 0, 127]);
+        assert_eq!(ups, [0, 0, 0, 0, 0, 127]);
     }
 
     /// Sliding along a face too steep to stand on, across the way to the
