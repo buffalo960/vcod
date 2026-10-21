@@ -2734,3 +2734,25 @@ Retail's lines, 2026-10-20, are
 `crates/server/tests/fixtures/missiles/mp_cassino-satchel{shot,chain}-uo.txt`
 with the snapshot pairs `*-uo-satchel{shot,chain}.bin`, which
 `uo_weapons_ab.rs` replays on ours.
+
+## probe_pronecrouch
+
+A crouch then prone press on probe_legs' flat floor, the same keys under a
+`setOrigin` hold at mp_carentan's tdm spawn (844 3480) facing 180 and 135,
+and a body let go there alive and dead (`docs/research/cod11-mantle.md`,
+"Prone under a setOrigin hold"; `cod11-combat.md` 5.7). Run it at the net
+probe's default 60 Hz cmds: the hold's outcome and the corpse's rest depend
+on the cmd split.
+
+```
+[COD_VERSION=1.5|uo] COD_DIR=<install> PORT=34715 SECS=95 \
+    tools/run_probe.sh client-probes/probe_pronecrouch mp_carentan
+# second shell, 6 s later:
+vcod --net-probe 127.0.0.1:34715 --game-dir <install> [--mod-dir uo] --probe-team allies \
+    --probe-weapon m1carbine_mp --probe-uo-weapon direct --save-slope --slope-every-state \
+    --capture-tag pronecrouch-<server> --probe-secs 82
+```
+
+`crates/server/tests/fixtures/pronecrouch/mp_carentan-{1.1,1.5,uo}.txt` are
+the 2026-10-21 captures, cut to the fields `pronecrouch_ab.rs` reads, with
+the server's `PROBE` lines.
