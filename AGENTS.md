@@ -879,6 +879,12 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   reads the last frame's `getTime()`; nothing on that path may advance
   `host.level_time_ms`.
 - A thread's own `notify` doesn't fire its own `endon`.
+- A runtime error ends its thread only at `developer 1`, `run_probe.sh`'s.
+  vcod-server's default `developer 0` runs on past it as retail does (the
+  failed instruction's results undefined, a conditional jump not taken)
+  and still lists it in `script_aborts` (cod11-gsc-language.md, "Runtime
+  errors below developer 1"), so a gate replaying a probe capture that
+  dies sets `developer 1`.
 - `loadFx` of a new effect after the bootstrap's first `wait` is a script
   error (`GameHost::initializing`), and so is any `precacheModel`,
   `precacheShader`, `precacheString`, `precacheItem` or

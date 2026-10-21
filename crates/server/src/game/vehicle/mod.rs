@@ -231,6 +231,8 @@ pub struct Vehicles {
     /// Each vehicle model's skeleton and collision, for its tags and the
     /// locational trace.
     pub rigs: HashMap<String, Option<std::rc::Rc<seat::Rig>>>,
+    /// Stuck kills landed since the level loaded, for the bot gates.
+    pub stuck_kills: u32,
 }
 
 impl Default for Vehicles {
@@ -251,6 +253,7 @@ impl Default for Vehicles {
             overheated_gunners: Vec::new(),
             seat_ops: Vec::new(),
             rigs: HashMap::new(),
+            stuck_kills: 0,
         }
     }
 }

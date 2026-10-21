@@ -336,6 +336,16 @@ impl ScriptRuntime {
 
         let mut host = GameHost::new(configstrings);
         host.cvars = cvars;
+        // `Scr_Init` takes `developer` at the load (coduo_lnxded 0x80714f1):
+        // below 1 a runtime error does not end its thread.
+        vm.set_recover_errors(
+            host.cvars
+                .get("developer")
+                .trim()
+                .parse::<i32>()
+                .unwrap_or(0)
+                == 0,
+        );
         host.patch_1_5 = matches!(host.cvars.get("protocol"), "6" | "22");
         let proto = host
             .cvars

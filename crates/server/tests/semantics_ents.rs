@@ -103,6 +103,14 @@ fn retail_probe_lines(name: &str) -> Vec<String> {
     lines
 }
 
+/// `tools/run_probe.sh`'s `developer 1`, under which retail's captures
+/// were taken: a runtime error ends its thread.
+fn probe_cvars() -> Cvars {
+    let mut c = Cvars::new();
+    c.set("developer", "1");
+    c
+}
+
 /// Loads `name`'s probe fresh, mirroring `semantics_ab.rs::install`; a
 /// test in `crates/gsc` cannot be imported from `crates/server`.
 fn install(name: &str) -> (Vm, FuncRef) {
@@ -424,7 +432,7 @@ fn probe_bootstrap_matches_retail() {
         "mp_pavlov",
         "probe_bootstrap",
         vec![String::new(); 2048],
-        Cvars::new(),
+        probe_cvars(),
         None,
         Rc::new(vcod_server::weapons::WeaponTable::empty()),
         0,
@@ -676,7 +684,7 @@ fn run_probe_with(name: &str, player: bool) -> Option<Vec<String>> {
         "mp_pavlov",
         name,
         vec![String::new(); 2048],
-        Cvars::new(),
+        probe_cvars(),
         None,
         Rc::new(vcod_server::weapons::WeaponTable::empty()),
         0,

@@ -878,7 +878,9 @@ world (VERIFIED decompile). `Scr_Vehicle_Die` (0x8dccb):
   which nothing sets, for a death to something not a player. A tank that
   is its own attacker has `tank_death_player_damage` kill its driver so,
   and on `run_probe.sh`'s retail server that is a fatal script error
-  (VERIFIED capture, the probe's first run).
+  (VERIFIED capture, the probe's first run). Below `developer 1` the
+  `if` takes its branch and the victim's team loses a point
+  (cod11-gsc-language.md, "Runtime errors below developer 1").
 
 Measured, retail UO 1.51b, 2026-10-17, `client-probes/probe_vehdie`
 (fixtures `crates/server/tests/fixtures/vehicles/*-die-*-uo.txt`, recipes
@@ -1151,8 +1153,9 @@ units/s and strikes the standing victim once.
 - Stock UO `tdm.gsc`'s `Callback_PlayerKilled` reads
   `level.teamkill_penalty`, which nothing sets, for a kill whose
   attacker is not a player (line 815): a script runtime error, fatal on
-  a `developer 1` server (VERIFIED, the first capture run). The probe
-  sets it to 0.
+  a `developer 1` server (VERIFIED, the first capture run) and run on
+  past below it (cod11-gsc-language.md, "Runtime errors below developer
+  1"). The probe sets it to 0.
 
 `vehicle_runover_ab`'s `a_driverless_jeep_runs_over_a_standing_player`
 replays it on ours: the damage line, its point and the callback's origin

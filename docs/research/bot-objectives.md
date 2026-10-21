@@ -1347,9 +1347,19 @@ stops boarding.
 - `rightmove` steers both kinds toward the waypoint's bearing past 6
   degrees (positive lowers the yaw: `physics::targets`, the port of
   0x7d709, raises it for `rightmove < 0`);
-  a tank more than 50 degrees off turns in place. A driver with the
-  throttle open under 30 units/s for 1.5 s backs off for 1.5 s with the
-  steer held one way; four back-offs with no 300 units made gets it out.
+  a tank more than 50 degrees off turns in place. A driver whose keys
+  took the hull under 45 units in 1.5 s (30 units/s), or turned a tank
+  in place under 15 degrees, backs off for 1.5 s with the steer held one
+  way; four back-offs, or 8 s of driving, with no 300 units made get it
+  out. The window counts ground made, not speed: a hull wedged on a wall
+  bounces, and read off its speed it never stalled.
+- The hull's unbroken contact (`SeatView::contact_ms`, the stuck clock
+  coduo-vehicles.md 12 "Self-damage" kills it on at 7 s) backs the
+  driver off at 2.5 s and gets every rider out at 5 s: a tank sliding
+  into a wall on a slope keeps the clock running with nobody at the
+  keys, and the stuck kill's death walk kills its riders with the tank
+  as attacker, which stock `tdm.gsc` 815 cannot score
+  (cod11-gsc-language.md, "Runtime errors below developer 1").
 - A tank's driver holds the hull still while it has an enemy or an enemy
   vehicle to shoot, and every driver waits up to 10 s for a teammate
   walking up to board.
@@ -1358,8 +1368,11 @@ stops boarding.
   ahead of its front by 120 plus 0.6 s of its speed (or as far behind its
   back, reversing), or within the corner's radius plus 40 of the origin
   for a turn in place. The driver lets the keys go for him; held 2 s it
-  backs off 1.5 s straight when the way back is clear, and a back-off
-  waits while anyone is behind. A crush (`MOD_CRUSH_TANK`) of a teammate
+  backs off 1.5 s straight when the way back is clear, or rolls on ahead
+  1.5 s when somebody stands behind and the way ahead is clear, and the
+  back-off waits while anyone is in its way. A teammate milling round the
+  hull clears it a tick at a time, so the hold's count runs down a tick
+  per clear tick rather than starting over. A crush (`MOD_CRUSH_TANK`) of a teammate
   was every driver's in the measurement before this rule (10.6).
 
 ### 10.4 Guns and getting out
@@ -1385,8 +1398,10 @@ stops boarding.
 - A seated bot with an enemy in range reads as engaged
   (`BotBody::engaged`), as a bot holding still to aim on foot does.
 - Out: a route's end, 5 s in a standing vehicle with nobody to shoot (a
-  rider) or with nothing to drive to (a driver), 90 s in the seat, or
-  four stalls. The bot taps use until the server lets it out; a tank holds
+  rider) or with nothing to drive to (a driver), 90 s in the seat, four
+  stalls or 8 s of driving under 300 units, 2 s idle in a vehicle
+  nobody drives, or 5 s of the hull's
+  unbroken contact (10.3). The bot taps use until the server lets it out; a tank holds
   its driver for 1.5 s after the entry (`VEH_UnlinkPlayer`).
 
 ### 10.5 The jeep self-destruct timer outlives no jeep
@@ -1475,3 +1490,24 @@ rockets went at enemy vehicles in three games. `tests/bot_vehicles.rs`'s
 `a_bot_fires_rockets_at_an_enemy_tank` sets a bot with a bazooka behind a
 tank an enemy bot drives: the first rocket goes 1 s after it is set down
 and the tank burns out 11 s on.
+
+Third (2026-10-21), the stuck drivers, seeds 1 to 13 odd (seven games),
+3 min each: the stall read off the speed against the rules in 10.3, the
+example's `stuck_kills` (`Server::test_stuck_kills`) and `stuck_drivers`
+(a driver neither fighting nor waiting for crew whose seat stayed within
+150 units of one spot for 12 s, the `uo_bots_fight_and_sprint_in_tdm`
+rule):
+
+| | stuck kills | stuck drivers | kills | boardings | bot-ticks seated |
+|---|---|---|---|---|---|
+| speed stall | 5 | 3 | 176 | 59 | 38251 |
+| contact, ground-made and turn stalls, 10 s headway | 1 | 1 | 197 | 58 | 27905 |
+| 10.3's rules, on master's later bots | 0 | 2 | 187 | 71 | 31542 |
+
+The middle row's stuck kill is seed 5's Sherman sliding into a wall on
+the slope at (2190, -2278, 40) after both riders got out. Riders give up
+a struggling hull sooner, so fewer bot-ticks are spent seated. The last
+row's two 12 s spells (seeds 9 and 11) are not traced. Each stuck kill
+before killed its riders with the tank as attacker, the stock tdm 815
+error `uo_bots_fight_and_sprint_in_tdm` failed on. That gate plays with
+vehicles on again and passes seeds 1 to 15.

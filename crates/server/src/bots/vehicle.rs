@@ -33,15 +33,31 @@ const RIDE_TICKS: u32 = 1800;
 /// Ticks a seat with nothing to drive to, or a gunner's seat with nobody
 /// driving, is held before the bot gets out.
 const IDLE_TICKS: u32 = 100;
-/// A driven vehicle under this speed with the throttle open is stalling;
-/// past `STALL_TICKS` of it the bot backs off for `REVERSE_TICKS`, and
-/// past `STALLS` back-offs with no ground made it gets out.
+/// A rider with nobody to shoot gets out of a vehicle nobody drives this
+/// soon: the driver gave it up.
+const UNDRIVEN_TICKS: u32 = 40;
+/// A driven vehicle the open throttle took under `STALL_DIST` in
+/// `STALL_TICKS` is stalling (30 units/s): the bot backs off for
+/// `REVERSE_TICKS`, and past `STALLS` back-offs with no ground made it gets
+/// out. Ground made over the window, not the speed: a hull bouncing off
+/// what it is wedged on reads 40 units/s one tick and -30 the next.
 const STALL_SPEED: f32 = 30.0;
 const STALL_TICKS: u32 = 30;
+const STALL_DIST: f32 = 45.0;
+/// A tank turning in place stalls when the window turned it less than this,
+/// degrees: wedged between walls, its hull shrugs a few degrees each way.
+const STALL_TURN: f32 = 15.0;
+/// The hull's unbroken contact (`SeatView::contact_ms`) past which the
+/// driver backs off, and past which every rider gets out: seven seconds of
+/// it destroy the vehicle, and its riders with it.
+const BACK_OFF_CONTACT_MS: i32 = 2500;
+const LEAVE_CONTACT_MS: i32 = 5000;
 const REVERSE_TICKS: u32 = 30;
 const STALLS: u32 = 4;
-/// Ground a ride has to make for its back-offs to start counting afresh.
+/// Ground a ride has to make for its back-offs to start counting afresh,
+/// and the driving ticks it may take to make it before the bot gets out.
 const PROGRESS: f32 = 300.0;
+const PROGRESS_TICKS: u32 = 160;
 /// A route's last point this near the hull is reached.
 const PASSED: f32 = 48.0;
 /// The steer holds off inside this much heading error; a tank turns in
@@ -123,6 +139,10 @@ pub struct SeatView {
     pub gun_speed: f32,
     /// A teammate on foot in the hull's way (driver's seat only).
     pub crowd: Crowd,
+    /// How long the hull has been striking something without a second's
+    /// break, ms; seven seconds of it destroy the vehicle
+    /// (coduo-vehicles.md 12, "Self-damage").
+    pub contact_ms: i32,
 }
 
 /// Teammates on foot round a driven hull: a body the hull rolls into is
@@ -195,16 +215,26 @@ pub(crate) struct Rider {
     leaving: bool,
     /// An enemy in the seat's gun range this tick.
     fighting: bool,
+    /// The driver holds this tick for a teammate walking up to board.
+    crew_wait: bool,
     /// Stall bookkeeping: ticks stalling, back-off ticks left and the way
     /// it steers, back-offs since the ride last made [`PROGRESS`], from
     /// where.
     stall: u32,
+    /// Where the hull stood, and its yaw, as the stall window opened.
+    stall_from: [f32; 3],
+    stall_yaw: f32,
     /// Ticks a driver has been held by a teammate in its way.
     blocked: u32,
     reverse: u32,
     reverse_right: i8,
+    /// The throttle a back-off holds: back, or ahead for a hull hemmed in
+    /// behind.
+    reverse_forward: i8,
     stalls: u32,
     progress_from: [f32; 3],
+    /// Driving ticks since the ride last made [`PROGRESS`].
+    unmade: u32,
     /// Boardings and exits, for the gates.
     pub(crate) boarded: u32,
     /// Rockets fired on foot at an enemy vehicle, for the gates; and the
@@ -332,6 +362,12 @@ impl Bot {
     /// for the shot on purpose.
     pub(crate) fn seated_fight(&self) -> bool {
         self.rider.seated > 0 && self.rider.fighting
+    }
+
+    /// In the driver's seat holding for a teammate on his way in: the hull
+    /// stands still on purpose.
+    pub(crate) fn waiting_for_crew(&self) -> bool {
+        self.rider.seated > 0 && self.rider.crew_wait
     }
 
     /// Times the bot got into a seat.
@@ -474,7 +510,12 @@ impl Bot {
             aim = [0.0, seat.yaw];
         }
         cmd.angles = cmd_angles(view, aim);
-        let done = self.rider.seated > RIDE_TICKS || self.rider.idle > IDLE_TICKS;
+        // A hull that has struck something for seconds on end, driven or
+        // sliding, is about to destroy itself and everyone in it.
+        let wedged = seat.contact_ms >= LEAVE_CONTACT_MS;
+        let abandoned = seat.seat > 1 && !seat.driven && self.rider.idle > UNDRIVEN_TICKS;
+        let done =
+            self.rider.seated > RIDE_TICKS || self.rider.idle > IDLE_TICKS || wedged || abandoned;
         if done || self.rider.leaving {
             self.rider.leaving = true;
             cmd.forward = 0;
@@ -499,6 +540,7 @@ impl Bot {
         // A fight holds a tank still for the gun; a four-wheel drives on.
         // Both wait for a teammate on his way in.
         let crew = seat.boarding && r.seated < CREW_WAIT_TICKS;
+        r.crew_wait = crew;
         let hold = seat.tank && r.fighting || crew;
         let Some(to) = to.filter(|_| !hold) else {
             r.stall = 0;
@@ -509,12 +551,24 @@ impl Bot {
         if super::dist_sq(seat.origin, r.progress_from) > PROGRESS * PROGRESS {
             r.progress_from = seat.origin;
             r.stalls = 0;
+            r.unmade = 0;
+        }
+        // A hull that backs, turns and creeps round one tight spot without
+        // ever stalling outright is let go of too.
+        r.unmade += 1;
+        if r.unmade > PROGRESS_TICKS {
+            r.leaving = true;
         }
         if r.reverse > 0 {
             r.reverse -= 1;
-            // Nobody is backed over: the back-off waits on him.
-            if !seat.crowd.behind {
-                cmd.forward = -127;
+            // Nobody is run over: the back-off waits on him.
+            let clear = if r.reverse_forward < 0 {
+                !seat.crowd.behind
+            } else {
+                !seat.crowd.ahead
+            };
+            if clear {
+                cmd.forward = r.reverse_forward;
                 cmd.right = r.reverse_right;
             }
             return;
@@ -543,23 +597,45 @@ impl Bot {
             cmd.right = 0;
             r.stall = 0;
             r.blocked += 1;
-            if r.blocked >= BLOCKED_TICKS && !seat.crowd.behind {
+            // Backed off straight, or rolled on when somebody stands behind
+            // too: a turn in place held by a teammate at its back corner.
+            let way = if !seat.crowd.behind {
+                Some(-127)
+            } else if !seat.crowd.ahead {
+                Some(127)
+            } else {
+                None
+            };
+            if let Some(way) = way.filter(|_| r.blocked >= BLOCKED_TICKS) {
                 r.blocked = 0;
                 r.reverse = REVERSE_TICKS;
                 r.reverse_right = 0;
+                r.reverse_forward = way;
             }
             return;
         }
-        r.blocked = 0;
-        if cmd.forward != 0 && seat.speed.abs() < STALL_SPEED {
-            r.stall += 1;
-        } else {
-            r.stall = 0;
+        // A teammate milling round the hull clears it for a tick at a time:
+        // the hold's count runs down rather than starting over.
+        r.blocked = r.blocked.saturating_sub(1);
+        let keyed = cmd.forward != 0 || cmd.right != 0;
+        if !keyed || r.stall == 0 {
+            r.stall_from = seat.origin;
+            r.stall_yaw = seat.yaw;
         }
-        if r.stall >= STALL_TICKS {
+        r.stall = if keyed { r.stall + 1 } else { 0 };
+        let stalled = r.stall >= STALL_TICKS && {
+            r.stall = 0;
+            if cmd.forward != 0 {
+                super::dist_sq(seat.origin, r.stall_from) < STALL_DIST * STALL_DIST
+            } else {
+                yaw_diff(seat.yaw, r.stall_yaw).abs() < STALL_TURN
+            }
+        };
+        if stalled || seat.contact_ms >= BACK_OFF_CONTACT_MS {
             r.stall = 0;
             r.stalls += 1;
             r.reverse = REVERSE_TICKS;
+            r.reverse_forward = -127;
             // Backing out steers the other way round the obstacle.
             r.reverse_right = if cmd.right == 0 { 127 } else { cmd.right };
             if r.stalls >= STALLS {
