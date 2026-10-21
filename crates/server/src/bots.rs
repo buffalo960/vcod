@@ -732,6 +732,9 @@ pub struct Bot {
     pub skill: Skill,
     /// Fighting from cover ([`cover`]).
     pub cover: cover::Cover,
+    /// Shares out an objective round with its team ([`team`]); off, it
+    /// plays as before team play did (a `bot_match` measuring arm).
+    pub team_play: bool,
     /// The team the team menu is answered with.
     team: String,
     /// The menu retail last named in `v g_scriptMainMenu`; the `t` that
@@ -1113,6 +1116,7 @@ impl Bot {
             shoot,
             skill: Skill::default(),
             cover: cover::Cover::default(),
+            team_play: true,
             main_menu: String::new(),
             answered: Vec::new(),
             heading: 0.0,
@@ -4276,6 +4280,11 @@ mod tests {
         v.waypoint = Some([0.0, 500.0, 64.0]);
         let cmd = bot.think(&v);
         assert!(cmd.forward != 0 || cmd.right != 0, "the keys run the path");
+        bot.team_play = false;
+        assert!(
+            !bot.carrying(&v),
+            "team play off: the carrier fights as any bot"
+        );
     }
 
     /// Only the escort keeps by the carrier; the rest of the team go
