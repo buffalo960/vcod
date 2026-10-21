@@ -1,0 +1,77 @@
+# Retail 1.1d Linux dedicated server, 2026-10-21, no client:
+#   COD_LNXDED_HOME=<absolute, no '+'> PORT=34764 SECS=15 \
+#       tools/run_probe.sh client-probes/probe_useby mp_carentan +set probe_life 1
+# probe: crates/gsc/tests/fixtures/semantics/client-probes/probe_useby.gsc
+# mp_carentan's trigger_hurt with "dmg" "1000" replaced by "life" "2.5"
+# (same length, every lump offset kept), the patched bsp in a
+# zzz_hurtlife.pk3 in the homepath's game dir; hurtfall_ab.rs's
+# `hurtlife_bsp` applies the same edit. Its useBy at 1550 arms hurt_think,
+# which frees it in the frame at 4100, the first think past 1550 + 2500.
+# All three servers logged the same lines.
+# The PROBE lines are the server's games_mp.log; hurtfall_ab.rs replays them.
+# docs/research/cod11-combat.md 5.9 reads it.
+PROBE user 170
+PROBE spawned life 72 trigger_hurt
+PROBE use life 1550
+PROBE def life 1550 1
+PROBE trigger life 1550 170
+PROBE def life 1600 1
+PROBE def life 1650 1
+PROBE def life 1700 1
+PROBE def life 1750 1
+PROBE def life 1800 1
+PROBE def life 1850 1
+PROBE def life 1900 1
+PROBE def life 1950 1
+PROBE def life 2000 1
+PROBE def life 2050 1
+PROBE def life 2100 1
+PROBE def life 2150 1
+PROBE def life 2200 1
+PROBE def life 2250 1
+PROBE def life 2300 1
+PROBE def life 2350 1
+PROBE def life 2400 1
+PROBE def life 2450 1
+PROBE def life 2500 1
+PROBE def life 2550 1
+PROBE def life 2600 1
+PROBE def life 2650 1
+PROBE def life 2700 1
+PROBE def life 2750 1
+PROBE def life 2800 1
+PROBE def life 2850 1
+PROBE def life 2900 1
+PROBE def life 2950 1
+PROBE def life 3000 1
+PROBE def life 3050 1
+PROBE def life 3100 1
+PROBE def life 3150 1
+PROBE def life 3200 1
+PROBE def life 3250 1
+PROBE def life 3300 1
+PROBE def life 3350 1
+PROBE def life 3400 1
+PROBE def life 3450 1
+PROBE def life 3500 1
+PROBE def life 3550 1
+PROBE def life 3600 1
+PROBE def life 3650 1
+PROBE def life 3700 1
+PROBE def life 3750 1
+PROBE def life 3800 1
+PROBE def life 3850 1
+PROBE def life 3900 1
+PROBE def life 3950 1
+PROBE def life 4000 1
+PROBE def life 4050 1
+PROBE def life 4100 1
+PROBE def life 4150 0
+PROBE def life 4200 0
+PROBE def life 4250 0
+PROBE def life 4300 0
+PROBE def life 4350 0
+PROBE def life 4400 0
+PROBE def life 4450 0
+PROBE def life 4500 0
+PROBE done

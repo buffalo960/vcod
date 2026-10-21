@@ -25,6 +25,9 @@
 //	touch. +set probe_write 1 tries a write of the spawned hurt's
 //	spawnflags, classname and model at the drop, each in its own thread
 //	(PROBE write, then PROBE wrote only if the write did not end it).
+//	+set probe_spawn_x/_y/_z put the spawned hurt there instead: at (0 0 8)
+//	the point is far from the body, but its inline model 0 is the world
+//	lifted 8, whose street the body lands inside.
 //	Run by tools/run_probe.sh client-probes/probe_hurtfall mp_carentan
 //	with a --probe-team allies --probe-ride client.
 
@@ -78,7 +81,10 @@ run()
 				}
 				if (getcvar("probe_spawn") != "")
 				{
-					hurt = spawn("trigger_hurt", (900, 1930, -20), getcvarint("probe_spawn"));
+					at = (900, 1930, -20);
+					if (getcvar("probe_spawn_z") != "")
+						at = (getcvarint("probe_spawn_x"), getcvarint("probe_spawn_y"), getcvarint("probe_spawn_z"));
+					hurt = spawn("trigger_hurt", at, getcvarint("probe_spawn"));
 					if (getcvar("probe_dmg") != "")
 						hurt.dmg = getcvarint("probe_dmg");
 					if (getcvar("probe_use") != "")

@@ -17,6 +17,12 @@
 //! trigger the script spawned, and the sound's temp entity, which the
 //! probe's own `spawn` numbers show.
 //!
+//! `-hurtuse` and `-hurtwrite` hold `hurt_use` and the read-only fields,
+//! `-hurtfar` a spawned hurt touching through its model-0 world copy, and
+//! the client-less `-useby` and `-hurtlife` runs of
+//! `client-probes/probe_useby.gsc` the other entities' `use` and a map
+//! hurt's `life` (combat doc 5.9).
+//!
 //! `HURTFALL_REPORT=1` prints both sides line by line.
 //!
 //! Needs `COD_DIR` at the capture's install; without it the test returns
@@ -147,8 +153,6 @@ enum Hold {
     /// Retail's log is cut short by the process dying on the first error:
     /// ours' must open with it.
     Prefix,
-    /// Every line but the per-frame `PROBE f` origins.
-    NoFrames,
 }
 
 /// [`replay_on`] where the probe raises `errors` runtime errors, each read
@@ -175,15 +179,10 @@ fn replay_with(
     for a in &ours.aborts {
         assert!(a.contains("Tried to set a read only entity field"), "{a}");
     }
-    let mut retail = probe_lines(text.lines());
+    let retail = probe_lines(text.lines());
     let mut ours = probe_lines(ours.log.iter().map(String::as_str));
-    match hold {
-        Hold::All => {}
-        Hold::Prefix => ours.truncate(retail.len()),
-        Hold::NoFrames => {
-            retail.retain(|l| !l.starts_with("PROBE f "));
-            ours.retain(|l| !l.starts_with("PROBE f "));
-        }
+    if hold == Hold::Prefix {
+        ours.truncate(retail.len());
     }
     if std::env::var("HURTFALL_REPORT").is_ok() {
         for (a, b) in retail.iter().zip(&ours) {
@@ -331,9 +330,6 @@ fn a_trigger_hurt_refuses_a_write_of_its_read_only_fields() {
     );
 }
 
-/// The 1.5 write capture's body drifts (900.16, 1930.16) in the first 50 ms
-/// of its fall, where ours falls straight, for a reason not yet measured
-/// (combat doc 5.9, Open), so that run holds every line but the frames.
 #[test]
 fn a_trigger_hurt_use_and_write_match_retail_15() {
     replay_on(
@@ -346,7 +342,7 @@ fn a_trigger_hurt_use_and_write_match_retail_15() {
         "tests/fixtures/triggers/mp_carentan-dm-hurtwrite-1.5.txt",
         WRITE,
         3,
-        Hold::NoFrames,
+        Hold::All,
     );
 }
 
@@ -366,5 +362,146 @@ fn a_trigger_hurt_use_and_write_match_retail_uo() {
         WRITE,
         3,
         Hold::Prefix,
+    );
+}
+
+const FAR: &[(&str, &str)] = &[
+    ("probe_spawn", "16"),
+    ("probe_dmg", "25"),
+    ("probe_drop", "-30"),
+    ("probe_spawn_x", "0"),
+    ("probe_spawn_y", "0"),
+    ("probe_spawn_z", "8"),
+];
+
+/// A hurt spawned at (0 0 8), far from the body, hurts it as a slow hurt
+/// next to it does: its inline model 0 is the world lifted 8, and the body
+/// lands inside that copy's street (combat doc 5.9).
+#[test]
+fn a_script_spawned_trigger_hurt_touches_through_its_world_copy() {
+    replay("tests/fixtures/triggers/mp_carentan-dm-hurtfar.txt", FAR);
+    replay_on(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtfar-1.5.txt",
+        FAR,
+    );
+    replay_on(
+        vcod_common::testing::uo_fs,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtfar-uo.txt",
+        FAR,
+    );
+}
+
+/// `probe_useby` and its `probe_life` run: no client, so ours runs the
+/// probe alone on the paks `fs` mounts, its bsp through `patch`, and every
+/// `PROBE` line must match the fixture's.
+fn replay_alone(
+    fs: fn() -> Option<Pk3Fs>,
+    fixture: &str,
+    cvars: &[(&str, &str)],
+    patch: fn(Vec<u8>) -> Vec<u8>,
+) {
+    const PROBE: &str =
+        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_useby.gsc");
+    let Some(mut fs) = fs() else {
+        eprintln!("COD_DIR unset or not the capture's install: skipping");
+        return;
+    };
+    let p = vcod_server::server::install_protocol(&fs);
+    let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
+    let bytes = patch(fs.read(&bsp_path).unwrap());
+    fs.overlay(&bsp_path, bytes.clone());
+    let bsp = vcod_common::bsp::parse(&bytes).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_useby"), now);
+    sv.set_protocol(p);
+    // run_probe.sh's.
+    sv.set_cvar("developer", "1");
+    sv.overlay_script("maps/mp/gametypes/probe_useby", PROBE);
+    for (k, v) in cvars {
+        sv.set_cvar(k, v);
+    }
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, 8000);
+    assert!(sv.script_aborts().is_empty(), "{:?}", sv.script_aborts());
+    let text = std::fs::read_to_string(fixture).unwrap();
+    let retail = probe_lines(text.lines());
+    let ours = probe_lines(sv.script_log().iter().map(String::as_str));
+    if std::env::var("HURTFALL_REPORT").is_ok() {
+        for (a, b) in retail.iter().zip(&ours) {
+            println!("retail {a}\nours   {b}");
+        }
+    }
+    assert_eq!(ours, retail);
+}
+
+fn unpatched(bytes: Vec<u8>) -> Vec<u8> {
+    bytes
+}
+
+/// `useBy` on a `trigger_once` spends it (`Use_Multi`, freed 150 ms on to
+/// the script), on a `trigger_multiple` or a `trigger_damage` notifies
+/// alone, and on a `func_static` toggles its link, which a `bulletTrace`
+/// sees (combat doc 5.9, "useBy").
+#[test]
+fn use_by_runs_each_entity_s_use_like_retail() {
+    replay_alone(
+        vcod_common::testing::game_fs_11,
+        "tests/fixtures/triggers/mp_carentan-dm-useby.txt",
+        &[],
+        unpatched,
+    );
+    replay_alone(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-useby-1.5.txt",
+        &[],
+        unpatched,
+    );
+    replay_alone(
+        vcod_common::testing::uo_fs,
+        "tests/fixtures/triggers/mp_carentan-dm-useby-uo.txt",
+        &[],
+        unpatched,
+    );
+}
+
+/// The `-hurtlife` captures' entity lump edit: mp_carentan's one hurt
+/// trades `"dmg" "1000"` for `"life" "2.5"`, the same length.
+fn hurtlife_bsp(mut bytes: Vec<u8>) -> Vec<u8> {
+    let (old, new) = (b"\"dmg\" \"1000\"", b"\"life\" \"2.5\"");
+    let at: Vec<usize> = bytes
+        .windows(old.len())
+        .enumerate()
+        .filter(|(_, w)| w == old)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(at.len(), 1);
+    bytes[at[0]..at[0] + old.len()].copy_from_slice(new);
+    bytes
+}
+
+/// A map hurt with a `life` key is freed by `hurt_think` once its first
+/// `useBy` is `life` seconds old, on the first 100 ms think past it.
+#[test]
+fn a_used_trigger_hurt_with_a_life_is_freed_like_retail() {
+    const LIFE: &[(&str, &str)] = &[("probe_life", "1")];
+    replay_alone(
+        vcod_common::testing::game_fs_11,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtlife.txt",
+        LIFE,
+        hurtlife_bsp,
+    );
+    replay_alone(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtlife-1.5.txt",
+        LIFE,
+        hurtlife_bsp,
+    );
+    replay_alone(
+        vcod_common::testing::uo_fs,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtlife-uo.txt",
+        LIFE,
+        hurtlife_bsp,
     );
 }

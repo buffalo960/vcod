@@ -4393,11 +4393,57 @@ The captures are `client-probes/probe_hurtfall` under `probe_use` and
   process (SIGABRT), as a builtin's error does there
   (`cod11-gsc-language.md`, "Runtime errors below developer 1").
 
-INFERRED, from the model-0 reading of a scripted `trigger_damage` (14.8):
-the spawned trigger links inline model 0, a copy of the world at its
-origin, and touches a body that copy overlaps. The captures hold the point
-inside the standing body, so they do not tell that apart from a point
-trigger.
+#### The model-0 touch, `life`, and `useBy` on the other entities
+
+The captures are 2026-10-21 on retail 1.1d, 1.5b and UO 1.51b, ports
+34761-34770 (`crates/server/tests/fixtures/triggers/`, each with a `-1.5`
+and a `-uo` twin, recipes in their headers). VERIFIED: all three servers
+logged the same lines but for the times.
+
+- VERIFIED, `-hurtfar` (`probe_hurtfall` under `probe_spawn_x/_y/_z`): a
+  hurt spawned with spawnflags 16 at (0 0 8), 1900 units from the body,
+  hurts it once a second from the drop's next frame and the fourth touch
+  kills, as `-hurtslow`'s point next to the body does. The spawned trigger
+  touches through its inline model 0, the world lifted 8: the body,
+  dropped from z -30 on to the street at -43.13, is inside that copy's
+  street (-35.16) from its 2500 frame on, and not at the drop's 2400,
+  where its box still clears it. A point or box trigger would not touch
+  at all.
+- VERIFIED, `-hurtlife` (`client-probes/probe_useby` under `probe_life`):
+  mp_carentan's slab with `"dmg" "1000"` replaced by `"life" "2.5"`, a
+  same-length entity lump edit served from a `zzz_hurtlife.pk3`. Its
+  `useBy` at 1550 notifies `"trigger"`, the slab reads defined through
+  4100 and undefined from 4150: `hurt_think`, armed at 1600 and every 100
+  ms after, frees it on the first think whose `level.time` is past
+  1550 + 2500, 4100's, in that frame's entity pass.
+- VERIFIED, `-useby` (`probe_useby`, no client): `useBy` with a
+  `script_origin` on four script-spawned entities at the world origin.
+  Each notifies `"trigger"` with the user, logged after the caller's next
+  line (the notify's waiters run after its step). A `trigger_once`
+  (`wait` -1) reads defined at 1550, 1600 and 1650 and undefined from
+  1700: `Use_Multi` spent it and freed it 100 ms on, as its first touch
+  would (`cod11-movers.md` 17). A `trigger_multiple` (`wait` 0.5) and a
+  `trigger_damage` stay, and a second `useBy` 250 ms on notifies again. A
+  `func_static` whose origin the script wrote to (0 0 8) stops a
+  `bulletTrace` down at (900 1930) at -35.16 on the static; after one
+  `useBy` the trace reaches the world's street at -43.16 and after a
+  second the static again.
+
+The use functions, VERIFIED off the three decompiles: `Use_Multi` (1.1d
+0x6594c, 1.5b 0x7a2f2, UO 0x865c7) is `multi_trigger`, `Touch_Multi`'s arm
+without its notify; `Use_trigger_damage` (1.1d 0x65d10, 1.5b 0x7ab3c, UO
+0x86e77) calls `Activate_trigger_damage(self, other, accumulate + 1, -1)`,
+whose mod -1 skips the `"trigger"` queue (14.8); `Use_Static` (1.1d
+0x58070, 1.5b 0x697a3, UO 0x742e7) unlinks a linked entity and links an
+unlinked one, and `SP_func_static` (1.1d 0x5820c, 1.5b 0x699ef, UO
+0x74533) installs it on every `func_static`, not only one with
+`takedamage` (the 1.1d store at 0x58228). VERIFIED,
+`tools/re/annotate_func.py` on 1.1d: `G_SpawnTurret` stores `turret_use`
+(0x52a9c) as the turret's `use` at 0x53009, as 1.5b's `G_SpawnTurret`
+(0x632be) stores its `turret_use` (0x62fcc); `InitMover` stores
+`Use_BinaryMover` (0x560ec) at 0x565d0 on a `func_bobbing` and
+`func_pendulum`; `SP_misc_spawner` stores `misc_spawner_use` (0x53468,
+which arms `misc_spawner_think` 100 ms on) at 0x534d8.
 
 **As implemented.** `Triggers::arm_hurt` takes the cadence and the once
 flag off the `spawnflags` field at each touch, the touch pass reads `dmg`
@@ -4410,18 +4456,22 @@ and keeps its `life`; the `useby` builtin notifies and runs
 `Triggers::use_hurt`, which toggles the touch and returns the free time
 `ThinkFn::HurtLife` runs to. `GameHost::store_field` refuses a script
 write of a read-only field with retail's error, which vcod's VM recovers
-from on UO as on 1.1d. `crates/server/tests/hurtfall_ab.rs` replays the
-fifteen captures (on UO's write, the lines before the abort). Open:
-`useBy` runs no other entity's `use` (`Use_Multi`, `Use_BinaryMover`,
-`Use_Static`, `Use_trigger_damage`, `misc_spawner_use`, a turret's
-mount), the 1.5b write capture's body drifts to (900.16, 1930.16) in the first
-50 ms of its fall and lands at (901.00, 1930.84), where ours falls
-straight down, so `hurtfall_ab` holds that run's lines but not its
-frames. The 1.5b use run, with the same spawn, the same 150 ms from the
-client's first snapshot to the drop and no write, falls straight on both,
-so why the body moves is not measured; and no capture measures `life`, since a script spawn has no keys and
-no hurt in the stock 1.1 or UO paks carries one, nor an MP map's hurt
-spawnflag 1 (VERIFIED, entity lumps, 2026-10-21).
+from on UO as on 1.1d: UO's abort is a crash vcod keeps out on purpose.
+The touch pass tests a model-0 trigger's box (the client's) by a position
+test against its world copy's clip (`Pusher::Copy`, mask -1). The `useby`
+builtin then runs `trigger::use_multi` (the wait arm, or the spend and the
+free 100 ms on), `damage_trigger::use_trigger` or `mover::toggle_static`
+by what the entity is, and a script `spawn` of a `trigger_multiple` or
+`trigger_once` is `trigger::spawn_scripted_multi`, a world copy with
+`wait` 500 or -1000. `crates/server/tests/hurtfall_ab.rs` replays the
+twenty-seven captures (on UO's write, the lines before the abort). The
+first 1.5b write capture's body drifted 0.16 sideways in its first 50 ms
+of fall; a rerun of the same recipe (port 34770) fell straight, as ours
+does, and replaced it. Open: a `useBy` on a turret (`turret_use`, a
+mount by script with no use key), on a sine mover (`Use_BinaryMover`) or
+on a `misc_spawner` runs nothing past the notify in vcod, and no capture
+measures them; no stock MP map gives a hurt spawnflag 1 or a `life` key
+(VERIFIED, entity lumps, 2026-10-21).
 
 ---
 

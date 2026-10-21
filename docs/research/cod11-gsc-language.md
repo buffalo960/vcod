@@ -883,6 +883,13 @@ raised in every cmd reaches a waiter once a frame.
 - VERIFIED: `G_TouchTriggers` notifies `"touch"` on the spot (0x3fa4d,
   0x3fa6f; `cod11-combat.md` 14.7), and so does `Cmd_Activate_f` its
   `trigger_use`'s `"trigger"` (0x48547; `cod11-gametypes-re-bel.md` 4).
+- VERIFIED, `client-probes/probe_useby` on 1.1d, 1.5b and UO 1.51b
+  (2026-10-21, `crates/server/tests/fixtures/triggers/mp_carentan-dm-useby*.txt`,
+  `cod11-combat.md` 5.9): `useBy` notifies `"trigger"` with its argument
+  on the spot, its waiter logging in the frame of the call, on a
+  `trigger_once`, a `trigger_multiple`, a `trigger_damage` and a
+  `func_static` alike; the use function it then calls queues nothing
+  (`Use_Multi` has no notify, `Use_trigger_damage` passes mod -1).
 - VERIFIED, `client-probes/probe_bel` on retail 1.1d (2026-10-20,
   `cod11-gametypes-re-bel.md` 8.7): the menu thread `Cmd_MenuResponse_f`'s
   `menuresponse` wakes reads the new frame's `getTime()` and runs ahead
