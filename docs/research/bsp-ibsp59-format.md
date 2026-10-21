@@ -537,8 +537,9 @@ VERIFIED, symbols and calls in `game.mp.i386.so` (file addresses):
   the intermission arm (`pm_type` 5) copies the view and skips
   `CG_OffsetFirstPersonView`.
 
-vcod: `pmove::update_lean` is the function above, `pmove::aim::lean_offset`
-is `AddLeanToPosition` with 16 and 20, and `PlayerState::view`,
+vcod: `pmove::update_lean` is the function above, `pmove::aim::add_lean`
+is `AddLeanToPosition` with 16 and 20 in each build's rounding
+(`cod11-movers.md` 22, "pmove's turns"), and `PlayerState::view`,
 `combat::muzzle_point`, `ClientSim::eye_origin` and the playing client's
-camera all add it. The walk mode draws no lean roll. The viewmodel's own
+camera all apply it. The walk mode draws no lean roll. The viewmodel's own
 lean offset and roll are `cod11-combat.md` 17.3.

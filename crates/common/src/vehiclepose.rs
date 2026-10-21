@@ -146,7 +146,7 @@ pub fn own_gunner(pose: &mut VehiclePose, view: [f32; 3], angles: [f32; 3], span
 /// Pitch and yaw of `view` in the frame of `hull`: `AxisToAngles` of
 /// `MatrixMultiply(viewAxis, hullAxis^T)` (0x3004a5b0, 0x3004c2a0).
 fn local_angles(view: [f32; 3], hull: [f32; 3]) -> [f32; 2] {
-    use crate::pmove::aim::angles_to_axis;
+    use crate::pmove::aim::angles_to_axis_msvc as angles_to_axis;
     let (v, h) = (angles_to_axis(view)[0], angles_to_axis(hull));
     let f = h.map(|a| v[0] * a[0] + v[1] * a[1] + v[2] * a[2]);
     let yaw = f[1].atan2(f[0]).to_degrees();

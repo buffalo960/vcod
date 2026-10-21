@@ -12,7 +12,9 @@
 //! lost the fractional part that decides the phase.
 
 use super::{PlayerState, Stance};
+use crate::patch::Arith;
 use crate::weapon::{AimDef, WeaponDef};
+use crate::x87;
 use glam::Vec3;
 
 /// `client+0x2278..0x22a8`: what the block keeps between cmds. The gun-kick
@@ -219,19 +221,47 @@ pub fn unget_lean_fraction(f: f32) -> f32 {
     1.0 - (1.0 - f).sqrt()
 }
 
-/// What `AddLeanToPosition` (`0x6ba9c`) adds to an eye for a lean of `leanf`
-/// at `yaw` radians: `lean_fraction(leanf) * 20` along the right vector of
-/// `(0, yaw, lean_fraction(leanf) * 16)` degrees. The roll only tips the
+/// `AddLeanToPosition` (`0x6ba9c`): `pos` moved `lean_fraction(leanf) * 20`
+/// along the right vector of `(0, yaw, lean_fraction(leanf) * 16)` degrees,
+/// `yaw` the sim's radians of `ps.viewangles[YAW]`. The roll only tips the
 /// offset down; nothing rolls the view (docs/research/bsp-ibsp59-format.md,
-/// "Lean").
-pub fn lean_offset(yaw: f32, leanf: f32) -> Vec3 {
+/// "Lean"). `arith` names the build: 1.1d keeps the fraction and the
+/// distance on the stack, 1.5b and UO store both, and the Windows cgames
+/// store both and turn through their own `AngleVectors`
+/// (docs/research/cod11-movers.md 22, "pmove's turns").
+pub fn add_lean(pos: Vec3, yaw: f32, leanf: f32, arith: Arith) -> Vec3 {
     if leanf == 0.0 {
-        return Vec3::ZERO;
+        return pos;
     }
-    let f = lean_fraction(leanf);
-    let roll = (f * LEAN_ROLL_SCALE).to_radians();
-    let right = Vec3::new(roll.cos() * yaw.sin(), -roll.cos() * yaw.cos(), -roll.sin());
-    right * (f * LEAN_DIST_SCALE)
+    let l = f64::from(leanf);
+    let exact = (2.0 - l.abs()) * l;
+    let f = match arith {
+        Arith::Kept => exact,
+        Arith::Stored | Arith::Msvc => f64::from(exact as f32),
+    };
+    let roll = (f * f64::from(LEAN_ROLL_SCALE)) as f32;
+    let right = match arith {
+        Arith::Kept | Arith::Stored => {
+            x87::angle_vectors_of_radians(Vec3::new(0.0, yaw, x87::radians(roll)))[1]
+        }
+        Arith::Msvc => x87::angle_vectors_msvc_of_radians(Vec3::new(
+            0.0,
+            x87::radians_msvc(super::view_deg(yaw)),
+            x87::radians_msvc(roll),
+        ))[1],
+    };
+    let d = f * f64::from(LEAN_DIST_SCALE);
+    let d = match arith {
+        Arith::Kept => d,
+        Arith::Stored | Arith::Msvc => f64::from(d as f32),
+    };
+    (pos.as_dvec3() + right.as_dvec3() * d).as_vec3()
+}
+
+/// What [`add_lean`] adds to a point at the origin under 1.1d's
+/// arithmetic: the offset the bots aim from.
+pub fn lean_offset(yaw: f32, leanf: f32) -> Vec3 {
+    add_lean(Vec3::ZERO, yaw, leanf, Arith::Kept)
 }
 
 /// `AddLeanToPosition`'s roll and distance scales at every caller
@@ -308,8 +338,8 @@ pub fn eye_bob(ps: &PlayerState, view: [f32; 3]) -> Vec3 {
     let up =
         (((2.0 * cycle).sin() as f32 + (PI64 / 2.0 + cycle * 4.0).sin() as f32 * 0.2) * 0.75) * amp;
     let side = cycle.sin() as f32 * amp;
-    let [_, right, _] = angle_vectors(view);
-    Vec3::new(right[0] * side, right[1] * side, right[2] * side + up)
+    let [_, right, _] = x87::angle_vectors_msvc(view.into());
+    Vec3::new(right.x * side, right.y * side, right.z * side + up)
 }
 
 /// The walk bob 1.5's and UO's `CalcMuzzlePoint` (1.5 game 0x7e91f, UO
@@ -328,9 +358,11 @@ pub fn add_muzzle_bob(ps: &PlayerState, at: Vec3) -> Vec3 {
         * 0.75
         * f64::from(amp)) as f32;
     let side = c.sin() as f32 * amp;
-    let [_, right, _] = angle_vectors([-ps.pitch.to_degrees(), ps.yaw.to_degrees(), 0.0]);
+    // The sim's radians are the game module's `AngleVectors` radians of
+    // `ps.viewangles` (`cmd::apply_view`).
+    let [_, right, _] = x87::angle_vectors_of_radians(Vec3::new(-ps.pitch, ps.yaw, 0.0));
     let at = Vec3::new(at.x, at.y, at.z + up);
-    at + Vec3::from(right) * side
+    at + right * side
 }
 
 /// `BG_CalculateWeaponPosition_Sway` (`0x3a548`): the gun lags a turn. The
@@ -713,21 +745,16 @@ pub fn view_angles(
     out
 }
 
-/// `AngleVectors` (`0x3b228`): forward, right and up of wire angles.
-fn angle_vectors(angles: [f32; 3]) -> [[f32; 3]; 3] {
-    let (sy, cy) = angles[1].to_radians().sin_cos();
-    let (sp, cp) = angles[0].to_radians().sin_cos();
-    let (sr, cr) = angles[2].to_radians().sin_cos();
-    let forward = [cp * cy, cp * sy, -sp];
-    let right = [-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp];
-    let up = [cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp];
-    [forward, right, up]
+/// `AnglesToAxis` (`0x3ef3c`): `[forward, left, up]` of wire angles, as
+/// the Linux servers round it ([`x87::angles_to_axis`]).
+pub fn angles_to_axis(angles: [f32; 3]) -> [[f32; 3]; 3] {
+    x87::angles_to_axis(angles.into()).map(|v| v.to_array())
 }
 
-/// `AnglesToAxis` (`0x3ef3c`): `[forward, left, up]` of wire angles.
-pub fn angles_to_axis(angles: [f32; 3]) -> [[f32; 3]; 3] {
-    let [f, r, u] = angle_vectors(angles);
-    [f, [-r[0], -r[1], -r[2]], u]
+/// [`angles_to_axis`] as the Windows cgames round it
+/// ([`x87::angles_to_axis_msvc`]): what the client draws with.
+pub fn angles_to_axis_msvc(angles: [f32; 3]) -> [[f32; 3]; 3] {
+    x87::angles_to_axis_msvc(angles.into()).map(|v| v.to_array())
 }
 
 /// `AxisToAngles` (`0x3c808`), the pitch and yaw half: `vectoangles` of

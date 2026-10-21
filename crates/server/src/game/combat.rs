@@ -565,8 +565,8 @@ pub fn muzzle_point_in(ps: &PlayerState, world: Option<&CollisionWorld>) -> Vec3
     if !ps.rules.v15() {
         // `G_AddLean`, the offset `PlayerState::view` adds, on the snapped
         // origin.
-        let lean = vcod_common::pmove::aim::lean_offset(ps.yaw, ps.lean);
-        return (ps.origin.trunc() + Vec3::Z * ps.view_height() + lean).trunc();
+        let eye = ps.origin.trunc() + Vec3::Z * ps.view_height();
+        return vcod_common::pmove::aim::add_lean(eye, ps.yaw, ps.lean, Arith::Kept).trunc();
     }
     let o = ps.origin;
     let uo = ps.rules == MoveRules::Uo;
@@ -583,7 +583,7 @@ pub fn muzzle_point_in(ps: &PlayerState, world: Option<&CollisionWorld>) -> Vec3
         p = bipod_muzzle(ps, world, p);
     }
     p = vcod_common::pmove::aim::add_muzzle_bob(ps, p);
-    p += vcod_common::pmove::aim::lean_offset(ps.yaw, ps.lean);
+    p = vcod_common::pmove::aim::add_lean(p, ps.yaw, ps.lean, Arith::Stored);
     p.z = p.z.max(o.z + MUZZLE_FLOOR);
     p
 }

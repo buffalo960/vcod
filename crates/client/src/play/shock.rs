@@ -310,7 +310,7 @@ pub fn kicked_angles(angles: [f32; 3], kick: [f32; 2]) -> [f32; 3] {
     let f = Vec3::new(1.0, kick[0], kick[1]).normalize();
     let l = Vec3::Z.cross(f).normalize();
     let u = f.cross(l);
-    let [af, al, au] = vcod_common::pmove::aim::angles_to_axis(angles).map(Vec3::from);
+    let [af, al, au] = vcod_common::pmove::aim::angles_to_axis_msvc(angles).map(Vec3::from);
     let turn = |k: Vec3| af * k.x + al * k.y + au * k.z;
     let (nf, nl, nu) = (turn(f), turn(l), turn(u));
     let yaw = nf.y.atan2(nf.x).to_degrees();

@@ -119,7 +119,7 @@ pub fn damage_kick(fb: DamageFeedback, view: [f32; 3], time_ms: i32) -> DamageKi
     let (sy, cy) = byte(fb.yaw).sin_cos();
     let (sp, cp) = byte(fb.pitch).sin_cos();
     let dir = [cp * cy, cp * sy, -sp];
-    let axis = aim::angles_to_axis(view);
+    let axis = aim::angles_to_axis_msvc(view);
     let dot = |a: [f32; 3]| a[0] * dir[0] + a[1] * dir[1] + a[2] * dir[2];
     DamageKick {
         time_ms,
@@ -132,7 +132,7 @@ pub fn damage_kick(fb: DamageFeedback, view: [f32; 3], time_ms: i32) -> DamageKi
 /// drawn fovs (degrees). The screen centre when it points behind the view.
 pub fn gun_point(gun: [f32; 3], (fov_x, fov_y): (f32, f32), (w, h): (f32, f32)) -> [f32; 2] {
     // Forward in the view's own frame: along it, to its left, up.
-    let [fwd, left, up] = aim::angles_to_axis(gun)[0];
+    let [fwd, left, up] = aim::angles_to_axis_msvc(gun)[0];
     let tx = (fov_x.to_radians() / 2.0).tan();
     let ty = (fov_y.to_radians() / 2.0).tan();
     if fwd <= 0.0 || tx <= 0.0 || ty <= 0.0 {
