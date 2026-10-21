@@ -5918,6 +5918,7 @@ impl Server {
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
             retreating: self.bots.get(&slot).map_or(0, |b| b.retreating()),
             seat: sim.seat.map(|s| (s.vehicle, s.pos)),
+            crew_wait: self.bots.get(&slot).is_some_and(|b| b.waiting_for_crew()),
             boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
             rockets_at_armor: self.bots.get(&slot).map_or(0, |b| b.rockets_at_armor()),
         })

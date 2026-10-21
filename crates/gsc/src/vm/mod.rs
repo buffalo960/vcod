@@ -198,6 +198,15 @@ pub enum ErrorKind {
     Custom(String),
 }
 
+impl ErrorKind {
+    /// Whether retail below `developer 1` runs on past it: every error but
+    /// vcod's own (a builtin it lacks, the instruction cap, a wait inside
+    /// `call_now`), which stand for retail's terminal ones.
+    pub fn recoverable(&self) -> bool {
+        matches!(self, ErrorKind::BadType(_) | ErrorKind::Custom(_))
+    }
+}
+
 /// One live thread for `Vm::thread_usage`: `(file order, file, line)` per
 /// frame, innermost first, the defined locals across its frames and its
 /// endons. The file order is the file's place in install order, so the
@@ -510,7 +519,8 @@ pub struct Vm {
     /// budget would. See `spawn`'s `MAX_SPAWN_DEPTH` check.
     spawn_depth: u32,
     /// The threads that have died of an error, in the order they died, up
-    /// to `MAX_RECORDED_ABORTS`. `run_frame` returns its own pass's errors
+    /// to `MAX_RECORDED_ABORTS`; with `recover_errors` on, every runtime
+    /// error, the threads having run on past them. `run_frame` returns its own pass's errors
     /// and `call_now` returns its own, but `start_thread` has none: its
     /// signature is `-> ThreadId`, so an abort in a thread it started
     /// reached nothing but `log::warn!`, which a test harness with no
@@ -519,6 +529,10 @@ pub struct Vm {
     /// How many threads have died in total, including the ones `aborts`
     /// stopped recording, so a truncated list cannot pass for a whole one.
     aborts_seen: u32,
+    /// Retail's mode below `developer 1`: a runtime error leaves the failed
+    /// instruction's results undefined and the thread runs on
+    /// (`step_frames`). Off, as at `developer 1`, the thread dies.
+    recover_errors: bool,
 }
 
 impl Default for Vm {
@@ -560,7 +574,14 @@ impl Vm {
             spawn_depth: 0,
             aborts: Vec::new(),
             aborts_seen: 0,
+            recover_errors: false,
         }
+    }
+
+    /// Whether a runtime error ends its thread (off, retail's `developer 1`)
+    /// or the thread runs on past it (on, below `developer 1`).
+    pub fn set_recover_errors(&mut self, on: bool) {
+        self.recover_errors = on;
     }
 
     pub fn set_budget(&mut self, budget: u32) {
@@ -621,7 +642,17 @@ impl Vm {
 
     /// Logs a dead thread, counts it, and keeps it in `aborts` up to the cap.
     fn record_abort(&mut self, e: &ScriptError) {
-        log::warn!("gsc: thread aborted in {}", self.describe(e));
+        self.record_error(e, false);
+    }
+
+    /// Logs a runtime error, counts it, and keeps it in `aborts` up to the
+    /// cap, whether the thread died of it or ran on (`recovered`).
+    pub(crate) fn record_error(&mut self, e: &ScriptError, recovered: bool) {
+        if recovered {
+            log::warn!("gsc: script error, thread runs on, in {}", self.describe(e));
+        } else {
+            log::warn!("gsc: thread aborted in {}", self.describe(e));
+        }
         self.aborts_seen = self.aborts_seen.saturating_add(1);
         if self.aborts.len() < Self::MAX_RECORDED_ABORTS {
             self.aborts.push(e.clone());

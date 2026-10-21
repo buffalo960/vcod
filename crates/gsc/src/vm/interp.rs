@@ -31,6 +31,10 @@ pub(crate) struct Frame {
     pub locals: Vec<Value>,
     pub stack: Vec<Value>,
     pub recv: Option<Target>,
+    /// The operand stack's depth before the instruction now running, so a
+    /// runtime error the VM recovers from (`Vm::set_recover_errors`) can
+    /// put the stack back as that instruction's `stack_effect` leaves it.
+    pub op_base: u32,
     /// Test-only: what this frame's `stack` length must be once the call
     /// currently running on top of it returns, per `stack_effect`'s
     /// declared `(pop, push)` for that `Call`/`CallPtr`. Lives on the frame,
@@ -320,6 +324,7 @@ impl Vm {
             locals,
             stack: Vec::new(),
             recv,
+            op_base: 0,
             #[cfg(test)]
             stack_effect_check: None,
         }
@@ -362,6 +367,39 @@ impl Vm {
         notifies: &mut Vec<(Target, Atom, Vec<Value>)>,
         errors: &mut Vec<ScriptError>,
     ) -> Result<Step, ScriptError> {
+        let mut remaining = budget;
+        loop {
+            match self.step_ops(host, frames, &mut remaining, thread_id, notifies, errors) {
+                Err(e) if self.recover_errors && e.kind.recoverable() => {
+                    // Retail below `developer 1` (`Scr_Init`'s flag,
+                    // coduo_lnxded 0x80aa818) leaves the failed
+                    // instruction's results undefined, a conditional jump
+                    // not taken, and runs on (cod11-gsc-language.md,
+                    // "Runtime errors below developer 1").
+                    self.record_error(&e, true);
+                    errors.push(e);
+                    let f = frames.last_mut().expect("an error leaves its frame on top");
+                    let (pops, pushes) = crate::bytecode::stack_effect(
+                        &f.func_rc.code[(f.ip as usize).saturating_sub(1)],
+                    );
+                    f.stack.truncate((f.op_base as i32 - pops).max(0) as usize);
+                    f.stack.extend((0..pushes).map(|_| Value::Undefined));
+                }
+                r => return r,
+            }
+        }
+    }
+
+    /// `step_frames` without the recovery: the first error ends the call.
+    fn step_ops(
+        &mut self,
+        host: &mut dyn Host,
+        frames: &mut Vec<Frame>,
+        remaining: &mut u32,
+        thread_id: Option<ThreadId>,
+        notifies: &mut Vec<(Target, Atom, Vec<Value>)>,
+        errors: &mut Vec<ScriptError>,
+    ) -> Result<Step, ScriptError> {
         // What a builtin queued through `Cx::spawn`, drained by
         // `Op::CallBuiltin` the moment the builtin returns.
         let mut pending_spawns = Vec::new();
@@ -369,13 +407,13 @@ impl Vm {
         // routed anywhere: `Op::CallBuiltin` is the only drain point, so a
         // spawn from `get_field`/`set_field` has no defined moment to run at.
         let mut field_spawns = Vec::new();
-        let mut remaining = budget;
         loop {
-            if remaining == 0 {
+            if *remaining == 0 {
                 return Ok(Step::Running);
             }
-            remaining -= 1;
+            *remaining -= 1;
             let top = frames.len() - 1;
+            frames[top].op_base = frames[top].stack.len() as u32;
             let func = frames[top].func_rc.clone();
             let ip = frames[top].ip as usize;
             let op = func.code[ip].clone();

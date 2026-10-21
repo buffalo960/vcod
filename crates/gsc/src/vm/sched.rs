@@ -583,6 +583,52 @@ mod tests {
         );
     }
 
+    /// Below `developer 1` retail runs on past a runtime error: the failed
+    /// instruction's results read undefined and a conditional jump is not
+    /// taken, so `if (undefined)` and `if (!undefined)` both take their
+    /// branch, and `wait undefined` does not wait
+    /// (`client-probes/probe_undef_if`, 1.1d and UO 1.51b).
+    #[test]
+    fn below_developer_1_a_thread_runs_on_past_an_error() {
+        let mut vm = vm_with(
+            r#"main() {
+                x = 4;
+                if (level.unset) { x = 100; } else { mark("else"); }
+                mark(x);
+                if (!level.unset) { mark("not"); } else { mark("not_else"); }
+                mark(isDefined(level.unset + 1));
+                mark(isDefined(!level.unset));
+                mark(isDefined(level.unset.field));
+                mark(isDefined(double("a")));
+                wait level.unset;
+                mark("end");
+            }"#,
+        );
+        vm.set_recover_errors(true);
+        let mut host = TestHost::default();
+        let f = vm.func_ref("test/script", "main");
+        vm.start_thread(&mut host, f, None, vec![]);
+        let marks: Vec<Value> = host
+            .calls
+            .iter()
+            .filter(|(n, _)| n == "mark")
+            .map(|(_, a)| a[0])
+            .collect();
+        let mut s = |t: &str| Value::String(vm.interner_mut().intern_exact(t));
+        let want = vec![
+            Value::Int(100),
+            s("not"),
+            Value::Int(0),
+            Value::Int(0),
+            Value::Int(0),
+            Value::Int(0),
+            s("end"),
+        ];
+        assert_eq!(marks, want);
+        assert_eq!(vm.aborts().len(), 8, "every error is still recorded");
+        assert_eq!(vm.thread_count(), 0, "the thread ran to its end");
+    }
+
     /// The record is capped, so a run that blows through it must not hand
     /// back a list that passes for complete: the count keeps going.
     #[test]

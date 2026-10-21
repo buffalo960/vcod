@@ -823,7 +823,8 @@ fn a_bot_gets_down_off_mp_depots_roof_onto_the_ledges() {
 /// bipod) and never their own frag, sprint most of the long straight legs
 /// they run, and no bot spends 12 s of play without an enemy within 150
 /// units of one spot (bot-navigation.md, "Other rules"; a sniper holding a long duel stands
-/// still on purpose). Needs `COD_DIR` at a UO install.
+/// still on purpose), seated or not: they board, drive and leave the map's
+/// tanks (bot-objectives.md 10). Needs `COD_DIR` at a UO install.
 #[test]
 #[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~5 s in release; run with --ignored"]
 fn uo_bots_fight_and_sprint_in_tdm() {
@@ -840,9 +841,6 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
     // `SEED=<odd n>` replays another game (bot-navigation.md, "Other rules").
     sv.test_seed_rng(std::env::var("SEED").map_or(1, |v| v.parse().expect("SEED")));
-    // On foot: a seated bot holds still on purpose, and the riders bring
-    // out stock script errors (`tests/bot_vehicles.rs` plays the vehicles).
-    sv.set_cvar("vc_bot_vehicles", "0");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();
@@ -857,9 +855,9 @@ fn uo_bots_fight_and_sprint_in_tdm() {
             };
             sprints += usize::from(b.sprinting);
             legs += usize::from(b.sprint_leg);
-            // An engaged bot holds still to shoot; the window counts the
-            // ticks it has no enemy.
-            if b.engaged {
+            // An engaged bot holds still to shoot, and a driver for a
+            // teammate walking up to board; the window counts the rest.
+            if b.engaged || b.crew_wait {
                 continue;
             }
             let h = &mut hist[slot];
@@ -916,7 +914,16 @@ fn uo_bots_fight_and_sprint_in_tdm() {
         sprints * 2 >= legs,
         "{sprints} sprinting bot-ticks of {legs} on sprint legs"
     );
-    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    // Stock UO tdm reads `level.teamkill_penalty`, which nothing sets, on a
+    // death to no player (a tank its own attacker): retail's own error,
+    // which it runs on past below `developer 1` (coduo-vehicles.md 11.6,
+    // cod11-gsc-language.md "Runtime errors below developer 1").
+    let aborts: Vec<String> = sv
+        .script_aborts()
+        .into_iter()
+        .filter(|a| !a.starts_with("maps/mp/gametypes/tdm::Callback_PlayerKilled:815:"))
+        .collect();
+    assert_eq!(aborts, Vec::<String>::new());
 }
 
 /// United Offensive's walled-in spawns: mp_cassino's allied upper floor at
