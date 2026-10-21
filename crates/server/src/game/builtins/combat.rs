@@ -265,8 +265,9 @@ fn drop_cooking_grenade(host: &mut GameHost, cx: &mut Cx, slot: usize) {
         fuse,
         now,
     );
-    if let Err(e) = spawned {
-        log::warn!("the grenade client {slot} died holding was not dropped: {e:?}");
+    match spawned {
+        Ok(id) => host.missiles.mark_dropped(id),
+        Err(e) => log::warn!("the grenade client {slot} died holding was not dropped: {e:?}"),
     }
 }
 

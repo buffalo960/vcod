@@ -178,14 +178,16 @@ struct Tally {
 const SNAP_DEG: f32 = 30.0;
 
 /// Grenades and the clip a fight starts on: throws, the hits and kills
-/// their blasts made on others (`MOD_GRENADE_SPLASH`), engagements started
-/// with a bullet weapon in hand and the clip fractions they started on,
-/// summed.
+/// their blasts made on others (`MOD_GRENADE_SPLASH`), the throwers they
+/// killed (`own`) and the teammates (`team`), engagements started with a
+/// bullet weapon in hand and the clip fractions they started on, summed.
 #[derive(Default, Clone)]
 struct Kit {
     throws: u32,
     grenade_hits: u32,
     grenade_kills: u32,
+    own_frags: u32,
+    team_frags: u32,
     engages: u32,
     clip_sum: f64,
 }
@@ -195,16 +197,20 @@ impl Kit {
         self.throws += o.throws;
         self.grenade_hits += o.grenade_hits;
         self.grenade_kills += o.grenade_kills;
+        self.own_frags += o.own_frags;
+        self.team_frags += o.team_frags;
         self.engages += o.engages;
         self.clip_sum += o.clip_sum;
     }
 
     fn line(&self) -> String {
         format!(
-            "grenades thrown {:4} hits {:3} kills {:3} engagements {:5} clip at start {:3.0}%",
+            "grenades thrown {:4} hits {:3} kills {:3} own {:2} team {:2} engagements {:5} clip at start {:3.0}%",
             self.throws,
             self.grenade_hits,
             self.grenade_kills,
+            self.own_frags,
+            self.team_frags,
             self.engages,
             100.0 * self.clip_sum / f64::from(self.engages.max(1)),
         )
@@ -728,6 +734,11 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         v.0.suicides += 1;
                         v.1.suicides += 1;
                         v.2.suicides += 1;
+                        if anum == vnum && f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            v.0.kit.own_frags += 1;
+                            v.1.kit.own_frags += 1;
+                            v.2.kit.own_frags += 1;
+                        }
                         continue;
                     }
                     let a = tally(&mut m, o, anum, ateam, &skill);
@@ -739,6 +750,11 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         a.0.team_kills += 1;
                         a.1.team_kills += 1;
                         a.2.team_kills += 1;
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            a.0.kit.team_frags += 1;
+                            a.1.kit.team_frags += 1;
+                            a.2.kit.team_frags += 1;
+                        }
                     } else {
                         let blind = react.killed(vnum, anum);
                         if let Some(blind) = blind {
