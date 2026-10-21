@@ -9,7 +9,8 @@
 //! `GAMETYPE=tdm` unlinks the other gametypes' script brushes as the
 //! census does, in place of the `bas` rubble. `LOST=1` lists the spawns
 //! that do not reach the census's main component, with their nodes, and
-//! `CROUCH=1` every crouched jump edge.
+//! `CROUCH=1` every crouched jump edge, `JUMPS=x,y,r` the jump edges out
+//! of nodes within `r` across of `(x, y)`, with the aim a bot steers at.
 //! `UNLINK=n,...` builds with those submodels out, as a script's
 //! `delete` leaves them. The `digest` is an FNV-1a hash over the nodes,
 //! the edges and the jump, leap, risky and perch sets: two builds that
@@ -80,7 +81,7 @@ fn main() {
         let on = seeds.iter().filter(|s| g.nearest(**s).is_some()).count();
         let (reach, leave) = g.spawn_census(&world.collision, &seeds);
         println!(
-            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {leave} reach it, {} leaps, {} crouched jumps, digest {:016x}",
+            "{map}: spacing {}, {} nodes, {} edges, {ms:.0} ms, spawns {}/{} on graph, {reach} in one component, {leave} reach it, {} leaps, {} crouched jumps, {} aimed jumps, digest {:016x}",
             g.spacing,
             g.len(),
             g.edge_count(),
@@ -88,6 +89,7 @@ fn main() {
             seeds.len(),
             g.leaps.len(),
             g.crouch_jumps.len(),
+            g.aims.len(),
             digest(&g),
         );
         if std::env::var("CROUCH").is_ok_and(|v| v == "1") {
@@ -128,6 +130,21 @@ fn main() {
                     .map(|n| g.nodes[*n as usize].round())
                     .collect::<Vec<_>>())
             );
+        }
+        if let Ok(near) = std::env::var("JUMPS") {
+            let v: Vec<f32> = near.split(',').map(|x| x.parse().expect("JUMPS")).collect();
+            for &(a, b) in &g.jumps {
+                let n = g.nodes[a as usize];
+                if (n.x - v[0]).hypot(n.y - v[1]) < v[2] {
+                    println!(
+                        "  jump {:?} -> {:?} leap {} aim {:?}",
+                        n.round(),
+                        g.nodes[b as usize].round(),
+                        g.leaps.contains(&(a, b)),
+                        g.aims.get(&(a, b))
+                    );
+                }
+            }
         }
         if let Ok(near) = std::env::var("NEAR") {
             let v: Vec<f32> = near.split(',').map(|x| x.parse().expect("NEAR")).collect();

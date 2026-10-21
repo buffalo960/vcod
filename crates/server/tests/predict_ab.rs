@@ -1692,18 +1692,6 @@ const REPLAY_GAPS: &[(&str, i32)] = &[
     // the two snapshots after the death.
     ("mp_peaks-tdm-slope-8ms-jeep-die-uo.txt", 18743),
     ("mp_peaks-tdm-slope-8ms-jeep-die-uo.txt", 18793),
-    // One float step under retail's z (8.124999 against 8.124998) where the
-    // crouched walk steps off the kerb onto brush 2290: the cmd's plain
-    // slide lands at 8.124999, its overclip lifts it to 8.12503 and the
-    // ground snap's 9-unit trace sets it back down. Only the snapshot's end
-    // state is retail's, so which of those three stores rounds differently
-    // on 1.5b is not known; UO's run of the same route matches.
-    ("mp_carentan-dm-slope-8ms-patchwalk-kerb-1.5.txt", 29991),
-    // One float step on x (460.2108 against 460.21082) after seven crouched
-    // diagonal cmds on terrain triangle 2177, y and z exact. Same evidence
-    // limit as the kerb's row: the cmd that rounds apart is not visible in
-    // 20 Hz snapshots, and UO's run of the route matches.
-    ("mp_carentan-dm-slope-8ms-patchwalk-pole-1.5.txt", 30492),
 ];
 
 fn replay_retail_runs(p: &Protocol, fs: &vcod_common::pk3::Pk3Fs, server: &str, min_runs: usize) {
