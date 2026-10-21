@@ -9,21 +9,39 @@ they play objectives in `bot-objectives.md`.
 ## 1. The harness
 
 `cargo run --release -p vcod-server --example bot_match [seed...]` runs one
-in-process match per seed (default 1..=8) with every bot's fire on, on the
-stock gametype scripts, until the script calls `exitLevel` or `TICKS`
-(12000, ten minutes of 50 ms ticks) run out. `JOBS` (4) seeds run at once;
-the nav graph is built once and shared. A match is deterministic in its
+in-process match per map and seed (default 1..=8) with every bot's fire
+on, on the stock gametype scripts, until the script calls `exitLevel` or
+`TICKS` (12000, ten minutes of 50 ms ticks) run out. `JOBS` (4) matches
+run at once; the nav graph is built once and shared. It is the one bot
+measuring tool: the per-feature examples that came before it
+(`team_tally`, `cover_ab`, `bot_fights`) are folded in, and a new
+measure goes in it too. A match is deterministic in its
 seed: the same seed on the same build prints the same lines. The example
 passes `2 * seed + 1` to `Server::test_seed_rng`, which sets the low bit
 itself, so neighbouring seeds don't replay one match.
 
-Knobs: `MAP=` (mp_carentan), `GAMETYPE=` (tdm), `BOTS=` (6), `TICKS=`,
-`JOBS=`, `SET=name=value,...` (any cvar, e.g. `scr_tdm_timelimit=5`),
-`UO=1` (a United Offensive server: `COD_DIR` at a UO install),
-`VERBOSE=1` (every kill line). `AXIS_SKILL=` / `ALLIES_SKILL=` add the
-`BOTS` through `addbot <side> <n> skill <level>`, half a side; `SKILLS=a,b,...`
-adds one bot per entry by balance (for `dm`). Without them the bots join
-as `--bots` does, at `vc_bot_skill`.
+Knobs: `MAPS=` a comma list (`MAP=` too; mp_carentan), `GAMETYPE=`
+(tdm), `BOTS=` (6), `TICKS=`, `JOBS=`, `SET=name=value,...` (any cvar,
+e.g. `scr_tdm_timelimit=5`), `UO=1` (a United Offensive server:
+`COD_DIR` at a UO install), `VERBOSE=1` (every kill line).
+`AXIS_SKILL=` / `ALLIES_SKILL=` add the `BOTS` through `addbot <side> <n>
+skill <level>`, half a side; `SKILLS=a,b,...` adds one bot per entry by
+balance (for `dm`). Without them the bots join as `--bots` does, at
+`vc_bot_skill`.
+
+Feature arms: `COVER=` (section 4, `Server::test_bot_cover`), `RETREAT=`
+(section 5, `test_bot_retreat`) and `TEAMPLAY=` (`bot-objectives.md` 9,
+`test_bot_team_play`: off, a bot ranks by slot, every attacker keeps by
+an `re` carrier, nobody covers a planter, plans pay no crowd cost and a
+carrier fights as any bot, the brain before team play) each take `all`
+(the default), `none`, `axis`, `allies` or `alt` (axis on odd seeds,
+allies on even, so the map's own asymmetry cancels over an even seed
+count). A default arm never calls its hook, so an all-default run plays
+the stock game bit for bit (checked: seeds 1 and 2 print the lines of
+the harness before the arms). `dm` has no sides: only `all` and `none`
+mean anything there. With an arm one-sided the totals add a row per
+arm, named by the one-sided features on for it (`control` for none),
+and the wins and actions by arm.
 
 Everything it counts comes off the script's `logPrint` lines, the same
 `games_mp.log` lines a retail server writes:
@@ -38,8 +56,14 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | actions | `A;` | Objective actions by team: `bomb_plant`, `bomb_defuse`, `re_pickup`, `re_capture`, UO's `ctf_take` and kin. |
 | stalled | bodies | Bot-ticks whose last 12 s lie within 150 units of the first, as `ship_stalls` counts them. With fire on this also counts a bot holding a spot on purpose (an `sd` defender at its site), so read it against a baseline, not as zero. |
 | ended | `exitLevel` | Matches that reached their end inside `TICKS`. |
+| life | bodies | Mean life: bot-ticks playing over the lives they made up (a life still running at the end is left out). |
+| wounds, dead in 5 s | bodies | A life's first tick under 50 health while `BotBody::engaged`, and the share of those whose bot died within 5 s. |
+| retreats hurt, dry | bodies | `BotBody::retreating` going from 0 to 1 (hurt) or 2 (dry): retreats started (section 5). |
+| cover hold, lean | `bot_cover_state` | Bot-ticks playing on a held cover spot, and with `ps.lean` off zero (section 4). |
 
-Each seed prints one line, then the totals by team and by skill level.
+Each match prints one line, then the totals by team, by skill level and,
+with an arm one-sided, by arm; with several maps a block per map comes
+first. Each row prints twice: the log's columns, then the bodies'.
 
 A change to bot behaviour reports its before and after on the same seeds,
 map and gametype, in this doc's section for it.
@@ -203,8 +227,11 @@ fewer is better. `OFF=1` turns cover off on both sides. Over 20 seeds the
 per-seed difference has a standard deviation of 12 to 14 deaths, so a
 total difference under about 60 is noise.
 
-The `bot_match` harness (section 1) was not on master when this was written; these runs
-are `cover_ab`'s own.
+The `bot_match` harness (section 1) was not on master when this was
+written; these runs are `cover_ab`'s own, an example since folded into
+`bot_match` (`COVER=alt` is its side swap; its seeds passed straight to
+`test_seed_rng`, so seeds 2k and 2k+1 played one match). Section 6
+re-measures on `bot_match`.
 
 | run (mp_carentan unless named, seeds 1-20) | cover side deaths | other side deaths |
 |---|---|---|
@@ -247,9 +274,10 @@ the noise of the shipped rule, so the simpler rule stayed.
 A bot in a fight breaks contact when it is hurt or its clip runs dry, then
 reloads, waits and plays on (`crates/server/src/bots/retreat.rs`). Retail
 has no bots, so none of this is measured against retail; the numbers are
-from `--example bot_fights` (below), whose per-side `RETREAT=` switch and
-wound count `bot_match` lacks. The baseline, skill and cover tables above predate
-the retreat (on by default since this section).
+from `--example bot_fights` (below), since folded into `bot_match`
+(`RETREAT=`, and its wound columns). The baseline, skill and cover
+tables above predate the retreat (on by default since this section);
+section 6 re-measures all of them on `bot_match`.
 
 - Hurt: health under 50% of the most (`HURT_PCT`) with an enemy in
   sight, once per wound (`Bot::hurt_at`): a bot that held its cover fights
@@ -335,3 +363,108 @@ a row:
   100 dry starts, of which 28 to 32% reach the cover; the rest die on the
   way, or the retreat ends first (a dry clip refilled, or no cover left
   from a threat that moved).
+
+## 6. One table on `bot_match` (2026-10-21)
+
+Sections 2 to 5 and `bot-objectives.md` 9 were measured on four
+different tools with different seeds, bot counts and lengths, so their
+numbers do not compare. These rows are all `bot_match` at one tip
+(branch `test/bot-harness-unify` off master c8c3fd1f), 8 bots, 6000
+ticks (5 min) a match, 1.1 unless named. Retail has no bots: every
+number is ours.
+
+Each arm leaves the other features at their default, on for both sides
+(`COVER=alt` runs the retreat on both sides). "Margin" is the arm
+side's score less the other's per match, mean and standard error: the
+symmetric rows give the same figure for the `alt` split with nothing
+different between the sides, the noise floor.
+
+### 6.1 `tdm`, mp_carentan, mp_harbor, mp_depot, mp_brecourt, seeds 1..=16 (64 matches a row)
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | Side | Kills | Deaths | K/D | Life s | Wounds | Dead in 5 s | TTK mean ms | Margin |
+|---|---|---|---|---|---|---|---|---|---|
+| stock (all on) | both | 5237 | 5244 | 1.00 | 24.8 | 3873 | 72% | 1783 | -1.1 +- 1.3 |
+| `COVER=none RETREAT=none` | both | 6596 | 6600 | 1.00 | 19.5 | 4826 | 85% | 1215 | -2.2 +- 2.1 |
+| `COVER=alt` | cover | 3045 | 3043 | 1.00 | 21.4 | 2277 | 75% | 1672 | +0.1 +- 2.0 |
+| | control | 3040 | 3046 | 1.00 | 21.4 | 2320 | 74% | 1913 | |
+| `RETREAT=alt` | retreat | 2736 | 2726 | 1.00 | 24.1 | 2010 | 72% | 1438 | +0.2 +- 1.5 |
+| | control | 2724 | 2743 | 0.99 | 23.9 | 2062 | 82% | 1636 | |
+| `COVER=alt RETREAT=alt` | both on | 3124 | 2904 | 1.08 | 22.3 | 2104 | 74% | 1142 | +3.5 +- 1.9 |
+| | control | 2903 | 3125 | 0.93 | 20.7 | 2377 | 85% | 1833 | |
+| one side `vc_bot_skill 2` | hard | 3790 | 1747 | 2.17 | 36.7 | 1228 | 66% | 1150 | +31.9 +- 1.6 |
+| | normal | 1747 | 3790 | 0.46 | 17.0 | 2672 | 80% | 3080 | |
+
+The skill row is two runs: `AXIS_SKILL=2` on seeds 1..=8 and
+`ALLIES_SKILL=2` on 9..=16 (the other side at 1), summed.
+
+- VERIFIED (measured, the table): skill is the one large effect: a hard side outscores a normal one 2.2
+  to 1, as section 3's three-a-side runs found (2.3 to 2.6).
+- VERIFIED (measured, the table): cover alone and the retreat alone move no score: both margins sit
+  inside one standard error, as small as the stock run's null split.
+  Section 4.5's 6% (one map, 20 seeds, the retreat not yet in) does not
+  show here.
+- VERIFIED (measured, the table): the retreat does what it was built for and nothing more: a wounded bot
+  running it dies within 5 s 72% of the time against 82%, with K/D
+  unchanged (section 5 found the same).
+- VERIFIED (measured, the table): together on one side they gave +3.5 a match, 1.8 standard errors, and
+  the lowest share of wounded deaths against the highest (74% against
+  85%). See 6.3 for the second seed set.
+- VERIFIED (measured, the table): both features on everywhere make the
+  game slower: 21% fewer kills than with both off, lives 24.8 s against
+  19.5 s, and the `stalled` count nearly eightfold (104718 bot-ticks
+  against 13666). INFERRED: the extra stalls are bots holding a cover
+  spot or a retreat's cover on purpose, so read `stalled` against a run
+  with the same features on.
+
+### 6.2 Team play: `sd` and `re` on the ten 1.1 maps that run both, seeds 1..=6 (60 matches a row)
+
+`bot-objectives.md` 9's table compared two builds with `team_tally`;
+`TEAMPLAY=` now switches the same rules per side inside one build, the
+retreat and cover on for everyone. The attackers are, per map, the team
+that plants or picks up (axis on mp_pavlov in `sd`, on mp_dawnville and
+mp_railyard in `re`; allies elsewhere). Wins are rounds.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | att W | def W | att share | plants / pickups | defuses / captures | stalled |
+|---|---|---|---|---|---|---|
+| `sd TEAMPLAY=none` | 104 | 178 | 37% | 200 | 85 | 408827 |
+| `sd TEAMPLAY=all` | 166 | 107 | 61% | 229 | 52 | 474275 |
+| `re TEAMPLAY=none` | 142 | 197 | 42% | 233 | 25 | 363031 |
+| `re TEAMPLAY=all` | 137 | 194 | 41% | 219 | 46 | 346276 |
+
+With `TEAMPLAY=alt` (team play on one side, attack or defence by seed)
+the team-play side took 168 `sd` rounds to the other's 116 and 179 `re`
+rounds to 157.
+
+- VERIFIED (measured, the table): `sd`: team play lifts the attackers from 37% to 61% of rounds, the
+  one-site rule as `bot-objectives.md` 9 found (47% to 62% there, a
+  build without cover or the retreat).
+- VERIFIED (measured, the table): `re`: captures nearly double (25 to
+  46), as there (9 to 18), but the attackers' round share does not move.
+  INFERRED: most rounds end on the clock or in a wipe, not a capture.
+
+### 6.3 United Offensive: `tdm`, mp_cassino and mp_kursk, seeds 1..=8 (16 matches a row)
+
+`UO=1`, `COD_DIR` at a UO install.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | Side | Kills | Deaths | K/D | Life s | Wounds | Dead in 5 s | Margin |
+|---|---|---|---|---|---|---|---|---|
+| stock | both | 601 | 626 | 0.96 | 44.8 | 417 | 75% | -1.1 +- 1.8 |
+| `COVER=none RETREAT=none` | both | 657 | 702 | 0.94 | 39.0 | 470 | 81% | -1.6 +- 2.1 |
+| `COVER=alt` | cover | 324 | 332 | 0.98 | 43.3 | 228 | 76% | +0.8 +- 2.6 |
+| | control | 321 | 344 | 0.93 | 40.7 | 242 | 78% | |
+| `RETREAT=alt` | retreat | 341 | 306 | 1.11 | 44.1 | 207 | 71% | +3.0 +- 3.0 |
+| | control | 281 | 354 | 0.79 | 37.7 | 237 | 84% | |
+
+- VERIFIED (measured, the table): kills and deaths differ here by
+  suicides and team kills; sixteen matches leave every margin within
+  about one standard error of nothing; the retreat's share of wounded
+  deaths falls 13 points, as on 1.1.
+- VERIFIED (measured, the table's runs): UO's axis bots start three to
+  four times the dry retreats its allies do (958 against 292 in the
+  stock run; 1.1's two sides start 112 and 149). Not followed up here.

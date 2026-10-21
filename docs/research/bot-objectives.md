@@ -1258,6 +1258,10 @@ view.
   the teammate's. Read when a plan starts; `dm`, `tdm` and `bel` plan as
   before, so the `dm` stall runs (`ship_stalls`) are unchanged.
 
+`team_tally` has since been folded into `bot_match` (`GAMETYPE=sd`,
+`MAPS=`, `TEAMPLAY=` switching these rules per side in one build);
+`bot-combat.md` 6.2 re-measures this table there.
+
 VERIFIED (measured, ours, 2026-10-20, release, `--example team_tally`, 8
 shooting bots, seeds 1-11 odd, 6000 ticks (300 s) per run, the ten 1.1 maps
 that run both gametypes, totals over 60 runs each). Columns: plants,
