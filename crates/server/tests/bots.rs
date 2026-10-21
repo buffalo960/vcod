@@ -1319,12 +1319,19 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
         "the round ended on its clock"
     );
     // Stock `BaseAssault_bomb_think` decrements a `count` it never sets
-    // when a charge's trigger fires outside a round: a bot looking at a
-    // live charge in the end-of-round delay (bot-objectives.md 7.1).
+    // when a charge's trigger fires outside a round, and at `developer 0`
+    // runs on to compare it: a bot looking at a live charge in the
+    // end-of-round delay (bot-objectives.md 7.1).
     let aborts: Vec<String> = sv
         .script_aborts()
         .into_iter()
-        .filter(|a| !a.starts_with("maps/mp/gametypes/bas::BaseAssault_bomb_think:3152:"))
+        .filter(|a| {
+            !["3152:", "3153:"].iter().any(|l| {
+                a.starts_with(&format!(
+                    "maps/mp/gametypes/bas::BaseAssault_bomb_think:{l}"
+                ))
+            })
+        })
         .collect();
     assert_eq!(aborts, Vec::<String>::new());
     Some(sv)

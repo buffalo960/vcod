@@ -1717,6 +1717,8 @@ pub struct Server {
     bot_paths: BTreeMap<usize, crate::nav::Follower>,
     /// Bots' routes in a UO vehicle's driver's seat.
     bot_drives: bot_vehicles::BotDrives,
+    /// The graph's nodes UO vehicles parked since its build cover.
+    bot_parked: bot_vehicles::ParkedVehicles,
     /// Each bombzone's `(mins, maxs)` and the stand `site_stand` picked in
     /// it, for the life of the nav graph.
     bot_sites: Vec<([f32; 3], [f32; 3], [f32; 3])>,
@@ -2163,6 +2165,7 @@ impl Server {
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
             bot_drives: Default::default(),
+            bot_parked: Default::default(),
             bot_sites: Vec::new(),
             bot_breach_stands: Vec::new(),
             bot_noises: Vec::new(),
@@ -4356,6 +4359,7 @@ impl Server {
             self.nav = job.poll(!self.nav_background);
         }
         self.relink_nav(links);
+        self.park_vehicles();
         let sid = i32::from(self.server_id);
         // The team table once per frame; `client_team` needs the script's
         // mutable face, so the enemy pass reads this instead.
@@ -4757,6 +4761,7 @@ impl Server {
                     }
                     _ => Vec::new(),
                 };
+                follower.blocked = self.bot_parked.blocked.clone();
                 if self.bots.get_mut(&slot).is_some_and(|b| b.take_stuck()) {
                     follower.stuck();
                 }
@@ -5491,7 +5496,7 @@ impl Server {
                 let at = sim.ps.origin.into();
                 let spawns = self.world.as_ref().map_or(&[][..], |w| &w.spawn_points);
                 g.dead_end(at) || (self.nav_settled() && g.pit(at, spawns))
-            }),
+            }) || self.bot_paths.get(&slot).is_some_and(|f| f.penned()),
             on_ladder: sim.ps.on_ladder,
             ladder_normal: sim.ps.ladder_normal.into(),
             ladder_middle: self

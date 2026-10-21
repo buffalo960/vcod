@@ -3859,10 +3859,104 @@ is one spell or two. The 172 of seed 23 are a bot held off the ground
 in a crease at (426, -958, 60), 5 units from the node (431, -964, 57),
 on plain edges into it; no pull ran within 150 units of it all game
 (VERIFIED, a temporary log), so the pull only changed which bot went
-there. The crease is the follower's to fix, and open. `mp_depot`
+there. The crease is a parked tank's, fixed under "Parked vehicles"
+below. `mp_depot`
 without fire, seeds 1 to 31 odd: 0 / 0, and 0 with either half alone.
 `nav_census` passes at 1.1 and at UO (both halves are the follower's;
 the graph is untouched).
+
+### Parked vehicles
+
+The graph is built round the UO vehicles where they stand at the build
+(section 2, the copy keeps their collmap instances), and rebuilt only
+when the script's brush links change. A vehicle driven off and left
+somewhere else covers nodes the graph still offers.
+
+mp_cassino seed 23's crease. VERIFIED (measured, release `ship_stalls`
+`UO=1`, dm, master 3135508b, the trace and position tests on the
+server's world at tick 2972): bot 1 drove the Panzer IV (entity 181) to
+(450.0, -1099.0, 10.5), yaw -79.6, was out of it by tick 2660 on the
+terrace at (364, -962, 81), and walked the stair down to the street through the
+nodes (431, -964, 57) and (482, -1011, 35). The tank's collmap,
+`script_vehicle_collmap` *28 (brushes 8803-8810, x -136..124,
+y -72..72, z 0..128), reaches the stair with its rear. From tick 2759
+the body stepped up against the rear on every grounded tick and fell
+back; the follower's stuck count avoided the edges one by one and,
+with no way round left, took them again (a temporary log of its
+plans). From tick 2968 it hung at
+(425.69, -957.52, 60.13) with velocity 0, off the ground: its capsule
+touches the stair's `wood@barnboard1rd` face, brush 8730 (normal z
+0.65, under `MIN_WALK_NORMAL`), under and north of it and the collmap's
+brush 8807 (`clip_nosight_metal`, normal (-0.18, 0.97, 0.14)) south of
+it. Forward at every 45 degrees, or with the jump key, it moves 0.0 in
+20 ticks. `Bot::wedged`'s kill took it at tick 3069. The same spot with
+no tank there holds nothing: a body left at rest there lands, and the
+walks from it to every neighbouring node arrive. Retail has no bots and
+the wedge is not measured on a retail server.
+
+`Server::park_vehicles` (`server/bot_vehicles.rs`) watches each live
+vehicle's pose. One that holds it within a unit and a degree for 20
+ticks (`PARK_TICKS`) is parked: the nodes within 192 units of its origin
+(`PARK_REACH`) where a standing body no longer fits, one at a time
+(`NavGraph::blocked_near`, the position test the flood's nodes passed),
+are blocked. A parked vehicle shoved under 48 units (`PARK_SHOVE`) keeps
+its nodes until it parks again; one moved further, or freed, lets them
+go. VERIFIED (measured, seed 1, a temporary log): the tank at the
+stair's foot parked again at (439.7, -1087.4), (436.7, -1088.1) and
+(446.4, -1088.5); with the nodes let go at each move, seed 1 stalled
+102 bot-ticks on the terrace and the stair, and 0 with them kept. The
+union, sorted, goes to every follower each tick
+(`Follower::blocked`):
+
+- A plan runs through no blocked node but its own destination
+  (`Search::blocking`). A destination that is blocked, as a boarding's
+  (bot-objectives.md 10.2), becomes the clear node nearest it within six
+  grid steps that the start reaches (`NavGraph::clear_near`), and a point
+  goal then walks at its point from there. Without it, seeds 1 to 63
+  odd stalled 281 bot-ticks against master's 208, and seeds 1, 11, 23,
+  41, 47, 49, 55 and 57 went from 279 to 0 with it (VERIFIED, measured).
+  INFERRED (the stall lines, bots with no waypoint near a parked
+  vehicle): most were a boarding's plan that never found its way.
+- A path with a blocked node ahead, short of its end, is planned again
+  from a node the body walks to. A start node that is blocked plans from
+  `walkable_start`.
+- A plan that finds no way round tries again round the stuck edges'
+  avoidance dropped (as before), then through the blocked nodes, unless
+  the start reached fewer than 64 nodes round them (`PEN_NODES`): then
+  the bot is hemmed in (`Follower::penned`), gets no plan, and reads as
+  stranded, so `Bot::wedged` sends `kill` after 10 s as for a dead end
+  (section 3, "mp_hurtgen's crease"). VERIFIED (measured, the test
+  below): the terrace at (383, -916, 76) reaches 7 nodes with the tank
+  parked as above, of the 7 676 it reaches without. VERIFIED (measured,
+  the traces): planned through, seed 1 stalled 402 bot-ticks on that
+  terrace and stair; with no plan and no kill, seed 9's bot, out of a
+  vehicle at (1384, -2659, 5), had no waypoint for 14 s and stalled 84.
+  With the kill, both 0.
+
+`nav::tests::a_plan_runs_round_the_nodes_a_parked_vehicle_covers`,
+`nav::tests::a_tank_parked_over_cassinos_stair_blocks_its_nodes` (the
+collmap put at seed 23's pose, yaw only; the stair node (431, -964, 57)
+blocked, the terrace not, hemmed in).
+
+VERIFIED (measured, release `ship_stalls`, 6 bots, 4000 ticks, master
+3135508b then this change; stalled bot-ticks / falls):
+
+| map | gametype | seeds | master | parked vehicles |
+|---|---|---|---|---|
+| `mp_cassino` (UO) | dm | 1-31 odd | 174 / 2 | 22 / 0 |
+| `mp_cassino` (UO) | dm | 33-63 odd | 34 / 0 | 7 / 0 |
+| `mp_cassino` (UO) | tdm | 1-31 odd | 54 / 0 | 74 / 0 |
+| `mp_ship` (1.1) | dm | 1-31 odd | 0 / 0 | 0 / 0 |
+
+Seed 23 stalls 0. Of the dm stalls left, seed 59's 4 are a driver in
+the seat (`ship_stalls` prints the seat since this change), seed 43's 3
+a bot on foot, and seed 15's 22 a bot on foot that turned between two
+nodes beside a crewed tank at (2545, -2020) for 10 s (VERIFIED, the
+trace). INFERRED (the riders near): walking up to board it. Every tdm
+stall is a driver in the seat,
+which the driver's route owns, not the walk's follower. Deaths with fire
+off over the 32 dm seeds went from 53 to 61, the hemmed-in kills among
+them. The graph is untouched: no build or digest moves.
 
 ## 4. Memory and hearing
 

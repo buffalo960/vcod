@@ -1059,6 +1059,60 @@ impl NavGraph {
         self.edges.iter().map(Vec::len).sum()
     }
 
+    /// The nodes within `reach` of `at` across and up or down where a
+    /// standing body no longer fits in `world` as it stands now: a UO
+    /// vehicle parked since the build covers them with its collmap
+    /// (bot-navigation.md, "Parked vehicles").
+    pub fn blocked_near(&self, world: &CollisionWorld, at: Vec3, reach: f32) -> Vec<u32> {
+        let (cx, cy) = self.column(at);
+        let span = (reach / self.spacing).ceil() as i32;
+        let mut out = Vec::new();
+        for dy in -span..=span {
+            for dx in -span..=span {
+                let Some(col) = self.columns.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
+                for &n in col {
+                    let p = self.nodes[n as usize];
+                    if (p - at).truncate().length() <= reach
+                        && (p.z - at.z).abs() <= reach
+                        && !stands(world, p + Vec3::Z * 0.125)
+                    {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The node nearest node `n` (by [`Self::nearest`]'s score) within
+    /// [`CLEAR_STEPS`] grid steps across that is in none of `blocked`
+    /// (sorted) and passes `ok`.
+    pub fn clear_near(&self, n: u32, blocked: &[u32], ok: impl Fn(u32) -> bool) -> Option<u32> {
+        let at = self.nodes[n as usize];
+        let (cx, cy) = self.column(at);
+        let mut best: Option<(f32, u32)> = None;
+        for dy in -CLEAR_STEPS..=CLEAR_STEPS {
+            for dx in -CLEAR_STEPS..=CLEAR_STEPS {
+                let Some(col) = self.columns.get(&(cx + dx, cy + dy)) else {
+                    continue;
+                };
+                for &m in col {
+                    let d = self.nodes[m as usize] - at;
+                    let score = d.truncate().length() + 4.0 * d.z.abs();
+                    if best.is_none_or(|(s, b)| score < s || (score == s && m < b))
+                        && blocked.binary_search(&m).is_err()
+                        && ok(m)
+                    {
+                        best = Some((score, m));
+                    }
+                }
+            }
+        }
+        best.map(|(_, m)| m)
+    }
+
     /// The node nearest `p` among the 5x5 columns around it, a floor's height
     /// difference costing four times a horizontal unit so a node one storey
     /// up loses to one beside the feet. `None` off the graph.
@@ -1610,6 +1664,14 @@ impl NavJob {
 
 /// Horizontal distance at which a waypoint counts as reached.
 const REACH: f32 = 24.0;
+/// A start that reaches fewer nodes than this round the parked vehicles'
+/// is hemmed in by them ([`Follower::penned`]): mp_cassino's terrace at
+/// (383, -916, 76) reaches 7 with a tank over its stair, of the 7 676 it
+/// reaches without.
+const PEN_NODES: usize = 64;
+/// How many grid steps across [`NavGraph::clear_near`] looks: past a
+/// parked tank's reach (`server::bot_vehicles::PARK_REACH`).
+const CLEAR_STEPS: i32 = 6;
 /// A waypoint further than this many grid steps away means the bot has left
 /// its path (knocked back, fell off a ledge): plan again.
 const OFF_PATH_STEPS: f32 = 4.0;
@@ -1793,6 +1855,16 @@ pub struct Follower {
     /// plan pays [`CROWD_COST`] more on them (`bots::team::crowd`). Set by
     /// the server each tick; read when a plan starts.
     pub crowd: Vec<(u32, u32)>,
+    /// Nodes a parked vehicle stands over, sorted
+    /// ([`NavGraph::blocked_near`]): a plan runs through none but its own
+    /// ends, and a path with one ahead is planned again. Set by the
+    /// server each tick.
+    pub blocked: Arc<[u32]>,
+    /// The path runs through [`Self::blocked`]: no plan went round.
+    through: bool,
+    /// The last plan found the start hemmed in by [`Self::blocked`]
+    /// ([`PEN_NODES`]).
+    penned: bool,
     round: bool,
     /// The threat an [`Goal::Away`](crate::bots::Goal::Away) destination
     /// was picked against.
@@ -2014,6 +2086,18 @@ impl Follower {
                     self.dest = g.goal_node(p);
                 }
             }
+        }
+        // A vehicle parked over a node ahead, short of the path's end: plan
+        // again round it, from a node the body walks to. Its first node
+        // may be one: the start a plan falls back to when no walk arrives.
+        let ahead = self
+            .path
+            .get(self.next.max(1)..self.path.len().saturating_sub(1));
+        if !self.through && ahead.is_some_and(|a| a.iter().any(|&n| self.blocks(n))) {
+            self.path.clear();
+            self.held = None;
+            self.pull_base = None;
+            self.fell = true;
         }
         if self.path.is_empty() {
             self.on_rungs = body.on_ladder;
@@ -2418,7 +2502,12 @@ impl Follower {
             self.jump_start = false;
             let start = match world {
                 _ if self.on_rungs => g.nearest_ladder_end(here),
-                Some(w) if std::mem::take(&mut self.fell) || g.off_floor(here) => {
+                // Nor from a node a parked vehicle stands over.
+                Some(w)
+                    if std::mem::take(&mut self.fell)
+                        || g.off_floor(here)
+                        || g.nearest(here.into()).is_some_and(|n| self.blocks(n)) =>
+                {
                     g.walkable_start(w, here).map(|(n, jump)| {
                         self.jump_start = jump;
                         n
@@ -2446,11 +2535,24 @@ impl Follower {
                 self.rest = REST_TICKS;
                 return None;
             };
+            // A destination a parked vehicle stands over, as a boarding's
+            // is: the clear node nearest it, and from there a point goal
+            // walks at its point.
+            let to = if self.blocks(to) {
+                g.clear_near(to, &self.blocked, |n| g.reaches(start, n))
+                    .unwrap_or(to)
+            } else {
+                to
+            };
             // Round the edges it got stuck on when there is a way round,
             // else through them again: whatever blocked one may have moved.
             let avoid: Vec<(u32, u32)> = self.avoid.iter().map(|e| (e.0, e.1)).collect();
             self.round = !avoid.is_empty();
-            self.search = Some(Search::new(g, start, to, avoid).crowded(self.crowd.clone()));
+            self.search = Some(
+                Search::new(g, start, to, avoid)
+                    .crowded(self.crowd.clone())
+                    .blocking(self.blocked.clone()),
+            );
         }
         let search = self.search.as_mut()?;
         let mut slice = (*budget).min(PLAN_SLICE);
@@ -2461,18 +2563,42 @@ impl Follower {
         match plan {
             Plan::Pending => None,
             Plan::Found(path) => {
-                self.search = None;
+                let s = self.search.take()?;
+                self.through = s.blocked.is_empty() && !self.blocked.is_empty();
+                self.penned = false;
                 Some(path)
             }
-            Plan::Failed if self.round => {
-                let s = self.search.take()?;
-                self.round = false;
-                self.search = Some(Search::new(g, s.from, s.to, Vec::new()).crowded(s.crowd));
-                None
-            }
             Plan::Failed => {
-                self.reset();
-                self.rest = REST_TICKS;
+                let s = self.search.take()?;
+                // Round the edges it got stuck on, then through them.
+                let blocked = if self.round {
+                    self.round = false;
+                    s.blocked.clone()
+                } else if s.blocked.is_empty() {
+                    self.reset();
+                    self.rest = REST_TICKS;
+                    return None;
+                } else if s.reached() < PEN_NODES {
+                    // Hemmed in by parked vehicles: no plan until one
+                    // moves off, and the bot reads as stranded meanwhile.
+                    // Planned through them, bots that got out of a tank
+                    // onto mp_cassino's terrace at (383, -916, 76), the
+                    // tank parked over the terrace's one stair, wedged on
+                    // its hull (seeds 23 and 1).
+                    self.penned = true;
+                    self.reset();
+                    self.rest = REST_TICKS;
+                    return None;
+                } else {
+                    // A destination no way round them reaches: through
+                    // them, as round an edge it got stuck on.
+                    Arc::default()
+                };
+                self.search = Some(
+                    Search::new(g, s.from, s.to, Vec::new())
+                        .crowded(s.crowd)
+                        .blocking(blocked),
+                );
                 None
             }
         }
@@ -3630,6 +3756,18 @@ impl Follower {
         }
     }
 
+    /// Whether the last plan found the body hemmed in by parked vehicles
+    /// ([`Self::blocked`]) with no way out round them: what the bot reads
+    /// as stranded (`bots::BotView::stranded`).
+    pub fn penned(&self) -> bool {
+        self.penned
+    }
+
+    /// Whether a parked vehicle stands over node `n` ([`Self::blocked`]).
+    fn blocks(&self, n: u32) -> bool {
+        self.blocked.binary_search(&n).is_ok()
+    }
+
     fn reset(&mut self) {
         self.held = None;
         self.pull_base = None;
@@ -3767,6 +3905,7 @@ pub struct Search {
     to: u32,
     avoid: Vec<(u32, u32)>,
     crowd: Vec<(u32, u32)>,
+    blocked: Arc<[u32]>,
     cost: Vec<f32>,
     came: Vec<u32>,
     open: BinaryHeap<Open>,
@@ -3781,6 +3920,7 @@ impl Search {
             to,
             avoid,
             crowd: Vec::new(),
+            blocked: Arc::default(),
             cost: vec![f32::INFINITY; n],
             came: vec![u32::MAX; n],
             open: BinaryHeap::new(),
@@ -3800,6 +3940,19 @@ impl Search {
     /// [`CROWD_COST`] times more.
     pub fn crowded(mut self, crowd: Vec<(u32, u32)>) -> Search {
         self.crowd = crowd;
+        self
+    }
+
+    /// How many nodes the search has reached: all its start reaches, once
+    /// it has failed.
+    fn reached(&self) -> usize {
+        self.cost.iter().filter(|c| c.is_finite()).count()
+    }
+
+    /// The search through none of `blocked`'s nodes (sorted) but its
+    /// destination.
+    pub fn blocking(mut self, blocked: Arc<[u32]>) -> Search {
+        self.blocked = blocked;
         self
     }
 
@@ -3835,7 +3988,9 @@ impl Search {
             }
             let here = g.nodes[node as usize];
             for &next in &g.edges[node as usize] {
-                if self.avoid.contains(&(node, next)) {
+                if self.avoid.contains(&(node, next))
+                    || (next != self.to && self.blocked.binary_search(&next).is_ok())
+                {
                     continue;
                 }
                 let risk = if g.risky.contains(&(node, next)) {
@@ -5510,6 +5665,54 @@ mod tests {
         let g = tiny();
         assert_eq!(g.path(0, 4), Some(vec![0, 1, 2, 4]));
         assert_eq!(g.path(4, 0), None);
+    }
+
+    /// A vehicle parked over node 1 of [`tiny`]: a path under way through
+    /// it is planned again round by node 3, and a goal on it is still
+    /// walked to. Parked over node 3 as well, node 0 is hemmed in until
+    /// the vehicle moves off.
+    #[test]
+    fn a_plan_runs_round_the_nodes_a_parked_vehicle_covers() {
+        use crate::bots::Goal;
+        let g = tiny();
+        let mut f = Follower::default();
+        let mut budget = 100;
+        let mut step = |f: &mut Follower, goal| {
+            let at = [-16.0, 16.0, 0.0];
+            f.waypoint(
+                &g,
+                None,
+                goal,
+                at,
+                Footing::STANDING,
+                &mut budget,
+                &mut || 0,
+            )
+        };
+        let goal = Goal::To([64.0, 0.0, 0.0]);
+        assert_eq!(step(&mut f, goal), Some([32.0, 0.0, 0.0]));
+        f.blocked = Arc::new([1]);
+        assert_eq!(step(&mut f, goal), Some([32.0, 64.0, 0.0]));
+        assert_eq!(f.path, [0, 3, 2]);
+        let mut f = Follower {
+            blocked: Arc::new([1]),
+            ..Follower::default()
+        };
+        assert_eq!(
+            step(&mut f, Goal::To([32.0, 0.0, 0.0])),
+            Some([32.0, 0.0, 0.0])
+        );
+        // Both ways covered: hemmed in, no plan.
+        let mut f = Follower {
+            blocked: Arc::new([1, 3]),
+            ..Follower::default()
+        };
+        assert_eq!((0..3).find_map(|_| step(&mut f, goal)), None);
+        assert!(f.penned());
+        f.blocked = Arc::default();
+        let w = (0..REST_TICKS + 2).find_map(|_| step(&mut f, goal));
+        assert_eq!(w, Some([32.0, 0.0, 0.0]));
+        assert!(!f.penned());
     }
 
     #[test]
@@ -8279,6 +8482,61 @@ mod tests {
                 "{out:?}"
             );
         });
+    }
+
+    /// mp_cassino's terrace at (383, -916, 76), whose one way down to the
+    /// street at 11 is a stair: seed 23 left a Panzer IV parked at
+    /// (450, -1099, 10.5) facing -79.6 with its collmap's rear over the
+    /// stair, and a bot on the stair wedged between the stair's side and
+    /// the hull at (425.7, -957.5, 60.1) (bot-navigation.md, "Parked
+    /// vehicles"). The stair's nodes read as blocked, and the terrace is
+    /// hemmed in.
+    #[test]
+    fn a_tank_parked_over_cassinos_stair_blocks_its_nodes() {
+        use crate::bots::Goal;
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let entry = fs.resolve_map("mp_cassino").unwrap();
+        let bsp = vcod_common::bsp::parse(&fs.read(&entry).unwrap()).unwrap();
+        let world = crate::world::World::from_bsp(&bsp, Some(&fs));
+        let c = &world.collision;
+        let g = with_rules(MoveRules::Uo, || graph_for("mp_cassino", &world));
+        let tank = Vec3::new(450.0, -1099.0, 10.5);
+        assert!(g.blocked_near(c, tank, 192.0).is_empty());
+        let contents = crate::game::vehicle::CONTENTS_COLLMAP as u32;
+        c.set_model_instance(181, 28, Some((tank, Vec3::new(0.0, -79.6, 0.0), contents)));
+        let mut blocked = g.blocked_near(c, tank, 192.0);
+        c.set_model_instance(181, 28, None);
+        blocked.sort_unstable();
+        let blocked: Arc<[u32]> = blocked.into();
+        let node = |p: [f32; 3]| g.nearest(p).unwrap();
+        let (top, street) = ([383.0, -916.0, 76.0], [576.0, -1052.0, 17.0]);
+        assert!(
+            blocked.contains(&node([431.0, -964.0, 57.0])),
+            "{blocked:?}"
+        );
+        assert!(!blocked.contains(&node(top)));
+        let mut search =
+            Search::new(&g, node(top), node(street), Vec::new()).blocking(blocked.clone());
+        assert!(matches!(search.run(&g, &mut 100_000), Plan::Failed));
+        let mut f = Follower {
+            blocked,
+            ..Follower::default()
+        };
+        let mut budget = 100_000;
+        let w = (0..3).find_map(|_| {
+            f.waypoint(
+                &g,
+                None,
+                Goal::To(street),
+                top,
+                Footing::STANDING,
+                &mut budget,
+                &mut || 0,
+            )
+        });
+        assert!(w.is_none() && f.penned());
     }
 
     /// Node 4 of [`tiny`] is a drop's foot with no way on: cut off from the
