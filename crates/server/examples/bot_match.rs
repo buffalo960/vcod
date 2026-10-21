@@ -8,9 +8,13 @@
 //! team scores. Each bot-tick adds its life, its wounds (health first
 //! under 50 in a fight this life) and those it died of within 5 s, the
 //! retreats it starts (hurt, dry), and the ticks it holds a cover spot and
-//! leans. It also counts stalled bot-ticks as `ship_stalls` does (12 s
-//! within 150 units), the hits bots answer with fire at the attacker
-//! within 1 s and the deaths to a killer the bot never targeted.
+//! leans, the grenades it throws and the clip it starts each fight on
+//! (grenade kills come off the `K;` lines). It also counts stalled
+//! bot-ticks as `ship_stalls` does (12 s within 150 units), how close
+//! a team keeps: each playing bot-tick's distance to its nearest teammate
+//! and whether two or more stand within 400 units, the hits bots answer
+//! with fire at the attacker within 1 s and the deaths to a killer the
+//! bot never targeted.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
 //! `BOTS=` (6), `TICKS=` (12000, ten minutes), `JOBS=` (4, matches run in
@@ -34,6 +38,10 @@ use std::time::{Duration, Instant};
 const TICK_MS: u64 = 50;
 const WINDOW: usize = 240;
 const RADIUS: f32 = 150.0;
+/// A bot-tick is packed with this many teammates or more within
+/// `PACK_RANGE` of it.
+const PACK: usize = 2;
+const PACK_RANGE: f32 = 400.0;
 
 /// Which side a feature is on for (`COVER=`, `RETREAT=`, `TEAMPLAY=`).
 #[derive(Clone, Copy, PartialEq)]
@@ -140,6 +148,66 @@ struct Tally {
     /// targeted this life.
     killed: u32,
     blindsided: u32,
+    /// Bot-ticks playing with a teammate playing, the sum of their
+    /// distances to the nearest one, and those with [`PACK`] or more
+    /// teammates inside [`PACK_RANGE`].
+    mate_ticks: u64,
+    mate_dist: f64,
+    packed: u64,
+    kit: Kit,
+}
+
+/// Grenades and the clip a fight starts on: throws, the hits and kills
+/// their blasts made on others (`MOD_GRENADE_SPLASH`), engagements started
+/// with a bullet weapon in hand and the clip fractions they started on,
+/// summed.
+#[derive(Default, Clone)]
+struct Kit {
+    throws: u32,
+    grenade_hits: u32,
+    grenade_kills: u32,
+    engages: u32,
+    clip_sum: f64,
+}
+
+impl Kit {
+    fn add(&mut self, o: &Kit) {
+        self.throws += o.throws;
+        self.grenade_hits += o.grenade_hits;
+        self.grenade_kills += o.grenade_kills;
+        self.engages += o.engages;
+        self.clip_sum += o.clip_sum;
+    }
+
+    fn line(&self) -> String {
+        format!(
+            "grenades thrown {:4} hits {:3} kills {:3} engagements {:5} clip at start {:3.0}%",
+            self.throws,
+            self.grenade_hits,
+            self.grenade_kills,
+            self.engages,
+            100.0 * self.clip_sum / f64::from(self.engages.max(1)),
+        )
+    }
+
+    /// One bot-tick: the throws since `life`'s last count, and an
+    /// engagement on the tick tracking starts.
+    fn step(life: &mut Life, body: Option<&vcod_server::bots::BotBody>) -> Kit {
+        let mut k = Kit::default();
+        let throws = body.map_or(life.throws, |b| b.throws);
+        k.throws = throws.saturating_sub(life.throws);
+        life.throws = throws;
+        let engaged = body.is_some_and(|b| b.playing && b.engaged);
+        if engaged
+            && !life.engaged
+            && let Some(b) = body.filter(|b| b.clip_size > 0 && b.clip >= 0)
+        {
+            k.engages = 1;
+            k.clip_sum = f64::from(b.clip) / f64::from(b.clip_size);
+        }
+        life.engaged = engaged;
+        k
+    }
 }
 
 impl Tally {
@@ -163,12 +231,16 @@ impl Tally {
         self.turned += o.turned;
         self.killed += o.killed;
         self.blindsided += o.blindsided;
+        self.mate_ticks += o.mate_ticks;
+        self.mate_dist += o.mate_dist;
+        self.packed += o.packed;
+        self.kit.add(&o.kit);
     }
 
     /// The per-bot-tick line under [`Tally::line`].
     fn survive(&self) -> String {
         format!(
-            "life {:5.1} s wounds {:4} dead in 5 s {:3.0}% retreats hurt {:4} dry {:4} cover hold {:6} lean {:6} turned {:3.0}% answered {:3.0}% of {:5} blindsided {:3.0}% of {:4}",
+            "life {:5.1} s wounds {:4} dead in 5 s {:3.0}% retreats hurt {:4} dry {:4} cover hold {:6} lean {:6} mate {:4.0} packed {:4.1}% turned {:3.0}% answered {:3.0}% of {:5} blindsided {:3.0}% of {:4}",
             self.life_ticks as f32 * TICK_MS as f32 / 1000.0 / self.lives.max(1) as f32,
             self.wounds,
             100.0 * self.wound_deaths as f32 / self.wounds.max(1) as f32,
@@ -176,6 +248,8 @@ impl Tally {
             self.dry,
             self.hold,
             self.lean,
+            self.mate_dist / self.mate_ticks.max(1) as f64,
+            100.0 * self.packed as f64 / self.mate_ticks.max(1) as f64,
             100.0 * self.turned as f32 / self.hits_taken.max(1) as f32,
             100.0 * self.answered as f32 / self.hits_taken.max(1) as f32,
             self.hits_taken,
@@ -397,6 +471,7 @@ fn summarize(what: &str, results: &[&Match]) {
         for (k, t) in map {
             println!("  {kind} {k:<13} {}", t.line());
             println!("  {kind} {k:<13} {}", t.survive());
+            println!("  {kind} {k:<13} {}", t.kit.line());
         }
     };
     rows("team ", &by_team);
@@ -523,6 +598,11 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         first_hit
                             .entry((anum.to_string(), vnum.to_string()))
                             .or_insert(tick);
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            att.0.kit.grenade_hits += 1;
+                            att.1.kit.grenade_hits += 1;
+                            att.2.kit.grenade_hits += 1;
+                        }
                         let vteam = f[2 + g];
                         if m.dm || ateam.is_empty() || ateam != vteam {
                             react.hit(vnum, anum, tick, |t| {
@@ -582,6 +662,14 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         a.0.ttk_ms.push(ttk);
                         a.1.ttk_ms.push(ttk);
                         a.2.ttk_ms.push(ttk);
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            a.0.kit.grenade_hits += 1;
+                            a.1.kit.grenade_hits += 1;
+                            a.2.kit.grenade_hits += 1;
+                            a.0.kit.grenade_kills += 1;
+                            a.1.kit.grenade_kills += 1;
+                            a.2.kit.grenade_kills += 1;
+                        }
                     }
                 }
                 // [guid,] num, team, name, action
@@ -624,6 +712,35 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             let life = bots.entry(slot).or_default();
             let t = tally(&mut m, o, &num, team, &skill);
             life.step(body.as_ref(), cover, t);
+        }
+        // Each playing bot's distance to its nearest playing teammate, and
+        // how many stand inside PACK_RANGE.
+        let playing: Vec<(usize, [f32; 3])> = sv
+            .bot_slots()
+            .into_iter()
+            .filter_map(|s| Some((s, sv.bot_body(s).filter(|b| b.playing && !b.dead)?.origin)))
+            .collect();
+        let playing: Vec<(usize, &'static str, [f32; 3])> = playing
+            .into_iter()
+            .map(|(s, p)| (s, team_name(&mut sv, s, m.dm), p))
+            .filter(|(_, t, _)| *t != "none")
+            .collect();
+        for &(slot, team, at) in &playing {
+            let d: Vec<f32> = playing
+                .iter()
+                .filter(|(s, t, _)| *s != slot && *t == team)
+                .map(|(_, _, p)| (0..3).map(|i| (p[i] - at[i]).powi(2)).sum::<f32>().sqrt())
+                .collect();
+            let Some(near) = d.iter().copied().reduce(f32::min) else {
+                continue;
+            };
+            let close = d.iter().filter(|&&x| x < PACK_RANGE).count();
+            let t = tally(&mut m, o, &slot.to_string(), team, &skill);
+            for t in [t.0, t.1, t.2] {
+                t.mate_ticks += 1;
+                t.mate_dist += f64::from(near);
+                t.packed += u64::from(close >= PACK);
+            }
         }
         for slot in sv.bot_slots() {
             let Some(b) = sv.bot_body(slot).filter(|b| b.playing && !b.deployed) else {
@@ -689,6 +806,9 @@ struct Life {
     /// Ticks since this life's wound, if any.
     wound: Option<u64>,
     retreating: u8,
+    /// [`Kit::step`]'s last throw count and tracking.
+    throws: u32,
+    engaged: bool,
 }
 
 impl Life {
@@ -711,6 +831,7 @@ impl Life {
             _ => {}
         }
         self.retreating = r;
+        d.kit = Kit::step(self, body);
         if let Some(b) = body.filter(|b| b.playing) {
             if self.wound.is_none() && b.engaged && b.health < 50 {
                 self.wound = Some(0);

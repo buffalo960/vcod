@@ -487,15 +487,23 @@ files):
     The release waits until the view is on that lob, or within 30
     degrees of the throw's yaw without one, 16 ticks at most (a UO frag
     cooks on meanwhile, with 2.5 s or more left).
-  - `BotView::frag_near`: a live frag or satchel, anyone's, within 400
-    across and 160 up or down. The goal is away from it and the keys run
-    that way, the view still on the fight.
+  - `BotView::frag_near`: a live frag or satchel within 400 across and
+    160 up or down, the bot's own or one it notices (`bots::notices_frag`,
+    since 2026-10-21: in a clear line and within 60 degrees of the view,
+    or within 150; bot-combat.md 6.5). The goal is away from it and the
+    keys run that way, the view still on the fight.
   VERIFIED (measured, ours, 2026-10-15, release `ship_stalls` `UO=1
   SHOOT=1`, `mp_cassino` `tdm`, 6 bots, 120 s, seeds 1 to 39 odd): with
   the turn-away and the release wait alone, 5 of 35 frag kills were the
   thrower's own; with the flight from live frags too, 4 of 17; with the
   lob probe, 0 of 12, among 499 kills. Fewer frags kill at all: the
   probe passes on most throws from indoors, and everyone runs from one.
+- Since 2026-10-21 (bot-combat.md 6.5) a throw goes only where the gun
+  cannot: at an enemy in sight no round has gone at for 1.5 s, or where
+  a slow one was lost 0.2 to 3 s ago; from a body at rest; never with a
+  teammate within the blast of the landing (`Server::lob_probe`). A 1.1
+  or 1.5 frag with no clear lob once the hold's wait is out is put back
+  through a switch to the rifle rather than let go.
 - By 2026-10-16 three releases still went off the probed flight
   (VERIFIED, measured, ours, release `ship_stalls` `UO=1 SHOOT=1`,
   `mp_cassino` `tdm`, 6 bots, 120 s, each throw logged): the release
@@ -1257,6 +1265,9 @@ view.
   `Follower::crowd`), so a way round up to twice as long is taken over
   the teammate's. Read when a plan starts; `dm`, `tdm` and `bel` plan as
   before, so the `dm` stall runs (`ship_stalls`) are unchanged.
+- Noise answering. On any level with sides, `tdm` and `bel` included,
+  only the two teammates nearest a noise go to it (`team::answers`);
+  the rest of the side keeps its own way (`bot-combat.md` 7).
 
 `team_tally` has since been folded into `bot_match` (`GAMETYPE=sd`,
 `MAPS=`, `TEAMPLAY=` switching these rules per side in one build);
@@ -1543,16 +1554,18 @@ the step; seed 45 on c8c3fd1f stalled at the same roofs. 45 is a tank
 driven back and forth over 350 units near (-150, -400) whose ground made
 from the anchor reached 300 on each reversal, then the driver's walk in
 the same spot. 63 is a bot's own frag. Not traced further.
-`uo_tdm_games_that_stalled_or_never_sprinted` replays seeds 15, 17, 23,
+`uo_tdm_games_that_stalled_or_never_sprinted` replays seeds 43, 17, 13,
 25 and 33 with vehicles and 1 and 31 without.
 
 VERIFIED (measured, release, stock UO paks, 2026-10-21): with the sight
-cone and target choice of `bot-combat.md` 7, seeds 1 and 19 pin bot 0 on
-the same roofs, from its spawn at (4938, -1317, 256): no enemy, no hit,
-keys held at the waypoint (4896, -1384, 280) from (4938 to 4957, -1405
-to -1428) for 12 s. The other ten of seeds 1 to 23 odd pass. The gate's
-default seed is 3, and the replay plays 23 (336 bot-ticks on sprint
-legs, 320 sprinted: the fewest of those ten) in 19's place for pre-aim.
+cone and target choice of `bot-combat.md` 8 alone, seeds 1 and 19 pinned
+bot 0 on the same roofs, from its spawn at (4938, -1317, 256): no enemy,
+no hit, keys held at the waypoint (4896, -1384, 280) from (4938 to
+4957, -1405 to -1428) for 12 s. With those beside the grenade rules
+(`bot-combat.md` 6.5) and the noise answering (section 9, `bot-combat.md` 7), seed 1 passes and
+seed 19's game ends on a bot's own frag; seed 13, the other game pre-aim
+starved of sprint legs, takes its place (331 bot-ticks on sprint legs,
+330 sprinted, the fewest of seeds 3, 5, 7, 13, 21 and 23).
 
 ### 10.7 Two exits on one frame
 

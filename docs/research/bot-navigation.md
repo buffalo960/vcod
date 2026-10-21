@@ -3786,7 +3786,7 @@ Two goals sit between a visible enemy and `Roam`, both kept by the brain
   (`forget_ticks`, 1 s): an enemy back in sight within another
   `forget_ticks` of being dropped is taken again on a third of the
   reaction delay, after that as a new target with the full delay
-  (`bot-combat.md` 7).
+  (`bot-combat.md` 8).
 - Pre-aim. While a remembered spot within `SHOOT_RANGE` is a goal and the
   waypoint is level, the view turns toward the spot at `turn_deg` per tick
   and the move keys are rotated so the body keeps the path. Ladder and ledge
@@ -3804,12 +3804,20 @@ Two goals sit between a visible enemy and `Roam`, both kept by the brain
   high above its origin, nobody's. `step_bots` takes the list at the top of the next
   tick and hands each bot the loudest one it did not make (`bots::loudest`:
   the smallest distance over range, inside range). No line of sight is
-  needed, and no sight cone (`bot-combat.md` 7): a shot behind the bot is
+  needed, and no sight cone (`bot-combat.md` 8): a shot behind the bot is
   heard as well as one ahead. Teammates' fire counts: a friend shooting
   means an enemy near him.
 - A heard noise is a goal for `Skill::noise_ticks` (200, 10 s, about 2200
   units at run speed) and is replaced by any newer one, but never replaces the
   spot of a seen enemy.
+
+- Answering. On a side, with team play on, a bot hears only the noises
+  fewer than `team::ANSWERS` (2) teammates stand nearer, the noise's own
+  shooter not counted (`team::answers`, the server's view pass); the
+  rest of the team keeps to its roam. VERIFIED (measured, ours,
+  `bot_match`, `bot-combat.md` 7): before it, every teammate in range
+  went to the same shot, and in a six-a-side `tdm` 72% of bot-ticks had
+  two or more teammates within 400 units.
 
 Ranges: `HEAR_GUNFIRE` 2000 and `HEAR_BLAST` 1500 units. VERIFIED
 (`soundaliases/iw_sound.csv` in `pak1.pk3`): every rifle, pistol and gun

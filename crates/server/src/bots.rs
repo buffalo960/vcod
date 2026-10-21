@@ -39,6 +39,27 @@ pub(crate) const LOB_DEG: f32 = 25.0;
 /// frag rolled back to, took its own blast (bot-objectives.md 6).
 pub(crate) const FLEE_REACH: f32 = 400.0;
 pub(crate) const FLEE_HEIGHT: f32 = 160.0;
+/// Another's frag is run from only once noticed ([`notices_frag`]): in a
+/// clear line and within this of the view's yaw either way, or this near.
+const FRAG_SEEN_DEG: f32 = 60.0;
+const FRAG_HEARD: f32 = 150.0;
+
+/// Whether a bot whose eye is at `eye`, looking along `yaw` (degrees),
+/// notices someone else's live frag at `frag`: in a clear line (`clear`)
+/// and in front, or close enough to hear it land. Run from wherever it lay,
+/// no frag ever went off near a bot (0 kills of 718 throws over the
+/// `tdm` table's 16 matches, bot-combat.md 6.5); CoD 1 draws no grenade
+/// indicator.
+pub(crate) fn notices_frag(
+    eye: glam::Vec3,
+    yaw: f32,
+    frag: glam::Vec3,
+    clear: impl Fn(glam::Vec3, glam::Vec3) -> bool,
+) -> bool {
+    let to = frag - eye;
+    let ahead = yaw_diff(to.y.atan2(to.x).to_degrees(), yaw).abs() < FRAG_SEEN_DEG;
+    (ahead || to.length() < FRAG_HEARD) && clear(eye, frag)
+}
 /// A throw turned away from a close enemy with no clear lob found goes
 /// this high (wire pitch, up). A release waits for a clear lob and the view
 /// within `LOB_SLACK` of it, else within `AWAY_DEG` of the throw's yaw,
@@ -755,7 +776,8 @@ pub struct Noise {
 /// The noise `listener` hears loudest from `at`: the one nearest relative
 /// to its range scaled by `hearing` ([`Skill::hearing`]), first in recorded
 /// order on a tie. Teammates' fights count too: a friend shooting means an
-/// enemy close to him.
+/// enemy close to him. The server leaves out those its teammates nearer the
+/// noise answer instead (`team::answers`).
 pub(crate) fn loudest(
     noises: &[Noise],
     listener: usize,
@@ -808,6 +830,10 @@ pub struct BotBody {
     /// its last cmd held the trigger.
     pub target: Option<usize>,
     pub firing: bool,
+    /// The held weapon's `clipSize` when it is a bullet weapon, else 0.
+    pub clip_size: i16,
+    /// Grenades it let go this game ([`Bot::throws`]).
+    pub throws: u32,
 }
 
 pub struct Bot {
@@ -965,6 +991,15 @@ pub struct Bot {
     /// Where the enemy a throw in hand goes at was last seen: one that left
     /// sight mid-hold is still thrown at, by a probed lob.
     throw_at: Option<[f32; 3]>,
+    /// Whom a throw under way follows ([`ThrowFor`]).
+    throw_for: ThrowFor,
+    /// Grenades let go this game, for `bot_match`.
+    throws: u32,
+    /// Ticks since an enemy was last in sight: a tactical reload waits on
+    /// [`QUIET_RELOAD_TICKS`].
+    quiet_ticks: u32,
+    /// How fast the last enemy in sight moved, flat, units/s.
+    seen_speed: f32,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
     /// rather than standing on it.
@@ -1192,6 +1227,17 @@ struct Recall {
     seen: bool,
 }
 
+/// Whom a throw under way goes at ([`Bot::throw_enemy`]).
+#[derive(Clone, Copy)]
+enum ThrowFor {
+    /// Any enemy in sight (a stage set by hand in a test).
+    Any,
+    /// The enemy in this slot while in sight, else where he was last seen.
+    Enemy(usize),
+    /// A lost enemy's spot, whoever comes into sight.
+    Spot,
+}
+
 enum Stage {
     Wander,
     ToGrenade,
@@ -1274,6 +1320,10 @@ impl Bot {
             lmg_linger: 0,
             throw_away: None,
             throw_at: None,
+            throw_for: ThrowFor::Any,
+            throws: 0,
+            quiet_ticks: 0,
+            seen_speed: 0.0,
             held_over: 0,
             marker_reached: None,
             last_seen_seq: 0,
@@ -2307,19 +2357,54 @@ impl Bot {
     }
 
     /// What a throw goes at: a turned-away throw's spot `AWAY_REACH` off
-    /// along its yaw, else the enemy in sight, else, with a throw under
-    /// way, where it was last seen. A frag let go along the view once the
-    /// enemy had stepped behind cover struck the cover and rolled back.
+    /// along its yaw; with a throw under way the enemy in sight, else
+    /// where it was last seen; before one, [`Bot::throw_spot`]. A frag let
+    /// go along the view once the enemy had stepped behind cover struck
+    /// the cover and rolled back.
     pub(crate) fn throw_target(&self, view: &BotView) -> Option<[f32; 3]> {
         if let Some(yaw) = self.throw_away {
             let (s, c) = yaw.to_radians().sin_cos();
             let [x, y, z] = view.origin;
             return Some([x + c * AWAY_REACH, y + s * AWAY_REACH, z]);
         }
-        let in_hand = !matches!(self.stage, Stage::Wander);
-        view.enemy
-            .map(|e| e.origin)
-            .or(self.throw_at.filter(|_| in_hand))
+        if matches!(self.stage, Stage::Wander) {
+            return self.throw_spot(view);
+        }
+        self.throw_enemy(view).map(|e| e.origin).or(self.throw_at)
+    }
+
+    /// The enemy in sight a throw under way follows: the one it started
+    /// at, none for a lost enemy's spot. A frag held for one enemy that
+    /// went at another who came into sight mid-hold left on the old view,
+    /// off the new lob, and killed its thrower.
+    fn throw_enemy(&self, view: &BotView) -> Option<EnemyView> {
+        view.enemy.filter(|e| match self.throw_for {
+            ThrowFor::Any => true,
+            ThrowFor::Enemy(slot) => e.slot == slot,
+            ThrowFor::Spot => false,
+        })
+    }
+
+    /// Where a throw would start for, between [`GRENADE_MIN`] and
+    /// [`GRENADE_RANGE`] off: an enemy in sight no round has gone at for
+    /// [`COVER_THROW_TICKS`] (behind cover, or never lined up), else the
+    /// spot a seen enemy was lost at within [`LOST_THROW_TICKS`], standing
+    /// or slow ([`LOST_STILL`]). An enemy the gun can hit takes the gun: a
+    /// frag at one in the open made 5 of 2908 kills (bot-combat.md 6.5).
+    fn throw_spot(&self, view: &BotView) -> Option<[f32; 3]> {
+        let at = match view.enemy {
+            Some(e) => (self.futile >= COVER_THROW_TICKS).then_some(e.origin)?,
+            None if self.seen_speed < LOST_STILL => {
+                let r = self.recall.filter(|r| r.seen)?;
+                let lost = self.skill.memory_ticks.saturating_sub(r.ticks);
+                (LOST_THROW_MIN..=LOST_THROW_TICKS)
+                    .contains(&lost)
+                    .then_some(r.at)?
+            }
+            None => return None,
+        };
+        let d = dist_sq(view.origin, at);
+        (d > GRENADE_MIN * GRENADE_MIN && d < GRENADE_RANGE * GRENADE_RANGE).then_some(at)
     }
 
     /// The `kill` [`Bot::think`] asked for, once.
@@ -2456,9 +2541,7 @@ impl Bot {
             // Whatever the death interrupted, the new life starts clean: no
             // throw resumes on respawn.
             self.stage = Stage::Wander;
-            self.throw_away = None;
-            self.held_over = 0;
-            self.throw_at = None;
+            self.end_throw();
             self.disengage();
             self.recall = None;
             self.end_life();
@@ -2506,6 +2589,13 @@ impl Bot {
         }
         self.obj.live = true;
         self.remember(view);
+        self.quiet_ticks = match view.enemy {
+            Some(e) => {
+                self.seen_speed = e.velocity[0].hypot(e.velocity[1]);
+                0
+            }
+            None => self.quiet_ticks.saturating_add(1),
+        };
         if let Some(bel) = view.bel.as_ref()
             && let Some(m) = self.next_marker(view, bel)
             && arrived(view.origin, m)
@@ -2513,7 +2603,7 @@ impl Bot {
             self.marker_reached = Some(m);
         }
         if !matches!(self.stage, Stage::Wander) {
-            if let Some(e) = view.enemy {
+            if let Some(e) = self.throw_enemy(view) {
                 self.throw_at = Some(e.origin);
             }
             cmd.angles = self.lob_angles(view);
@@ -2557,31 +2647,36 @@ impl Bot {
         if let Some(cmd) = self.think_objective(view, cmd) {
             return cmd;
         }
-        // A frag goes at a close enemy, occasionally, once the cooldown is
-        // spent; the switch itself is the stage machine below.
+        // A frag goes at an enemy the gun cannot reach ([`Bot::throw_spot`])
+        // once the cooldown is spent and the server found a clear lob with
+        // no teammate by the landing, from a body at rest: one that started
+        // on the run slid on through the switch to where a wall over the
+        // eye stopped every lob, and the hold let go into it. The switch
+        // itself is the stage machine below.
         self.grenade_cooldown = self.grenade_cooldown.saturating_sub(1);
         if self.shoot
             && self.grenade_cooldown == 0
             && self.switch_to.is_none()
             && !view.deployed
+            && view.speed < THROW_SPEED
+            && view.eye_settled
             && view.lob.is_some()
-            && let (Some(g), Some(e)) = (view.grenade, view.enemy)
+            && let (Some(g), Some(at)) = (view.grenade, self.throw_spot(view))
         {
-            let d = dist_sq(view.origin, e.origin);
-            let close = d < GRENADE_RANGE * GRENADE_RANGE && d > GRENADE_MIN * GRENADE_MIN;
-            if close && self.rand() % 4 == 0 {
-                self.grenade_cooldown = GRENADE_COOLDOWN_TICKS;
-                self.rifle = view.weapon;
-                self.stage = Stage::ToGrenade;
-                // The start tick aims as the stages do: a cmd left at null
-                // angles turned the view onto `delta_angles`, off the enemy,
-                // and a target never recorded left the release no lob
-                // (bot-objectives.md 6).
-                self.throw_at = Some(e.origin);
-                cmd.angles = self.lob_angles(view);
-                cmd.weapon = g;
-                return cmd;
-            }
+            self.grenade_cooldown = GRENADE_COOLDOWN_TICKS;
+            self.rifle = view.weapon;
+            self.stage = Stage::ToGrenade;
+            // The start tick aims as the stages do: a cmd left at null
+            // angles turned the view onto `delta_angles`, off the enemy,
+            // and a target never recorded left the release no lob
+            // (bot-objectives.md 6).
+            self.throw_at = Some(at);
+            self.throw_for = view
+                .enemy
+                .map_or(ThrowFor::Spot, |e| ThrowFor::Enemy(e.slot));
+            cmd.angles = self.lob_angles(view);
+            cmd.weapon = g;
+            return cmd;
         }
 
         // A body that has not left a 15-unit circle in ten ticks (2 units
@@ -2930,10 +3025,17 @@ impl Bot {
         if let Some(w) = self.switch_to {
             cmd.weapon = w;
         }
-        // A dry clip reloads, unless a switch is putting it away or there is
-        // nothing to load; the tap is suppressed while the machine is busy
-        // so a held bit cannot restart the reload it started.
-        if view.clip == 0
+        // A dry clip reloads, and so does one under half once no enemy has
+        // been in sight for [`QUIET_RELOAD_TICKS`] (not the pistol, which
+        // goes back by then), unless a switch is putting it away or there
+        // is nothing to load; the tap is suppressed while the machine is
+        // busy so a held bit cannot restart the reload it started.
+        let tactical = self.quiet_ticks >= QUIET_RELOAD_TICKS
+            && view.clip > 0
+            && 2 * view.clip < view.survive.clip_size
+            && view.pistol != Some(view.weapon)
+            && view.grenade != Some(view.weapon);
+        if (view.clip == 0 || tactical)
             && view.busy_ms == 0
             && self.switch_to.is_none()
             && view.loaded >> view.weapon.min(63) & 1 == 1
@@ -3476,6 +3578,11 @@ impl Bot {
         self.sprint_leg
     }
 
+    /// Grenades let go this game ([`BotBody::throws`]).
+    pub fn throws(&self) -> u32 {
+        self.throws
+    }
+
     /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
         self.target.is_some() || self.seated_fight()
@@ -3661,6 +3768,16 @@ impl Bot {
         if turning {
             self.held_over += 1;
         }
+        // Still no clear lob, or the view off it, once the wait is out: a
+        // frag with no fuse running is put back, the switch cancelling the
+        // pullback with the clip unspent (cod11-combat.md 1.14). One let go
+        // anyway met the wall the probe saw and came back at the thrower.
+        if left <= 1 && !turning && (blocked || off) && !view.grenade_cooks {
+            self.end_throw();
+            cmd.weapon = self.rifle;
+            self.stage = Stage::BackToRifle { weapon: self.rifle };
+            return cmd;
+        }
         if left > 1 || turning {
             cmd.buttons = msg::BUTTON_ATTACK;
             if left <= spoon {
@@ -3671,10 +3788,9 @@ impl Bot {
                 spoon,
             };
         } else {
-            self.throw_away = None;
-            self.held_over = 0;
-            self.throw_at = None;
+            self.end_throw();
             // The release; the next stage walks the byte back to the rifle.
+            self.throws += 1;
             log::debug!(
                 "{} throws from {:?}, enemy {:?} at {:.0}, view {:?}",
                 self.name,
@@ -3687,6 +3803,15 @@ impl Bot {
             self.stage = Stage::BackToRifle { weapon: self.rifle };
         }
         cmd
+    }
+
+    /// A throw is out, put back or cut short by a death: nothing of it
+    /// carries over to the next.
+    fn end_throw(&mut self) {
+        self.throw_away = None;
+        self.held_over = 0;
+        self.throw_at = None;
+        self.throw_for = ThrowFor::Any;
     }
 
     fn think_back(&mut self, view: &BotView, mut cmd: UserCmd, weapon: u8) -> UserCmd {
@@ -3781,8 +3906,21 @@ const LMG_ARC_DEG: f32 = 50.0;
 /// (`PM_UpdateViewAngles`, coduo-movement.md 7). A prone deploy measures it
 /// from the torso's pitch, which the brain does not read.
 const LMG_PITCH_DEG: f32 = 45.0;
-/// Grenade reuses are minutes apart, not seconds.
-const GRENADE_COOLDOWN_TICKS: u32 = 400;
+/// Ticks between one throw's start and the next's.
+const GRENADE_COOLDOWN_TICKS: u32 = 200;
+/// An enemy in sight this many ticks with no round at him is thrown at;
+/// one lost from sight between these ticks ago is thrown at where he went
+/// ([`Bot::throw_spot`]).
+const COVER_THROW_TICKS: u32 = 30;
+const LOST_THROW_MIN: u32 = 4;
+const LOST_THROW_TICKS: u32 = 60;
+/// ...if he was slower than this when lost, units/s: a frag at the spot a
+/// runner left lands where he no longer is.
+const LOST_STILL: f32 = 100.0;
+/// A throw starts from a body slower than this, units/s.
+const THROW_SPEED: f32 = 60.0;
+/// Ticks with no enemy in sight before a clip under half reloads.
+const QUIET_RELOAD_TICKS: u32 = 20;
 /// A sprint starts with this much straight path ahead and this much of the
 /// fatigue bar left, and stops this far from the straight's end, a tick or
 /// two of friction back to the graph's pace.
@@ -6571,6 +6709,50 @@ mod tests {
         assert_eq!(bot.throw_target(&v), None);
     }
 
+    /// Another's frag is noticed in front in a clear line, or close by;
+    /// one behind or out of the line goes unnoticed.
+    #[test]
+    fn a_frag_is_noticed_in_front_or_close() {
+        let eye = glam::Vec3::new(0.0, 0.0, 60.0);
+        let open = |_, _| true;
+        let notices = |at: [f32; 3], clear: &dyn Fn(glam::Vec3, glam::Vec3) -> bool| {
+            notices_frag(eye, 0.0, at.into(), clear)
+        };
+        assert!(notices([300.0, 50.0, 0.0], &open));
+        assert!(!notices([-300.0, 0.0, 0.0], &open), "seen behind");
+        assert!(notices([-100.0, 0.0, 0.0], &open), "not heard close");
+        assert!(
+            !notices([300.0, 0.0, 0.0], &|_, _| false),
+            "seen through a wall"
+        );
+    }
+
+    /// A 1.1 frag with no clear lob once the wait is out is put back: the
+    /// cmd that lets the trigger go asks for the rifle, which cancels the
+    /// pullback. A UO frag, its fuse running, is let go.
+    #[test]
+    fn a_throw_with_no_lob_is_put_back() {
+        for cooks in [false, true] {
+            let mut bot = Bot::new("allies", true, 1);
+            bot.rifle = 10;
+            let mut v = view();
+            v.weapon = 6;
+            v.grenade_cooks = cooks;
+            v.enemy = Some(EnemyView {
+                slot: 3,
+                origin: [300.0, 0.0, 40.0],
+                velocity: [0.0; 3],
+            });
+            bot.stage = Stage::Cook { left: 1, spoon: 0 };
+            let cmd = (0..=AWAY_TICKS)
+                .map(|_| bot.think(&v))
+                .find(|c| c.buttons & BUTTON_ATTACK == 0)
+                .expect("held for good");
+            assert_eq!(cmd.weapon, if cooks { 6 } else { 10 }, "cooks {cooks}");
+            assert_eq!(bot.throws(), u32::from(cooks), "cooks {cooks}");
+        }
+    }
+
     /// mp_cassino on UO, seed 1: the tick a throw started sent null angles,
     /// which turned the view onto `delta_angles` (45 degrees off the
     /// enemy), and the enemy left sight before any target was recorded.
@@ -6600,6 +6782,84 @@ mod tests {
         assert!(yaw.abs() < 10.0, "the view turns onto the enemy: {yaw}");
         v.enemy = None;
         assert_eq!(bot.throw_target(&v), Some([400.0, 0.0, 40.0]));
+    }
+
+    /// An enemy lost from sight a second ago is thrown at where he went;
+    /// one gone longer than [`LOST_THROW_TICKS`] is not.
+    #[test]
+    fn a_bot_throws_where_an_enemy_was_lost() {
+        let mut v = view();
+        v.grenade = Some(6);
+        v.lob = Some([-10.0, 0.0]);
+        let mut bot = Bot::new("allies", true, 1);
+        bot.grenade_cooldown = 0;
+        let lost = |ticks| Recall {
+            at: [400.0, 0.0, 40.0],
+            ticks,
+            seen: true,
+        };
+        bot.recall = Some(lost(bot.skill.memory_ticks - LOST_THROW_TICKS - 2));
+        bot.think(&v);
+        assert!(
+            matches!(bot.stage, Stage::Wander),
+            "a stale spot drew a throw"
+        );
+        bot.recall = Some(lost(bot.skill.memory_ticks - 20));
+        let cmd = bot.think(&v);
+        assert!(matches!(bot.stage, Stage::ToGrenade));
+        assert_eq!(cmd.weapon, 6);
+        assert_eq!(bot.throw_target(&v), Some([400.0, 0.0, 40.0]));
+    }
+
+    /// An enemy in sight takes the gun until no round has gone at him for
+    /// [`COVER_THROW_TICKS`].
+    #[test]
+    fn a_bot_throws_at_an_enemy_only_once_the_gun_has_failed() {
+        let mut v = view();
+        v.lob = Some([-10.0, 0.0]);
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [400.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        let mut bot = Bot::new("allies", true, 1);
+        bot.grenade_cooldown = 0;
+        bot.futile = COVER_THROW_TICKS - 2;
+        assert_eq!(bot.throw_target(&v), None);
+        bot.futile = COVER_THROW_TICKS;
+        assert_eq!(bot.throw_target(&v), Some([400.0, 0.0, 40.0]));
+        bot.think(&v);
+        assert!(matches!(bot.stage, Stage::ToGrenade));
+    }
+
+    /// A clip under half reloads once no enemy has been in sight for
+    /// [`QUIET_RELOAD_TICKS`]; half or more, or in a fight, it does not.
+    #[test]
+    fn a_bot_reloads_a_short_clip_between_fights() {
+        let mut v = view();
+        v.grenade = None;
+        v.survive.clip_size = 8;
+        v.clip = 3;
+        let mut bot = Bot::new("allies", true, 1);
+        let reloads = |bot: &mut Bot, v: &BotView| {
+            (0..QUIET_RELOAD_TICKS + 1).any(|_| bot.think(v).wbuttons & WBUTTON_RELOAD != 0)
+        };
+        assert!(reloads(&mut bot, &v), "a short clip reloads");
+        v.clip = 4;
+        assert!(
+            !reloads(&mut Bot::new("allies", true, 1), &v),
+            "half a clip reloaded"
+        );
+        v.clip = 3;
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [2000.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        assert!(
+            !reloads(&mut Bot::new("allies", true, 1), &v),
+            "reloaded mid-fight"
+        );
     }
 
     /// A live frag near, anyone's: the goal is away from it and the keys
