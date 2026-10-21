@@ -420,7 +420,10 @@ something, the bullet links it.
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
   hunts. With `--bots-shoot` they fight back, with a reaction delay, a turn
   cap and aim that settles on target, from behind a low wall they duck
-  under to reload or round a corner they lean out of. They are still bad at it. So am I.
+  under to reload or round a corner they lean out of. A hurt bot, or one whose clip ran
+  dry, backs off to a spot out of its enemy's sight, reloads and waits
+  there, and a hurt one walks to a health pack lying near. They are still
+  bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from
   UO's weapon menus and deploy a light machine gun's bipod to fire it, cook

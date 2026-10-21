@@ -178,6 +178,11 @@ impl LeafTime {
     pub fn settle(&mut self, now_ms: i32) {
         self.0.settle(now_ms);
     }
+
+    /// Keeps the time where it stopped and steps it again from `now_ms`.
+    pub fn resume(&mut self, now_ms: i32) {
+        self.0.time_ms = now_ms;
+    }
 }
 
 /// A node's weight easing to its goal: `XAnimSetGoalWeight` (`cod_lnxded`

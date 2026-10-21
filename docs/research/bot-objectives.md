@@ -116,8 +116,9 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
 
 ## 3. The brain
 
-Goal order: a plant or defuse in progress (use held, or linked), a visible
-enemy, objective travel, then the rest. Use is pressed only at the
+Goal order: a plant or defuse in progress (use held, or linked), a live
+frag, a retreat's cover (bot-combat.md 5), a visible enemy, a health pack for a
+hurt bot (bot-combat.md 5), objective travel, then the rest. Use is pressed only at the
 objective, since its rising edge also picks up weapons and mounts turrets.
 
 - Sites are dealt out by rank: a bot's place among its team's bots by slot
