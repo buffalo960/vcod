@@ -5947,6 +5947,12 @@ impl Server {
             crew_wait: self.bots.get(&slot).is_some_and(|b| b.waiting_for_crew()),
             boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
             rockets_at_armor: self.bots.get(&slot).map_or(0, |b| b.rockets_at_armor()),
+            clip_size: self
+                .weapon_table
+                .get(sim.ps.weapon as usize)
+                .filter(|d| d.weapon_type == "bullet")
+                .map_or(0, |d| d.clip_size.min(i16::MAX as u32) as i16),
+            throws: self.bots.get(&slot).map_or(0, |b| b.throws()),
         })
     }
 

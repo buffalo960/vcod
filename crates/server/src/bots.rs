@@ -726,6 +726,10 @@ pub struct BotBody {
     pub boardings: u32,
     /// Rockets it fired on foot at enemy vehicles.
     pub rockets_at_armor: u32,
+    /// The held weapon's `clipSize` when it is a bullet weapon, else 0.
+    pub clip_size: i16,
+    /// Grenades it let go this game ([`Bot::throws`]).
+    pub throws: u32,
 }
 
 pub struct Bot {
@@ -878,6 +882,8 @@ pub struct Bot {
     /// Where the enemy a throw in hand goes at was last seen: one that left
     /// sight mid-hold is still thrown at, by a probed lob.
     throw_at: Option<[f32; 3]>,
+    /// Grenades let go this game, for `bot_match`.
+    throws: u32,
     /// The `bel` marker this bot last stood at; it holds still for
     /// `scr_bel_positiontime` seconds, and the hunt looks round from it
     /// rather than standing on it.
@@ -1181,6 +1187,7 @@ impl Bot {
             lmg_linger: 0,
             throw_away: None,
             throw_at: None,
+            throws: 0,
             held_over: 0,
             marker_reached: None,
             last_seen_seq: 0,
@@ -3328,6 +3335,11 @@ impl Bot {
         self.sprint_leg
     }
 
+    /// Grenades let go this game ([`BotBody::throws`]).
+    pub fn throws(&self) -> u32 {
+        self.throws
+    }
+
     /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
         self.target.is_some() || self.seated_fight()
@@ -3517,6 +3529,7 @@ impl Bot {
             self.held_over = 0;
             self.throw_at = None;
             // The release; the next stage walks the byte back to the rifle.
+            self.throws += 1;
             log::debug!(
                 "{} throws from {:?}, enemy {:?} at {:.0}, view {:?}",
                 self.name,
