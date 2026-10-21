@@ -645,9 +645,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   the box axial there, not in the world. A capsule meets the axial sides
   as its upright world box, `|turned sphere offset| + r` a side, and a
   non-axial side with the offset's y negated, so on a roll it is not
-  upright. The turn takes the engine's `AngleVectors` rounding
-  (`x87::angles_to_axis`, the same on all three servers), not the game
-  module's. A trace an entity's clip cuts short of the world's ends where
+  upright. The turn takes `AngleVectors`' stored rounding
+  (`x87::rotation_matrix`; `x87::angles_to_axis` for `AnglesToAxis`),
+  the same in every engine and game module of the three servers, never
+  `pmove::aim::angles_to_axis`'s float products. A trace an entity's clip cuts short of the world's ends where
   `SV_Trace` puts it, off the unshifted points (`sv_trace_endpos`), not
   where `CM_BoxTrace` would (movers doc 21, 22).
 - A fall onto a slope slides as far as its cmd split lets it: a cmd that

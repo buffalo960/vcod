@@ -2929,7 +2929,8 @@ negates: each angle is multiplied by the double at 0x80cdfe8 (`M_PI * 2 /
 float and both results are stored as floats; each component of right and
 up (`-sr*sp*cy + cr*sy` and the rest) is summed on the x87 stack and stored
 once. VERIFIED, the capture's `turned` pose: with every product rounded to
-a float (`pmove::aim::angles_to_axis`, the game module's copy), ours landed
+a float (`pmove::aim::angles_to_axis`, which vcod took for the game
+module's copy; it is not, see "The game module's turn" below), ours landed
 on the same frame and then slid 0.0017, 0.0024 and 0.0059 short of retail
 over the next three rows; with the engine's rounding every row matches.
 `down` and `steep`, a roll alone, matched either way. VERIFIED, the
@@ -2937,7 +2938,7 @@ normal back into the world (0x8056c4d..0x8056d10) is the turn's
 transpose, not Quake III's `CreateRotationMatrix` of the negated angles;
 keeping its dots unrounded moved no row.
 
-vcod: `x87::angles_to_axis` builds the turn for a posed submodel
+vcod: `x87::rotation_matrix` builds the turn for a posed submodel
 (`CollisionWorld::model_pose`) and a world copy (`set_world_copy`).
 `worldcopy_ab.rs`'s
 `a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail`
@@ -2985,9 +2986,44 @@ in its rounding: each angle times the double at 1.5b 0x80d7fb8 / UO
 float with both results stored (1.5b 0x806b570, UO 0x806b4de); the -1.0
 of the right a float constant (1.5b 0x80d7fc0, UO 0x80dd800); each
 component's products and sum on the stack and stored once.
-`x87::angles_to_axis` is that arithmetic on all three servers.
-INFERRED, off vcod's code: `combat::angles_to_axis_stored`, the body
-frame's port of the same `AngleVectors`, rounds alike.
+`x87::angle_vectors` is that arithmetic on all three servers.
+
+**The game module's turn.** VERIFIED, the disassembly: the game modules'
+`AngleVectors` round as the engine's. 1.1d `game.mp.i386.so` 0x3b228
+multiplies each angle by the double at 0x72930 and stores the radians
+(`fstps` 0x3b250, 0x3b268, 0x3b2a9), stores both `fsincos` results, and
+keeps each component's products and sum on the stack until its one
+`fstps` (right 0x3b2ed..0x3b2f5, up 0x3b336..0x3b33e). 1.5b 0x33e18 does
+the same in its unoptimized build: the radians stored (0x33e3a), the sine
+and cosine stored by its helper (0x381a6), each component's products and
+sum on the stack and stored once (0x33f1f, 0x33f48, 0x33f7a, 0x33f9b);
+UO's 0x3b068 is in `cod11-combat.md` 2.2. Two wrappers build an axis from
+it. `AnglesToAxis` (game.mp 0x3ef3c, 1.5b 0x36ffa, UO 0x3e24a; engine UO
+0x806a46e) writes the left as `vec3_origin - right` (`fld` of
+`vec3_origin`, `fsub` of the right, at 0x3ef58..0x3ef79; 1.5b
+0x3703b..0x37065; UO engine 0x806a49d..0x806a4c8), so a zero there is
+always `+0.0`. `G_CreateRotationMatrix` (game.mp 0x579fc, 1.5b 0x55943,
+UO 0x60487) and 1.1d's `G_TryPushingEntity`, which inlines it (0x5498c
+`AngleVectors`, 0x54995 `VectorInverse`), negate the right in place, as
+`CM_TransformedBoxTrace` does. INFERRED: the two differ only in a zero's
+sign. VERIFIED, `G_SetFixedLink` (game.mp 0x66540) turns a mode 2 link's
+offset by `AnglesToAxis` of the parent's angles (0x66577), and
+`StopFollowing` (0x46a28) calls `AngleVectors` (0x46a84).
+
+vcod: `x87::angle_vectors`, `x87::angles_to_axis` (the
+`vec3_origin - right` left) and `x87::rotation_matrix` (the negated
+right) are the only server-side turn: a posed submodel and a world copy,
+`push::carried`, a linked client's offset (`run_client_link`, the
+`linkTo` offset builtin), `link::Frame::from_pose`, the turret muzzle
+and rest sweep, the stored body frame, the damage kick, the follow stop
+spot and the UO vehicle code. The game-module callers used to round every
+product to a float (`pmove::aim::angles_to_axis`,
+`spawn::angles_to_axis`); VERIFIED, vcod measurement 2026-10-21: moving
+them onto the stored rounding moved no row of `movers_ab`, `push_ab`,
+`push_candidate_ab`, `push_order_ab`, `worldcopy_ab`, `ride_ab`,
+`sine_ab`, `linkto_ab`, `turret_ab`, `scriptmodel_ab` or the vehicle
+gates at the 1.1 and UO installs. `pmove::aim::angles_to_axis` stays the
+client's and pmove's.
 
 **The rolled ramp.** The `probe_rollramp` recipe above ran on the retail
 1.5b and UO 1.51b Linux servers on 2026-10-21 (ports 34661 and 34662, a

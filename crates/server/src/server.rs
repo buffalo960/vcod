@@ -1390,7 +1390,7 @@ fn run_client_link(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut Client
     };
     match rt.link_anchor(link.parent) {
         Some((p, angles)) => {
-            let [f, l, u] = vcod_common::pmove::aim::angles_to_axis(angles).map(glam::Vec3::from);
+            let [f, l, u] = vcod_common::x87::angles_to_axis(angles.into());
             let [x, y, z] = link.offset;
             sim.ps.origin = glam::Vec3::from(p) + f * x + l * y + u * z;
             sim.ps.velocity = link.velocity.into();

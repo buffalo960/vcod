@@ -316,11 +316,13 @@ impl DobjStamps {
             .map_or_else(|| body.frame(), vcod_common::turretpose::angles_quat)
     }
 
-    /// [`Self::frame`]'s axes as 1.5b's and UO's `AnglesToAxis` rounds
-    /// them.
+    /// [`Self::frame`]'s axes as `AnglesToAxis` rounds them
+    /// (`x87::angles_to_axis`).
     pub fn axis_stored(&self, body: &HitBody) -> [Vec3; 3] {
-        self.angles
-            .map_or_else(|| body.axis_stored(), angles_to_axis_stored)
+        self.angles.map_or_else(
+            || body.axis_stored(),
+            |a| vcod_common::x87::angles_to_axis(a.into()),
+        )
     }
 
     /// The controls the last build eased to, which the end frame's record
@@ -1325,33 +1327,6 @@ impl HitBody {
         );
         [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
     }
-}
-
-/// `AnglesToAxis` as 1.5b's and UO's engines run it (UO 0x806a46e over
-/// `AngleVectors` 0x80674ad): each angle's float radians, its sine and
-/// cosine stored, each component rounded once off the x87 stack, the
-/// left the right negated.
-pub fn angles_to_axis_stored(a: [f32; 3]) -> [Vec3; 3] {
-    let st = |x: f64| x as f32;
-    let sc = |deg: f32| {
-        let r = f64::from(st(f64::from(deg) * (std::f64::consts::PI / 180.0)));
-        (f64::from(st(r.sin())), f64::from(st(r.cos())))
-    };
-    let ((sp, cp), (sy, cy), (sr, cr)) = (sc(a[0]), sc(a[1]), sc(a[2]));
-    let right = [
-        st(-sr * sp * cy + -cr * -sy),
-        st(-sr * sp * sy + -cr * cy),
-        st(-sr * cp),
-    ];
-    [
-        Vec3::new(st(cp * cy), st(cp * sy), st(-sp)),
-        Vec3::new(-right[0], -right[1], -right[2]),
-        Vec3::new(
-            st(cr * sp * cy + -sr * -sy),
-            st(cr * sp * sy + -sr * cy),
-            st(cr * cp),
-        ),
-    ]
 }
 
 /// What `ClientEndFrame`'s `BG_PlayerAnimation` hands the DObj: its models,

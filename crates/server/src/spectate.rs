@@ -2137,9 +2137,9 @@ impl ClientSim {
                 let [pitch, yaw, _] = crate::game::builtins::math::vectoangles(d.into());
                 self.feedback.pitch = (f64::from(pitch) / 360.0 * 256.0) as i32;
                 self.feedback.yaw = (f64::from(yaw) / 360.0 * 256.0) as i32;
-                let axis = pmove::aim::angles_to_axis(self.view_angles);
-                self.kick.side = -kick * d.dot(Vec3::from(axis[1]));
-                self.kick.pitch = kick * d.dot(Vec3::from(axis[0]));
+                let axis = vcod_common::x87::angles_to_axis(self.view_angles.into());
+                self.kick.side = -kick * d.dot(axis[1]);
+                self.kick.pitch = kick * d.dot(axis[0]);
             }
         }
         self.kick.time_ms = now_ms.wrapping_sub(20);

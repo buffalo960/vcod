@@ -920,7 +920,7 @@ fn link_client(
     // In the parent's own frame, so a turning parent swings the child round
     // with it (docs/research/cod11-movers.md, section 13).
     let d = glam::Vec3::from(child) - glam::Vec3::from(anchor);
-    let axis = vcod_common::pmove::aim::angles_to_axis(parent_angles).map(glam::Vec3::from);
+    let axis = vcod_common::x87::angles_to_axis(parent_angles.into());
     let offset = [d.dot(axis[0]), d.dot(axis[1]), d.dot(axis[2])];
     host.client_link_ops
         .push((slot, LinkOp::Link { parent, offset }));

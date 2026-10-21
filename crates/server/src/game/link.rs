@@ -11,9 +11,10 @@
 //! `enableLinkTo`, turrets and a tag parent's model change.
 
 use crate::game::host::GameHost;
-use crate::game::spawn::{angles_to_axis, axis_to_angles};
+use crate::game::spawn::axis_to_angles;
 use glam::{Quat, Vec3};
 use std::collections::{BTreeMap, HashSet};
+use vcod_common::x87::angles_to_axis;
 use vcod_gsc::{Cx, EntId, Host, Value};
 
 /// A placement: `AnglesToAxis`' forward, left and up, and an origin. Retail
@@ -27,7 +28,7 @@ pub struct Frame {
 impl Frame {
     pub fn from_pose(origin: [f32; 3], angles: [f32; 3]) -> Frame {
         Frame {
-            axis: angles_to_axis(angles),
+            axis: angles_to_axis(angles.into()),
             origin: origin.into(),
         }
     }
@@ -374,7 +375,7 @@ fn tag_frame(
             // stored axis, each element rounded once.
             let angles = vector(host, cx, parent, "angles");
             let base = Frame {
-                axis: crate::game::combat::angles_to_axis_stored(angles),
+                axis: angles_to_axis(angles.into()),
                 origin: base.origin,
             };
             Some(Frame { axis, origin: o }.within_stored(&base))

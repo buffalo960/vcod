@@ -14,10 +14,10 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 use vcod_common::collision::CollisionWorld;
+use vcod_common::x87::angles_to_axis;
 use vcod_server::game::vehicle::info::{VehicleInfo, VehicleInfos};
 use vcod_server::game::vehicle::physics::{
     CollisionVehicleWorld, DriveInput, Physics, StepInput, StepOutput, VehicleModel, an180,
-    angles_to_axis,
 };
 
 const TANK: &str = "mp_cassino-tdm-slope-8ms-tank-drive-uo.txt";

@@ -128,9 +128,9 @@ pub fn stop_spot(
     eye: [f32; 3],
     view: [f32; 3],
 ) -> ([f32; 3], [f32; 3]) {
-    let axis = vcod_common::pmove::aim::angles_to_axis(view);
+    let axis = vcod_common::x87::angles_to_axis(view.into());
     let eye = Vec3::from(eye);
-    let end = eye + Vec3::from(axis[0]) * -40.0 + Vec3::from(axis[2]) * 10.0;
+    let end = eye + axis[0] * -40.0 + axis[2] * 10.0;
     let spot = match collision {
         Some(w) => {
             w.box_trace(eye, end, Vec3::splat(-8.0), Vec3::splat(8.0))

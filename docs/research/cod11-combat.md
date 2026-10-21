@@ -2432,7 +2432,7 @@ sequence apart from addresses and struct offsets in each pair:
 
 vcod: `bonetrace::bone_trace_in` under `Arith::Stored` (the frame, the
 matrix, the slab), `HitBody::axis_stored` (`DobjStamps::axis_stored`
-through `combat::angles_to_axis_stored` while a `setPlayerAngles` holds),
+through `x87::angles_to_axis` while a `setPlayerAngles` holds),
 `combat::trace_point` for a round, a swing, a missile and a
 `bulletTrace` that stops on a body. The
 bone's quaternion and origin come from the engine's own pose (next

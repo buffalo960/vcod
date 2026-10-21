@@ -481,9 +481,10 @@ pub fn muzzle(
     angles2: [f32; 3],
     forward: [f32; 3],
 ) -> [f32; 3] {
-    use crate::game::spawn::{angles_to_axis, transform};
-    let barrel = angles_to_axis([angles2[0], angles2[1], 0.0]);
-    let gun = angles_to_axis(turret_angles);
+    use crate::game::spawn::transform;
+    use vcod_common::x87::angles_to_axis;
+    let barrel = angles_to_axis(Vec3::new(angles2[0], angles2[1], 0.0));
+    let gun = angles_to_axis(turret_angles.into());
     let world = |pivot: Vec3, tag: Vec3| {
         Vec3::from(turret_origin) + transform(pivot + transform(tag - pivot, &barrel), &gun)
     };
