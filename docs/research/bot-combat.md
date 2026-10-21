@@ -1139,5 +1139,10 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21): `WARY=alt`, `tdm`,
   Each half on alone fails one seed: the cover half seed 19, the same
   roof; the hunt half seed 13, at (720, -1467, 92) with its waypoint at
   (-192, -384). All off, the test passed. INFERRED: follower stalls the
-  changed draws reach, not this feature; the roof pin is still in the
-  graph for another game to find.
+  changed draws reach, not this feature. VERIFIED (measured, release,
+  stock UO paks): merged with section 9's aim and footwork and the
+  follower's landing replans, the 96 to 320 unit cut passes the test,
+  both halves on and each alone. A lone bot placed at each stall spot
+  with the goal it had reaches that goal within 30 s on both the old and
+  the new follower, so the pins needed the whole game's state, and
+  whether the follower fixes cover them stays open.
