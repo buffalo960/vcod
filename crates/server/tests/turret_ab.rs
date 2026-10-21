@@ -2414,14 +2414,15 @@ fn hitfine<'a>(log: impl Iterator<Item = &'a str>) -> Vec<(String, [f64; 3], [f6
 }
 
 /// How far a hit's point a gate names in its gaps may sit from retail's,
-/// units: what is left on a knockback's first frame (`cod11-turrets.md`
-/// 13.6). Every other hit is retail's to the bit.
-const HIT_NEAR: f64 = 0.02;
-/// How far a hit-grid cell may sit from retail's along its ray, units.
-const GRID_NEAR: f64 = 0.1;
-/// How far a gunner-grid cell may: every cell of both captures but one
-/// edge cell sits within 0.05 of retail's (cod11-turrets.md 13.9).
-const GUNGRID_NEAR: f64 = 0.05;
+/// units: what is left on a knockback's first frame, 2e-4 at most
+/// (`cod11-turrets.md` 13.6). Every other hit is retail's to the bit.
+const HIT_NEAR: f64 = 0.001;
+/// How far a hit-grid cell may sit from retail's along its ray, units:
+/// 0.0011 at most, on 1.1d's knockback frame (13.6).
+const GRID_NEAR: f64 = 0.005;
+/// How far a gunner-grid cell may: every cell of both captures sits
+/// within 0.0001 of retail's (cod11-turrets.md 13.9).
+const GUNGRID_NEAR: f64 = 0.0005;
 
 /// The captures that log `probe_hitlog`: every hit at retail's time, on the
 /// same victim, location and damage, its point retail's as `fine1` prints
@@ -2688,11 +2689,6 @@ const GUNGRID_15: &[(&str, &str)] = &[
     ("probe_head", "basehead_axis_a_09"),
 ];
 
-/// One edge cell (row 36, 12 right) on one frame of 1.5b's yaw sweep, 0.12
-/// off where the rest of the frame is within 0.005 (turrets doc 13.9, "What
-/// is left").
-const GUNGRID_SWEEP_GAP: &str = "one edge cell on one frame (turrets doc 13.9)";
-
 /// A firing gunner's own pose on UO, every frame he mans the gun: his fire
 /// leaves on their sync group's node time, and the aim group blending out
 /// on its own leaves (cod11-turrets.md 13.9).
@@ -2718,7 +2714,7 @@ fn the_gunner_grid_capture_matches_15b_on_mp_carentan() {
         },
         &PROTOCOL_V6,
         GUNGRID_15,
-        &[("t=20200 cell 5:", GUNGRID_SWEEP_GAP)],
+        &[],
     );
 }
 
@@ -2744,7 +2740,7 @@ fn the_hitgrid_capture_matches_15b_on_mp_carentan() {
         },
         &PROTOCOL_V6,
         HITGRID,
-        &[("[hit] 30500 0 ", KNOCKBACK_GAP)],
+        &[],
     );
 }
 
@@ -2776,7 +2772,7 @@ fn the_spawnlog_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID_SPAWNLOG,
-        &[("[hit] 30300 0 ", KNOCKBACK_GAP)],
+        &[],
     );
 }
 
@@ -2787,7 +2783,7 @@ fn the_grounded_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID_GROUND,
-        &[("[hit] 30400 0 ", KNOCKBACK_GAP)],
+        &[],
     );
 }
 

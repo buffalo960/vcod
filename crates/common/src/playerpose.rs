@@ -1069,10 +1069,10 @@ pub struct PoseInputs<'a> {
     /// Engine degrees, down positive: what an MG42 aim group descends by
     /// when no placement blend is given.
     pub group_pitch: f32,
-    /// A gunner's legs: the turret anim's rows and leaves and the weights
-    /// the body placement gave them (`turretpose::GunnerPlacement::rows`),
-    /// in place of the legs clip.
-    pub turret_leaves: Option<&'a [TurretRow]>,
+    /// A gunner's legs: the turret group and its rows and leaves with the
+    /// weights the body placement gave them
+    /// (`turretpose::GunnerPlacement::rows`), in place of the group's clip.
+    pub turret_leaves: Option<(usize, &'a [TurretRow])>,
     /// The turret group a gunner's legs last left, and the rows its
     /// placement last gave it, which it blends out on
     /// (cod11-turrets.md 13.9).
@@ -1116,23 +1116,20 @@ pub fn pose_player(
     let mut legs: Vec<(Rc<XAnim>, f32, f32)> = Vec::new();
     let mut shape: Vec<LegsShape> = Vec::new();
     match inputs.turret_leaves {
-        Some(rows) => {
-            // The current clip is the turret anim's group, the rows its
-            // placement weighted; a turret group still blending out keeps
-            // the rows its own placement left (`turret_left`), any other
-            // clip blends out as itself. Every leaf takes its group's time
-            // (UO 0x80bd7e4).
+        Some(current) => {
+            // The turret anim's group poses by the rows its placement
+            // weighted, and a turret group still blending out by the rows
+            // its own placement left (`turret_left`); any other clip, the
+            // one the mount blends out of included, poses as itself. Every
+            // leaf takes its group's time (UO 0x80bd7e4).
             let layers = &inputs.legs_layers;
-            for (i, l) in layers.iter().enumerate() {
+            for l in layers {
                 let node = inputs.anims.index.node_id(l.index);
-                let group = if i + 1 == layers.len() {
-                    Some(rows)
-                } else {
-                    inputs
-                        .turret_left
-                        .filter(|(n, _)| Some(*n) == node)
-                        .map(|(_, w)| w)
-                };
+                let group = [Some(current), inputs.turret_left]
+                    .into_iter()
+                    .flatten()
+                    .find(|(n, _)| Some(*n) == node)
+                    .map(|(_, w)| w);
                 let Some(group) = group else {
                     for c in layer_clips(inputs, std::slice::from_ref(l), &mut clip) {
                         shape.push(LegsShape::Clip(legs.len()));
