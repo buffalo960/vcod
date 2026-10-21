@@ -126,6 +126,10 @@ pub struct Skill {
     pub noise_ticks: u32,
     /// Scales how far a noise carries to this bot ([`loudest`]).
     pub hearing: f32,
+    /// The sight cone a new target is acquired in, degrees across, about
+    /// the view. A tracked target, the attacker of a fresh hit
+    /// ([`BotView::hurt`]) and what the bot hears are known outside it.
+    pub fov_deg: f32,
 }
 
 impl Default for Skill {
@@ -144,6 +148,7 @@ impl Default for Skill {
             memory_ticks: 100,
             noise_ticks: 200,
             hearing: 1.0,
+            fov_deg: 120.0,
         }
     }
 }
@@ -206,8 +211,12 @@ pub struct BotView {
     pub dead: bool,
     /// `pm_type` 0, a spawned player rather than a spectator or camera.
     pub playing: bool,
-    /// Nearest live enemy with a clear sightline, as the server traced it.
+    /// The enemy in sight the server picked (`Server::bot_enemy`'s
+    /// order: the one who just hit the bot, the tracked target, the
+    /// nearest in the sight cone, [`Skill::fov_deg`]).
     pub enemy: Option<EnemyView>,
+    /// The last hit another client dealt this body, within [`HURT_MS`].
+    pub hurt: Option<Hurt>,
     /// A live teammate stands across the line to [`Self::enemy`]
     /// ([`friend_in_line`]): the trigger stays up.
     pub friend_in_line: bool,
@@ -611,6 +620,75 @@ pub enum Goal {
     Away([f32; 3]),
 }
 
+/// A tracked target in sight is kept over a new one unless the new one
+/// stands nearer than this share of its range: picked nearest-first every
+/// refresh, a bot between two enemies at like range swapped targets, and
+/// paid a fresh reaction and full aim error, at each swap.
+pub(crate) const RETARGET_RATIO: f32 = 0.6;
+
+/// Whether `at` lies inside the sight cone `fov` degrees across about the
+/// view `view` (wire degrees, pitch down) from `eye`.
+pub(crate) fn in_sight_cone(eye: glam::Vec3, view: [f32; 3], at: glam::Vec3, fov: f32) -> bool {
+    let [pitch, yaw, _] = view.map(f32::to_radians);
+    let forward = glam::Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        -pitch.sin(),
+    );
+    fov >= 360.0 || (at - eye).normalize_or_zero().dot(forward) >= (fov * 0.5).to_radians().cos()
+}
+
+/// The enemy a bot fights from `order`, the candidates' (squared range,
+/// slot) nearest first; `sighted(i)` traces the `i`th and gives its view
+/// when the eye line reaches it. The `attacker` of a fresh hit in sight
+/// comes first, then a new one nearer than [`RETARGET_RATIO`] of the
+/// `tracked` target's range, then the tracked one, then the nearest.
+pub(crate) fn pick_enemy(
+    order: &[(f32, usize)],
+    attacker: Option<usize>,
+    tracked: Option<usize>,
+    sighted: impl Fn(usize) -> Option<EnemyView>,
+) -> Option<EnemyView> {
+    let find = |slot: Option<usize>| {
+        let i = order.iter().position(|c| Some(c.1) == slot)?;
+        Some((order[i].0, sighted(i)?))
+    };
+    if let Some((_, e)) = find(attacker) {
+        return Some(e);
+    }
+    let held = find(tracked);
+    let reach = held.map_or(f32::INFINITY, |(d, _)| d * RETARGET_RATIO * RETARGET_RATIO);
+    order
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.0 < reach && Some(c.1) != tracked && Some(c.1) != attacker)
+        .find_map(|(i, _)| sighted(i))
+        .or(held.map(|(_, e)| e))
+}
+
+/// A hit [`BotView::hurt`] reports for this long, ms: the attacker is
+/// preferred as a target and, out of sight, looked for along the hit.
+pub(crate) const HURT_MS: i32 = 2000;
+/// How long a hit from an unseen enemy turns the view toward it, ms.
+const HURT_LOOK_MS: i32 = 1500;
+/// A target taken again after [`Bot::prior`] keeps its error times this;
+/// one who just hit the bot starts at this share of `error_start`. Both
+/// take a third and a half of the reaction delay.
+const REACQUIRE_ERROR: f32 = 1.25;
+const HIT_BY_ERROR: f32 = 0.75;
+
+/// The last hit another client dealt a bot.
+#[derive(Clone, Copy, Debug)]
+pub struct Hurt {
+    /// The attacker's client slot.
+    pub slot: usize,
+    /// Ms since the hit.
+    pub ago_ms: i32,
+    /// The damage direction, from the attacker toward the body; zero
+    /// when the hit carried none.
+    pub dir: [f32; 3],
+}
+
 #[derive(Clone, Copy)]
 pub struct EnemyView {
     /// The enemy's client slot, so a switch of target reads as one.
@@ -748,6 +826,10 @@ pub struct BotBody {
     pub boardings: u32,
     /// Rockets it fired on foot at enemy vehicles.
     pub rockets_at_armor: u32,
+    /// The client slot the bot tracks ([`Bot::target_slot`]), and whether
+    /// its last cmd held the trigger.
+    pub target: Option<usize>,
+    pub firing: bool,
     /// The held weapon's `clipSize` when it is a bullet weapon, else 0.
     pub clip_size: i16,
     /// Grenades it let go this game ([`Bot::throws`]).
@@ -763,6 +845,11 @@ pub struct Bot {
     /// Shares out an objective round with its team ([`team`]); off, it
     /// plays as before team play did (a `bot_match` measuring arm).
     pub team_play: bool,
+    /// Knows who shot it and keeps its target ([`pick_enemy`],
+    /// [`Bot::track`], [`Bot::face_hurt`]) and sees in a cone
+    /// ([`Skill::fov_deg`]); off, it fights the nearest enemy in sight all
+    /// round, as before (a `bot_match` measuring arm).
+    pub aware: bool,
     /// The team the team menu is answered with.
     team: String,
     /// The menu retail last named in `v g_scriptMainMenu`; the `t` that
@@ -930,6 +1017,11 @@ pub struct Bot {
     dry_had: bool,
     /// Boarding, driving and leaving a vehicle (`vehicle`).
     rider: vehicle::Rider,
+    /// The last cmd held the trigger.
+    fired: bool,
+    /// The target last dropped or replaced: its slot, its aim error then,
+    /// and the ticks since ([`Bot::track`]).
+    prior: Option<(usize, f32, u32)>,
 }
 
 /// The enemy the bot is engaging and how settled its aim on it is.
@@ -1169,6 +1261,7 @@ impl Bot {
             skill: Skill::default(),
             cover: cover::Cover::default(),
             team_play: true,
+            aware: true,
             main_menu: String::new(),
             answered: Vec::new(),
             heading: 0.0,
@@ -1236,6 +1329,8 @@ impl Bot {
             last_seen_seq: 0,
             next_command_seq: 1,
             rider: Default::default(),
+            fired: false,
+            prior: None,
             team: team.to_string(),
             rng: seed | 1,
             retreat_on: true,
@@ -2333,6 +2428,7 @@ impl Bot {
         self.retreat = None;
         self.hurt_at = i32::MAX;
         self.dry_had = false;
+        self.prior = None;
     }
 
     /// The remembered spot not yet reached, else this tick's noise. The same
@@ -2382,6 +2478,7 @@ impl Bot {
     pub(crate) fn think(&mut self, view: &BotView) -> UserCmd {
         let cmd = self.think_body(view);
         self.count_futile(view, &cmd);
+        self.fired = cmd.buttons & msg::BUTTON_ATTACK != 0;
         cmd
     }
 
@@ -2878,7 +2975,7 @@ impl Bot {
         let clearing = Self::blast_near(view).is_some() || self.carrying(view);
         let path = ((cmd.forward, cmd.right, cmd.up, cmd.wbuttons), yaw);
         if self.shoot {
-            self.track(view.enemy);
+            self.track(view);
             let keys = (cmd.forward, cmd.right, cmd.up, cmd.wbuttons);
             if !clearing && let Some(aim) = self.think_armor(view, &mut cmd) {
                 [pitch, yaw] = aim;
@@ -2898,6 +2995,11 @@ impl Bot {
                 cmd.forward = 0;
                 cmd.right = 0;
                 [pitch, yaw] = [yaw_diff(view.view[0], 0.0), view.view[1]];
+            } else if view.enemy.is_none()
+                && !clearing
+                && let Some(look) = self.face_hurt(view, &mut cmd, yaw)
+            {
+                [pitch, yaw] = look;
             } else if view.enemy.is_none()
                 && !clearing
                 && let Some(look) = self.cover_unseen(view, &mut cmd)
@@ -3151,10 +3253,18 @@ impl Bot {
     }
 
     /// Keeps [`Bot::target`] in step with the server's enemy: a new slot is
-    /// a new target with a fresh reaction and full error; one out of sight
-    /// for `forget_ticks` is dropped.
-    fn track(&mut self, enemy: Option<EnemyView>) {
-        let Some(e) = enemy else {
+    /// a new target, one out of sight for `forget_ticks` is dropped. A new
+    /// target starts with the full reaction delay and aim error, less for
+    /// one the bot let go of within `forget_ticks` (it keeps most of the
+    /// error it had) or one who just hit it.
+    fn track(&mut self, view: &BotView) {
+        if let Some(p) = self.prior.as_mut() {
+            p.2 += 1;
+            if p.2 > self.skill.forget_ticks {
+                self.prior = None;
+            }
+        }
+        let Some(e) = view.enemy else {
             // Out of sight behind its own cover the bot still knows where
             // the target is.
             let covering = self.covering();
@@ -3170,22 +3280,60 @@ impl Bot {
             t.lost = 0;
             return;
         }
-        let react = self.skill.reaction_min + self.rand_below(self.skill.reaction_spread);
+        let full = self.skill.reaction_min + self.rand_below(self.skill.reaction_spread);
+        let again = self.prior.filter(|p| p.0 == e.slot && self.aware);
+        let (react, error) = if let Some((_, error, _)) = again {
+            (
+                full / 3,
+                (error * REACQUIRE_ERROR).clamp(self.skill.error_floor, self.skill.error_start),
+            )
+        } else if view.hurt.is_some_and(|h| h.slot == e.slot) && self.aware {
+            (full / 2, self.skill.error_start * HIT_BY_ERROR)
+        } else {
+            (full, self.skill.error_start)
+        };
+        if let Some(t) = self.target.take() {
+            self.prior = Some((t.slot, t.error, 0));
+        }
         self.burst_ticks = 0;
         self.target = Some(Target {
             slot: e.slot,
             react,
-            error: self.skill.error_start,
+            error,
             dir: [0.0, 1.0],
             wobble: 0,
             lost: 0,
         });
     }
 
+    /// Drops the target, remembered for a while as [`Bot::prior`].
     fn disengage(&mut self) {
-        self.target = None;
+        if let Some(t) = self.target.take() {
+            self.prior = Some((t.slot, t.error, 0));
+        }
         self.burst_ticks = 0;
         self.crouch_ticks = 0;
+    }
+
+    /// Hit by an enemy not in sight: the view turns toward where the hit
+    /// came from, at the bot's turn rate, for [`HURT_LOOK_MS`], so the
+    /// sight cone sweeps over him. The path's keys follow the turn.
+    fn face_hurt(&self, view: &BotView, cmd: &mut UserCmd, yaw: f32) -> Option<[f32; 2]> {
+        let h = view
+            .hurt
+            .filter(|h| h.ago_ms < HURT_LOOK_MS && self.aware)?;
+        let [x, y, z] = h.dir;
+        if x == 0.0 && y == 0.0 {
+            return None;
+        }
+        // Back along the direction the damage travelled.
+        let want = [
+            (z.atan2(x.hypot(y)).to_degrees()).clamp(-45.0, 45.0),
+            (-y).atan2(-x).to_degrees(),
+        ];
+        let look = self.turn_toward(view, want);
+        (cmd.forward, cmd.right) = rekey(cmd.forward, cmd.right, yaw, look[1]);
+        Some(look)
     }
 
     /// One tick against the tracked target: turn toward it at a bounded
@@ -3438,6 +3586,16 @@ impl Bot {
     /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
         self.target.is_some() || self.seated_fight()
+    }
+
+    /// The client slot of the enemy the bot tracks, reaction delay and all.
+    pub fn target_slot(&self) -> Option<usize> {
+        self.target.as_ref().map(|t| t.slot)
+    }
+
+    /// Whether the last cmd held the trigger.
+    pub fn fired(&self) -> bool {
+        self.fired
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
@@ -4014,6 +4172,7 @@ mod tests {
             dead: false,
             playing: true,
             enemy: None,
+            hurt: None,
             friend_in_line: false,
             sidestep: None,
             cover: None,
@@ -5946,6 +6105,106 @@ mod tests {
             let cmd = bot.think(&other);
             assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "fired on tick {tick}");
         }
+    }
+
+    /// Back to a target it let go of, the bot keeps most of its settled
+    /// aim and a third of the delay; onto one who just hit it, half the
+    /// delay and three quarters of the first error.
+    #[test]
+    fn a_known_target_is_taken_again_quicker() {
+        let (mut bot, v) = engaged(7);
+        bot.skill.reaction_min = 9;
+        let e = v.enemy.unwrap();
+        bot.track(&v);
+        bot.target.as_mut().unwrap().error = bot.skill.error_floor;
+        let mut other = engaged(7).1;
+        other.enemy = Some(EnemyView { slot: 4, ..e });
+        bot.track(&other);
+        let t = bot.target.as_ref().unwrap();
+        assert_eq!((t.slot, t.react, t.error), (4, 9, bot.skill.error_start));
+        bot.track(&v);
+        let t = bot.target.as_ref().unwrap();
+        assert_eq!((t.slot, t.react), (3, 3));
+        assert_eq!(t.error, bot.skill.error_floor * REACQUIRE_ERROR);
+
+        let (mut bot, mut v) = engaged(7);
+        bot.skill.reaction_min = 9;
+        v.hurt = Some(Hurt {
+            slot: 3,
+            ago_ms: 50,
+            dir: [0.0, 1.0, 0.0],
+        });
+        bot.track(&v);
+        let t = bot.target.as_ref().unwrap();
+        assert_eq!(t.react, 4);
+        assert_eq!(t.error, bot.skill.error_start * HIT_BY_ERROR);
+    }
+
+    #[test]
+    fn the_attacker_then_the_held_target_then_the_nearest() {
+        let e = |slot| EnemyView {
+            slot,
+            origin: [0.0; 3],
+            velocity: [0.0; 3],
+        };
+        // Slots 1, 2, 3 at 100, 200, 300 units; slot 3 out of sight.
+        let order = [(1e4, 1), (4e4, 2), (9e4, 3)];
+        let seen = |i: usize| (order[i].1 != 3).then(|| e(order[i].1));
+        let pick = |a, t| pick_enemy(&order, a, t, seen).map(|e| e.slot);
+        assert_eq!(pick(None, None), Some(1));
+        assert_eq!(pick(Some(2), Some(1)), Some(2));
+        // Unseen, the attacker gives way.
+        assert_eq!(pick(Some(3), None), Some(1));
+        // Slot 1 is under 0.6 of the held slot 2's range; nothing is
+        // nearer than 0.6 of slot 1's.
+        assert_eq!(pick(None, Some(2)), Some(1));
+        let order = [(2e4, 1), (4e4, 2)];
+        let seen = |i: usize| Some(e(order[i].1));
+        assert_eq!(
+            pick_enemy(&order, None, Some(2), seen).map(|e| e.slot),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn the_sight_cone_is_about_the_view() {
+        let eye = glam::Vec3::ZERO;
+        let ahead = glam::Vec3::new(100.0, 0.0, 0.0);
+        let side = glam::Vec3::new(0.0, 100.0, 0.0);
+        assert!(in_sight_cone(eye, [0.0; 3], ahead, 120.0));
+        assert!(!in_sight_cone(eye, [0.0; 3], side, 120.0));
+        assert!(in_sight_cone(eye, [0.0, 90.0, 0.0], side, 120.0));
+        assert!(in_sight_cone(eye, [0.0; 3], side, 181.0));
+        assert!(in_sight_cone(eye, [0.0; 3], -ahead, 360.0));
+        // Pitch is down positive: a view 80 down misses a level target.
+        assert!(!in_sight_cone(eye, [80.0, 0.0, 0.0], ahead, 120.0));
+    }
+
+    /// Shot from behind by nobody in sight, the bot comes round toward
+    /// where the round came from at its turn rate.
+    #[test]
+    fn a_hit_from_out_of_sight_turns_the_view_toward_it() {
+        let (mut bot, mut v) = engaged(3);
+        v.enemy = None;
+        v.view = [0.0, 0.0, 0.0];
+        // From an attacker at -x toward the body.
+        v.hurt = Some(Hurt {
+            slot: 5,
+            ago_ms: 50,
+            dir: [1.0, 0.0, 0.0],
+        });
+        let mut yaw = 0.0f32;
+        for _ in 0..20 {
+            v.view = [0.0, yaw, 0.0];
+            let next = bot.think(&v).angles[1] as f32 / ANGLE2SHORT;
+            assert!(yaw_diff(next, yaw).abs() <= bot.skill.turn_deg + 0.01);
+            yaw = next;
+        }
+        assert!(yaw_diff(180.0, yaw).abs() < 1.0, "never came round: {yaw}");
+        // Past the look window the hit no longer steers.
+        v.hurt.as_mut().unwrap().ago_ms = HURT_LOOK_MS;
+        let mut cmd = NULL_USERCMD;
+        assert!(bot.face_hurt(&v, &mut cmd, 0.0).is_none());
     }
 
     #[test]

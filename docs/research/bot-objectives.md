@@ -1554,8 +1554,18 @@ the step; seed 45 on c8c3fd1f stalled at the same roofs. 45 is a tank
 driven back and forth over 350 units near (-150, -400) whose ground made
 from the anchor reached 300 on each reversal, then the driver's walk in
 the same spot. 63 is a bot's own frag. Not traced further.
-`uo_tdm_games_that_stalled_or_never_sprinted` replays seeds 15, 17, 19,
+`uo_tdm_games_that_stalled_or_never_sprinted` replays seeds 43, 17, 13,
 25 and 33 with vehicles and 1 and 31 without.
+
+VERIFIED (measured, release, stock UO paks, 2026-10-21): with the sight
+cone and target choice of `bot-combat.md` 8 alone, seeds 1 and 19 pinned
+bot 0 on the same roofs, from its spawn at (4938, -1317, 256): no enemy,
+no hit, keys held at the waypoint (4896, -1384, 280) from (4938 to
+4957, -1405 to -1428) for 12 s. With those beside the grenade rules
+(`bot-combat.md` 6.5) and the noise answering (section 9, `bot-combat.md` 7), seed 1 passes and
+seed 19's game ends on a bot's own frag; seed 13, the other game pre-aim
+starved of sprint legs, takes its place (331 bot-ticks on sprint legs,
+330 sprinted, the fewest of seeds 3, 5, 7, 13, 21 and 23).
 
 ### 10.7 Two exits on one frame
 

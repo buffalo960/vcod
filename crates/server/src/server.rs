@@ -433,7 +433,15 @@ fn apply_sim_op(
         SimOp::WeaponDisabled(on) => sim.ps.weapon_disabled = on,
         SimOp::ViewKick { force, from } => sim.view_kick(force, from),
         SimOp::VehiclePain { damage, from } => sim.vehicle_pain(damage, from),
-        SimOp::Damaged { .. } => {
+        SimOp::Damaged {
+            attacker,
+            damage,
+            dir,
+            ..
+        } => {
+            if let Some(a) = attacker.filter(|&a| a != slot && damage > 0) {
+                sim.last_hit = Some((a, now_ms, dir));
+            }
             let index = sim.ps.weapon as usize;
             let inputs = anims.map(|anims| crate::spectate::AnimInputs {
                 anims,
@@ -5386,6 +5394,7 @@ impl Server {
             dead: sim.dead,
             playing: sim.pm_type == crate::spectate::PmType::Normal && !sim.dead,
             enemy,
+            hurt: self.bot_hurt(sim),
             // Checked in pass 2 against this tick's teammates.
             friend_in_line: false,
             sidestep: None,
@@ -5796,9 +5805,14 @@ impl Server {
         p
     }
 
-    /// The nearest live, playing client on another team with a clear eye
-    /// line. Team rules: axis and allies only fight each other; everyone
-    /// else is fair game to everyone (`dm` carries no teams).
+    /// The live, playing client on another team with a clear eye line that
+    /// the bot in `slot` fights: the one who hit it within
+    /// [`crate::bots::HURT_MS`], else the target it tracks while in sight,
+    /// unless a new one in the sight cone stands nearer than
+    /// [`crate::bots::RETARGET_RATIO`] of its range, else the nearest in
+    /// the cone ([`crate::bots::Skill::fov_deg`]). Team rules: axis and
+    /// allies only fight each other; everyone else is fair game to everyone
+    /// (`dm` carries no teams).
     fn bot_enemy(&self, slot: usize, teams: &[i32]) -> Option<crate::bots::EnemyView> {
         if !self.bot_admin.shoot {
             return None;
@@ -5815,9 +5829,21 @@ impl Server {
         };
         let my_eye: glam::Vec3 = me.eye_origin().into();
         let world = self.world.as_ref().map(|w| &w.collision);
-        // In-range candidates nearest first; the first one the sightline
-        // reaches is the nearest visible enemy, so the trace loop stops
-        // early instead of scoring every candidate in a crowd.
+        let bot = self.bots.get(&slot);
+        let tracked = bot.and_then(|b| b.target_slot());
+        let aware = bot.is_none_or(|b| b.aware);
+        let attacker = self.bot_hurt(me).map(|h| h.slot).filter(|_| aware);
+        let tracked = tracked.filter(|_| aware);
+        // A seat's view is the seat's (a tank's driver looks down the
+        // hull), not where the bot turns its head: crews see all round.
+        let fov = match bot {
+            Some(b) if b.aware && me.seat.is_none() => b.skill.fov_deg,
+            Some(_) => 360.0,
+            None => crate::bots::Skill::default().fov_deg,
+        };
+        let view = me.view_angles();
+        // In-range candidates nearest first: the tracked target and the
+        // attacker wherever they stand, the rest only inside the cone.
         let mut candidates: Vec<(f32, glam::Vec3, crate::bots::EnemyView)> = Vec::new();
         for (i, c) in self.clients.iter().enumerate() {
             if i == slot {
@@ -5845,24 +5871,51 @@ impl Server {
             if d > crate::bots::SHOOT_RANGE * crate::bots::SHOOT_RANGE {
                 continue;
             }
+            let chest = crate::bots::chest(s.ps.origin.into(), s.ps.view_height());
+            let known = Some(i) == tracked || Some(i) == attacker;
+            if !known && !crate::bots::in_sight_cone(my_eye, view, chest.into(), fov) {
+                continue;
+            }
             candidates.push((
                 d,
                 s.ps.view().eye,
                 crate::bots::EnemyView {
                     slot: i,
-                    origin: crate::bots::chest(s.ps.origin.into(), s.ps.view_height()),
+                    origin: chest,
                     velocity: s.ps.velocity.into(),
                 },
             ));
         }
         candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let Some(w) = world else {
-            return candidates.into_iter().next().map(|c| c.2);
+        let sighted = |(_, eye, enemy): &(f32, glam::Vec3, crate::bots::EnemyView)| {
+            let Some(w) = world else {
+                return Some(*enemy);
+            };
+            let clear = |to: glam::Vec3| w.shot_trace(my_eye, to).fraction >= 1.0;
+            let origin = crate::bots::aim_point(enemy.origin, (*eye).into(), |p| clear(p.into()))?;
+            Some(crate::bots::EnemyView { origin, ..*enemy })
         };
-        let clear = |to: glam::Vec3| w.shot_trace(my_eye, to).fraction >= 1.0;
-        candidates.into_iter().find_map(|(_, eye, enemy)| {
-            let origin = crate::bots::aim_point(enemy.origin, eye.into(), |p| clear(p.into()))?;
-            Some(crate::bots::EnemyView { origin, ..enemy })
+        let order: Vec<(f32, usize)> = candidates.iter().map(|c| (c.0, c.2.slot)).collect();
+        crate::bots::pick_enemy(&order, attacker, tracked, |i| sighted(&candidates[i]))
+    }
+
+    /// [`crate::bots::BotView::hurt`] for the body `sim`: its last hit by
+    /// another client within [`crate::bots::HURT_MS`], while he still
+    /// plays.
+    fn bot_hurt(&self, sim: &crate::spectate::ClientSim) -> Option<crate::bots::Hurt> {
+        let (a, at, dir) = sim.last_hit?;
+        let ago_ms = self.sv_time_ms.wrapping_sub(at);
+        if !(0..crate::bots::HURT_MS).contains(&ago_ms) {
+            return None;
+        }
+        let s = self.clients.get(a)?.as_ref()?.sim.as_ref()?;
+        if s.pm_type != crate::spectate::PmType::Normal || s.dead {
+            return None;
+        }
+        Some(crate::bots::Hurt {
+            slot: a,
+            ago_ms,
+            dir,
         })
     }
 
@@ -6011,6 +6064,8 @@ impl Server {
             crew_wait: self.bots.get(&slot).is_some_and(|b| b.waiting_for_crew()),
             boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
             rockets_at_armor: self.bots.get(&slot).map_or(0, |b| b.rockets_at_armor()),
+            target: self.bots.get(&slot).and_then(|b| b.target_slot()),
+            firing: self.bots.get(&slot).is_some_and(|b| b.fired()),
             clip_size: self
                 .weapon_table
                 .get(sim.ps.weapon as usize)
@@ -6031,6 +6086,14 @@ impl Server {
     pub fn test_bot_cover(&mut self, slot: usize, on: bool) {
         if let Some(bot) = self.bots.get_mut(&slot) {
             bot.cover.enabled = on;
+        }
+    }
+
+    /// Test-facing: whether a bot reacts to hits, keeps its target and
+    /// sees in a cone (`Bot::aware`).
+    pub fn test_bot_aware(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.aware = on;
         }
     }
 

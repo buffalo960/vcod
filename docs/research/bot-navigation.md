@@ -3783,8 +3783,10 @@ Two goals sit between a visible enemy and `Roam`, both kept by the brain
   remembered. Out of sight the spot stays a goal for `Skill::memory_ticks`
   (100, 5 s) and is dropped once the bot stands within 64 units of it
   horizontally and 96 vertically. The memory outlives the target's identity
-  (`forget_ticks`, 1 s): an enemy back in sight after that is a new target
-  with a full reaction delay, as before.
+  (`forget_ticks`, 1 s): an enemy back in sight within another
+  `forget_ticks` of being dropped is taken again on a third of the
+  reaction delay, after that as a new target with the full delay
+  (`bot-combat.md` 8).
 - Pre-aim. While a remembered spot within `SHOOT_RANGE` is a goal and the
   waypoint is level, the view turns toward the spot at `turn_deg` per tick
   and the move keys are rotated so the body keeps the path. Ladder and ledge
@@ -3802,7 +3804,9 @@ Two goals sit between a visible enemy and `Roam`, both kept by the brain
   high above its origin, nobody's. `step_bots` takes the list at the top of the next
   tick and hands each bot the loudest one it did not make (`bots::loudest`:
   the smallest distance over range, inside range). No line of sight is
-  needed. Teammates' fire counts: a friend shooting means an enemy near him.
+  needed, and no sight cone (`bot-combat.md` 8): a shot behind the bot is
+  heard as well as one ahead. Teammates' fire counts: a friend shooting
+  means an enemy near him.
 - A heard noise is a goal for `Skill::noise_ticks` (200, 10 s, about 2200
   units at run speed) and is replaced by any newer one, but never replaces the
   spot of a seen enemy.
