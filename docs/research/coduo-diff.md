@@ -2013,6 +2013,10 @@ for 55 s and the `--probe-weapsel` shooter 3 s later for 48 s: one round
 on entity 158 as `eType` 4 for eight snapshots, its explode (185) on the
 same entity as `eType` 0 at +400 ms (live, VERIFIED). It gates the
 missile's `projectileSound` (cod11-sound-system.md section 8).
+The `*-uo-bazooka-draw.bin` pair (2026-10-21) is the same recipe on port
+34531 with the server run under gdb, which read the round's `gunrandom`
+pair and its direction's bits (cod11-combat.md 13.6, "The direction's
+bits"); `the_bazooka_rocket_leaves_on_retails_bits` replays it.
 `uo_weapons_ab`'s `the_bazooka_rocket_flies_and_explodes_as_on_uo`
 replays the shooter on ours from retail's spot and view: the rocket's
 trajectory on every snapshot (`TR_LINEAR`, `trTime` 100 ms before the

@@ -64,7 +64,7 @@ instead of leaving the fact in a commit message.
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
-| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness) |
+| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness, cover and lean) |
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
 | Shader scripts, light grid, prop and entity lighting | `cod11-shader-scripts.md`, `cod11-light-grid-and-leaf-lights.md` |
 | Gamma, overbright, `r_intensity` | `cod11-gamma.md` |
@@ -134,7 +134,9 @@ check.
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
   `--example team_tally` `bot-objectives.md` 9's 1.1 `sd`/`re` objective tally; its
   `digest` matches across two builds only when they built the same graph,
-  the check for a collision change meant to move no trace.
+  the check for a collision change meant to move no trace. `--example
+  cover_ab` pits a team fighting from cover against one without
+  (`bot-combat.md` 4.5).
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
   is not a regression.
@@ -329,9 +331,9 @@ header of the fixture it produced.
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
   (`coduo-diff.md` 18), the `*-uo-overheat.bin` pair the same crew with a
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
-  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin`, `*-uo-satchel.bin`
-  and `*-uo-bazooka.bin` pairs a spectator following a shooter under
-  `client-probes/probe_uofx` (the arty, smoke, mg and satchel ones
+  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin`, `*-uo-satchel.bin`,
+  `*-uo-bazooka.bin` and `*-uo-bazooka-draw.bin` (under gdb) pairs a
+  spectator following a shooter under `client-probes/probe_uofx` (the arty, smoke, mg and satchel ones
   `--probe-uo-weapon`, the satchel with the smoke script;
   `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on

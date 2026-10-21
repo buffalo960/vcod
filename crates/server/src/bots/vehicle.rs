@@ -5,7 +5,7 @@
 //! boards and exits, `forwardmove` and `rightmove` drive, the view lays the
 //! seat's gun and `buttons` 0x1 fires it. The server half, what the seat
 //! and the vehicles near the bot look like, is
-//! `server/bot_vehicles.rs`. docs/research/bot-objectives.md, "Vehicles".
+//! `server/bot_vehicles.rs`. docs/research/bot-objectives.md section 10.
 
 use super::{Bot, BotView, Goal, aim_angles, cmd_angles, yaw_diff};
 use vcod_common::net::msg::{self, UserCmd};

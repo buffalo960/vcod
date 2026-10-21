@@ -470,9 +470,10 @@ pub fn loop_tick(rec: &mut TurretRecord, loop_index: i32, frozen: bool) -> (i32,
 }
 
 /// 0x51488's muzzle (turrets doc 6.3): `tag_player` in the world, moved
-/// along the player's view by `tag_flash`'s distance from it. `tag_player`
-/// turns with the barrel about `tag_aim`; the reach is read off the bind
-/// pose (INFERRED, turrets doc 13). `forward` is `AngleVectors` of the view.
+/// along `forward` by `tag_flash`'s distance from it. `turret_controller`
+/// turns `tag_aim` and `tag_aim_animated` by the barrel, so `tag_player`
+/// swings about the first and `tag_flash` about the second, and the reach
+/// moves with the aim (turrets doc 13.8).
 pub fn muzzle(
     tags: &TurretTags,
     turret_origin: [f32; 3],
@@ -482,9 +483,13 @@ pub fn muzzle(
 ) -> [f32; 3] {
     use crate::game::spawn::{angles_to_axis, transform};
     let barrel = angles_to_axis([angles2[0], angles2[1], 0.0]);
-    let player = tags.aim + transform(tags.player - tags.aim, &barrel);
-    let player = Vec3::from(turret_origin) + transform(player, &angles_to_axis(turret_angles));
-    let reach = (tags.flash - tags.player).length();
+    let gun = angles_to_axis(turret_angles);
+    let world = |pivot: Vec3, tag: Vec3| {
+        Vec3::from(turret_origin) + transform(pivot + transform(tag - pivot, &barrel), &gun)
+    };
+    let player = world(tags.aim, tags.player);
+    let flash = world(tags.aim_animated, tags.flash);
+    let reach = (flash - player).length();
     (player + Vec3::from(forward) * reach).into()
 }
 
@@ -944,6 +949,24 @@ mod tests {
         let back = -3.0 - (-45.1);
         assert!((m[0] - (100.0 + back - 0.06)).abs() < 0.01, "{m:?}");
         assert!((m[2] - (20.9 + reach)).abs() < 0.01, "{m:?}");
+    }
+
+    /// `|tag_flash - tag_player|` on retail UO's gun at one gdb aim
+    /// (turrets doc 13.8): 53.80326, where the bind pose reads 53.80957.
+    #[test]
+    fn the_muzzle_reach_moves_with_the_barrel() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let bones = vcod_common::xmodel::load_bones(&fs, "mg42_bipod").unwrap();
+        let tags = TurretTags::from_bones(&bones).unwrap();
+        let reach = |a2: [f32; 3]| {
+            let m = muzzle(&tags, [0.0; 3], [0.0, 229.0, 0.0], a2, [1.0, 0.0, 0.0]);
+            let p = muzzle(&tags, [0.0; 3], [0.0, 229.0, 0.0], a2, [0.0; 3]);
+            (Vec3::from(m) - Vec3::from(p)).x
+        };
+        assert!((reach([0.0; 3]) - 53.80957).abs() < 2e-5);
+        assert!((reach([9.997559, 30.002686, 0.0]) - 53.80326).abs() < 2e-5);
     }
 
     #[test]

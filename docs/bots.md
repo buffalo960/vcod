@@ -71,8 +71,8 @@ startup. A change takes effect within half a second, with no restart.
 | `vc_bot_autobalance` | 1 | Keeps the teams even in team gametypes. |
 | `vc_bot_shoot` | 1 | 0 stops bots from firing. `--bots` without `--bots-shoot` sets it to 0. |
 | `vc_bot_names` | 1 | 0 names new bots `bot<slot>` instead of drawing a funny name. |
-| `vc_bot_skill` | 1 | The skill level, 0 to 3, of every bot that `addbot ... skill N` didn't set. See [Skill](#skill). |
 | `vc_bot_vehicles` | 1 | United Offensive only. 0 stops bots getting into vehicles; a bot already in one rides on until it gets out. |
+| `vc_bot_skill` | 1 | The skill level, 0 to 3, of every bot that `addbot ... skill N` didn't set. See [Skill](#skill). |
 
 ## Skill
 
@@ -168,15 +168,17 @@ On objective gametypes a team spreads its bots over different routes,
 reshuffles who guards what each round, sends all its S&D attackers to one
 site and covers a planter, and in Retrieval escorts the carrier and holds
 the goal ahead of him
-([research/bot-objectives.md](research/bot-objectives.md) section 9). On a United
-Offensive map with vehicles, a bot with no fight and no objective close by
-walks to a vehicle near it and gets in with the use key, like a player. A
-driver drives toward its objective or an enemy, waits a moment for a
-teammate walking up to board, holds or backs off for a teammate in its way,
-and in a tank stops to lay the turret on an enemy or an enemy vehicle and
-fire. A gunner fires the vehicle's machine gun. A bot on foot carrying a
-rocket launcher fires it at an enemy-crewed vehicle in its sight. Bots get
-out when they arrive, when stuck, or after 90 seconds.
+([research/bot-objectives.md](research/bot-objectives.md) section 9).
+
+On a United Offensive map with vehicles, a bot with no fight and no
+objective close by walks to a vehicle near it and gets in with the use key,
+like a player. A driver drives toward its objective or an enemy, waits a
+moment for a teammate walking up to board, holds or backs off for a
+teammate in its way, and in a tank stops to lay the turret on an enemy or
+an enemy vehicle and fire. A gunner fires the vehicle's machine gun. A bot
+on foot carrying a rocket launcher fires it at an enemy-crewed vehicle in
+its sight. Bots get out when they arrive, when stuck, or after 90 seconds
+(section 10 of the same page).
 
 ## Known limits
 
@@ -189,3 +191,4 @@ out when they arrive, when stuck, or after 90 seconds.
 - Skill levels change how bots aim, react and remember, not how they move
   or what they choose to do: an expert takes the same routes and plays the
   objectives the same way as an easy bot.
+- A bot picks its cover against the one enemy it is fighting; another enemy may still see it there. It takes no cover while planting, carrying or holding a capture zone, nor within 300 units of the enemy.

@@ -682,7 +682,12 @@ protocol. A test harness
 that joins two clients in one frame therefore spawns the later packet's
 first: `common::join_pair_stamped` hands the second client's packets to the
 server first once both are in, so the first spawns first, as a retail
-client that joined earlier does.
+client that joined earlier does. Every gate that joins two or three
+clients in one frame goes through that rule (`common::step_pair_joining`,
+`join_trio`, `step_trio_ordered`), or joins its second client as late as
+the retail recipe did (`vehicle_runover_ab`, `vehicle_armor_ab`); a
+`gametypes_ab` or `votes_ab` restart that sends both clients back through
+the menus in one frame reads the same in either packet order.
 
 **The script clock.** The VM keeps its own clock, separate from
 `level.time`, and a frame's threads run on it a frame behind.
