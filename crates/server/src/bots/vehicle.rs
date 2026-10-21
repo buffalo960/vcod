@@ -52,7 +52,16 @@ const TURN_IN_PLACE: f32 = 50.0;
 const CREW_WAIT_TICKS: u32 = 200;
 /// A seat's gun fires once laid this near the enemy in yaw, within range.
 const LAID_DEG: f32 = 4.0;
-const GUN_RANGE: f32 = 3000.0;
+pub(crate) const GUN_RANGE: f32 = 3000.0;
+/// A driver held by a teammate in its way this long backs off, when the
+/// way back is clear.
+const BLOCKED_TICKS: u32 = 40;
+/// A rocket on foot goes at a vehicle once the view rests this near the
+/// lead, and from this far at least: past the launchers' 256-unit splash
+/// with a margin (`BREACH_CLEAR`).
+const ROCKET_LAID_DEG: f32 = 2.0;
+pub(crate) const ROCKET_MIN: f32 = super::BREACH_CLEAR;
+pub(crate) const ROCKET_RANGE: f32 = super::BREACH_RANGE;
 
 /// A usable vehicle near the bot, as the server sees it this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,6 +119,61 @@ pub struct SeatView {
     pub driven: bool,
     /// Another bot is walking up to board it.
     pub boarding: bool,
+    /// The seat's gun's round speed, units/s; 0 for a bullet gun.
+    pub gun_speed: f32,
+    /// A teammate on foot in the hull's way (driver's seat only).
+    pub crowd: Crowd,
+}
+
+/// Teammates on foot round a driven hull: a body the hull rolls into is
+/// crushed (`MOD_CRUSH_TANK`, `MOD_CRUSH_JEEP`), whichever side it is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Crowd {
+    /// In the strip the hull drives into, forward or reversing.
+    pub ahead: bool,
+    pub behind: bool,
+    /// Within reach of a corner turning in place.
+    pub beside: bool,
+}
+
+/// An enemy-crewed vehicle the bot has a clear line to, for a rocket on
+/// foot or a tank's gun.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArmorView {
+    pub num: u32,
+    /// The hull box's middle in the world, and the vehicle's velocity.
+    pub centre: [f32; 3],
+    pub velocity: [f32; 3],
+    /// The riders' slots, as a mask: an enemy among them is the vehicle.
+    pub crew: u64,
+    /// The speed of the round the bot would fire at it, units/s.
+    pub shot_speed: f32,
+    /// A teammate stands across the line to `centre`.
+    pub friend_in_line: bool,
+}
+
+impl ArmorView {
+    pub(crate) fn carries(&self, slot: usize) -> bool {
+        slot < 64 && self.crew >> slot & 1 == 1
+    }
+}
+
+/// Where to aim at a body at `at` moving at `vel` (its horizontal part)
+/// from `from`, for a round at `speed` units/s: ahead by the round's
+/// flight. A bullet (`speed` 0) aims at the body. Neither the view's lag
+/// nor a shell's fall is led: neither scored better on mp_cassino, and
+/// the fall's lift scored worse (bot-objectives.md 10.6).
+pub(crate) fn lead(from: [f32; 3], at: [f32; 3], vel: [f32; 3], speed: f32) -> [f32; 3] {
+    if speed <= 0.0 {
+        return at;
+    }
+    let ahead = |p: [f32; 3]| {
+        let t = super::dist_sq(from, p).sqrt() / speed;
+        [at[0] + vel[0] * t, at[1] + vel[1] * t, at[2]]
+    };
+    // The flight to the led point, twice over, settles well inside a unit
+    // for anything slower than the round.
+    ahead(ahead(ahead(at)))
 }
 
 /// The bot's own vehicle state, carried across ticks.
@@ -135,12 +199,20 @@ pub(crate) struct Rider {
     /// it steers, back-offs since the ride last made [`PROGRESS`], from
     /// where.
     stall: u32,
+    /// Ticks a driver has been held by a teammate in its way.
+    blocked: u32,
     reverse: u32,
     reverse_right: i8,
     stalls: u32,
     progress_from: [f32; 3],
     /// Boardings and exits, for the gates.
     pub(crate) boarded: u32,
+    /// Rockets fired on foot at an enemy vehicle, for the gates; and the
+    /// last tick's trigger, which a launcher wants released between shots.
+    pub(crate) rockets: u32,
+    rocket_tap: bool,
+    /// This tick's fight is a vehicle: the launcher stays out.
+    pub(crate) at_armor: bool,
 }
 
 impl Rider {
@@ -197,8 +269,63 @@ impl Bot {
     pub(crate) fn vehicle_life_over(&mut self) {
         self.rider = Rider {
             boarded: self.rider.boarded,
+            rockets: self.rider.rockets,
             ..Rider::default()
         };
+    }
+
+    /// Rockets fired on foot at enemy vehicles.
+    pub fn rockets_at_armor(&self) -> u32 {
+        self.rider.rockets
+    }
+
+    /// On foot with a loaded launcher and an enemy-crewed vehicle in its
+    /// line, nearer than any other enemy (or carrying him): the launcher
+    /// comes out, the feet stop, the view lays on the hull's lead and a
+    /// rocket goes once it rests there. The view to hold, `None` with no
+    /// such fight.
+    pub(crate) fn think_armor(&mut self, view: &BotView, cmd: &mut UserCmd) -> Option<[f32; 2]> {
+        self.rider.at_armor = false;
+        let rocket = view.rocket?;
+        let a = view.armor?;
+        if view.seat.is_some() || view.deployed {
+            return None;
+        }
+        let d = super::dist_sq(view.origin, a.centre);
+        if view
+            .enemy
+            .is_some_and(|e| !a.carries(e.slot) && super::dist_sq(view.origin, e.origin) < d)
+        {
+            return None;
+        }
+        self.rider.at_armor = true;
+        if view.weapon != rocket && self.switch_to.is_none() {
+            self.switch_to = Some(rocket);
+        }
+        let eye = [
+            view.origin[0],
+            view.origin[1],
+            view.origin[2] + view.eye_height,
+        ];
+        let (pitch, yaw) = aim_angles(view, lead(eye, a.centre, a.velocity, a.shot_speed));
+        let aim = self.turn_toward(view, [pitch, yaw]);
+        cmd.forward = 0;
+        cmd.right = 0;
+        let off = yaw_diff(yaw, view.view[1])
+            .abs()
+            .max(yaw_diff(pitch, view.view[0]).abs());
+        let fire = view.weapon == rocket
+            && view.busy_ms == 0
+            && view.clip > 0
+            && !a.friend_in_line
+            && !self.rider.rocket_tap
+            && off < ROCKET_LAID_DEG;
+        self.rider.rocket_tap = fire;
+        if fire {
+            cmd.buttons |= msg::BUTTON_ATTACK;
+            self.rider.rockets += 1;
+        }
+        Some(aim)
     }
 
     /// In a seat with an enemy in its gun's range: a tank holds still
@@ -288,9 +415,21 @@ impl Bot {
     fn think_seat(&mut self, view: &BotView, seat: SeatView, mut cmd: UserCmd) -> UserCmd {
         // The view stays where it is unless a gun or the walk-in turns it.
         let mut aim = [view.view[0], view.view[1]];
+        let in_range = |p: [f32; 3]| super::dist_sq(seat.origin, p) < GUN_RANGE * GUN_RANGE;
+        // A tank's driver lays its gun on an enemy vehicle with nobody
+        // else to shoot.
+        let armor = view
+            .armor
+            .filter(|a| seat.seat == 1 && seat.tank && in_range(a.centre));
         let enemy = view
             .enemy
-            .filter(|e| super::dist_sq(seat.origin, e.origin) < GUN_RANGE * GUN_RANGE);
+            .filter(|e| in_range(e.origin))
+            .map(|e| (e.origin, e.velocity))
+            .or(armor.map(|a| (a.centre, a.velocity)));
+        let friend_in_line = match view.enemy.filter(|e| in_range(e.origin)) {
+            Some(_) => view.friend_in_line,
+            None => armor.is_some_and(|a| a.friend_in_line),
+        };
         self.rider.fighting = enemy.is_some();
         if seat.seat == 1 {
             self.drive(view, seat, &mut cmd);
@@ -301,8 +440,20 @@ impl Bot {
         } else {
             self.rider.idle += 1;
         }
-        if let Some(e) = enemy {
-            let (pitch, yaw) = aim_angles(view, e.origin);
+        if let Some((at, vel)) = enemy {
+            // A seat's gun leads a moving target by its round's flight; a
+            // passenger's own weapon aims as on foot.
+            let at = if seat.gun_yaw.is_some() {
+                let eye = [
+                    view.origin[0],
+                    view.origin[1],
+                    view.origin[2] + view.eye_height,
+                ];
+                lead(eye, at, vel, seat.gun_speed)
+            } else {
+                at
+            };
+            let (pitch, yaw) = aim_angles(view, at);
             aim = [pitch, yaw];
             // A four-wheel's driver has no gun (0x1 sounds the horn); a
             // passenger fires his own weapon, a tap at a time.
@@ -311,7 +462,7 @@ impl Bot {
                 None => seat.seat > 2 && yaw_diff(yaw, view.view[1]).abs() < LAID_DEG,
             };
             let gun = seat.gun_yaw.is_some() || seat.seat > 2;
-            if self.shoot && gun && laid && !view.friend_in_line {
+            if self.shoot && gun && laid && !friend_in_line {
                 let tap =
                     seat.gun_yaw.is_some() || view.automatic || self.rider.seated.is_multiple_of(2);
                 if tap {
@@ -348,7 +499,7 @@ impl Bot {
         // A fight holds a tank still for the gun; a four-wheel drives on.
         // Both wait for a teammate on his way in.
         let crew = seat.boarding && r.seated < CREW_WAIT_TICKS;
-        let hold = seat.tank && view.enemy.is_some() || crew;
+        let hold = seat.tank && r.fighting || crew;
         let Some(to) = to.filter(|_| !hold) else {
             r.stall = 0;
             r.idle = if hold { 0 } else { r.idle + 1 };
@@ -361,8 +512,11 @@ impl Bot {
         }
         if r.reverse > 0 {
             r.reverse -= 1;
-            cmd.forward = -127;
-            cmd.right = r.reverse_right;
+            // Nobody is backed over: the back-off waits on him.
+            if !seat.crowd.behind {
+                cmd.forward = -127;
+                cmd.right = r.reverse_right;
+            }
             return;
         }
         let want = (to[1] - seat.origin[1])
@@ -382,6 +536,21 @@ impl Bot {
         } else {
             127
         };
+        // A teammate in the way: the hull holds rather than run him over,
+        // and backs off when he stays (a bot walking the same route).
+        if cmd.forward > 0 && seat.crowd.ahead || cmd.forward == 0 && seat.crowd.beside {
+            cmd.forward = 0;
+            cmd.right = 0;
+            r.stall = 0;
+            r.blocked += 1;
+            if r.blocked >= BLOCKED_TICKS && !seat.crowd.behind {
+                r.blocked = 0;
+                r.reverse = REVERSE_TICKS;
+                r.reverse_right = 0;
+            }
+            return;
+        }
+        r.blocked = 0;
         if cmd.forward != 0 && seat.speed.abs() < STALL_SPEED {
             r.stall += 1;
         } else {

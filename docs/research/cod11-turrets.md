@@ -2339,7 +2339,7 @@ sat within 0.01 of retail's but the three frames after the aim-to-fire
 change (2.6 to 8.8 off) and the three after fire-to-aim in the target
 phase (0.2 to 2.2); the mount's eight frames were 9 to 24 off. With the
 blend out on the group's own leaves the fire and target phases are
-within 0.02 throughout, and the mount 1 to 10. Shifting the fire
+within 0.02 throughout, and the mount 1 to 10 (the idle's phase, below). Shifting the fire
 leaves' node time by 0.02 (a third of a frame's step) puts fire-phase
 cells 0.27 off and by 0.05 2.2 off, so the leaves' time is retail's
 to well under a step. At the grid's resolution the node time and the
@@ -2347,19 +2347,62 @@ old seconds read alike: every fire leaf has frequency 6, so the mean
 differs from 6 only in the last bit and `time * 5` frames tracks
 `seconds * 30`.
 
+#### The mount: the idle the blend fades out
+
+VERIFIED, game.mp.uo 0x6b0e6..0x6b70c (the placement's second pass,
+Ghidra's addresses, 0x10000 over the file's): each row and leaf goal
+goes to `trap_XAnimSetGoalWeight` with a blend time of `1 / (1000 /
+level.frametime * |weight - goal|)` (constants 1.0 at 0xb1578, 1000.0 at
+0xb157c, `level+0x1f4`), or 0 when that rate is 0 (0.0 at 0xb1574), and
+rate 1.0. VERIFIED, 1.5b `cod_lnxded` 0x080bd674: the setter keeps
+`|goal - weight| * time` as the node's remaining time, sets the weight
+to the goal under 0.001, and raises a weight of 0 to `0.001 * goal`.
+INFERRED: the remaining time is one frame, so every leaf (from
+`0.001 * goal`) is on its goal at the next step, and the walk
+normalizes the group to its own weight (cod11-combat.md 3.1), so the
+leaves' first weights move no bone. What blends is the group's node
+against the clip it replaces, over the setter's blend.
+
+vcod measurement, UO: every cell of the eight mount frames sat 1 to 10
+off, ours farther along the ray, in proportion to the weight left on
+the idle (`pb_stand_alert`, frequency 0.1596): 1.6 on the frame before
+the blend, 0.2 on its last. Shifting the idle's node time by +0.25
+put the whole mount within 0.06. The cause was the rig, not the
+blend: our gunner joined with the target (placed at 11450 where
+retail's `PROBE place 1` reads 16550; the recipe starts him 5 s after
+the target), and his random spawn on a slope sent the spawn think's
+first anim to `pb_crouch_walk_forward_unarmed` for 350 ms, so his idle
+started at 16900 with the toggle off (wire 185) where retail's first
+snapshot reads 697. VERIFIED, both captures' first `!trace`: `legsAnim`
+697 on UO and 634 on 1.5b, the idle with the toggle set, one anim set
+since the spawn. `gungrid_gate` now joins the gunner when retail's did
+(`rig_aligned`'s gunner place, `common::join_pair_staggered`) and pins
+his spawn to the probe's spot on the ground (`GUNNER_SPAWN`; retail's
+pick is not logged): our first snapshot reads 697, the idle's node time
+0.5745 at 20100, and every mount frame but one cell is within 0.1 on
+both servers (UO 20450 cell 14 0.28, 1.5b 19050 cell 18 0.10 and 19100
+cell 14 0.28, the edge cells below).
+
 #### What is left
 
-- vcod measurement: the eight frames after a mount (and the crouch
-  phase's re-mount) stay 1 to 10 off, every cell: the legs blending from
-  the idle into the aim group. Not run down; candidates are the idle
-  clip's weight curve under the setter and the leaves' first weights
-  (a leaf set from 0 starts at `0.001 * goal`).
 - vcod measurement: one cell (row 42, 12 to the right) reads 2.45 nearer
   on ours on every frame the barrel rests at the yaw sweep's right arc,
   on 1.5b and UO alike (37.2635 against 34.81). The pose elsewhere on
-  those frames matches to 0.02, so it is one box's edge.
-- vcod measurement: single cells on single frames of the sweeps, 0.1 to
-  1.6 off (UO 21100, 24850, 24950; 1.5b 20200, 20450).
+  those frames matches to 0.02. vcod measurement, UO 22100: ours grazes
+  `bip01 r finger22`'s box (hit location 10, 34.81 in, 0.22 deep), and
+  `bip01 r hand`'s box behind it reads 37.253, retail's to 0.01, so
+  retail's ray misses the finger. Not run down: the finger's pose, or a
+  body model whose finger box differs (the gunner's models are not
+  logged; `PROBE models` covers the axis target only).
+- vcod measurement: single cells on single frames of the mount and the
+  sweeps, 0.1 to 1.6 off (UO 20450, 21100, 24850, 24950; 1.5b 19050,
+  19100, 20200, 20450).
+- vcod measurement: the re-mount from a crouch: on UO the head-height
+  cells (row 54, cells 22 and 23) 0.1 to 0.14 off for six frames
+  (33850..34100) and cell 13 1.7 off on the first (33800); on 1.5b cell
+  13 0.15 and 0.27 on the first two (32550, 32600). The mounted
+  controllers move none of them (forced off or to their targets, the
+  cells hold).
 
 ## 14. The client
 

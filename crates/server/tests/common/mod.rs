@@ -255,13 +255,7 @@ pub fn join_pair_logged(
     join_pair_stamped(sv, qa, qb, now, a, b, &[])
 }
 
-/// [`join_pair_logged`] with client `a`'s cmds, once it is in the game,
-/// stamped `stamps_a` (a retail client's, on a server whose clock runs on
-/// retail's level time): each frame sends those past its last and before
-/// the frame's time. Empty, every client sends one cmd a frame on its own
-/// clock.
-///
-/// Each frame goes through [`step_pair_joining`], so `a` spawns ahead of `b`.
+/// [`join_pair_staggered`] with both clients connecting at once.
 pub fn join_pair_stamped(
     sv: &mut Server,
     qa: &Rc<RefCell<Queues>>,
@@ -271,13 +265,64 @@ pub fn join_pair_stamped(
     b: (&str, &str),
     stamps_a: &[i32],
 ) -> (NetClient<ClientEnd>, NetClient<ClientEnd>, Join, Join) {
+    join_pair_staggered(sv, qa, qb, now, a, b, stamps_a, 0)
+}
+
+/// [`join_pair_logged`] with client `a`'s cmds, once it is in the game,
+/// stamped `stamps_a` (a retail client's, on a server whose clock runs on
+/// retail's level time): each frame sends those past its last and before
+/// the frame's time. Empty, every client sends one cmd a frame on its own
+/// clock.
+///
+/// Each frame goes through [`step_pair_joining`], so `a` spawns ahead of `b`.
+///
+/// `b` connects `b_after_ms` after `a` (a frame at a time), as a retail
+/// client started later does; until then `a` joins and plays alone. A late
+/// `b` is handed back a second after its spawn, not [`SPAWN_SETTLE`], so a
+/// capture that starts soon after it can still be met.
+#[allow(clippy::too_many_arguments)]
+pub fn join_pair_staggered(
+    sv: &mut Server,
+    qa: &Rc<RefCell<Queues>>,
+    qb: &Rc<RefCell<Queues>>,
+    now: &mut Instant,
+    a: (&str, &str),
+    b: (&str, &str),
+    stamps_a: &[i32],
+    b_after_ms: i64,
+) -> (NetClient<ClientEnd>, NetClient<ClientEnd>, Join, Join) {
     // Distinct qports: the server keys a peer by ip and qport, so two clients
     // sharing one read as a single client reconnecting and the second is
     // refused. A real client is one per process and gets this for free.
     let mut ca = NetClient::start_with_qport(ClientEnd(qa.clone()), *now, 0x2001);
-    let mut cb = NetClient::start_with_qport(ClientEnd(qb.clone()), *now, 0x2002);
     let (mut ja, mut jb) = (Join::new(a.0, a.1), Join::new(b.0, b.1));
     let mut last_a = i32::MIN;
+    let mut waited = 0;
+    while waited < b_after_ms {
+        *now += Duration::from_millis(50);
+        waited += 50;
+        match ca.snapshots().newest().filter(|_| !stamps_a.is_empty()) {
+            Some(snap) if ca.state() == NetState::Active => {
+                let end = snap.server_time + FRAME_MS as i32;
+                let cmds = stamped(&ca, &holding(&ca), stamps_a, last_a, end);
+                if let Some(c) = cmds.last() {
+                    last_a = c.server_time;
+                }
+                ca.send_cmds(&cmds);
+            }
+            _ => {
+                ca.send_frame(&holding(&ca));
+            }
+        }
+        for e in step(sv, qa, &mut ca, *now) {
+            match e {
+                NetEvent::ServerCommand(tokens) => ja.on_server_command(&tokens, &mut ca, *now),
+                NetEvent::Dropped(r) => panic!("dropped mid-join: {r}"),
+                _ => {}
+            }
+        }
+    }
+    let mut cb = NetClient::start_with_qport(ClientEnd(qb.clone()), *now, 0x2002);
     for _ in 0..600 {
         *now += Duration::from_millis(50);
         match ca.snapshots().newest().filter(|_| !stamps_a.is_empty()) {
@@ -304,7 +349,12 @@ pub fn join_pair_stamped(
                 }
             }
         }
-        if ja.settled(*now) && jb.settled(*now) {
+        let b_wait = if b_after_ms > 0 {
+            Duration::from_secs(1)
+        } else {
+            SPAWN_SETTLE
+        };
+        if ja.settled(*now) && jb.settled_after(*now, b_wait) {
             break;
         }
     }
@@ -1416,8 +1466,13 @@ impl Join {
     }
 
     pub fn settled(&self, now: Instant) -> bool {
+        self.settled_after(now, SPAWN_SETTLE)
+    }
+
+    /// Whether the weapon menu was answered `wait` ago or more.
+    pub fn settled_after(&self, now: Instant, wait: Duration) -> bool {
         self.answered_weapon_at
-            .is_some_and(|t| now.duration_since(t) >= SPAWN_SETTLE)
+            .is_some_and(|t| now.duration_since(t) >= wait)
     }
 
     /// What the join did, for a failure message.

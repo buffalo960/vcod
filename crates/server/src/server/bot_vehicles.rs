@@ -3,17 +3,34 @@
 //! board, as the use key would find them (`game::vehicle::seat::usable`).
 
 use super::*;
-use crate::bots::{SeatView, VehicleSpot};
+use crate::bots::{ArmorView, Crowd, SeatView, VehicleSpot};
 use crate::game::vehicle::info::KIND_TANK;
 
 /// `vc_bot_vehicles`: 0 stops bots boarding; one seated rides on.
 pub(crate) const VEHICLES_CVAR: &str = "vc_bot_vehicles";
 
 impl Server {
-    /// Fills [`crate::bots::BotView::seat`] and `vehicles` for this tick's
-    /// views. A level with no vehicle leaves them empty.
-    pub(super) fn bot_vehicle_views(&mut self, views: &mut [(usize, crate::bots::BotView)]) {
+    /// Fills [`crate::bots::BotView::seat`], `vehicles` and `armor` for
+    /// this tick's views. A level with no vehicle leaves them empty.
+    pub(super) fn bot_vehicle_views(
+        &mut self,
+        views: &mut [(usize, crate::bots::BotView)],
+        teams: &[i32],
+    ) {
         let on = crate::game::builtins::cvar::atoi(&self.live_cvar(VEHICLES_CVAR, "1")) != 0;
+        // Every body on foot, by slot and team: what a driver keeps off.
+        let walkers: Vec<(usize, [f32; 3], i32)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                let s = c.as_ref()?.sim.as_ref()?;
+                let up =
+                    s.pm_type == crate::spectate::PmType::Normal && !s.dead && s.seat.is_none();
+                up.then(|| (i, s.ps.origin.into(), teams.get(i).copied().unwrap_or(0)))
+            })
+            .collect();
+        let crewed = self.crewed_vehicles(teams);
         let Some(rt) = self.script.as_mut() else {
             return;
         };
@@ -32,6 +49,10 @@ impl Server {
                     continue;
                 }
                 view.seat = seat_view(host, *slot, &targets);
+                if let Some(seat) = view.seat.as_mut().filter(|s| s.seat == 1) {
+                    let mine = teams.get(*slot).copied().unwrap_or(0);
+                    seat.crowd = crowd(host, *slot, mine, &walkers);
+                }
                 if view.seat.is_some() || !on {
                     continue;
                 }
@@ -59,6 +80,131 @@ impl Server {
                 }
             }
         });
+        if crewed.is_empty() {
+            return;
+        }
+        for (slot, view) in views.iter_mut() {
+            view.armor = self.armor_view(*slot, view, &crewed, teams);
+        }
+    }
+
+    /// Each live vehicle with a rider: its box, its velocity, its riders as
+    /// a slot mask and their teams.
+    fn crewed_vehicles(&self, teams: &[i32]) -> Vec<Crewed> {
+        let Some(rt) = self.script.as_ref() else {
+            return Vec::new();
+        };
+        let host = &rt.host;
+        host.vehicles
+            .in_slot_order()
+            .into_iter()
+            .filter_map(|id| {
+                let v = host.vehicles.live.get(&id)?;
+                let riders: Vec<usize> = v.seats.iter().flatten().copied().collect();
+                if riders.is_empty() || host.ents.get(id).is_none_or(|e| e.unlinked) {
+                    return None;
+                }
+                let info = host.vehicles.info_of(v);
+                let spot = VehicleSpot {
+                    num: id.0,
+                    origin: v.pose.origin,
+                    yaw: v.pose.angles[1],
+                    mins: info.mins,
+                    maxs: info.maxs,
+                };
+                let mask = riders
+                    .iter()
+                    .filter(|s| **s < 64)
+                    .fold(0u64, |m, s| m | 1 << s);
+                let sides = riders
+                    .iter()
+                    .map(|s| teams.get(*s).copied().unwrap_or(0))
+                    .collect();
+                Some(Crewed {
+                    spot,
+                    velocity: v.velocity,
+                    crew: mask,
+                    sides,
+                })
+            })
+            .collect()
+    }
+
+    /// [`crate::bots::BotView::armor`]: the nearest vehicle an enemy rides
+    /// in, in a clear line from the eye, for a bot on foot with a loaded
+    /// launcher (past a rocket's splash, inside its range) or one driving a
+    /// tank (inside the gun's range).
+    fn armor_view(
+        &self,
+        slot: usize,
+        view: &crate::bots::BotView,
+        crewed: &[Crewed],
+        teams: &[i32],
+    ) -> Option<ArmorView> {
+        if !self.bot_admin.shoot || !view.playing || view.dead {
+            return None;
+        }
+        let (min, max, speed) = match view.seat {
+            Some(s) if s.seat == 1 && s.tank => (0.0, crate::bots::VEHICLE_GUN_RANGE, s.gun_speed),
+            Some(_) => return None,
+            None => {
+                let r = view.rocket?;
+                let def = self.weapon_table.get(r as usize)?;
+                (
+                    crate::bots::VEHICLE_ROCKET_MIN,
+                    crate::bots::VEHICLE_ROCKET_RANGE,
+                    def.projectile_speed,
+                )
+            }
+        };
+        let mine = teams.get(slot).copied().unwrap_or(0);
+        let hostile = |their: i32| match mine {
+            script::TEAM_AXIS => their != script::TEAM_AXIS,
+            script::TEAM_ALLIES => their != script::TEAM_ALLIES,
+            _ => true,
+        };
+        let me = self.clients[slot].as_ref()?.sim.as_ref()?;
+        let eye = glam::Vec3::from(me.eye_origin());
+        let world = self.world.as_ref().map(|w| &w.collision);
+        crewed
+            .iter()
+            .filter(|c| {
+                (slot >= 64 || c.crew >> slot & 1 == 0) && c.sides.iter().any(|t| hostile(*t))
+            })
+            .map(|c| (crate::bots::dist_sq(view.origin, c.spot.centre()), c))
+            .filter(|(d, _)| *d >= min * min && *d <= max * max)
+            .filter(|(_, c)| {
+                // The hull's own clip may stop the trace short of its
+                // middle: a stop at its box is the vehicle.
+                world.is_none_or(|w| {
+                    let to = glam::Vec3::from(c.spot.centre());
+                    let t = w.shot_trace(eye, to);
+                    let end: [f32; 3] = (eye + (to - eye) * t.fraction).into();
+                    let up = end[2] - c.spot.origin[2];
+                    t.fraction >= 1.0
+                        || c.spot.gap(end) < ARMOR_REACH
+                            && up > c.spot.mins[2] - ARMOR_REACH
+                            && up < c.spot.maxs[2] + ARMOR_REACH
+                })
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, c)| ArmorView {
+                num: c.spot.num,
+                centre: c.spot.centre(),
+                velocity: c.velocity,
+                crew: c.crew,
+                shot_speed: speed,
+                friend_in_line: self
+                    .bot_friend_in_line(slot, c.spot.centre(), teams, None)
+                    .0,
+            })
+    }
+
+    /// Test-facing: the kind of the live vehicle `num` (`info::KIND_*`).
+    pub fn test_vehicle_kind(&self, num: u32) -> Option<i32> {
+        let host = &self.script.as_ref()?.host;
+        let (_, v) = host.vehicles.live.iter().find(|(id, _)| id.0 == num)?;
+        Some(host.vehicles.info_of(v).kind)
     }
 
     /// Test-facing: each live vehicle in pool order, as a bot would see it.
@@ -103,6 +249,17 @@ fn seat_view(
         2 if info.has_gunner => Some(yaw + v.wire.angles2[1] + v.wire.origin2[1]),
         _ => None,
     };
+    // The seat's gun's round: a tank's shell flies, the MGs' are bullets.
+    let gun = match seat {
+        1 => v.weapons[0],
+        2 => v.weapons[2],
+        _ => 0,
+    };
+    let gun_speed = host
+        .weapons
+        .get(gun)
+        .filter(|d| gun != 0 && d.weapon_type == "projectile")
+        .map_or(0.0, |d| d.projectile_speed);
     Some(SeatView {
         seat,
         tank,
@@ -112,7 +269,66 @@ fn seat_view(
         gun_yaw,
         driven: v.seats[1].is_some(),
         boarding: targets.iter().any(|&(s, n)| s != slot && n == id.0),
+        gun_speed,
+        crowd: Crowd::default(),
     })
+}
+
+/// A trace toward a vehicle's middle that stops this near its box met the
+/// hull.
+const ARMOR_REACH: f32 = 24.0;
+
+/// A vehicle with a rider, for [`Server::armor_view`].
+struct Crewed {
+    spot: VehicleSpot,
+    velocity: [f32; 3],
+    /// The riders' slots as a mask, and each rider's team.
+    crew: u64,
+    sides: Vec<i32>,
+}
+/// How far past the hull's front or back a driver keeps teammates clear,
+/// at rest and per unit/s of speed, and how wide of its sides.
+const CROWD_REACH: f32 = 120.0;
+const CROWD_REACH_PER_SPEED: f32 = 0.6;
+const CROWD_MARGIN: f32 = 40.0;
+
+/// [`Crowd`] round the vehicle `slot` drives, of the bodies on foot on
+/// team `mine` (an axis or allies one; nobody is a teammate in `dm`).
+fn crowd(
+    host: &crate::game::host::GameHost,
+    slot: usize,
+    mine: i32,
+    walkers: &[(usize, [f32; 3], i32)],
+) -> Crowd {
+    let mut c = Crowd::default();
+    if mine != script::TEAM_AXIS && mine != script::TEAM_ALLIES {
+        return c;
+    }
+    let Some((id, _)) = host.vehicles.seat_of(slot) else {
+        return c;
+    };
+    let Some(v) = host.vehicles.live.get(&id) else {
+        return c;
+    };
+    let info = host.vehicles.info_of(v);
+    let (s, k) = v.pose.angles[1].to_radians().sin_cos();
+    let reach = CROWD_REACH + v.forward_speed.abs() * CROWD_REACH_PER_SPEED;
+    let corner = info.mins[0]
+        .abs()
+        .max(info.maxs[0])
+        .hypot(info.mins[1].abs().max(info.maxs[1]));
+    for &(_, p, _) in walkers.iter().filter(|w| w.0 != slot && w.2 == mine) {
+        let (dx, dy) = (p[0] - v.pose.origin[0], p[1] - v.pose.origin[1]);
+        if (p[2] - v.pose.origin[2]).abs() > info.maxs[2] + 64.0 {
+            continue;
+        }
+        let (x, y) = (dx * k + dy * s, -dx * s + dy * k);
+        let wide = y > info.mins[1] - CROWD_MARGIN && y < info.maxs[1] + CROWD_MARGIN;
+        c.ahead |= wide && x > 0.0 && x < info.maxs[0] + reach;
+        c.behind |= wide && x < 0.0 && x > info.mins[0] - reach;
+        c.beside |= dx.hypot(dy) < corner + CROWD_MARGIN;
+    }
+    c
 }
 
 /// How far ahead along its route a driver steers: a hull turns wide, and

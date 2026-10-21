@@ -1478,10 +1478,8 @@ the snapshots print. INFERRED: the cmd at 25000 is the probe's, which
 ends each frame's cmds on the frame's time (25050, 25100, ... in both
 logs). `legs_ab` replays retail's commandTime on the placement frame and
 that cmd before the log's first; the 1.5 walk is then exact throughout
-(its join fit to 8250). The probe dropped from its spawn point, so the
-settle's idle start is in neither half; on UO the best fit of the join
-still leaves the settle 0.11 units and 2.9 degrees off, named in
-`legs_ab`'s `GAPS_UO`. VERIFIED, same captures:
+and so is the UO walk once the spawn idle is dated as "The spawn idle on
+1.5 and UO" below has it. VERIFIED, same captures:
 the crouch walk back that returns at 42000 while its node still blends
 out keeps its time, as "The setter on a weighted node" (cod11-combat.md
 3.1) has it, to 0.03 units.
@@ -1664,6 +1662,38 @@ starts ours' client so its spawn lands on 5750 and asserts it does.
 VERIFIED, the torso capture: its placement snapshot is message 352, and the
 same rule (the idle 4 messages after the join, 50 ms a message) gives 7600,
 which fits its settle to 0.08 degrees where 7500 and 7700 read 11 off.
+
+**The spawn idle on 1.5 and UO.** VERIFIED, live (retail UO 1.51b,
+2026-10-21, `probe_legs` with a `--save-legs` client that also logs the
+join's snapshots and cmds as `!psnap` and `!pcmd`; fixtures
+`movers/mp_carentan-dm-legs{,-client}-uo-settle.txt`, whose spawn drew
+the deathmatch point at (426, 2158), and `-uo-spawn720.txt`, run with
+`+set probe_legs_spawn 720_-32` so the probe deletes every other
+`mp_deathmatch_spawn` and the spawn takes the point `-legs-uo.txt`'s
+probe took; recipe in each header): the first playing snapshot
+(`pm_type` 0) is netchan message 5 in both (level time 9100 and 9550),
+already carries `legsAnim` 697 (`pb_stand_alert`) and stands at rest:
+z 160.125, `placeSpawnpoint`'s height for that point in
+`spawnpoints/placebits-retail.txt`, and -7.8749866 at (720, -32), where
+the placed point reads -5.25356 and the spawn's think lands the body on
+the floor under it. No snapshot shows a fall from the spawn point.
+INFERRED: the spawn's end frame sets the idle and nothing restarts it
+until the run, as on 1.1.
+
+VERIFIED, vcod measurement, `legs_ab`: ours used to pin the spawn at the
+lump's origin (z 176 at (426, 2158), 0 at (720, -32)), so its body fell
+and set the idle up to 150 ms late. Pinned at the placed height, with
+the idle set on retail's spawn snapshot, both logged walks match every
+row, settle included (`a_body_settling_from_a_logged_spawn_is_posed_like_retail_on_uo`).
+The captures that start at the placement are dated from the
+placement's message: message 5 gives 8500 for the 1.5b walk, 8800 for
+the 1.5b stop and go and 10100 for the UO walk, each the one frame on
+which the walk matches throughout (a frame either side misses 31 to 34
+rows), and the UO stop and go matches only on message 6 (11750).
+INFERRED: which message the spawn lands on rides when the client's
+team menu answer arrives. The UO walk's old residual (0.11 units, 2.9
+degrees at 26300) was its idle fit at 3850, 6250 ms off retail's 10100:
+the idle is 6267 ms long, so that fit's phase sat 17 ms off.
 
 **`movementDir` folds like retail's.** VERIFIED, `PM_SetMovementDir`
 (0x2e970): the yaw comes from `vectoangles` (0x2eac4, 0x3de94: `atan2`, plus
