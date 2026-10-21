@@ -840,6 +840,9 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
     // `SEED=<odd n>` replays another game (bot-navigation.md, "Other rules").
     sv.test_seed_rng(std::env::var("SEED").map_or(1, |v| v.parse().expect("SEED")));
+    // On foot: a seated bot holds still on purpose, and the riders bring
+    // out stock script errors (`tests/bot_vehicles.rs` plays the vehicles).
+    sv.set_cvar("vc_bot_vehicles", "0");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();

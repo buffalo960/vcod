@@ -3749,6 +3749,40 @@ impl Server {
         true
     }
 
+    /// Test-facing: `self giveMaxAmmo(name)` on `slot`, a full clip and
+    /// reserve, as the frame's weapon pass applies it. False for an unknown
+    /// name.
+    pub fn test_give_max_ammo(&mut self, slot: usize, name: &str) -> bool {
+        use crate::game::host::WeaponOp;
+        let Some(rt) = self.script.as_mut() else {
+            return false;
+        };
+        let Some(index) = rt.host.defs.weapon_index(name) else {
+            return false;
+        };
+        let weapons = rt.host.weapons.clone();
+        let Some(def) = weapons.get(index) else {
+            return false;
+        };
+        if !def.clip_only {
+            rt.host.weapon_op(
+                slot,
+                WeaponOp::SetAmmo {
+                    ammo_index: def.ammo_index,
+                    rounds: def.max_ammo as i16,
+                },
+            );
+        }
+        rt.host.weapon_op(
+            slot,
+            WeaponOp::SetClip {
+                clip_index: def.clip_index,
+                rounds: def.clip_size as i16,
+            },
+        );
+        true
+    }
+
     /// Test-facing: the seed the spread and the melee rolls draw from, so a
     /// gate that needs a shot to land where it did once can have it again.
     /// The bots added after it draw their own streams off `seed` too.
@@ -4506,7 +4540,7 @@ impl Server {
                 });
             }
         }
-        self.bot_vehicle_views(&mut views);
+        self.bot_vehicle_views(&mut views, &teams);
         let breach_models = if views.iter().any(|(_, v)| v.rocket.is_some()) {
             self.bot_breach_models(uo.as_ref())
         } else {
@@ -5359,6 +5393,7 @@ impl Server {
             // Filled for the level's vehicles in pass 2.
             vehicles: Vec::new(),
             seat: None,
+            armor: None,
         })
     }
 
@@ -5861,6 +5896,7 @@ impl Server {
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
             seat: sim.seat.map(|s| (s.vehicle, s.pos)),
             boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
+            rockets_at_armor: self.bots.get(&slot).map_or(0, |b| b.rockets_at_armor()),
         })
     }
 

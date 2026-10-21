@@ -173,10 +173,12 @@ the goal ahead of him
 On a United Offensive map with vehicles, a bot with no fight and no
 objective close by walks to a vehicle near it and gets in with the use key,
 like a player. A driver drives toward its objective or an enemy, waits a
-moment for a teammate walking up to board, and in a tank stops to lay the
-turret on an enemy and fire. A gunner fires the vehicle's machine gun. Bots
-get out when they arrive, when stuck, or after 90 seconds (section 10 of
-the same page).
+moment for a teammate walking up to board, holds or backs off for a
+teammate in its way, and in a tank stops to lay the turret on an enemy or
+an enemy vehicle and fire. A gunner fires the vehicle's machine gun. A bot
+on foot carrying a rocket launcher fires it at an enemy-crewed vehicle in
+its sight. Bots get out when they arrive, when stuck, or after 90 seconds
+(section 10 of the same page).
 
 ## Known limits
 
@@ -184,7 +186,8 @@ the same page).
 - In UO, bots drive vehicles along the infantry graph over ground the hull
   fits, so a tank can still wedge itself; a driver backs off and gets out
   after four stalls. They never change seats, use the hatch or drive a
-  vehicle at an enemy to run him over.
+  vehicle at an enemy to run him over. A bot fires rockets at a vehicle
+  only with a launcher already in hand; outside `bas` none fetches one.
 - Skill levels change how bots aim, react and remember, not how they move
   or what they choose to do: an expert takes the same routes and plays the
   objectives the same way as an easy bot.

@@ -431,8 +431,10 @@ something, the bullet links it.
   (fetch a bazooka or panzerschreck lying about and breach a base with
   rockets from a spot with a shot at it, plant on a breached base and
   defuse), and board UO vehicles with the use key: a driver steers along
-  the graph over ground its hull fits, a tank's driver stops to lay the
-  turret on an enemy and fire, a gunner fires the MG. The nav graph is rebuilt when the script
+  the graph over ground its hull fits and holds for a teammate in its way,
+  a tank's driver stops to lay the turret on an enemy or an enemy vehicle
+  and fire, a gunner fires the MG, and a bot on foot with a launcher fires
+  rockets at an enemy-crewed vehicle. The nav graph is rebuilt when the script
   deletes walls, as `bas` does to a breached base. A bot jumps through a
   window too low for a standing body with crouch held in the air, as
   out of mp_cassino's axis room and two rooms on mp_streets.
