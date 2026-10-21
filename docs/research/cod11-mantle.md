@@ -2199,6 +2199,12 @@ biased. The scale, applied after the event, is
 18-unit step costs four fifths of the frame's speed, a step of nothing costs
 none.
 
+VERIFIED, rodata 0x70f14 of the 1.1d `game.mp.i386.so`: the 0.2 is stored as
+0x3e4ccccc, one bit under the nearest float to 0.2 (0x3e4ccccd); the 0.8 at
+0x70f10 is 0x3f4ccccd. 1.5b builds it as `1.0 - 0.8f` instead (0.8 stored
+to a local at 0x2a4fb, the subtraction at 0x2a5d9), which is exact and lands
+on the same 0x3e4ccccc.
+
 INFERRED, from the control flow of 0x35116-0x35659: every arm past the entry
 gate reaches the tail - the step-up, the down pass a grounded frame takes
 without one, and a step-up the "did the flat slide get further" test reverted.
