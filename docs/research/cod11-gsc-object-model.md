@@ -500,7 +500,9 @@ The heading's label above covers the table; every claim below carries its own.
   INFERRED, from the compare and the branches around it: the compare is an
   early return taken when the timestamp is in the future, the 1000 is the
   spawnflag 0x10 arm and the 100 the other, and the timestamp gates the
-  `Scr_Notify` as well as the `G_Damage`, both sitting past it.
+  `Scr_Notify` as well as the `G_Damage`, both sitting past it. VERIFIED on
+  retail 1.1d, 1.5b and UO, the 100 and 1000 ms cadences, spawnflags 0x4,
+  0x8 and 0x20 and the per-touch read of `dmg`: `cod11-combat.md` 5.9.
 - `hurt_touch` tests a byte at gentity+0x171 **on the toucher**. VERIFIED: the
   compare against 0 at 0x64dd2, on the function's second argument (loaded at
   0x64dcc). INFERRED, from the `je` it feeds: it is an early return, and it is

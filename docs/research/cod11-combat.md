@@ -4266,6 +4266,66 @@ lifted height.
 undefined vectors. `crates/server/tests/hurtfall_ab.rs` replays each
 capture's cmds on vcod-server and holds every `PROBE` line exact.
 
+### 5.9 The hurt's cadence, its flags and its sound
+
+`hurt_touch` is 1.1d 0x64dc4, 1.5b 0x7a456 and UO 0x8672b, one body on
+all three (INFERRED, read off the three
+decompiles' control flow): a byte on the toucher, then the trigger's
+timestamp against `level.time`, then the `"trigger"` notify (1.1 inline,
+1.5 and UO through `G_Trigger`), the timestamp moved 1000 on under
+spawnflag 0x10 and 100 otherwise, `G_PlaySoundAliasAtPoint` at the
+toucher's origin unless spawnflag 0x4, `G_Damage` with the trigger's `dmg`
+(gentity+568 on 1.1, +0x240 on 1.5, +0x248 on UO) and `dflags` 0x10 under
+spawnflag 0x8, mod 0x17 (UO 0x16), and last the touch function cleared
+under spawnflag 0x20. `dmg` and the spawnflags are read at each touch, not
+kept from the spawn. `G_PlaySoundAliasAtPoint` (1.1d 0x67a2c, a `G_Spawn`
+with `eType` 0xb8; 1.5b `G_TempEntity(point, 0xac)`) takes an entity
+number on every touch (`cod11-sound-system.md`).
+
+The captures are `client-probes/probe_hurtfall` on retail 1.1d, 1.5b and UO
+1.51b, 2026-10-21, nine runs
+(`crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtrate.txt`,
+`-hurtslow`, `-hurtonce`, each with a `-1.5` and a `-uo` twin, recipes in
+their headers). Every run drops the client from z -30 on to the street at
+(900 1930). VERIFIED: all three servers log the same lines but for the
+times.
+
+- VERIFIED, `-hurtrate`: the slab lifted to -56..-40 with `hurt.dmg = 30` written by
+  script. Four touches 100 ms apart, 30 each, the fourth kills. A script
+  write of `dmg` changes what the next touch takes.
+- VERIFIED, `-hurtslow`: `spawn("trigger_hurt", (900, 1930, -20), 16)` with `dmg`
+  written to 25. Touches 1000 ms apart, the first on the drop's frame, the
+  fourth kills. The script spawn runs `SP_trigger_hurt`: before the write
+  the new entity reads `dmg 5` (a separate 1.1d run; the probe logs it
+  after the write).
+- VERIFIED, `-hurtonce`: the same spawn with spawnflags 44 (4, 8, 0x20) and `dmg` 10.
+  One touch, `dflags 16`, and never another in the 6 s that follow.
+- VERIFIED, all nine: each damage callback spawns and deletes a `script_origin` and logs its
+  number. Under the sound it reads two above the last (171, 173, 175, 177
+  on the slab, 172, 174, ... next to the spawned trigger at 170): the
+  touch's sound took the number before it. Under the silent flag it reads
+  171, the next number after the trigger.
+- VERIFIED, 1.1d: a script write of `spawnflags` is the runtime error
+  `Tried to set a read only entity field`, so the slow and once flags are
+  only reachable through a map's key or `spawn`'s third argument. vcod
+  does not raise that error (Open, below).
+
+INFERRED, from the model-0 reading of a scripted `trigger_damage` (14.8):
+the spawned trigger links inline model 0, a copy of the world at its
+origin, and touches a body that copy overlaps. The captures hold the point
+inside the standing body, so they do not tell that apart from a point
+trigger.
+
+**As implemented.** `Triggers::arm_hurt` takes the cadence and the once
+flag off the `spawnflags` field at each touch, the touch pass reads `dmg`
+there too, and the hurt plays its alias on a PVS temp entity at the
+toucher's `origin` field before the damage (`ScriptRuntime::add_sound_at`).
+`trigger::spawn_scripted_hurt` is the script spawn's `SP_trigger_hurt`, and
+both spawns write `dmg` 5 over a 0 (`default_hurt_dmg`).
+`crates/server/tests/hurtfall_ab.rs` replays the nine captures. Open: the
+read-only `spawnflags` guard, `START_OFF` (spawnflag 1, no touch until
+`hurt_use`) and `hurt_use` itself are not modelled and not measured.
+
 ---
 
 ## 6. `P_DamageFeedback`
