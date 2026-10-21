@@ -440,6 +440,8 @@ fn spawn_entity(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<Valu
         crate::game::spawn::link_script_entity(host, cx, &Default::default(), id, &name);
     } else if name == "trigger_damage" {
         crate::game::damage_trigger::spawn_scripted(host, cx, id, flags);
+    } else if name == "trigger_hurt" {
+        crate::game::trigger::spawn_scripted_hurt(host, cx, id, flags);
     } else {
         crate::game::mover::spawn_sine(host, cx, id, &name, None);
     }

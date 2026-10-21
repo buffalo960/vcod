@@ -686,6 +686,44 @@ impl ScriptRuntime {
         );
     }
 
+    /// An entity's int field, 0 when it holds none.
+    fn int_field(&mut self, id: EntId, name: &str) -> i32 {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let atom = cx.intern_folded(name);
+            match vcod_gsc::Host::get_field(host, cx, id, atom) {
+                Value::Int(i) => i,
+                _ => 0,
+            }
+        })
+    }
+
+    /// `G_PlaySoundAliasAtPoint`: an `EV_SOUND_ALIAS` temp entity at `at`,
+    /// culled by PVS (`G_Spawn` and no `svFlags` on 1.1d 0x67a2c,
+    /// `G_TempEntity` on 1.5b and UO).
+    fn add_sound_at(&mut self, at: [f32; 3], parm: i32) {
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            host.add_temp_entity(
+                cx,
+                crate::game::temp_entity::TempEntity {
+                    event: EV_SOUND_ALIAS,
+                    parm,
+                    surf_type: 0,
+                    other: 0,
+                    attacker: 0,
+                    weapon: 0,
+                    client_num: 0,
+                    scale: 0,
+                    origin: at,
+                    scope: crate::game::temp_entity::Scope::Pvs,
+                    quake: None,
+                    origin2: None,
+                },
+            )
+        });
+    }
+
     /// Damage from `[inflictor, attacker]`, neither a player:
     /// [`Self::deliver_world_hit`]'s shape with a weapon, a point and a
     /// direction, as a driverless vehicle's `VEH_PlayerDamage` passes them
@@ -839,6 +877,17 @@ impl ScriptRuntime {
             // `Touch_Multi` skips its wait arm on a trigger whose think is
             // `enableLinkTo`'s `Think_GeneralLink` (0x65aa2).
             let linked = self.host.links.is_enabled(id);
+            // `hurt_touch` reads the trigger's `dmg` and `spawnflags` at
+            // every touch (cod11-combat.md 5.9).
+            let is_hurt = self
+                .host
+                .triggers
+                .get(id)
+                .is_some_and(|t| t.kind == crate::game::trigger::TriggerKind::Hurt);
+            let hurt = is_hurt.then(|| {
+                let (dmg, flags) = (self.int_field(id, "dmg"), self.int_field(id, "spawnflags"));
+                (dmg, self.host.triggers.arm_hurt(id, flags), flags)
+            });
             let fire = self.host.triggers.fire(id, now_ms, linked);
             if !fire.fired() {
                 continue;
@@ -851,18 +900,19 @@ impl ScriptRuntime {
                     .ents
                     .schedule(id, crate::game::entity::ThinkFn::Free, at);
             }
-            let hurt = self
-                .host
-                .triggers
-                .get(id)
-                .filter(|t| t.kind == crate::game::trigger::TriggerKind::Hurt)
-                .map(|t| (t.damage, t.dflags));
             if !self.host.queue_trigger(id, client) {
                 self.host
                     .engine_notifies
                     .push((id, "trigger", vec![Value::Entity(client)]));
             }
-            if let Some((damage, dflags)) = hurt {
+            if let Some((damage, dflags, flags)) = hurt {
+                // `G_PlaySoundAliasAtPoint` at the toucher's origin, a temp
+                // entity taken ahead of the damage callback's.
+                let sound = self.host.triggers.get(id).map_or(0, |t| t.sound);
+                if flags & crate::game::trigger::HURT_SILENT == 0 && sound != 0 {
+                    let at = self.client_origin(slot);
+                    self.add_sound_at(at, sound);
+                }
                 self.deliver_world_hit(
                     slot,
                     id,
@@ -3922,6 +3972,23 @@ impl ScriptRuntime {
         id
     }
 
+    /// A `trigger_hurt` of `shape` on `id` doing `dmg` a touch, linked as
+    /// its spawn would link it.
+    pub fn register_hurt_for_test(
+        &mut self,
+        id: EntId,
+        shape: crate::game::trigger::TriggerShape,
+        dmg: i32,
+    ) {
+        self.host.triggers.register_hurt(id, shape, 0);
+        let host = &mut self.host;
+        self.vm.with_cx(|cx| {
+            let atom = cx.intern_folded("dmg");
+            let _ = vcod_gsc::Host::set_field(host, cx, id, atom, Value::Int(dmg));
+            host.link_trigger(cx, id);
+        });
+    }
+
     /// A trigger the test registered, linked as its spawn would link it.
     pub fn link_trigger_for_test(&mut self, id: EntId) {
         let host = &mut self.host;
@@ -5356,7 +5423,7 @@ mod tests {
 
     /// A `trigger_hurt` damages the player standing in it through the stock
     /// damage callback, so the victim's health drops on the path a bullet's
-    /// hit already takes, and the 100 ms cadence `register_hurt` arms gates
+    /// hit already takes, and the 100 ms cadence `arm_hurt` arms gates
     /// the second helping.
     #[test]
     fn a_trigger_hurt_damages_the_player_in_it() {
@@ -5372,13 +5439,11 @@ mod tests {
         rt.set_client_health_for_test(0, 100);
 
         let hurt = rt.spawn_map_entity_for_test([0.0, 0.0, 0.0]);
-        rt.triggers_mut().register_hurt(
+        rt.register_hurt_for_test(
             hurt,
             crate::game::trigger::TriggerShape::boxed([-64.0, -64.0, 0.0], [64.0, 64.0, 64.0]),
             5,
-            0,
         );
-        rt.link_trigger_for_test(hurt);
 
         rt.touch_triggers(0, 100);
         rt.run_frame(100);
@@ -5396,6 +5461,25 @@ mod tests {
         rt.touch_triggers(0, 200);
         rt.run_frame(200);
         assert_eq!(rt.client_vitals(0).health, 90);
+    }
+
+    /// A script `spawn("trigger_hurt", ...)` runs `SP_trigger_hurt`: it is a
+    /// hurt trigger and its `dmg` reads 5 (cod11-combat.md 5.9).
+    #[test]
+    fn a_script_spawned_trigger_hurt_reads_dmg_5() {
+        let mut rt = ScriptRuntime::for_test(
+            "main() { t = spawn(\"trigger_hurt\", (0, 0, 0), 16); level.t = t; \
+             level.dmg = t.dmg; }",
+        );
+        rt.run_frame(50);
+        assert_eq!(rt.level_field("dmg"), Value::Int(5));
+        let Value::Entity(t) = rt.level_field("t") else {
+            panic!("no trigger");
+        };
+        assert_eq!(
+            rt.triggers_mut().get(t).map(|t| t.kind),
+            Some(crate::game::trigger::TriggerKind::Hurt)
+        );
     }
 
     /// A `trigger_use` answers the use key through the aim pick, the way

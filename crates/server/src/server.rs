@@ -13669,13 +13669,11 @@ mod tests {
         );
         let rt = sv.script.as_mut().unwrap();
         let hurt = rt.spawn_map_entity_for_test([0.0, 0.0, 0.0]);
-        rt.triggers_mut().register_hurt(
+        rt.register_hurt_for_test(
             hurt,
             crate::game::trigger::TriggerShape::boxed([-64.0, -64.0, -8.0], [64.0, 64.0, 64.0]),
             1000,
-            0,
         );
-        rt.link_trigger_for_test(hurt);
         sv.clients[0].as_mut().unwrap().pending.push(cook(i).into());
         sv.replay_moves();
 

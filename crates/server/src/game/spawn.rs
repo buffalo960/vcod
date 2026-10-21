@@ -109,9 +109,6 @@ pub fn spawn_entities_from_string(
             let vars = block.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             crate::game::vehicle::spawn(host, cx, id, vars, true)?;
         }
-        if classname == "trigger_hurt" {
-            register_sound_alias(host, trigger_hurt_sound(&block));
-        }
         let spawnflags = block
             .get("spawnflags")
             .and_then(|v| v.trim().parse::<i32>().ok())
@@ -124,6 +121,9 @@ pub fn spawn_entities_from_string(
         );
         if let Some(kind) = crate::game::trigger::kind_of(&classname).or(mount) {
             register_trigger(host, &block, id, kind);
+            if kind == crate::game::trigger::TriggerKind::Hurt {
+                crate::game::trigger::default_hurt_dmg(host, cx, id);
+            }
             if kind == crate::game::trigger::TriggerKind::Damage {
                 // `SP_trigger_damage`'s `health` 32000 (1.1d 0x65337).
                 let health = cx.intern_folded("health");
@@ -352,8 +352,8 @@ fn trigger_hurt_sound(block: &std::collections::HashMap<String, String>) -> Stri
 /// retail's unset `r.mins`/`r.maxs` do.
 ///
 /// A `trigger_hurt` takes no `wait`: its cadence, damage and damage flags
-/// come from `dmg` and `spawnflags` instead, which `Triggers::register_hurt`
-/// documents.
+/// come from its `dmg` and `spawnflags` fields at each touch, which
+/// `Triggers::register_hurt` documents; it keeps its sound alias.
 fn register_trigger(
     host: &mut GameHost,
     block: &std::collections::HashMap<String, String>,
@@ -379,20 +379,9 @@ fn register_trigger(
             .and_then(|v| v.trim().parse::<f32>().ok())
             .map_or(default, |s| (s * 1000.0) as i32)
     };
-    let int_key = |key: &str, default: i32| -> i32 {
-        block
-            .get(key)
-            .and_then(|v| v.trim().parse::<i32>().ok())
-            .filter(|n| *n != 0)
-            .unwrap_or(default)
-    };
     if kind == crate::game::trigger::TriggerKind::Hurt {
-        host.triggers.register_hurt(
-            id,
-            shape,
-            int_key("dmg", crate::game::trigger::HURT_DEFAULT_DAMAGE),
-            int_key("spawnflags", 0),
-        );
+        let sound = crate::game::trigger::hurt_sound_index(host, &trigger_hurt_sound(block));
+        host.triggers.register_hurt(id, shape, sound);
         return;
     }
     if kind == crate::game::trigger::TriggerKind::Damage {

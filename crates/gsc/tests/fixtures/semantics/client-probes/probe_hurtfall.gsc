@@ -12,6 +12,13 @@
 //	PROBE done 3 s after the kill ends the capture. Under +set probe_lift 120
 //	the slab's top is 3 over the street, so the kill comes on the landing;
 //	+set probe_late_lift <z> moves the slab again at the drop.
+//	+set probe_drop <z> drops from that z instead of 362. +set probe_spawn
+//	<spawnflags> spawns a second trigger_hurt by script at the drop, a point
+//	at (900 1930 -20) inside the body standing on the street, and +set
+//	probe_dmg <n> writes the dmg of that one (or of the slab without
+//	probe_spawn) before the drop. Under either, every damage callback also
+//	spawns and deletes a script_origin and logs its number (PROBE spawned),
+//	and PROBE done comes 6 s after the drop if nothing kills by then.
 //	Run by tools/run_probe.sh client-probes/probe_hurtfall mp_carentan
 //	with a --probe-team allies --probe-ride client.
 
@@ -34,7 +41,12 @@ run()
 	hurt = getent("trigger_hurt", "classname");
 	hurt.origin = (0, 0, lift);
 	logPrint("PROBE hurt " + hurt getEntityNumber() + " " + hurt.origin + "\n");
+	level.probe_rate = getcvar("probe_dmg") != "" || getcvar("probe_spawn") != "";
+	if (getcvar("probe_dmg") != "" && getcvar("probe_spawn") == "")
+		hurt.dmg = getcvarint("probe_dmg");
 	s = (900, 1930, 362);
+	if (getcvar("probe_drop") != "")
+		s = (900, 1930, getcvarint("probe_drop"));
 	wait 0.05;
 	level.probe_damage = level.callbackPlayerDamage;
 	level.callbackPlayerDamage = ::probe_damage;
@@ -58,13 +70,27 @@ run()
 					hurt.origin = (0, 0, getcvarint("probe_late_lift"));
 					logPrint("PROBE hurt " + hurt getEntityNumber() + " " + hurt.origin + "\n");
 				}
+				if (getcvar("probe_spawn") != "")
+				{
+					hurt = spawn("trigger_hurt", (900, 1930, -20), getcvarint("probe_spawn"));
+					if (getcvar("probe_dmg") != "")
+						hurt.dmg = getcvarint("probe_dmg");
+				}
+				if (level.probe_rate)
+					logPrint("PROBE fields " + hurt getEntityNumber() + " dmg " + hurt.dmg + " spawnflags " + hurt.spawnflags + "\n");
 				logPrint("PROBE player " + p getEntityNumber() + " " + getTime() + "\n");
+				level.probe_drop = getTime();
 			}
 		}
 		if (isdefined(p))
 		{
 			logPrint("PROBE f " + getTime() + " " + p.origin + " " + p.health + " " + p.sessionstate + "\n");
 			if (isdefined(level.probe_dead) && getTime() >= level.probe_dead + 3000)
+			{
+				logPrint("PROBE done " + getTime() + "\n");
+				return;
+			}
+			if (level.probe_rate && getTime() >= level.probe_drop + 6000)
 			{
 				logPrint("PROBE done " + getTime() + "\n");
 				return;
@@ -100,6 +126,12 @@ show_ent(e)
 probe_damage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc)
 {
 	logPrint("PROBE damage " + getTime() + " inflictor " + show_ent(eInflictor) + " attacker " + show_ent(eAttacker) + " damage " + iDamage + " dflags " + iDFlags + " mod " + sMeansOfDeath + " weapon " + sWeapon + " point " + show(vPoint) + " dir " + show(vDir) + " hitloc " + sHitLoc + " health " + self.health + "\n");
+	if (level.probe_rate)
+	{
+		e = spawn("script_origin", (0, 0, 0));
+		logPrint("PROBE spawned " + getTime() + " " + e getEntityNumber() + "\n");
+		e delete();
+	}
 	[[level.probe_damage]](eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc);
 }
 
