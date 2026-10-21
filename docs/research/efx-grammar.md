@@ -584,7 +584,9 @@ as ring radii: `size2` at `origin`, `size` at `oldorigin`.
 - vcod: `fx::sim::vertex_colour` builds the colour that way, and
   `Renderer::set_fx_quads` gives a `GL_ONE GL_ONE` material vertex alpha
   1, so its draw reads none. Before 2026-10-21 every sprite carried its
-  alpha curve in its vertex alpha.
+  alpha curve in its vertex alpha. The blend a sprite's material draws
+  on, the texture alpha it reads and its fog: `cod11-shader-scripts.md`
+  section 3 (`renderer::fx_draw`).
 
 ### An element with no shaders
 

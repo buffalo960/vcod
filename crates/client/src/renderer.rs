@@ -28,9 +28,9 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::props;
 use vcod_common::shader::{
     AlphaFunc, AlphaGen, BlendFactor, Bundle, Clamp, DLIGHT_IMAGE, Deform, DepthFunc, DrawClass,
-    ImageRef, PolygonOffset, RgbGen, SORT_ADDITIVE, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader,
-    ShaderLib, Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb,
-    has_animated_tcmods, rgb_wave_value, wave_value,
+    ImageRef, PolygonOffset, RgbGen, SORT_BLEND, SORT_DECAL, SORT_OPAQUE, Shader, ShaderLib,
+    Sprite, Stage, TcGen, TexEnv, Wave, WaveForm, bundle_affine, bundle_turb, has_animated_tcmods,
+    rgb_wave_value, wave_value,
 };
 use vcod_common::static_light::{SceneLight, StaticLighting};
 use vcod_common::vis::{Frustum, Visible, WorldVis};
@@ -92,10 +92,79 @@ struct FxVert {
     rgba: [f32; 4],
     /// The quad's smaller half-extent; scales the `vc_softParticles` fade.
     size: f32,
+    /// `FX_VERT_*` bits, the material's (`fx_draw`).
+    flags: u32,
 }
 
 // The vertex layout below hardcodes this stride.
-const _: () = assert!(std::mem::size_of::<FxVert>() == 40);
+const _: () = assert!(std::mem::size_of::<FxVert>() == 44);
+
+/// `fx.wgsl`: the material is `nofog`.
+const FX_VERT_NOFOG: u32 = 1;
+/// `fx.wgsl`: an additive draw scales by the texture's alpha
+/// (`GL_SRC_ALPHA GL_ONE`).
+const FX_VERT_TEX_ALPHA: u32 = 2;
+
+/// The fx pass's blend states, retail's `glBlendFunc` for the stage that
+/// carries the material's first image (GL_State 0x4d57b0 maps the script's
+/// pair straight through; cod11-shader-scripts.md section 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FxBlend {
+    /// `GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA`, and any pair not below.
+    Alpha,
+    /// Onto `GL_ONE`, drawn premultiplied as `GL_ONE GL_ONE`.
+    Add,
+    /// `GL_ONE GL_ONE_MINUS_SRC_COLOR` (UO's `flamethrowerFire*`).
+    Screen,
+}
+
+/// How the fx pass draws a material: its blend and its `FX_VERT_*` bits.
+/// Retail fogs a stage unless the shader is `nofog` (0x4fbc71), towards
+/// black when it blends onto `GL_ONE` (0x4d2ad0); the colour that reaches
+/// the blend is texture times vertex colour under `GL_MODULATE`, so a
+/// `GL_SRC_ALPHA` source reads the texture's alpha. A material without a
+/// script is implicit, straight alpha.
+fn fx_draw(shader: Option<&Shader>) -> (FxBlend, u32) {
+    use BlendFactor as F;
+    let Some(sh) = shader else {
+        return (FxBlend::Alpha, 0);
+    };
+    let fog = if sh.nofog { FX_VERT_NOFOG } else { 0 };
+    let image_stage = sh.stages.iter().find(|st| {
+        st.bundles
+            .iter()
+            .any(|b| matches!(b.image, ImageRef::Path(_)))
+    });
+    match image_stage.and_then(|st| st.blend.as_ref()) {
+        Some((F::SrcAlpha, F::One)) => (FxBlend::Add, fog | FX_VERT_TEX_ALPHA),
+        Some((_, F::One)) => (FxBlend::Add, fog),
+        Some((F::One, F::OneMinusSrcColor)) => (FxBlend::Screen, fog),
+        _ => (FxBlend::Alpha, fog),
+    }
+}
+
+/// The wgpu blend of each [`FxBlend`] pipeline. `fs_additive` and
+/// `fs_screen` write alpha 0, so their alpha component leaves the target's
+/// alpha alone.
+fn fx_blend_state(blend: FxBlend) -> wgpu::BlendState {
+    let component = |src_factor, dst_factor| wgpu::BlendComponent {
+        src_factor,
+        dst_factor,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let add = component(wgpu::BlendFactor::One, wgpu::BlendFactor::One);
+    match blend {
+        FxBlend::Alpha => wgpu::BlendState::ALPHA_BLENDING,
+        FxBlend::Add => wgpu::BlendState {
+            color: add,
+            alpha: add,
+        },
+        FxBlend::Screen => wgpu::BlendState {
+            color: component(wgpu::BlendFactor::One, wgpu::BlendFactor::OneMinusSrc),
+            alpha: add,
+        },
+    }
+}
 
 /// The world batches' pipelines. Layers (polygonOffset terrain blends) and
 /// overlays (decals, masked cutouts) are coplanar with the world and draw
@@ -518,7 +587,7 @@ enum Emit {
     World { set: usize, bound: Option<Bound> },
     Ent { inst: u32, bound: Option<usize> },
     Gun { part: u32, bound: Option<usize> },
-    Fx { additive: bool },
+    Fx { blend: FxBlend },
 }
 
 /// Copies the visible `ranges` out of `src` batch by batch into `out`, one
@@ -1499,23 +1568,22 @@ fn stage_bind_groups(
     (mat, stage)
 }
 
-/// World-space fx quads. Two pipelines that differ only in blend state:
-/// straight alpha, and `GL_ONE GL_ONE` for [`assets::Shaders::is_additive`]
-/// materials. One draw call per contiguous same-shader run.
+/// World-space fx quads. One pipeline per [`FxBlend`], and the same three
+/// with the `vc_softParticles` fade. One draw call per contiguous
+/// same-shader run.
 struct FxPass {
-    pipeline: wgpu::RenderPipeline,
-    additive_pipeline: wgpu::RenderPipeline,
-    /// The pair with the `vc_softParticles` fade; group 2 is
+    /// Indexed by `FxBlend as usize`.
+    pipelines: [wgpu::RenderPipeline; 3],
+    /// The `vc_softParticles` three; group 2 is
     /// `SoftParticles::fx_bind_group`.
-    soft_pipeline: wgpu::RenderPipeline,
-    soft_additive_pipeline: wgpu::RenderPipeline,
+    soft_pipelines: [wgpu::RenderPipeline; 3],
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer, // static quad pattern, MAX_FX_QUADS * 6, u32
     /// shader name -> bind group; None = failed to resolve, warned already.
     textures: HashMap<String, Option<wgpu::BindGroup>>,
-    /// (shader, additive, quad count, material sort) runs in draw order,
+    /// (shader, blend, quad count, material sort) runs in draw order,
     /// by sort first.
-    runs: Vec<(String, bool, usize, f32)>,
+    runs: Vec<(String, FxBlend, usize, f32)>,
 }
 
 /// Debug-HUD text over an embedded font atlas; drawn last, ignoring depth.
@@ -3936,8 +4004,7 @@ impl Renderer {
 
     /// Quads in draw order (already back-to-front). Unseen shader names
     /// resolve lazily; an unresolvable one warns once and is cached as
-    /// `None`. Additive materials (see `Shaders::is_additive`) go on the
-    /// additive pipeline, everything else on straight alpha.
+    /// `None`. Each run draws on its material's [`FxBlend`] (`fx_draw`).
     pub fn set_fx_quads(&mut self, fs: &Pk3Fs, quads: Vec<FxQuad>) {
         // build_quads is capped by construction; the vertex buffer is sized
         // exactly, so truncate anyway.
@@ -3953,25 +4020,20 @@ impl Renderer {
 
         // Retail's draw list keys an effect's polygons by material sort
         // first (shader doc 5); within a sort they keep the sim's
-        // back-to-front order. An fx material without a script sorts as
-        // its blend does.
+        // back-to-front order. An fx material without a script is
+        // implicit, straight alpha, and sorts as a blend.
         let mut sorts: HashMap<&str, f32> = HashMap::new();
         for quad in quads {
             sorts.entry(&quad.shader).or_insert_with(|| {
                 self.shader_lib
                     .get(&quad.shader)
-                    .map(Shader::sort_value)
-                    .unwrap_or(if self.shaders.is_additive(&quad.shader) {
-                        SORT_ADDITIVE
-                    } else {
-                        SORT_BLEND
-                    })
+                    .map_or(SORT_BLEND, Shader::sort_value)
             });
         }
         let mut order: Vec<&FxQuad> = quads.iter().collect();
         order.sort_by(|a, b| sorts[a.shader.as_str()].total_cmp(&sorts[b.shader.as_str()]));
         let mut verts: Vec<FxVert> = Vec::with_capacity(quads.len() * 4);
-        let mut runs: Vec<(String, bool, usize, f32)> = Vec::new();
+        let mut runs: Vec<(String, FxBlend, usize, f32)> = Vec::new();
         for quad in order {
             if !self.fx.textures.contains_key(&quad.shader) {
                 let sh = self.shader_lib.get(&quad.shader);
@@ -3994,6 +4056,7 @@ impl Renderer {
 
             let sh = self.shader_lib.get(&quad.shader);
             let k = colour_scale(sh, self.identity_light);
+            let (blend, flags) = fx_draw(sh);
             let [r, g, b, mut a] = quad.rgba;
             if ignores_vertex_alpha(sh) {
                 a = 1.0;
@@ -4005,14 +4068,14 @@ impl Renderer {
                     uv: quad.uvs[i],
                     rgba: [r * k, g * k, b * k, a],
                     size,
+                    flags,
                 });
             }
             match runs.last_mut() {
                 Some((name, _, count, _)) if *name == quad.shader => *count += 1,
                 _ => {
-                    let additive = self.shaders.is_additive(&quad.shader);
                     let sort = sorts[quad.shader.as_str()];
-                    runs.push((quad.shader.clone(), additive, 1, sort));
+                    runs.push((quad.shader.clone(), blend, 1, sort));
                 }
             }
         }
@@ -5890,14 +5953,14 @@ impl Renderer {
                     }
                     SortedItem::Fx(fi) => {
                         let fx = &self.fx;
-                        let (shader, additive, count, _) = &fx.runs[fi];
+                        let (shader, blend, count, _) = &fx.runs[fi];
                         let Some(Some(bg)) = fx.textures.get(shader) else {
                             continue;
                         };
                         // only after the split is the depth copy this frame's
                         let soft = soft_on && split_at.is_some_and(|at| k >= at);
                         let bound = match emit {
-                            Emit::Fx { additive } => Some(additive),
+                            Emit::Fx { blend } => Some(blend),
                             other => {
                                 if matches!(other, Emit::Gun { .. }) {
                                     pass.set_viewport(0.0, 0.0, vw, vh, 0.0, 1.0);
@@ -5914,21 +5977,19 @@ impl Renderer {
                                 None
                             }
                         };
-                        if bound != Some(*additive) {
-                            pass.set_pipeline(match (soft, *additive) {
-                                (false, false) => &fx.pipeline,
-                                (false, true) => &fx.additive_pipeline,
-                                (true, false) => &fx.soft_pipeline,
-                                (true, true) => &fx.soft_additive_pipeline,
-                            });
+                        if bound != Some(*blend) {
+                            let set = if soft {
+                                &fx.soft_pipelines
+                            } else {
+                                &fx.pipelines
+                            };
+                            pass.set_pipeline(&set[*blend as usize]);
                         }
                         pass.set_bind_group(1, bg, &[]);
                         let start = (fx_firsts[fi] * 6) as u32;
                         let end = ((fx_firsts[fi] + count) * 6) as u32;
                         pass.draw_indexed(start..end, 0, 0..1);
-                        emit = Emit::Fx {
-                            additive: *additive,
-                        };
+                        emit = Emit::Fx { blend: *blend };
                     }
                 }
             }
@@ -6369,6 +6430,7 @@ fn create_fx_pass(
                         1 => Float32x2, // uv
                         2 => Float32x4, // rgba
                         3 => Float32, // size
+                        4 => Uint32, // flags
                     ],
                 })],
             },
@@ -6407,42 +6469,27 @@ fn create_fx_pass(
         })
     };
 
-    let pipeline = make(
-        "fx pipeline",
-        "fs_main",
-        wgpu::BlendState::ALPHA_BLENDING,
-        false,
-    );
-    // `GL_ONE GL_ONE`, as the effect materials' blendFunc. The fragment
-    // writes alpha 0 so additive quads never inflate the target's alpha.
-    let add = wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    };
-    let additive = wgpu::BlendState {
-        color: add,
-        alpha: add,
-    };
-    let additive_pipeline = make("fx additive pipeline", "fs_additive", additive, false);
-    let soft_pipeline = make(
-        "fx soft pipeline",
-        "fs_soft",
-        wgpu::BlendState::ALPHA_BLENDING,
-        true,
-    );
-    let soft_additive_pipeline = make(
-        "fx soft additive pipeline",
-        "fs_soft_additive",
-        additive,
-        true,
-    );
+    let [alpha, additive, screen] =
+        [FxBlend::Alpha, FxBlend::Add, FxBlend::Screen].map(fx_blend_state);
+    let pipelines = [
+        make("fx pipeline", "fs_main", alpha, false),
+        make("fx additive pipeline", "fs_additive", additive, false),
+        make("fx screen pipeline", "fs_screen", screen, false),
+    ];
+    let soft_pipelines = [
+        make("fx soft pipeline", "fs_soft", alpha, true),
+        make(
+            "fx soft additive pipeline",
+            "fs_soft_additive",
+            additive,
+            true,
+        ),
+        make("fx soft screen pipeline", "fs_soft_screen", screen, true),
+    ];
 
     FxPass {
-        pipeline,
-        additive_pipeline,
-        soft_pipeline,
-        soft_additive_pipeline,
+        pipelines,
+        soft_pipelines,
         vertex_buf,
         index_buf,
         textures: HashMap::new(),
@@ -7630,7 +7677,7 @@ mod tests {
     use super::*;
     use glam::Mat4;
     use vcod_common::shader::{
-        BlendFactor, Bundle, DepthFunc, PolygonOffset, Stage, TcMod, Wave, WaveForm,
+        BlendFactor, Bundle, DepthFunc, PolygonOffset, SORT_ADDITIVE, Stage, TcMod, Wave, WaveForm,
     };
 
     #[test]
@@ -7727,6 +7774,80 @@ mod tests {
             colour_scale(Some(&with(RgbGen::IdentityLighting)), 1.0),
             1.0
         );
+    }
+
+    /// The fx pass draws each material on its image stage's blendFunc and
+    /// fogs it unless it is `nofog`; only `GL_SRC_ALPHA GL_ONE` reads the
+    /// texture's alpha among the additive ones (CoDMP.exe 0x4d57b0,
+    /// 0x4fbc71).
+    #[test]
+    fn fx_draw_follows_the_image_stage_blend_and_nofog() {
+        let parse = |body: &str| {
+            let toks: Vec<&str> = body.split_whitespace().collect();
+            vcod_common::shader::parse_shader("t", &toks, &mut vcod_common::shader::WarnSet::new())
+        };
+        let draw = |body: &str| fx_draw(Some(&parse(body)));
+        assert_eq!(fx_draw(None), (FxBlend::Alpha, 0));
+        assert_eq!(
+            draw("{ map a.tga blendFunc blend rgbGen vertex }"),
+            (FxBlend::Alpha, 0)
+        );
+        assert_eq!(
+            draw("{ map a.tga blendFunc GL_ONE GL_ONE rgbGen vertex }"),
+            (FxBlend::Add, 0)
+        );
+        assert_eq!(
+            draw("{ map a.tga blendFunc add rgbGen vertex }"),
+            (FxBlend::Add, 0)
+        );
+        assert_eq!(
+            draw("{ map a.tga blendFunc GL_SRC_ALPHA GL_ONE rgbGen vertex }"),
+            (FxBlend::Add, FX_VERT_TEX_ALPHA)
+        );
+        // UO's flamethrowerFire* and flameSmoke*
+        assert_eq!(
+            draw("nofog { map a.dds blendFunc GL_ONE GL_ONE_MINUS_SRC_COLOR rgbGen vertex }"),
+            (FxBlend::Screen, FX_VERT_NOFOG)
+        );
+        assert_eq!(
+            draw(
+                "nofog { map a.dds blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA \
+                 alphaGen vertex rgbGen vertex }"
+            ),
+            (FxBlend::Alpha, FX_VERT_NOFOG)
+        );
+        // UO's smoke/smk_t_fire_*: additive and nofog
+        assert_eq!(
+            draw("nofog { map a.dds blendFunc add rgbGen vertex }"),
+            (FxBlend::Add, FX_VERT_NOFOG)
+        );
+        // the stock impact sprites: the image stage blends, the overlay's
+        // GL_SRC_ALPHA GL_ONE does not retag it
+        assert_eq!(
+            draw(
+                "{ map a.tga blendFunc blend rgbGen vertex } \
+                 { map b.tga blendFunc GL_SRC_ALPHA GL_ONE rgbGen vertex }"
+            ),
+            (FxBlend::Alpha, 0)
+        );
+    }
+
+    /// Each fx pipeline's colour blend is retail's glBlendFunc for its
+    /// `FxBlend`; the additive two leave the target's alpha alone.
+    #[test]
+    fn fx_blend_states_match_the_gl_pairs() {
+        use wgpu::BlendFactor as W;
+        let pair = |b: FxBlend| {
+            let c = fx_blend_state(b).color;
+            (c.src_factor, c.dst_factor)
+        };
+        assert_eq!(pair(FxBlend::Alpha), (W::SrcAlpha, W::OneMinusSrcAlpha));
+        assert_eq!(pair(FxBlend::Add), (W::One, W::One));
+        assert_eq!(pair(FxBlend::Screen), (W::One, W::OneMinusSrc));
+        for b in [FxBlend::Add, FxBlend::Screen] {
+            let a = fx_blend_state(b).alpha;
+            assert_eq!((a.src_factor, a.dst_factor), (W::One, W::One));
+        }
     }
 
     #[test]
@@ -7878,6 +7999,26 @@ mod tests {
             hud_texture_path("gfx/hud/hud@health.tga", &HashMap::new(), &fs),
             HudTex::Path("gfx/hud/hud@health.dds".to_string())
         );
+    }
+
+    /// UO's `nofog` fx materials (`scripts/flamethrower.shader`,
+    /// `fxshaders/smoke.shader`) draw unfogged, each on its own blend.
+    #[test]
+    fn uo_nofog_fx_materials_draw_unfogged_on_their_blend() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        let lib = ShaderLib::load(&fs);
+        for (name, want) in [
+            ("flamethrowerFire12", (FxBlend::Screen, FX_VERT_NOFOG)),
+            ("flameSmoke1", (FxBlend::Alpha, FX_VERT_NOFOG)),
+            ("smoke/smk_t_fire_a", (FxBlend::Add, FX_VERT_NOFOG)),
+            ("impact/bullet_dirt_a", (FxBlend::Alpha, 0)),
+        ] {
+            let sh = lib.get(name);
+            assert!(sh.is_some(), "{name} has no script");
+            assert_eq!(fx_draw(sh), want, "{name}");
+        }
     }
 
     #[test]

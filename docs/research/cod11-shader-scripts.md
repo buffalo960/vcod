@@ -319,6 +319,46 @@ The dlight pass in detail, all CoDMP.exe 1.1:
   `fs_stage` scale by `1 - fog` (`shader.wgsl`); `fx.wgsl`'s additive draw
   did so already. Before 2026-10-21 the world's additive stages fogged
   towards the fog colour.
+- VERIFIED, GL_State 0x4d57b0, the blend: a state whose low byte is 0
+  disables `GL_BLEND`; otherwise the low nibble picks the source factor
+  (1 `GL_ZERO`, 2 `GL_ONE`, 3 `GL_DST_COLOR`, 4 `GL_ONE_MINUS_DST_COLOR`,
+  5 `GL_SRC_ALPHA`, 6 `GL_ONE_MINUS_SRC_ALPHA`, 7 `GL_DST_ALPHA`, 8
+  `GL_ONE_MINUS_DST_ALPHA`, 9 `GL_SRC_ALPHA_SATURATE`) and the next the
+  destination (0x10 `GL_ZERO`, 0x20 `GL_ONE`, 0x30 `GL_SRC_COLOR`, 0x40
+  `GL_ONE_MINUS_SRC_COLOR`, 0x50 `GL_SRC_ALPHA`, 0x60
+  `GL_ONE_MINUS_SRC_ALPHA`, 0x70 `GL_DST_ALPHA`, 0x80
+  `GL_ONE_MINUS_DST_ALPHA`), straight into `glBlendFunc`. 0x4d2ad0 runs
+  only when that byte changes. INFERRED: nothing maps or premultiplies the
+  script's pair, so an effect sprite blends as its script says, and the
+  source colour is texture times vertex colour under `GL_MODULATE`, its
+  alpha the texture's alpha times the gen's.
+- VERIFIED, the stage parser, 0x4f8d4f..0x4f8d7e: `rgbGen vertex` (gen 6)
+  and `exactVertex` (gen 5, joining at 0x4f8d70) set `alphaGen` (`+0x67c`)
+  to 4, `vertex` (the code `alphaGen vertex` stores at 0x4f9069), when it
+  is still 0; `alphaGen identity` stores 0 (0x4f9009). INFERRED: so every
+  stock fx stage, all `rgbGen vertex` or `exactVertex`, takes the sprite's
+  vertex alpha, as Q3's parser does.
+- vcod, the fx pass (`renderer::fx_draw`, `fx.wgsl`): a material draws on
+  the blend of the stage carrying its first image: straight alpha,
+  additive onto `GL_ONE` (the texture's alpha read only under
+  `GL_SRC_ALPHA GL_ONE`), or `GL_ONE GL_ONE_MINUS_SRC_COLOR`
+  (`fs_screen`), and a `nofog` material is never fogged. Before
+  2026-10-21 the pass fogged every sprite, drew `GL_ONE
+  GL_ONE_MINUS_SRC_COLOR` as straight alpha and dropped the texture's
+  alpha under `GL_SRC_ALPHA GL_ONE`. vcod ignores the stage flag 4 that
+  0x4fbc6b also tests, as the world's `STAGE_FLAG_NOFOG` does.
+- VERIFIED, string search of the stock 1.1, 1.5 and UO paks' `scripts/`
+  and `fxshaders/` blocks against the `.efx` `shaders` lists and
+  `fx::flame`'s names (2026-10-21): the fx materials that change are
+  UO's, `flamethrowerFire1`..`46` in `pakuo01.pk3`
+  `scripts/flamethrower.shader` (`GL_ONE GL_ONE_MINUS_SRC_COLOR`, `nofog`;
+  `fx::flame` draws 2..44), `flameSmoke1`..`6` there (blend, `nofog`) and
+  the nine `.efx` materials `smoke/smk_{p_out,p_top,t}_fire_{a,b,c}`
+  (`pakuo00.pk3` `fxshaders/smoke.shader`, `add`, `nofog`). No stock
+  `.efx` material has `GL_SRC_ALPHA GL_ONE` on its image stage; 57 carry
+  it on a second stage over a blended first (`gfx/impact/bullethit_*`,
+  UO's `impact/bullet_*` and `impact/scorch_*`), and the fx pass draws
+  only the first.
 - VERIFIED, which surfaces a light reaches: the world walk (0x4e4c10)
   visits the cells the portals show (0x4e44d0), tests each surface against
   the frustum and portal planes (0x4e3070, 0x4e4120) and hands it to
