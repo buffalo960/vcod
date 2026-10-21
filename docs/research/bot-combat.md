@@ -81,12 +81,14 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | sight to shot | bodies | From a tick whose `BotBody::target` comes up with none the tick before (the reaction delay included) to the first tick that fires a round while that target is still the one tracked, in ms; mean and median. A switch from one target straight to another starts no count. "Fired on" is the share of those acquisitions that got a round before the target went (died, hid past `forget_ticks`, or the bot died). |
 | peeks, re-peeks, dead in 2 s | `bot_tactics` | A peek is a held cover spot's body going from hidden (or walking to the spot) to showing: standing, leaning or leaning crouched (`Bot::tactics`, counted in `cover_keys`). A re-peek is one from the spot (within 12 units) and the pose (stance and lean side) of the bot's peek before it this life. Each is printed with the share whose bot died within 2 s of it (the body's first dead tick, any cause). |
 | hunts, dead in 2 s | `bot_tactics`, bodies | A hunt that reached where it was headed: a seen enemy's lost spot, or with `Bot::wary` the vantage over it (section 10), within `ARRIVE_RADIUS`. A spot dropped on memory or the hunt's budget is no arrival. Printed with the share dead within 2 s of the arrival. |
+| fights, target down, bot down, broken, over 10 s, re-engaged | bodies | A fight is a bot's ticks with `BotBody::target` on one slot, merged across gaps under 1 s (another target in between included). It ends with the target down (dead or off the field, by anyone), the bot down, or broken off: neither, and the target not tracked for 1 s. `over 10 s` counts fights whose first and last tracked ticks lie 10 s or more apart. A re-engagement is a fight on the target of one the bot broke off within the last 10 s, both still in the lives they fought in; printed with its share of the broken fights (section 13). |
 | walking ticks, turn mean, snaps | bodies | The walking view (section 11). A bot-tick counts when `BotBody::walking` holds on it and the tick before: playing, on the ground, off the rungs, steering at its waypoint with no unstick spell, and no target tracked (`Bot::engaged` false). `turn mean` is the mean of the view's yaw change over those ticks in degrees (wrapped to ±180); `snaps` counts the ticks it turned more than 30 degrees, and their share of the walking ticks. |
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
-first. Each row prints six lines: the log's columns, the bodies', the aim,
-the grenades and the clip, the peeks and hunts, then the walking view.
+first. Each row prints seven lines: the log's columns, the bodies', the aim,
+the grenades and the clip, the peeks and hunts, the walking view, then the
+fights.
 
 A change to bot behaviour reports its before and after on the same seeds,
 map and gametype, in this doc's section for it.
@@ -1285,7 +1287,8 @@ on seed 3 and 5 386 on seed 5 (master 2 895 and 3 447, without the
 hand-back 9 345 and 11 949); seed 5's fights over 10 s 21 (master 18)
 and those ending with the target down 33% (master 40%, without 28%). The
 same pair again within 10 s is still 385 and 405 against master's 226
-and 189; its cause is not traced. Without the hand-back
+and 189; section 13 measures it on eight seeds, where it does not rise.
+Without the hand-back
 `bots::tests::the_walking_view_takes_the_path_at_once_after_a_fight`
 fails.
 
@@ -1448,3 +1451,115 @@ suicides): no vehicle round landed with a spawn queued there.
   299 units from where the teammate stood at the release; its cause is
   not traced. INFERRED: the mate ran into it, or the frag met a
   vehicle, which `predict_flight` does not fly against.
+
+## 13. Fights broken off and taken up again (2026-10-21)
+
+11.4 left one finding open: on mp_depot `tdm` seeds 3 and 5 the same pair
+fought again within 10 s more often after the walking view (226 and 189
+to 385 and 405), and fewer fights ended with the target down. `bot_match`
+now counts it (section 1's fights row); this section measures it, traces
+it, and records the fix that did not ship.
+
+### 13.1 Measured
+
+VERIFIED (measured, ours, release `bot_match`, `COD_DIR` at 1.1, master
+028799bf, normal skill): `tdm` 12 bots and `dm` 10 bots, seeds 1..=4.
+
+| Run | Fights | Target down | Bot down | Broken | Re-engaged | Share of broken |
+|---|---|---|---|---|---|---|
+| `tdm` mp_carentan | 5 607 | 30.8% | 19.8% | 49.4% | 1 454 | 52.5% |
+| `tdm` mp_harbor | 3 911 | 42.0% | 26.3% | 31.7% | 482 | 38.9% |
+| `tdm` mp_depot | 4 020 | 34.3% | 23.4% | 42.3% | 729 | 42.9% |
+| `tdm` mp_brecourt | 3 414 | 41.7% | 27.4% | 30.9% | 444 | 42.0% |
+| `tdm` total | 16 952 | 36.4% | 23.7% | 39.9% | 3 109 | 46.0% |
+| `dm` mp_carentan | 4 642 | 39.4% | 28.5% | 32.1% | 464 | 31.1% |
+| `dm` mp_harbor | 3 546 | 40.9% | 30.2% | 28.9% | 258 | 25.1% |
+| `dm` mp_depot | 3 629 | 37.3% | 28.0% | 34.7% | 359 | 28.5% |
+| `dm` total | 11 817 | 39.2% | 28.8% | 31.9% | 1 081 | 28.6% |
+
+- VERIFIED (measured, the table): mp_carentan, not mp_depot, takes up
+  the most fights again. `dm` re-engages about half as often as `tdm`.
+- VERIFIED (measured, release `bot_match` with this column on c1faaeec,
+  3135508b's first parent, before the walking view, against master;
+  mp_depot `tdm` 12 bots seeds 1..=8): 1 885 re-engagements (50.1% of
+  broken fights) before, 1 748 (46.9%) on master; target down 34.5% and
+  33.9%. Per seed, before then master: 157 / 148, 219 / 175, 208 / 234,
+  251 / 172, 209 / 200, 211 / 333, 286 / 196, 344 / 290. INFERRED: the
+  walking view did not raise it; 11.4's rise was two seeds' spread on a
+  temporary count.
+
+### 13.2 What the bots do
+
+VERIFIED (measured, ours, a temporary per-tick dump of each bot's brain
+before its think: target and its lost ticks, the server's enemy, goal,
+cover hold, retreat, recall, vantage, hurt; mp_depot `tdm` 12 bots seeds
+1..=8 on master, the fights recounted off the dump to the same 1 748):
+
+- A target is dropped for another 5 167 times with the old target alive.
+  4 621 (89%) fall on the first tick the old target is out of the bot's
+  sight, 4 516 go to someone other than the bot's attacker, and none to
+  a new enemy while the old one stayed in sight.
+- On the tick before the old target came back into the bot's view, the
+  bot was fighting another enemy 880 times (50%), on a cover spot 448
+  (26%), walking to a health item 100, roaming 89, walking to a hunt's
+  vantage 88 or its spot 23, to a heard noise 87, retreating 30, running
+  from a frag 3.
+- Within 10 s of the re-engagement the bot died or its target did: from
+  another fight 389 and 314, from a cover spot 152 and 215, from a hunt
+  37 and 54, from a retreat 18 and 6.
+
+INFERRED (read off `bots::pick_enemy` and the dump): the tracked target
+sets the range a new enemy has to beat only while he is in sight. One
+who ducks behind his cover for a tick sets none, the nearest enemy in
+the cone wins, and the old target goes to `Bot::prior`. Two groups
+peeking at each other from cover spots at range hand each bot from one
+enemy to the next at every duck, and the first comes back into view when
+the next ducks. Hunts and retreats take up a fight broken off 6% and 2%
+of the time.
+
+### 13.3 Waiting on a target that ducks (not shipped)
+
+The obvious cut: a tracked target out of sight for under 20 ticks keeps
+his range as the bar, and with nothing nearer than `RETARGET_RATIO` of it
+in sight the bot has no enemy and waits on him (the attacker still comes
+first). Four arms, each a temporary switch: always; only with the target's
+health under the bot's; only with no other enemy in sight facing the bot
+(his view within 15 degrees of the bot's eye); only while the bot holds a
+cover spot.
+
+VERIFIED (measured, ours, release `bot_match`, mp_depot `tdm` 12 bots
+seeds 1..=8, both sides on the arm):
+
+| Arm | Re-engaged | Target down | Kills | Accuracy | TTK mean ms | Blindsided | Stalled / held |
+|---|---|---|---|---|---|---|---|
+| master | 1 748 | 33.9% | 1 431 | 28.5% | 1 626 | 8% | 1 842 / 36 302 |
+| always | 826 | 41.3% | 1 443 | 29.6% | 1 650 | 15% | 1 627 / 39 942 |
+| target hurt more | 1 434 | 35.3% | 1 485 | 28.1% | 1 402 | 9% | 2 497 / 42 008 |
+| no one facing | 1 862 | 33.3% | 1 434 | 26.2% | 1 965 | 10% | 1 672 / 51 727 |
+| on cover | 871 | 39.5% | 1 435 | 31.0% | 1 462 | 13% | 2 411 / 41 174 |
+
+VERIFIED (measured, the same build, `tdm` 12 bots on mp_carentan,
+mp_harbor, mp_depot and mp_brecourt, seeds 1..=4, the arm on axis in one
+run and on allies in the other, 32 matches; master's two sides score
+1 448 and 1 515 there):
+
+| Arm | Kills, arm / other side | Re-engaged, arm / other side | Blindsided, arm |
+|---|---|---|---|
+| always | 2 887 / 2 949 | 1 324 / 3 094 | 17% |
+| target hurt more | 2 893 / 2 963 | 2 379 / 3 108 | 12-13% |
+| no one facing | 2 924 / 2 976 | 3 034 / 3 442 | 10-12% |
+| on cover | 2 945 / 2 928 | 1 804 / 3 206 | 13% |
+
+- VERIFIED (measured, the tables): every arm that cuts re-engagements
+  raises the deaths to an enemy the bot never targeted, and no arm wins
+  fights: the side on it scores 17 more to 70 fewer kills over 32
+  matches, inside the spread section 10.2 read as neither side winning.
+- VERIFIED (measured, the first table): every arm raises mp_depot's
+  held ticks, by 10% to 42%.
+- INFERRED: turning to the enemy in sight when the target ducks is not
+  a mistake the yardstick can see: the bot that waits is shot by the one
+  it passed over as often as it finishes the one it waited on. The
+  re-engagement count stays a column, the brain is unchanged.
+
+The hunts and retreats that take a fight up again are too few to move
+anything (13.2), and of them only a retreat's lose more than they win.
