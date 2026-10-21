@@ -1416,8 +1416,17 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   rest vehicle blasts and crushes. On seeds 9..=16 `MOD_SUICIDE` is 33
   against 32. VERIFIED (measured, a dump of each `kill` on an earlier
   build of the branch, seeds 1..=8): 30 of 33 were the dry rule, every
-  one with a frag and a pistol in the kit and nothing loaded. Why more
-  bots run dry on those seeds is not traced.
+  one with a frag and a pistol in the kit and nothing loaded. VERIFIED
+  (measured, ours, a per-tick ammo dump of one bot, mp_cassino seed 2):
+  the dry bots spawn with every weapon at 0 rounds, the sniper rifle,
+  the pistol, the frag and the binoculars alike (ticks 1758 and 2422;
+  the spawns at 2008 and 2179 got 5+25, 8+8 and 1), and the dry rule
+  kills them 200 ticks on; no script runtime error is logged. Of the
+  `MOD_SUICIDE`s, those under 300 ticks after the victim's last death
+  (a life dry from its spawn) are 14 before and 36 after on seeds
+  1..=8, 26 and 27 on seeds 9..=16. INFERRED: the zero-ammo spawn is
+  older than this branch and how often it strikes rides the match;
+  its cause is not traced.
 - The one team frag left (UO mp_cassino seed 16, tick 2758) went off
   299 units from where the teammate stood at the release; its cause is
   not traced. INFERRED: the mate ran into it, or the frag met a
