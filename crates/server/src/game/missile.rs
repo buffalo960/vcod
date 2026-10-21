@@ -300,7 +300,8 @@ pub struct Explosion {
     /// `None` when the thrower left before it went off, and then
     /// `G_RadiusDamage` returns before its walk (combat doc 13.7).
     /// [`crate::game::host::ZEROED_ENTITY`] for a fuse's blast charged to
-    /// `&g_entities[1023]`.
+    /// `&g_entities[1023]`, and a UO vehicle shell's fuse blast names the
+    /// vehicle's entity number.
     pub owner: Option<usize>,
     pub inflictor: EntId,
     pub weapon: u8,
@@ -1020,12 +1021,16 @@ impl Missile {
             _ => org,
         };
         // The splash is charged to `parent` (UO 0x5e2fc): a shell hung
-        // after its caller left has `&g_entities[1023]` there, which walks
-        // (13.7). Its means of death is the spawn's `splashMethodOfDeath`
-        // (`+0x25c`: `fire_rocket` 6, `fire_artillery` 14).
-        let owner = match self.owner {
-            None if self.parent_unspawned => Some(crate::game::host::ZEROED_ENTITY),
-            owner => owner,
+        // after its caller left has `&g_entities[1023]` there, which walks,
+        // and a vehicle's shell the vehicle itself, never its driver: only a
+        // turret's `parent` is swapped for its gunner (13.7). A freed
+        // vehicle swept `parent` to NULL with the owner. Its means of death
+        // is the spawn's `splashMethodOfDeath` (`+0x25c`: `fire_rocket` 6,
+        // `fire_artillery` 14).
+        let owner = match (self.owner, self.shell.and_then(|s| s.vehicle)) {
+            (None, _) if self.parent_unspawned => Some(crate::game::host::ZEROED_ENTITY),
+            (Some(_), Some(vehicle)) => Some(vehicle.0 as usize),
+            (owner, _) => owner,
         };
         let (mod_, direct_mod) = if self.rocket {
             ("MOD_PROJECTILE_SPLASH", "MOD_PROJECTILE")
@@ -3149,6 +3154,55 @@ mod tests {
                 (15_100, Some(0), splash),
                 (15_100, None, splash),
                 (15_100, Some(crate::game::host::ZEROED_ENTITY), splash),
+            ]
+        );
+    }
+
+    /// A UO vehicle shell that strikes nothing goes off on `fire_rocket`'s
+    /// 15 s fuse, its splash charged to `parent`, the vehicle, where its
+    /// direct hit would name the driver; a freed vehicle swept `parent` to
+    /// NULL (game.mp.uo 0x5e2fc, 0x5fd6e, combat doc 13.7).
+    #[test]
+    fn a_vehicle_shell_s_fuse_blast_is_charged_to_the_vehicle() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let mut ms = Missiles {
+            uo: true,
+            falls: true,
+            ..Missiles::default()
+        };
+        let (tank, freed) = (EntId(200, 0), EntId(201, 0));
+        let ents = &mut host.ents;
+        let ids: Vec<EntId> = [tank, freed]
+            .into_iter()
+            .map(|vehicle| {
+                let shell = Shell {
+                    drop_at_ms: None,
+                    speed: 1000.0,
+                    damage: 300,
+                    vehicle: Some(vehicle),
+                };
+                vm.with_cx(|cx| {
+                    ms.fire_rocket(ents, cx, 3, 42, Vec3::ZERO, Vec3::X, shell, 6, false, 0)
+                })
+                .unwrap()
+            })
+            .collect();
+        ms.free_owner_refs(3);
+        ms.free_vehicle_refs(freed);
+        let mut went = Vec::new();
+        for f in 1..=400 {
+            for &id in &ids {
+                if let Some(Turn::Exploded(x)) = ms.run_one(id, None, &[], &[], None, f * 50) {
+                    went.push((f * 50, x.owner, x.mod_));
+                }
+            }
+        }
+        let splash = "MOD_PROJECTILE_SPLASH";
+        assert_eq!(
+            went,
+            [
+                (ROCKET_LIFE_MS, Some(200), splash),
+                (ROCKET_LIFE_MS, None, splash),
             ]
         );
     }

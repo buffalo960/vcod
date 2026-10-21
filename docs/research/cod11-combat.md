@@ -6825,10 +6825,36 @@ owner keeps `parent_unspawned`, and its fuse blast is charged to
 `host::ZEROED_ENTITY`, which `ScriptRuntime::attacker_entity` reads as entity
 0. A fuse blast's means of death is the missile's own splash one (a rocket's
 `MOD_PROJECTILE_SPLASH`, a shell's `MOD_ARTILLERY_SPLASH`); before
-2026-10-20 vcod named every fuse blast `MOD_GRENADE_SPLASH`. Not modelled
-(INFERRED): a UO vehicle shell's fuse blast is charged to `parent`, the
-vehicle, where vcod charges the driver, and the explode's `r.ownerNum` of 0
-for a disowned artillery shell passes nothing vcod traces.
+2026-10-20 vcod named every fuse blast `MOD_GRENADE_SPLASH`.
+
+VERIFIED, UO: `fire_rocket` arms `G_ExplodeMissile` 15 s on for every
+rocket, a vehicle's shell among them (0x5fc74: the `nextthink` and
+`think` stores at 0x5fce1 and 0x5fcf0, ahead of the `eType` 12 test at
+0x5fd33), and `G_ExplodeMissile` swaps `parent` for
+`g_entities[parent->r.ownerNum]` only when `parent`'s `eType` is 11
+(0x5e314..0x5e342). INFERRED: a vehicle shell that strikes nothing in
+15 s walks its splash with the vehicle itself as the attacker, never the
+driver its direct hit names, and `CodeCallback_PlayerDamage` gets the
+vehicle as `eAttacker`, whether or not the driver is still in the slot. A
+freed vehicle swept `parent` to NULL, so no walk. vcod: the fuse's
+`Explosion::owner` is the vehicle's entity number, which
+`ScriptRuntime::charged_owner` keeps and `attacker_entity` resolves while
+the vehicle is live (pinned by
+`a_vehicle_shell_s_fuse_blast_is_charged_to_the_vehicle` and
+`a_blast_charged_to_a_vehicle_names_it`). Before 2026-10-21 vcod charged
+the driver's slot.
+
+VERIFIED, UO: the `r.ownerNum` copy from `+0x330` (0x5e2db..0x5e2f3) runs
+ahead of the explode's two traces, which pass the missile (`*param_1`)
+under mask 0x11 (0x5e519 down, 0x5e745 the 10 up; 0x5e616 is the water
+trace), and the explode clears `r.contents` (0x5e46c). VERIFIED:
+`CanDamage`'s (0x503f8) traces pass the victim, not the inflictor
+(`trap_LocationalTrace` with `*param_1`, mask 0x802091).
+INFERRED: a disowned shell's `r.ownerNum` of 0 makes those two traces pass
+entity 0, which under mask 0x11 only a solid entity 0 could stop, and slot
+0 is a player's body (0x2000000); with its contents cleared the exploded
+shell clips nothing for 300 ms whatever owns it. vcod models no
+`r.ownerNum` on an exploded missile, and nothing it traces reads one.
 
 VERIFIED, UO `fire_rocket` (0x5fc74): from a vehicle (`eType` 12) the
 rocket's `+0x330` takes the vehicle's own `r.ownerNum` (0x5fd3f, 0x5fd45),

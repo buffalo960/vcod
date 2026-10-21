@@ -539,6 +539,50 @@ pub fn spawn(
     Ok(())
 }
 
+#[cfg(test)]
+impl Vehicle {
+    /// A bare record in pool slot `slot`, for a test that needs only a live
+    /// vehicle.
+    pub fn for_test(slot: usize) -> Vehicle {
+        Vehicle {
+            slot,
+            info: 0,
+            spawn_vars: Vec::new(),
+            blends: [None; 4],
+            sound_blends: [None; 4],
+            hint_string: 0,
+            seats: [None; MAX_SEATS + 1],
+            driven: false,
+            collmap: None,
+            contents: 0,
+            weapons: [0; 3],
+            gun_sounds: [0; 4],
+            wire: VehicleWire::default(),
+            posed_wire: VehicleWire::default(),
+            pose: Pose::default(),
+            phys: physics::Physics::spawn(
+                glam::Vec3::ZERO,
+                glam::Vec3::ZERO,
+                physics::VehicleModel::default(),
+            ),
+            guns: Guns::default(),
+            speed: 0.0,
+            forward_speed: 0.0,
+            velocity: [0.0; 3],
+            coast_until: 0,
+            hull_view: true,
+            engine_on: true,
+            on_compass: false,
+            target: None,
+            aim_point: None,
+            barrel_blocked: false,
+            jolts: Vec::new(),
+            next_think: 0,
+            initialized: false,
+        }
+    }
+}
+
 /// The wheel and gun tags the step reads off the vehicle's model.
 fn vehicle_model(host: &mut GameHost, model: &str) -> physics::VehicleModel {
     let Some(fs) = host.fs.clone() else {
