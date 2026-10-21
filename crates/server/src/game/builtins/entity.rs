@@ -118,9 +118,10 @@ fn set_hint_string(
 /// `trigger_hurt`'s `hurt_use` toggles the touch and under a `life` key
 /// arms `hurt_think`'s free, a `trigger_multiple`'s or `trigger_once`'s
 /// `Use_Multi` arms its wait or spends it, a `trigger_damage`'s
-/// `Use_trigger_damage` activates it, and a `func_static`'s `Use_Static`
-/// toggles its link. A turret's `turret_use`, a sine mover's
-/// `Use_BinaryMover` and `misc_spawner_use` are not modelled
+/// `Use_trigger_damage` activates it, a `func_static`'s `Use_Static`
+/// toggles its link, a gun's `turret_use` mounts a player user, a sine
+/// mover's `Use_BinaryMover` runs it to the world origin and back, and a
+/// map `misc_spawner`'s `misc_spawner_use` drops its item 100 ms on
 /// (cod11-combat.md 5.9, "useBy").
 fn use_by(
     host: &mut GameHost,
@@ -142,8 +143,11 @@ fn use_by(
         }
     } else if !crate::game::trigger::use_multi(host, id)
         && !crate::game::damage_trigger::use_trigger(host, cx, id, user)
+        && !crate::game::mover::toggle_static(host, cx, id)
+        && !crate::game::mover::use_binary(host, cx, id)
+        && !crate::game::turret::use_by(host, cx, id, user)
     {
-        crate::game::mover::toggle_static(host, cx, id);
+        crate::game::item::misc_spawner_use(host, cx, id);
     }
     Ok(Value::Undefined)
 }

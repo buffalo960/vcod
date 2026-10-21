@@ -290,7 +290,14 @@ pub enum ThinkFn {
     /// `hurt_think` (1.1d 0x65b5c): re-arms 100 ms on and frees the hurt on
     /// the spot once the level time passes the float `hurt_use` stored.
     HurtLife(f32),
+    /// `misc_spawner_think` (1.1d 0x533fc): `Drop_Item` of the spawner's
+    /// `spawnitem`, which needs the script context, so the entity pass runs
+    /// it (`crate::game::item::misc_spawner_think`).
+    MiscSpawner,
 }
+
+/// `misc_spawner_use`'s `nextthink`, `level.time + 100` (1.1d 0x53468).
+pub const MISC_SPAWNER_THINK_MS: i32 = 100;
 
 /// `hurt_use`'s first `nextthink`, `level.time + 50` (0x65bdd).
 pub const HURT_LIFE_FIRST_THINK_MS: i32 = 50;
@@ -711,7 +718,7 @@ impl ObjectTable {
         e.think = None;
         e.nextthink = 0;
         match think {
-            ThinkFn::Free | ThinkFn::RespawnItem => Some(think),
+            ThinkFn::Free | ThinkFn::RespawnItem | ThinkFn::MiscSpawner => Some(think),
             ThinkFn::MultiWait => None,
             ThinkFn::ClearOwner => {
                 if let Some(item) = e.item.as_mut() {

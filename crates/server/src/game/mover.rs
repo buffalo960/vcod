@@ -220,8 +220,13 @@ struct Mover {
     clip: Option<(Vec3, Vec3)>,
     /// A `func_bobbing` or `func_pendulum` ([`spawn_sine`]): its angles
     /// read raw, and the end of a period is `Reached_BinaryMover`'s
-    /// `G_Error`.
+    /// `G_Error` unless a `useBy` moved its state ([`use_binary`]).
     sine: bool,
+    /// A sine mover's `moverState` (`ent+0x174`), which only a `useBy`
+    /// moves off `InitMover`'s 0 (cod11-combat.md 5.9, "Use_BinaryMover").
+    binary: Binary,
+    /// `ReturnToPos1`'s `nextthink`, armed when a 1-to-2 leg ends.
+    return_at: Option<i32>,
     /// Spawned through `InitMover` (0x56454), which writes `eType` 5: the
     /// sine movers and a `func_static`.
     init_mover: bool,
@@ -236,6 +241,17 @@ struct Mover {
     /// push that went through (0x558a0..0x558e9), so a blocked push on the
     /// last frame of a move puts them back and the move runs on.
     unreached: Option<(Plan, Plan, Vec<&'static str>)>,
+}
+
+/// `SetMoverState`'s four door states (`MOVER_POS1`, `POS2`, `1TO2`,
+/// `2TO1`: 0, 1, 3, 4), the ones a sine mover can reach.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Binary {
+    #[default]
+    Pos1,
+    Pos2,
+    OneToTwo,
+    TwoToOne,
 }
 
 /// One frame's move of a brush model mover, for the server to push players
@@ -534,7 +550,7 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     // A push runs first and a blocked one never reaches this
     // (`crate::game::script::ScriptRuntime::push_mover`).
     if step.is_none() {
-        reached(host, id);
+        reached(host, cx, id);
     }
     (done, step)
 }
@@ -552,32 +568,155 @@ pub fn verb_linked(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) {
 }
 
 /// `G_MoverTeam`'s tail (0x558a0..0x558e9), after the move went through:
-/// a group whose `trType` is not 0 and whose `trTime + trDuration` the level
-/// time has reached calls the entity's `reached`. Only a sine mover's is
-/// `Reached_BinaryMover`, whose `G_Error` on the mover state no `SP_`
-/// function set drops the level (docs/research/cod11-movers.md 18); the
-/// verbs' plans retire their own segments.
+/// `pos`, then `apos` as the first call left it, each calls the entity's
+/// `reached` when its `trType` is not 0 and the level time has reached its
+/// `trTime + trDuration`. Only a sine mover's is `Reached_BinaryMover`
+/// (0x55c9c), which ends a door leg and `G_Error`s on any other state, so
+/// an unused sine mover drops the level at its first period's end
+/// (docs/research/cod11-movers.md 18); the verbs' plans retire their own
+/// segments. Then `G_RunThink`'s `ReturnToPos1` when it is due.
 ///
 /// A verb's `Reached_ScriptMover` links again where `G_MoverPush` just
 /// linked, once per group whose segment ended: the entity keeps its place
 /// in the area tree, but each link runs the node's push-down.
-pub fn reached(host: &mut GameHost, id: EntId) {
+pub fn reached(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) {
     let links = host.movers.rows.get(&id).map_or(0, |m| m.reach_links);
     for _ in 0..links {
         if let Some(link) = host.area.last_link(id.0) {
             host.area.link(id.0, &link);
         }
     }
-    let Some(m) = host.movers.rows.get(&id).filter(|m| m.sine) else {
+    if !host.movers.rows.get(&id).is_some_and(|m| m.sine) {
+        return;
+    }
+    let t = host.level_time_ms;
+    for apos in [false, true] {
+        let Some(m) = host.movers.rows.get(&id) else {
+            return;
+        };
+        let p = if apos { &m.apos } else { &m.pos };
+        if p.current.tr_type != TR_STATIONARY
+            && t >= p.current.tr_time + p.current.tr_duration
+            && host.game_error.is_none()
+        {
+            reached_binary(host, cx, id);
+        }
+    }
+    // `G_RunThink` (`nextthink` of 0 or less never runs).
+    if let Some(m) = host.movers.rows.get_mut(&id)
+        && m.return_at.is_some_and(|at| at > 0 && at <= t)
+    {
+        m.return_at = None;
+        return_to_pos1(host, cx, id);
+    }
+}
+
+/// `Reached_BinaryMover` (0x55c9c) on a sine mover: a 1-to-2 leg settles
+/// at `pos2` and arms `ReturnToPos1` `wait` on (never at a `wait` of
+/// -1000, 0x75c84), a 2-to-1 leg settles at `pos1`, and any other state
+/// drops the level. Its sounds are the mover's alias bytes, 0 on a sine
+/// mover, which `G_PlaySoundAlias` (0x67b30) skips.
+fn reached_binary(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) {
+    let t = host.level_time_ms;
+    match host.movers.rows.get(&id).map(|m| m.binary) {
+        Some(Binary::OneToTwo) => {
+            set_mover_state(host, cx, id, Binary::Pos2, t);
+            if let Some(wait) = mover_wait(host, cx, id)
+                && let Some(m) = host.movers.rows.get_mut(&id)
+            {
+                m.return_at = Some(t + wait);
+            }
+        }
+        Some(Binary::TwoToOne) => set_mover_state(host, cx, id, Binary::Pos1, t),
+        _ => {
+            host.game_error = Some("Reached_BinaryMover: bad moverState".to_string());
+        }
+    }
+}
+
+/// The milliseconds `ReturnToPos1` waits at `pos2`: the `wait` field
+/// (`ent+0x268`, a float the script may write) truncated, `None` for
+/// -1000, which holds it there.
+fn mover_wait(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> Option<i32> {
+    let atom = cx.intern_folded("wait");
+    let wait = match host.get_field(cx, id, atom) {
+        vcod_gsc::Value::Float(f) => f,
+        vcod_gsc::Value::Int(i) => i as f32,
+        _ => 0.0,
+    };
+    (wait != -1000.0).then_some(wait as i32)
+}
+
+/// `ReturnToPos1` (0x57b28): the 2-to-1 leg from the level time.
+fn return_to_pos1(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) {
+    let t = host.level_time_ms;
+    set_mover_state(host, cx, id, Binary::TwoToOne, t);
+}
+
+/// `SetMoverState` (0x55904) on a sine mover, whose `pos1` and `pos2` are
+/// both the world origin and whose leg time (`ent+0x1f4`, `+0x1f8`) is
+/// `InitMover`'s 1 ms: `pos` stationary at the origin for `POS1` and
+/// `POS2`, a `TR_LINEAR_STOP` of no distance for a leg; `trTime` of both
+/// groups set to `t`, which restarts a pendulum's swing; then
+/// `r.currentOrigin` off `pos` at the level time and a link (0x55c5d).
+/// `r.currentAngles` keeps what the last frame wrote.
+fn set_mover_state(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId, state: Binary, t: i32) {
+    let level = host.level_time_ms;
+    let Some(m) = host.movers.rows.get_mut(&id) else {
         return;
     };
+    m.binary = state;
+    m.pos.started = true;
+    m.pos.current = match state {
+        Binary::Pos1 | Binary::Pos2 => Trajectory {
+            tr_type: TR_STATIONARY,
+            tr_time: t,
+            base: Vec3::ZERO,
+            ..m.pos.current
+        },
+        Binary::OneToTwo | Binary::TwoToOne => Trajectory {
+            tr_type: TR_LINEAR_STOP,
+            tr_time: t,
+            tr_duration: 1,
+            base: Vec3::ZERO,
+            delta: Vec3::ZERO,
+        },
+    };
+    m.apos.current.tr_time = t;
+    let origin = bg_evaluate(m.pos.stored, &m.pos.current, level);
+    let atom = cx.intern_folded("origin");
+    let _ = host.write_field(cx, id, atom, vcod_gsc::Value::Vector(origin.into()));
+    verb_linked(host, cx, id);
+}
+
+/// `Use_BinaryMover` (0x560ec), every sine mover's `use` (`InitMover`,
+/// 0x565d0), on `useBy`: at `pos1` the 1-to-2 leg starts 50 ms on; at
+/// `pos2` `ReturnToPos1` is put `wait` on. A use during a leg runs
+/// `Blocked_Door`'s reversal, which vcod does not model: a script sees a
+/// leg only for 100 ms after a use. Returns false for anything not a sine
+/// mover (cod11-combat.md 5.9, "Use_BinaryMover").
+pub fn use_binary(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> bool {
+    let Some(state) = host
+        .movers
+        .rows
+        .get(&id)
+        .filter(|m| m.sine)
+        .map(|m| m.binary)
+    else {
+        return false;
+    };
     let t = host.level_time_ms;
-    let due = [&m.pos, &m.apos].iter().any(|p| {
-        p.current.tr_type != TR_STATIONARY && t >= p.current.tr_time + p.current.tr_duration
-    });
-    if due && host.game_error.is_none() {
-        host.game_error = Some("Reached_BinaryMover: bad moverState".to_string());
+    match state {
+        Binary::Pos1 => set_mover_state(host, cx, id, Binary::OneToTwo, t + 50),
+        Binary::Pos2 => {
+            let at = mover_wait(host, cx, id).map(|w| t + w);
+            if let (Some(at), Some(m)) = (at, host.movers.rows.get_mut(&id)) {
+                m.return_at = Some(at);
+            }
+        }
+        Binary::OneToTwo | Binary::TwoToOne => {}
     }
+    true
 }
 
 /// `SV_LinkEntity`'s snap (cod_lnxded `0x080908b0`): each component of
@@ -756,6 +895,8 @@ pub fn spawn_sine(
             init_mover: true,
             use_static: false,
             reach_links: 0,
+            binary: Binary::Pos1,
+            return_at: None,
             unreached: None,
         },
     );
@@ -852,6 +993,8 @@ fn spawn_static(
             init_mover: true,
             use_static,
             reach_links: 0,
+            binary: Binary::Pos1,
+            return_at: None,
             unreached: None,
         },
     );

@@ -2154,6 +2154,18 @@ applies the same edit. The 2026-10-21 runs on 1.1d, 1.5b and UO are
 `crates/server/tests/fixtures/triggers/mp_carentan-dm-useby*.txt` and
 `-hurtlife*.txt`; `hurtfall_ab.rs` replays them.
 
+Three more runs, each alone: `+set probe_sine 1` uses a script-spawned
+`func_bobbing` and `func_pendulum` twice each and logs their `origin` and
+`angles` every frame (`-usesine*.txt`); `+set probe_spawner 1` uses a
+script-spawned `misc_spawner` and the map's, which needs mp_carentan's
+`mp_retrieval_spawn_axis` at (904 2896 100) made a `misc_spawner` of
+`item_health` in a `zzz_spawner.pk3` (`spawner_bsp` in `hurtfall_ab.rs`),
+twice each, and logs every `item_health` every frame (`-usespawner*.txt`);
+`+set probe_turret 1` waits for a `--probe-ride` client, puts him behind
+the gun at (1712 1830 8) and uses the gun with him (`-useturret*.txt`, the
+client's `CMDS` lines after the `PROBE` ones). `+set probe_turret 2` uses
+the gun with the `script_origin`, which segfaults all three servers.
+
 ```
 COD_LNXDED_HOME=<absolute, no '+'> PORT=34761 SECS=15 \
     tools/run_probe.sh client-probes/probe_useby mp_carentan [+set probe_life 1]

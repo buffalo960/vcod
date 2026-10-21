@@ -1,0 +1,105 @@
+# Retail 1.5b Linux dedicated server, 2026-10-21, no client:
+#   COD_VERSION=1.5 COD_DIR=<stock 1.5 main/> PORT=34775 SECS=12 \
+#       tools/run_probe.sh client-probes/probe_useby mp_carentan +set probe_spawner 1
+# probe: crates/gsc/tests/fixtures/semantics/client-probes/probe_useby.gsc
+# mp_carentan's mp_retrieval_spawn_axis at (904 2896 100) with its
+# "angles" "0 270 0" and classname replaced by "classname" "misc_spawner"
+# "spawnitem" "item_health" and four spaces (same length, every lump offset
+# kept), the patched bsp in a zzz_spawner.pk3 in the homepath's game dir;
+# hurtfall_ab.rs's `spawner_bsp` applies the same edit. A script-spawned
+# misc_spawner gets no use; the map's drops an item_health off its origin
+# 100 ms after each use. The climbs and landing lifts are rand() draws.
+# The PROBE lines are the server's games_mp.log; hurtfall_ab.rs replays them.
+# docs/research/cod11-combat.md 5.9 reads it.
+PROBE user 170
+PROBE spawned scriptspawner 171 misc_spawner
+PROBE use scriptspawner 1550
+PROBE item scriptspawner 1550 0
+PROBE trigger scriptspawner 1550 170
+PROBE item scriptspawner 1600 0
+PROBE item scriptspawner 1650 0
+PROBE item scriptspawner 1700 0
+PROBE item scriptspawner 1750 0
+PROBE item scriptspawner 1800 0
+PROBE item scriptspawner 1850 0
+PROBE item scriptspawner 1900 0
+PROBE item scriptspawner 1950 0
+PROBE item scriptspawner 2000 0
+PROBE item scriptspawner 2050 0
+PROBE item scriptspawner 2100 0
+PROBE item scriptspawner 2150 0
+PROBE item scriptspawner 2200 0
+PROBE item scriptspawner 2250 0
+PROBE item scriptspawner 2300 0
+PROBE item scriptspawner 2350 0
+PROBE item scriptspawner 2400 0
+PROBE item scriptspawner 2450 0
+PROBE item scriptspawner 2500 0
+PROBE use scriptspawner 2550
+PROBE item scriptspawner 2550 0
+PROBE trigger scriptspawner 2550 170
+PROBE item scriptspawner 2600 0
+PROBE item scriptspawner 2650 0
+PROBE item scriptspawner 2700 0
+PROBE item scriptspawner 2750 0
+PROBE item scriptspawner 2800 0
+PROBE item scriptspawner 2850 0
+PROBE item scriptspawner 2900 0
+PROBE item scriptspawner 2950 0
+PROBE item scriptspawner 3000 0
+PROBE item scriptspawner 3050 0
+PROBE item scriptspawner 3100 0
+PROBE item scriptspawner 3150 0
+PROBE item scriptspawner 3200 0
+PROBE item scriptspawner 3250 0
+PROBE item scriptspawner 3300 0
+PROBE item scriptspawner 3350 0
+PROBE item scriptspawner 3400 0
+PROBE item scriptspawner 3450 0
+PROBE item scriptspawner 3500 0
+PROBE spawned mapspawner 213 misc_spawner (904.00, 2896.00, 100.00)
+PROBE use mapspawner 4050
+PROBE item mapspawner 4050 0
+PROBE trigger mapspawner 4050 170
+PROBE item mapspawner 4100 0
+PROBE item mapspawner 4150 0
+PROBE item mapspawner 4200 1 172 (904.00, 2896.00, 100.00)
+PROBE item mapspawner 4250 1 172 (911.50, 2896.00, 108.81)
+PROBE item mapspawner 4300 1 172 (919.00, 2896.00, 115.62)
+PROBE item mapspawner 4350 1 172 (926.50, 2896.00, 120.43)
+PROBE item mapspawner 4400 1 172 (934.00, 2896.00, 123.24)
+PROBE item mapspawner 4450 1 172 (941.50, 2896.00, 124.05)
+PROBE item mapspawner 4500 1 172 (949.00, 2896.00, 122.86)
+PROBE item mapspawner 4550 1 172 (956.50, 2896.00, 119.67)
+PROBE item mapspawner 4600 1 172 (964.00, 2896.00, 114.48)
+PROBE item mapspawner 4650 1 172 (971.50, 2896.00, 107.29)
+PROBE item mapspawner 4700 1 172 (979.00, 2896.00, 98.10)
+PROBE item mapspawner 4750 1 172 (986.50, 2896.00, 86.91)
+PROBE item mapspawner 4800 1 172 (994.00, 2896.00, 73.72)
+PROBE item mapspawner 4850 1 172 (1001.50, 2896.00, 58.53)
+PROBE item mapspawner 4900 1 172 (1009.00, 2896.00, 41.34)
+PROBE item mapspawner 4950 1 172 (1016.50, 2896.00, 22.15)
+PROBE item mapspawner 5000 1 172 (1024.00, 2896.00, 0.96)
+PROBE use mapspawner 5050
+PROBE item mapspawner 5050 1 172 (1031.50, 2896.00, -22.23)
+PROBE trigger mapspawner 5050 170
+PROBE item mapspawner 5100 1 172 (1031.99, 2896.00, -23.35)
+PROBE item mapspawner 5150 1 172 (1031.99, 2896.00, -23.35)
+PROBE item mapspawner 5200 2 172 (1031.99, 2896.00, -23.35) 173 (904.00, 2896.00, 100.00)
+PROBE item mapspawner 5250 2 172 (1031.99, 2896.00, -23.35) 173 (911.50, 2896.00, 108.86)
+PROBE item mapspawner 5300 2 172 (1031.99, 2896.00, -23.35) 173 (919.00, 2896.00, 115.73)
+PROBE item mapspawner 5350 2 172 (1031.99, 2896.00, -23.35) 173 (926.50, 2896.00, 120.59)
+PROBE item mapspawner 5400 2 172 (1031.99, 2896.00, -23.35) 173 (934.00, 2896.00, 123.46)
+PROBE item mapspawner 5450 2 172 (1031.99, 2896.00, -23.35) 173 (941.50, 2896.00, 124.32)
+PROBE item mapspawner 5500 2 172 (1031.99, 2896.00, -23.35) 173 (949.00, 2896.00, 123.19)
+PROBE item mapspawner 5550 2 172 (1031.99, 2896.00, -23.35) 173 (956.50, 2896.00, 120.05)
+PROBE item mapspawner 5600 2 172 (1031.99, 2896.00, -23.35) 173 (964.00, 2896.00, 114.92)
+PROBE item mapspawner 5650 2 172 (1031.99, 2896.00, -23.35) 173 (971.50, 2896.00, 107.78)
+PROBE item mapspawner 5700 2 172 (1031.99, 2896.00, -23.35) 173 (979.00, 2896.00, 98.65)
+PROBE item mapspawner 5750 2 172 (1031.99, 2896.00, -23.35) 173 (986.50, 2896.00, 87.51)
+PROBE item mapspawner 5800 2 172 (1031.99, 2896.00, -23.35) 173 (994.00, 2896.00, 74.38)
+PROBE item mapspawner 5850 2 172 (1031.99, 2896.00, -23.35) 173 (1001.50, 2896.00, 59.24)
+PROBE item mapspawner 5900 2 172 (1031.99, 2896.00, -23.35) 173 (1009.00, 2896.00, 42.11)
+PROBE item mapspawner 5950 2 172 (1031.99, 2896.00, -23.35) 173 (1016.50, 2896.00, 22.97)
+PROBE item mapspawner 6000 2 172 (1031.99, 2896.00, -23.35) 173 (1024.00, 2896.00, 1.84)
+PROBE done
