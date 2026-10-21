@@ -2818,6 +2818,11 @@ mod tests {
                             steer_full: STEER_FULL_CGAME,
                             ..served
                         }),
+                        es: vcod_server::game::combat::HookEs {
+                            seat: Some((v.pose.kind, seat)),
+                            weapon,
+                        },
+                        ci_seat_angles: served.angles,
                         ..Default::default()
                     };
                     let server = body.pose_inputs(&anims, s.server_time);

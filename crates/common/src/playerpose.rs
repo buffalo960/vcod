@@ -117,6 +117,11 @@ impl BodyInput {
     fn mounted(&self) -> bool {
         self.eflags & EF_MOUNTED != 0
     }
+    /// On a turret or, on UO, in a vehicle seat: UO's updater tests
+    /// `eFlags & 0x106000` (game.mp.uo 0x1dbac).
+    fn rides(&self) -> bool {
+        self.eflags & (EF_MOUNTED | crate::net::flags::EF_IN_VEHICLE_V22) != 0
+    }
     fn prone(&self) -> bool {
         self.eflags & EF_PRONE != 0
     }
@@ -229,7 +234,7 @@ impl BodyAngles {
         } else {
             legs(yaw + m, 40.0, self);
         }
-        if input.mounted() {
+        if input.rides() {
             self.torso_yaw = yaw;
             self.legs_yaw = yaw;
         } else if climbing {
@@ -237,7 +242,7 @@ impl BodyAngles {
             self.legs_yaw = yaw + m;
         }
 
-        let pitch_dest = if input.dead() || input.mounted() || climbing {
+        let pitch_dest = if input.dead() || input.rides() || climbing {
             0.0
         } else {
             let p = input.view[0];
