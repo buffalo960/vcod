@@ -588,6 +588,13 @@ fn fire_flash(ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {
     }
 }
 
+/// [`resolve`] against `fs`'s impact table rather than the one [`init`]
+/// loaded, which tests running beside each other would race on.
+#[cfg(test)]
+pub(crate) fn resolve_in(fs: &Pk3Fs, ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {
+    resolve_with(ev, &load(fs), ctx)
+}
+
 /// Resolve one drained [`GameEvent`] against the cached table and this
 /// frame's muzzles.
 pub fn resolve(ev: &GameEvent, ctx: &ResolveCtx) -> Vec<Resolved> {

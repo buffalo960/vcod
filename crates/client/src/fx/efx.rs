@@ -81,6 +81,12 @@ pub struct Emitter {
     pub density: R1,
     pub variance: R1,
     pub size: Curve,
+    /// `nonUniformScale`'s vertical half-extent (grammar doc R4); read only
+    /// when [`Self::non_uniform_scale`] is set.
+    pub size2: Curve,
+    /// `nonUniformScale`: `atol` of its value, non-zero on (CoDMP.exe
+    /// 0x49d8b0, template `+0xc0`).
+    pub non_uniform_scale: bool,
     pub length: Curve,
     pub alpha: Curve,
     pub rgb: CurveV3,
@@ -132,6 +138,12 @@ impl Default for Emitter {
                 end: zero1,
                 flags: Vec::new(),
             },
+            size2: Curve {
+                start: zero1,
+                end: zero1,
+                flags: Vec::new(),
+            },
+            non_uniform_scale: false,
             length: Curve {
                 start: zero1,
                 end: zero1,
@@ -441,10 +453,7 @@ fn dispatch_curve(p: &mut Cursor, em: &mut Emitter, key: &str, line: usize) -> R
         "alpha" => em.alpha = curve_from_raw(raw, 1.0, line)?,
         "size" => em.size = curve_from_raw(raw, 0.0, line)?,
         "length" => em.length = curve_from_raw(raw, 0.0, line)?,
-        // nonUniformScale's second axis; no field for it, validated and dropped.
-        "size2" => {
-            curve_from_raw(raw, 0.0, line)?;
-        }
+        "size2" => em.size2 = curve_from_raw(raw, 0.0, line)?,
         _ => em.unknown_keys.push(key.to_string()),
     }
     Ok(())
@@ -486,11 +495,26 @@ fn dispatch_keyval(em: &mut Emitter, key: &str, vals: &[&str], line: usize) -> R
         "intensity" => em.intensity = Some(r1_from_tokens(vals, line)?),
         "density" => em.density = r1_from_tokens(vals, line)?,
         "variance" => em.variance = r1_from_tokens(vals, line)?,
+        "nonUniformScale" => em.non_uniform_scale = atol(vals.first().copied().unwrap_or("")) != 0,
         // Census keys without a field, kept out of unknown_keys.
-        "origin2" | "wind" | "nonUniformScale" => {}
+        "origin2" | "wind" => {}
         _ => em.unknown_keys.push(key.to_string()),
     }
     Ok(())
+}
+
+/// C's `atol`: leading whitespace, a sign and the digits after it; 0 when
+/// none.
+fn atol(s: &str) -> i64 {
+    let s = s.trim_start();
+    let (neg, rest) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    let v = digits.parse::<i64>().unwrap_or(0);
+    if neg { -v } else { v }
 }
 
 fn parse_block_body(p: &mut Cursor, em: &mut Emitter) -> Result<(), String> {
@@ -651,6 +675,24 @@ Tail
         assert_eq!(em.size.end, R1 { a: 10.0, b: 10.0 });
         assert_eq!(em.length.end, R1 { a: 120.0, b: 120.0 });
         assert_eq!(em.shaders, vec!["gfx/effects/antiaircraft_tracer"]);
+    }
+
+    /// `fx/impacts/blast_flash2.efx`'s flash: `nonUniformScale 1` and its
+    /// `size2` curve are kept.
+    #[test]
+    fn non_uniform_scale_keeps_size2() {
+        let text = "Particle\n{\n\tnonUniformScale\t\t1\n\tsize2\n\t{\n\t\tstart\t\t\t122\n\t\tend\t\t\t\t2\n\t\tflags\t\t\tlinear\n\t}\n}\n";
+        let em = &parse(text).unwrap().emitters[0];
+        assert!(em.non_uniform_scale);
+        assert_eq!(em.size2.start, R1 { a: 122.0, b: 122.0 });
+        assert_eq!(em.size2.end, R1 { a: 2.0, b: 2.0 });
+        assert_eq!(em.size2.flags, vec!["linear"]);
+        assert!(
+            !parse("Particle\n{\n\tnonUniformScale 0\n}\n")
+                .unwrap()
+                .emitters[0]
+                .non_uniform_scale
+        );
     }
 
     #[test]

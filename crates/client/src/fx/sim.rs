@@ -176,12 +176,20 @@ struct Particle {
     /// Half-extent at spawn and at death (grammar doc R4).
     size0: f32,
     size1: f32,
+    /// A sprite's vertical half-extent at spawn and at death: `size2` under
+    /// `nonUniformScale`, else `size` (grammar doc R4).
+    height0: f32,
+    height1: f32,
     len0: f32,
     len1: f32, // 0 = billboard, else stretch backwards along vel
     alpha0: f32,
     alpha1: f32,
     rgb0: Vec3,
     rgb1: Vec3,
+    /// `useAlpha`: the alpha curve rides the vertex alpha; without it the
+    /// curve scales the vertex rgb and the alpha byte is 255 (CoDMP.exe
+    /// 0x48e92c..0x48e9a8).
+    use_alpha: bool,
     physics: bool,
     impact_kills: bool,
     /// `bounce`: the share of the reflected velocity a hit keeps.
@@ -622,6 +630,13 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
         let rot = sample_r1(rng, em.rotation);
         let rot_delta = sample_r1(rng, em.rotation_delta);
         let (size0, size1) = sample_curve(rng, &em.size);
+        // The constructor copies `size` into `size2` without the flag
+        // (CoDMP.exe 0x49f360); only a sprite reads it (0x5101d0, 0x5103c0).
+        let (height0, height1) = if em.non_uniform_scale {
+            sample_curve(rng, &em.size2)
+        } else {
+            (size0, size1)
+        };
         // `length` is a tail-only field (grammar doc R3); sprites carrying
         // one (fx/muzzleflashes/heavy.efx) stay square.
         let (len0, len1) = match sample_curve(rng, &em.length) {
@@ -711,12 +726,15 @@ fn spawn_emitter(rng: &mut Rng, out: &mut SpawnOut, em: &Emitter, cx: &SpawnCx) 
             rot_delta,
             size0,
             size1,
+            height0,
+            height1,
             len0,
             len1,
             alpha0,
             alpha1,
             rgb0,
             rgb1,
+            use_alpha: em.flags.iter().any(|f| f == "useAlpha"),
             physics,
             impact_kills,
             elasticity,
@@ -1078,6 +1096,19 @@ fn live(p: &Particle, now: f32) -> bool {
     now >= p.spawn && p.life > 0.0 && now - p.spawn <= p.life
 }
 
+/// A sprite's vertex colour at `t` through its life: the rgb curve, then
+/// the alpha curve clamped to 0..1, into the alpha (`useAlpha`) or onto the
+/// rgb with an opaque alpha (0x48e640 then 0x48e7d0).
+fn vertex_colour(p: &Particle, t: f32) -> (Vec3, f32) {
+    let alpha = lerp(p.alpha0, p.alpha1, t).clamp(0.0, 1.0);
+    let rgb = p.rgb0.lerp(p.rgb1, t);
+    if p.use_alpha {
+        (rgb, alpha)
+    } else {
+        (rgb * alpha, 1.0)
+    }
+}
+
 fn push_quads(
     pool: &VecDeque<Particle>,
     bolts: &HashMap<Bolt, BoltFrame>,
@@ -1100,8 +1131,7 @@ fn push_quads(
         let t = ((now - p.spawn) / p.life).clamp(0.0, 1.0);
         // `size` is a half-extent (grammar doc R4).
         let half = lerp(p.size0, p.size1, t);
-        let alpha = lerp(p.alpha0, p.alpha1, t);
-        let rgb = p.rgb0.lerp(p.rgb1, t);
+        let (rgb, alpha) = vertex_colour(p, t);
         let rad = p.rot.to_radians();
 
         if p.len0 != 0.0 || p.len1 != 0.0 {
@@ -1116,8 +1146,18 @@ fn push_quads(
             let side = stretch_side_dir(axis, view_dir, cam_up, cam_right) * half;
             out.push(make_quad(mid, axis, side, rgb, alpha, &p.shader));
         } else {
+            // `size` across the view, `size2` up it, both turned by the
+            // rotation (0x5101d0).
+            let height = lerp(p.height0, p.height1, t);
             let (rx, ry) = rotate2(cam_right, cam_up, rad);
-            out.push(make_quad(pos, rx * half, ry * half, rgb, alpha, &p.shader));
+            out.push(make_quad(
+                pos,
+                rx * half,
+                ry * height,
+                rgb,
+                alpha,
+                &p.shader,
+            ));
         }
     }
 }
@@ -1146,12 +1186,15 @@ fn tracer_particle(spawn: f32, life: f32, head: Vec3, vel: Vec3, len: f32, width
         rot_delta: 0.0,
         size0: width,
         size1: width,
+        height0: width,
+        height1: width,
         len0: len,
         len1: len,
         alpha0: 1.0,
         alpha1: 1.0,
         rgb0: Vec3::ONE,
         rgb1: Vec3::ONE,
+        use_alpha: false,
         physics: false,
         impact_kills: false,
         elasticity: 0.0,
@@ -1740,9 +1783,44 @@ mod tests {
         );
         // half-size at mid-life: 2 + (4-2)*0.5 = 3
         assert!((quad_half_x(&q[0]) - 3.0).abs() < 1e-3);
-        assert!((q[0].rgba[3] - 0.5).abs() < 1e-3);
+        // No `useAlpha`: the half-faded alpha scales the rgb.
+        assert_eq!(q[0].rgba, [0.5, 0.5, 0.5, 1.0]);
         s.step(0.6, 1.1, None); // past 1s life
         assert!(s.build_quads(Vec3::ZERO, Vec3::X, Vec3::Z, 1.1).is_empty());
+    }
+
+    /// `useAlpha` keeps the alpha curve in the vertex alpha and the rgb
+    /// curve whole; without it the clamped alpha scales the rgb and the
+    /// alpha is opaque (CoDMP.exe 0x48e7d0). `grenade2.efx`'s flash rgb,
+    /// white going to (0.76, 0.44, 0.24), half-way through its life.
+    #[test]
+    fn use_alpha_picks_where_the_alpha_curve_goes() {
+        let mut e = still_particle();
+        e.rgb.end = R3 {
+            a: [0.7608, 0.4353, 0.2392],
+            b: [0.7608, 0.4353, 0.2392],
+        };
+        e.rgb.flags = vec!["linear".into()];
+        e.alpha.start = R1 { a: 1.5, b: 1.5 };
+        e.alpha.end = R1 { a: -0.5, b: -0.5 };
+        let colour = |e: &Emitter, t: f32| {
+            let mut s = sys_with(e.clone(), SpawnAt::Point { pos: Vec3::ZERO });
+            s.step(t, t, None);
+            s.build_quads(Vec3::new(0.0, -100.0, 0.0), Vec3::X, Vec3::Z, t)[0].rgba
+        };
+        let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-4);
+        let rgb = [0.8804, 0.71765, 0.6196];
+        let a = colour(&e, 0.5);
+        assert!(
+            near(a, [rgb[0] * 0.5, rgb[1] * 0.5, rgb[2] * 0.5, 1.0]),
+            "{a:?}"
+        );
+        // The curve passes 1 early on: clamped first.
+        let a = colour(&e, 0.1);
+        assert!(a[3] == 1.0 && a[0] > 0.97, "{a:?}");
+        e.flags = vec!["useAlpha".into()];
+        let a = colour(&e, 0.5);
+        assert!(near(a, [rgb[0], rgb[1], rgb[2], 0.5]), "{a:?}");
     }
 
     #[test]
@@ -3110,6 +3188,33 @@ mod tests {
             s.spawn_chained(&fs, now);
         }
         assert!(emitted > 0);
+    }
+
+    /// A `nonUniformScale` sprite spans `size` across the view and `size2`
+    /// up it, each on its own curve (CoDMP.exe 0x5101d0); without the flag
+    /// the sprite is square on `size` whatever `size2` says (0x49f360).
+    #[test]
+    fn a_non_uniform_sprite_takes_size2_up_the_view() {
+        let mut e = still_particle();
+        e.size2 = Curve {
+            start: R1 { a: 122.0, b: 122.0 },
+            end: R1 { a: 2.0, b: 2.0 },
+            flags: vec!["linear".into()],
+        };
+        let extents = |e: &Emitter| {
+            let mut s = sys_with_files(&[("fx/flash.efx", vec![e.clone()])]);
+            let at = SpawnAt::Point { pos: Vec3::ZERO };
+            s.spawn(&Pk3Fs::empty(), "fx/flash.efx", at, 0.0);
+            let q = &s.build_quads(Vec3::new(0.0, -100.0, 0.0), Vec3::X, Vec3::Z, 0.5)[0];
+            let [a, _, c, _] = q.verts.map(Vec3::from);
+            ((c.x - a.x).abs() / 2.0, (c.z - a.z).abs() / 2.0)
+        };
+        // Half-way through its life: size 2 -> 4, size2 122 -> 2.
+        let (w, h) = extents(&e);
+        assert!((w - 3.0).abs() < 1e-4 && (h - 3.0).abs() < 1e-4, "{w} {h}");
+        e.non_uniform_scale = true;
+        let (w, h) = extents(&e);
+        assert!((w - 3.0).abs() < 1e-4 && (h - 62.0).abs() < 1e-3, "{w} {h}");
     }
 
     /// A UO `CameraShake` element plays nothing on screen and hands its

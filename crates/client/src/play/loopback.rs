@@ -531,6 +531,69 @@ fn every_slot_name_switches_the_held_weapon() {
     );
 }
 
+/// Two frags thrown on vcod-server through `PlayInput` (the grenade slot,
+/// the trigger held and let go), watched until both blow: each frag's
+/// explode plays once off the snapshot drain, as each of retail's does
+/// (`replay::each_retail_explode_plays_one_effect`).
+#[test]
+fn each_thrown_frag_explodes_once() {
+    use super::input::{Action, Held, PlayInput};
+    use vcod_common::net::event_ids::EV_GRENADE_EXPLODE;
+    use vcod_common::net::flags::ET_MISSILE;
+    let Some((fs, p)) = setup() else {
+        return;
+    };
+    let bsp_path = fs.resolve_map("mp_carentan").expect("mp_carentan");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let fs = Rc::new(fs);
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg("mp_carentan", "dm"), now);
+    sv.set_protocol(p);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(fs.clone()).expect("load the scripts");
+    let q = Rc::new(RefCell::new(common::Queues::default()));
+    let (mut net, _) = common::join(&mut sv, &q, &mut now, "axis", "kar98k_mp");
+    let weapons = vcod_common::weapon_table::from_configstring(&fs, net.configstring(7));
+    let mut input = PlayInput::default();
+    input.new_gamestate();
+    let mut tracker = EventTracker::new();
+    let (mut missiles, mut played) = (std::collections::BTreeSet::new(), 0);
+    let mut frames = |input: &mut PlayInput, n: usize| {
+        for _ in 0..n {
+            now += Duration::from_millis(50);
+            let s = net.snapshots().newest().unwrap();
+            let cmd = input.build(0, &Held::from_ps(&s.ps, p, &weapons));
+            net.send_frame(&cmd);
+            common::step(&mut sv, &q, &mut net, now);
+            let s = net.snapshots().newest().unwrap();
+            for (&num, e) in &s.entities {
+                if e.field_i32(p, "eType") == ET_MISSILE {
+                    missiles.insert(num);
+                }
+            }
+            played += tracker
+                .drain(s, p)
+                .iter()
+                .filter(|e| e.event == EV_GRENADE_EXPLODE)
+                .count();
+        }
+    };
+    frames(&mut input, 20);
+    input.key(Action::Slot(4), true);
+    input.key(Action::Slot(4), false);
+    frames(&mut input, 30);
+    for _ in 0..2 {
+        input.key(Action::Attack, true);
+        frames(&mut input, 10);
+        input.key(Action::Attack, false);
+        frames(&mut input, 40);
+    }
+    frames(&mut input, 100);
+    println!("{} frags thrown, {played} explodes played", missiles.len());
+    assert_eq!(missiles.len(), 2, "frags thrown");
+    assert_eq!(played, missiles.len(), "explodes played");
+}
+
 /// A cmd built under a key catcher carries `BUTTON_TALK`, and the server
 /// lights `EF_TALK` on the player for it, clearing it on the next cmd
 /// without (cod15-movement.md 5, "The talk button").
