@@ -907,6 +907,12 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   their configstrings at his own end frame (`client_attachments`;
   object-model doc 24). `addTestClient` runs the connect callback inside
   the call and the `begin` waiters after the caller's step (25).
+- The weapon builtins queue `WeaponOp`s, and any pass may drain them
+  (a vehicle round's callbacks drain every slot's). So the playerstate's
+  ammo is the queue's alone: `self spawn()` queues its emptying as
+  `WeaponOp::TakeAll` and the spawn pass keeps `ps.ammo`. A reset of
+  ammo outside the queue lands out of order with the loadout, and a
+  spawn came up with every weapon at 0 rounds (object-model doc 20).
 - On 1.5 and UO every script thread runs before the frame's anim update,
   so a script `bulletTrace` poses bodies at the last frame's time
   (`GameHost::dobj_time_ms`); a UO spawn's `setModel` rebuilds the DObj

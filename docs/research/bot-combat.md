@@ -1424,9 +1424,26 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   kills them 200 ticks on; no script runtime error is logged. Of the
   `MOD_SUICIDE`s, those under 300 ticks after the victim's last death
   (a life dry from its spawn) are 14 before and 36 after on seeds
-  1..=8, 26 and 27 on seeds 9..=16. INFERRED: the zero-ammo spawn is
-  older than this branch and how often it strikes rides the match;
-  its cause is not traced.
+  1..=8, 26 and 27 on seeds 9..=16. The zero-ammo spawn was a server
+  bug, fixed on 2026-10-21 (below).
+
+The zero-ammo spawn: a vehicle round delivered between the script
+threads and the spawn pass applied every slot's queued weapon ops, the
+spawning bot's loadout among them, to the old life's playerstate, and
+the spawn pass then emptied the ammo arrays (`cod11-gsc-object-model.md`
+20, "The spawn's memset and the weapon op queue"). INFERRED, off the
+code: nothing in the path is a bot's, so a human spawning in such a
+frame came up dry too. VERIFIED (measured, ours, `bot_match`, UO `tdm`
+with 10 bots, seeds 1..=8, the fix's base 028799bf with and without the
+fix, the kill lines):
+
+| Run | Kills on mp_cassino | Suicides on mp_cassino | `MOD_SUICIDE` mp_cassino / mp_kursk |
+|---|---|---|---|
+| before | 1402 | 47 | 43 / 2 |
+| after | 1331 | 10 | 7 / 2 |
+
+mp_kursk's matches play out bit for bit alike (237 kills, 10
+suicides): no vehicle round landed with a spawn queued there.
 - The one team frag left (UO mp_cassino seed 16, tick 2758) went off
   299 units from where the teammate stood at the release; its cause is
   not traced. INFERRED: the mate ran into it, or the frag met a

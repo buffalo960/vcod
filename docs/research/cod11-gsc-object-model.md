@@ -1656,6 +1656,36 @@ Whether retail's `setWeaponSlotAmmo` clamps its argument to the weapon's
 script passes 999 to every loadout weapon (`sd.gsc` 541-542), which vcod
 stores verbatim.
 
+### The spawn's memset and the weapon op queue
+
+VERIFIED (UO `game.mp.uo.i386.so`, `ClientSpawn` 0x54df4): the spawn copies
+the session block aside, `memset`s the whole `gclient_t` (0x4734 bytes) and
+copies the session back, so `ps.weapons`, `ps.ammo` and `ps.ammoclip` are
+empty when `self spawn()` returns, ahead of the loadout the script gives
+after it. On 1.1 the clip setter stores into the playerstate inside the
+call (`client+0x20c+4*clip`, 0x444f4, above): retail's loadout lands on the
+spawned playerstate in call order.
+
+vcod's weapon builtins queue a `WeaponOp` for the sim, and the sim's
+playerstate is reset in the frame's spawn pass (`Server::game_frame`,
+after the script threads). Until 2026-10-21 that reset also emptied the
+ammo arrays. Any pass that drains the queue between the threads and the
+spawn pass (a vehicle round's callbacks in `vehicle_fire`, which applies
+every slot's ops) or before the frame (a cmd callback's
+`apply_callback_ops`) landed the loadout on the old life's playerstate,
+and the spawn pass then wiped it: every weapon held at 0 rounds. VERIFIED
+(measured, ours, UO `tdm` on mp_cassino, `bot_match` seed 2 with 10 bots,
+a temporary log in `vehicle_fire`): 12 vehicle rounds were delivered with
+a spawn queued, two of them at 88 250 and 121 450 ms, the sniper's dry
+spawns at ticks 1758 and 2422 (`bot-combat.md` 12.3).
+
+The `spawn` builtin now queues `WeaponOp::TakeAll` in call order as the
+memset's emptying, and the spawn pass keeps `ps.ammo` and `ps.ammoclip`,
+so the loadout survives whichever pass applies it.
+`server::tests::a_loadout_applied_before_the_spawn_pass_survives_it`
+spawns and gives a frag inside a damage callback: without the change the
+frag's clip reads 0, with it 3. VERIFIED (measured, ours).
+
 ### `setViewmodel` reaches `ps.viewmodelIndex`
 
 `setViewmodel` (player method 17, 0x4512c) resolves its argument through
