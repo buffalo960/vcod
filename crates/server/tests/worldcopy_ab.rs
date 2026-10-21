@@ -16,7 +16,9 @@
 //! `func_static`s, `-worldcopy3.txt` reruns its turns with the player
 //! printed to the ten-thousandth, and `-sinecrush.txt` crushes the player
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
-//! beside a turned submodel as it lifts.
+//! beside a turned submodel as it lifts. `mp_harbor-dm-tiltslab*.txt` and
+//! `mp_depot-dm-rollramp.txt` drop him onto a pitched or rolled submodel,
+//! the latter onto a non-axial side (movers doc 22).
 //!
 //! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
