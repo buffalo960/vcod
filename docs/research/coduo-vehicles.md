@@ -1682,6 +1682,25 @@ face.
   `misc_mg42` and `misc_turret` (scr_const 0x4e, 0x50), so a vehicle's
   health falls; the stock scripts set 2900 and refund friendly fire
   (VERIFIED decompile and script).
+- **The firing vehicle's own splash.** `G_MissileImpact` (0x5db67) hands
+  the struck entity to `G_RadiusDamage` as the one to skip (call at
+  0x5e1ae, after the direct `G_Damage` at 0x5ded6), and `G_RadiusDamage`
+  (0x5098b) skips only that entity and those without `takedamage`: no
+  test of the attacker or the inflictor (VERIFIED decompile and
+  disassembly). VERIFIED, live capture (retail UO 1.51b, 2026-10-21,
+  `client-probes/probe_vehicle_shell` on mp_kharkov, fixture
+  `crates/server/tests/fixtures/vehicles/mp_kharkov-tank-shell-uo.txt`):
+  each of the Panzer IV's three shells strikes the Elefant 276 units off,
+  about 200 from the Panzer's origin, and the Panzer's own `damage`
+  notify reads 70 `MOD_PROJECTILE_SPLASH`, attacker 0 (the driver),
+  inflictor 162 (itself), in the same frame and logged ahead of the
+  Elefant's 279 `MOD_PROJECTILE`. vcod charges the same 70 in the same
+  order (`vehicle_shell_ab`). The notify's point, the blast 4 off the
+  struck face, reads (-1417.37, 6198.68, 1.10) on retail and
+  (-1417.64, 6197.88, 0.40) on ours; the direct hit's point is retail's to
+  the hundredth (VERIFIED, replay). Not measured: whether the struck
+  face's normal or the trace's start puts it there; the gate holds the
+  point to 4 units.
 - **A frag's splash on a hull.** `Scr_Vehicle_DamageScale` (0x9ccad)
   takes `MOD_GRENADE_SPLASH` (4) through its own arm: the scale is the
   inflictor's weapon's `vehiclescale` (weapon info `+0x4ac`, read off the

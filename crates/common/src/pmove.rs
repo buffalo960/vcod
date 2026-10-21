@@ -993,7 +993,19 @@ impl PlayerState {
             MoveRules::V1_1 => self.stance,
             // `PM_CheckDuck` sizes the box off the stepped target (1.5
             // 0x24155..0x241ce).
-            MoveRules::V1_5 | MoveRules::Uo => self.effective_stance(),
+            MoveRules::V1_5 => self.effective_stance(),
+            // UO's (0x28d66..0x28ef0) takes the flags' box where they stand
+            // higher than the target, so a rise the stance traces let
+            // through grows the box at once (coduo-movement.md 18).
+            MoveRules::Uo => {
+                let risen = self.stance != Stance::Prone && !self.ducked;
+                match self.effective_stance() {
+                    Stance::Prone if risen => Stance::Stand,
+                    Stance::Prone if self.ducked => Stance::Crouch,
+                    Stance::Crouch if risen => Stance::Stand,
+                    s => s,
+                }
+            }
         };
         Vec3::new(HALF_WIDTH, HALF_WIDTH, stance.height())
     }
@@ -9284,6 +9296,57 @@ mod tests {
         // Less the cmd's own 8 ms: `PM_DropTimers` runs after the stance.
         assert!(ps.jump_penalty && ps.knockback_ms == JUMP_PENALTY_MS - 8.0);
         assert_eq!(ps.effective_stance(), Stance::Prone);
+    }
+
+    /// UO's `PM_CheckDuck` (0x28d66..0x28ef0) sizes the box off the flags
+    /// where they stand higher than the eye's target: a crouch let go
+    /// inside the 200 ms leg down stands the box at once, where 1.5's waits
+    /// for the target. So a UO body that crouch-walks under a 60-unit
+    /// ceiling after the release is stopped at its edge, and a 1.5 one
+    /// walks under it and stands up into it, held there all solid
+    /// (coduo-movement.md 18; mp_cassino held bots so until they typed
+    /// `kill`).
+    #[test]
+    fn a_uo_rise_sizes_the_box_off_the_flags() {
+        let w = test_world(&[(Vec3::new(0.0, -64.0, 60.0), Vec3::new(256.0, 64.0, 80.0))]);
+        let w = MoveWorld::bare(&w);
+        let crouch = PmInput {
+            crouch: true,
+            ..Default::default()
+        };
+        let walk = PmInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        let wedged = |rules: MoveRules| {
+            let mut ps = PlayerState {
+                rules,
+                ..PlayerState::spawn(Vec3::new(-16.0, 0.0, 0.125), 0.0)
+            };
+            tick(&mut ps, &PmInput::default(), &w, 10);
+            tick(&mut ps, &crouch, &w, 5);
+            assert_eq!(ps.view_target, VIEW_CROUCH);
+            assert_eq!(ps.maxs().z, HEIGHT_CROUCH);
+            tick(&mut ps, &walk, &w, 1);
+            assert_eq!(ps.stance, Stance::Stand);
+            assert!(ps.view_lerp_ms.is_some(), "still inside the leg down");
+            let box_at_release = ps.maxs().z;
+            tick(&mut ps, &walk, &w, 125);
+            let x = ps.origin.x;
+            tick(&mut ps, &walk, &w, 25);
+            (box_at_release, x, ps.origin.x, ps.maxs().z)
+        };
+        let (uo_box, uo_x, uo_end, uo_h) = wedged(MoveRules::Uo);
+        assert_eq!(uo_box, HEIGHT_STAND);
+        assert!(uo_x <= -15.0 && uo_end <= -15.0, "{uo_x} {uo_end}");
+        assert_eq!(uo_h, HEIGHT_STAND);
+        let (box15, x15, end15, h15) = wedged(MoveRules::V1_5);
+        assert_eq!(box15, HEIGHT_CROUCH);
+        assert!(
+            x15 > -15.0 && x15 == end15,
+            "held under the ceiling: {x15} {end15}"
+        );
+        assert_eq!(h15, HEIGHT_STAND);
     }
 
     /// `PM_Footsteps`: a lean is the walk under 1.5, in the rate and the

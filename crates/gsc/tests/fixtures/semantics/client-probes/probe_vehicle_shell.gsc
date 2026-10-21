@@ -11,9 +11,11 @@
 //	PROBE target <number> <vehicletype> <origin> <angles> health <health>
 //	PROBE fire <time> <vehicle origin> <vehicle angles>
 //	PROBE vdamage <time> <amount> <mod> <point> <dir> <attacker number> <inflictor number> <health>
+//	PROBE selfdamage <time> <amount> <mod> <point> <dir> <attacker number> <inflictor number> <health>
 //	PROBE hit <time> <client> dmg <iDamage> mod <mod> loc <hitloc>
 //
-//	the `vdamage` lines being the target's `damage` notifies. A player's
+//	the `vdamage` lines being the target's `damage` notifies and the
+//	`selfdamage` ones the firing vehicle's. A player's
 //	damage callback only logs. UO only.
 
 main()
@@ -71,12 +73,12 @@ entnum(e)
 	return e getEntityNumber();
 }
 
-log_vehicle_damage()
+log_vehicle_damage(tag)
 {
 	for (;;)
 	{
 		self waittill("damage", amount, attacker, dir, point, mod, inflictor);
-		logPrint("PROBE vdamage " + gettime() + " " + amount + " " + mod + " " + point + " " + dir + " " + entnum(attacker) + " " + entnum(inflictor) + " " + self.health + "\n");
+		logPrint("PROBE " + tag + " " + gettime() + " " + amount + " " + mod + " " + point + " " + dir + " " + entnum(attacker) + " " + entnum(inflictor) + " " + self.health + "\n");
 	}
 }
 
@@ -117,7 +119,8 @@ watch_places()
 	logPrint("PROBE target " + target getEntityNumber() + " " + target.vehicletype + " " + target.origin + " " + target.angles + " health " + target.health + "\n");
 	veh thread watch_seat();
 	veh thread watch_unseat();
-	target thread log_vehicle_damage();
+	target thread log_vehicle_damage("vdamage");
+	veh thread log_vehicle_damage("selfdamage");
 	every = getcvarint("probe_fire_ms");
 	if (every == 0)
 		every = 4000;
