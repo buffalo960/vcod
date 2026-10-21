@@ -422,9 +422,11 @@ fn run_ours(
     let mut walk = walk(&std::fs::read_to_string(client).unwrap());
     let first = walk.snaps.first().expect("a snapshot");
     let (placed, placed_ct) = (first.t, first.ct);
-    // The probe sent a cmd at the placement's own time, before the log's
-    // first (its cmds end each frame on the frame's time): the fall from
-    // the placement runs from retail's commandTime through it.
+    // The probe sent a cmd at the placement's own time, before it saw the
+    // placement, and captures before 2026-10-21 did not log it (its cmds
+    // end each frame on the frame's time): the fall from the placement runs
+    // from retail's commandTime through it (cod11-movers.md 15, "The cmd at
+    // the placement").
     if let Some(&(c, world)) = walk.cmds.first()
         && c.server_time > placed
     {

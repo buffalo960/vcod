@@ -1453,6 +1453,30 @@ the crouch walk back that returns at 42000 while its node still blends
 out keeps its time, as "The setter on a weighted node" (cod11-combat.md
 3.1) has it, to 0.03 units.
 
+**The cmd at the placement.** VERIFIED (the probe's loop,
+`crates/client/src/probe.rs`): the net probe builds, sends and logs a
+frame's cmd before it reads the snapshot that shows the placement, so
+the cmds it sent past that snapshot's commandTime predate the placement
+it times its log from. Retail runs them through the placement's fall:
+the legs captures' 25000 above, and the shellshock capture's 15000
+(cod11-shellshock.md, "Measured"). `--save-legs` and `--save-shock` keep
+the last cmds sent before the placement and log those past the placement
+snapshot's commandTime at `ms=0`, ahead of the first `!snap`'s
+successors. VERIFIED (a 1.1d `--save-legs` run on 2026-10-21, not
+committed): the placement snapshot (t 25000) read ct 24986 and the log's
+next line is `!cmd ms=0 st=25000`. Captures from before then lack it,
+and `legs_ab` and
+`shellshock_ab` add a holding cmd at the placement's level time when the
+log's first cmd is later. `moves_ab` and `predict_ab` rebuild each pair
+from its first snapshot and skip a pair whose last cmd is missing, and
+`ladder_ab` starts at the first snapshot past the log's first cmd. The
+slope captures log every cmd from the first spawned snapshot on, and the
+gates over them rebase on snapshots. `bump_ab`'s walker log starts 51 ms
+past the placement snapshot's commandTime (26282 to 26333), so its first
+pair runs one holding step where retail ran three, on a body standing at
+rest on the floor. INFERRED (the gate passes with no gaps): that step
+moves it nowhere.
+
 **The blend.** VERIFIED, the setter: `lf+0x18` starts at the new anim's
 `+0x40` (0x2a6ab; `BG_FinalizePlayerAnims` writes -1 there for an unset 0,
 0x27f1d), or 200 for no anim (0x2a6c7). For the legs (`lf == ci+0x37c`,
