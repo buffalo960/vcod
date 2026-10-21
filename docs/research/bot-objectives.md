@@ -1350,7 +1350,7 @@ stops boarding.
   a tank more than 50 degrees off turns in place. A driver whose keys
   took the hull under 45 units in 1.5 s (30 units/s), or turned a tank
   in place under 15 degrees, backs off for 1.5 s with the steer held one
-  way; four back-offs, or 10 s of driving, with no 300 units made get it
+  way; four back-offs, or 8 s of driving, with no 300 units made get it
   out. The window counts ground made, not speed: a hull wedged on a wall
   bounces, and read off its speed it never stalled.
 - The hull's unbroken contact (`SeatView::contact_ms`, the stuck clock
@@ -1399,7 +1399,8 @@ stops boarding.
   (`BotBody::engaged`), as a bot holding still to aim on foot does.
 - Out: a route's end, 5 s in a standing vehicle with nobody to shoot (a
   rider) or with nothing to drive to (a driver), 90 s in the seat, four
-  stalls or 10 s of driving under 300 units, or 5 s of the hull's
+  stalls or 8 s of driving under 300 units, 2 s idle in a vehicle
+  nobody drives, or 5 s of the hull's
   unbroken contact (10.3). The bot taps use until the server lets it out; a tank holds
   its driver for 1.5 s after the entry (`VEH_UnlinkPlayer`).
 
@@ -1501,10 +1502,13 @@ rule):
 |---|---|---|---|---|---|
 | speed stall | 5 | 3 | 176 | 59 | 38251 |
 | 10.3's rules | 1 | 1 | 197 | 58 | 27905 |
+| the same, on master's later bots | 0 | 2 | 187 | 71 | 31542 |
 
-The one stuck kill left is seed 5's Sherman sliding into a wall on the
-slope at (2190, -2278, 40) after both riders got out. Riders give up a
-struggling hull sooner, so a quarter fewer bot-ticks are spent seated. Each stuck kill
+The second row's one stuck kill is seed 5's Sherman sliding into a wall
+on the slope at (2190, -2278, 40) after both riders got out. Riders give
+up a struggling hull sooner, so fewer bot-ticks are spent seated. The two
+stalled drivers left (seeds 9 and 11) are under the 12 s before the
+no-headway exit and the undriven-seat exit land. Each stuck kill
 before killed its riders with the tank as attacker, the stock tdm 815
 error `uo_bots_fight_and_sprint_in_tdm` failed on. That gate plays with
 vehicles on again and passes seeds 1 to 15.

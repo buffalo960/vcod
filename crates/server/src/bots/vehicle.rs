@@ -33,6 +33,9 @@ const RIDE_TICKS: u32 = 1800;
 /// Ticks a seat with nothing to drive to, or a gunner's seat with nobody
 /// driving, is held before the bot gets out.
 const IDLE_TICKS: u32 = 100;
+/// A rider with nobody to shoot gets out of a vehicle nobody drives this
+/// soon: the driver gave it up.
+const UNDRIVEN_TICKS: u32 = 40;
 /// A driven vehicle the open throttle took under `STALL_DIST` in
 /// `STALL_TICKS` is stalling (30 units/s): the bot backs off for
 /// `REVERSE_TICKS`, and past `STALLS` back-offs with no ground made it gets
@@ -54,7 +57,7 @@ const STALLS: u32 = 4;
 /// Ground a ride has to make for its back-offs to start counting afresh,
 /// and the driving ticks it may take to make it before the bot gets out.
 const PROGRESS: f32 = 300.0;
-const PROGRESS_TICKS: u32 = 200;
+const PROGRESS_TICKS: u32 = 160;
 /// A route's last point this near the hull is reached.
 const PASSED: f32 = 48.0;
 /// The steer holds off inside this much heading error; a tank turns in
@@ -510,7 +513,9 @@ impl Bot {
         // A hull that has struck something for seconds on end, driven or
         // sliding, is about to destroy itself and everyone in it.
         let wedged = seat.contact_ms >= LEAVE_CONTACT_MS;
-        let done = self.rider.seated > RIDE_TICKS || self.rider.idle > IDLE_TICKS || wedged;
+        let abandoned = seat.seat > 1 && !seat.driven && self.rider.idle > UNDRIVEN_TICKS;
+        let done =
+            self.rider.seated > RIDE_TICKS || self.rider.idle > IDLE_TICKS || wedged || abandoned;
         if done || self.rider.leaving {
             self.rider.leaving = true;
             cmd.forward = 0;
