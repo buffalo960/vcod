@@ -2598,12 +2598,23 @@ impl Bot {
         // toward it while the keys keep the path, so a returning enemy is
         // already near the crosshair. The reaction delay is `track`'s
         // business either way.
+        // A UO bot with the breath to sprint a straight that ends short of
+        // the spot runs it looking along the path: turned to the spot, the
+        // keys leave the line and the sprint never starts, and in a game of
+        // running fights that left 64 sprinted leg-ticks in 90 s (seed 19).
+        let sprints_on = |r: &Recall| {
+            view.fatigue
+                .is_some_and(|f| view.sprinting || f >= SPRINT_FRESH)
+                && view.sprint_room >= SPRINT_ROOM
+                && dist_sq(view.origin, r.at) > view.sprint_room * view.sprint_room
+        };
         if self.shoot
             && view.enemy.is_none()
             && pitch == 0.0
             && forward == 127
             && let Some(r) = self.recall
             && dist_sq(view.origin, r.at) < SHOOT_RANGE * SHOOT_RANGE
+            && !sprints_on(&r)
         {
             let (tp, ty) = aim_angles(view, r.at);
             let look = self.turn_toward(view, [tp, ty]);
@@ -4668,6 +4679,34 @@ mod tests {
         v.fatigue = Some(1.0);
         v.jump = true;
         assert!(!sprints(&bot.think(&v)), "not onto a jump edge");
+    }
+
+    /// A remembered spot past the end of a straight the bot has the breath
+    /// to sprint is run at along the path; one short of it turns the view
+    /// (seed 19 of `uo_bots_fight_and_sprint_in_tdm`).
+    #[test]
+    fn a_uo_bot_sprints_toward_a_spot_past_the_straight() {
+        let sprints = |c: &UserCmd| c.buttons & msg::BUTTON_SPRINT_V22 != 0;
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        v.sprint_room = 600.0;
+        v.fatigue = Some(1.0);
+        let think = |at: [f32; 3]| {
+            let mut bot = Bot::new("allies", true, 1);
+            bot.recall = Some(Recall {
+                at,
+                ticks: 100,
+                seen: true,
+            });
+            bot.think(&v)
+        };
+        let cmd = think([400.0, 1200.0, 64.0]);
+        assert!(sprints(&cmd), "far spot");
+        assert_eq!((cmd.forward, cmd.right), (127, 0));
+        assert!(
+            !sprints(&think([300.0, 300.0, 64.0])),
+            "spot short of the end"
+        );
     }
 
     /// UO's frag cooks: the sight button goes down a few ticks into the

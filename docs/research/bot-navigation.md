@@ -3635,7 +3635,12 @@ Two goals sit between a visible enemy and `Roam`, both kept by the brain
 - Pre-aim. While a remembered spot within `SHOOT_RANGE` is a goal and the
   waypoint is level, the view turns toward the spot at `turn_deg` per tick
   and the move keys are rotated so the body keeps the path. Ladder and ledge
-  waypoints keep the path's own view.
+  waypoints keep the path's own view. A UO bot with the breath to sprint a
+  straight of `SPRINT_ROOM` or more that ends short of the spot runs it
+  looking along the path and sprints: the rotated keys leave the line, and
+  in a game of running fights (`uo_bots_fight_and_sprint_in_tdm` seed 19
+  on c8c3fd1f) pre-aim took about 330 bot-ticks with the room to sprint
+  and left 64 sprinted leg-ticks in 90 s (VERIFIED, measured).
 - Hearing. The server records a noise for every `EV_FIRE_WEAPON` shot in the
   per-cmd attack pass (grenade throws and melee excluded), for every blast
   the missile pass sets off, chest high at the shooter or the blast, with the
