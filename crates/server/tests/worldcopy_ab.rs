@@ -16,7 +16,10 @@
 //! `func_static`s, `-worldcopy3.txt` reruns its turns with the player
 //! printed to the ten-thousandth, and `-sinecrush.txt` crushes the player
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
-//! beside a turned submodel as it lifts.
+//! beside a turned submodel as it lifts. The `mp_harbor-dm-tiltslab*.txt`
+//! captures drop the player onto a pitched and a rolled submodel (movers
+//! doc 22): two on 1.1d, `-1.5.txt` on 1.5b and `-uo.txt` on United
+//! Offensive, the last two run with `COD_DIR` at a 1.5 or UO install.
 //!
 //! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
@@ -34,7 +37,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::net::{NetClient, NetEvent};
 
 const MAP: &str = "mp_carentan";
@@ -54,6 +57,8 @@ const PROBE_SLAB: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_turnedslab.gsc");
 const TILT: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab.txt";
 const TILT_RIDE: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-ride.txt";
+const TILT_15: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-1.5.txt";
+const TILT_UO: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-uo.txt";
 const PROBE_TILT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
 const PROBE_CRUSH: &str =
@@ -242,16 +247,64 @@ fn ours_tilt_ride() -> Option<&'static Ours> {
         .as_ref()
 }
 
+/// The capture on retail 1.5b, `None` unless `COD_DIR`'s `main/` is 1.5's
+/// (a UO install's is).
+fn ours_tilt_15() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    fn paks() -> Option<vcod_common::pk3::Pk3Fs> {
+        let fs = vcod_common::testing::game_fs()?;
+        (vcod_server::server::install_protocol(&fs).version == PROTOCOL_V6.version).then_some(fs)
+    }
+    RUN.get_or_init(|| {
+        let (map, name) = ("mp_harbor", "probe_tiltslab");
+        run_ours_on(&PROTOCOL_V6, paks, map, name, PROBE_TILT, TILT_15, true)
+    })
+    .as_ref()
+}
+
+/// The capture on retail United Offensive 1.51b, `None` off a UO install.
+fn ours_tilt_uo() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        let (map, name) = ("mp_harbor", "probe_tiltslab");
+        let paks = vcod_common::testing::uo_fs;
+        run_ours_on(&PROTOCOL_V22, paks, map, name, PROBE_TILT, TILT_UO, true)
+    })
+    .as_ref()
+}
+
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| run_ours(MAP, "probe_sinecrush", PROBE_CRUSH, CRUSH, true))
         .as_ref()
 }
 
-/// [`run_once`], run again once if the client's first snapshot missed
-/// retail's: how long ours takes to join differs by map.
+/// [`run_ours_on`] on 1.1, `None` unless the install is 1.1's.
 fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool) -> Option<Ours> {
-    let ours = run_once(map, name, probe, fixture, probe_rate, 0)?;
+    run_ours_on(
+        &PROTOCOL_V1,
+        vcod_common::testing::game_fs_11,
+        map,
+        name,
+        probe,
+        fixture,
+        probe_rate,
+    )
+}
+
+/// [`run_once`], run again once if the client's first snapshot missed
+/// retail's: how long ours takes to join differs by map. `paks` opens the
+/// install's paks for each run, `None` when the install is not `proto`'s.
+fn run_ours_on(
+    proto: &'static Protocol,
+    paks: fn() -> Option<vcod_common::pk3::Pk3Fs>,
+    map: &str,
+    name: &str,
+    probe: &str,
+    fixture: &str,
+    probe_rate: bool,
+) -> Option<Ours> {
+    let ours = run_once(proto, paks()?, map, name, probe, fixture, probe_rate, 0)?;
     let text = std::fs::read_to_string(fixture).unwrap();
     let Some(&(first, _)) = common::cmds_ran(&text, "").first() else {
         return Some(ours);
@@ -259,7 +312,7 @@ fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool)
     match ours.first_snap {
         Some(t) if t != first => {
             let late = (t - first) as i64;
-            run_once(map, name, probe, fixture, probe_rate, late)
+            run_once(proto, paks()?, map, name, probe, fixture, probe_rate, late)
         }
         _ => Some(ours),
     }
@@ -272,6 +325,8 @@ fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool)
 /// `probe_rate` sends the probe client's three cmds a frame instead of one.
 #[allow(clippy::too_many_arguments)]
 fn run_once(
+    proto: &'static Protocol,
+    fs: vcod_common::pk3::Pk3Fs,
     map: &str,
     name: &str,
     probe: &str,
@@ -279,11 +334,11 @@ fn run_once(
     probe_rate: bool,
     late_ms: i64,
 ) -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs_11()?;
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(map, name), now);
+    sv.set_protocol(proto);
     sv.overlay_script(&format!("maps/mp/gametypes/{name}"), probe);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -337,7 +392,7 @@ fn run_once(
         }
     }
     let q = Rc::new(RefCell::new(Queues::default()));
-    let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
+    let mut cl = NetClient::start_with_protocol(ClientEnd(q.clone()), now, 0x2001, proto);
     // mp_harbor's allies are Russian.
     let weapon = if map == "mp_harbor" {
         "mosin_nagant_mp"
@@ -355,7 +410,7 @@ fn run_once(
         let live = cl
             .snapshots()
             .newest()
-            .is_some_and(|s| matches!(s.ps.field_i32(&PROTOCOL_V1, "pm_type"), 0 | 1 | 6));
+            .is_some_and(|s| matches!(s.ps.field_i32(proto, "pm_type"), 0 | 1 | 6));
         if replay && live {
             let cmds = hold.cmds(&cl, 0);
             cl.send_cmds(&cmds);
@@ -377,7 +432,7 @@ fn run_once(
         }
         if let Some(s) = cl.snapshots().newest() {
             first_snap.get_or_insert(s.server_time);
-            let p = &PROTOCOL_V1;
+            let p = proto;
             if let Some(present) = &present {
                 for (&n, e) in s.entities.iter().filter(|(n, _)| !present.contains(n)) {
                     new.entry(n).or_insert(Sent {
@@ -455,7 +510,7 @@ fn send_at_probe_rate(cl: &mut NetClient<ClientEnd>) {
     let da = cl
         .snapshots()
         .newest()
-        .map(|s| vcod_common::net::DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(&PROTOCOL_V1, n)));
+        .map(|s| vcod_common::net::DELTA_ANGLE_FIELDS.map(|n| s.ps.field_i32(cl.protocol(), n)));
     let cmds = [now - 34, now - 17, now].map(|t| {
         let mut c = input;
         c.server_time = t;
@@ -767,6 +822,19 @@ fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
 #[test]
 fn a_capsule_lands_on_a_tilted_submodel_like_retail_again() {
     tilt_matches(TILT_RIDE, ours_tilt_ride());
+}
+
+/// The same capture on retail 1.5b: its `Reached_ScriptMover` truncates the
+/// angles as 1.1d's does (movers doc 22).
+#[test]
+fn a_capsule_lands_on_a_tilted_submodel_like_retail_on_1_5() {
+    tilt_matches(TILT_15, ours_tilt_15());
+}
+
+/// And on United Offensive 1.51b.
+#[test]
+fn a_capsule_lands_on_a_tilted_submodel_like_retail_on_uo() {
+    tilt_matches(TILT_UO, ours_tilt_uo());
 }
 
 #[test]
