@@ -989,7 +989,7 @@ stood off retail's by up to 0.84 degrees on the change's snapshot.
   with a seated cmd at 29733 in the same frame, is sent with the on-foot
   idle (697) at 29750 and the seat's (94) at 29800, and his bones begin
   the glide down a frame after vcod's did (VERIFIED, capture 2026-10-21,
-  `mp_peaks-jeep-glide-uo.txt`). vcod: the boarding keeps the sim's
+  the first cut of `mp_peaks-jeep-glide-uo.txt`, since recaptured, 13). vcod: the boarding keeps the sim's
   `veh_motion` and `seat_conditions` names no motion for 0.
 
 ### 11.5 A spawn out of a seat
@@ -1891,7 +1891,7 @@ face.
   (INFERRED).
 - **The silhouette.** Measured again with `probe_profile 1`, retail UO
   1.51b, 2026-10-15 (fixtures `*-silhouette-uo.txt`, recipe in their
-  headers): every 2 s the probe traces a grid of level `bulletTrace`s
+  headers; the tank's and the seated jeep's recaptured 2026-10-21, 13): every 2 s the probe traces a grid of level `bulletTrace`s
   (hitCharacters) from the vehicle's right across client 0, `z` -8..84 by
   4 above his origin and `f` -24..24 by 6 along the hull, and logs where
   each that meets him or the vehicle stops. The rider's origin and angles
@@ -2145,7 +2145,8 @@ face.
       same way (`entities.rs` `SeatLeaves`). With it every bone of the
       glide sits within 0.02 of retail's (VERIFIED, replay,
       `vehicle_armor_ab::the_tank_rider_glides_back_into_the_drivers_seat_as_on_retail`,
-      fixture `mp_cassino-tank-glide-uo.txt`, cut from that run) but for
+      fixture `mp_cassino-tank-glide-uo.txt`, cut from that run and
+      since recut from the 2026-10-21 recapture below) but for
       one frame its `GLIDE_GAPS` name. 54100 and 54250, where retail
       repeats the last frame's pose, now match: a `bulletTrace` in the
       first thread pass (the profile's at 54050, the aim sweep's at
@@ -2230,9 +2231,10 @@ face.
       (INFERRED). Not ported.
     - **The glides on the jeep.** A fresh retail jeep run (2026-10-21,
       port 34691, `probe_bones 1`, seat changes at 29750, 41900, 53900,
-      out at 65900) cut to every glide and the exit's fall is
+      out at 65900) cut to every glide and the exit's fall was the first
       `mp_peaks-jeep-glide-uo.txt`, the tank's exit from the same day
-      `mp_cassino-tank-exit-uo.txt`; both keep the two net probes'
+      the first `mp_cassino-tank-exit-uo.txt` (both recaptured since,
+      "Retail's spawn point" below); both keep the two net probes'
       `CMDS` lines, which `vehicle_armor_ab` replays as each client's
       cmd times (`Capture::cmds`). Against them (VERIFIED, replay,
       `the_jeep_rider_glides_into_each_seat_and_falls_out_as_on_retail`,
@@ -2302,14 +2304,60 @@ face.
         gunner's seat at 41700), so its phase runs from the spawn; ours,
         alone at the spawn, took the script's pick, whose think started
         legs 128, then 157, and the idle at 19600. VERIFIED, replay: with
-        his spawn pinned on the spot the probe then places him
-        (`placed_spawn`, idle from the spawn frame) every bone of the
-        whole local capture (29550 to 76000) sits within 0.01 of
-        retail's and the silhouette cell matches. INFERRED: retail's
-        random pick, which the probe does not log, left him standing.
-        VERIFIED, replay: pinned the same way the jeep run's glides miss
-        by up to 0.2, so the gates pin only the tank captures. The
-        committed exit fixture keeps the stint's 30300 to 31200.
+        his spawn pinned on the spot the probe then places him (idle
+        from the spawn frame) every bone of the whole local capture
+        (29550 to 76000) sits within 0.01 of retail's and the silhouette
+        cell matches.
+      - **Retail's spawn point.** The probe now logs each spawn's pick:
+        `log_spawns` wakes on `"spawned"` after tdm's `spawnPlayer` has
+        returned and prints the origin and angles of the
+        `mp_teamdeathmatch_spawn` nearest the body (`PROBE spawn <time>
+        <client> <origin> <angles>`). Recaptured on retail UO 1.51b,
+        2026-10-21, ports 34711-34714, each fixture's recipe in its
+        header: the target's picks were real tdm points, nowhere near
+        the placement: mp_cassino (-688, -1160, 75.80) yaw 0 (silhouette
+        run) and (2688, -160, 320.12) yaw 180 (bones run), mp_peaks
+        (-696, 2456, 304.12) yaw 270 and (-1808, 1072, 298.12) yaw 90
+        (VERIFIED, the four captures). `vehicle_armor_ab` pins the
+        logged point (`logged_spawn`) for every capture it replays on
+        retail's clock. Pinned there, the tank driver's first stint
+        (29850 to 30750) and his exit (65250 to 65850) match every bone
+        within 0.021 (VERIFIED, replay,
+        `the_tank_driver_idles_and_falls_off_the_hull_as_on_retail`).
+        On the script's own pick the stint misses from its first sample
+        (0.68 on the right hand at 29950; VERIFIED, replay). So retail's
+        think on its pick started the idle at the spawn frame, as one on
+        the placement spot does (VERIFIED, replay), which is why the fit
+        held. The jeep's gates pass pinned or not (VERIFIED, replay);
+        the boarding sets the jeep rider's legs (11.4), so his spawn's
+        clip never reaches a seat (INFERRED).
+      - **The shooter's trigger.** The net probe's `--probe-uo-weapon
+        aim` first presses attack and sight on its first cmd 1000 ms or
+        more past its placement, in all four runs and in the two earlier
+        bones runs (VERIFIED, the `CMDS` lines' `in=`: placed 23650,
+        pressed 24650 on the mp_peaks bones run). The gate had held the
+        trigger from the placement, so ours' rounds landed off retail's
+        frames: on the jeep exit ours logged hits at 65950 and 66150,
+        retail at 65900 and 66100 (VERIFIED, replay). Each round's trace
+        builds the rider's DObj (combat doc 3.6), and the landing frame
+        66000 read up to 0.51 off (`bip01 l hand`; VERIFIED, replay).
+        With the shooter's buttons taken off the capture's `in=` cmd by
+        cmd (`common::cmds_inputs`) every bone matches (VERIFIED,
+        replay).
+      - The silhouette fixtures now keep both probes' `CMDS` lines, and
+        their tests replay them with the shooter joined as late as
+        retail's. With the shooter joined beside the target and holding
+        from his placement, one jeep cell, (12, 6) on the passenger at
+        56050, met him where retail's ray missed (VERIFIED, replay).
+      - The frames named above for the glides and the stint are the
+        earlier runs'. The committed `mp_cassino-tank-silhouette-uo.txt`,
+        `-tank-glide-uo.txt`, `-tank-exit-uo.txt`,
+        `mp_peaks-jeep-silhouette-uo.txt` and `-jeep-glide-uo.txt` are
+        the recapture's: tank seats at 29050/41200/53200, out 65200
+        (silhouette) and 29100/41250/53250, out 65250 (bones), jeep
+        29650/41800/53800, out 65800 and 29700/41850/53850, out 65850.
+        The gates join on each fixture's placement (`late_for`,
+        `LATE_MS` set on a placement at 19300).
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
   within a quarter unit, the stints after the gunner's seat included.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses
