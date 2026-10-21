@@ -166,7 +166,16 @@ struct Tally {
     aim: Aim,
     kit: Kit,
     peeks: Peeks,
+    /// Walking bot-ticks (`BotBody::walking` this tick and the last), the
+    /// sum of their view turns in degrees, and those that turned more than
+    /// [`SNAP_DEG`].
+    walk_ticks: u64,
+    walk_turn: f64,
+    snaps: u64,
 }
+
+/// A walking view turned more than this in one tick has snapped.
+const SNAP_DEG: f32 = 30.0;
 
 /// Grenades and the clip a fight starts on: throws, the hits and kills
 /// their blasts made on others (`MOD_GRENADE_SPLASH`), engagements started
@@ -292,6 +301,20 @@ impl Tally {
         self.packed += o.packed;
         self.kit.add(&o.kit);
         self.peeks.add(&o.peeks);
+        self.walk_ticks += o.walk_ticks;
+        self.walk_turn += o.walk_turn;
+        self.snaps += o.snaps;
+    }
+
+    /// The walking view's line (bot-combat.md section 1).
+    fn walk(&self) -> String {
+        format!(
+            "walking ticks {:7} turn mean {:5.2} deg snaps over {SNAP_DEG:.0} deg {:6} ({:5.2}%)",
+            self.walk_ticks,
+            self.walk_turn / self.walk_ticks.max(1) as f64,
+            self.snaps,
+            100.0 * self.snaps as f64 / self.walk_ticks.max(1) as f64,
+        )
     }
 
     /// The per-bot-tick line under [`Tally::line`].
@@ -530,6 +553,7 @@ fn summarize(what: &str, results: &[&Match]) {
             println!("  {kind} {k:<13} {}", t.aim.line());
             println!("  {kind} {k:<13} {}", t.kit.line());
             println!("  {kind} {k:<13} {}", t.peeks.line());
+            println!("  {kind} {k:<13} {}", t.walk());
         }
     };
     rows("team ", &by_team);
@@ -888,6 +912,8 @@ struct Life {
     throws: u32,
     engaged: bool,
     peeks: PeekLife,
+    /// The view's yaw last tick when the bot walked then.
+    walk_yaw: Option<f32>,
 }
 
 impl Life {
@@ -948,6 +974,14 @@ impl Life {
         };
         d.kit = Kit::step(self, body);
         d.peeks = Peeks::step(&mut self.peeks, tactics, dead);
+        let walking = body.filter(|b| b.playing && b.walking);
+        if let (Some(b), Some(y)) = (walking, self.walk_yaw) {
+            let turn = (b.yaw - y + 180.0).rem_euclid(360.0) - 180.0;
+            d.walk_ticks += 1;
+            d.walk_turn += f64::from(turn.abs());
+            d.snaps += u64::from(turn.abs() > SNAP_DEG);
+        }
+        self.walk_yaw = walking.map(|b| b.yaw);
         if let Some(b) = body.filter(|b| b.playing) {
             if self.wound.is_none() && b.engaged && b.health < 50 {
                 self.wound = Some(0);

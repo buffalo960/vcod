@@ -163,6 +163,9 @@ pub struct Skill {
     /// the view. A tracked target, the attacker of a fresh hit
     /// ([`BotView::hurt`]) and what the bot hears are known outside it.
     pub fov_deg: f32,
+    /// The most the walking view turns in one tick, degrees: the keys
+    /// keep the path while it comes round ([`Bot::walk_turn`]).
+    pub walk_turn_deg: f32,
 }
 
 impl Default for Skill {
@@ -184,6 +187,7 @@ impl Default for Skill {
             noise_ticks: 200,
             hearing: 1.0,
             fov_deg: 120.0,
+            walk_turn_deg: 24.0,
         }
     }
 }
@@ -876,6 +880,11 @@ pub struct BotBody {
     pub clip_size: i16,
     /// Grenades it let go this game ([`Bot::throws`]).
     pub throws: u32,
+    /// The view's yaw in degrees, and whether the last think steered the
+    /// body along its waypoint with no target tracked: `bot_match`'s
+    /// walking turn columns.
+    pub yaw: f32,
+    pub walking: bool,
 }
 
 pub struct Bot {
@@ -933,6 +942,13 @@ pub struct Bot {
     unstick_ticks: u32,
     /// The last think was on a leg a bot sprints when it has the breath.
     sprint_leg: bool,
+    /// The last think steered the body along its waypoint, no unstick
+    /// spell and no fight ([`BotBody::walking`]).
+    walking: bool,
+    /// The last think's view was set by a fight, a hurt look, a cover
+    /// peek, a recalled spot or a retreat, not the walk: the walking
+    /// view takes the path's heading at once ([`Bot::walk_turn`]).
+    view_owned: bool,
     /// Ticks since the body was last on the rungs, and whether the spell
     /// under way began within [`RUNG_GRACE`] of them.
     rungs_ago: u32,
@@ -1329,6 +1345,8 @@ impl Bot {
             stall_ticks: 0,
             unstick_ticks: 0,
             sprint_leg: false,
+            walking: false,
+            view_owned: false,
             rungs_ago: u32::MAX,
             rung_spell: false,
             unstick_at: [f32::INFINITY; 3],
@@ -2573,6 +2591,7 @@ impl Bot {
     fn think_body(&mut self, view: &BotView) -> UserCmd {
         self.fire_cooldown = self.fire_cooldown.saturating_sub(1);
         self.sprint_leg = false;
+        self.walking = false;
         for s in &mut self.shunned {
             s.1 -= 1;
         }
@@ -2878,6 +2897,7 @@ impl Bot {
                 && view.sprint_room >= SPRINT_ROOM
                 && dist_sq(view.origin, r.at) > view.sprint_room * view.sprint_room
         };
+        let mut recall_look = false;
         if self.shoot
             && view.enemy.is_none()
             && pitch == 0.0
@@ -2893,6 +2913,7 @@ impl Bot {
             forward = (d.cos() * 127.0).round() as i8;
             cmd.right = (-d.sin() * 127.0).round() as i8;
             [pitch, yaw] = look;
+            recall_look = true;
         }
         // Slowing onto a leap's foot, then standing on it.
         if let Some(w) = foot {
@@ -2989,6 +3010,33 @@ impl Bot {
             }
             _ => self.unpin = None,
         }
+        // A plain run on the ground: the view comes round to the path's
+        // heading at `walk_turn_deg` a tick and the keys keep the body on
+        // the heading meanwhile. A climb, a back down, a jump, a run off a
+        // drop and a leap's or a creep's foot keep the view the walk that
+        // proved them had (bot-combat.md section 11). Handed back from a
+        // view something else owned, the view takes the heading at once:
+        // brought round from the threat, a bot leaving its cover saw the
+        // same enemy again and dug back in (11.4).
+        if steering
+            && view.on_ground
+            && !view.on_ladder
+            && pitch == 0.0
+            && forward == 127
+            && cmd.right == 0
+            && cmd.up == 0
+            && foot.is_none()
+            && !view.stop
+            && !view.jump
+            && !view.run_off
+            && self.pushed_off.is_none()
+            && self.unpin.is_none()
+            && !self.creep.creeping()
+            && !self.view_owned
+        {
+            (forward, cmd.right, yaw) = self.walk_turn(view, yaw);
+        }
+        let walked = [pitch, yaw];
         // On the ground the keys are cut to the graph's pace: its walks ran
         // at 190 units/s, and a light weapon's 215 to 228 flies a run off
         // mp_ship's mast platform at (3564, -127, 896) over the narrow ledge
@@ -3107,6 +3155,8 @@ impl Bot {
             cmd.wbuttons |= msg::WBUTTON_RELOAD;
         }
         self.retreat_update(view);
+        self.walking = steering && view.on_ground && !view.on_ladder && !self.engaged();
+        self.view_owned = recall_look || [pitch, yaw] != walked;
         cmd.angles = cmd_angles(view, [pitch, yaw]);
         cmd
     }
@@ -3537,6 +3587,25 @@ impl Bot {
         view.deployed && view.ads_frac >= LMG_READY_FRAC
     }
 
+    /// The walking view one tick on toward the path's heading `want`, at
+    /// most [`Skill::walk_turn_deg`], and the (forward, right) keys that run
+    /// the body along `want` from it ([`rekey`]'s turn), scaled so the
+    /// larger is 127: `PM_CmdScale` then gives the run's full speed.
+    fn walk_turn(&self, view: &BotView, want: f32) -> (i8, i8, f32) {
+        let cur = view.view[1];
+        let d = yaw_diff(want, cur);
+        let most = self.skill.walk_turn_deg;
+        if d.abs() <= most {
+            return (127, 0, want);
+        }
+        let look = cur + d.clamp(-most, most);
+        let off = yaw_diff(want, look).to_radians();
+        let (f, r) = (off.cos(), -off.sin());
+        let m = f.abs().max(r.abs());
+        let key = |k: f32| (k / m * 127.0).round().clamp(-127.0, 127.0) as i8;
+        (key(f), key(r), look)
+    }
+
     /// The (pitch, yaw) one tick's turn takes the view to on its way to
     /// `want`, at most `turn_deg` along the straight line between them.
     fn turn_toward(&self, view: &BotView, want: [f32; 2]) -> [f32; 2] {
@@ -3703,6 +3772,11 @@ impl Bot {
     /// On a leg it sprints when it has the breath ([`BotBody::sprint_leg`]).
     pub fn sprint_leg(&self) -> bool {
         self.sprint_leg
+    }
+
+    /// Steered along its waypoint last think ([`BotBody::walking`]).
+    pub fn walking(&self) -> bool {
+        self.walking
     }
 
     /// Grenades let go this game ([`BotBody::throws`]).
@@ -4794,6 +4868,7 @@ mod tests {
             let mut v = sd_view(role);
             v.origin = [800.0, 0.0, 64.0];
             v.waypoint = Some([700.0, 0.0, 64.0]);
+            v.view[1] = 180.0;
             assert_eq!(bot.goal(&v), Goal::To([0.0, 0.0, 64.0]), "{role:?}");
             for _ in 0..100 {
                 let cmd = bot.think(&v);
@@ -5145,6 +5220,68 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(cmd.forward, 127);
         assert_eq!(cmd.angles, [0, deg_short(90.0), 0], "level, facing +y");
+    }
+
+    /// A waypoint off the walking view's heading: the view comes round at
+    /// `walk_turn_deg` a tick while the keys, full, run the body at the
+    /// waypoint all along.
+    #[test]
+    fn the_walking_view_comes_round_while_the_keys_keep_the_path() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([100.0, 0.0, 64.0]);
+        let most = bot.skill.walk_turn_deg;
+        let mut ticks = 0;
+        loop {
+            let cmd = bot.think(&v);
+            let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
+            let turn = yaw_diff(yaw, v.view[1]);
+            assert!(turn.abs() <= most + 0.01, "turned {turn}");
+            let way = yaw + (-(cmd.right as f32)).atan2(cmd.forward as f32).to_degrees();
+            assert!(yaw_diff(way, 0.0).abs() < 1.0, "keys run at {way}");
+            assert_eq!(
+                cmd.forward.unsigned_abs().max(cmd.right.unsigned_abs()),
+                127
+            );
+            v.view[1] = yaw;
+            ticks += 1;
+            if yaw_diff(yaw, 0.0).abs() < 0.01 {
+                assert_eq!((cmd.forward, cmd.right), (127, 0));
+                break;
+            }
+            assert!(ticks < 10);
+        }
+        assert_eq!(ticks, (90.0 / most).ceil() as i32);
+    }
+
+    /// A view a fight owned is handed back to the walk at once: the first
+    /// walking tick after it faces the path, and the limit runs again
+    /// from the tick after.
+    #[test]
+    fn the_walking_view_takes_the_path_at_once_after_a_fight() {
+        let (mut bot, mut v) = engaged(1);
+        // Enemy east, waypoint north, the view on the enemy.
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        bot.think(&v);
+        bot.think(&v);
+        // Out of sight, and out of mind, so nothing else owns the view.
+        v.enemy = None;
+        bot.skill.forget_ticks = 0;
+        bot.disengage();
+        bot.prior = None;
+        bot.recall = None;
+        let yaw = |c: &UserCmd| c.angles[1] as f32 / ANGLE2SHORT;
+        let cmd = bot.think(&v);
+        assert!(yaw_diff(yaw(&cmd), 90.0).abs() < 0.01, "yaw {}", yaw(&cmd));
+        v.view[1] = yaw(&cmd);
+        // The path turns south-east: the limit is back.
+        v.waypoint = Some([100.0, -100.0, 64.0]);
+        let cmd = bot.think(&v);
+        let turn = yaw_diff(yaw(&cmd), v.view[1]).abs();
+        assert!(
+            (turn - bot.skill.walk_turn_deg).abs() < 0.01,
+            "turned {turn}"
+        );
     }
 
     /// On UO a bot sprints a long straight leg with breath to spare, at
@@ -5928,7 +6065,9 @@ mod tests {
             let cmd = bot.think(&v);
             assert_eq!((cmd.up, cmd.forward, cmd.angles), (0, 127, out));
         }
+        // Landed facing the waypoint, it runs on.
         v.on_ground = true;
+        v.view[1] = (-229.9f32 + 230.0).atan2(2144.7 - 2146.5).to_degrees();
         assert_eq!(bot.think(&v).forward, 127);
     }
 

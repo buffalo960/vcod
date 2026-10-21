@@ -80,12 +80,12 @@ Four levels set how fast a bot reacts and turns, how well it aims, how long
 it remembers an enemy it lost sight of, how far it hears gunfire and how
 wide it sees:
 
-| Level | Name | Reaction | Turn rate | Aim error at first sight, settled | Hearing | Sight cone |
-|---|---|---|---|---|---|---|
-| 0 | easy | 400-650 ms | 200°/s | 64, 5 units | 0.75x | 100° |
-| 1 | normal (default) | 200-350 ms | 300°/s | 36, 4 units | 1x | 120° |
-| 2 | hard | 150-300 ms | 440°/s | 32, 2.5 units | 1.25x | 140° |
-| 3 | expert | 100-150 ms | 600°/s | 24, 1.5 units | 1.5x | 160° |
+| Level | Name | Reaction | Turn rate | Walking turn | Aim error at first sight, settled | Hearing | Sight cone |
+|---|---|---|---|---|---|---|---|
+| 0 | easy | 400-650 ms | 200°/s | 360°/s | 64, 5 units | 0.75x | 100° |
+| 1 | normal (default) | 200-350 ms | 300°/s | 480°/s | 36, 4 units | 1x | 120° |
+| 2 | hard | 150-300 ms | 440°/s | 600°/s | 32, 2.5 units | 1.25x | 140° |
+| 3 | expert | 100-150 ms | 600°/s | 720°/s | 24, 1.5 units | 1.5x | 160° |
 
 The aim error is how far from the target's chest a shot would land; it
 shrinks every tick the bot stays on the target and grows with range, with
@@ -95,6 +95,13 @@ waits for a closer line. On its sights a bot now and then strafes slowly,
 backs away from a close enemy with a bolt rifle, or lies down at long
 range; a higher level does so more often. A higher level also remembers a
 lost enemy and a heard shot longer.
+
+Out of a fight a walking bot turns its view at the walking rate and keeps
+running along its path while the view comes round; the tick a fight, a
+look toward a hit or a peek from cover lets go, it faces its path at
+once. On open floor it
+heads straight for a node further along its path instead of stepping
+along the navigation grid.
 
 A bot spots a new enemy only inside its sight cone, centred on where it
 looks; a bot in a vehicle seat sees all round. It keeps fighting the enemy
