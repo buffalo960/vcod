@@ -4445,6 +4445,86 @@ unlinked one, and `SP_func_static` (1.1d 0x5820c, 1.5b 0x699ef, UO
 `func_pendulum`; `SP_misc_spawner` stores `misc_spawner_use` (0x53468,
 which arms `misc_spawner_think` 100 ms on) at 0x534d8.
 
+#### `useBy` on a gun, a sine mover and a `misc_spawner`
+
+The captures are `client-probes/probe_useby` under `probe_sine`,
+`probe_spawner` and `probe_turret`, 2026-10-21 on retail 1.1d, 1.5b and UO
+1.51b, ports 34771-34780 (`crates/server/tests/fixtures/triggers/`
+`mp_carentan-dm-usesine.txt`, `-usespawner.txt` and `-useturret.txt`, each
+with a `-1.5` and a `-uo` twin, recipes in their headers). Addresses below
+are the modules' `nm` and `objdump` ones (1.1d `game.mp.i386.so`, 1.5b's,
+UO's `game.mp.uo.i386.so`).
+
+- VERIFIED, `-usesine`, all three servers the same lines and times: a
+  script-spawned `func_bobbing` used at 1550 reads `origin` (0 0 0) on the
+  line after the call and every frame after, through a second use at 2550,
+  and the level runs past the 4000 where an unused one drops it (movers
+  doc 18). A `func_pendulum` used at 4050 reads its old roll (15.77) on
+  the line after the call, then -0.97, 0, 0.97, 0.97, 0.97, 1.94: its
+  swing restarts from 0 off a `trTime` of 4100, then of 4150 and 4200,
+  each roll the frame's own entity pass evaluated a frame before the line.
+  The second use at 5050 repeats it.
+- VERIFIED, 1.1d disassembly: `Use_BinaryMover` (0x560ec) at mover state 0
+  stores the activator and calls `SetMoverState(ent, 3, level.time + 50)`
+  for each team member (0x56247), then `G_PlaySoundAlias` of the start
+  alias past level time 4000, `s.loopSound` 0 or the loop alias (0x562d6)
+  and `trap_AdjustAreaPortalState(ent, 1)` for a team master (0x5630b). `SetMoverState` (0x55904) writes `moverState`, `pos.trTime`
+  and `apos.trTime` both, `pos` from `pos1`/`pos2` with `trDuration` from
+  `ent+0x1f4` (`+0x1f8` for the 2-to-1 leg past a `speed2`), then
+  `BG_EvaluateTrajectory(&s.pos, level.time, r.currentOrigin)` and a link
+  (0x55c5d..0x55c8f); it does not touch `r.currentAngles` for states 0..4.
+  `InitMover` writes the `pos1`..`pos2` time, at least 1, to both
+  `+0x1f4` and `+0x1f8` (0x566dd..0x566f3). `G_MoverTeam` (0x558a0..0x558e9)
+  calls `reached` for `pos`, then for `apos` as that call left it.
+  `Reached_BinaryMover` (0x55c9c) moves state 3 to 1 (`pos2`) and puts
+  `ReturnToPos1` (0x57b28) `wait` on unless `wait` is -1000 (0x75c84), and
+  state 4 to 0. `ReturnToPos1` runs `SetMoverState(ent, 4, level.time)`.
+  `G_PlaySoundAlias` (0x67b30) returns on alias 0, which is all a sine
+  mover holds. INFERRED from those and the capture: a use at `pos1` runs a
+  sine mover through a 1 ms leg out to `pos2`, the world origin, and a 1
+  ms leg back over the next three entity passes (`ReturnToPos1` in the
+  pass that reached `pos2`, since `wait` is 0 and `G_RunThink` follows
+  `G_MoverTeam`), and leaves it stationary there; a pendulum keeps its
+  `apos` swing, its `trTime` set at each of the four state changes, and
+  drops the level one period past the last (4200 + 9711) as an unused one
+  does. `Use_BinaryMover` at state 3 or 4 (a use inside 100 ms of the
+  last) runs `Blocked_Door` (INFERRED, unmeasured).
+- VERIFIED, `-usespawner`, all three the same lines but for the drops'
+  heights: a script `spawn("misc_spawner", ...)` with `spawnitem` written
+  after it is used twice and drops nothing; `SP_misc_spawner` (1.1d
+  0x53498) prints `has no spawnitem!` at the spawn and returns before the
+  `use` store (0x534aa, VERIFIED, console and disassembly). The map's
+  spawner (an `mp_retrieval_spawn_axis` block rewritten, header) used at
+  4050 shows its `item_health` (entity 172) from 4200, at the spawner's
+  origin, then 7.5 units a frame along +x, its yaw 0: `misc_spawner_think`
+  ran in the 4150 entity pass, 100 ms after the use, and the item's own
+  turn (172) had passed. A second use 1 s on drops a second item (173).
+  The climbs differ run to run: 1.1d's two read 131.5 and 86, (-3, -1] in
+  `crandom()` (items doc 14.2), 1.5b's and UO's [150, 250).
+- VERIFIED, 1.1d disassembly: `misc_spawner_think` (0x533fc) is
+  `Drop_Item(ent, BG_FindItem(SL_ConvertToString(spawnitem)), 0, 0)`
+  (0x53428) and prints `failed to drop!` on a 0. `Drop_Item` (0x4ed30)
+  launches along `(0, r.currentAngles[1] + angle, 0)` at 150 (0x74e5c), the
+  climb `200 + 50 * crandom()` with one `rand()` (0x4eda6), from
+  `r.currentOrigin` raised by half `r.maxs[2] - r.mins[2]` (0x4ede8), 0 on
+  the point entity, through `LaunchItem` with the spawner's number as the
+  owner (0x4ee05). VERIFIED, the 1.5b and UO `misc_spawner_use` (0x538f3,
+  0x5d265) add 100 to the level time and link, as 1.1d's does.
+- VERIFIED, `-useturret`, all three the same lines but for the times: a
+  player placed 40 behind the gun at (1712 1830 8, yaw 229) looking at yaw
+  289 is mounted by the gun's `useBy` with him, with no use key and no
+  reach test: his `angles` read (0, 274, 0) on the line after the call,
+  the yaw clamped into the 45-degree arc, and (0, 0, 0) from the next
+  frame; his origin moves from (1738.24, 1860.19) to the mount point
+  (1715.42, 1877.25) two frames after the call; his `"trigger"` notify
+  carries his number. VERIFIED, 1.1d decompile: `turret_use` (0x52a9c)
+  writes through `other->client` (`+0x158`) with no test and ends in
+  `SetClientViewAngle` (0x41e30, called at 0x52c72), which stores the view
+  into `r.currentAngles` and `ps.viewangles`. VERIFIED: with the
+  `script_origin` as the user (`+set probe_turret 2`) each server
+  segfaults inside the call, after `PROBE use turret` and before the
+  notify's waiter logs.
+
 **As implemented.** `Triggers::arm_hurt` takes the cadence and the once
 flag off the `spawnflags` field at each touch, the touch pass reads `dmg`
 there too, and the hurt plays its alias on a PVS temp entity at the
@@ -4460,18 +4540,31 @@ from on UO as on 1.1d: UO's abort is a crash vcod keeps out on purpose.
 The touch pass tests a model-0 trigger's box (the client's) by a position
 test against its world copy's clip (`Pusher::Copy`, mask -1). The `useby`
 builtin then runs `trigger::use_multi` (the wait arm, or the spend and the
-free 100 ms on), `damage_trigger::use_trigger` or `mover::toggle_static`
-by what the entity is, and a script `spawn` of a `trigger_multiple` or
+free 100 ms on), `damage_trigger::use_trigger`, `mover::toggle_static`,
+`mover::use_binary`, `turret::use_by` or `item::misc_spawner_use` by what
+the entity is. `mover::use_binary` is `Use_BinaryMover` at `pos1` and
+`pos2` on a sine mover's `Binary` state, `mover::reached` its
+`Reached_BinaryMover` legs and `ReturnToPos1` (pos then apos, the
+`G_Error` on any other state kept), and `set_mover_state` its
+`SetMoverState`; the start and stop sounds (alias 0) and the area portal
+are not modelled, nor a use during a leg. `turret::use_by` runs
+`turret_use`'s record half on the spot from the host's mirrors (origin,
+stance, `client_aim`), writes the player's `angles` and queues
+`SimOp::Mount` for the sim half; a user that is no player notifies alone,
+where retail segfaults, a crash vcod keeps out on purpose.
+`item::spawn_misc_spawner` gives a map spawner with a `spawnitem` its use,
+`item::misc_spawner_use` arms `ThinkFn::MiscSpawner` 100 ms on, and the
+entity pass runs `item::misc_spawner_think`'s `Drop_Item` on its turn. A
+script `spawn` of a `trigger_multiple` or
 `trigger_once` is `trigger::spawn_scripted_multi`, a world copy with
 `wait` 500 or -1000. `crates/server/tests/hurtfall_ab.rs` replays the
-twenty-seven captures (on UO's write, the lines before the abort). The
-first 1.5b write capture's body drifted 0.16 sideways in its first 50 ms
-of fall; a rerun of the same recipe (port 34770) fell straight, as ours
-does, and replaced it. Open: a `useBy` on a turret (`turret_use`, a
-mount by script with no use key), on a sine mover (`Use_BinaryMover`) or
-on a `misc_spawner` runs nothing past the notify in vcod, and no capture
-measures them; no stock MP map gives a hurt spawnflag 1 or a `life` key
-(VERIFIED, entity lumps, 2026-10-21).
+thirty-six captures (on UO's write, the lines before the abort; the
+spawner's climbs pinned to the draws its frames read back to, its
+landings rested where retail's did). The first 1.5b write capture's body
+drifted 0.16 sideways in its first 50 ms of fall; a rerun of the same
+recipe (port 34770) fell straight, as ours does, and replaced it. No stock
+MP map gives a hurt spawnflag 1 or a `life` key (VERIFIED, entity lumps,
+2026-10-21).
 
 ---
 

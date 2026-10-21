@@ -21,7 +21,9 @@
 //! `-hurtfar` a spawned hurt touching through its model-0 world copy, and
 //! the client-less `-useby` and `-hurtlife` runs of
 //! `client-probes/probe_useby.gsc` the other entities' `use` and a map
-//! hurt's `life` (combat doc 5.9).
+//! hurt's `life`, its `-usesine` and `-usespawner` runs a sine mover's and
+//! a `misc_spawner`'s, and its `-useturret` run, with a `--probe-ride`
+//! client, a gun's (combat doc 5.9).
 //!
 //! `HURTFALL_REPORT=1` prints both sides line by line.
 //!
@@ -39,9 +41,16 @@ use vcod_common::net::{NetClient, NetEvent};
 use vcod_common::pk3::Pk3Fs;
 
 const MAP: &str = "mp_carentan";
-const NAME: &str = "probe_hurtfall";
-const PROBE: &str =
-    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_hurtfall.gsc");
+/// A client probe gametype: its name and its source.
+type Probe = (&'static str, &'static str);
+const HURTFALL: Probe = (
+    "probe_hurtfall",
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_hurtfall.gsc"),
+);
+const USEBY: Probe = (
+    "probe_useby",
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_useby.gsc"),
+);
 
 /// How long after its connect the client's first snapshot lands on ours.
 const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
@@ -57,14 +66,21 @@ struct Ours {
 /// Runs the probe on ours under `cvars` (the capture's `+set`s), the
 /// client's join started `late_ms` earlier than [`FIRST_SNAP_AFTER_JOIN_MS`]
 /// puts it, to `PROBE done`.
-fn run_once(fs: Pk3Fs, text: &str, cvars: &[(&str, &str)], late_ms: i64) -> Option<Ours> {
+fn run_once(
+    fs: Pk3Fs,
+    probe: Probe,
+    text: &str,
+    cvars: &[(&str, &str)],
+    late_ms: i64,
+) -> Option<Ours> {
+    let (name, source) = probe;
     let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
-    let mut sv = vcod_server::Server::new(common::cfg(MAP, NAME), now);
+    let mut sv = vcod_server::Server::new(common::cfg(MAP, name), now);
     sv.set_protocol(p);
-    sv.overlay_script(&format!("maps/mp/gametypes/{NAME}"), PROBE);
+    sv.overlay_script(&format!("maps/mp/gametypes/{name}"), source);
     for (k, v) in cvars {
         sv.set_cvar(k, v);
     }
@@ -143,7 +159,7 @@ fn replay(fixture: &str, cvars: &[(&str, &str)]) {
 
 /// [`replay`] on the paks `fs` mounts, a 1.1, 1.5 or UO install's.
 fn replay_on(fs: fn() -> Option<Pk3Fs>, fixture: &str, cvars: &[(&str, &str)]) {
-    replay_with(fs, fixture, cvars, 0, Hold::All);
+    replay_with(fs, HURTFALL, fixture, cvars, 0, Hold::All);
 }
 
 /// Which of retail's lines a replay holds ours to.
@@ -159,13 +175,14 @@ enum Hold {
 /// only entity field's, holding the lines `hold` names.
 fn replay_with(
     fs: fn() -> Option<Pk3Fs>,
+    probe: Probe,
     fixture: &str,
     cvars: &[(&str, &str)],
     errors: usize,
     hold: Hold,
 ) {
     let text = std::fs::read_to_string(fixture).unwrap();
-    let Some(mut ours) = fs().and_then(|f| run_once(f, &text, cvars, 0)) else {
+    let Some(mut ours) = fs().and_then(|f| run_once(f, probe, &text, cvars, 0)) else {
         eprintln!("COD_DIR unset or not the capture's install: skipping");
         return;
     };
@@ -173,7 +190,7 @@ fn replay_with(
     // client's first snapshot falls on retail's.
     let first = common::cmds_ran(&text, "")[0].0;
     if let Some(t) = ours.first_snap.filter(|&t| t != first) {
-        ours = run_once(fs().unwrap(), &text, cvars, (t - first) as i64).unwrap();
+        ours = run_once(fs().unwrap(), probe, &text, cvars, (t - first) as i64).unwrap();
     }
     assert_eq!(ours.aborts.len(), errors, "{:?}", ours.aborts);
     for a in &ours.aborts {
@@ -323,6 +340,7 @@ fn a_start_off_trigger_hurt_toggles_on_its_use() {
 fn a_trigger_hurt_refuses_a_write_of_its_read_only_fields() {
     replay_with(
         vcod_common::testing::game_fs_11,
+        HURTFALL,
         "tests/fixtures/triggers/mp_carentan-dm-hurtwrite.txt",
         WRITE,
         3,
@@ -339,6 +357,7 @@ fn a_trigger_hurt_use_and_write_match_retail_15() {
     );
     replay_with(
         fs_15,
+        HURTFALL,
         "tests/fixtures/triggers/mp_carentan-dm-hurtwrite-1.5.txt",
         WRITE,
         3,
@@ -358,6 +377,7 @@ fn a_trigger_hurt_use_and_write_match_retail_uo() {
     );
     replay_with(
         uo,
+        HURTFALL,
         "tests/fixtures/triggers/mp_carentan-dm-hurtwrite-uo.txt",
         WRITE,
         3,
@@ -401,8 +421,18 @@ fn replay_alone(
     cvars: &[(&str, &str)],
     patch: fn(Vec<u8>) -> Vec<u8>,
 ) {
-    const PROBE: &str =
-        include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_useby.gsc");
+    replay_alone_with(fs, fixture, cvars, patch, |_, _| {});
+}
+
+/// [`replay_alone`] with `prep` run on ours before the load, handed
+/// retail's `PROBE` lines.
+fn replay_alone_with(
+    fs: fn() -> Option<Pk3Fs>,
+    fixture: &str,
+    cvars: &[(&str, &str)],
+    patch: fn(Vec<u8>) -> Vec<u8>,
+    prep: impl FnOnce(&mut vcod_server::Server, &[String]),
+) {
     let Some(mut fs) = fs() else {
         eprintln!("COD_DIR unset or not the capture's install: skipping");
         return;
@@ -417,23 +447,27 @@ fn replay_alone(
     sv.set_protocol(p);
     // run_probe.sh's.
     sv.set_cvar("developer", "1");
-    sv.overlay_script("maps/mp/gametypes/probe_useby", PROBE);
+    sv.overlay_script("maps/mp/gametypes/probe_useby", USEBY.1);
     for (k, v) in cvars {
         sv.set_cvar(k, v);
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
-    common::run_alone(&mut sv, &mut now, 8000);
-    assert!(sv.script_aborts().is_empty(), "{:?}", sv.script_aborts());
     let text = std::fs::read_to_string(fixture).unwrap();
     let retail = probe_lines(text.lines());
+    prep(&mut sv, &retail);
+    common::run_alone(&mut sv, &mut now, 8000);
+    assert!(sv.script_aborts().is_empty(), "{:?}", sv.script_aborts());
     let ours = probe_lines(sv.script_log().iter().map(String::as_str));
     if std::env::var("HURTFALL_REPORT").is_ok() {
         for (a, b) in retail.iter().zip(&ours) {
             println!("retail {a}\nours   {b}");
         }
     }
-    assert_eq!(ours, retail);
+    for (r, o) in retail.iter().zip(&ours) {
+        assert_eq!(o, r, "{fixture}");
+    }
+    assert_eq!(ours.len(), retail.len(), "{fixture}: line count");
 }
 
 fn unpatched(bytes: Vec<u8>) -> Vec<u8> {
@@ -503,5 +537,196 @@ fn a_used_trigger_hurt_with_a_life_is_freed_like_retail() {
         "tests/fixtures/triggers/mp_carentan-dm-hurtlife-uo.txt",
         LIFE,
         hurtlife_bsp,
+    );
+}
+
+/// A script-spawned `func_bobbing` and `func_pendulum` used twice each:
+/// `Use_BinaryMover` runs the bobbing to its `pos1`, the world origin, and
+/// out and back in two 1 ms legs, and each `SetMoverState` restarts the
+/// pendulum's swing off `apos.trTime` (combat doc 5.9).
+#[test]
+fn use_by_on_a_sine_mover_runs_use_binary_mover_like_retail() {
+    const SINE: &[(&str, &str)] = &[("probe_sine", "1")];
+    replay_alone(
+        vcod_common::testing::game_fs_11,
+        "tests/fixtures/triggers/mp_carentan-dm-usesine.txt",
+        SINE,
+        unpatched,
+    );
+    replay_alone(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-usesine-1.5.txt",
+        SINE,
+        unpatched,
+    );
+    replay_alone(
+        vcod_common::testing::uo_fs,
+        "tests/fixtures/triggers/mp_carentan-dm-usesine-uo.txt",
+        SINE,
+        unpatched,
+    );
+}
+
+/// The `-usespawner` captures' entity lump edit: mp_carentan's
+/// `mp_retrieval_spawn_axis` at (904 2896 100) made a `misc_spawner` of
+/// `item_health`, padded to the same length.
+fn spawner_bsp(mut bytes: Vec<u8>) -> Vec<u8> {
+    let old: &[u8] =
+        b"\"origin\" \"904 2896 100\"\n\"angles\" \"0 270 0\"\n\"classname\" \"mp_retrieval_spawn_axis\"";
+    let mut new =
+        b"\"origin\" \"904 2896 100\"\n\"classname\" \"misc_spawner\"\n\"spawnitem\" \"item_health\""
+            .to_vec();
+    new.resize(old.len(), b' ');
+    let at: Vec<usize> = bytes
+        .windows(old.len())
+        .enumerate()
+        .filter(|(_, w)| *w == old)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(at.len(), 1);
+    bytes[at[0]..at[0] + old.len()].copy_from_slice(&new);
+    bytes
+}
+
+/// One item's path in retail's `PROBE item` lines: `(script time, origin)`
+/// a frame from its first sight.
+type ItemPath = Vec<(i32, [f32; 3])>;
+
+/// Every item's path, by entity number, in order of first sight.
+fn retail_items(retail: &[String]) -> Vec<(u32, ItemPath)> {
+    let mut items: Vec<(u32, ItemPath)> = Vec::new();
+    for l in retail {
+        let Some(rest) = l.strip_prefix("PROBE item mapspawner ") else {
+            continue;
+        };
+        let clean = rest.replace(['(', ')', ','], "");
+        let words: Vec<&str> = clean.split_whitespace().collect();
+        let time: i32 = words[0].parse().unwrap();
+        for w in words[2..].chunks(4) {
+            let num: u32 = w[0].parse().unwrap();
+            let v = [1, 2, 3].map(|i| w[i].parse::<f32>().unwrap());
+            match items.iter_mut().find(|(n, _)| *n == num) {
+                Some((_, path)) => path.push((time, v)),
+                None => items.push((num, vec![(time, v)])),
+            }
+        }
+    }
+    items
+}
+
+/// The `rand()` values retail's drops read back to, one climb each: the
+/// middle of the climbs every frame still on the launch's line in x (150 a
+/// second) allows, `z0 + vz t - 400 t^2` within the print's half
+/// hundredth, `vz = 200 + 50 * crandom()` (items doc 8, 14.2).
+fn spawner_draws(items: &[(u32, ItemPath)], negative: bool) -> Vec<i32> {
+    items
+        .iter()
+        .map(|(_, path)| {
+            let (t0, start) = path[0];
+            let (mut lo, mut hi) = (f64::MIN, f64::MAX);
+            for (t, at) in path
+                .iter()
+                .skip(1)
+                .take_while(|(t, v)| (v[0] - start[0] - 0.15 * (t - t0) as f32).abs() < 0.01)
+            {
+                let secs = f64::from(t - t0) / 1000.0;
+                let climb = |dz: f64| (dz + 400.0 * secs * secs) / secs;
+                let dz = f64::from(at[2] - start[2]);
+                lo = lo.max(climb(dz - 0.005));
+                hi = hi.min(climb(dz + 0.005));
+            }
+            let vz = (lo + hi) / 2.0;
+            let u = ((vz - 200.0) / 50.0 + 1.0) / 2.0;
+            let u = if negative { -u } else { u };
+            (u * 2_147_483_648.0).round().clamp(0.0, 2_147_483_647.0) as i32
+        })
+        .collect()
+}
+
+/// A `misc_spawner` with no `spawnitem` (a script `spawn`) has no use; the
+/// map's drops an `item_health` off its origin on `misc_spawner_think`,
+/// 100 ms after each `useBy`. The climbs and the landing lifts are pinned to
+/// retail's draws (combat doc 5.9).
+#[test]
+fn use_by_on_a_misc_spawner_drops_its_item_like_retail() {
+    const SPAWNER: &[(&str, &str)] = &[("probe_spawner", "1")];
+    let prep = |negative: bool| {
+        move |sv: &mut vcod_server::Server, retail: &[String]| {
+            let items = retail_items(retail);
+            sv.pin_item_draws(spawner_draws(&items, negative));
+            // Each landing rests where retail's did over the same x and y:
+            // an item whose last frame is off its launch's line has landed.
+            let rests: Vec<[f32; 3]> = items
+                .iter()
+                .filter_map(|(_, path)| {
+                    let (t0, start) = path[0];
+                    let (t, last) = *path.last()?;
+                    let line = start[0] + 0.15 * (t - t0) as f32;
+                    ((last[0] - line).abs() >= 0.01).then_some(last)
+                })
+                .collect();
+            sv.test_item_lifts(Box::new(move |_, floor: [f32; 3]| {
+                rests
+                    .iter()
+                    .find(|r| (r[0] - floor[0]).abs() < 0.01 && (r[1] - floor[1]).abs() < 0.01)
+                    .map_or(0.25, |r| r[2] - floor[2])
+            }));
+        }
+    };
+    replay_alone_with(
+        vcod_common::testing::game_fs_11,
+        "tests/fixtures/triggers/mp_carentan-dm-usespawner.txt",
+        SPAWNER,
+        spawner_bsp,
+        prep(true),
+    );
+    replay_alone_with(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-usespawner-1.5.txt",
+        SPAWNER,
+        spawner_bsp,
+        prep(false),
+    );
+    replay_alone_with(
+        vcod_common::testing::uo_fs,
+        "tests/fixtures/triggers/mp_carentan-dm-usespawner-uo.txt",
+        SPAWNER,
+        spawner_bsp,
+        prep(false),
+    );
+}
+
+/// `run_probe.sh`'s `developer 1` and the turret run.
+const TURRET: &[(&str, &str)] = &[("developer", "1"), ("probe_turret", "1")];
+
+/// A gun's `useBy` with a player mounts him as his use key would, with no
+/// reach or arc test (`turret_use`): his yaw clamped into the arcs at once,
+/// the mount point at his end frames (combat doc 5.9).
+#[test]
+fn use_by_on_a_turret_mounts_the_player_like_retail() {
+    let fixture = "tests/fixtures/triggers/mp_carentan-dm-useturret";
+    replay_with(
+        vcod_common::testing::game_fs_11,
+        USEBY,
+        &format!("{fixture}.txt"),
+        TURRET,
+        0,
+        Hold::All,
+    );
+    replay_with(
+        fs_15,
+        USEBY,
+        &format!("{fixture}-1.5.txt"),
+        TURRET,
+        0,
+        Hold::All,
+    );
+    replay_with(
+        vcod_common::testing::uo_fs,
+        USEBY,
+        &format!("{fixture}-uo.txt"),
+        TURRET,
+        0,
+        Hold::All,
     );
 }

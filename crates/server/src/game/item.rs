@@ -525,14 +525,15 @@ pub enum DropAt {
 
 /// `LaunchItem` (0x4db98): a new item of row `index` at `origin`, flying at
 /// `velocity` under gravity from this frame, locked to `owner` for
-/// [`OWNER_LOCKOUT_MS`], and in the drop ring. Its angles are zero.
+/// [`OWNER_LOCKOUT_MS`], and in the drop ring. Its angles are zero. An
+/// owner that is no client (a `misc_spawner`) locks out no one: `None`.
 fn launch(
     host: &mut GameHost,
     cx: &mut Cx,
     index: usize,
     origin: Vec3,
     velocity: Vec3,
-    owner: usize,
+    owner: Option<u8>,
 ) -> Result<EntId, ErrorKind> {
     let name = crate::items::item_name(host.defs, index)
         .unwrap_or_default()
@@ -554,7 +555,7 @@ fn launch(
         e.item = Some(ItemState {
             index: index as u8,
             clip: 0,
-            owner: Some(owner as u8),
+            owner,
             dropped: true,
             taken: false,
             ground: 0,
@@ -598,7 +599,62 @@ fn launch_off(
     let velocity = Vec3::new(yaw.cos() * LAUNCH_SPEED, yaw.sin() * LAUNCH_SPEED, up);
     let mut origin = Vec3::from(origin_of(host, cx, player));
     origin.z += host.client_height.get(slot).copied().unwrap_or(0.0) * 0.5;
-    launch(host, cx, index, origin, velocity, slot)
+    launch(host, cx, index, origin, velocity, Some(slot as u8))
+}
+
+/// `SP_misc_spawner` (1.1d 0x53498, 1.5b 0x5393d, UO 0x5d2af) for a map
+/// block: with a `spawnitem` it installs `misc_spawner_use` and links;
+/// without one it prints its warning and leaves the entity unlinked with
+/// no `use`, which is every script `spawn` of one (cod11-combat.md 5.9).
+pub fn spawn_misc_spawner(host: &mut GameHost, cx: &mut Cx, id: EntId, classname: &str) {
+    if classname != "misc_spawner" {
+        return;
+    }
+    let field = cx.intern_folded("spawnitem");
+    if !matches!(host.get_field(cx, id, field), Value::String(_)) {
+        log::warn!("misc_spawner {} has no spawnitem", id.0);
+        return;
+    }
+    host.misc_spawners.insert(id);
+    host.link_entity(cx, id);
+}
+
+/// `misc_spawner_use` (1.1d 0x53468, 1.5b 0x538f3, UO 0x5d265), a map
+/// spawner's `useBy`: `misc_spawner_think` 100 ms on, and a link. Returns
+/// false for anything without it.
+pub fn misc_spawner_use(host: &mut GameHost, cx: &mut Cx, id: EntId) -> bool {
+    if !host.misc_spawners.contains(&id) {
+        return false;
+    }
+    let at = host.level_time_ms + crate::game::entity::MISC_SPAWNER_THINK_MS;
+    host.ents.schedule(id, ThinkFn::MiscSpawner, at);
+    host.link_entity(cx, id);
+    true
+}
+
+/// `misc_spawner_think` (1.1d 0x533fc, 1.5b 0x5385c, UO 0x5d1ce):
+/// `Drop_Item(ent, BG_FindItem(spawnitem), 0, 0)` (1.1d 0x4ed30), the
+/// launch [`launch_off`] gives a player's drop but off the spawner's
+/// `r.currentOrigin` along its yaw, with no owner a client could be. The
+/// origin's lift, half the box (0x4ede8), is 0 on a point entity. A name
+/// `BG_FindItem` misses drops nothing.
+pub fn misc_spawner_think(host: &mut GameHost, cx: &mut Cx, id: EntId) {
+    let field = cx.intern_folded("spawnitem");
+    let Value::String(name) = host.get_field(cx, id, field) else {
+        return;
+    };
+    let name = cx.resolve(name).to_string();
+    let Some(index) = crate::items::classname_index(host.defs, &name) else {
+        log::warn!("misc_spawner {} failed to drop {name}", id.0);
+        return;
+    };
+    let yaw = angles_of(host, cx, id)[1].to_radians();
+    let up = (f64::from(LAUNCH_UP) + f64::from(LAUNCH_UP_SPREAD) * crandom(host)) as f32;
+    let velocity = Vec3::new(yaw.cos() * LAUNCH_SPEED, yaw.sin() * LAUNCH_SPEED, up);
+    let origin = Vec3::from(origin_of(host, cx, id));
+    if let Err(e) = launch(host, cx, index, origin, velocity, None) {
+        log::warn!("misc_spawner {} failed to drop {name}: {e:?}", id.0);
+    }
 }
 
 /// `Drop_Item(player, item, 0, 0)` (0x4ed30), `dropItem`'s arm for a
@@ -671,7 +727,7 @@ pub fn launch_weapon(
                 d.weapon as usize,
                 Vec3::from(*origin),
                 Vec3::ZERO,
-                slot,
+                Some(slot as u8),
             )?;
             for (field, v) in [("origin", *origin), ("angles", *angles)] {
                 let atom = cx.intern_folded(field);

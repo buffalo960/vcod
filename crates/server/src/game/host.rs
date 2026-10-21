@@ -253,6 +253,13 @@ pub enum SimOp {
     SetOrigin { origin: [f32; 3] },
     /// A player's `setPlayerAngles`: `SetClientViewAngle` on the sim.
     SetViewAngles { angles: [f32; 3] },
+    /// A gun's `useBy` with the player: `turret_use`'s player half
+    /// (`crate::game::turret::mount_sim`), its record half already run.
+    Mount {
+        turret: u32,
+        stance: crate::game::turret::TurretStance,
+        view: [f32; 3],
+    },
     /// 1.5's `disableWeapon` (true) and `enableWeapon` (false).
     WeaponDisabled(bool),
     /// UO's `viewKick(force, origin)`: damage feedback with no damage.
@@ -569,6 +576,9 @@ pub struct GameHost {
     /// reads `angles2` and the view-lock/firing bits off it; mount, aim,
     /// fire and release mutate it in place.
     pub turrets: std::collections::HashMap<EntId, crate::game::turret::TurretRecord>,
+    /// Every `misc_spawner` `SP_misc_spawner` gave `misc_spawner_use`: a map
+    /// one with a `spawnitem` (`crate::game::item::spawn_misc_spawner`).
+    pub misc_spawners: std::collections::HashSet<EntId>,
     /// United Offensive's vehicle files and live vehicles
     /// (`crate::game::vehicle`); empty on 1.1 and 1.5.
     pub vehicles: crate::game::vehicle::Vehicles,
@@ -1527,6 +1537,7 @@ impl GameHost {
             client_name_mode: builtins::cvar::ClientNameMode::default(),
             fs: None,
             turrets: std::collections::HashMap::new(),
+            misc_spawners: std::collections::HashSet::new(),
             vehicles: crate::game::vehicle::Vehicles::default(),
             script_takedamage: Default::default(),
             looped_fx: std::collections::HashMap::new(),
@@ -1671,6 +1682,7 @@ impl GameHost {
     /// three have one entry point here rather than three call sites each.
     pub fn free_entity(&mut self, id: EntId) {
         self.temp_entities.retain(|t| t.id != id);
+        self.misc_spawners.remove(&id);
         // `G_FreeTurret` (turrets doc 8): a manned gun lets its gunner go
         // before the record goes; the sim half waits for `ClientEndFrame`.
         if let Some(mut rec) = self.turrets.remove(&id)
@@ -1822,10 +1834,13 @@ impl GameHost {
     }
 
     /// `G_RunThink` for `id` on its turn in the entity pass.
-    pub fn run_entity_think(&mut self, id: EntId, now_ms: i32) {
-        if let Some(think) = self.ents.run_think(id, now_ms) {
-            self.finish_think(id, think);
-        }
+    /// `G_RunThink` for `id`. Returns a think the host cannot run without
+    /// the script context (`ThinkFn::MiscSpawner`) for the entity pass.
+    #[must_use]
+    pub fn run_entity_think(&mut self, id: EntId, now_ms: i32) -> Option<ThinkFn> {
+        let think = self.ents.run_think(id, now_ms)?;
+        self.finish_think(id, think);
+        (think == ThinkFn::MiscSpawner).then_some(think)
     }
 
     fn finish_think(&mut self, id: EntId, think: ThinkFn) {
@@ -1835,7 +1850,8 @@ impl GameHost {
             | ThinkFn::RespawnItem
             | ThinkFn::Concussive(_)
             | ThinkFn::HurtLife(_)
-            | ThinkFn::MultiWait => {}
+            | ThinkFn::MultiWait
+            | ThinkFn::MiscSpawner => {}
         }
     }
 

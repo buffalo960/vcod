@@ -1417,7 +1417,9 @@ impl ScriptRuntime {
         for slot in crushed {
             self.deliver_world_hit(slot, step.ent, CRUSH_DAMAGE, 0, "MOD_CRUSH");
         }
-        crate::game::mover::reached(&mut self.host, step.ent);
+        let host = &mut self.host;
+        self.vm
+            .with_cx(|cx| crate::game::mover::reached(host, cx, step.ent));
     }
 
     /// Where a link parent is this frame, origin and angles, `None` once it
@@ -3316,7 +3318,7 @@ impl ScriptRuntime {
         if self.host.vehicles.live.contains_key(&id) {
             // A think script set (a `delete`'s free) replaces the
             // vehicle's own.
-            self.host.run_entity_think(id, now_ms);
+            let _ = self.host.run_entity_think(id, now_ms);
             if !self.host.vehicles.live.contains_key(&id) {
                 return None;
             }
@@ -3428,7 +3430,10 @@ impl ScriptRuntime {
             (Vec::new(), None)
         });
         // `G_RunThink`, which every arm past the missile's ends on.
-        host.run_entity_think(id, now_ms);
+        if host.run_entity_think(id, now_ms).is_some() {
+            self.vm
+                .with_cx(|cx| crate::game::item::misc_spawner_think(host, cx, id));
+        }
         host.run_turret_think(id);
         // Raised inside the pass, run by the next frame's threads.
         for d in done {

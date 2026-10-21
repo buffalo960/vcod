@@ -430,6 +430,14 @@ fn apply_sim_op(
             rt.set_client_origin(slot, sim.origin());
         }
         SimOp::SetViewAngles { angles } => sim.set_view_angle(angles),
+        SimOp::Mount {
+            turret,
+            stance,
+            view,
+        } => {
+            let rule = crate::game::turret::AimRule::of(rt.host.defs.proto);
+            crate::game::turret::mount_sim(sim, rule, turret, stance, view);
+        }
         SimOp::WeaponDisabled(on) => sim.ps.weapon_disabled = on,
         SimOp::ViewKick { force, from } => sim.view_kick(force, from),
         SimOp::VehiclePain { damage, from } => sim.vehicle_pain(damage, from),

@@ -2266,10 +2266,12 @@ vcod: `crate::game::mover::spawn_sine` is both spawn functions plus
 links the entity with the model's bounds and contents -1 and gives it a
 mover row whose plans are the two trajectories. `mover::run_one` writes
 `origin` and the raw `angles` back each frame like any mover, and
-`mover::reached` sets `GameHost::game_error` when a group is due, on the
-mover's turn or after its push. The entity pass stops there and
+`mover::reached` sets `GameHost::game_error` when a group is due at mover
+state 0, on the mover's turn or after its push. The entity pass stops there and
 `Server::drop_level` logs the error and shuts the level down without a
-final message. A script-spawned mover's clip is a moving copy of the
+final message. A `useBy` runs the mover through `Use_BinaryMover`'s legs
+instead, which stops a bobbing at the world origin (`cod11-combat.md`
+5.9). A script-spawned mover's clip is a moving copy of the
 world's (section 19) that pushes like any brush model (section 20) and
 crushes what it cannot place (section 21); a map-placed one moves and pushes
 like a script brush model.

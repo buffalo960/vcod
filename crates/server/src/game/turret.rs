@@ -275,6 +275,51 @@ pub fn mount(
     ]
 }
 
+/// `turret_use` (1.1d 0x52a9c, 1.5b 0x62fcc) as a gun's `useBy` calls it:
+/// no reach, arc or busy test, the record half now and the player half
+/// queued for his sim, his `angles` (`SetClientViewAngle`'s
+/// `r.currentAngles`) at the clamped view at once. `turret_use` writes
+/// through `other->client`, so a user that is no player segfaults all
+/// three retail servers; vcod notifies alone there (cod11-combat.md 5.9,
+/// "useBy on a turret"). Returns false for anything not a turret.
+pub fn use_by(
+    host: &mut crate::game::host::GameHost,
+    cx: &mut vcod_gsc::Cx,
+    id: vcod_gsc::EntId,
+    user: vcod_gsc::EntId,
+) -> bool {
+    if !host.turrets.contains_key(&id) {
+        return false;
+    }
+    if !host.ents.get(user).is_some_and(|e| e.client.is_some()) {
+        return true;
+    }
+    let slot = user.0 as usize;
+    let origin = crate::game::item::origin_of(host, cx, user);
+    let stance = host.client_stance[slot];
+    let aim = host.client_aim[slot].1;
+    let angles = crate::game::item::angles_of(host, cx, id);
+    let Some(rec) = host.turrets.get_mut(&id) else {
+        return true;
+    };
+    let view = mount(rec, slot, origin, stance, [aim[0], aim[1], 0.0], angles);
+    let stance = rec.def.stance;
+    let field = cx.intern_folded("angles");
+    let _ = host.write_field(cx, user, field, vcod_gsc::Value::Vector(view));
+    if let Some(s) = host.dobj_posed.get_mut(slot) {
+        s.set_angles(Some(view));
+    }
+    host.client_sim_ops.push((
+        slot,
+        crate::game::host::SimOp::Mount {
+            turret: id.0,
+            stance,
+            view,
+        },
+    ));
+    true
+}
+
 /// `turret_use`'s player half: the view lock, the mounted bits and the view
 /// snapped onto the barrel. UO's (game.mp.uo 0x6c919) writes no
 /// `viewlocked`, only its entity number.
