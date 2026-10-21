@@ -9,7 +9,9 @@
 //! under 50 in a fight this life) and those it died of within 5 s, the
 //! retreats it starts (hurt, dry), and the ticks it holds a cover spot and
 //! leans. It also counts stalled bot-ticks as `ship_stalls` does (12 s
-//! within 150 units).
+//! within 150 units), and how close a team keeps: each playing bot-tick's
+//! distance to its nearest teammate and whether two or more stand within
+//! 400 units.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
 //! `BOTS=` (6), `TICKS=` (12000, ten minutes), `JOBS=` (4, matches run in
@@ -33,6 +35,10 @@ use std::time::{Duration, Instant};
 const TICK_MS: u64 = 50;
 const WINDOW: usize = 240;
 const RADIUS: f32 = 150.0;
+/// A bot-tick is packed with this many teammates or more within
+/// `PACK_RANGE` of it.
+const PACK: usize = 2;
+const PACK_RANGE: f32 = 400.0;
 
 /// Which side a feature is on for (`COVER=`, `RETREAT=`, `TEAMPLAY=`).
 #[derive(Clone, Copy, PartialEq)]
@@ -128,6 +134,12 @@ struct Tally {
     /// Bot-ticks holding a cover spot, and leaning.
     hold: u64,
     lean: u64,
+    /// Bot-ticks playing with a teammate playing, the sum of their
+    /// distances to the nearest one, and those with [`PACK`] or more
+    /// teammates inside [`PACK_RANGE`].
+    mate_ticks: u64,
+    mate_dist: f64,
+    packed: u64,
 }
 
 impl Tally {
@@ -146,12 +158,15 @@ impl Tally {
         self.dry += o.dry;
         self.hold += o.hold;
         self.lean += o.lean;
+        self.mate_ticks += o.mate_ticks;
+        self.mate_dist += o.mate_dist;
+        self.packed += o.packed;
     }
 
     /// The per-bot-tick line under [`Tally::line`].
     fn survive(&self) -> String {
         format!(
-            "life {:5.1} s wounds {:4} dead in 5 s {:3.0}% retreats hurt {:4} dry {:4} cover hold {:6} lean {:6}",
+            "life {:5.1} s wounds {:4} dead in 5 s {:3.0}% retreats hurt {:4} dry {:4} cover hold {:6} lean {:6} mate {:4.0} packed {:4.1}%",
             self.life_ticks as f32 * TICK_MS as f32 / 1000.0 / self.lives.max(1) as f32,
             self.wounds,
             100.0 * self.wound_deaths as f32 / self.wounds.max(1) as f32,
@@ -159,6 +174,8 @@ impl Tally {
             self.dry,
             self.hold,
             self.lean,
+            self.mate_dist / self.mate_ticks.max(1) as f64,
+            100.0 * self.packed as f64 / self.mate_ticks.max(1) as f64,
         )
     }
 
@@ -573,6 +590,35 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             let life = bots.entry(slot).or_default();
             let t = tally(&mut m, o, &num, team, &skill);
             life.step(body.as_ref(), cover, t);
+        }
+        // Each playing bot's distance to its nearest playing teammate, and
+        // how many stand inside PACK_RANGE.
+        let playing: Vec<(usize, [f32; 3])> = sv
+            .bot_slots()
+            .into_iter()
+            .filter_map(|s| Some((s, sv.bot_body(s).filter(|b| b.playing && !b.dead)?.origin)))
+            .collect();
+        let playing: Vec<(usize, &'static str, [f32; 3])> = playing
+            .into_iter()
+            .map(|(s, p)| (s, team_name(&mut sv, s, m.dm), p))
+            .filter(|(_, t, _)| *t != "none")
+            .collect();
+        for &(slot, team, at) in &playing {
+            let d: Vec<f32> = playing
+                .iter()
+                .filter(|(s, t, _)| *s != slot && *t == team)
+                .map(|(_, _, p)| (0..3).map(|i| (p[i] - at[i]).powi(2)).sum::<f32>().sqrt())
+                .collect();
+            let Some(near) = d.iter().copied().reduce(f32::min) else {
+                continue;
+            };
+            let close = d.iter().filter(|&&x| x < PACK_RANGE).count();
+            let t = tally(&mut m, o, &slot.to_string(), team, &skill);
+            for t in [t.0, t.1, t.2] {
+                t.mate_ticks += 1;
+                t.mate_dist += f64::from(near);
+                t.packed += u64::from(close >= PACK);
+            }
         }
         for slot in sv.bot_slots() {
             let Some(b) = sv.bot_body(slot).filter(|b| b.playing && !b.deployed) else {
