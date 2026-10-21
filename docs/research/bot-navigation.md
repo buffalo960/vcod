@@ -3537,7 +3537,9 @@ defaults (`dm`, fire off) nothing else holds a bot still. `tests/bots.rs`'s
 `uo_tdm_games_that_stalled_or_never_sprinted` also skips engaged and
 crew-wait ticks, which never enter its window. `bot_match` keeps the
 window as `ship_stalls` has it and splits the count into `stalled` and
-`held` by `BotBody::holds` (bot-combat.md section 1).
+`held`, a window with a tick `BotBody::holds` names in it
+(bot-combat.md section 1); `ship_stalls` prints the same `held` and,
+on each stall line, the ticks since the bot last held (`ago`).
 
 The probe costs 25 us a body (8 octants, up to five capsule traces
 each) and 43 us with 10-13d's half-way samples. VERIFIED (measured
@@ -3957,6 +3959,64 @@ stall is a driver in the seat,
 which the driver's route owns, not the walk's follower. Deaths with fire
 off over the 32 dm seeds went from 53 to 61, the hemmed-in kills among
 them. The graph is untouched: no build or digest moves.
+
+### The 2026-10-21 recheck
+
+The 1.1 tables above are tied to the commits they measured. This round
+ran them again on master 028799bf (past botrng, shipedges, jumpcue and
+the UO pins). VERIFIED (measured, release `ship_stalls`, `dm`, 6 bots,
+4000 ticks, fire off; ours only; stalled bot-ticks / falls / deaths):
+
+| map | seeds | master 028799bf | the fall off the path past its reach |
+|---|---|---|---|
+| `mp_ship` | 1-1535 odd | 78 / 1 / 1 | 43 / 1 / 1 |
+| `mp_dawnville` | 1-383 odd | 0 / 2 / 0 | 0 / 2 / 0 |
+| `mp_depot` | 1-767 odd | 8 / 5 / 0 | 8 / 5 / 0 |
+| `mp_cassino` (UO, `tdm`, 2400 ticks) | 1-63 odd | 31 / 0 / 22 | 31 / 0 / 22 |
+| `mp_uo_stanjel` (UO, `tdm`, 2400 ticks) | 1-63 odd | 28 / 1 / 0 | 28 / 1 / 0 |
+
+- The unstick falls the lip walk left are gone on master: `mp_depot`
+  seed 663 and `mp_ship` seed 225 stall 0 with no fall, and no
+  `mp_uo_stanjel` spell leaves (276, 3388, -390). No fall in the 384
+  `mp_depot` seeds ends in the gutter at (-2028, -451, 344); its five
+  are spells off the pit's rim at (-1252, 2096, 227) (seeds 529, 639)
+  and (-1056, 2098, 227) (677) and off the roof at 372 (437, 483). So
+  the unstick spell is unchanged. With fire on (`bot_match` `dm` seeds
+  1..=8, 12 000 ticks) `mp_depot`'s `stalled` read 485 with `held` taken
+  per tick and 0 with the window rule (bot-combat.md section 1): every
+  one of the 485 came within 12 s of a fight or a cover hold, no nav
+  stall among them. VERIFIED (measured, `ship_stalls` `SHOOT=1
+  TICKS=12000` on the same matches, seeds 3-17 odd, its `ago` column).
+- `mp_ship` seeds 125, 441 and 491 (21, 10 and 4): a bot up the ladder
+  at x 7232 off the hull floor at 8 came onto its head (7232, 261, 142)
+  and walked the edge to the ledge node (7260, 225, 166). It reached the
+  ledge at (7249, 244, 166), left it at (7256, 237) onto the roof that
+  slopes down to y 355, slid off it and fell to the hull floor at -64.
+  Still in the air, more than `OFF_PATH_STEPS` grid steps from its
+  waypoint, the follower dropped the plan but avoided nothing, so the
+  next plan, from the ladder at (7287, 340) by the floor, took the same
+  ladder and the same edge: four falls in 13 s in seed 125 (VERIFIED,
+  `TRACE=1:1380:1800`). Now a body that far off its path and more than
+  `FELL_BELOW` under its waypoint, off a climb, avoids the edge under way
+  and plans from a node it walks to, as a landing under the edge already
+  did (`Follower::waypoint`,
+  `nav::tests::a_fall_off_the_path_past_its_reach_plans_round_the_edge`).
+  In seed 125 the next plan took the ledge node by its other edge, from
+  (7225, 253, 150), fell off the same way onto the roof at 104, avoided
+  that edge too on the landing, and went west along the hull floor
+  (VERIFIED, the trace). The three seeds stall 0, and every other seed
+  in the table keeps master's stall, fall and death counts. Why the
+  bot's walk on leaves the ledge where the graph's walks from the head
+  nodes did not is not traced.
+- Left on `mp_ship` (seed: stalled bot-ticks): the mast ladder's head at
+  (4954-4964, 35-64, 1219) with another bot 34 and 177 units off (1233:
+  11, 307: 9), the meetings "The jump cue and the re-proof" lists; the
+  head of the ladder at x 3696 from 883 to 992 (233: 5, 1031: 4, 1227:
+  4); the stairwell over the drop to (5404, 354, 204), from (5451, 350,
+  240) (1275: 10). Seed 661's fall is an unstick spell from (6198, -67,
+  108) to 56; seed 969's death at (4973, -33, 616) is under the mast.
+  None traced. `mp_dawnville`'s falls are spells off (-1200, -16934, 97)
+  and (-1641, -18304, 94), about 50 down.
 
 ## 4. Memory and hearing
 

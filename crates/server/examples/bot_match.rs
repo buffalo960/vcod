@@ -14,7 +14,8 @@
 //! time from acquiring a target with none tracked to the first round at
 //! it. It also counts the bot-ticks 12 s within 150 units, as
 //! `ship_stalls` does, split into `held` (holding still on purpose,
-//! `BotBody::holds`) and `stalled` (the rest), how close
+//! `BotBody::holds`, on any tick of the 12 s) and `stalled` (the rest),
+//! how close
 //! a team keeps: each playing bot-tick's distance to its nearest teammate
 //! and whether two or more stand within 400 units, the hits bots answer
 //! with fire at the attacker within 1 s and the deaths to a killer the
@@ -626,7 +627,9 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
     let mut level = sv.server_id();
     // (attacker, victim) -> tick of the attacker's first hit this life.
     let mut first_hit: HashMap<(String, String), usize> = HashMap::new();
-    let mut hist: HashMap<usize, VecDeque<[f32; 3]>> = HashMap::new();
+    // Each bot's last 12 s: where it stood and whether it held still on
+    // purpose there.
+    let mut hist: HashMap<usize, VecDeque<([f32; 3], bool)>> = HashMap::new();
     let mut bots: HashMap<usize, Life> = HashMap::new();
     let mut react = React::default();
     for tick in 0..o.ticks {
@@ -866,17 +869,19 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                 continue;
             };
             let h = hist.entry(slot).or_default();
-            h.push_back(b.origin);
+            h.push_back((b.origin, b.holds()));
             if h.len() > WINDOW {
                 h.pop_front();
             }
-            let first = h[0];
+            let first = h[0].0;
             if h.len() == WINDOW
-                && h.iter().all(|p| {
+                && h.iter().all(|(p, _)| {
                     (0..3).map(|i| (p[i] - first[i]).powi(2)).sum::<f32>() < RADIUS * RADIUS
                 })
             {
-                if b.holds() {
+                // A window a hold left behind is the hold's: a fight's
+                // spot is still within 150 units for up to 12 s after it.
+                if h.iter().any(|(_, held)| *held) {
                     m.held += 1;
                 } else {
                     m.stalled += 1;
