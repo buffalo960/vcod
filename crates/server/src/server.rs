@@ -8021,7 +8021,8 @@ impl Server {
                 // A thrower who left is `r.ownerNum` 0x3ff: the direct hit's
                 // `G_Damage` gets a NULL attacker. A UO vehicle shell keeps
                 // its driver's slot (`+0x330`) after he left, and the freed
-                // entity there reads number 0 (combat doc 13.7).
+                // entity there reads number 0; its fuse blast names the
+                // vehicle (combat doc 13.7).
                 let owner = rt.charged_owner(x.owner);
                 let attacker = owner.unwrap_or(crate::game::host::ENTITYNUM_NONE as usize);
                 // A shell's direct hit lands before its splash, which skips
