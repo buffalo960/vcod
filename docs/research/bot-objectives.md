@@ -1257,6 +1257,9 @@ view.
   `Follower::crowd`), so a way round up to twice as long is taken over
   the teammate's. Read when a plan starts; `dm`, `tdm` and `bel` plan as
   before, so the `dm` stall runs (`ship_stalls`) are unchanged.
+- Noise answering. On any level with sides, `tdm` and `bel` included,
+  only the two teammates nearest a noise go to it (`team::answers`);
+  the rest of the side keeps its own way (`bot-combat.md` 7).
 
 `team_tally` has since been folded into `bot_match` (`GAMETYPE=sd`,
 `MAPS=`, `TEAMPLAY=` switching these rules per side in one build);

@@ -1,5 +1,6 @@
 //! Team play: how a team's bots share out an objective round and the ways
-//! to it (docs/research/bot-objectives.md section 9). The server calls
+//! to it (docs/research/bot-objectives.md section 9), and which of a
+//! side's bots go to a noise (bot-combat.md section 7). The server calls
 //! these once a frame with the whole team in hand and puts the answers in
 //! each bot's view; the brain only reads them.
 
