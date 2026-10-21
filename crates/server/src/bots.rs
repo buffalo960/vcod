@@ -7035,7 +7035,7 @@ mod tests {
         let out = (0..200).find(|i| {
             let seat = v.seat.as_mut().unwrap();
             seat.origin[0] = if i % 40 < 20 { 0.0 } else { 150.0 };
-            seat.level_ms = *i as i32 * 50;
+            seat.level_ms = *i * 50;
             bot.think(&v).buttons & msg::BUTTON_USE != 0
         });
         assert!(out.is_some_and(|i| i > 150), "{out:?}");
@@ -7044,7 +7044,7 @@ mod tests {
         let out = (0..200).find(|i| {
             let seat = v.seat.as_mut().unwrap();
             seat.origin[0] = *i as f32 * 10.0;
-            seat.level_ms = *i as i32 * 50;
+            seat.level_ms = *i * 50;
             bot.think(&v).buttons & msg::BUTTON_USE != 0
         });
         assert_eq!(out, None);

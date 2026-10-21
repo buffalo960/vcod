@@ -550,7 +550,7 @@ impl Bot {
             // `deactivated` to stock `_tankdrive_gmi::deactivated`'s loop,
             // whose old HUD thread then reads the destroyed fire icons
             // (bot-objectives.md 10.6, seed 15).
-            let frame = seat.level_ms / super::FRAME_MS as i32;
+            let frame = seat.level_ms / super::FRAME_MS;
             self.rider.pressed =
                 frame.rem_euclid(EXIT_FRAMES) == (seat.seat as i32 - 1) % EXIT_FRAMES;
             if self.rider.pressed {
