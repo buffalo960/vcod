@@ -789,6 +789,12 @@ impl<T: Transport> NetClient<T> {
         self.send_message(&cmds[start..]);
     }
 
+    /// A connectionless datagram to the server, as it stands (`rcon`'s
+    /// packet, CoDMP.exe 0x40f880).
+    pub fn send_oob(&mut self, packet: &[u8]) {
+        self.transport.send(packet);
+    }
+
     /// Queue a reliable `clc_clientCommand`, resent until acked.
     pub fn send_reliable(&mut self, cmd: &str) {
         // A full ring means the server stopped acking; overwriting unacked slots
@@ -1162,6 +1168,15 @@ impl<T: Transport> NetClient<T> {
                 if !text.is_empty() {
                     self.events.push(NetEvent::Print(text.clone()));
                     self.handshake_print = Some(text);
+                }
+            }
+            // `CL_ConnectionlessPacket`'s `print` (CoDMP.exe 0x410db1) prints
+            // in any state, colour codes kept: an rcon reply, among others.
+            "print" => {
+                let text = String::from_utf8_lossy(rest);
+                let text = text.trim_end_matches(['\n', '\0']);
+                if !text.is_empty() {
+                    self.events.push(NetEvent::Print(text.to_string()));
                 }
             }
             _ => {
@@ -2133,6 +2148,23 @@ mod tests {
         c.pump_at(t0);
         assert_eq!(c.state(), NetState::Active);
         c
+    }
+
+    /// An rcon reply reaches a connected client's console as a print; the
+    /// packet `send_oob` puts out goes on the wire untouched.
+    #[test]
+    fn a_print_while_connected_is_printed() {
+        let mut c = active_client();
+        c.send_oob(b"\xff\xff\xff\xffrcon pw status\0");
+        assert_eq!(
+            c.transport.sent.last().map(Vec::as_slice),
+            Some(&b"\xff\xff\xff\xffrcon pw status\0"[..])
+        );
+        c.transport
+            .incoming
+            .push_back(oob("print", "\n^3Bad rconpassword.\n"));
+        let ev = c.pump_at(Instant::now());
+        assert!(ev.contains(&NetEvent::Print("^3Bad rconpassword.".to_string())));
     }
 
     /// `[u32 reliableAck=0][compressed ops]`, the ops written by `f` plus `svc_EOF`.
