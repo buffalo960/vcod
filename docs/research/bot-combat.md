@@ -1351,8 +1351,8 @@ I dumped every release, every live frag's spawn and every
   run from by every bot in reach, seen or not. VERIFIED (measured, ours,
   UO mp_cassino seed 7, the kill lines): a thrower died at tick 7785
   and his frag killed a teammate at 7856, 3.55 s on. INFERRED: a frag a
-  bot lets go has at most 2.75 s left (`COOK_MEAN_MS` and more burnt),
-  so this one fell from the hand.
+  UO bot lets go has at most 3.05 s left (its spoon is down 19 ticks or
+  more), so this one fell from the hand.
 - `GRENADE_RANGE` 600 to 800, `COVER_THROW_TICKS` 30 to 20 (1 s in
   sight with no round at him). The 10 s cooldown stays.
 
