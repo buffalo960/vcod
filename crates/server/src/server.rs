@@ -4878,7 +4878,7 @@ impl Server {
             if let Some(b) = self.bots.get(&slot).filter(|b| b.wants_lob(&view))
                 && let (Some(g), Some(at)) = (view.grenade, b.throw_target(&view))
             {
-                view.lob = self.lob_probe(slot, g, at);
+                view.lob = self.lob_probe(slot, g, at, &teams);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
@@ -5081,12 +5081,35 @@ impl Server {
     /// [`crate::bots::GRENADE_MIN`] across. The aim as (pitch, yaw), wire
     /// degrees. A UO frag bounces off a wall or a body at full speed, so a
     /// lob into a ceiling, a window frame or a teammate comes back at the
-    /// thrower (bot-objectives.md 6).
-    fn lob_probe(&self, slot: usize, weapon: u8, target: [f32; 3]) -> Option<[f32; 2]> {
+    /// thrower (bot-objectives.md 6). None while a live teammate stands
+    /// within the frag's `explosionRadius` of `target`: friendly fire may
+    /// be on.
+    fn lob_probe(
+        &self,
+        slot: usize,
+        weapon: u8,
+        target: [f32; 3],
+        teams: &[i32],
+    ) -> Option<[f32; 2]> {
         use crate::bots::{GRENADE_MIN, GRENADE_RANGE, LOB_DEG};
         use vcod_common::net::trajectory::DEFAULT_GRAVITY;
         let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
         let def = self.weapon_table.get(weapon as usize)?;
+        let my_team = teams.get(slot).copied().unwrap_or(0);
+        let radius = def.explosion_radius;
+        let mate_near = (my_team == script::TEAM_AXIS || my_team == script::TEAM_ALLIES)
+            && self.clients.iter().enumerate().any(|(i, c)| {
+                i != slot
+                    && teams.get(i).copied() == Some(my_team)
+                    && c.as_ref().and_then(|c| c.sim.as_ref()).is_some_and(|o| {
+                        o.pm_type == crate::spectate::PmType::Normal
+                            && !o.dead
+                            && o.ps.origin.distance(glam::Vec3::from(target)) < radius
+                    })
+            });
+        if mate_near {
+            return None;
+        }
         let world = &self.world.as_ref()?.collision;
         let eye = crate::game::combat::muzzle_point(&sim.ps);
         let to = glam::Vec3::from(target) - eye;
@@ -5374,14 +5397,23 @@ impl Server {
                 .is_some_and(|d| d.cook_off_hold),
             frag_near: self.script.as_ref().and_then(|rt| {
                 let at = sim.ps.origin;
+                let eye = glam::Vec3::from(sim.eye_origin());
                 rt.missiles()
                     .armed()
-                    .filter(|(_, w)| {
+                    .filter(|(_, w, _)| {
                         weapons.get(*w as usize).is_some_and(|d| {
                             d.explosion_radius > 0.0 && d.explosion_inner_damage > 0
                         })
                     })
-                    .map(|(o, _)| o)
+                    .filter(|(o, _, owner)| {
+                        *owner == Some(slot)
+                            || self.world.as_ref().is_none_or(|w| {
+                                crate::bots::notices_frag(eye, sim.view_angles()[1], *o, |a, b| {
+                                    w.collision.shot_trace(a, b).fraction >= 1.0
+                                })
+                            })
+                    })
+                    .map(|(o, _, _)| o)
                     .filter(|o| {
                         (o.z - at.z).abs() < crate::bots::FLEE_HEIGHT
                             && (*o - at).truncate().length() < crate::bots::FLEE_REACH
@@ -5979,6 +6011,12 @@ impl Server {
             crew_wait: self.bots.get(&slot).is_some_and(|b| b.waiting_for_crew()),
             boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
             rockets_at_armor: self.bots.get(&slot).map_or(0, |b| b.rockets_at_armor()),
+            clip_size: self
+                .weapon_table
+                .get(sim.ps.weapon as usize)
+                .filter(|d| d.weapon_type == "bullet")
+                .map_or(0, |d| d.clip_size.min(i16::MAX as u32) as i16),
+            throws: self.bots.get(&slot).map_or(0, |b| b.throws()),
         })
     }
 

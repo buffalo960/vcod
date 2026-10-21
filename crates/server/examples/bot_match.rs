@@ -8,10 +8,11 @@
 //! team scores. Each bot-tick adds its life, its wounds (health first
 //! under 50 in a fight this life) and those it died of within 5 s, the
 //! retreats it starts (hurt, dry), and the ticks it holds a cover spot and
-//! leans. It also counts stalled bot-ticks as `ship_stalls` does (12 s
-//! within 150 units), and how close a team keeps: each playing bot-tick's
-//! distance to its nearest teammate and whether two or more stand within
-//! 400 units.
+//! leans, the grenades it throws and the clip it starts each fight on
+//! (grenade kills come off the `K;` lines). It also counts stalled
+//! bot-ticks as `ship_stalls` does (12 s within 150 units), and how close
+//! a team keeps: each playing bot-tick's distance to its nearest teammate
+//! and whether two or more stand within 400 units.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
 //! `BOTS=` (6), `TICKS=` (12000, ten minutes), `JOBS=` (4, matches run in
@@ -140,6 +141,60 @@ struct Tally {
     mate_ticks: u64,
     mate_dist: f64,
     packed: u64,
+    kit: Kit,
+}
+
+/// Grenades and the clip a fight starts on: throws, the hits and kills
+/// their blasts made on others (`MOD_GRENADE_SPLASH`), engagements started
+/// with a bullet weapon in hand and the clip fractions they started on,
+/// summed.
+#[derive(Default, Clone)]
+struct Kit {
+    throws: u32,
+    grenade_hits: u32,
+    grenade_kills: u32,
+    engages: u32,
+    clip_sum: f64,
+}
+
+impl Kit {
+    fn add(&mut self, o: &Kit) {
+        self.throws += o.throws;
+        self.grenade_hits += o.grenade_hits;
+        self.grenade_kills += o.grenade_kills;
+        self.engages += o.engages;
+        self.clip_sum += o.clip_sum;
+    }
+
+    fn line(&self) -> String {
+        format!(
+            "grenades thrown {:4} hits {:3} kills {:3} engagements {:5} clip at start {:3.0}%",
+            self.throws,
+            self.grenade_hits,
+            self.grenade_kills,
+            self.engages,
+            100.0 * self.clip_sum / f64::from(self.engages.max(1)),
+        )
+    }
+
+    /// One bot-tick: the throws since `life`'s last count, and an
+    /// engagement on the tick tracking starts.
+    fn step(life: &mut Life, body: Option<&vcod_server::bots::BotBody>) -> Kit {
+        let mut k = Kit::default();
+        let throws = body.map_or(life.throws, |b| b.throws);
+        k.throws = throws.saturating_sub(life.throws);
+        life.throws = throws;
+        let engaged = body.is_some_and(|b| b.playing && b.engaged);
+        if engaged
+            && !life.engaged
+            && let Some(b) = body.filter(|b| b.clip_size > 0 && b.clip >= 0)
+        {
+            k.engages = 1;
+            k.clip_sum = f64::from(b.clip) / f64::from(b.clip_size);
+        }
+        life.engaged = engaged;
+        k
+    }
 }
 
 impl Tally {
@@ -161,6 +216,7 @@ impl Tally {
         self.mate_ticks += o.mate_ticks;
         self.mate_dist += o.mate_dist;
         self.packed += o.packed;
+        self.kit.add(&o.kit);
     }
 
     /// The per-bot-tick line under [`Tally::line`].
@@ -391,6 +447,7 @@ fn summarize(what: &str, results: &[&Match]) {
         for (k, t) in map {
             println!("  {kind} {k:<13} {}", t.line());
             println!("  {kind} {k:<13} {}", t.survive());
+            println!("  {kind} {k:<13} {}", t.kit.line());
         }
     };
     rows("team ", &by_team);
@@ -507,6 +564,11 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         first_hit
                             .entry((anum.to_string(), vnum.to_string()))
                             .or_insert(tick);
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            att.0.kit.grenade_hits += 1;
+                            att.1.kit.grenade_hits += 1;
+                            att.2.kit.grenade_hits += 1;
+                        }
                     }
                 }
                 "K" if f.len() >= 11 => {
@@ -548,6 +610,14 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         a.0.ttk_ms.push(ttk);
                         a.1.ttk_ms.push(ttk);
                         a.2.ttk_ms.push(ttk);
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            a.0.kit.grenade_hits += 1;
+                            a.1.kit.grenade_hits += 1;
+                            a.2.kit.grenade_hits += 1;
+                            a.0.kit.grenade_kills += 1;
+                            a.1.kit.grenade_kills += 1;
+                            a.2.kit.grenade_kills += 1;
+                        }
                     }
                 }
                 // [guid,] num, team, name, action
@@ -684,6 +754,9 @@ struct Life {
     /// Ticks since this life's wound, if any.
     wound: Option<u64>,
     retreating: u8,
+    /// [`Kit::step`]'s last throw count and tracking.
+    throws: u32,
+    engaged: bool,
 }
 
 impl Life {
@@ -706,6 +779,7 @@ impl Life {
             _ => {}
         }
         self.retreating = r;
+        d.kit = Kit::step(self, body);
         if let Some(b) = body.filter(|b| b.playing) {
             if self.wound.is_none() && b.engaged && b.health < 50 {
                 self.wound = Some(0);

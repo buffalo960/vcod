@@ -426,7 +426,11 @@ something, the bullet links it.
   cap and aim that settles on target, from behind a low wall they duck
   under to reload or round a corner they lean out of. A hurt bot, or one whose clip ran
   dry, backs off to a spot out of its enemy's sight, reloads and waits
-  there, and a hurt one walks to a health pack lying near. They are still
+  there, and a hurt one walks to a health pack lying near. A clip under
+  half reloads once the fight goes quiet. A frag goes at an enemy behind
+  cover the gun cannot reach, or where a standing one was lost from
+  sight, never by a teammate, and a bot runs from a live frag it sees or
+  hears land near. They are still
   bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from
