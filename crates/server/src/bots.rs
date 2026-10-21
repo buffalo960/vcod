@@ -6916,6 +6916,7 @@ mod tests {
             gun_speed: 10000.0,
             crowd,
             contact_ms: 0,
+            level_ms: 0,
         });
         v
     }
@@ -6980,6 +6981,55 @@ mod tests {
         v.seat.as_mut().unwrap().contact_ms = 5000;
         let out = (0..4).any(|_| bot.think(&v).buttons & msg::BUTTON_USE != 0);
         assert!(out, "the driver stays in");
+    }
+
+    /// A gunner with nobody to shoot gets out of a hull that makes no
+    /// headway with its driver, not after him (seed 45 of
+    /// `uo_bots_fight_and_sprint_in_tdm`).
+    #[test]
+    fn a_gunner_leaves_a_ride_that_makes_no_headway() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd::default());
+        let seat = v.seat.as_mut().unwrap();
+        seat.seat = 2;
+        // Shuffling back and forth at speed, never 300 units from the start.
+        let out = (0..200).find(|i| {
+            let seat = v.seat.as_mut().unwrap();
+            seat.origin[0] = if i % 40 < 20 { 0.0 } else { 150.0 };
+            seat.level_ms = *i as i32 * 50;
+            bot.think(&v).buttons & msg::BUTTON_USE != 0
+        });
+        assert!(out.is_some_and(|i| i > 150), "{out:?}");
+        // A ride on the move keeps him.
+        let mut bot = Bot::new("allies", false, 1);
+        let out = (0..200).find(|i| {
+            let seat = v.seat.as_mut().unwrap();
+            seat.origin[0] = *i as f32 * 10.0;
+            seat.level_ms = *i as i32 * 50;
+            bot.think(&v).buttons & msg::BUTTON_USE != 0
+        });
+        assert_eq!(out, None);
+    }
+
+    /// Leaving riders press use on their own seat's frames: two never get
+    /// out of one vehicle on one frame (seed 15).
+    #[test]
+    fn riders_leave_a_vehicle_on_frames_of_their_own() {
+        let presses = |seat: usize| -> Vec<i32> {
+            let mut bot = Bot::new("allies", false, 1);
+            let mut v = driving(Crowd::default());
+            v.seat.as_mut().unwrap().seat = seat;
+            v.seat.as_mut().unwrap().contact_ms = 5000;
+            (0..12)
+                .filter(|&f| {
+                    v.seat.as_mut().unwrap().level_ms = f * 50;
+                    bot.think(&v).buttons & msg::BUTTON_USE != 0
+                })
+                .collect()
+        };
+        let (d, g) = (presses(1), presses(2));
+        assert!(!d.is_empty() && !g.is_empty());
+        assert!(d.iter().all(|f| !g.contains(f)), "{d:?} {g:?}");
     }
 
     /// A tank turning in place between walls shrugs a few degrees each

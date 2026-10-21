@@ -280,6 +280,7 @@ fn seat_view(
         gun_speed,
         crowd: Crowd::default(),
         contact_ms: v.phys.contact_ms(host.level_time_ms),
+        level_ms: host.level_time_ms,
     })
 }
 
