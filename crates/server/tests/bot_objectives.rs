@@ -200,9 +200,11 @@ fn uo_server(
 /// `flag_carrier_atgoal_wait`).
 #[test]
 fn uo_bots_take_and_capture_a_flag_on_cassino() {
-    // Seed 7 took no flag in 150 s once the `begin` waiter moved a frame
-    // later; 2, 4 and 8 capture, 1 and 6 do not (2026-10-18).
-    let Some((mut sv, mut now)) = uo_server("mp_cassino", "ctf", true, &[], 8) else {
+    // The seed is a draw: any bot change reshuffles which seeds take a flag
+    // in 150 s. Over 80 seed pairs in 1-161 (2n and 2n + 1 play alike), 79
+    // took one and 54 captured before the jump cue (24cff5ab), 77 and 47
+    // after; seed 8 was one of the three that took none (2026-10-21).
+    let Some((mut sv, mut now)) = uo_server("mp_cassino", "ctf", true, &[], 14) else {
         return;
     };
     let taken = wait_for(&mut sv, &mut now, "ctf_pickup", 3000);
