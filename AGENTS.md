@@ -646,7 +646,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   as its upright world box, `|turned sphere offset| + r` a side, and a
   non-axial side with the offset's y negated, so on a roll it is not
   upright. The turn takes the engine's `AngleVectors` rounding
-  (`x87::angles_to_axis`), not the game module's (movers doc 21, 22).
+  (`x87::angles_to_axis`, the same on all three servers), not the game
+  module's. A trace an entity's clip cuts short of the world's ends where
+  `SV_Trace` puts it, off the unshifted points (`sv_trace_endpos`), not
+  where `CM_BoxTrace` would (movers doc 21, 22).
 - A fall onto a slope slides as far as its cmd split lets it: a cmd that
   starts within the ground trace's reach turns the fall into ground speed.
   An A/B over one replays the client's three cmds a frame, never one
