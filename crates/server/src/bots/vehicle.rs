@@ -81,6 +81,11 @@ const BLOCKED_TICKS: u32 = 40;
 const ROCKET_LAID_DEG: f32 = 2.0;
 pub(crate) const ROCKET_MIN: f32 = super::BREACH_CLEAR;
 pub(crate) const ROCKET_RANGE: f32 = super::BREACH_RANGE;
+/// How far past its own splash the muzzle's cone has to be clear
+/// ([`ArmorView::muzzle_clear`]): the splash is measured to the shooter's
+/// box, which reaches a half width (15) round the muzzle, and this is
+/// twice that, rounded up.
+pub(crate) const ROCKET_CLEAR_MARGIN: f32 = 32.0;
 
 /// A usable vehicle near the bot, as the server sees it this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -175,6 +180,10 @@ pub struct ArmorView {
     pub shot_speed: f32,
     /// A teammate stands across the line to `centre`.
     pub friend_in_line: bool,
+    /// For a launcher on foot: nothing within its splash and
+    /// [`ROCKET_CLEAR_MARGIN`] of the muzzle along the view or the hip
+    /// cone round it (`Server::armor_view`). Set for a tank's gun.
+    pub muzzle_clear: bool,
 }
 
 impl ArmorView {
@@ -319,8 +328,14 @@ impl Bot {
     /// line, nearer than any other enemy (or carrying him): the launcher
     /// comes out, the feet stop, the view lays on the hull's lead and a
     /// rocket goes once it rests there. The view to hold, `None` with no
-    /// such fight.
-    pub(crate) fn think_armor(&mut self, view: &BotView, cmd: &mut UserCmd) -> Option<[f32; 2]> {
+    /// such fight. `path_yaw` is the view the walk's keys in `cmd` were
+    /// set for.
+    pub(crate) fn think_armor(
+        &mut self,
+        view: &BotView,
+        cmd: &mut UserCmd,
+        path_yaw: f32,
+    ) -> Option<[f32; 2]> {
         self.rider.at_armor = false;
         let rocket = view.rocket?;
         let a = view.armor?;
@@ -345,8 +360,17 @@ impl Bot {
         ];
         let (pitch, yaw) = aim_angles(view, lead(eye, a.centre, a.velocity, a.shot_speed));
         let aim = self.turn_toward(view, [pitch, yaw]);
-        cmd.forward = 0;
-        cmd.right = 0;
+        // A wall, a prop or a hull in the cone by the muzzle takes the
+        // rocket's splash back on the shooter: on mp_foy a bot fired at an
+        // enemy vehicle 1300 off and died of its own rocket (seed 7,
+        // bot-objectives.md 10.6). No round then, and the feet keep the
+        // walk, which may carry the line clear.
+        if a.muzzle_clear {
+            cmd.forward = 0;
+            cmd.right = 0;
+        } else {
+            (cmd.forward, cmd.right) = super::rekey(cmd.forward, cmd.right, path_yaw, aim[1]);
+        }
         let off = yaw_diff(yaw, view.view[1])
             .abs()
             .max(yaw_diff(pitch, view.view[0]).abs());
@@ -354,6 +378,7 @@ impl Bot {
             && view.busy_ms == 0
             && view.clip > 0
             && !a.friend_in_line
+            && a.muzzle_clear
             && !self.rider.rocket_tap
             && off < ROCKET_LAID_DEG;
         self.rider.rocket_tap = fire;

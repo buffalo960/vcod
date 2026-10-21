@@ -4,7 +4,8 @@
 //! `UO=1` reads United Offensive's `uo/` over `main/` and proves the walks
 //! under UO's movement, as a UO server builds the graph; `RULES=1.1`,
 //! `1.5` or `uo` picks the movement on its own. `NEAR=x,y,r` lists the
-//! nodes within `r` across of `(x, y)`, with their edge counts, and
+//! nodes within `r` across of `(x, y)`, with their edge counts (`EDGES=1`
+//! lists each node's edges, tagged jump, leap, crouch or risky), and
 //! `ROUTE=x,y,z,x,y,z` the route between the nodes nearest two points.
 //! `GAMETYPE=tdm` unlinks the other gametypes' script brushes as the
 //! census does, in place of the `bas` rubble. `LOST=1` lists the spawns
@@ -151,6 +152,23 @@ fn main() {
             for (i, n) in g.nodes.iter().enumerate() {
                 if (n.x - v[0]).hypot(n.y - v[1]) < v[2] {
                     println!("  node {i} {:?} edges {}", n.round(), g.edges[i].len());
+                    if std::env::var("EDGES").is_ok_and(|v| v == "1") {
+                        for &b in &g.edges[i] {
+                            let e = (i as u32, b);
+                            let tag = [
+                                (&g.jumps, "jump"),
+                                (&g.leaps, "leap"),
+                                (&g.crouch_jumps, "crouch"),
+                                (&g.risky, "risky"),
+                            ]
+                            .iter()
+                            .filter(|(s, _)| s.contains(&e))
+                            .map(|(_, t)| *t)
+                            .collect::<Vec<_>>()
+                            .join(",");
+                            println!("    -> {b} {:?} {tag}", g.nodes[b as usize].round());
+                        }
+                    }
                 }
             }
         }

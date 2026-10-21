@@ -4825,7 +4825,10 @@ impl Server {
                     }
                     view.stop = follower.holding(&g);
                     if let Some(foot) = ps.as_ref().and_then(|ps| follower.jump_wait(&g, at, ps)) {
-                        view.waypoint = Some(foot);
+                        // A jump that fails from rest there is planned
+                        // round; the body holds still meanwhile.
+                        let round = world.is_some_and(|w| follower.rest_jump_fails(&g, w, foot));
+                        view.waypoint = Some(if round { at } else { foot });
                         view.stop = true;
                         view.jump = false;
                     }
@@ -5137,6 +5140,33 @@ impl Server {
         let mut lobs: Vec<f32> = (1..=8).map(|i| i as f32 * 5.0).collect();
         lobs.sort_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()));
         let clear = (range * 0.6).max(GRENADE_MIN);
+        // Nor a lob whose frag, flown on past the arc's first contact by
+        // the missile code, can go off within its blast radius of the
+        // thrower: on mp_cassino a UO stick grenade lobbed at an enemy 550
+        // off met a wall past the arc's 60 per cent, came back and went off
+        // 340 from the wounded thrower, whose run from it fell short of the
+        // 350 radius (seed 19, bot-combat.md 6.5). A cook burns up to
+        // `COOK_MOST_MS` of the fuse in the hand, so the burst is looked
+        // for from that much short of the full fuse on.
+        let fuse = vcod_common::weapon::stored_ms(def.fuse_time);
+        let earliest = if def.cook_off_hold {
+            fuse - crate::bots::COOK_MOST_MS
+        } else {
+            fuse
+        };
+        let (lo, hi) = (sim.ps.origin + sim.ps.mins(), sim.ps.origin + sim.ps.maxs());
+        let burst_clear = |aim: [f32; 2]| {
+            let Some(rt) = self.script.as_ref() else {
+                return true;
+            };
+            let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
+            rt.missiles()
+                .predict_flight(world, weapon, origin, velocity, sim.ps.velocity, fuse)
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| (*i as i32 + 1) * FRAME_MS >= earliest)
+                .all(|(_, p)| p.clamp(lo, hi).distance(*p) > radius)
+        };
         lobs.into_iter().find_map(|lob| {
             let aim = [pitch - lob, yaw];
             let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
@@ -5155,11 +5185,11 @@ impl Server {
                 }
                 if tr.fraction < 1.0 {
                     let reach = (tr.endpos - origin).truncate().length();
-                    return (reach >= clear).then_some(aim);
+                    return (reach >= clear && burst_clear(aim)).then_some(aim);
                 }
                 from = next;
             }
-            Some(aim)
+            burst_clear(aim).then_some(aim)
         })
     }
 
@@ -10777,7 +10807,14 @@ fn breach_aim(
                 Some(o) => o == base,
                 None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
             }
-            && spread_clear(world, models, muzzle, dir);
+            && cone_clear(
+                world,
+                models,
+                muzzle,
+                dir,
+                BREACH_SPREAD_DEG,
+                crate::bots::BREACH_CLEAR,
+            );
         ok.then_some(spot.into())
     })
 }
@@ -10796,25 +10833,32 @@ fn held_rocket(hand: u8, loaded: u64, launcher: impl Fn(u8) -> bool) -> Option<u
 /// bazooka and the panzerschreck, 3.5 for the panzerfaust).
 const BREACH_SPREAD_DEG: f32 = 4.0;
 
-/// Whether rockets along the edge of the sighted spread cone round `dir`
-/// meet nothing within [`crate::bots::BREACH_CLEAR`] of the muzzle: the
-/// line's middle alone left a bot now and then killed by a rocket the
-/// spread carried into the cover by its stand. Only the near part of the
-/// cone counts; where the rest bursts the base's checks already rule.
-fn spread_clear(
+/// Whether rockets along `dir` and the edge of a `spread_deg` cone round
+/// it meet nothing within `reach` of the muzzle. A breach stand checks the
+/// sighted cone out to [`crate::bots::BREACH_CLEAR`]: the line's middle
+/// alone left a bot now and then killed by a rocket the spread carried
+/// into the cover by its stand. Only the near part of the cone counts;
+/// where the rest bursts the base's checks already rule.
+pub(crate) fn cone_clear(
     world: &vcod_common::collision::CollisionWorld,
     models: &[crate::game::combat::PlacedModel],
     muzzle: glam::Vec3,
     dir: glam::Vec3,
+    spread_deg: f32,
+    reach: f32,
 ) -> bool {
-    use crate::bots::BREACH_CLEAR;
     let right = dir.cross(glam::Vec3::Z).normalize_or(glam::Vec3::X);
     let up = right.cross(dir);
-    let r = BREACH_SPREAD_DEG.to_radians().tan();
-    (0..8).all(|k| {
+    let r = spread_deg.to_radians().tan();
+    (0..9).all(|k| {
         let a = k as f32 * std::f32::consts::FRAC_PI_4;
-        let ray = (dir + (right * a.cos() + up * a.sin()) * r).normalize();
-        let end = muzzle + ray * BREACH_CLEAR;
+        let edge = if k == 8 {
+            glam::Vec3::ZERO
+        } else {
+            (right * a.cos() + up * a.sin()) * r
+        };
+        let ray = (dir + edge).normalize();
+        let end = muzzle + ray * reach;
         world.missile_trace(muzzle, end).fraction >= 1.0
             && models.iter().all(|m| {
                 m.clip(muzzle, end, crate::game::missile::MISSILE_MODEL_MASK, 1.0)
@@ -10835,6 +10879,34 @@ mod tests {
         assert_eq!(held_rocket(5, loaded, launcher), Some(43));
         assert_eq!(held_rocket(43, loaded | (1 << 5), launcher), Some(43));
         assert_eq!(held_rocket(9, 1 << 9, launcher), None);
+    }
+
+    /// A launcher's widest hip cone (12 degrees) out to its 256 splash and
+    /// the margin (`Server::armor_view`): a wall 200 ahead of the muzzle
+    /// fails it, one 400 ahead does not, and neither does the floor under
+    /// a standing body's level view.
+    #[test]
+    fn a_wall_inside_the_splash_by_the_muzzle_closes_the_cone() {
+        let muzzle = glam::Vec3::new(0.0, 0.0, 64.0);
+        let reach = 256.0 + crate::bots::ROCKET_CLEAR_MARGIN;
+        let wall = |x: f32| {
+            vcod_common::collision::test_world(&[(
+                glam::Vec3::new(x, -512.0, 0.0),
+                glam::Vec3::new(x + 16.0, 512.0, 512.0),
+            )])
+        };
+        let clear = |w: &vcod_common::collision::CollisionWorld| {
+            cone_clear(w, &[], muzzle, glam::Vec3::X, 12.0, reach)
+        };
+        assert!(!clear(&wall(200.0)));
+        assert!(clear(&wall(400.0)));
+        // A wall beside the line, inside the cone's edge.
+        let beside = vcod_common::collision::test_world(&[(
+            glam::Vec3::new(100.0, 40.0, 0.0),
+            glam::Vec3::new(300.0, 56.0, 512.0),
+        )]);
+        assert!(!clear(&beside));
+        assert!(cone_clear(&beside, &[], muzzle, glam::Vec3::X, 4.0, reach));
     }
 
     use super::*;

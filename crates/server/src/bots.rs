@@ -15,7 +15,7 @@ pub mod team;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
 pub use vehicle::{ArmorView, Crowd, SeatView, VehicleSpot};
 pub(crate) use vehicle::{
-    GUN_RANGE as VEHICLE_GUN_RANGE, ROCKET_MIN as VEHICLE_ROCKET_MIN,
+    GUN_RANGE as VEHICLE_GUN_RANGE, ROCKET_CLEAR_MARGIN, ROCKET_MIN as VEHICLE_ROCKET_MIN,
     ROCKET_RANGE as VEHICLE_ROCKET_RANGE, SEEK_RANGE as VEHICLE_SEEK_RANGE,
 };
 
@@ -67,6 +67,15 @@ pub(crate) fn notices_frag(
 const AWAY_PITCH: f32 = -30.0;
 const AWAY_DEG: f32 = 30.0;
 const AWAY_TICKS: u32 = 16;
+/// A UO cook's hold: `COOK_TICKS` plus a draw under `COOK_SPREAD`, the
+/// sight button down from `COOK_SPOON_AFTER` ticks in (`Bot::think_grenade`).
+const COOK_TICKS: u32 = 24;
+const COOK_SPREAD: u32 = 10;
+const COOK_SPOON_AFTER: u32 = 4;
+/// The most of a UO fuse a bot's cook burns before the release: the
+/// longest spooned hold and the longest wait for the view after it.
+pub(crate) const COOK_MOST_MS: i32 =
+    ((COOK_TICKS + COOK_SPREAD - 1 - COOK_SPOON_AFTER + AWAY_TICKS) * FRAME_MS as u32) as i32;
 /// A turned-away throw is probed at a spot this far off along its yaw.
 const AWAY_REACH: f32 = 400.0;
 /// A release on a probed lob waits until the view is this near it in
@@ -2977,7 +2986,7 @@ impl Bot {
         if self.shoot {
             self.track(view);
             let keys = (cmd.forward, cmd.right, cmd.up, cmd.wbuttons);
-            if !clearing && let Some(aim) = self.think_armor(view, &mut cmd) {
+            if !clearing && let Some(aim) = self.think_armor(view, &mut cmd, yaw) {
                 [pitch, yaw] = aim;
             } else if let Some(e) = view.enemy
                 && !(clearing && view.lmg)
@@ -3705,10 +3714,10 @@ impl Bot {
                     // pullback runs (coduo-movement.md 12): pressed 200 ms
                     // in and held 1 to 1.5 s, which leaves 2.5 s of a 4 s
                     // fuse for the flight.
-                    let left = 24 + (self.rand() % 10) as u32;
+                    let left = COOK_TICKS + (self.rand() % COOK_SPREAD as i32) as u32;
                     Stage::Cook {
                         left,
-                        spoon: left - 4,
+                        spoon: left - COOK_SPOON_AFTER,
                     }
                 } else {
                     // No cook exists in 1.1 (combat doc 1.11): the release
@@ -7743,6 +7752,7 @@ mod tests {
             crew: 1 << 5,
             shot_speed: 2800.0,
             friend_in_line: false,
+            muzzle_clear: true,
         });
         let (pitch, yaw) = aim_angles(&v, at);
         v.view = [pitch, yaw, 0.0];
@@ -7767,6 +7777,22 @@ mod tests {
         let mut bot = Bot::new("allies", true, 1);
         v.armor.as_mut().unwrap().friend_in_line = true;
         assert_eq!(bot.think(&v).buttons & BUTTON_ATTACK, 0);
+    }
+
+    /// A wall in the cone by the muzzle holds the rocket, and the feet keep
+    /// walking: the view lies on the hull and the keys still run the path.
+    #[test]
+    fn a_launcher_with_a_wall_by_its_muzzle_holds_its_rocket() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = armored([800.0, 300.0, 100.0]);
+        v.weapon = 20;
+        v.clip = 1;
+        v.armor.as_mut().unwrap().muzzle_clear = false;
+        v.waypoint = Some([0.0, 400.0, 0.0]);
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "fired into the wall");
+        assert_ne!((cmd.forward, cmd.right), (0, 0), "stood still behind it");
+        assert_eq!(bot.rockets_at_armor(), 0);
     }
 
     #[test]
@@ -7799,6 +7825,7 @@ mod tests {
             crew: 1 << 5,
             shot_speed: 10000.0,
             friend_in_line: false,
+            muzzle_clear: true,
         });
         let cmd = bot.think(&v);
         assert_eq!(cmd.forward, 0, "the tank does not hold for the shot");
