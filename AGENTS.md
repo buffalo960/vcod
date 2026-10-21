@@ -1049,6 +1049,11 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   builds two graphs, and one that deletes a brush mid-level waits on a
   build. `bas` breaches delete a base's walls; a UO bot test on a `bas`
   map runs a second build.
+- A vehicle moved since the build does not rebuild the graph: once it
+  holds still 20 ticks its nodes are blocked for the followers
+  (`Server::park_vehicles`, `Follower::blocked`), and a bot hemmed in by
+  them reads as stranded. A test that parks a vehicle by hand waits those
+  ticks before the bots see it.
 
 ## Reverse engineering
 

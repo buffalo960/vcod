@@ -604,3 +604,104 @@ impl Server {
 fn ordered(c: f32) -> u32 {
     c.to_bits()
 }
+
+/// How long a vehicle holds its pose before its nodes are tested: a
+/// second. A tank on the move is met by the walk's own stall handling.
+const PARK_TICKS: u32 = 20;
+/// How far, across and up or down, from a parked vehicle's origin its
+/// collmap can cover a node: the tanks' (`script_vehicle_collmap` *28,
+/// x -136..124, y -72..72) reach 154 at a corner, and a body 15 more.
+const PARK_REACH: f32 = 192.0;
+/// What a parked vehicle may drift off the pose it parked in, in units and
+/// degrees, and still be parked.
+const PARK_SLACK: f32 = 1.0;
+/// How far a parked vehicle may move before the nodes it covered are let
+/// go: a tank at mp_cassino's stair foot at (440, -1088, 13) parked again
+/// a few units off three times, and each move let the stair go for a
+/// second (seed 1, bot-navigation.md "Parked vehicles").
+const PARK_SHOVE: f32 = 48.0;
+
+/// One live vehicle's pose, the ticks it has held it within
+/// [`PARK_SLACK`], and the graph's nodes its collmap covered where it last
+/// parked.
+struct Parked {
+    pose: crate::game::vehicle::Pose,
+    still: u32,
+    at: [f32; 3],
+    nodes: Vec<u32>,
+}
+
+/// Each live vehicle's [`Parked`]; the union of their nodes, sorted, is
+/// what the followers plan round (`nav::Follower::blocked`,
+/// bot-navigation.md "Parked vehicles").
+#[derive(Default)]
+pub(super) struct ParkedVehicles {
+    graph: usize,
+    each: HashMap<vcod_gsc::EntId, Parked>,
+    pub(super) blocked: std::sync::Arc<[u32]>,
+}
+
+impl Server {
+    /// Updates [`ParkedVehicles`] for this tick's vehicle poses. The graph
+    /// was built round the vehicles where they stood then; one driven off
+    /// and left over the graph's nodes covers them, and a bot walking that
+    /// way wedged between mp_cassino's stair at (426, -958, 60) and a
+    /// Panzer IV's rear (seed 23).
+    pub(super) fn park_vehicles(&mut self) {
+        let (Some(g), Some(world), Some(rt)) =
+            (self.nav.as_ref(), self.world.as_ref(), self.script.as_ref())
+        else {
+            return;
+        };
+        let parked = &mut self.bot_parked;
+        let graph = std::sync::Arc::as_ptr(g) as usize;
+        if parked.graph != graph {
+            *parked = ParkedVehicles {
+                graph,
+                ..Default::default()
+            };
+        }
+        let live = &rt.host.vehicles.live;
+        let mut changed = false;
+        parked.each.retain(|id, p| {
+            let keep = live.contains_key(id);
+            changed |= !keep && !p.nodes.is_empty();
+            keep
+        });
+        for (id, v) in live {
+            let p = parked.each.entry(*id).or_insert(Parked {
+                pose: v.pose,
+                still: 0,
+                at: v.pose.origin,
+                nodes: Vec::new(),
+            });
+            let near = |a: [f32; 3], b: [f32; 3], d: f32| (0..3).all(|i| (a[i] - b[i]).abs() <= d);
+            if !(near(p.pose.origin, v.pose.origin, PARK_SLACK)
+                && near(p.pose.angles, v.pose.angles, PARK_SLACK))
+            {
+                (p.pose, p.still) = (v.pose, 0);
+                if !p.nodes.is_empty() && !near(p.at, v.pose.origin, PARK_SHOVE) {
+                    p.nodes.clear();
+                    changed = true;
+                }
+                continue;
+            }
+            p.still = p.still.saturating_add(1);
+            if p.still == PARK_TICKS {
+                let nodes = g.blocked_near(&world.collision, v.pose.origin.into(), PARK_REACH);
+                changed |= nodes != p.nodes;
+                (p.at, p.nodes) = (v.pose.origin, nodes);
+            }
+        }
+        if changed {
+            let mut all: Vec<u32> = parked
+                .each
+                .values()
+                .flat_map(|p| p.nodes.iter().copied())
+                .collect();
+            all.sort_unstable();
+            all.dedup();
+            parked.blocked = all.into();
+        }
+    }
+}

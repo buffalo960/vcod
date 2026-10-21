@@ -671,8 +671,11 @@ first everywhere.
   script alone): a player looking at a live charge in the end-of-round
   delay (`endRound`'s `wait` of `scr_bas_endrounddelay`, 2260-2264, 10 s
   by default, 186, between `level.roundended` and the `W;` line) stops
-  that thread with a script error on any engine. The bas gates in `tests/bots.rs` pass over that
-  one abort.
+  that thread with a script error on any engine. At `developer 0`
+  the thread runs on past it and 3153's `if(count == 0)` reads the same
+  unset `count`: VERIFIED (measured, `four_shooting_uo_bots_end_a_bas_round`
+  on the parked-vehicle change, bot-navigation.md "Parked vehicles"), a
+  second abort. The bas gates in `tests/bots.rs` pass over the two.
 - VERIFIED (`bas.gsc` 330-345): `scr_bas_planttime` 15,
   `scr_bas_defusetime` 10 and `scr_bas_bombtime` 60 by default.
   INFERRED (`BaseAssault_bomb_countdown`, 3591-3598, loop body): the
@@ -1337,7 +1340,9 @@ stops boarding.
   throw in hand looks for one. With no objective (`dm`, `tdm`) any vehicle
   in the list will do; with an objective more than 1500 units off only one
   within 400; with an objective nearer it walks on. The nearest wins and
-  the graph walks the bot to it (`Bot::goal`, ahead of the objective).
+  the graph walks the bot to it (`Bot::goal`, ahead of the objective),
+  to the clear node nearest it when the vehicle is parked over its own
+  (bot-navigation.md, "Parked vehicles").
 - Within 90 units of the hull the bot faces the box's centre, closes to 30
   and taps use on every other tick: the server boards on the press's edge
   (`item_pass`) and takes the first free seat from 1, so a second bot
