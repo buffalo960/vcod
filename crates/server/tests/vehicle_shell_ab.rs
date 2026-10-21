@@ -140,9 +140,11 @@ fn vec3(s: &str) -> [f32; 3] {
     [v[0], v[1], v[2]]
 }
 
-fn notifies(log: &[String]) -> Vec<Notify> {
+/// The `PROBE <tag>` lines, in log order.
+fn notifies(log: &[String], tag: &str) -> Vec<Notify> {
+    let prefix = format!("PROBE {tag} ");
     log.iter()
-        .filter_map(|l| l.trim().strip_prefix("PROBE vdamage ").map(str::to_string))
+        .filter_map(|l| l.trim().strip_prefix(prefix.as_str()).map(str::to_string))
         .map(|l| {
             // `<time> <amount> <mod> (x, y, z) (x, y, z) <attacker> <inflictor> <health>`
             let (head, rest) = l.split_once(" (").unwrap();
@@ -187,13 +189,51 @@ fn a_shell_strikes_a_vehicle_as_on_uo() {
             );
         }
     }
-    let (rn, on) = (notifies(&retail), notifies(&log));
+    let order = |log: &[String]| -> Vec<String> {
+        log.iter()
+            .filter_map(|l| l.trim().strip_prefix("PROBE "))
+            .filter(|l| l.starts_with("vdamage ") || l.starts_with("selfdamage "))
+            .map(|l| l.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect()
+    };
+    let rorder = order(&retail);
+    let oorder: Vec<String> = order(&log);
+    // Times past the first fire: ours seats on its own clock.
+    let rebase = |v: Vec<String>| -> Vec<(String, i32)> {
+        let t0 = v
+            .first()
+            .map_or(0, |l| l.split(' ').nth(1).unwrap().parse::<i32>().unwrap());
+        v.iter()
+            .map(|l| {
+                let (tag, t) = l.split_once(' ').unwrap();
+                (tag.to_string(), t.parse::<i32>().unwrap() - t0)
+            })
+            .collect()
+    };
     assert_eq!(
-        on.len(),
-        rn.len(),
-        "the Elefant's notifies: retail {rn:?}, ours {on:?}"
+        rebase(oorder),
+        rebase(rorder),
+        "the notifies' order and times past the first"
     );
-    for (o, r) in on.iter().zip(&rn) {
+    for tag in ["vdamage", "selfdamage"] {
+        compare(&notifies(&retail, tag), &notifies(&log, tag), tag);
+    }
+    assert_eq!(ours_ex.len(), retail_ex.len(), "the explodes");
+    for ((_, o), (_, r)) in ours_ex.iter().zip(&retail_ex) {
+        assert_eq!(
+            (o.event, o.parm, o.surf_type, o.scale, o.weapon, o.eflags),
+            (r.event, r.parm, r.surf_type, r.scale, r.weapon, r.eflags),
+            "the explode on the hull"
+        );
+    }
+}
+
+/// One vehicle's notifies, retail's against ours. The splash's point is the
+/// blast 4 off the struck face, which ours puts up to a unit off retail's
+/// (docs/research/coduo-vehicles.md 13, "The firing vehicle's own splash").
+fn compare(rn: &[Notify], on: &[Notify], tag: &str) {
+    assert_eq!(on.len(), rn.len(), "{tag}: retail {rn:?}, ours {on:?}");
+    for (o, r) in on.iter().zip(rn) {
         assert_eq!(
             (o.0, &o.1, o.4, o.5),
             (r.0, &r.1, r.4, r.5),
@@ -213,13 +253,5 @@ fn a_shell_strikes_a_vehicle_as_on_uo() {
                 o.3
             );
         }
-    }
-    assert_eq!(ours_ex.len(), retail_ex.len(), "the explodes");
-    for ((_, o), (_, r)) in ours_ex.iter().zip(&retail_ex) {
-        assert_eq!(
-            (o.event, o.parm, o.surf_type, o.scale, o.weapon, o.eflags),
-            (r.event, r.parm, r.surf_type, r.scale, r.weapon, r.eflags),
-            "the explode on the hull"
-        );
     }
 }
