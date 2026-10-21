@@ -218,7 +218,7 @@ impl Triggers {
             .get_mut(&id)
             .filter(|t| t.kind == TriggerKind::Hurt)?;
         t.spent = !t.spent;
-        Some((t.life != 0.0).then(|| now_ms as f32 + t.life * 1000.0))
+        Some((t.life != 0.0).then_some(now_ms as f32 + t.life * 1000.0))
     }
 
     /// `hurt_touch`'s read of the trigger's `spawnflags` ahead of
