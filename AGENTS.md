@@ -125,7 +125,8 @@ check.
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
   mp_cassino six-bot tdm run and its walled-in spawns test (the file
   ~12 s, 60 s of CPU), and `tests/bot_vehicles.rs` its bots boarding,
-  driving and firing mp_cassino's tanks (~10 s); with a 1.1 install they
+  driving and firing mp_cassino's tanks, rockets at one and
+  mp_kharkov's jeep (~30 s); with a 1.1 install they
   return at once. `--example bot_vehicles` (UO) plays each seed with
   bots' vehicles off and on (`bot-objectives.md` 10.6). `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
