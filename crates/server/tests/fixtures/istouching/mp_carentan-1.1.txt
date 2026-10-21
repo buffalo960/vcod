@@ -1,0 +1,67 @@
+# client-probes/probe_istouching on retail 1.1d, mp_carentan, 2026-10-21: one --probe-uo-weapon direct axis client (recipe in the client probes' README).
+PROBE site (932.00, -376.00, -151.88) default
+PROBE phase stand playing (932.00, -376.00, -151.88)
+PROBE edge stand bottom 0 11
+PROBE edge stand bottom 70.125 00
+PROBE edge stand top -4 00
+PROBE edge stand top 0 11
+PROBE edge stand side -4 11
+PROBE edge stand side 15.125 00
+PROBE phase crouch playing (932.00, -376.00, -151.88)
+PROBE edge crouch bottom 0 11
+PROBE edge crouch bottom 50.125 00
+PROBE edge crouch top -4 00
+PROBE edge crouch top 0 11
+PROBE edge crouch side -4 11
+PROBE edge crouch side 15.125 00
+PROBE phase stand_again playing (932.00, -376.00, -151.88)
+PROBE edge stand_again bottom 0 11
+PROBE edge stand_again bottom 70.125 00
+PROBE edge stand_again top -4 00
+PROBE edge stand_again top 0 11
+PROBE edge stand_again side -4 11
+PROBE edge stand_again side 15.125 00
+PROBE phase prone playing (932.00, -376.00, -151.88)
+PROBE edge prone bottom 0 11
+PROBE edge prone bottom 30.125 00
+PROBE edge prone top -4 00
+PROBE edge prone top 0 11
+PROBE edge prone side -4 11
+PROBE edge prone side 15.125 00
+PROBE phase crouch_again playing (932.00, -376.00, -151.88)
+PROBE edge crouch_again bottom 0 11
+PROBE edge crouch_again bottom 50.125 00
+PROBE edge crouch_again top -4 00
+PROBE edge crouch_again top 0 11
+PROBE edge crouch_again side -4 11
+PROBE edge crouch_again side 15.125 00
+PROBE phase dead_now dead (932.00, -376.00, -151.88)
+PROBE edge dead_now bottom 0 11
+PROBE edge dead_now bottom 30.125 00
+PROBE edge dead_now top -4 00
+PROBE edge dead_now top 0 11
+PROBE edge dead_now side -4 11
+PROBE edge dead_now side 15.125 00
+PROBE fall 1 932 -376 -151.875
+PROBE fall 2 932 -376 -151.875
+PROBE fall 3 932 -376 -151.875
+PROBE fall 4 932 -376 -151.875
+PROBE fall 5 932 -376 -151.875
+PROBE fall 6 932 -376 -151.875
+PROBE fall 7 932 -376 -151.875
+PROBE fall 8 932 -376 -151.875
+PROBE phase dead_crouched dead (932.00, -376.00, -151.88)
+PROBE edge dead_crouched bottom 0 11
+PROBE edge dead_crouched bottom 70.125 00
+PROBE edge dead_crouched top -4 00
+PROBE edge dead_crouched top 0 11
+PROBE edge dead_crouched side -4 11
+PROBE edge dead_crouched side 15.125 00
+PROBE phase dead dead (932.00, -376.00, -151.88)
+PROBE edge dead bottom 0 11
+PROBE edge dead bottom 70.125 00
+PROBE edge dead top -4 00
+PROBE edge dead top 0 11
+PROBE edge dead side -4 11
+PROBE edge dead side 15.125 00
+PROBE done

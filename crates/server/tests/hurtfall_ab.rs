@@ -11,9 +11,16 @@
 //! undefined point and direction, and the corpse's fall, landing and slide
 //! (`docs/research/cod11-combat.md` 5.8).
 //!
+//! Three more, `-hurtrate`, `-hurtslow` and `-hurtonce`, each on 1.1d,
+//! 1.5b (`-1.5`) and UO (`-uo`), hold the hurt's cadence (combat doc 5.9):
+//! a `dmg` the script wrote, the slow spawnflag and the once flag on a
+//! trigger the script spawned, and the sound's temp entity, which the
+//! probe's own `spawn` numbers show.
+//!
 //! `HURTFALL_REPORT=1` prints both sides line by line.
 //!
-//! Needs `COD_DIR` at a 1.1 install; without it the test returns early.
+//! Needs `COD_DIR` at the capture's install; without it the test returns
+//! early.
 
 mod common;
 
@@ -21,8 +28,9 @@ use common::{ADDR, ClientEnd, FRAME_MS, Join, Queues, holding, step_at};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::PROTOCOL_V6;
 use vcod_common::net::{NetClient, NetEvent};
+use vcod_common::pk3::Pk3Fs;
 
 const MAP: &str = "mp_carentan";
 const NAME: &str = "probe_hurtfall";
@@ -41,12 +49,13 @@ struct Ours {
 /// Runs the probe on ours under `cvars` (the capture's `+set`s), the
 /// client's join started `late_ms` earlier than [`FIRST_SNAP_AFTER_JOIN_MS`]
 /// puts it, to `PROBE done`.
-fn run_once(text: &str, cvars: &[(&str, &str)], late_ms: i64) -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs_11()?;
+fn run_once(fs: Pk3Fs, text: &str, cvars: &[(&str, &str)], late_ms: i64) -> Option<Ours> {
+    let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, NAME), now);
+    sv.set_protocol(p);
     sv.overlay_script(&format!("maps/mp/gametypes/{NAME}"), PROBE);
     for (k, v) in cvars {
         sv.set_cvar(k, v);
@@ -76,7 +85,7 @@ fn run_once(text: &str, cvars: &[(&str, &str)], late_ms: i64) -> Option<Ours> {
         let live = cl
             .snapshots()
             .newest()
-            .is_some_and(|s| matches!(s.ps.field_i32(&PROTOCOL_V1, "pm_type"), 0 | 1 | 6));
+            .is_some_and(|s| matches!(s.ps.field_i32(p, "pm_type"), 0 | 1 | 6));
         if live {
             let cmds = hold.cmds(&cl, 0);
             cl.send_cmds(&cmds);
@@ -112,19 +121,30 @@ fn probe_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
+/// A 1.5 install's paks, `None` at any other.
+fn fs_15() -> Option<Pk3Fs> {
+    let fs = vcod_common::testing::game_fs()?;
+    (vcod_server::server::install_protocol(&fs).version == PROTOCOL_V6.version).then_some(fs)
+}
+
 /// Replays `fixture` on ours under `cvars` and holds every `PROBE` line to
 /// retail's.
 fn replay(fixture: &str, cvars: &[(&str, &str)]) {
+    replay_on(vcod_common::testing::game_fs_11, fixture, cvars);
+}
+
+/// [`replay`] on the paks `fs` mounts, a 1.1, 1.5 or UO install's.
+fn replay_on(fs: fn() -> Option<Pk3Fs>, fixture: &str, cvars: &[(&str, &str)]) {
     let text = std::fs::read_to_string(fixture).unwrap();
-    let Some(mut ours) = run_once(&text, cvars, 0) else {
-        eprintln!("COD_DIR unset or not a 1.1 install: skipping");
+    let Some(mut ours) = fs().and_then(|f| run_once(f, &text, cvars, 0)) else {
+        eprintln!("COD_DIR unset or not the capture's install: skipping");
         return;
     };
     // How long ours takes to join differs from retail: rerun once so the
     // client's first snapshot falls on retail's.
     let first = common::cmds_ran(&text, "")[0].0;
     if let Some(t) = ours.first_snap.filter(|&t| t != first) {
-        ours = run_once(&text, cvars, (t - first) as i64).unwrap();
+        ours = run_once(fs().unwrap(), &text, cvars, (t - first) as i64).unwrap();
     }
     let retail = probe_lines(text.lines());
     let ours = probe_lines(ours.log.iter().map(String::as_str));
@@ -164,5 +184,79 @@ fn a_trigger_hurt_kill_before_a_hard_landing_matches_retail() {
     replay(
         "tests/fixtures/triggers/mp_carentan-dm-hurtland.txt",
         &[("probe_lift", "120")],
+    );
+}
+
+const RATE: &[(&str, &str)] = &[
+    ("probe_lift", "120"),
+    ("probe_dmg", "30"),
+    ("probe_drop", "-30"),
+];
+const SLOW: &[(&str, &str)] = &[
+    ("probe_spawn", "16"),
+    ("probe_dmg", "25"),
+    ("probe_drop", "-30"),
+];
+const ONCE: &[(&str, &str)] = &[
+    ("probe_spawn", "44"),
+    ("probe_dmg", "10"),
+    ("probe_drop", "-30"),
+];
+
+/// The slab with a script-written `dmg` 30 hurts every 100 ms, each touch
+/// playing its sound on a temp entity, and the fourth kills.
+#[test]
+fn a_trigger_hurt_hurts_every_100_ms_with_its_written_dmg() {
+    replay("tests/fixtures/triggers/mp_carentan-dm-hurtrate.txt", RATE);
+}
+
+/// A script-spawned `trigger_hurt` with the slow flag hurts once a second.
+#[test]
+fn a_slow_trigger_hurt_hurts_once_a_second() {
+    replay("tests/fixtures/triggers/mp_carentan-dm-hurtslow.txt", SLOW);
+}
+
+/// Spawnflags 44: one silent touch with no protection, then never again.
+#[test]
+fn a_once_trigger_hurt_hurts_once_without_a_sound() {
+    replay("tests/fixtures/triggers/mp_carentan-dm-hurtonce.txt", ONCE);
+}
+
+#[test]
+fn a_trigger_hurt_cadence_matches_retail_15() {
+    replay_on(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtrate-1.5.txt",
+        RATE,
+    );
+    replay_on(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtslow-1.5.txt",
+        SLOW,
+    );
+    replay_on(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtonce-1.5.txt",
+        ONCE,
+    );
+}
+
+#[test]
+fn a_trigger_hurt_cadence_matches_retail_uo() {
+    let uo = vcod_common::testing::uo_fs;
+    replay_on(
+        uo,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtrate-uo.txt",
+        RATE,
+    );
+    replay_on(
+        uo,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtslow-uo.txt",
+        SLOW,
+    );
+    replay_on(
+        uo,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtonce-uo.txt",
+        ONCE,
     );
 }

@@ -2107,6 +2107,17 @@ The 2026-10-20 runs are `crates/server/tests/fixtures/triggers/mp_carentan-dm-hu
 (no `+set`), `-hurtlow.txt` (`+set probe_late_lift 203`) and `-hurtland.txt`
 (`+set probe_lift 120`); `crates/server/tests/hurtfall_ab.rs` replays them.
 
+`probe_drop` drops from another z, `probe_spawn <spawnflags>` spawns a
+second `trigger_hurt` by script at the drop, and `probe_dmg` writes the
+`dmg` of that one or of the slab; under either the damage callback logs the
+number a fresh `script_origin` takes (`PROBE spawned`). The 2026-10-21 runs,
+on 1.1d, 1.5b (`COD_VERSION=1.5`, a `-1.5` suffix) and UO (`COD_VERSION=uo`,
+`-uo`), are `mp_carentan-dm-hurtrate*.txt` (`+set probe_lift 120 +set
+probe_dmg 30 +set probe_drop -30`), `-hurtslow*.txt` (`+set probe_spawn 16
++set probe_dmg 25 +set probe_drop -30`) and `-hurtonce*.txt` (`+set
+probe_spawn 44 +set probe_dmg 10 +set probe_drop -30`), each with a
+`--probe-secs 12` client; `docs/research/cod11-combat.md` 5.9 reads them.
+
 ## probe_linkto2
 
 `linkTo`'s second round on mp_carentan. Once an allied player has spawned it
@@ -2620,6 +2631,25 @@ script on any 1.1d map and blasts at it twice.
 
 Retail's lines are in `crates/server/tests/dmgtrig_ab.rs` (the
 belltower's, the touch walks') and `cod11-combat.md` 14.8 (the spawn).
+
+## probe_istouching
+
+`isTouching` against a standing, crouched, prone and dead player
+(`docs/research/cod11-gsc-object-model.md` 22.3): one direct-mode client
+on mp_carentan, the map's trigger_hurt swept past his box in one frame
+per face. `COD_VERSION=1.5` or `uo` (with that install as `COD_DIR` and
+the client's `--game-dir`, `--mod-dir uo` for UO) runs the same recipe.
+
+```
+COD_DIR=<1.1 install> COD_LNXDED_HOME=<absolute, no '+'> PORT=34671 SECS=40 \
+    tools/run_probe.sh client-probes/probe_istouching mp_carentan
+# 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:34671 --probe-team axis \
+    --probe-weapon kar98k_mp --probe-uo-weapon direct --probe-secs 30
+```
+
+Retail's logs are `crates/server/tests/fixtures/istouching/`, replayed by
+`crates/server/tests/istouching_ab.rs`.
 
 ## probe_threadorder
 
