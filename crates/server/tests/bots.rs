@@ -1191,24 +1191,34 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
     Some(sv)
 }
 
-/// The same seeded bas match twice in one process, the second after a
-/// match without shooting on the map filled the nav cache: both play out
-/// alike.
-/// The cache once keyed a rebuild on the brush links alone, so a gate
-/// got the graph whichever test beside it reached those links first had
-/// built round its own vehicles (bot-navigation.md, "Build times"). Needs
-/// `COD_DIR` at a UO install.
+/// The same seeded bas match twice in one process, the second beside a
+/// match without shooting on the map and a busy thread, all three on one
+/// nav cache: both play out alike. The cache once keyed a rebuild on the
+/// brush links alone, so a gate got the graph whichever test beside it
+/// reached those links first had built round its own vehicles
+/// (bot-navigation.md, "Build times"). Needs `COD_DIR` at a UO install.
 #[test]
-#[ignore = "builds mp_foy's UO graph and its rebuilds three times, runs three 4-bot matches of 4 min of game time; run with --ignored"]
-fn a_seeded_bas_match_replays_after_another_fills_the_nav_cache() {
+#[ignore = "builds mp_foy's UO graph and its rebuilds, runs three 4-bot matches of 4 min of game time, ~10 min in release; run with --ignored"]
+fn a_seeded_bas_match_replays_beside_another() {
     if vcod_common::testing::uo_fs().is_none() {
         return;
     }
     vcod_server::nav::clear_cache();
     let first = bas_fingerprint(true);
     vcod_server::nav::clear_cache();
-    bas_fingerprint(false);
-    let again = bas_fingerprint(true);
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let again = std::thread::scope(|s| {
+        s.spawn(|| bas_fingerprint(false));
+        s.spawn(|| {
+            let mut x = 1u64;
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+            }
+        });
+        let again = bas_fingerprint(true);
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        again
+    });
     assert_eq!(
         first.len(),
         again.len(),
