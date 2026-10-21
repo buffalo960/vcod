@@ -278,8 +278,10 @@ const STEP_VIEW_MIN: i32 = -16;
 const STEP_VIEW_MAX: i32 = 24;
 const STEP_VIEW_BIAS: i32 = 128;
 /// Post-step velocity scale `0.2 + 0.8 * (1 - |dz| / stepSize)`
-/// (rodata 0x70f14/0x70f10, applied @0x35770).
-const STEP_SCALE_BASE: f32 = 0.2;
+/// (rodata 0x70f14/0x70f10, applied @0x35770). The 0.2 is 0x3e4ccccc, a
+/// bit under `0.2f32`; 1.5b and UO reach the same bits as `1.0 - 0.8f`
+/// (1.5b 0x2a4fb, 0x2a5d9).
+const STEP_SCALE_BASE: f32 = f32::from_bits(0x3e4c_cccc);
 const STEP_SCALE_GAIN: f32 = 0.8;
 /// Ladder climb steps stay quiet this long after a jump
 /// (`cmd.serverTime - ps->jumpTime <= 0x12b`, @0x323b9-0x323c8).
