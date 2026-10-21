@@ -955,9 +955,8 @@ The rest of the walk, read 2026-10-17 in 1.5b's `game.mp.i386.so`:
   `to * f + (1 - f) * from` stays on the stack and is
 multiplied in with one store (0x1f2e8, 0x1f368); `f` is the float
   `PM_GetViewHeightLerpTime` returns. VERIFIED, disassembly. 1.1d keeps
-  the whole product on the stack (`cod11-mantle.md`, "The wish speed"),
-  and so does the Windows cgame (`cgame_mp15.dll` 0x30007e40, INFERRED
-  from Ghidra's float10 chain). VERIFIED, gdb on 1.5b (2026-10-21, a
+  the whole product on the stack (`cod11-mantle.md`, "The wish speed").
+  VERIFIED, gdb on 1.5b (2026-10-21, a
   `--probe-patchwalk 180` kerb run, dprintfs on `Pmove` and on
   `PM_StepSlideMove` past its prologue, 0x29957): of 2097 cmds the
   velocity entering `PM_StepSlideMove` differed from ours in 223, by one
@@ -970,9 +969,59 @@ multiplied in with one store (0x1f2e8, 0x1f368); `f` is the float
   `DotProduct(clipVelocity, planes[i])` after the two clips is 9.7e-7 over
   0 with our old wish speed and under 0 with one a float step larger, so
   retail slides along the crease (`CrossProduct`, 0x29667) and holds x.
-  vcod: `pmove::wish`'s `stored` arm, under `MoveRules::v15()` off
-  `Arith::Msvc`; `predict_ab`'s 1.5b kerb (ct 29991) and pole (ct 30492)
+  vcod: `pmove::wish`'s `WishArith::Stored` arm, under `MoveRules::v15()`
+  off `Arith::Msvc`; `predict_ab`'s 1.5b kerb (ct 29991) and pole (ct 30492)
   rows match since. VERIFIED, `predict_ab`.
+- The Windows cgames' walk scale (1.1 `cgame_mp_x86.dll` 0x300076e0, 1.5
+  0x30007e40, UO `uo_cgame_mp_x86.dll` 0x30008770, each called once from
+  its `PM_WalkMove`: 1.1 0x300080d3, 1.5 0x3000891e) stores two steps and
+  keeps the rest at 53 bits. Stored: the strafe product after `fabs`
+  (1.1 0x30007728, 1.5 0x30007e88, UO 0x300087c4) and the product after
+  the walk, run or (UO) sprint scale (1.5 0x30007f04, UO 0x30008886); 1.1
+  stores after the walk or run scale (0x300077af, 0x30007791) and again
+  after `leanSpeedScale` (0x300077af). Kept: the back product, the max
+  when the back product wins (`fcom` against the stored strafe), `sqrt` of
+  the int sum, the base `(speed * max) / (length * 127)`, the stance blend
+  `(1 - f) * from + f * to` and its product, the wade factor
+  `1 - (waterlevel * 0.33333334) * (1 - 0.5)` (1.5 0x30008004-0x30008022;
+  the third a float, rodata 0x3006b7b4 = 0x3eaaaaab, where 1.1d and 1.5b
+  divide by 3.0) and its product, the weapon's `moveSpeedScale` and the
+  shellshock's 0.4. The scale comes back on the stack and `PM_WalkMove`
+  stores it (1.5 0x30008926, 1.1 0x300080db), then stores the length
+  times it (1.5 0x30008aa4). VERIFIED, disassembly. 1.5's and UO's take a
+  lean as the walk (1.5 `ps+0x34c`, UO `ps+0x584`), as 1.5b does
+  (0x1f1e0); 1.1's picks the
+  run scale, then the lean's (`ps+0x364`). VERIFIED. vcod:
+  `pmove::wish`'s `WishArith::Msvc` arm under `Arith::Msvc`, on every
+  protocol's client
+  (`pmove::tests::the_windows_walk_scale_stores_the_run_product`: a
+  crouched diagonal run wishes a float step under 1.1d's). VERIFIED
+  (measured 2026-10-21), `play::replay::the_windows_build_draws_no_new_correction`:
+  the springfield 1.1 capture goes from 0 to 2 last-bit corrections, every
+  other own-body capture reads as before (1.5 moves 44, turns 14, UO
+  sprint 126, 1.1 moves 3), none past 0.1.
+- `pm_type` 2 and 3 in the walk scale: 1.5b multiplies the walk or run
+  product by 3.0 (rodata 0x756b8, 0x1f221-0x1f229) or 6.0 (0x756bc,
+  0x1f244-0x1f24c), stored, and skips the stance and wade factors; the
+  Windows cgames do the same on the stack (1.5 0x30007f08-0x30007f2b,
+  rodata 0x3006b6b0 3.0 and 0x3006b66c 6.0), and 1.1d too (0x2e781-0x2e79c).
+  VERIFIED. The walk scale's only caller is `PM_WalkMove` (0x202ec), which
+  `PmoveSingle` calls only from its default arm (0x28873); its jump table
+  (GOT - 0x132b0, `pm_type` 0..7) sends 0 and 6 there, 1 and 7 to the
+  linked arm (0x286f1), 2 to 0x28663 (noclip, whose move 0x2084c reads
+  the air scale 0x1eec9 at 0x20a34), 3 to 0x28699 (UFO, 0x20bae), 4 to
+  0x28628 and 5 to 0x286cf. VERIFIED, disassembly. INFERRED, off that
+  table: no move reaches the walk scale's 3.0 and 6.0, so vcod, which has
+  no noclip or UFO, ports neither. The air scale carries the same two
+  factors (0x1f050-0x1f079).
+- `PM_Accelerate`'s `1 / ps.friction` (0x1ee49-0x1ee5a, the 1.0 at rodata
+  0x7569c over `ps+0x37c`, behind `groundEntityNum != 1023` at 0x1ee36):
+  the module's only store to `ps+0x37c` is `ClientSpawn`'s 1.0
+  (0x3ce4b, `movl $0x3f800000`); the field is the wire's `friction`
+  (offset 892). VERIFIED, disassembly. INFERRED: the factor is exactly 1
+  and the rate it scales is already a stored float, so the multiply and
+  its store change no bit, and vcod leaves it out (`pmove::accelerate_stored`).
+  vcod's server sends `friction` 1.0 as well.
 - `PM_StepSlideMove` (0x29942) forms the step-up's end on the stack
   (`stepSize + 1` plus the start's z, 0x29ccf-0x29ce2) and stores what
   the up trace left, `(stepSize + 1) * fraction - 1` (0x29d46-0x29d5f);
