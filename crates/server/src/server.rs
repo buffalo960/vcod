@@ -689,7 +689,7 @@ fn vehicle_fire(
             .weapons
             .get(shot.weapon)
             .map(crate::game::combat::Falloff::of);
-        // `CMD_VEH_FireTurret` and kin pass the vehicle (0x7ee02): the
+        // `CMD_VEH_FireTurret` and kin pass the vehicle (0x8ee02): the
         // round skips it and its riders, owned by it.
         let pass = crate::game::combat::Pass {
             ent: id.0,
@@ -716,12 +716,12 @@ fn vehicle_fire(
                 &mut rt.host.dobj_posed,
                 vcod_common::patch::Arith::for_protocol(rt.host.defs.proto),
             );
-            crate::game::combat::bullet_fire_from(
+            crate::game::combat::bullet_fire_to(
                 shot.attacker,
                 pass,
                 shot.muzzle,
+                shot.end,
                 shot.dir,
-                crate::game::combat::bullet_range(rt.host.defs.proto),
                 shot.damage,
                 shot.rifle_bullet,
                 falloff,

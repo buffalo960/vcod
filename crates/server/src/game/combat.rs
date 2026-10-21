@@ -702,7 +702,7 @@ pub fn rocket_aim(
 
 /// The rocket's spread point 16 out from the origin, normalized as the
 /// protocol's `VectorNormalize` rounds.
-fn rocket_dir(frame: &[Vec3; 3], spread: f32, draw: (f32, f32), arith: Arith) -> Vec3 {
+pub(crate) fn rocket_dir(frame: &[Vec3; 3], spread: f32, draw: (f32, f32), arith: Arith) -> Vec3 {
     let d = spread_point(frame, Vec3::ZERO, spread, ROCKET_REACH, draw, arith);
     match arith {
         Arith::Kept => vcod_common::x87::normalize_in_place(d),
@@ -744,12 +744,13 @@ pub fn aim_frame(aim: [f32; 2]) -> [Vec3; 3] {
 
 /// `base + forward * reach + right * x * k + up * y * k`, `k` the spread's
 /// `tan` times `reach` and `(x, y)` the `gunrandom` draw: `BG_Bullet_Endpos`
-/// (1.1d 0x69624, UO 0x3011c) with `base` the muzzle, the rocket's direction
-/// before its normalize with `base` 0. 1.1d keeps everything past the
+/// (1.1d inline in `Bullet_Fire` 0x690dc, UO 0x3011c) with `base` the
+/// muzzle, the rocket's direction before its normalize with `base` 0, a UO
+/// vehicle gun's with the flash tag's frame. 1.1d keeps everything past the
 /// tangent's float on the x87 stack and rounds each component once; 1.5b
 /// and UO store `k`, the two offsets and each component after every add
 /// (combat doc 2.2).
-fn spread_point(
+pub(crate) fn spread_point(
     frame: &[Vec3; 3],
     base: Vec3,
     spread: f32,
@@ -809,6 +810,46 @@ pub fn bullet_fire_from(
     hitlocs: &HitLocTable,
     bones: Option<&mut BoneTraceCtx>,
 ) -> ShotResult {
+    let end = bullet_end(muzzle, dir, range);
+    bullet_fire_to(
+        shooter,
+        pass,
+        muzzle,
+        end,
+        dir,
+        damage,
+        rifle_bullet,
+        falloff,
+        weapon_name,
+        sims,
+        targets,
+        world,
+        models,
+        hitlocs,
+        bones,
+    )
+}
+
+/// [`bullet_fire_from`] to an end point already worked out: a UO vehicle
+/// gun's `BG_Bullet_Endpos` with its spread (`vehicle::fire::prepare`).
+#[allow(clippy::too_many_arguments)]
+pub fn bullet_fire_to(
+    shooter: usize,
+    pass: Pass,
+    muzzle: Vec3,
+    end: Vec3,
+    forward: Vec3,
+    damage: i32,
+    rifle_bullet: bool,
+    falloff: Option<Falloff>,
+    weapon_name: &str,
+    sims: &[(usize, &ClientSim)],
+    targets: &[ShotTarget],
+    world: Option<&CollisionWorld>,
+    models: &[PlacedModel],
+    hitlocs: &HitLocTable,
+    bones: Option<&mut BoneTraceCtx>,
+) -> ShotResult {
     let round = Round {
         damage,
         rifle_bullet,
@@ -816,9 +857,8 @@ pub fn bullet_fire_from(
         uo: None,
         falloff,
     };
-    let end = bullet_end(muzzle, dir, range);
     fire_round(
-        shooter, pass, muzzle, end, dir, round, sims, targets, world, models, hitlocs, bones,
+        shooter, pass, muzzle, end, forward, round, sims, targets, world, models, hitlocs, bones,
     )
 }
 
@@ -2497,6 +2537,100 @@ mod tests {
             let draw = (f32::from_bits(draw[0]), f32::from_bits(draw[1]));
             let e = spread_point(&frame, muzzle, spread, UO_BULLET_RANGE, draw, Arith::Stored);
             assert_eq!(e.to_array().map(f32::to_bits), end);
+        }
+    }
+
+    /// A 1.1d panzerfaust round read under gdb on the retail server
+    /// (`probe_panzer`, combat doc 13.6): the spread, `gunrandom`'s pair,
+    /// the tangent's float, the frame, the point 16 out kept on the x87
+    /// stack, the twice-normalized direction and `trDelta` at 2800.
+    #[test]
+    fn a_11_rocket_leaves_on_retails_bits() {
+        let v = |h: [u32; 3]| Vec3::from_array(h.map(f32::from_bits));
+        let bits = |v: Vec3| v.to_array().map(f32::to_bits);
+        let spread = f32::from_bits(0x40600000);
+        let draw = (f32::from_bits(0xbcf26ff0), f32::from_bits(0xbe91d118));
+        let t = (f64::from(spread) * std::f64::consts::PI / 180.0).tan() as f32;
+        assert_eq!(t.to_bits(), 0x3d7a85a8);
+        let frame = [
+            v([0x3f7fff8d, 0xbb6e84eb, 0x3a357443]),
+            v([0xbb6e84ef, 0xbf7fff91, 0x80000000]),
+            v([0xba3573f4, 0x36291050, 0x3f7ffffc]),
+        ];
+        let pre = spread_point(&frame, Vec3::ZERO, spread, ROCKET_REACH, draw, Arith::Kept);
+        assert_eq!(bits(pre), [0x41800063, 0xbcefcbd2, 0xbe8906ae]);
+        let dir = crate::game::missile::rocket_launch_dir(
+            rocket_dir(&frame, spread, draw, Arith::Kept),
+            false,
+        );
+        assert_eq!(bits(dir), [0x3f7ff6ba, 0xbaefc269, 0xbc89014e]);
+        assert_eq!(
+            bits((dir * 2800.0).trunc()),
+            [0x452ef000, 0xc0a00000, 0xc2380000]
+        );
+    }
+
+    /// 1.1d kar98k rounds read under gdb on the retail server
+    /// (`--save-combat`, combat doc 2.2): `FireWeapon`'s inline end point,
+    /// kept on the x87 stack and rounded once per component, for three
+    /// standing hip rounds, a crouched and a prone one, each at a spread
+    /// scale of 0.
+    #[test]
+    fn an_11_rounds_spread_lands_on_retails_bits() {
+        let v = |h: [u32; 3]| Vec3::from_array(h.map(f32::from_bits));
+        let bits = |v: Vec3| v.to_array().map(f32::to_bits);
+        let frame = [
+            v([0xb33bbd2e, 0xbf800000, 0x80000000]),
+            v([0xbf800000, 0x333bbd2e, 0x80000000]),
+            v([0x80000000, 0, 0x3f800000]),
+        ];
+        // spread, draw, tan, muzzle z, end
+        type Row = (u32, [u32; 2], u32, u32, [u32; 3]);
+        let rows: [Row; 5] = [
+            (
+                0x40000000,
+                [0xbdd526b5, 0x3f1dd6fc],
+                0x3d0f0915,
+                0x435c0000,
+                [0x440d717d, 0xc5dd4800, 0x43c630b0],
+            ),
+            (
+                0x40000000,
+                [0xbf2882b3, 0x3e255b42],
+                0x3d0f0915,
+                0x435c0000,
+                [0x44351378, 0xc5dd4800, 0x438518f6],
+            ),
+            (
+                0x40000000,
+                [0xbe8a354e, 0xbe2833f6],
+                0x3d0f0915,
+                0x435c0000,
+                [0x44194e26, 0xc5dd4800, 0x432d0281],
+            ),
+            (
+                0x3fcccccd,
+                [0xbc5a4688, 0xbdc73b48],
+                0x3ce4d2c3,
+                0x43480000,
+                [0x4406c315, 0xc5dd4800, 0x4331bd66],
+            ),
+            (
+                0x3fa978d5,
+                [0xbf042bd4, 0xbcdcb58c],
+                0x3cbd55f3,
+                0x432f0000,
+                [0x441e7029, 0xc5dd4800, 0x4329e61f],
+            ),
+        ];
+        for (spread, draw, tan, z, end) in rows {
+            let spread = f32::from_bits(spread);
+            let t = (f64::from(spread) * std::f64::consts::PI / 180.0).tan() as f32;
+            assert_eq!(t.to_bits(), tan);
+            let muzzle = v([0x44060000, 0x448ae000, z]);
+            let draw = (f32::from_bits(draw[0]), f32::from_bits(draw[1]));
+            let e = spread_point(&frame, muzzle, spread, BULLET_RANGE, draw, Arith::Kept);
+            assert_eq!(bits(e), end);
         }
     }
 

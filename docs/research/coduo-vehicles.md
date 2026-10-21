@@ -1537,17 +1537,71 @@ face.
   flag (`Vehicle::barrel_blocked`, the barrel test below). The gunner's
   (0x871a6) notifies `turret_gunner_fire` the same way (VERIFIED
   decompile). The scripts fire on the next frame's threads.
-- `fireTurret` (0x7ee02): from `tag_flash`, the barrel's forward bent
+- `fireTurret` (0x8ee02): from `tag_flash`, the barrel's forward bent
   toward the aim point by at most 5° pitch, 2° yaw; a bullet weapon's
   spread `minSpread + rand * maxSpread`; a projectile weapon goes through
   `Weapon_Artillery_Fire` (0x7b594) to `fire_rocket` (0x5fc74), `trType`
   5 (z falls 400 t²), the speed truncated per axis, the driver credited
   through the vehicle, `MOD_PROJECTILE` direct and `_SPLASH` around;
   event 163 on the vehicle, the hull jolted 0.75 back along `tag_barrel`,
-  the timer `fireTime` (VERIFIED decompile). `fireAltTurret` (0x7f57e)
-  fires from `tag_altfire` (164) and `fireGunner` (0x7fc7a) along
+  the timer `fireTime` (VERIFIED decompile). `fireAltTurret` (0x8f57e)
+  fires from `tag_altfire` (164) and `fireGunner` (0x8fc7a) along
   `tag_secondary_flash` (165); both refuse while overheated, add
   `fireHeat` and hold their loop 200 ms (VERIFIED decompile).
+- **The bend's arithmetic.** `fireTurret` (0x8f0fe..0x8f2ae) takes the
+  aim point less `tag_flash`'s origin, each component stored, through
+  the stored `VectorNormalize` (0x3a1c3); `vectoangles` (0x3aded) of the
+  tag's forward and of that; `AnglesSubtract` (0x3dc11) of the two,
+  pitch clamped to [-5, 5] and yaw to [-2, 2] (f32 at rodata 0xa79cc,
+  0xa79d0, 0xa79d4, 0xa79d8), roll 0; `AnglesSubtract` of the tag's
+  angles and the clamped pair, which wraps the yaw back into
+  [-180, 180]; and `AngleVectors` (0x3b068) of the result for the
+  forward (VERIFIED disassembly). `fireAltTurret` runs the same chain off
+  `tag_altfire` with its own copy of the four limits (0xa79e4..0xa79f0)
+  (VERIFIED decompile and bytes). The bend is skipped where the vehicle's
+  `r.ownerNum` (+0x154) is 0x3ff, the barrel is blocked (`rec+0x270`),
+  or the main gun has two barrels (VERIFIED disassembly, 0x8f0ce..0x8f0f8).
+- **The guns' spread.** All three fire calls hand the round the flash
+  tag's frame: the bent (or straight) forward, the tag's `axis[1]` (its
+  left) where the spread reads its right, its `axis[2]`, and the muzzle
+  (VERIFIED disassembly, 0x8f2d9..0x8f3da). A bullet weapon goes to
+  `Bullet_Fire` with `minSpread + rand() / 2^31 * maxSpread` (weapon
+  `+0x298`, `+0x2a4`; 2^31 at 0xa79dc), so its end point is
+  `BG_Bullet_Endpos`'s stored chain 10000 out (VERIFIED disassembly,
+  0x8f3ec..0x8f44c; INFERRED that it lands on the bits the kar98k's did,
+  cod11-combat.md 2.2: no vehicle MG round was read under gdb). A
+  projectile weapon goes to `Weapon_Artillery_Fire(vehicle, 0.0, frame)`
+  (0x8f459..0x8f471), the bazooka's function with spread 0 and `trType`
+  rewritten to 5 (0x7b6c8): `tan(0)` makes `k` 0, `gunrandom` (0x399e0)
+  still draws its two `rand()`, the point is `forward * 16` stored plus
+  two zero offsets, then the stored `VectorNormalize`, and `fire_rocket`
+  normalizes it again (VERIFIED disassembly, 0x7b594..0x7b6c8).
+- **The shell's bits.** VERIFIED, gdb on retail UO 1.51b (2026-10-21,
+  `client-probes/probe_vehicle_shell` on mp_kharkov with
+  `probe_vehicletype panzeriv_mp`, the driver `--probe-vehicle sit`;
+  dprintfs at 0x8f0ce, 0x8f145, 0x8f17a, 0x8f19c, 0x8f288, 0x8f2b3,
+  0x8f459, 0x7b5e6, 0x7b681, 0x7b6cf). All three shells: the tag's
+  forward (-0.9721, -0.0983, -0.2129), the aim point
+  (-1472.85, 6193.82, -62.38), the bend's angles (12.29, 185.77) and
+  (43.47, 182.98), their difference (-31.18, 2.80) clamped to (-5, 2),
+  the bent angles (17.29, -176.23), the forward
+  (-0.95273, -0.06282, -0.29724). `k` reads 0, and each shell's own
+  `gunrandom` pair leaves the point at 16 times the forward, the
+  direction on the forward's bits and `trDelta` (-9527, -628, -2972), the
+  forward times 10000 truncated. vcod-server runs the chain in
+  `vehicle::fire::bend` and `prepare` (`combat::rocket_dir`, spread 0,
+  `gunrandom` drawn), on those bits to the last one
+  (`vehicle::fire::a_uo_tank_shell_leaves_on_retails_bits`). In
+  `vehicle_shell_ab`'s replay ours poses the tag a few ulps off retail's
+  (forward y 0xbdc941d5 against 0xbdc941b0, muzzle z 0x40e2db70 against
+  0x40e2db6a), so its bent forward's y sits 0x1f ulps off and its z one
+  (VERIFIED, replay): the pose, not the chain. The capture cannot hold
+  the shell's `trDelta`: it strikes the Elefant inside its first frame
+  and is only ever sent exploded, stationary (VERIFIED, capture). Until
+  2026-10-21 it bent through f32 `atan2` and a `%` wrap, left the yaw
+  unwrapped and fired the shell along the bent forward with one
+  normalize; its MG rounds took a disc of their own around the tag's
+  right, not `BG_Bullet_Endpos`.
 - A vehicle round's event parm is its weapon with bit 7 set unless it
   struck a player: the round raises no impact of its own because its
   inflictor (the vehicle) is not its attacker (VERIFIED decompile, 0x7a920;

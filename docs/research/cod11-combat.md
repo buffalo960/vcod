@@ -1633,7 +1633,25 @@ then a float (0x6964d, 0x69653); `k = tan * 8192` and the two offsets
 `x * k`, `y * k` stay on the x87 stack (the `fst` at 0x69683 and 0x69688
 store a copy and keep the unrounded value), and each component of
 `forward * 8192 + muzzle + right * x' + up * y'` is rounded once, at the
-last `fstp` (0x696d4..0x696e5). VERIFIED, 1.5b `Bullet_Endpos` (0x6de44)
+last `fstp` (0x696d4..0x696e5). VERIFIED, 1.1d `Bullet_Fire` (0x690dc)
+does not call `Bullet_Endpos`; it runs the same chain inline: `fptan`
+(0x69105), the double and the float (0x69109, 0x6910f), the offsets
+kept past their `fst` copies (0x6913f, 0x69144), and each component of
+`forward * 8192 + muzzle + right * x' + up * y'` rounded once (0x69186,
+0x69190, 0x691a2) before `Bullet_Fire_Extended` (0x691b4). VERIFIED,
+1.1d `FireWeapon` inlines it once more for a player's round: the spread
+blend `min + (max - min) * scale` stays on the x87 stack into
+`spread * pi / 180` (0x68ecb..0x68f26), then `fptan` (0x68f3a), the
+double and the float (0x68f3e, 0x68f44), and each component rounded once
+(0x68fe5..0x68fed). VERIFIED, gdb on the retail 1.1d server (2026-10-21,
+`--save-combat` with its kar98k on mp_carentan; dprintfs at 0x68f1e,
+0x68f6a and 0x68ff0): three standing rounds at spread 2.0, a crouched one
+at 1.6 and a prone one at 1.324, each at scale 0, read the tangent's
+float, `gunrandom`'s pair, the frame and the end point, which
+`combat::an_11_rounds_spread_lands_on_retails_bits` holds to the bit. A
+round at a scale above 0, where vcod's f32 blend could round the spread
+apart from the stack's, was not read.
+VERIFIED, 1.5b `Bullet_Endpos` (0x6de44)
 and UO `BG_Bullet_Endpos` (0x3011c): `tan` (libm, double) of
 `spread * pi / 180` (UO .rodata 0x9cd10, 0x9cd18) stored as a float
 (0x30150), `k = tan * range` stored (0x30159), `x * k` and `y * k` stored
@@ -6827,6 +6845,17 @@ shot on ours with gdb's `gunrandom` pair (x 0xbea62115, y 0xbf0d3c83,
 point with f32 sums and one glam normalize (1-2 ulps off on every round
 measured) and read the post-shot spread scale (2.1). vcod:
 `combat::rocket_aim`, `missile::rocket_launch_dir`.
+
+VERIFIED, gdb on the retail 1.1d server (2026-10-21, `probe_panzer` on
+mp_carentan, the shooter `--probe-weapsel`; dprintfs at 0x68c90, 0x68cf7
+and 0x68d22): one panzerfaust round at spread 3.5 read `gunrandom`'s pair
+(0xbcf26ff0, 0xbe91d118), the tangent's float 0x3d7a85a8, the frame, the
+point 16 out (0x41800063, 0xbcefcbd2, 0xbe8906ae), the direction after
+`fire_rocket` (0x3f7ff6ba, 0xbaefc269, 0xbc89014e) and `trDelta`
+(2799, -5, -46). The kept arm lands on all of them, the tangent included,
+though 1.1d takes it with `fptan` (0x68c5e) where vcod takes libm's in
+double (`combat::a_11_rocket_leaves_on_retails_bits`). Only one round
+was read.
 
 **The rocket.** VERIFIED, `fire_rocket` (0x54614): `G_Spawn`, `classname`
 `scr_const+0x6e`, `nextthink` `level.time + 30000` (0x54666) with `think`
