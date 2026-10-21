@@ -55,14 +55,15 @@ pub fn normalize_stored(v: Vec3) -> Vec3 {
     (v.as_dvec3() * f64::from(inv)).as_vec3()
 }
 
-/// The engine's `AnglesToAxis` as `CM_TransformedBoxTrace` builds it
-/// (`cod_lnxded` `AngleVectors` 0x8063388, the right inverted by 0x8065c38):
-/// each angle times the double `M_PI * 2 / 360` stored as a float, its
-/// `fsincos` stored as floats, and each axis component's sum of products
-/// kept on the stack and stored once. Rounding every product to a float
-/// instead turns a pitched, yawed and rolled model by a few ulps, and a
-/// slide down its face ends thousandths short (movers doc 22).
-pub fn angles_to_axis(angles: Vec3) -> [Vec3; 3] {
+/// `AngleVectors` as all three Linux servers round it, engine and game
+/// module alike (`cod_lnxded` 0x8063388, 1.5b 0x806759d, UO 0x80674ad;
+/// game.mp 0x3b228, 1.5b 0x33e18, UO 0x3b068): forward, right, up. Each
+/// angle times the double `M_PI * 2 / 360` is stored as a float, its
+/// `fsincos` stored as floats, and each component's sum of products kept on
+/// the stack until one store. Rounding every product to a float instead
+/// turns a pitched, yawed and rolled model by a few ulps, and a slide down
+/// its face ends thousandths short (movers doc 22).
+pub fn angle_vectors(angles: Vec3) -> [Vec3; 3] {
     let sin_cos = |a: f32| {
         let r = f64::from((f64::from(a) * (std::f64::consts::PI * 2.0 / 360.0)) as f32);
         (f64::from(r.sin() as f32), f64::from(r.cos() as f32))
@@ -71,7 +72,25 @@ pub fn angles_to_axis(angles: Vec3) -> [Vec3; 3] {
     let (sy, cy) = sin_cos(angles.y);
     let (sr, cr) = sin_cos(angles.z);
     let forward = DVec3::new(cp * cy, cp * sy, -sp);
-    let left = DVec3::new(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
+    let right = DVec3::new(-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp);
     let up = DVec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-    [forward.as_vec3(), left.as_vec3(), up.as_vec3()]
+    [forward.as_vec3(), right.as_vec3(), up.as_vec3()]
+}
+
+/// `AnglesToAxis` (engine UO 0x806a46e, game.mp 0x3ef3c, 1.5b 0x36ffa, UO
+/// 0x3e24a): forward, left, up, the left `vec3_origin - right`, so a zero
+/// in it is always `+0.0`.
+pub fn angles_to_axis(angles: Vec3) -> [Vec3; 3] {
+    let [f, r, u] = angle_vectors(angles);
+    [f, Vec3::ZERO - r, u]
+}
+
+/// `CreateRotationMatrix` (engine 1.5b 0x8057df6, UO 0x8057c2a, under
+/// `CM_TransformedBoxTrace`; game.mp `G_CreateRotationMatrix` 0x579fc, 1.5b
+/// 0x55943, UO 0x60487): [`angle_vectors`] with the right negated in place
+/// (`VectorInverse`, `cod_lnxded` 0x8065c38). It differs from
+/// [`angles_to_axis`] only in a zero's sign.
+pub fn rotation_matrix(angles: Vec3) -> [Vec3; 3] {
+    let [f, r, u] = angle_vectors(angles);
+    [f, -r, u]
 }

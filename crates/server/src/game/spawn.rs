@@ -5,6 +5,7 @@ use crate::configstrings::CsRange;
 use crate::game::fields::{self, FieldType, Route};
 use crate::game::host::GameHost;
 use vcod_common::net::protocol::CS_NORTHYAW;
+use vcod_common::x87::angles_to_axis;
 use vcod_gsc::{Cx, EntId, ErrorKind, Host, Value};
 
 /// The `spawns` table at 0x7eb30, dumped by `tools/re/dump_builtins.py`.
@@ -711,29 +712,21 @@ fn sweep_rest_pitch(
     const STEP: f32 = -3.0;
     const STEPS: i32 = 30;
 
-    let ent = angles_to_axis(angles);
+    let ent = angles_to_axis(angles.into());
     let to_world = |v: glam::Vec3| glam::Vec3::from(origin) + transform(v, &ent);
     let start = to_world(aim);
     for i in 0..=STEPS {
         let pitch = i as f32 * STEP;
-        let swung = aim + transform(butt - aim, &angles_to_axis([pitch, 0.0, 0.0]));
+        let swung = aim
+            + transform(
+                butt - aim,
+                &angles_to_axis(glam::Vec3::new(pitch, 0.0, 0.0)),
+            );
         if collision.shot_trace(start, to_world(swung)).fraction < 1.0 {
             return pitch;
         }
     }
     DEFAULT_TURRET_PITCH
-}
-
-/// `AnglesToAxis` (0x3ef3c): forward, *negated* right, up.
-pub(crate) fn angles_to_axis(a: [f32; 3]) -> [glam::Vec3; 3] {
-    let (sp, cp) = a[0].to_radians().sin_cos();
-    let (sy, cy) = a[1].to_radians().sin_cos();
-    let (sr, cr) = a[2].to_radians().sin_cos();
-    [
-        glam::Vec3::new(cp * cy, cp * sy, -sp),
-        glam::Vec3::new(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp),
-        glam::Vec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp),
-    ]
 }
 
 /// `MatrixTransformVector` (0x3e220): the vector's components scale the axes.

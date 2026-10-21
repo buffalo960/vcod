@@ -306,7 +306,7 @@ fn carried(step: &Step, at: Vec3, arith: Arith) -> Vec3 {
     if amove == Vec3::ZERO {
         return moved;
     }
-    let axis = vcod_common::pmove::aim::angles_to_axis(amove.to_array()).map(Vec3::from);
+    let axis = vcod_common::x87::rotation_matrix(amove);
     if arith != Arith::Kept {
         // `G_RotatePoint` sums each row on the stack and stores it.
         let org = moved - step.to.0;

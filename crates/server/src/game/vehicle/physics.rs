@@ -11,6 +11,7 @@
 use glam::{DVec3, Vec3};
 
 use super::info::{KIND_ARTILLERY, KIND_FOUR_WHEEL, KIND_TANK, VehicleInfo};
+use vcod_common::x87::angles_to_axis;
 
 /// The step, seconds (0.05 f32 at 0xa6d54 and kin).
 pub const STEP: f32 = 0.05;
@@ -2062,22 +2063,6 @@ fn normalize2(v: Vec3) -> Vec3 {
         return Vec3::ZERO;
     }
     out
-}
-
-/// `AnglesToAxis`: forward, left, up. `AngleVectors` scales by a double
-/// pi/180 and keeps the radians, sines and cosines as floats.
-pub fn angles_to_axis(a: Vec3) -> [Vec3; 3] {
-    let sc = |deg: f32| {
-        let r = f64::from((f64::from(deg) * (std::f64::consts::PI / 180.0)) as f32);
-        (f64::from(r.sin() as f32), f64::from(r.cos() as f32))
-    };
-    let (sp, cp) = sc(a.x);
-    let (sy, cy) = sc(a.y);
-    let (sr, cr) = sc(a.z);
-    let fwd = DVec3::new(cp * cy, cp * sy, -sp).as_vec3();
-    let right = DVec3::new(-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp).as_vec3();
-    let up = DVec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp).as_vec3();
-    [fwd, -right, up]
 }
 
 /// `MatrixTransformVector`: `v`'s components scale the axes.

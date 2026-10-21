@@ -890,7 +890,7 @@ pub fn damage_scale(
     } else {
         [0.0, 0.0]
     };
-    let [f, l, _] = vcod_common::pmove::aim::angles_to_axis(angles);
+    let [f, l, _] = vcod_common::x87::angles_to_axis(angles.into()).map(|v| v.to_array());
     let fwd = v[0] * f[0] + v[1] * f[1];
     // The axis' second row is the left; only its size is read.
     let right = v[0] * l[0] + v[1] * l[1];
@@ -1244,8 +1244,7 @@ pub fn dismount_spot(
     let origin = Vec3::from(v.pose.origin);
     // `AngleVectors` of the record's whole angles (`rec+0xd0`): on a
     // slope the spot tilts with the hull.
-    let [f, r, _] = vcod_common::pmove::aim::angles_to_axis(v.pose.angles);
-    let (fwd, right) = (Vec3::from(f), -Vec3::from(r));
+    let [fwd, right, _] = vcod_common::x87::angle_vectors(v.pose.angles.into());
     let vel = Vec3::from(velocity.unwrap_or([0.0; 3]));
     let mut d = if vel.length() > 0.0 {
         -vel
