@@ -188,6 +188,8 @@ fn run_ours_patched(
     let bsp = vcod_common::bsp::parse(&bytes).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, probe), now);
+    // run_probe.sh's: the closing error ends the probe's thread.
+    sv.set_cvar("developer", "1");
     sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), src);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -678,6 +680,8 @@ fn a_tag_on_an_attached_model_takes_a_link_like_retail() {
     let mut now = Instant::now();
     let probe = "probe_linkattach";
     let mut sv = vcod_server::Server::new(common::cfg(MAP, probe), now);
+    // run_probe.sh's: the closing error ends the probe's thread.
+    sv.set_cvar("developer", "1");
     sv.overlay_script(
         &format!("maps/mp/gametypes/{probe}"),
         include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_linkattach.gsc"),
