@@ -443,6 +443,11 @@ pub struct ClientSim {
     /// clips the spawn set advance in that frame's anim update, a frame ahead
     /// of 1.1's and 1.5's (cod11-turrets.md 13.7). The next end frame takes it.
     pub dobj_ahead: bool,
+    /// `aimSpreadScale / 255` as the last `ClientEndFrame` stored it
+    /// (1.1d `client+0x2240` 0x410f1, UO `client+0x4698`): what a shot's
+    /// cone reads, so a hip shot's own `hipSpreadFireAdd` widens only the
+    /// next one (combat doc 2.1).
+    pub spread_frac: f32,
     /// 1.5's and UO's `ci+0x4a4` / `ci+0x4c0`: until when a crouch or
     /// prone change stretches every blend (`animclock::ChannelClock::update_windowed`).
     stance_window_ms: i32,
@@ -672,6 +677,7 @@ impl ClientSim {
             hud_cleared: false,
             respawned: false,
             dobj_ahead: false,
+            spread_frac: 0.0,
             stance_window_ms: 0,
             max_speed: pmove::SPEED_RUN as i32,
             gravity: pmove::GRAVITY as i32,
@@ -841,6 +847,7 @@ impl ClientSim {
         // `ClientSpawn`'s memset clears the aim block's state with the rest
         // of the client.
         self.aim_state = Default::default();
+        self.spread_frac = 0.0;
         self.spawn_view = [0.0, yaw_deg, 0.0];
         self.kick = Default::default();
         self.gun_kick = Default::default();
@@ -2060,6 +2067,8 @@ impl ClientSim {
             self.ps.speed = self.max_speed as f32;
             self.ps.gravity = self.gravity as f32;
         }
+        // Ahead of `P_DamageFeedback`, so a hit's spread add waits a frame.
+        self.spread_frac = self.ps.aim_spread_scale / 255.0;
         if self.pm_dead || self.damage.taken <= 0 || self.max_health <= 0 {
             return;
         }
@@ -2215,6 +2224,12 @@ impl ClientSim {
         // doc 14.3); without the anim records every clip plays at rate 1
         // from where the channel took it.
         let (mut legs_clock, mut torso_clock) = (self.pose.legs_clock, self.pose.torso_clock);
+        // The legs nodes still weighted after the frame's step: the seat
+        // leaves under one at 0 stand still (`SeatRamp::fade_held`).
+        let weighted: Vec<i32> = match self.seat {
+            Some(_) => legs_clock.layers(now_ms).iter().map(|l| l.index).collect(),
+            None => Vec::new(),
+        };
         let ahead = if std::mem::take(&mut self.dobj_ahead) {
             frametime_ms
         } else {
@@ -2293,6 +2308,7 @@ impl ClientSim {
                 .seat
                 .as_ref()
                 .and_then(|seat| vcod_common::playerpose::seat_inputs(a, legs, seat));
+            seat_ramp.fade_held(|node| weighted.iter().any(|&i| a.index.node_id(i) == Some(node)));
             seat_ramp.set(goal, now_ms, |leaf| a.leaf_motion(leaf));
             self.pose.seat_ramp = seat_ramp;
         }

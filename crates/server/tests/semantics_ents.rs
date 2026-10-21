@@ -361,6 +361,8 @@ fn probe_stale_handles_match_retail() {
         "probe_stale_hud_method",
         "probe_stale_hud_read",
         "probe_stale_hud_write",
+        "probe_stale_self",
+        "probe_stale_self_hud",
     ] {
         let (ours, died) = run_stale_probe(name);
         assert_eq!(ours, retail_probe_lines(name), "{name}");

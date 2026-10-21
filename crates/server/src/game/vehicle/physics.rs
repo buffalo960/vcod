@@ -1671,8 +1671,10 @@ impl Physics {
         let (mut jp, mut jr) = (0.0f32, 0.0f32);
         let j = &mut self.jolt;
         if 0.0 < j.remaining {
-            let ph = (std::f64::consts::PI as f32 * j.phase) / 180.0;
-            let k = (f64::from(ph).sin() as f32) * (j.remaining / j.duration);
+            // The angle is a double (`fldl` pi, 0x867a8): a half turn's
+            // sine is 1.2e-16, which packs to 127.
+            let ph = (std::f64::consts::PI * f64::from(j.phase)) / 180.0;
+            let k = (ph.sin() as f32) * (j.remaining / j.duration);
             jp = k * j.pitch;
             jr = k * j.roll;
             j.remaining -= STEP;
@@ -1879,11 +1881,13 @@ fn clamp_lo_hi(v: f32, lo: f32, hi: f32) -> f32 {
     }
 }
 
-/// `floor(clamp(127 + 127 * deg / 30, 0, 255))`.
+/// `floor(clamp(127 + 127 * deg / 30, 0, 255))`, the sum kept on the x87
+/// stack (0x86864): a sway a hair under 0 packs 126, where an f32 sum
+/// rounds to 127.
 fn pack(deg: f32) -> i32 {
-    let x = 127.0f32 + (127.0f32 * deg) / 30.0;
+    let x = 127.0 + (127.0 * f64::from(deg)) / 30.0;
     let c = if x <= 0.0 || x < 255.0 {
-        if 0.0 < x { f64::from(x) } else { 0.0 }
+        if 0.0 < x { x } else { 0.0 }
     } else {
         255.0
     };
@@ -2116,6 +2120,7 @@ mod tests {
         assert_eq!(pack(30.0), 254);
         assert_eq!(pack(40.0), 255);
         assert_eq!(pack(-0.3), 125);
+        assert_eq!(pack(-5e-7), 126);
     }
 
     /// The constant-rate chase lands on the target inside a step and

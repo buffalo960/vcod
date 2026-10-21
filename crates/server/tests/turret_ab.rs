@@ -204,6 +204,7 @@ fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Ri
         gunner_second,
         None,
         0,
+        None,
         &[],
         None,
     )
@@ -212,7 +213,8 @@ fn build(cvars: &[(&str, &str)], weapon: &str, gunner_second: bool) -> Option<Ri
 /// [`build`] on the paks of `fs`, the server speaking `p`; `gun_info`
 /// swaps the map's stand guns for that weapon file. The server runs
 /// `alone_ms` before the clients connect, and a non-empty `target_cmds`
-/// stamps the target's cmds (`Rig::target_cmds`) from its join on.
+/// stamps the target's cmds (`Rig::target_cmds`) from its join on. A
+/// second gunner joins as `late` says, or with the target.
 #[allow(clippy::too_many_arguments)]
 fn build_on(
     fs: Pk3Fs,
@@ -222,6 +224,7 @@ fn build_on(
     gunner_second: bool,
     gun_info: Option<&str>,
     alone_ms: i64,
+    late: Option<LateGunner>,
     target_cmds: &[i32],
     target_spawn: Option<([f32; 3], [f32; 3])>,
 ) -> Option<Rig> {
@@ -243,7 +246,9 @@ fn build_on(
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(fs).expect("load the scripts");
-    if let Some(pin) = target_spawn {
+    if let Some(late) = late {
+        sv.pin_spawns(vec![vec![target_spawn], vec![Some(late.spawn)]]);
+    } else if let Some(pin) = target_spawn {
         sv.pin_spawns(vec![vec![Some(pin)]]);
     }
     common::run_alone(&mut sv, &mut now, alone_ms);
@@ -251,7 +256,7 @@ fn build_on(
     let qt = Rc::new(RefCell::new(Queues::default()));
     assert!(gunner_second || target_cmds.is_empty());
     let (gunner, target) = if gunner_second {
-        let (t, g, _, _) = common::join_pair_stamped(
+        let (t, g, _, _) = common::join_pair_staggered(
             &mut sv,
             &qt,
             &qg,
@@ -259,6 +264,7 @@ fn build_on(
             ("axis", "kar98k_mp"),
             ("allies", weapon),
             target_cmds,
+            late.map_or(0, |l| l.after_ms),
         );
         (g, t)
     } else {
@@ -294,7 +300,9 @@ fn build_on(
         let snap = rig.target.snapshots().newest().expect("a target snapshot");
         rig.target_last = snap.ps.field_i32(p, "commandTime");
     }
-    for _ in 0..40 {
+    // A late gunner's capture starts soon after his spawn.
+    let settle = if late.is_some() { 10 } else { 40 };
+    for _ in 0..settle {
         let h = rig.still();
         rig.frame([h, h]);
     }
@@ -1705,21 +1713,34 @@ fn parse(text: &str) -> Capture {
     }
 }
 
+/// A spawn's origin and angles, as [`Server::pin_spawns`] takes it.
+type Spawn = ([f32; 3], [f32; 3]);
+
+/// A gunner who joins after the target, as retail's capture client did: he
+/// connects `after_ms` after it and spawns at `spawn`.
+#[derive(Clone, Copy)]
+struct LateGunner {
+    after_ms: i64,
+    spawn: Spawn,
+}
+
 /// The rig as the capture's recipe left retail, on the paks of `fs`, the
 /// server speaking `p`: the gunner joined with the header's weapon, as
 /// client 1, standing where retail's did, the start rebased at most
 /// `rebase_max` on any axis (`docs/research/cod11-turrets.md` 13.1).
 fn rig_on(cap: &Capture, fs: Pk3Fs, p: &'static Protocol, rebase_max: f32) -> Option<Rig> {
-    rig_after(cap, fs, p, rebase_max, 0)
+    rig_after(cap, fs, p, rebase_max, 0, None)
 }
 
-/// [`rig_on`] with the server alone for `alone_ms` before the joins.
+/// [`rig_on`] with the server alone for `alone_ms` before the joins and the
+/// gunner joining as `late` says.
 fn rig_after(
     cap: &Capture,
     fs: Pk3Fs,
     p: &'static Protocol,
     rebase_max: f32,
     alone_ms: i64,
+    late: Option<LateGunner>,
 ) -> Option<Rig> {
     let mut rig = build_on(
         fs,
@@ -1729,6 +1750,7 @@ fn rig_after(
         true,
         None,
         alone_ms,
+        late,
         &cap.target_cmds,
         cap.target_spawn,
     )?;
@@ -1780,21 +1802,37 @@ fn place_ms<'a>(mut log: impl Iterator<Item = &'a str>, num: u32) -> Option<i32>
 /// past `wait`, so every replayed frame runs at the level time of the
 /// retail snapshot it pairs with. The target's idle runs from its spawn
 /// and a movement clip's start phase off the level time (`animclock`), so
-/// the pose a round meets is retail's (`cod11-turrets.md` 13.3).
+/// the pose a round meets is retail's (`cod11-turrets.md` 13.3). With
+/// `gunner`, retail's `PROBE place` time for client 1 and the spawn to pin
+/// him to, the gunner joins late enough to be placed then too, so his own
+/// idle runs from retail's spawn (13.9).
 fn rig_aligned(
     cap: &Capture,
     fs: &impl Fn() -> Option<Pk3Fs>,
     p: &'static Protocol,
     rebase_max: f32,
     place: i32,
+    gunner: Option<(i32, Spawn)>,
 ) -> Option<Rig> {
+    let gunner_place = gunner.map(|g| g.0);
     let mut alone = place as i64 - JOIN_TO_PLACE_MS;
-    for _ in 0..2 {
-        let mut rig = rig_after(cap, fs()?, p, rebase_max, alone)?;
-        let ours = place_ms(rig.sv.script_log().iter().map(|l| l.as_str()), 0)
+    let mut after = gunner_place.map_or(0, |g| (g - place) as i64);
+    for _ in 0..3 {
+        let late = gunner.map(|(_, spawn)| LateGunner {
+            after_ms: after,
+            spawn,
+        });
+        let mut rig = rig_after(cap, fs()?, p, rebase_max, alone, late)?;
+        let log = rig.sv.script_log();
+        let ours = place_ms(log.iter().map(|l| l.as_str()), 0)
             .expect("our PROBE place line for the target");
-        if ours != place {
+        let ours_gunner = place_ms(log.iter().map(|l| l.as_str()), 1);
+        let gunner_off = gunner_place
+            .zip(ours_gunner)
+            .map_or(0, |(g, o)| (g - o) as i64);
+        if ours != place || gunner_off != 0 {
             alone += (place - ours) as i64;
+            after += gunner_off - (place - ours) as i64;
             continue;
         }
         let first = cap
@@ -1815,7 +1853,7 @@ fn rig_aligned(
         rig.aligned = true;
         return Some(rig);
     }
-    panic!("the target's placement never landed on retail's {place}");
+    panic!("the placements never landed on retail's {place} and {gunner_place:?}");
 }
 
 /// Every `serverTime` a `--probe-fall` client's `CMDS` lines list, in send
@@ -2165,6 +2203,7 @@ fn the_victim_capture_matches_retail_on_mp_carentan() {
         &PROTOCOL_V1,
         REBASE_MAX_VICTIM,
         place,
+        None,
     ) else {
         return;
     };
@@ -2194,6 +2233,7 @@ fn the_142_step_off_the_sandbags_matches_retail() {
         &PROTOCOL_V1,
         REBASE_MAX_VICTIM,
         place,
+        None,
     ) else {
         return;
     };
@@ -2237,7 +2277,7 @@ fn spawn_gate(
         ..parse(&read(&path("")))
     };
     let place = place_ms(read(&path("-script")).lines(), 0).expect("retail's PROBE place");
-    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
+    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place, None) else {
         return;
     };
     if p.version == PROTOCOL_V22.version {
@@ -2325,7 +2365,7 @@ fn hit_gate(
         ..parse(&read(&path("")))
     };
     let place = place_ms(script.lines(), 0).expect("retail's PROBE place");
-    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
+    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place, None) else {
         return;
     };
     let ours = replay(&mut rig, &cap);
@@ -2533,9 +2573,17 @@ fn gungrid_rows<'a>(
     rows
 }
 
+/// Where the gunner-grid gates spawn the gunner: `probe_turret`'s spot 40
+/// behind the gun, on the ground. Retail's capture logs no `spawnat` for
+/// him; its first snapshot's `legsAnim` (the idle, toggle set) says his
+/// spawn set the idle once, as a spawn on flat ground does, where our
+/// random pick spins up a walk first (cod11-turrets.md 13.9).
+const GUNNER_SPAWN: Spawn = ([1738.2423, 1860.1884, -23.875], [0.0, 229.0, 0.0]);
+
 /// The gunner-grid captures (`-gungrid-*`): the hit-grid recipe with
 /// `probe_gungrid`, replayed as [`hit_gate`] does and held to the gunner's
-/// own grid alone; the target's rows are the hit-grid gates'.
+/// own grid alone; the target's rows are the hit-grid gates'. The gunner
+/// joins when retail's did, his idle running from that spawn.
 fn gungrid_gate(
     tag: &str,
     fs: impl Fn() -> Option<Pk3Fs>,
@@ -2560,7 +2608,9 @@ fn gungrid_gate(
         ..parse(&read(&path("")))
     };
     let place = place_ms(script.lines(), 0).expect("retail's PROBE place");
-    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place) else {
+    let gunner = place_ms(script.lines(), 1).expect("retail's PROBE place for the gunner");
+    let late = Some((gunner, GUNNER_SPAWN));
+    let Some(mut rig) = rig_aligned(&cap, &fs, p, REBASE_MAX_VICTIM, place, late) else {
         return;
     };
     replay(&mut rig, &cap);
@@ -2605,18 +2655,10 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
         "hitfine-uo",
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
-        &[
-            ("[hit] 30150 0 ", MUZZLE_GAP),
-            ("[hit] 30200 0 ", KNOCKBACK_GAP),
-        ],
+        &[("[hit] 30200 0 ", KNOCKBACK_GAP)],
     );
 }
 
-/// A wound a float step off retail's: the round's muzzle. Ours reaches
-/// `tag_flash`'s bind-pose distance along the aim from `tag_player` turned
-/// about `tag_aim`; retail poses `tag_flash` on its own chain, which puts it
-/// up to 0.006 nearer (`cod11-turrets.md` 13.8).
-const MUZZLE_GAP: &str = "the muzzle's reach off the bind pose (turrets doc 13.8)";
 /// A kill on the knockback's first frame: the body turned about a
 /// hundredth of a degree off retail's, cause not found (`cod11-turrets.md`
 /// 13.6).
@@ -2643,17 +2685,19 @@ const GUNGRID_15: &[(&str, &str)] = &[
     ("probe_head", "basehead_axis_a_09"),
 ];
 
-/// The eight frames after a mount (from standing, or from a crouch in the
-/// `crouch` phase), while the legs blend from the idle into the aim group:
-/// every cell 1 to 10 units off (cod11-turrets.md 13.9, "What is left").
-const GUNGRID_MOUNT_GAP: &str = "the mount's blend into the aim group (turrets doc 13.9)";
+/// The re-mount from a crouch in the `crouch` phase: the head-height cells
+/// (row 54) 0.1 to 0.14 off for six frames on UO, and one cell on its first
+/// frames (1.7 on UO, 0.15 and 0.27 on 1.5b) (cod11-turrets.md 13.9, "What
+/// is left").
+const GUNGRID_CROUCH_GAP: &str = "the crouched re-mount's few cells (turrets doc 13.9)";
 /// One cell (row 42, 12 right) 2.45 nearer on ours on every frame the
-/// barrel rests at the yaw sweep's right arc (2.6 on UO's first), the same on 1.5b and UO
-/// (turrets doc 13.9, "What is left").
+/// barrel rests at the yaw sweep's right arc (2.6 on UO's first), the same on 1.5b and UO:
+/// ours grazes `bip01 r finger22`'s box 0.22 deep, retail meets the hand's
+/// box behind it (turrets doc 13.9, "What is left").
 const GUNGRID_ARC_GAP: &str = "one edge cell at the right arc (turrets doc 13.9)";
-/// A single cell on one frame of the yaw or pitch sweep, 0.1 to 1.6 off
-/// (turrets doc 13.9, "What is left").
-const GUNGRID_SWEEP_GAP: &str = "one edge cell mid-sweep (turrets doc 13.9)";
+/// A single cell on one frame of the mount, the yaw or the pitch sweep, 0.1
+/// to 1.6 off (turrets doc 13.9, "What is left").
+const GUNGRID_SWEEP_GAP: &str = "one edge cell on one frame (turrets doc 13.9)";
 
 /// A firing gunner's own pose on UO, every frame he mans the gun: his fire
 /// leaves on their sync group's node time, and the aim group blending out
@@ -2666,10 +2710,17 @@ fn the_gunner_grid_capture_matches_uo_on_mp_carentan() {
         &PROTOCOL_V22,
         GUNGRID_UO,
         &[
-            ("[gungrid] mount ", GUNGRID_MOUNT_GAP),
-            ("[gungrid] crouch ", GUNGRID_MOUNT_GAP),
+            ("t=33800 cell 9:", GUNGRID_CROUCH_GAP),
+            ("t=33800 cell 13:", GUNGRID_CROUCH_GAP),
+            ("t=33900 cell 22:", GUNGRID_CROUCH_GAP),
+            ("t=33900 cell 23:", GUNGRID_CROUCH_GAP),
+            ("t=33950 cell 23:", GUNGRID_CROUCH_GAP),
+            ("t=34000 cell 22:", GUNGRID_CROUCH_GAP),
+            ("t=34050 cell 22:", GUNGRID_CROUCH_GAP),
+            ("t=34100 cell 22:", GUNGRID_CROUCH_GAP),
             ("cell 10: retail Some(37.2635", GUNGRID_ARC_GAP),
             ("t=22050 cell 10:", GUNGRID_ARC_GAP),
+            ("t=20450 cell 14:", GUNGRID_SWEEP_GAP),
             ("t=21100 cell 17:", GUNGRID_SWEEP_GAP),
             ("t=24850 cell 23:", GUNGRID_SWEEP_GAP),
             ("t=24950 cell 18:", GUNGRID_SWEEP_GAP),
@@ -2689,9 +2740,11 @@ fn the_gunner_grid_capture_matches_15b_on_mp_carentan() {
         &PROTOCOL_V6,
         GUNGRID_15,
         &[
-            ("[gungrid] mount ", GUNGRID_MOUNT_GAP),
-            ("[gungrid] crouch ", GUNGRID_MOUNT_GAP),
+            ("t=32550 cell 13:", GUNGRID_CROUCH_GAP),
+            ("t=32600 cell 13:", GUNGRID_CROUCH_GAP),
             ("cell 10: retail Some(37.2635", GUNGRID_ARC_GAP),
+            ("t=19050 cell 18:", GUNGRID_SWEEP_GAP),
+            ("t=19100 cell 14:", GUNGRID_SWEEP_GAP),
             ("t=20200 cell 5:", GUNGRID_SWEEP_GAP),
             ("t=20450 cell 15:", GUNGRID_SWEEP_GAP),
         ],
@@ -2705,10 +2758,7 @@ fn the_hitgrid_capture_matches_retail_on_mp_carentan() {
         vcod_common::testing::game_fs_11,
         &PROTOCOL_V1,
         HEAD_HITGRID,
-        &[
-            ("[hit] 30400 0 ", MUZZLE_GAP),
-            ("[hit] 30450 0 ", KNOCKBACK_GAP),
-        ],
+        &[("[hit] 30450 0 ", KNOCKBACK_GAP)],
     );
 }
 
@@ -2766,10 +2816,7 @@ fn the_grounded_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID_GROUND,
-        &[
-            ("[hit] 30350 0 ", MUZZLE_GAP),
-            ("[hit] 30400 0 ", KNOCKBACK_GAP),
-        ],
+        &[("[hit] 30400 0 ", KNOCKBACK_GAP)],
     );
 }
 
@@ -2820,6 +2867,7 @@ fn a_15_match_timeout_holds_the_gunner_where_he_stands() {
         false,
         None,
         0,
+        None,
         &[],
         None,
     )
@@ -2960,6 +3008,7 @@ fn a_gunner_never_meets_his_own_round() {
             false,
             Some(info),
             0,
+            None,
             &[],
             None,
         )
@@ -3023,6 +3072,7 @@ fn a_gunner_spawned_off_the_gun(fs: Pk3Fs, p: &'static Protocol, fixture: &str) 
         true,
         None,
         0,
+        None,
         &[],
         None,
     )

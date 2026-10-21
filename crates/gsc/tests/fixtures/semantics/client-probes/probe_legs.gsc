@@ -13,9 +13,22 @@
 //	the walk on the same level time: a movement clip's first phase is read
 //	off it (cod11-movers.md 15).
 //	Run by tools/run_probe.sh with a --save-legs client.
+//	+set probe_legs_spawn x_y deletes every other mp_deathmatch_spawn.
 
 main()
 {
+	// +set probe_legs_spawn x_y keeps only the deathmatch spawnpoint
+	// there, so the walk starts from a known spawn.
+	keep = getcvar("probe_legs_spawn");
+	if (keep != "")
+	{
+		points = getentarray("mp_deathmatch_spawn", "classname");
+		for (i = 0; i < points.size; i++)
+		{
+			if ((int)points[i].origin[0] + "_" + (int)points[i].origin[1] != keep)
+				points[i] delete();
+		}
+	}
 	thread watch_players();
 	maps\mp\gametypes\dm::main();
 }

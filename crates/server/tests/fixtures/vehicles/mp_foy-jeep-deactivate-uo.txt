@@ -1,0 +1,12 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-21: the PROBE lines of
+# client-probes/probe_jeepdeact on mp_foy, no client joined.
+# COD_VERSION=uo PORT=34491 SECS=40 tools/run_probe.sh client-probes/probe_jeepdeact mp_foy
+# The jeep's 20 s self-destruct timer is due at 22050; the jeep is freed by
+# 13200 and the server runs past the timer with no script error in its
+# console: the free ended the timer's thread.
+PROBE timer 2050 504 willyjeep_mp 20 0 all
+PROBE kill 2550 2900
+PROBE death 2550
+PROBE explode 12550
+PROBE gone 13200
+PROBE alive 24550

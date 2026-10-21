@@ -282,7 +282,7 @@ fn set_origin_moves_a_player_a_unit_up_and_flips_the_teleport_bit() {
         now += Duration::from_millis(FRAME_MS as u64);
         ca.send_frame(&crate::common::echo_weapon(&ca, &NULL_USERCMD));
         cb.send_frame(&crate::common::echo_weapon(&cb, &NULL_USERCMD));
-        let (ea, eb) = step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
+        let (ea, eb, _) = common::step_pair_joining(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
             for e in events {
                 if let NetEvent::ServerCommand(tokens) = e {

@@ -456,13 +456,23 @@ struct Rig {
 
 impl Rig {
     fn step(&mut self, cmds: &[Option<UserCmd>]) -> Vec<Vec<NetEvent>> {
+        self.step_ordered(cmds, false)
+    }
+
+    /// [`Rig::step`] handing the packets to the server last peer first when
+    /// `reversed`.
+    fn step_ordered(&mut self, cmds: &[Option<UserCmd>], reversed: bool) -> Vec<Vec<NetEvent>> {
         self.now += Duration::from_millis(50);
         for (p, c) in self.peers.iter_mut().zip(cmds) {
             if let Some(c) = c {
                 p.cl.send_frame(c);
             }
         }
-        for p in &self.peers {
+        let mut order: Vec<&Peer> = self.peers.iter().collect();
+        if reversed {
+            order.reverse();
+        }
+        for p in order {
             let pending: Vec<Vec<u8>> = p.q.borrow_mut().to_server.drain(..).collect();
             for pkt in pending {
                 self.sv.handle_packet(p.addr, &pkt, self.now);
@@ -509,7 +519,13 @@ fn joined(spectator: bool) -> Option<Rig> {
     ];
     for _ in 0..600 {
         let cmds = vec![Some(NULL_USERCMD); rig.peers.len()];
-        let events = rig.step(&cmds);
+        // Once the pair is in, the walker's packets go ahead of the
+        // target's, so the target answers and spawns first
+        // (`common::join_pair_stamped`). The spectator sends no answer.
+        let entered = rig.peers[first..]
+            .iter()
+            .all(|p| p.cl.state() == vcod_common::net::NetState::Active);
+        let events = rig.step_ordered(&cmds, entered);
         let now = rig.now;
         for (k, join) in joins.iter_mut().enumerate() {
             for e in &events[first + k] {

@@ -1429,6 +1429,20 @@ other `min + (hipSpreadMax - min) * client->0x2240` where `min` is
 `BG_GetMinSpreadForWeapon(ps, weapon, level.time)`. INFERRED: the `adsSpread`
 arm is the one an equal comparison takes.
 
+VERIFIED, UO `ClientEndFrame` (0x432b6): `client+0x4698` is
+`ps->aimSpreadScale` (`ps+0x628`) over a double 255.0, stored as a float,
+ahead of its `P_DamageFeedback` call, and UO's `FireWeapon` (0x7bd05)
+reads it as its blend. INFERRED: on all three servers a shot reads
+the scale the last end frame left, so a hip shot's own `hipSpreadFireAdd`
+(1.5, step 8) widens only the next shot and a hit's feedback add the
+frame after it. VERIFIED, `snapshots-uo-bazooka-draw.bin` with gdb on the
+same run (2026-10-21): the shooter's `aimSpreadScale` reads 0 on every
+snapshot before the shot and 91.8 on the shot's own, and the rocket left
+at a spread of 7.0, `bazooka_mp`'s `hipSpreadStandMin` (its
+`hipSpreadMax` 12, `hipSpreadFireAdd` 0.4): the scale the shot read was
+0. vcod read the post-add scale until 2026-10-21 (9.0 here); it
+keeps the end frame's in `ClientSim::spread_frac`.
+
 `BG_GetMinSpreadForWeapon` `0x37114`, read with `tools/re/annotate_func.py`
 on 2026-09-27 (field names as in `cod11-mantle.md`, "The eye through a
 stance change"). VERIFIED: it compares `viewHeightCurrent` (ps+0xD0, float)
@@ -1612,6 +1626,31 @@ VERIFIED, United Offensive's `BG_Bullet_Endpos` (`game.mp.uo.i386.so`
 product on the x87 stack. 1.5b's `Bullet_Endpos` (0x6de56) keeps 8192.
 Every UO `Bullet_Fire` and the artillery strike go through it
 (cod11-turrets.md 13.8). vcod: `combat::bullet_range`.
+
+**The rounding.** VERIFIED, 1.1d `Bullet_Endpos` (0x69624): `fptan` of
+`spread * pi / 180` (.rodata 0x79cf8, 0x79d00) is stored as a double and
+then a float (0x6964d, 0x69653); `k = tan * 8192` and the two offsets
+`x * k`, `y * k` stay on the x87 stack (the `fst` at 0x69683 and 0x69688
+store a copy and keep the unrounded value), and each component of
+`forward * 8192 + muzzle + right * x' + up * y'` is rounded once, at the
+last `fstp` (0x696d4..0x696e5). VERIFIED, 1.5b `Bullet_Endpos` (0x6de44)
+and UO `BG_Bullet_Endpos` (0x3011c): `tan` (libm, double) of
+`spread * pi / 180` (UO .rodata 0x9cd10, 0x9cd18) stored as a float
+(0x30150), `k = tan * range` stored (0x30159), `x * k` and `y * k` stored
+(0x30174, 0x3017d), and the end point stored after each of its three adds:
+`forward * range + muzzle` (0x30193), then `+ right * x'` (0x301da), then
+`+ up * y'` (0x30225). VERIFIED, gdb on retail UO 1.51b (2026-10-21,
+`probe_uofx` with its kar98k, three hip rounds at spread 2.0): `k`
+0x43ae9a96 and the three end points, which
+`combat::a_uo_rounds_spread_lands_on_retails_bits` holds to the bit.
+VERIFIED, UO `AngleVectors` (0x3b068): each angle times the double
+pi/180 (.rodata 0x9dad0) stored as float radians, `fsincos` (0x3f464)
+storing the sine and the cosine, every component stored once; the right
+vector's -1.0 is .rodata 0x9dad8. INFERRED: with roll 0 (`CalcMuzzlePoints`
+reads `ps+0xf0`, the view's roll) every component is one product of two
+stored floats, so 1.1d, 1.5b and UO give the same frame; `right.z` is
+`-sin(0) * cos(pitch)`, a negative zero (VERIFIED in gdb:
+0x80000000). vcod: `combat::aim_frame`, `combat::spread_point`.
 
 VERIFIED, `FireWeapon` `0x68f2c`: the `damage` argument the shot carries into
 `Bullet_Fire_Extended` is `weaponDef->damage` (`0x1C0`), loaded straight from
@@ -2599,7 +2638,9 @@ release takes the run back 100-200 ms into its blend to the idle. On
 both servers the run's bones then go on from the run's own time:
 `legs_ab`'s `a_body_stopping_and_going_is_posed_like_retail_on_15` /
 `_on_uo` match every row from the first stop on to 0.05 units and 0.3
-degrees, and with `animclock::restart_weighted_nodes` forcing 1.1's
+degrees (and, since 2026-10-21, the settle and the first run too, with
+the spawn idle dated as cod11-movers.md 15, "The spawn idle on 1.5 and
+UO", has it), and with `animclock::restart_weighted_nodes` forcing 1.1's
 restart the same replays miss 83 (1.5b) and 78 (UO) rows from the first
 go on, up to 29 units and 97 degrees. A strafe swap (right, 150 ms
 left, right) takes the right strafe back the same way.
@@ -6614,6 +6655,39 @@ direction. VERIFIED, `snapshots-panzer-wall.bin`: the shooter, standing
 still facing +x, slid back 1.6, 1.1 and 0.4 on x over the three snapshots
 from the shot's, then stopped. INFERRED: that is 64 units/s spent by
 ground friction.
+
+**The direction's bits.** VERIFIED, 1.1d (0x68c40..0x68cf4): the tangent
+goes through a double and a float (0x68c62, 0x68c70) as in
+`Bullet_Endpos`, and `k`, both offsets and each component's
+`forward * 16 + right * x' + up * y'` stay on the x87 stack until the
+component's one store. VERIFIED, 1.5b (0x6e6bc) and UO (0x7b3da): `tan`
+in double stored as a float (UO 0x7b40e), `k` stored (0x7b417), `x * k`
+and `y * k` stored (0x7b432, 0x7b43b), `forward * 16` stored (0x7b446),
+then `+ right * x'` (0x7b46f) and `+ up * y'` (0x7b4a2) each stored, and
+the stored `VectorNormalize` (0x3a1c3). VERIFIED: `fire_rocket`
+normalizes the direction once more before it scales it by
+`projectileSpeed` (1.1d 0x54627, 1.5b 0x5559a, UO 0x5fc8c), in place, so
+the launcher's local holds the twice-normalized direction once
+`fire_rocket` returns. On UO the second normalize moves a last bit: gdb on
+retail UO 1.51b (2026-10-21; `probe_uofx` with `bazooka_mp` from the hip
+along (0, 0), and `probe_skyshot`'s sky part twice along (280.15,
+46.25)) read the point before the first normalize (0x7b4c7), the
+direction and the rocket's `trDelta` after `fire_rocket` (0x7b508), and
+one normalize of the second and third rounds' points comes out 1-2 ulps
+short of the direction on each axis where two give it. VERIFIED: the frame, the stored offsets, the
+pre-normalize point, the direction and `trDelta`
+(`combat::a_uo_rocket_leaves_on_retails_bits`). The same run's
+spectator capture is `net/snapshots-uo-bazooka-draw.bin`
+(`--capture-tag uo-bazooka-draw`, the `*-uo-bazooka.bin` recipe of
+coduo-diff.md 19 on port 34531 under gdb); its rocket's `trBase` and
+`trDelta` match gdb's, and
+`uo_weapons_ab::the_bazooka_rocket_leaves_on_retails_bits` replays the
+shot on ours with gdb's `gunrandom` pair (x 0xbea62115, y 0xbf0d3c83,
+`Server::pin_spread_draws`) and sends both on retail's bits. Until
+2026-10-21 vcod built the rocket's direction off the bullet's 8192 end
+point with f32 sums and one glam normalize (1-2 ulps off on every round
+measured) and read the post-shot spread scale (2.1). vcod:
+`combat::rocket_aim`, `missile::rocket_launch_dir`.
 
 **The rocket.** VERIFIED, `fire_rocket` (0x54614): `G_Spawn`, `classname`
 `scr_const+0x6e`, `nextthink` `level.time + 30000` (0x54666) with `think`

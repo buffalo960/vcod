@@ -682,7 +682,12 @@ protocol. A test harness
 that joins two clients in one frame therefore spawns the later packet's
 first: `common::join_pair_stamped` hands the second client's packets to the
 server first once both are in, so the first spawns first, as a retail
-client that joined earlier does.
+client that joined earlier does. Every gate that joins two or three
+clients in one frame goes through that rule (`common::step_pair_joining`,
+`join_trio`, `step_trio_ordered`), or joins its second client as late as
+the retail recipe did (`vehicle_runover_ab`, `vehicle_armor_ab`); a
+`gametypes_ab` or `votes_ab` restart that sends both clients back through
+the menus in one frame reads the same in either packet order.
 
 **The script clock.** The VM keeps its own clock, separate from
 `level.time`, and a frame's threads run on it a frame behind.
@@ -1082,6 +1087,24 @@ compares both halves, which is retail's equal-only-to-its-copies. Not
 measured: a dead handle passed to a builtin other than `isDefined`
 (`linkTo(dead)`), or used with `notify`, `waittill`, `endon` or `thread`;
 ours leaves each to the builtin or the scheduler.
+
+**Freeing an object ends every thread whose `self` it is
+(`probe_stale_self`, `probe_stale_self_hud`).** VERIFIED on 1.1d and on
+UO 1.51b (`probe_stale_self` on both, the hudelem case on 1.1d): a
+thread started on an entity asleep in `wait` over the entity's free, and
+one started on it waiting on a `level` notify sent past the free, never
+log another line and raise no error; a thread on `level` holding the
+entity in a local wakes and reads `isDefined` 0. A thread on a hudelem
+that `destroy()` frees ends the same way. INFERRED, from the free chain
+above: the end rides `Scr_FreeEntityNum`'s engine call, which frees the
+object a thread's `self` refers to. vcod drops such a thread when the
+scheduler picks it to run (`Vm::step_runnable`, through `Host::is_live`),
+which no script can tell apart from an end at the free: the thread runs
+no step in between. The stock jeep self-destruct timer depends on it
+(`_jeepdrive_gmi::process_deactivate`, `client-probes/probe_jeepdeact`,
+`crates/server/tests/fixtures/vehicles/mp_foy-jeep-deactivate-uo.txt`):
+a jeep destroyed while it waits is deleted, and retail's server runs past
+the timer's `dodamage` line with nothing in its console.
 
 ### The map-cycle builtins, and the `sd` connect race
 

@@ -1238,6 +1238,21 @@ face.
   disassembly 0x3dc9e), and terrain meets the hull's half box as a
   capsule of its half width (VERIFIED, replay: the min-radius capsule
   lands the Panzer 0.63 low on the first slope).
+- **The sway pack's last bit.** 0x86735 builds the jolt's angle as a
+  double, `phase * pi / 180` with `pi` and 180 loaded as doubles
+  (`fldl` at 0x867a8 and 0x867b0, rodata 0xa6c60 and 0xa6c68), so a
+  half turn's sine is 1.2e-16, not the -8.7e-8 an f32 `pi` gives; the
+  sine is stored as an f32 (VERIFIED disassembly). The pack then sums
+  `127 + 127 * deg / 30` on the x87 stack and stores it as a double
+  before `floor` (0x86864..0x86920, 127 and 30 as floats at 0xa6c78 and
+  0xa6c7c), so a sway a hair under 0 packs 126 where an f32 sum rounds
+  to 127 (VERIFIED disassembly). The two sit on the body's `tag_body`
+  pose, so the seat tag and every rider's origin ride them: vcod packed
+  in f32 with an f32 `pi`, and the tank seats replay's driver missed
+  retail by up to 0.39 on 2 snapshots (msg 305, 352: our roll byte 127,
+  retail's 126) and 0.47 on 7 others once the pack alone was fixed. With
+  both, the tank seats, drive and gun replays hold the rider's origin
+  to 0.01 on every snapshot (VERIFIED, `vehicle_ab`).
 - The probes and the slide meet vehicle clip brushes (contents 0x200),
   which only the vehicle clipmask 0x201 holds: where retail's tank
   bounced at mp_cassino's slope the brush is one (VERIFIED, replay; vcod's
@@ -2308,33 +2323,57 @@ face.
   ramp"), so every weight runs to its goal in a straight line over 100 ms
   from where the frame found it, half way by the next frame's step, and a
   leaf the frame no longer sets lands on 0 at that step (INFERRED, off the
-  setter and the step). `playerpose::SeatRamp` keeps the server's
-  weights across end frames; a node just entered plays its goals, since
-  every leaf rises from 0 over the same time and the blend normalizes
-  them (INFERRED). It matters only to a four-wheel's driver and
-  passenger, whose middle and end children share the steer.
+  setter and the step). A node just entered is no exception: its leaves
+  were zero, so each rises from a thousandth of its goal over the same
+  100 ms (0x080c05a2 raises a zero weight to `0.001 * goal` after storing
+  the goal time) and a steer change on the next frame ramps from about
+  half of each (INFERRED, off the setter).
+  The node a legs change leaves keeps its leaves' goals: UO's legs setter
+  (game.mp.uo 0x2ce5f) clears the old anim with
+  `trap_XAnimClearGoalWeight` (0x84c62, syscall 0x57), which
+  `coduo_lnxded`'s dispatcher sends to 0x080bfc22, the node alone; the
+  recursive clear 0x080bfd0c is reached only from syscalls 0x56 and 0x58
+  (`trap_XAnimClearTreeGoalWeights`, `...Strict`) (VERIFIED decompile).
+  The weight step 0x080bcc1e descends into a node's children only while
+  its weight or goal is non-zero; once both read 0 it runs 0x080bca32 on
+  each child instead, which sets the weight to the goal and the goal time
+  to 0 and frees a leaf whose weight, goal and other half's weight and
+  goal all read 0 (VERIFIED decompile). The time step skips a node with
+  no weight (`cod11-combat.md` 3.1). So once the old legs node fades out
+  its seat leaves sit on their last goals with their times stopped where
+  the last weighted step left them, and a return to that legs anim, any
+  time later, ramps the leaves from those goals and steps the times on
+  from there (INFERRED, off those).
+  The walk normalizes a node's weighted children (`cod11-movers.md` 15,
+  "Torso over legs", read on 1.1's `cod_lnxded` 0x080bbea8), so only the
+  leaves' shares count, however small the weights (INFERRED for UO).
+  `playerpose::SeatRamp` keeps the server's weights across end frames,
+  the node last left's with them (`SeatRamp::fade_held` stills it), and
+  `layer_clips` normalizes the leaves under the legs layer's weight. It
+  matters only to a four-wheel's driver and passenger, whose middle and
+  end children share the steer.
   Measured on retail UO 1.51b, 2026-10-15 (fixtures
   `vehicles/mp_peaks-jeep-bones-uo.txt` and
   `playerstate/mp_peaks-tdm-slope-8ms-jeep-bones-uo.txt`, recipe in the
   first's header): `client-probes/probe_vehicle` with `probe_bones 1`
   links a `script_origin` to five of client 0's bones (both hands, head,
   `bip01 spine2`, left foot; UO has no `getTagOrigin`) and logs them every
-  frame while a `--probe-vehicle drive` client drives the Willys.
+  frame while a `--probe-vehicle drive` client drives the Willys. The
+  legs anim toggles between `vehicleJeepDriverDriving` and
+  `vehicleJeepDriverIdle` every 200 to 300 ms through the swings and
+  sits on one for seconds between them (VERIFIED, replay).
   `vehicle_ab`'s `the_jeep_driver_s_bones_follow_retail_s` replays the
-  drive on ours: past the links' first frame the 2170 samples sit 0.008
-  units off retail's on average and none past 0.55, the hands at the
-  steer's swings, 8 samples past 0.3 (VERIFIED, replay, 2026-10-20).
-  The worst (25100 to 25300) fall in the blend after the legs anim
-  changes from `vehicleJeepDriverDriving` to `vehicleJeepDriverIdle`
-  (25050), the old node's `drivingA` and `turnR` fading under the new
-  node's `idle` and `turnR` ramp. Each seat leaf's own node time
-  (`cod11-combat.md` 3.1, "The clip's float time") moves none of them:
-  `drivingA`'s leaf was allocated when its node started, and the other
-  three are single-frame or clamp on their first step (VERIFIED, replay,
-  2026-10-20). What is left is the weights.
-  Without the ramp the frames after each steer change read up to 0.9
-  off where they read 0.01 to 0.55 with it (VERIFIED,
-  replay).
+  drive on ours: past the links' first frame the 2170 samples sit within
+  retail's print (0.01) but one at 0.02 (17550, a hand), mean 0.000
+  (VERIFIED, replay, 2026-10-21). Each part was measured by taking it
+  out (VERIFIED, replay): a node entered at its goals with nothing of
+  the node left kept read 0.55 at 25150, the hands after the legs return
+  to the idle node they left five seconds earlier, and so did dropping a
+  faded node's leaves (0.54); keeping them with their leaf times running
+  read 0.10 (29300, head and `spine2` through the toggles); the ramps
+  from a thousandth without the normalization read 3.81. Before any of
+  this, without the 100 ms ramp, the frames after each steer change read
+  up to 0.9 off (VERIFIED, replay, 2026-10-20).
 - **The controllers.** 1.5 and UO ease every body's controls toward their
   targets; 1.1 sets them. game.mp.uo's `BG_Player_DoControllers`
   (0x1f2fe) and 1.5b's (`game.mp.i386.so` 1.5b, 0x1ad71) compute the

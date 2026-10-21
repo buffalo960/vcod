@@ -160,11 +160,37 @@ impl Walk {
     }
 }
 
+/// The last cmds a placement probe sent before it saw the placement, as
+/// `!cmd` lines at `ms=0`. The probe sends a frame's cmd before it reads
+/// that frame's snapshot, so the ones past the placement snapshot's
+/// `commandTime` ran after the placement on the server and belong in the
+/// log (cod11-movers.md 15, "The cmd at the placement").
+#[derive(Default)]
+pub struct BeforePlacement(std::collections::VecDeque<(i32, String)>);
+
+impl BeforePlacement {
+    pub fn push(&mut self, server_time: i32, line: String) {
+        if self.0.len() == 8 {
+            self.0.pop_front();
+        }
+        self.0.push_back((server_time, line));
+    }
+
+    /// The kept lines the server had not run by `command_time`.
+    pub fn past(&mut self, command_time: i32) -> impl Iterator<Item = String> + '_ {
+        self.0
+            .drain(..)
+            .filter(move |(st, _)| *st > command_time)
+            .map(|(_, l)| l)
+    }
+}
+
 pub struct LegsProbe {
     script: &'static [Step],
     torso: bool,
     /// Wall clock and server time of the snapshot that showed the placement.
     placed: Option<(Instant, i32)>,
+    before: BeforePlacement,
     seen: Option<u32>,
     lines: Vec<String>,
     done: bool,
@@ -180,6 +206,7 @@ impl LegsProbe {
             },
             torso: matches!(walk, Walk::Torso),
             placed: None,
+            before: BeforePlacement::default(),
             seen: None,
             lines: Vec::new(),
             done: false,
@@ -240,49 +267,67 @@ impl LegsProbe {
 
     /// A cmd as it went on the wire, beside the world angles it was built
     /// from.
+    /// Before the placement it goes in as `!pcmd`, without `ms`, once a
+    /// snapshot has come, and [`BeforePlacement`] keeps it for the `ms=0`
+    /// lines.
     pub fn record(&mut self, now: Instant, sent: UserCmd, world: [i32; 3]) {
-        let Some(ms) = self.ms(now) else { return };
         if self.done {
             return;
         }
-        self.lines.push(format!(
-            "!cmd ms={ms} st={} buttons={} wbuttons={} weapon={} up={} forward={} right={} angles={},{},{} world={},{},{}",
-            sent.server_time,
-            sent.buttons,
-            sent.wbuttons,
-            sent.weapon,
-            sent.up,
-            sent.forward,
-            sent.right,
-            sent.angles[0],
-            sent.angles[1],
-            sent.angles[2],
-            world[0],
-            world[1],
-            world[2],
-        ));
+        let line = |head: &str| {
+            format!(
+                "{head} st={} buttons={} wbuttons={} weapon={} up={} forward={} right={} angles={},{},{} world={},{},{}",
+                sent.server_time,
+                sent.buttons,
+                sent.wbuttons,
+                sent.weapon,
+                sent.up,
+                sent.forward,
+                sent.right,
+                sent.angles[0],
+                sent.angles[1],
+                sent.angles[2],
+                world[0],
+                world[1],
+                world[2],
+            )
+        };
+        match self.ms(now) {
+            Some(ms) => self.lines.push(line(&format!("!cmd ms={ms}"))),
+            None => {
+                if self.seen.is_some() {
+                    self.lines.push(line("!pcmd"));
+                }
+                self.before.push(sent.server_time, line("!cmd ms=0"));
+            }
+        }
     }
 
     /// Takes the placement off the first snapshot that stands on the mark,
-    /// and logs every snapshot after it. True once the script has run out
-    /// and a second has passed.
+    /// and logs every snapshot: `!psnap` from the join to the placement,
+    /// `!snap` from it on. True once the script has run out and a second
+    /// has passed.
     pub fn observe(&mut self, now: Instant, s: &Snapshot) -> bool {
         let p = crate::probe::wire();
         let o = s.ps.origin(p);
-        if self.placed.is_none() {
-            if (o[0] - LEGS_SPOT[0]).abs() < 0.5 && (o[1] - LEGS_SPOT[1]).abs() < 0.5 {
-                self.placed = Some((now, s.server_time));
-                println!("legs: placed at serverTime {}", s.server_time);
-            } else {
-                return false;
-            }
+        let mut pre = Vec::new();
+        if self.placed.is_none()
+            && (o[0] - LEGS_SPOT[0]).abs() < 0.5
+            && (o[1] - LEGS_SPOT[1]).abs() < 0.5
+        {
+            self.placed = Some((now, s.server_time));
+            println!("legs: placed at serverTime {}", s.server_time);
+            pre = self.before.past(s.ps.field_i32(p, "commandTime")).collect();
         }
         if self.seen != Some(s.message_num) {
             self.seen = Some(s.message_num);
             let v = [0, 1, 2].map(|i| s.ps.field_f32(p, &format!("velocity[{i}]")));
-            let label = self.step(now).map_or("end", |st| st.label);
+            let (head, label) = match self.placed {
+                Some(_) => ("!snap", self.step(now).map_or("end", |st| st.label)),
+                None => ("!psnap", "join"),
+            };
             self.lines.push(format!(
-                "!snap msg={} t={} ct={} step={label} origin={},{},{} vel={},{},{} legs={} torso={} movementDir={} pm_flags={} view={},{} weaponstate={} weapAnim={}",
+                "{head} msg={} t={} ct={} step={label} origin={},{},{} vel={},{},{} legs={} torso={} movementDir={} pm_flags={} view={},{} weaponstate={} weapAnim={} pm_type={} delta={},{}",
                 s.message_num,
                 s.server_time,
                 s.ps.field_i32(p, "commandTime"),
@@ -300,8 +345,12 @@ impl LegsProbe {
                 s.ps.viewangles(p)[1],
                 s.ps.field_i32(p, "weaponstate"),
                 s.ps.field_i32(p, "weapAnim"),
+                s.ps.field_i32(p, "pm_type"),
+                s.ps.field_i32(p, "delta_angles[0]"),
+                s.ps.field_i32(p, "delta_angles[1]"),
             ));
         }
+        self.lines.extend(pre);
         let total: u128 = self.script.iter().map(|s| s.ms).sum();
         if self.ms(now).is_some_and(|ms| ms >= total + 1000) {
             self.done = true;
@@ -364,8 +413,11 @@ impl LegsProbe {
         out.push('\n');
         out.push_str(
             "# !cmd is a usercmd as it went on the wire (angles rebased on delta_angles; world=\n\
-             # the angles before), ms after the placement. !snap is the playerstate per\n\
-             # snapshot: t serverTime, ct commandTime, legs/torso the wire anim values.\n",
+             # the angles before), ms after the placement; ms=0 after the first !snap are the\n\
+             # cmds sent before the probe saw the placement that its commandTime had not run.\n\
+             # !snap is the playerstate per snapshot: t serverTime, ct commandTime, legs/torso\n\
+             # the wire anim values. !pcmd and !psnap are the same from the join to the\n\
+             # placement.\n",
         );
         if !self.done {
             out.push_str("# BROKEN the run ended before the script did\n");
@@ -384,5 +436,23 @@ impl LegsProbe {
         std::fs::write(&path, out)?;
         println!("legs: {} lines -> {path}", self.lines.len());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The 1.5 legs capture's placement: the snapshot at 25000 had run the
+    /// cmds to 24982, so the one at 25000 goes in the log and the older
+    /// ones do not.
+    #[test]
+    fn the_cmds_past_the_placement_commandtime_are_kept() {
+        let mut before = BeforePlacement::default();
+        for st in [24950, 24966, 24982, 25000] {
+            before.push(st, format!("st={st}"));
+        }
+        assert_eq!(before.past(24982).collect::<Vec<_>>(), ["st=25000"]);
+        assert_eq!(before.past(0).count(), 0, "drained");
     }
 }

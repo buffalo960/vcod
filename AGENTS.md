@@ -64,7 +64,7 @@ instead of leaving the fact in a commit message.
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
-| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness) |
+| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness, cover and lean, retreat) |
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
 | Shader scripts, light grid, prop and entity lighting | `cod11-shader-scripts.md`, `cod11-light-grid-and-leaf-lights.md` |
 | Gamma, overbright, `r_intensity` | `cod11-gamma.md` |
@@ -124,13 +124,22 @@ check.
   `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
   mp_cassino six-bot tdm run and its walled-in spawns test (the file
-  ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
+  ~12 s, 60 s of CPU), and `tests/bot_vehicles.rs` its bots boarding,
+  driving and firing mp_cassino's tanks, rockets at one and
+  mp_kharkov's jeep (~30 s); with a 1.1 install they
+  return at once. `--example bot_vehicles` (UO) plays each seed with
+  bots' vehicles off and on (`bot-objectives.md` 10.6). `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
   `--example team_tally` `bot-objectives.md` 9's 1.1 `sd`/`re` objective tally; its
   `digest` matches across two builds only when they built the same graph,
-  the check for a collision change meant to move no trace.
+  the check for a collision change meant to move no trace. `--example
+  bot_fights` runs seeded shooting matches and prints each team's kills,
+  deaths and wounds survived, with the retreat on for one side
+  (`RETREAT=allies|axis|all|none`, `bot-combat.md` 5). `--example
+  cover_ab` pits a team fighting from cover against one without
+  (`bot-combat.md` 4.5).
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
   is not a regression.
@@ -325,9 +334,9 @@ header of the fixture it produced.
   `*-uo-jeep.bin` pairs the driver of a `--probe-vehicle` crew
   (`coduo-diff.md` 18), the `*-uo-overheat.bin` pair the same crew with a
   `--probe-vehicle overheat` gunner, the `*-uo-quake.bin`, `*-uo-flame.bin`,
-  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin`, `*-uo-satchel.bin`
-  and `*-uo-bazooka.bin` pairs a spectator following a shooter under
-  `client-probes/probe_uofx` (the arty, smoke, mg and satchel ones
+  `*-uo-arty.bin`, `*-uo-smoke.bin`, `*-uo-mg.bin`, `*-uo-satchel.bin`,
+  `*-uo-bazooka.bin` and `*-uo-bazooka-draw.bin` (under gdb) pairs a
+  spectator following a shooter under `client-probes/probe_uofx` (the arty, smoke, mg and satchel ones
   `--probe-uo-weapon`, the satchel with the smoke script;
   `coduo-diff.md` 19, 21), the `*-uo-turret.bin` pair a
   spectator following a `--save-turret` gunner on
@@ -935,7 +944,8 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   as two tree nodes, weighted 1 and 0.01 under a torso anim. A 1.5 or UO
   server samples a clip at the engine's node time, a float stepped by
   50 ms frames (`Layer::time`, `PoseInputs::node_time`; a UO seat's leaves
-  each step their own, `SeatRamp::leaf_times`; an MG42 gunner's
+  each step their own, `SeatRamp::leaf_times`, and stand still with
+  their weights while their legs node is faded out, `SeatRamp::fade_held`; an MG42 gunner's
   fire group its leaves' weighted mean, `set_sync_frequency`), not its seconds
   (combat doc 3.1, "The clip's float time").
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
