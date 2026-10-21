@@ -225,7 +225,7 @@ fn no_stock_vehicle_takes_the_stuck_kill_at_the_start() {
 /// Stock `_jeepdrive_gmi::process_deactivate`'s self-destruct timer on a
 /// jeep destroyed and deleted while it waits: the free ends the thread,
 /// whose `self` it is, so the timer's `dodamage` never runs on the dead
-/// entity (bot-objectives.md 9.5, `probe_stale_self`). Retail's lines
+/// entity (bot-objectives.md 10.5, `probe_stale_self`). Retail's lines
 /// under `client-probes/probe_jeepdeact`, no client joined.
 #[test]
 fn a_deleted_jeeps_self_destruct_timer_ends_with_it() {

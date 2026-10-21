@@ -1,6 +1,6 @@
 //	United Offensive: the stock jeep self-destruct timer on a jeep that is
 //	destroyed and deleted before it runs out (docs/research/
-//	bot-objectives.md 9.5). Stock tdm on mp_foy, so `_jeepdrive_gmi` and
+//	bot-objectives.md 10.5). Stock tdm on mp_foy, so `_jeepdrive_gmi` and
 //	`_jeepeffects_gmi` run as they do in a game. No client is needed.
 //	Two seconds in, the lowest-numbered jeep is marked driven and gets the
 //	thread a rider's exit starts, `_jeepdrive_gmi::process_deactivate`,

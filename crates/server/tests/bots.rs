@@ -1207,12 +1207,6 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
         .script_aborts()
         .into_iter()
         .filter(|a| !a.starts_with("maps/mp/gametypes/bas::BaseAssault_bomb_think:3152:"))
-        // Stock `_jeepdrive_gmi::process_deactivate` starts a 90 s
-        // self-destruct on the last rider's exit, ended only by a boarding:
-        // a jeep destroyed meanwhile (a rider still in it counts, as his
-        // exit is the death's unlink) is deleted, and the timer's
-        // `dodamage` lands on a dead entity (bot-objectives.md 10.5).
-        .filter(|a| !a.starts_with("maps/mp/_jeepdrive_gmi::process_deactivate:469:"))
         .collect();
     assert_eq!(aborts, Vec::<String>::new());
     Some(sv)
