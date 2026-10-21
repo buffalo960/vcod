@@ -20,9 +20,11 @@ impl super::Bot {
     /// goal, the keys on the path, and fights on the way (as a `bas` bot
     /// clearing a charge's blast does) rather than close on what it sees.
     pub(super) fn carrying(&self, view: &super::BotView) -> bool {
-        view.re
-            .as_ref()
-            .is_some_and(|r| r.objectives.iter().any(|m| m.mine))
+        self.team_play
+            && view
+                .re
+                .as_ref()
+                .is_some_and(|r| r.objectives.iter().any(|m| m.mine))
     }
 }
 

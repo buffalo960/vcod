@@ -4477,6 +4477,13 @@ impl Server {
             })
             .collect();
         let round = u32::from(self.server_id);
+        // Bots with team play off (`Bot::team_play`) rank by slot, keep by
+        // a carrier, cover nobody and plan alone, as before `bots::team`.
+        let solo: Vec<usize> = slots
+            .iter()
+            .copied()
+            .filter(|s| self.bots.get(s).is_some_and(|b| !b.team_play))
+            .collect();
         if let Some((attackers, defenders, objectives)) = &re {
             let team = |slot: usize| teams.get(slot).copied().unwrap_or(0);
             let slots: Vec<usize> = views.iter().map(|(s, _)| *s).collect();
@@ -4506,10 +4513,15 @@ impl Server {
                 };
                 let mates: Vec<usize> =
                     slots.iter().copied().filter(|s| team(*s) == mine).collect();
+                let alone = solo.contains(slot);
                 view.re = Some(crate::bots::ReView {
                     role,
-                    rank: crate::bots::team::round_rank(*slot, &mates, mine, round),
-                    escort: escorts.contains(slot),
+                    rank: if alone {
+                        mates.iter().filter(|s| *s < slot).count()
+                    } else {
+                        crate::bots::team::round_rank(*slot, &mates, mine, round)
+                    },
+                    escort: alone || escorts.contains(slot),
                     objectives: objectives
                         .iter()
                         .map(|(o, carrier, shown_to)| crate::bots::ReObjView {
@@ -4610,8 +4622,13 @@ impl Server {
                 };
                 let mates: Vec<usize> = side.iter().filter(|s| s.1 == mine).map(|s| s.0).collect();
                 let attack = role == crate::bots::ObjRole::Attack;
-                let rank = crate::bots::team::site_rank(attack, *slot, &mates, mine, round);
-                let cover = attack
+                let alone = solo.contains(slot);
+                let rank = if alone {
+                    mates.iter().filter(|s| *s < slot).count()
+                } else {
+                    crate::bots::team::site_rank(attack, *slot, &mates, mine, round)
+                };
+                let cover = (attack && !alone)
                     .then(|| {
                         let mates: Vec<_> = planting
                             .iter()
@@ -4690,7 +4707,7 @@ impl Server {
             if let Some(g) = self.nav.clone().filter(|_| view.seat.is_none()) {
                 let mut follower = self.bot_paths.remove(&slot).unwrap_or_default();
                 follower.crowd = match teams.get(slot) {
-                    Some(&t) if Self::team_objective(&view) => {
+                    Some(&t) if Self::team_objective(&view) && !solo.contains(&slot) => {
                         crate::bots::team::crowd(&paths, slot, t)
                     }
                     _ => Vec::new(),
@@ -5937,6 +5954,13 @@ impl Server {
     pub fn test_bot_cover(&mut self, slot: usize, on: bool) {
         if let Some(bot) = self.bots.get_mut(&slot) {
             bot.cover.enabled = on;
+        }
+    }
+
+    /// Test-facing: whether a bot plays as one of its team (`bots::team`).
+    pub fn test_bot_team_play(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.team_play = on;
         }
     }
 
