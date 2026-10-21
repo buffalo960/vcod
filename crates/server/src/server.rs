@@ -1696,6 +1696,9 @@ pub struct Server {
     /// Per fighting bot, `(sv_time of the last look, the cover spot it
     /// found)` ([`crate::bots::BotView::cover`]).
     bot_covers: BTreeMap<usize, (i32, Option<crate::bots::cover::Spot>)>,
+    /// Per hunting bot, `(the lost enemy's spot, its vantage)`
+    /// ([`crate::bots::BotView::hunt`]).
+    bot_hunts: BTreeMap<usize, ([f32; 3], Option<[f32; 3]>)>,
     /// The level's navigation graph, built on the first tick with bots.
     nav: Option<std::sync::Arc<crate::nav::NavGraph>>,
     /// The build of `nav` under way, and whether the tick waits for it or
@@ -2150,6 +2153,7 @@ impl Server {
             bot_enemies: BTreeMap::new(),
             bot_sidesteps: BTreeMap::new(),
             bot_covers: BTreeMap::new(),
+            bot_hunts: BTreeMap::new(),
             nav: None,
             nav_job: None,
             nav_links: 0,
@@ -4734,6 +4738,7 @@ impl Server {
                 view.survive.cover =
                     crate::bots::retreat::cover_spot(g, &w.collision, view.origin, threat, held);
             }
+            view.hunt = self.bot_vantage(slot, view.origin);
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
             };
@@ -5429,6 +5434,7 @@ impl Server {
             friend_in_line: false,
             sidestep: None,
             cover: None,
+            hunt: None,
             use_takes_weapon: sim.cursor_hint >= self.proto.cursor_hints.weapon,
             grenade,
             grenade_cooks: grenade
@@ -6019,8 +6025,16 @@ impl Server {
             return None;
         };
         let held = self.bot_covers.get(&slot).copied();
+        // A wary bot that shifted off the spot it was given has its own
+        // checked at once.
+        let mine = self
+            .bots
+            .get(&slot)
+            .filter(|b| b.wary)
+            .and_then(|b| b.held_spot());
         if let Some((t, spot)) = held
             && self.sv_time_ms.wrapping_sub(t) < COVER_REFRESH_MS
+            && mine.is_none_or(|m| spot.is_some_and(|s| s.at == m.at))
         {
             return spot;
         }
@@ -6047,17 +6061,37 @@ impl Server {
                 clear: &clear,
                 lean_room: &lean_room,
             };
-            held.and_then(|(_, s)| s)
-                .and_then(|s| {
-                    Some(cover::Spot {
-                        peek: sight.peek(s.at.into())?,
-                        ..s
-                    })
-                })
+            mine.or(held.and_then(|(_, s)| s))
+                .and_then(|s| sight.recheck(s))
                 .or_else(|| cover::find(g, me.ps.origin, &sight))
         };
         self.bot_covers.insert(slot, (self.sv_time_ms, spot));
         spot
+    }
+
+    /// [`crate::bots::BotView::hunt`] for the bot in `slot` standing at
+    /// `from`: the vantage over the spot it hunts ([`crate::bots::hunt::vantage`]),
+    /// looked for once per spot.
+    fn bot_vantage(&mut self, slot: usize, from: [f32; 3]) -> Option<[f32; 3]> {
+        let Some(spot) = self.bots.get(&slot).and_then(|b| b.hunt_query()) else {
+            self.bot_hunts.remove(&slot);
+            return None;
+        };
+        if let Some((s, v)) = self.bot_hunts.get(&slot)
+            && *s == spot
+        {
+            return *v;
+        }
+        let (g, w) = (self.nav.as_ref()?, self.world.as_ref()?);
+        let sees = |feet: glam::Vec3| {
+            w.collision
+                .shot_trace(crate::bots::hunt::eye(feet), spot.into())
+                .fraction
+                >= 1.0
+        };
+        let v = crate::bots::hunt::vantage(g, from.into(), spot.into(), &sees).map(Into::into);
+        self.bot_hunts.insert(slot, (spot, v));
+        v
     }
 
     /// Test-facing: the shots and blasts the bots hear next tick.
@@ -6110,6 +6144,20 @@ impl Server {
         if let Some(bot) = self.bots.get_mut(&slot) {
             bot.set_retreat(on);
         }
+    }
+
+    /// Test-facing: whether a bot varies its peeks and hunts from a
+    /// vantage (`Bot::wary`).
+    pub fn test_bot_wary(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.wary = on;
+        }
+    }
+
+    /// Test-facing: a bot's peeks, re-peeks and hunt arrivals
+    /// (`Bot::tactics`).
+    pub fn bot_tactics(&self, slot: usize) -> Option<[u32; 3]> {
+        Some(self.bots.get(&slot)?.tactics())
     }
 
     /// Test-facing: whether a bot fights from cover (`bots::cover`).
@@ -6200,6 +6248,7 @@ impl Server {
         self.bot_breach_stands.clear();
         self.bot_noises.clear();
         self.bot_covers.clear();
+        self.bot_hunts.clear();
         self.creases = Default::default();
     }
 

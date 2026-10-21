@@ -37,7 +37,9 @@ carrier fights as any bot and every noise draws the bot, the brain
 before team play; section 7) and `AWARE=` (section 8, `test_bot_aware`:
 off, a bot sees all round, fights the nearest enemy in sight, pays the
 full reaction and error on every switch and ignores hits from out of
-sight) each take `all`
+sight) and `WARY=` (section 9, `test_bot_wary`: off, a bot peeks from a
+spot the one way, peeks on through the 3 s hold, and walks onto a lost
+enemy's spot until it forgets it) each take `all`
 (the default), `none`, `axis`, `allies` or `alt` (axis on odd seeds,
 allies on even, so the map's own asymmetry cancels over an even seed
 count). A default arm never calls its hook, so an all-default run plays
@@ -70,11 +72,13 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | grenades thrown | bodies | Frags let go (`BotBody::throws`, counted at the release; a throw put back is not one). |
 | grenade hits, kills | `D;`, `K;` | Lines with means of death `MOD_GRENADE_SPLASH` on another player, by the thrower; kills are the `K;` ones. A frag that kills its own thrower is a suicide. |
 | engagements, clip at start | bodies | `BotBody::engaged` going from off to on with a bullet weapon in hand, and the mean of its clip over its `clipSize` on that tick. |
+| peeks, re-peeks, dead in 2 s | `bot_tactics` | A peek is a held cover spot's body going from hidden (or walking to the spot) to showing: standing, leaning or leaning crouched (`Bot::tactics`, counted in `cover_keys`). A re-peek is one from the spot (within 12 units) and the pose (stance and lean side) of the bot's peek before it this life. Each is printed with the share whose bot died within 2 s of it (the body's first dead tick, any cause). |
+| hunts, dead in 2 s | `bot_tactics`, bodies | A hunt that reached where it was headed: a seen enemy's lost spot, or with `Bot::wary` the vantage over it (section 9), within `ARRIVE_RADIUS`. A spot dropped on memory or the hunt's budget is no arrival. Printed with the share dead within 2 s of the arrival. |
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
-first. Each row prints three times: the log's columns, the bodies', then
-the grenades and the clip.
+first. Each row prints four times: the log's columns, the bodies', the
+grenades and the clip, then the peeks and hunts.
 
 A change to bot behaviour reports its before and after on the same seeds,
 map and gametype, in this doc's section for it.
@@ -211,10 +215,10 @@ and the `nav_census` floors do not move.
   past 300 ms (a bolt's rechamber, not a semi-automatic's tap spacing)
   it crouches behind a `Peek::Stand` wall or comes back off a lean.
 - With the threat out of sight the spot is held for 3 s
-  (`cover::WAIT_TICKS`), peeking where the threat was last aimed at; the
-  target is not counted lost meanwhile, so a re-peek keeps its settled
-  aim (`Bot::track`). Past that the hold goes and the bot hunts the
-  remembered spot as before.
+  (`cover::WAIT_TICKS`; a wary bot draws its own, section 9), peeking
+  where the threat was last aimed at; the target is not counted lost
+  meanwhile, so a re-peek keeps its settled aim (`Bot::track`). Past that
+  the hold goes and the bot hunts the remembered spot (section 9).
 - No cover while a plant, defuse or carry is under way, on a capture
   zone or radio, with a UO LMG, or held by a link. A guard or a sweep
   takes cover (`Bot::may_cover`). A live frag near clears the lean and
@@ -857,3 +861,109 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21): `AWARE=alt`, `tdm`,
   the aware side (13% against 14%) though it sees a cone. INFERRED: it
   turns on its attacker and keeps its target where the control flips to
   the nearest.
+
+## 9. Peeks and hunts that vary (2026-10-21)
+
+Before this a bot at a cover spot showed itself the one way the spot
+offered, each time it came back from a reload, and peeked on for 3 s
+once the threat left sight. It then walked onto the spot where it had
+lost the enemy (`Bot::recall`, led by half a second of his velocity)
+until it got there or its memory (`Skill::memory_ticks`) ran out.
+
+Now, with `Bot::wary` on (the default; `WARY=` and
+`Server::test_bot_wary` turn it off):
+
+- `cover::Sight::alt` gives a spot a second way to show: the other lean
+  side, or from a body hidden crouched a crouched lean (`Peek::LowLean`,
+  the 0.5 lean limit of `pmove::lean_scale`). `cover::find` also keeps
+  the next nearest spot at least 48 units off (`Spot::next`). The server
+  rechecks the spot the bot holds, not the one it handed out
+  (`Bot::held_spot`).
+- A peek that would repeat the spot and pose of the bot's last peek this
+  life takes the spot's other pose (`Bot::cover_keys`).
+- Ducking back to reload, a bot moves to the neighbouring spot with a
+  chance of 0, 3, 4 and 4 in 8 by skill level (`cover::WARY`).
+- The hold with the threat out of sight is drawn per loss: 70-89,
+  45-74, 40-69 and 35-64 ticks by level.
+- The server hands a hunting bot a vantage (`BotView::hunt`,
+  `hunt::vantage`): of the graph nodes 160 to 480 units across from the
+  lost enemy's spot, reached along edges with no jump or risky step, the
+  one nearest the bot (of the 12 nearest) whose standing eye has a clear
+  bullet line to the spot. The bot walks there and its view turns onto
+  the spot on the way, as it did onto the spot before. Reaching the
+  vantage ends the hunt, as reaching the spot did. Without a vantage it
+  walks to the spot.
+- A seen enemy's spot is walked to for 70, 70, 60 and 50 ticks after he
+  was lost, by level, never past `memory_ticks` (100, 140 and 180 at
+  levels 1 to 3) (`hunt::HUNT_TICKS`). The memory itself is unchanged,
+  so a grenade at the lost spot and `bel`'s hunted bots read it as
+  before.
+
+Two cuts did not ship. Holding a spot through alternate spells hidden
+and peeking (draws of 6-15 and 10-19 ticks at level 1) lost a `WARY=alt`
+side 159 kills against the control's 3031 over 32 matches (10 wins to 17),
+and with the hunt on too, 2931 to 3007. INFERRED: a bot hidden behind its
+cover does not see the threat come back, so the threat gets the first
+shot. A vantage 96 to 320 units off the spot gave as many kills as the
+control (3007 to 2980) but 11.4% of its 3199 arrivals died within 2 s,
+against 8.3% of the control's 931 arrivals at the spot.
+
+### 9.1 Before and after
+
+`WARY=none` replays master: the match lines of the runs below print
+master's kills, deaths, damage, ticks and stalls with it.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21): `tdm`, 12 bots,
+mp_carentan, mp_harbor, mp_depot and mp_brecourt, seeds 1..=4 (16
+matches); `dm`, 10 bots, mp_carentan, mp_harbor and mp_depot, seeds
+1..=4 (12 matches, none ended):
+
+| Run | Kills | Life s | Dead in 5 s | Peeks | dead in 2 s | Re-peeks | dead in 2 s | Hunts | dead in 2 s | Frags thrown | Stalled |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `tdm` before | 3026 | 30.8 | 76% | 8784 | 5.9% | 3193 (36%) | 5.1% | 974 | 8.2% | 744 | 76323 |
+| `tdm` after | 2942 | 29.7 | 73% | 7884 | 7.3% | 1725 (22%) | 6.9% | 4591 | 8.5% | 489 | 49617 |
+| `dm` before | 2947 | 21.4 | 78% | 9246 | 9.7% | 3079 (33%) | 8.7% | 533 | 7.7% | 723 | 29586 |
+| `dm` after | 2899 | 21.7 | 79% | 8793 | 9.5% | 1513 (17%) | 10.9% | 3523 | 11.4% | 510 | 34195 |
+
+- VERIFIED (measured, the table): re-peeks fall from about a third of
+  peeks to a fifth. The rest repeat from a spot with only one way out.
+- VERIFIED (measured, the table): hunts reach their vantage four to
+  seven times as often as they reached the spot. In `tdm` the share dead
+  within 2 s of the arrival holds (8.2% to 8.5%); in `dm` it rises (7.7%
+  to 11.4%). INFERRED: the vantage is reached soon after the loss, while
+  the enemy is still near the spot. Before, most hunts ended on memory or
+  in a fight before they got there.
+- VERIFIED (measured, the table): bots throw a third fewer frags.
+  INFERRED: a hunt now ends at the vantage, often inside the window in
+  which a lost enemy's spot draws a frag (`LOST_THROW_TICKS`). Frag kills
+  were 2 and 3 in `tdm` and 1 and 0 in `dm`.
+- VERIFIED (measured, the table): `tdm` stalls fall a third. INFERRED:
+  bots spend less time on cover spots (cover hold 621573 to 551272
+  bot-ticks).
+
+### 9.2 One-sided
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21): `WARY=alt`, `tdm`,
+12 bots, the four maps above, seeds 1..=8 (32 matches):
+
+| Arm | Kills | Deaths | K/D | Peeks | dead in 2 s | Re-peeks | dead in 2 s | Hunts | dead in 2 s | Wins |
+|---|---|---|---|---|---|---|---|---|---|---|
+| wary | 2975 | 3001 | 0.99 | 8242 | 6.2% | 1874 | 6.4% | 4547 | 8.9% | 15 |
+| control | 3001 | 2976 | 1.01 | 8393 | 6.3% | 3033 | 5.5% | 929 | 8.1% | 15 |
+
+- VERIFIED (measured, the table): neither side wins: 26 kills apart over
+  32 matches and 15 wins each. Varying the peek and hunting from a
+  vantage makes the bots harder to predict without making them score
+  more.
+- VERIFIED (measured, release, stock UO paks): the shipped cut passes
+  `tests/bots.rs` and `tests/bot_vehicles.rs` at 1.1 and UO. With the
+  96 to 320 unit vantage `uo_tdm_games_that_stalled_or_never_sprinted`
+  failed seeds 13 and 19.
+  Each stalls a bot for 12 s on mp_cassino's roof, (4890..4990,
+  -1320..-1440, 256..303), routed toward the drop edge from (4990, -1440,
+  303) to (5040, -1490, 48) with no recall, cover hold, target or hunt.
+  Each half on alone fails one seed: the cover half seed 19, the same
+  roof; the hunt half seed 13, at (720, -1467, 92) with its waypoint at
+  (-192, -384). All off, the test passed. INFERRED: follower stalls the
+  changed draws reach, not this feature; the roof pin is still in the
+  graph for another game to find.

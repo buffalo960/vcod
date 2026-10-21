@@ -425,7 +425,9 @@ something, the bullet links it.
   spreads out instead of moving as one. With `--bots-shoot` they fight back, with a reaction delay, a turn
   cap and aim that settles on target. They spot new enemies in a sight
   cone, keep their target, and turn on whoever shoots them. They fight from behind a low wall they duck
-  under to reload or round a corner they lean out of. A hurt bot, or one whose clip ran
+  under to reload or round a corner they lean out of, change how they
+  peek from one peek to the next, and go after a lost enemy from a spot
+  that looks onto where he was. A hurt bot, or one whose clip ran
   dry, backs off to a spot out of its enemy's sight, reloads and waits
   there, and a hurt one walks to a health pack lying near. A clip under
   half reloads once the fight goes quiet. A frag goes at an enemy behind

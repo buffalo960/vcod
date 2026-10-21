@@ -14,7 +14,9 @@
 //! a team keeps: each playing bot-tick's distance to its nearest teammate
 //! and whether two or more stand within 400 units, the hits bots answer
 //! with fire at the attacker within 1 s and the deaths to a killer the
-//! bot never targeted.
+//! bot never targeted. It counts peeks from cover, those that repeat the
+//! spot and pose of the one before, hunts that reach a lost enemy's spot
+//! (or the vantage over it), and the deaths within 2 s of each.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
 //! `BOTS=` (6), `TICKS=` (12000, ten minutes), `JOBS=` (4, matches run in
@@ -22,9 +24,9 @@
 //! server. `AXIS_SKILL=` / `ALLIES_SKILL=` add the bots per side at those
 //! `vc_bot_skill` levels, half each (dm: `SKILLS=a,b,...`, one bot per
 //! entry); without them `BOTS` join by balance at `vc_bot_skill`.
-//! One-sided feature arms: `COVER=`, `RETREAT=`, `TEAMPLAY=` and `AWARE=`
-//! (cover and lean, `bots/cover.rs`; the retreat, `bots/retreat.rs`; team
-//! play, `bots/team.rs`; `Bot::aware`) each take `all` (the default), `none`, `axis`, `allies`
+//! One-sided feature arms: `COVER=`, `RETREAT=`, `TEAMPLAY=`, `AWARE=` and
+//! `WARY=` (cover and lean, `bots/cover.rs`; the retreat, `bots/retreat.rs`;
+//! team play, `bots/team.rs`; `Bot::aware`; `Bot::wary`) each take `all` (the default), `none`, `axis`, `allies`
 //! or `alt` (axis on odd seeds, allies on even, so the map's own
 //! asymmetry cancels); `dm` has no sides, so only `all` and `none` there.
 //! With an arm one-sided the totals add a row per arm, named by the
@@ -93,11 +95,12 @@ struct Opts {
     /// Console lines run once the level is up (the per-side `addbot`s).
     console: Vec<String>,
     verbose: bool,
-    /// cover, retreat, team play, awareness.
-    arms: [Arm; 4],
+    /// cover, retreat, team play, awareness, wariness.
+    arms: [Arm; 5],
 }
 
-const FEATURES: [&str; 4] = ["cover", "retreat", "teamplay", "aware"];
+const FEATURES: [&str; 5] = ["cover", "retreat", "teamplay", "aware", "wary"];
+const ARM_VARS: [&str; 5] = ["COVER", "RETREAT", "TEAMPLAY", "AWARE", "WARY"];
 
 impl Opts {
     /// The one-sided features on for `team`, the arm its tallies land in.
@@ -155,6 +158,7 @@ struct Tally {
     mate_dist: f64,
     packed: u64,
     kit: Kit,
+    peeks: Peeks,
 }
 
 /// Grenades and the clip a fight starts on: throws, the hits and kills
@@ -235,6 +239,7 @@ impl Tally {
         self.mate_dist += o.mate_dist;
         self.packed += o.packed;
         self.kit.add(&o.kit);
+        self.peeks.add(&o.peeks);
     }
 
     /// The per-bot-tick line under [`Tally::line`].
@@ -342,7 +347,7 @@ fn main() {
             .collect(),
         console,
         verbose: env("VERBOSE", "0") == "1",
-        arms: ["COVER", "RETREAT", "TEAMPLAY", "AWARE"].map(Arm::parse),
+        arms: ARM_VARS.map(Arm::parse),
     };
     let jobs: usize = env("JOBS", "4").parse().expect("JOBS");
     let mut seeds: Vec<u64> = std::env::args()
@@ -353,7 +358,7 @@ fn main() {
         seeds = (1..=8).collect();
     }
     println!(
-        "maps {} gametype {} bots {} ticks {} uo {} set {:?} console {:?} cover/retreat/teamplay/aware {:?}",
+        "maps {} gametype {} bots {} ticks {} uo {} set {:?} console {:?} cover/retreat/teamplay/aware/wary {:?}",
         opts.maps.join(","),
         opts.gametype,
         opts.bots,
@@ -361,8 +366,7 @@ fn main() {
         opts.uo,
         opts.set,
         opts.console,
-        ["COVER", "RETREAT", "TEAMPLAY", "AWARE"]
-            .map(|k| std::env::var(k).unwrap_or_else(|_| "all".into())),
+        ARM_VARS.map(|k| std::env::var(k).unwrap_or_else(|_| "all".into())),
     );
     let started = Instant::now();
     let jobs_list: Vec<(String, u64)> = opts
@@ -472,6 +476,7 @@ fn summarize(what: &str, results: &[&Match]) {
             println!("  {kind} {k:<13} {}", t.line());
             println!("  {kind} {k:<13} {}", t.survive());
             println!("  {kind} {k:<13} {}", t.kit.line());
+            println!("  {kind} {k:<13} {}", t.peeks.line());
         }
     };
     rows("team ", &by_team);
@@ -542,7 +547,7 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
         // stock game.
         for slot in sv.bot_slots() {
             let team = team_name(&mut sv, slot, m.dm);
-            let [cover, retreat, team_play, aware] = o.arms;
+            let [cover, retreat, team_play, aware, wary] = o.arms;
             if cover != Arm::All {
                 sv.test_bot_cover(slot, cover.on(team, seed));
             }
@@ -554,6 +559,9 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             }
             if aware != Arm::All {
                 sv.test_bot_aware(slot, aware.on(team, seed));
+            }
+            if wary != Arm::All {
+                sv.test_bot_wary(slot, wary.on(team, seed));
             }
         }
         sv.tick(now);
@@ -709,9 +717,10 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             let num = slot.to_string();
             let body = sv.bot_body(slot);
             let cover = sv.bot_cover_state(slot);
+            let tactics = sv.bot_tactics(slot);
             let life = bots.entry(slot).or_default();
             let t = tally(&mut m, o, &num, team, &skill);
-            life.step(body.as_ref(), cover, t);
+            life.step(body.as_ref(), cover, tactics, t);
         }
         // Each playing bot's distance to its nearest playing teammate, and
         // how many stand inside PACK_RANGE.
@@ -809,6 +818,7 @@ struct Life {
     /// [`Kit::step`]'s last throw count and tracking.
     throws: u32,
     engaged: bool,
+    peeks: PeekLife,
 }
 
 impl Life {
@@ -817,6 +827,7 @@ impl Life {
         &mut self,
         body: Option<&vcod_server::bots::BotBody>,
         cover: Option<(bool, f32)>,
+        tactics: Option<[u32; 3]>,
         t: (&mut Tally, &mut Tally, &mut Tally),
     ) {
         let (mut d, playing, dead) = (
@@ -832,6 +843,7 @@ impl Life {
         }
         self.retreating = r;
         d.kit = Kit::step(self, body);
+        d.peeks = Peeks::step(&mut self.peeks, tactics, dead);
         if let Some(b) = body.filter(|b| b.playing) {
             if self.wound.is_none() && b.engaged && b.health < 50 {
                 self.wound = Some(0);
@@ -947,5 +959,81 @@ impl React {
         self.pending.retain(|(pv, _), _| *pv != v);
         let (seen, _) = self.targeted.get(&v)?;
         Some(!seen.contains(&k))
+    }
+}
+
+/// Ticks a death counts against the peek or hunt arrival before it: 2 s.
+const EXPOSED_TICKS: u64 = 2000 / TICK_MS;
+
+/// Peeks from cover and hunt arrivals (`Bot::tactics`) and the deaths
+/// within [`EXPOSED_TICKS`] of each: of any peek, of a re-peek (the spot
+/// and pose of the peek before), of a hunt reaching the lost enemy's spot
+/// or its vantage (bot-combat.md section 1).
+#[derive(Default, Clone)]
+struct Peeks {
+    peeks: u32,
+    peek_deaths: u32,
+    repeeks: u32,
+    repeek_deaths: u32,
+    hunts: u32,
+    hunt_deaths: u32,
+}
+
+/// One bot's last counts and the ticks since its last peek, re-peek and
+/// hunt arrival this life.
+#[derive(Default)]
+struct PeekLife {
+    last: [u32; 3],
+    since: [Option<u64>; 3],
+    dead: bool,
+}
+
+impl Peeks {
+    fn add(&mut self, o: &Peeks) {
+        self.peeks += o.peeks;
+        self.peek_deaths += o.peek_deaths;
+        self.repeeks += o.repeeks;
+        self.repeek_deaths += o.repeek_deaths;
+        self.hunts += o.hunts;
+        self.hunt_deaths += o.hunt_deaths;
+    }
+
+    fn line(&self) -> String {
+        let pct = |d: u32, n: u32| 100.0 * d as f32 / n.max(1) as f32;
+        format!(
+            "peeks {:6} dead in 2 s {:4.1}% re-peeks {:6} dead in 2 s {:4.1}% hunts {:5} dead in 2 s {:4.1}%",
+            self.peeks,
+            pct(self.peek_deaths, self.peeks),
+            self.repeeks,
+            pct(self.repeek_deaths, self.repeeks),
+            self.hunts,
+            pct(self.hunt_deaths, self.hunts),
+        )
+    }
+
+    /// One bot-tick: the counts' rise since the last, and on the tick the
+    /// body dies, a death against each still inside its window.
+    fn step(life: &mut PeekLife, tactics: Option<[u32; 3]>, dead: bool) -> Peeks {
+        let mut p = Peeks::default();
+        let now = tactics.unwrap_or(life.last);
+        let rose: [u32; 3] = std::array::from_fn(|i| now[i].saturating_sub(life.last[i]));
+        [p.peeks, p.repeeks, p.hunts] = rose;
+        for (since, rose) in life.since.iter_mut().zip(rose) {
+            *since = if rose > 0 {
+                Some(0)
+            } else {
+                since.map(|t| t + 1)
+            };
+        }
+        life.last = now;
+        if dead && !life.dead {
+            let inside = |s: Option<u64>| u32::from(s.is_some_and(|t| t < EXPOSED_TICKS));
+            p.peek_deaths = inside(life.since[0]);
+            p.repeek_deaths = inside(life.since[1]);
+            p.hunt_deaths = inside(life.since[2]);
+            life.since = [None; 3];
+        }
+        life.dead = dead;
+        p
     }
 }
