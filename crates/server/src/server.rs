@@ -23,6 +23,7 @@ use crate::spectate::{ClientSim, PmType};
 use crate::world::{TestEntities, World};
 
 mod bot_admin;
+mod bot_vehicles;
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
@@ -1701,6 +1702,8 @@ pub struct Server {
     creases: std::cell::RefCell<crate::nav::Creases>,
     /// Per bot, its walk along `nav`.
     bot_paths: BTreeMap<usize, crate::nav::Follower>,
+    /// Bots' routes in a UO vehicle's driver's seat.
+    bot_drives: bot_vehicles::BotDrives,
     /// Each bombzone's `(mins, maxs)` and the stand `site_stand` picked in
     /// it, for the life of the nav graph.
     bot_sites: Vec<([f32; 3], [f32; 3], [f32; 3])>,
@@ -2145,6 +2148,7 @@ impl Server {
             nav_background: false,
             creases: Default::default(),
             bot_paths: BTreeMap::new(),
+            bot_drives: Default::default(),
             bot_sites: Vec::new(),
             bot_breach_stands: Vec::new(),
             bot_noises: Vec::new(),
@@ -4502,6 +4506,7 @@ impl Server {
                 });
             }
         }
+        self.bot_vehicle_views(&mut views);
         let breach_models = if views.iter().any(|(_, v)| v.rocket.is_some()) {
             self.bot_breach_models(uo.as_ref())
         } else {
@@ -4628,7 +4633,14 @@ impl Server {
             let Some(goal) = self.bots.get(&slot).map(|b| b.goal(&view)) else {
                 continue;
             };
-            if let Some(g) = self.nav.clone() {
+            // A seat leaves the walk's follower alone; a driver steers along
+            // a route its hull fits (`drive_waypoint`).
+            if let Some(s) = view.seat.filter(|s| s.seat == 1) {
+                view.waypoint = self.drive_waypoint(slot, goal, &s);
+            } else {
+                self.bot_drives.forget(slot);
+            }
+            if let Some(g) = self.nav.clone().filter(|_| view.seat.is_none()) {
                 let mut follower = self.bot_paths.remove(&slot).unwrap_or_default();
                 follower.crowd = match teams.get(slot) {
                     Some(&t) if Self::team_objective(&view) => {
@@ -4665,7 +4677,8 @@ impl Server {
                 // readable and written back below.
                 let mut rng = self.bots.get(&slot).map_or(1, |b| b.rng);
                 let mut rand = || rand_from(&mut rng);
-                let at = view.origin;
+                // A seat plans from the vehicle on the ground under it.
+                let at = view.seat.map_or(view.origin, |s| s.origin);
                 let world = self.world.as_ref().map(|w| &w.collision);
                 let others =
                     |all: &[(usize, glam::Vec3, glam::Vec3)]| -> Vec<(glam::Vec3, glam::Vec3)> {
@@ -5343,6 +5356,9 @@ impl Server {
                 .level_cvars
                 .as_ref()
                 .is_some_and(|(g, _)| g == "sd" || g == "re"),
+            // Filled for the level's vehicles in pass 2.
+            vehicles: Vec::new(),
+            seat: None,
         })
     }
 
@@ -5730,6 +5746,10 @@ impl Server {
             .filter(|(i, _)| *i != slot && teams.get(*i).copied() == Some(my_team))
             .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
             .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            // A crew mate in the bot's own vehicle sits beside its gun.
+            .filter(|o| {
+                me.seat.is_none() || o.seat.map(|s| s.vehicle) != me.seat.map(|s| s.vehicle)
+            })
             .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
             .collect();
         let eye = crate::game::combat::muzzle_point(&me.ps);
@@ -5839,6 +5859,8 @@ impl Server {
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
             deployed: sim.ps.deployed(),
             engaged: self.bots.get(&slot).is_some_and(|b| b.engaged()),
+            seat: sim.seat.map(|s| (s.vehicle, s.pos)),
+            boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
         })
     }
 

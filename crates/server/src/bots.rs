@@ -13,6 +13,10 @@ pub(crate) mod cover;
 use crate::server::FRAME_MS;
 pub mod team;
 use vcod_common::net::msg::{self, NULL_USERCMD, UserCmd};
+pub(crate) use vehicle::SEEK_RANGE as VEHICLE_SEEK_RANGE;
+pub use vehicle::{SeatView, VehicleSpot};
+
+mod vehicle;
 
 mod skill;
 pub use skill::{DEFAULT_LEVEL, MAX_LEVEL};
@@ -322,6 +326,11 @@ pub struct BotView {
     /// `Callback_PlayerKilled` spawns a spectator), so a wedged bot holds
     /// on rather than `kill` itself.
     pub one_life: bool,
+    /// United Offensive vehicles the bot could board, on foot only
+    /// (`vehicle`).
+    pub vehicles: Vec<VehicleSpot>,
+    /// The vehicle seat the bot sits in.
+    pub seat: Option<SeatView>,
 }
 
 /// Behind Enemy Lines as the bot plays it (docs/research/bot-objectives.md,
@@ -695,6 +704,10 @@ pub struct BotBody {
     /// Tracking an enemy it saw within the last second: a scoped or
     /// sighted shot at range stands still on purpose.
     pub engaged: bool,
+    /// The UO vehicle (entity number) and seat it sits in.
+    pub seat: Option<(u32, i32)>,
+    /// Times it got into a vehicle.
+    pub boardings: u32,
 }
 
 pub struct Bot {
@@ -850,6 +863,8 @@ pub struct Bot {
     pub(crate) last_seen_seq: i32,
     /// The client-command sequence the bot's own replies use.
     pub(crate) next_command_seq: i32,
+    /// Boarding, driving and leaving a vehicle (`vehicle`).
+    rider: vehicle::Rider,
 }
 
 /// The enemy the bot is engaging and how settled its aim on it is.
@@ -1137,6 +1152,7 @@ impl Bot {
             marker_reached: None,
             last_seen_seq: 0,
             next_command_seq: 1,
+            rider: Default::default(),
             team: team.to_string(),
             rng: seed | 1,
         }
@@ -1280,6 +1296,9 @@ impl Bot {
         }
         if let Some(e) = view.enemy {
             return Goal::To(e.origin);
+        }
+        if let Some(g) = self.vehicle_goal(view) {
+            return g;
         }
         if let Some(bel) = view.bel.as_ref() {
             return self.bel_goal(view, bel);
@@ -2299,6 +2318,7 @@ impl Bot {
             self.disengage();
             self.recall = None;
             self.end_life();
+            self.vehicle_life_over();
             // The stock death flow polls the use key only after its own
             // `wait 2` (dm.gsc, `waitRespawnButton`), so a one-shot press
             // lands before any poll reads it; retry every second, the way
@@ -2318,6 +2338,9 @@ impl Bot {
             return cmd;
         }
         self.respawn_ticks = 0;
+        if let Some(cmd) = self.think_vehicle(view, cmd) {
+            return cmd;
+        }
         if self.wedged(view) && !view.one_life {
             self.kill = true;
         }
@@ -3223,9 +3246,9 @@ impl Bot {
         self.sprint_leg
     }
 
-    /// Tracking an enemy ([`BotBody::engaged`]).
+    /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
-        self.target.is_some()
+        self.target.is_some() || self.seated_fight()
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
@@ -3816,6 +3839,8 @@ mod tests {
             bel: None,
             uo: None,
             one_life: false,
+            vehicles: Vec::new(),
+            seat: None,
         }
     }
 

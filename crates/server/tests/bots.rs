@@ -869,13 +869,23 @@ fn uo_bots_fight_and_sprint_in_tdm() {
                 && h.iter().all(|p| {
                     (0..3).map(|i| (p[i] - first[i]).powi(2)).sum::<f32>() < 150.0 * 150.0
                 });
-            assert!(!still, "tick {tick}: bot {slot} 12 s at {first:?}");
+            assert!(
+                !still,
+                "tick {tick}: bot {slot} 12 s at {first:?} seat {:?}",
+                b.seat
+            );
         }
     }
     let kills: Vec<Vec<String>> = sv
         .script_log()
         .iter()
-        .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+        .filter_map(|l| {
+            // Not the `TANK;` of a `D;` line's `MOD_CRUSH_TANK`.
+            l.trim_end()
+                .split_once("K;")
+                .filter(|(pre, _)| !pre.ends_with(|c: char| c.is_ascii_alphanumeric()))
+                .map(|(_, k)| k)
+        })
         .map(|k| k.split(';').map(str::to_string).collect())
         .collect();
     eprintln!(
@@ -1069,7 +1079,13 @@ fn bas_maps() -> Vec<String> {
 fn kills(sv: &vcod_server::Server) -> Vec<Vec<String>> {
     sv.script_log()
         .iter()
-        .filter_map(|l| l.trim_end().split_once("K;").map(|(_, k)| k))
+        .filter_map(|l| {
+            // Not the `TANK;` of a `D;` line's `MOD_CRUSH_TANK`.
+            l.trim_end()
+                .split_once("K;")
+                .filter(|(pre, _)| !pre.ends_with(|c: char| c.is_ascii_alphanumeric()))
+                .map(|(_, k)| k)
+        })
         .map(|k| k.split(';').map(str::to_string).collect())
         .collect()
 }
@@ -1162,12 +1178,17 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
     }
     eprintln!(
         "{map}: {bots} bots, shoot {shoot}: first breach at tick {first:?}, round over at {end:?}: \
-         {} breached, {} planted, {} destroyed, {} defused, {} kills",
+         {} breached, {} planted, {} destroyed, {} defused, {} kills, {} boardings",
         count(&sv, "bas_breached"),
         count(&sv, "bas_planted"),
         count(&sv, "bas_destroyed"),
         count(&sv, "bas_defused"),
         kills(&sv).len(),
+        sv.bot_slots()
+            .iter()
+            .filter_map(|s| sv.bot_body(*s))
+            .map(|b| b.boardings)
+            .sum::<u32>(),
     );
     assert!(
         first.is_some_and(|t| t < BAS_BREACH_TICKS),
@@ -1186,6 +1207,12 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
         .script_aborts()
         .into_iter()
         .filter(|a| !a.starts_with("maps/mp/gametypes/bas::BaseAssault_bomb_think:3152:"))
+        // Stock `_jeepdrive_gmi::process_deactivate` starts a 90 s
+        // self-destruct on the last rider's exit, ended only by a boarding:
+        // a jeep destroyed meanwhile (a rider still in it counts, as his
+        // exit is the death's unlink) is deleted, and the timer's
+        // `dodamage` lands on a dead entity (bot-objectives.md 10.5).
+        .filter(|a| !a.starts_with("maps/mp/_jeepdrive_gmi::process_deactivate:469:"))
         .collect();
     assert_eq!(aborts, Vec::<String>::new());
     Some(sv)

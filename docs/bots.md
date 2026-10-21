@@ -71,6 +71,7 @@ startup. A change takes effect within half a second, with no restart.
 | `vc_bot_autobalance` | 1 | Keeps the teams even in team gametypes. |
 | `vc_bot_shoot` | 1 | 0 stops bots from firing. `--bots` without `--bots-shoot` sets it to 0. |
 | `vc_bot_names` | 1 | 0 names new bots `bot<slot>` instead of drawing a funny name. |
+| `vc_bot_vehicles` | 1 | United Offensive only. 0 stops bots getting into vehicles; a bot already in one rides on until it gets out. |
 | `vc_bot_skill` | 1 | The skill level, 0 to 3, of every bot that `addbot ... skill N` didn't set. See [Skill](#skill). |
 
 ## Skill
@@ -169,10 +170,21 @@ site and covers a planter, and in Retrieval escorts the carrier and holds
 the goal ahead of him
 ([research/bot-objectives.md](research/bot-objectives.md) section 9).
 
+On a United Offensive map with vehicles, a bot with no fight and no
+objective close by walks to a vehicle near it and gets in with the use key,
+like a player. A driver drives toward its objective or an enemy, waits a
+moment for a teammate walking up to board, and in a tank stops to lay the
+turret on an enemy and fire. A gunner fires the vehicle's machine gun. Bots
+get out when they arrive, when stuck, or after 90 seconds (section 10 of
+the same page).
+
 ## Known limits
 
 - `status` shows a bot's address as `127.0.0.1:-1`.
-- Bots don't use UO vehicles.
+- In UO, bots drive vehicles along the infantry graph over ground the hull
+  fits, so a tank can still wedge itself; a driver backs off and gets out
+  after four stalls. They never change seats, use the hatch or drive a
+  vehicle at an enemy to run him over.
 - Skill levels change how bots aim, react and remember, not how they move
   or what they choose to do: an expert takes the same routes and plays the
   objectives the same way as an easy bot.

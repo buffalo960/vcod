@@ -124,7 +124,10 @@ check.
   `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
   mp_cassino six-bot tdm run and its walled-in spawns test (the file
-  ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
+  ~12 s, 60 s of CPU), and `tests/bot_vehicles.rs` its bots boarding,
+  driving and firing mp_cassino's tanks (~10 s); with a 1.1 install they
+  return at once. `--example bot_vehicles` (UO) plays each seed with
+  bots' vehicles off and on (`bot-objectives.md` 10.6). `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
   `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
