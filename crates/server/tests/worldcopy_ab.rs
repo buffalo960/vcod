@@ -84,6 +84,9 @@ const PRECISE_TOL: f32 = 0.0003;
 /// `0.5 + 0.5 * rand() * -2^-31` (items doc 14.2).
 const MAX_LIFT: f32 = 0.5;
 
+/// 1.5b's and UO's lift, `0.5 + 0.5 * rand() / 2^31` (items doc 14.2).
+const LIFT_15: std::ops::RangeInclusive<f32> = 0.5..=1.0;
+
 /// The pack per sample time, the second vector of each `PROBE f` line.
 fn pack_track(text: &str) -> Vec<(i32, [f32; 3])> {
     text.lines()
@@ -212,6 +215,9 @@ struct Ours {
     /// Every pack landing: retail's level time, ours' rest with no lift,
     /// retail's lift above it.
     lifts: Vec<(i32, f32, f32)>,
+    /// Every pack landing's lift by ours' level time, for [`run_once`]'s
+    /// second pass, and whether any of them was corrected after its frame.
+    landings: (BTreeMap<i32, f32>, bool),
     /// Whether the level dropped.
     killed: bool,
     /// The client's first snapshot's time.
@@ -310,24 +316,30 @@ fn run_ours_on(
     fixture: &str,
     probe_rate: bool,
 ) -> Option<Ours> {
-    let ours = run_once(fs()?, map, name, probe, fixture, probe_rate, 0)?;
+    let none = BTreeMap::new();
+    let mut ours = run_once(fs()?, map, name, probe, fixture, probe_rate, 0, &none)?;
     let text = std::fs::read_to_string(fixture).unwrap();
-    let Some(&(first, _)) = common::cmds_ran(&text, "").first() else {
-        return Some(ours);
-    };
-    match ours.first_snap {
-        Some(t) if t != first => {
-            let late = (t - first) as i64;
-            run_once(fs()?, map, name, probe, fixture, probe_rate, late)
-        }
-        _ => Some(ours),
+    let mut late = 0;
+    if let (Some(&(first, _)), Some(t)) = (common::cmds_ran(&text, "").first(), ours.first_snap)
+        && t != first
+    {
+        late = (t - first) as i64;
+        ours = run_once(fs()?, map, name, probe, fixture, probe_rate, late, &none)?;
     }
+    // A landing whose lift was corrected after its frame ran that frame's
+    // push at the wrong height: run again with every lift drawn in place.
+    if !ours.landings.1 {
+        return Some(ours);
+    }
+    let known = ours.landings.0;
+    run_once(fs()?, map, name, probe, fixture, probe_rate, late, &known)
 }
 
 /// Runs `probe` on `map` on ours with one allied client standing still, to `PROBE
 /// done` or the level's drop. `fixture` is the retail capture whose pack
 /// lifts it borrows, when it has a pack, and whose client's cmds it replays,
 /// when it logs them. `late_ms` starts the client that much earlier.
+/// `known` is a first pass's lift for each landing by ours' level time.
 /// `probe_rate` sends the probe client's three cmds a frame instead of one.
 #[allow(clippy::too_many_arguments)]
 fn run_once(
@@ -338,6 +350,7 @@ fn run_once(
     fixture: &str,
     probe_rate: bool,
     late_ms: i64,
+    known: &BTreeMap<i32, f32>,
 ) -> Option<Ours> {
     let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
@@ -350,34 +363,49 @@ fn run_once(
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     // Each landing's lift is a fresh `rand()` draw, which ours cannot
     // replay. Before the samples start, a landing where the pack rests takes
-    // the lift up to retail's first rest. After, ours lands every item with
-    // none and the pack is raised to retail's rest after the frame it landed
-    // in: the retail sample a frame later (a thread reads the last frame's
-    // entity pass), the clocks lined up on the first `rest` sample. Each lift
-    // is kept for the test to hold to the lift's range.
+    // the lift up to retail's first rest. After, a landing takes the lift up
+    // to retail's rest a frame later (a thread reads the last frame's entity
+    // pass), the clocks lined up on the first `rest` sample, and the pack is
+    // raised to that rest after the frame: a mover that carried it in the
+    // frame put it off by its step. That corrected lift is the draw, which
+    // a second pass (`known`) gives the landing itself, so the frame's push
+    // tests the pack where retail's stood. Each lift is kept for the test to
+    // hold to the lift's range.
     let retail_text = std::fs::read_to_string(fixture).unwrap();
-    let track = pack_track(&retail_text);
+    let track = Rc::new(pack_track(&retail_text));
     let rest = track.first().map_or([0.0; 3], |s| s.1);
-    let sampling = Rc::new(std::cell::Cell::new(false));
+    let offset = Rc::new(std::cell::Cell::new(None::<i32>));
     let landed = Rc::new(RefCell::new(Vec::new()));
     let lifts = Rc::new(RefCell::new(Vec::new()));
-    let (seen, early, started) = (landed.clone(), lifts.clone(), sampling.clone());
+    let (seen, early, off_seen, landing_track) =
+        (landed.clone(), lifts.clone(), offset.clone(), track.clone());
+    let known = known.clone();
     let has_pack = !track.is_empty();
     sv.test_item_lifts(Box::new(move |time, floor| {
         if !has_pack {
             return 0.25;
         }
-        let at_rest = (floor[0] - rest[0]).abs() < 0.5 && (floor[1] - rest[1]).abs() < 0.5;
-        if started.get() || !at_rest {
-            seen.borrow_mut().push((time, floor));
-            return 0.0;
-        }
-        early
-            .borrow_mut()
-            .push((time, floor[2], rest[2] - floor[2]));
-        rest[2] - floor[2]
+        let under = |at: [f32; 3]| (floor[0] - at[0]).abs() < 0.5 && (floor[1] - at[1]).abs() < 0.5;
+        let Some(off) = off_seen.get() else {
+            if !under(rest) {
+                return 0.0;
+            }
+            early
+                .borrow_mut()
+                .push((time, floor[2], rest[2] - floor[2]));
+            return rest[2] - floor[2];
+        };
+        let at = time + off + FRAME_MS as i32;
+        let lift = match (known.get(&time), landing_track.iter().find(|s| s.0 >= at)) {
+            (Some(&lift), _) => lift,
+            (None, Some(&(_, r))) if under(r) => r[2] - floor[2],
+            _ => return 0.0,
+        };
+        seen.borrow_mut().push((time, floor, lift));
+        lift
     }));
-    let mut offset = None;
+    let mut corrected = false;
+    let mut landings = BTreeMap::new();
     let mut pack = None;
     // A capture that logs its client's cmds (`CMDS` lines) is replayed on
     // them: the client joins so its first snapshot falls on retail's, and
@@ -462,19 +490,18 @@ fn run_once(
                 );
             }
         }
-        if offset.is_none()
+        if offset.get().is_none()
             && has_pack
             && let Some(t) = pack_track(&sv.script_log().join("\n")).first()
         {
-            offset = Some(track[0].0 - t.0);
-            sampling.set(true);
+            offset.set(Some(track[0].0 - t.0));
             pack = sv.script_log().iter().find_map(|l| {
                 let rest = l.split("PROBE player ").nth(1)?;
                 rest.split(" pack ").nth(1)?.trim().parse().ok()
             });
         }
-        if let (Some(off), Some(pack)) = (offset, pack) {
-            for (time, floor) in landed.take() {
+        if let (Some(off), Some(pack)) = (offset.get(), pack) {
+            for (time, floor, lift) in landed.take() {
                 let Some(o) = sv.test_raise_entity(pack, 0.0) else {
                     continue;
                 };
@@ -485,8 +512,14 @@ fn run_once(
                 let Some(&(_, r)) = track.iter().find(|s| s.0 >= at) else {
                     continue;
                 };
-                sv.test_raise_entity(pack, r[2] - o[2]);
-                lifts.borrow_mut().push((time + off, o[2], r[2] - o[2]));
+                // Past the print's two decimals and a float step.
+                let dz = r[2] - o[2];
+                if dz.abs() > 1e-4 {
+                    sv.test_raise_entity(pack, dz);
+                    corrected = true;
+                }
+                landings.insert(time, lift + dz);
+                lifts.borrow_mut().push((time + off, floor[2], lift + dz));
             }
         }
         if sv.is_killed() || sv.script_log().iter().any(|l| l.contains("PROBE done")) {
@@ -498,6 +531,7 @@ fn run_once(
         log: sv.script_log().to_vec(),
         new,
         lifts: lifts.take(),
+        landings: (landings, corrected),
         killed: sv.is_killed(),
         first_snap,
     })
@@ -667,14 +701,14 @@ fn a_turned_world_copy_clips_and_pushes_like_retail() {
 /// does and the jitter lands where retail's did (cod11-movers.md 21).
 #[test]
 fn a_pitched_copy_blocks_its_rider_like_retail() {
-    pitched_matches(SERVER3, ours3(), &[]);
+    pitched_matches(SERVER3, ours3(), 0.0..=MAX_LIFT);
 }
 
 /// The same on 1.5b and UO, whose `G_TryPushingEntity` stores each step of
 /// the carry (cod11-movers.md 21, "The carry's rounding").
 #[test]
 fn a_pitched_copy_blocks_its_rider_like_retail_on_15() {
-    pitched_matches(SERVER3_15, run3_on(fs_15, SERVER3_15), &[]);
+    pitched_matches(SERVER3_15, run3_on(fs_15, SERVER3_15), LIFT_15);
 }
 
 #[test]
@@ -682,22 +716,9 @@ fn a_pitched_copy_blocks_its_rider_like_retail_on_uo() {
     pitched_matches(
         SERVER3_UO,
         run3_on(vcod_common::testing::uo_fs, SERVER3_UO),
-        PACK_GAPS_UO,
+        LIFT_15,
     );
 }
-
-/// UO's health pack on the turning copy, from each phase's frame on: retail's
-/// lands again at yaw 10.5 (16100, a second lift) where ours rests on, so
-/// ours falls off the copy's slope a frame early and the harness's lift
-/// raise holds it there (cod11-movers.md 21, "The carry's rounding"). The
-/// player's rows are held on every frame.
-const PACK_GAPS_UO: &[(&str, usize)] = &[
-    ("yaw45", 8),
-    ("yaw90", 0),
-    ("yaw0", 0),
-    ("pitch", 0),
-    ("unpitch", 0),
-];
 
 /// The 1.5b install's paks, `None` elsewhere (a UO install's `main/` is
 /// 1.5's, so this runs there too).
@@ -710,18 +731,28 @@ fn run3_on(fs: fn() -> Option<Pk3Fs>, fixture: &str) -> Option<Ours> {
     run_ours_on(fs, MAP, "probe_worldcopy3", PROBE3, fixture, true)
 }
 
-/// `probe_worldcopy3`'s rows, every frame to the ten-thousandth, but the
-/// pack's (`PROBE f` column 1) from each `pack_gaps` phase's frame on.
+/// `probe_worldcopy3`'s rows, every frame to the ten-thousandth, with
+/// every pack lift in `lifts`.
 fn pitched_matches(
     fixture: &str,
     ours: Option<impl std::borrow::Borrow<Ours>>,
-    pack_gaps: &[(&str, usize)],
+    lifts: std::ops::RangeInclusive<f32>,
 ) {
     let Some(ours) = ours else {
         eprintln!("no install of this version under COD_DIR: skipping");
         return;
     };
     let log = &ours.borrow().log;
+    // Retail's two decimals put a lift up to 0.005 out of range.
+    for &(time, floor, lift) in &ours.borrow().lifts {
+        if report() {
+            println!("landing {time} floor {floor} lift {lift}");
+        }
+        assert!(
+            (lifts.start() - 0.01..=lifts.end() + 0.01).contains(&lift),
+            "the pack landed at {time} at {floor}, {lift} under retail's rest"
+        );
+    }
     let text = std::fs::read_to_string(fixture).unwrap();
     let retail = phases(text.lines());
     let ours = phases(log.iter().map(String::as_str));
@@ -737,14 +768,6 @@ fn pitched_matches(
         }
     }
     let mut bad = compare_phases(&retail, &ours);
-    bad.retain(|row| {
-        !pack_gaps.iter().any(|&(phase, from)| {
-            row.strip_prefix(&format!("{phase} frame "))
-                .and_then(|r| r.split_once(" column 1:"))
-                .and_then(|(k, _)| k.parse::<usize>().ok())
-                .is_some_and(|k| k >= from)
-        })
-    });
     // Every frame to the ten-thousandth: the lift's slide down the copy's
     // slope, the carry through the turns, the pitch's blocked frame and the
     // jitter's fall.
