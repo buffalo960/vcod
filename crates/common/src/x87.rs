@@ -54,3 +54,24 @@ pub fn normalize_stored(v: Vec3) -> Vec3 {
     let inv = 1.0 / len;
     (v.as_dvec3() * f64::from(inv)).as_vec3()
 }
+
+/// The engine's `AnglesToAxis` as `CM_TransformedBoxTrace` builds it
+/// (`cod_lnxded` `AngleVectors` 0x8063388, the right inverted by 0x8065c38):
+/// each angle times the double `M_PI * 2 / 360` stored as a float, its
+/// `fsincos` stored as floats, and each axis component's sum of products
+/// kept on the stack and stored once. Rounding every product to a float
+/// instead turns a pitched, yawed and rolled model by a few ulps, and a
+/// slide down its face ends thousandths short (movers doc 22).
+pub fn angles_to_axis(angles: Vec3) -> [Vec3; 3] {
+    let sin_cos = |a: f32| {
+        let r = f64::from((f64::from(a) * (std::f64::consts::PI * 2.0 / 360.0)) as f32);
+        (f64::from(r.sin() as f32), f64::from(r.cos() as f32))
+    };
+    let (sp, cp) = sin_cos(angles.x);
+    let (sy, cy) = sin_cos(angles.y);
+    let (sr, cr) = sin_cos(angles.z);
+    let forward = DVec3::new(cp * cy, cp * sy, -sp);
+    let left = DVec3::new(sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp);
+    let up = DVec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
+    [forward.as_vec3(), left.as_vec3(), up.as_vec3()]
+}
