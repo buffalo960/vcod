@@ -2203,6 +2203,12 @@ impl Follower {
                     let n = g.nodes[n as usize];
                     n.z >= w.z - vcod_common::pmove::JUMP_HEIGHT
                         && flat(n) < (n - w).truncate().length()
+                        // Only with floor the whole way: off mp_ship's mast
+                        // ladder at x 3696 a body 27 short of the head's exit
+                        // at (3705, 85, 992) read as past it and ran straight
+                        // for (3648, 71, 994), over the hatch, and fell back
+                        // down it (seed 1031, bot-navigation.md section 3).
+                        && world.is_none_or(|world| straight_floor(world, here, n))
                 });
             let reached = if foot {
                 flat(w) < LEAP_FOOT && body.still
@@ -2273,13 +2279,30 @@ impl Follower {
                 && (reached || past)
                 && (!foot || held)
                 && !planned_round
-                && !self.edge_holds(world, here, body.velocity, g)
+                && !self.edge_holds(world, here, body.velocity, body.on_ladder, g)
             {
                 // The walk on was proved from the node, and fails from here:
-                // close in on the node first, and from on it, round the
-                // edge.
+                // close in on the node first, and from on it, round the edge.
+                // A drop more than a step down whose walk on from rest on
+                // the node arrives is taken from rest there, as a fling is
+                // (not a run off a rim that needs its running start: bots
+                // stopped at each of mp_depot's pit drops at 212 in turn and
+                // paced the rim, seed 149). Avoided at the pace a bot came
+                // onto mp_ship's crow's nest rim at (4929, 61, 1254), the
+                // spar at 1212 that it walks onto from rest was left, the
+                // roam picked anew down the ladder and met the next bot up
+                // (seed 307). Not a level or rising edge: brought to rest
+                // on the hull rib at (2214, -325, -48), a bot took the next
+                // plan's jump edge from rest, where the graph proved it with
+                // a running start, and slid into the crease beside it (seed
+                // 603, bot-navigation.md section 3).
                 let edge = (self.path[self.next], self.path[self.next + 1]);
                 if (flat(w) < ON_NODE || held) && here.z < w.z + ARRIVE {
+                    let drop = g.nodes[edge.1 as usize].z < w.z - vcod_common::pmove::STEPSIZE;
+                    if !held && drop && self.edge_holds(world, w, Vec3::ZERO, false, g) {
+                        self.held = Some(edge);
+                        break;
+                    }
                     self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
                     self.reset();
                     return None;
@@ -2294,7 +2317,7 @@ impl Follower {
                 && (reached || past)
                 && planned_round
                 && !held
-                && !self.edge_holds(world, here, body.velocity, g)
+                && !self.edge_holds(world, here, body.velocity, body.on_ladder, g)
             {
                 self.held = Some((self.path[self.next], self.path[self.next + 1]));
                 break;
@@ -2633,8 +2656,9 @@ impl Follower {
     /// from `at`: the graph proved it from the node, and over a hull beam's
     /// slope a body a few units aside slides back. A climb or a drop
     /// steeper than a jump is taken as proved (a ladder, a back down), and
-    /// so is a walk from under the node's floor (a body on a ladder under
-    /// its head) or without a world. From over it the walk has to arrive:
+    /// so is a walk from the rungs under the node's floor (`on_rungs`, a
+    /// body on a ladder under its head) or without a world. From over it,
+    /// or from up a slope under it, the walk has to arrive:
     /// mp_ship's lip at (5424, -187, 344) stands 24 over a stair node,
     /// within reach of it flat, and the walk on from there pins under a
     /// shelf. Off a jump edge the walk has to arrive
@@ -2646,6 +2670,7 @@ impl Follower {
         world: Option<&CollisionWorld>,
         at: Vec3,
         pace: Vec3,
+        on_rungs: bool,
         g: &NavGraph,
     ) -> bool {
         let (Some(world), Some(&a), Some(&b)) = (
@@ -2666,7 +2691,12 @@ impl Follower {
             Gait::Forward
         };
         let (a, b) = (g.nodes[a as usize], g.nodes[b as usize]);
-        if at.z < a.z - ARRIVE {
+        // Only from the rungs: up mp_dawnville's slope to (-1193, -16944,
+        // 102) a body passes the node 12 under it, and from 4 units off
+        // the line the walk on pins where the bot did, stalled until an
+        // unstick spell ran it back down the slope (seed 239,
+        // bot-navigation.md section 3).
+        if on_rungs && at.z < a.z - ARRIVE {
             return true;
         }
         // A run off a drop has to arrive at the pace the body comes onto
@@ -4004,6 +4034,15 @@ impl Search {
                     continue;
                 }
                 let risk = if g.risky.contains(&(node, next)) {
+                    // Round a stuck edge, never down a risky drop: with the
+                    // ladder off mp_ship's crow's nest avoided after a
+                    // meeting at its head, plans took the drop down its
+                    // hatch, and a bot fell past the rungs to its death
+                    // (seed 969, bot-navigation.md section 3). The plan
+                    // through the stuck edge comes next.
+                    if !self.avoid.is_empty() {
+                        continue;
+                    }
                     RISK_COST
                 } else {
                     0.0
@@ -5793,6 +5832,49 @@ mod tests {
             assert_eq!(step(&mut f, [70.0, 200.0, z], air), None);
             assert_eq!((f.fell, f.avoid.len() == 1), (avoided, avoided), "z {z}");
         }
+    }
+
+    /// A plan round a stuck edge takes no risky drop: with the only plain
+    /// way avoided, the plan goes through the stuck edge again, as
+    /// mp_ship's crow's nest's ladder after a meeting at its head, not
+    /// down the hatch beside it. With nothing avoided, the risky drop is
+    /// still the way when it is the only one.
+    #[test]
+    fn a_plan_round_a_stuck_edge_takes_no_risky_drop() {
+        use crate::bots::Goal;
+        // 0 -> 1 -> 2 plain, 0 -> 2 a risky drop.
+        let nodes = vec![
+            Vec3::ZERO,
+            Vec3::new(64.0, 64.0, 0.0),
+            Vec3::new(128.0, 0.0, 0.0),
+        ];
+        let mut g = NavGraph::from_parts(nodes, vec![vec![1, 2], vec![2], vec![]]);
+        g.risky.insert((0, 2));
+        g.index_components();
+        let goal = Goal::To([128.0, 0.0, 0.0]);
+        let mut f = Follower::default();
+        f.avoid.push((0, 1, u32::MAX));
+        let mut budget = 100;
+        let at = [0.0, 0.0, 0.0];
+        let plan = (0..4).find_map(|_| {
+            f.waypoint(
+                &g,
+                None,
+                goal,
+                at,
+                Footing::STANDING,
+                &mut budget,
+                &mut || 0,
+            )
+        });
+        assert_eq!(plan, Some([64.0, 64.0, 0.0]), "through the stuck edge");
+        let mut s = Search::new(&g, 0, 2, vec![(0, 1)]);
+        assert!(matches!(s.run(&g, &mut 100), Plan::Failed));
+        let mut s = Search::new(&g, 0, 2, Vec::new());
+        assert!(matches!(s.run(&g, &mut 100), Plan::Found(p) if p == [0, 1, 2]));
+        g.edges[0] = vec![2];
+        let mut s = Search::new(&g, 0, 2, Vec::new());
+        assert!(matches!(s.run(&g, &mut 100), Plan::Found(p) if p == [0, 2]));
     }
 
     /// A point goal that moves off and comes back within `PARK_TICKS`
@@ -8133,14 +8215,17 @@ mod tests {
             Walked::Arrived(..)
         ));
         assert!(
-            !f.edge_holds(Some(w), at, pace, &g),
+            !f.edge_holds(Some(w), at, pace, false, &g),
             "from where the bots passed"
         );
         assert!(!coasts_off(w, at, pace));
         let mast = Vec3::new(3309.6, 128.8, 1030.125);
         assert!(coasts_off(w, mast, Vec3::new(-176.0, -72.0, 0.0)));
         let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
-        assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
+        assert!(
+            f.edge_holds(Some(w), a, straight, false, &g),
+            "from the node"
+        );
     }
 
     /// mp_ship's dome crest: a bot climbing the dome passed the node at
@@ -8179,12 +8264,18 @@ mod tests {
         assert!(matches!(on, Walked::Arrived(_, false)) && trail.dip > 0.0);
         assert!(a_miss_hurts(w, b));
         assert!(
-            !f.edge_holds(Some(w), at, pace, &g),
+            !f.edge_holds(Some(w), at, pace, false, &g),
             "from where the bot passed"
         );
         let straight = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
-        assert!(f.edge_holds(Some(w), a, straight, &g), "from the node");
-        assert!(f.edge_holds(Some(w), a, Vec3::ZERO, &g), "from rest on it");
+        assert!(
+            f.edge_holds(Some(w), a, straight, false, &g),
+            "from the node"
+        );
+        assert!(
+            f.edge_holds(Some(w), a, Vec3::ZERO, false, &g),
+            "from rest on it"
+        );
         // The crow's nest ladder's foot at 692: the walk hops a lip and its
         // runs aside never arrive, but neither falls.
         let (a, b) = (
@@ -8199,7 +8290,7 @@ mod tests {
         let at = Vec3::new(5006.1475, 115.67403, 692.125);
         let pace = Vec3::new(-42.0, -172.0, 0.0);
         assert!(
-            f.edge_holds(Some(w), at, pace, &g),
+            f.edge_holds(Some(w), at, pace, false, &g),
             "onto the ladder's foot"
         );
     }
@@ -8365,12 +8456,12 @@ mod tests {
             ..Follower::default()
         };
         let at = Vec3::new(5823.3916, 567.12866, 92.125);
-        assert!(f.edge_holds(Some(w), at, Vec3::new(22.0, 0.0, 0.0), &g));
+        assert!(f.edge_holds(Some(w), at, Vec3::new(22.0, 0.0, 0.0), false, &g));
         f.next = 1;
         assert!(f.jumping(&g) && !f.jump_cued(&g), "from the stringer");
         f.next = 0;
         let run = (b - a).truncate().normalize().extend(0.0) * vcod_common::pmove::SPEED_RUN;
-        assert!(f.edge_holds(Some(w), a, run, &g));
+        assert!(f.edge_holds(Some(w), a, run, false, &g));
         f.next = 1;
         assert!(f.jump_cued(&g), "from the node at a run");
     }
@@ -8393,14 +8484,17 @@ mod tests {
             ..Follower::default()
         };
         let aside = Vec3::new(3822.0, -802.0, -63.875);
-        assert!(f.edge_holds(Some(w), a, Vec3::ZERO, &g), "from the node");
         assert!(
-            !f.edge_holds(Some(w), aside, Vec3::ZERO, &g),
+            f.edge_holds(Some(w), a, Vec3::ZERO, false, &g),
+            "from the node"
+        );
+        assert!(
+            !f.edge_holds(Some(w), aside, Vec3::ZERO, false, &g),
             "3 units north"
         );
         g.jumps.insert((0, 1));
         assert!(
-            f.edge_holds(Some(w), aside, Vec3::ZERO, &g),
+            f.edge_holds(Some(w), aside, Vec3::ZERO, false, &g),
             "on a jump edge"
         );
     }
@@ -9042,8 +9136,11 @@ mod tests {
             on_ladder: false,
             velocity: Vec3::new(0.0, 85.0, 0.0),
         };
+        // From where the body steps off, the straight line west crosses
+        // the hatch: `side` is not passed early whatever the scale (seed
+        // 1031), and the walk on from there falls at 0.9 only.
         let off_rungs = [3704.875, 57.676594, 992.125];
-        for (move_scale, want) in [(1.0, west), (0.9, side)] {
+        for (move_scale, holds) in [(1.0, true), (0.9, false)] {
             let mut f = Follower {
                 move_scale,
                 path: vec![0, 1, 2, 3],
@@ -9051,9 +9148,15 @@ mod tests {
                 dest: Some(3),
                 ..Follower::default()
             };
+            let at = Vec3::from(off_rungs);
+            assert_eq!(
+                f.edge_holds(Some(w), at, body.velocity, false, &g),
+                holds,
+                "walk on at {move_scale}"
+            );
             let mut budget = 100;
             let wp = f.waypoint(&g, Some(w), goal, off_rungs, body, &mut budget, &mut || 0);
-            assert_eq!(wp, Some(want.into()), "at {move_scale}");
+            assert_eq!(wp, Some(side.into()), "at {move_scale}");
         }
     }
 
