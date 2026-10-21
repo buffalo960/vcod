@@ -131,15 +131,9 @@ check.
   bots' vehicles off and on (`bot-objectives.md` 10.6). `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
-  `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
-  `--example team_tally` `bot-objectives.md` 9's 1.1 `sd`/`re` objective tally; its
+  `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
   `digest` matches across two builds only when they built the same graph,
-  the check for a collision change meant to move no trace. `--example
-  bot_fights` runs seeded shooting matches and prints each team's kills,
-  deaths and wounds survived, with the retreat on for one side
-  (`RETREAT=allies|axis|all|none`, `bot-combat.md` 5). `--example
-  cover_ab` pits a team fighting from cover against one without
-  (`bot-combat.md` 4.5).
+  the check for a collision change meant to move no trace.
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
   third-party `zzz_*.pk3` into `main/`, and a census failure on one of those
   is not a regression.
@@ -234,12 +228,16 @@ check.
   `VCOD_POS="x y z yaw"` override to the `FlyCamera::new` spawn in `main.rs`
   and remove it before committing.
 - Bot play is measured, not eyeballed: `cargo run --release -p vcod-server
-  --example bot_match [seed...]` runs seeded bot-vs-bot matches (`MAP=`,
-  `GAMETYPE=`, `BOTS=`, `TICKS=`, `JOBS=`, `SET=`, `UO=1`) and prints
-  kills, deaths, damage, time-to-kill, wins, objective actions and stalls
-  per team. A bot behaviour change reports its before and after on the
-  same seeds in `docs/research/bot-combat.md`, whose section 1 says what
-  each number means. Retail has no bots, so this is the only yardstick.
+  --example bot_match [seed...]` runs seeded bot-vs-bot matches (`MAPS=`,
+  `GAMETYPE=`, `BOTS=`, `TICKS=`, `JOBS=`, `SET=`, `UO=1`, per-side
+  `AXIS_SKILL=`/`ALLIES_SKILL=`, and one-sided `COVER=`, `RETREAT=`,
+  `TEAMPLAY=` arms) and prints kills, deaths, damage, time-to-kill, wins,
+  objective actions, lives, wounds survived, retreats, cover holds and
+  stalls per team, skill and arm. It is the one bot measuring tool:
+  extend it rather than add another example. A bot behaviour change
+  reports its before and after on the same seeds in
+  `docs/research/bot-combat.md`, whose section 1 says what each number
+  means. Retail has no bots, so this is the only yardstick.
 - Pixel and by-ear checks (aim sign, lean direction, shading, sound) belong to
   the human. Report them as pending.
 
