@@ -1037,7 +1037,9 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   view turns at `Skill::walk_turn_deg` only on a plain run
   (`Bot::walk_turn`): a new edge kind or gait the bot must take as its
   walk proved it is left out of both, or the bot meets it off the line
-  and the view the graph proved it on.
+  and the view the graph proved it on. A view set after the walk's is
+  seen as owned (`Bot::view_owned`) and handed back at once; one set
+  before it, as the recall look is, flags itself.
 - The server fills `BotView::drop_ahead` only on the ticks
   `Bot::reads_drops` names; a new reader in the brain widens it.
 - The graph's cache keys on which submodels clip, and the server rebuilds

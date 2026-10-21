@@ -97,7 +97,9 @@ range; a higher level does so more often. A higher level also remembers a
 lost enemy and a heard shot longer.
 
 Out of a fight a walking bot turns its view at the walking rate and keeps
-running along its path while the view comes round, and on open floor it
+running along its path while the view comes round; the tick a fight, a
+look toward a hit or a peek from cover lets go, it faces its path at
+once. On open floor it
 heads straight for a node further along its path instead of stepping
 along the navigation grid.
 

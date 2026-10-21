@@ -76,7 +76,7 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | hits | `D;`, `K;` | Lines on another player whose means of death is a bullet (`MOD_RIFLE_BULLET`, `MOD_PISTOL_BULLET`, `MOD_HEAD_SHOT`). A mounted MG's hits land here too; bots seldom use one. |
 | accuracy | | Hits over shots. |
 | sight to shot | bodies | From a tick whose `BotBody::target` comes up with none the tick before (the reaction delay included) to the first tick that fires a round while that target is still the one tracked, in ms; mean and median. A switch from one target straight to another starts no count. "Fired on" is the share of those acquisitions that got a round before the target went (died, hid past `forget_ticks`, or the bot died). |
-| walking ticks, turn mean, snaps | bodies | The walking view (section 10). A bot-tick counts when `BotBody::walking` holds on it and the tick before: playing, on the ground, off the rungs, steering at its waypoint with no unstick spell, and no target tracked (`Bot::engaged` false). `turn mean` is the mean of the view's yaw change over those ticks in degrees (wrapped to ±180); `snaps` counts the ticks it turned more than 30 degrees, and their share of the walking ticks. |
+| walking ticks, turn mean, snaps | bodies | The walking view (section 11). A bot-tick counts when `BotBody::walking` holds on it and the tick before: playing, on the ground, off the rungs, steering at its waypoint with no unstick spell, and no target tracked (`Bot::engaged` false). `turn mean` is the mean of the view's yaw change over those ticks in degrees (wrapped to ±180); `snaps` counts the ticks it turned more than 30 degrees, and their share of the walking ticks. |
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
@@ -122,7 +122,7 @@ the skill branch, before and after merging master.
 | remember a spot, a noise, ticks | 70, 140 | 100, 200 | 140, 260 | 180, 300 |
 | hearing scale | 0.75 | 1 | 1.25 | 1.5 |
 | sight cone for a new target, degrees across | 100 | 120 | 140 | 160 |
-| walking view's turn per tick, degrees (section 10) | 18 | 24 | 30 | 36 |
+| walking view's turn per tick, degrees (section 11) | 18 | 24 | 30 | 36 |
 
 Normal's reaction (5 + 6), error start (48) and decay (0.88) changed with
 section 9; the measurements below are from before it.
@@ -1034,7 +1034,7 @@ cause is the goal, not the node pick: an enemy seen for a tick or two from
 the step flipped `Bot::goal` and back, and each replan began at the node
 behind the body.
 
-## 10. The walking view and string-pulling (2026-10-21)
+## 11. The walking view and string-pulling (2026-10-21)
 
 `Bot::walk_turn` in `crates/server/src/bots.rs` and `Follower::pull` in
 `crates/server/src/nav.rs`; the follower's side is in
@@ -1045,7 +1045,7 @@ Before this a walking bot's waypoint was the plan's next node on the
 every tick. Across a diagonal the grid's eight neighbours make a stair
 of 45 degree kinks, and at every node the view jumped to the next one.
 
-### 10.1 The rules
+### 11.1 The rules
 
 - The view turns at most `Skill::walk_turn_deg` a tick toward the
   path's heading (18, 24, 30, 36 by level: 360 to 720 deg/s). The keys
@@ -1055,62 +1055,105 @@ of 45 degree kinks, and at every node the view jumped to the next one.
 - Only on a plain run: on the ground, off the rungs, level view, full
   forward key and nothing else held, no leap's or creep's foot, no jump,
   run off, push off or unpin, no creep. Those keep the view the walk
-  that proved them had (AGENTS.md, "Bots"). A fight, a hurt look, a
-  recalled spot and a retreat set the view after it, by their own rules.
+  that proved them had (AGENTS.md, "Bots").
+- A fight, a launcher on a vehicle, a bipod's linger, a hurt look, a
+  cover peek, a recalled spot and a retreat's look set the view after
+  the walk, by their own rules, from the tick they take it. The tick
+  after one of them lets go the view takes the path's heading at once
+  (`Bot::view_owned`: the last think's view was not the walk's), and the
+  limit runs again from the tick after that (11.4).
 - The waypoint is pulled one node further along the plan a tick when a
   straight walk from the body reaches it (bot-navigation.md section 3).
 
-### 10.2 Before and after
+### 11.2 Before and after
 
 VERIFIED (measured, release `bot_match`, `COD_DIR` at 1.1, 12 bots
 `tdm` on mp_carentan, mp_harbor, mp_depot and mp_brecourt, 10 bots `dm`
 on the first three, normal skill; master d3b03cb0 with the section 1
-columns, then this change). Turn is the walking view's mean yaw change a
-tick, snaps the walking ticks it turned more than 30 degrees.
+columns, then this change with 11.4's hand-back). Turn is the walking
+view's mean yaw change a tick, snaps the walking ticks it turned more
+than 30 degrees.
 
 | run | kills | life s | accuracy | walking ticks | turn deg | snaps | stalled |
 |---|---|---|---|---|---|---|---|
-| tdm seeds 1-4 | 3016 / 2957 | 28.5 / 26.2 | 33.9 / 32.6% | 975 332 / 812 464 | 3.87 / 2.95 | 19 926 (2.04%) / 818 (0.10%) | 63 151 / 79 868 |
-| tdm seeds 5-8 | 2908 / 2898 | 27.9 / 27.7 | 34.1 / 32.7% | 910 296 / 897 972 | 3.83 / 2.92 | 19 050 (2.09%) / 889 (0.10%) | 70 669 / 75 958 |
-| dm seeds 1-4 | 3129 / 3093 | 19.9 / 20.2 | 33.9 / 33.1% | 521 357 / 517 036 | 4.53 / 3.53 | 10 780 (2.07%) / 412 (0.08%) | 33 834 / 35 730 |
+| tdm seeds 1-4 | 3016 / 2955 | 28.5 / 26.7 | 33.9 / 33.4% | 975 332 / 863 241 | 3.87 / 2.93 | 19 926 (2.04%) / 2 196 (0.25%) | 63 151 / 62 899 |
+| tdm seeds 5-8 | 2908 / 2949 | 27.9 / 26.9 | 34.1 / 33.7% | 910 296 / 854 828 | 3.83 / 2.97 | 19 050 (2.09%) / 2 245 (0.26%) | 70 669 / 69 137 |
+| dm seeds 1-4 | 3129 / 3124 | 19.9 / 20.0 | 33.9 / 33.3% | 521 357 / 517 329 | 4.53 / 3.75 | 10 780 (2.07%) / 3 328 (0.64%) | 33 834 / 31 890 |
 
-Snaps fall twentyfold on every map (per map, tdm 1-4: mp_carentan 2 878
-to 166, mp_harbor 4 520 to 92, mp_depot 4 242 to 267, mp_brecourt 8 286
-to 293). Those left are the views this leaves alone: a climb, a back
-down, a jump, a spell's heading.
+Snaps fall eight times in `tdm` and three in `dm`. Most of those left
+are hand-backs: a recalled spot's look or a hurt look ends on a tick the
+bot walks on both sides of, and the view takes the path at once. Without
+the hand-back (the build before 11.4) they were 818 (0.10%), 889
+(0.10%) and 412 (0.08%), at the cost 11.4 measures.
 
-Kills and life move inside what seeds 1-4 and 5-8 differ by, save
-tdm 1-4's life, which 5-8 does not repeat. The stall rise is mp_depot's
-in both seed sets (14 592 to 28 947, 18 333 to 29 114) with its cover
-hold (146 902 to 180 504, 147 374 to 161 881) and its rounds (6 208 to
-7 330, 5 633 to 7 224 at about the same hits, so accuracy 31.9 to 26.5%
-and 30.6 to 26.5%). The section 1 stall column counts a bot holding
-cover as stalled. INFERRED (the columns move together; no per-tick
-trace): depot's extra stalls are bots fighting longer from cover, not
-pins. Without fire the change stalls no bot there (`ship_stalls`
-`MAP=mp_depot`, seeds 1 to 31 odd: 0 before and after, bot-navigation.md
-section 3).
+Per map, `tdm` seeds 1-4 then 5-8, stalled: mp_carentan 31 133 / 22 209
+and 33 031 / 25 534, mp_harbor 9 858 / 10 730 and 8 894 / 14 347,
+mp_depot 14 592 / 21 736 and 18 333 / 20 589, mp_brecourt 7 568 / 8 224
+and 10 411 / 8 667. mp_depot's accuracy 31.9 / 30.8% and 30.6 / 28.7%.
+Kills move inside what the two seed sets differ by. `tdm` life is a
+second shorter in both sets (28.5 / 26.7, 27.9 / 26.9 s), `dm`'s level;
+not looked into.
 
-Taken apart on mp_depot and mp_harbor `tdm` seeds 1-4 (VERIFIED,
-measured, temporary switches since removed): stalled 14 592 / 9 858
-before, 24 480 / 9 230 with the turn limit alone, 17 763 / 11 475 with
-the pull alone, 28 947 / 13 428 with both.
+Taken apart before 11.4 on mp_depot and mp_harbor `tdm` seeds 1-4
+(VERIFIED, measured, temporary switches since removed): stalled 14 592 /
+9 858 before, 24 480 / 9 230 with the turn limit alone, 17 763 / 11 475
+with the pull alone, 28 947 / 13 428 with both.
 
-### 10.3 The rocket test's margin
+### 11.3 The rocket test
 
-`tests/bot_vehicles.rs`'s `a_bot_fires_rockets_at_an_enemy_tank` fails
-with this change at a stock UO install: the rocket goes out on the same
-tick (21) and strikes the same face of the tank's hull as on master, and
-the tank lives. VERIFIED (measured, temporary logs in `think_armor`,
-`Missile::impact` and `vehicle_damage`): master's strikes at (4782.927,
+`tests/bot_vehicles.rs`'s `a_bot_fires_rockets_at_an_enemy_tank` failed
+with this change at a stock UO install: the rocket went out on the same
+tick (21) and struck the same face of the tank's hull as on master, and
+the tank lived. VERIFIED (measured, temporary logs in `think_armor`,
+`Missile::impact` and `vehicle_damage`): master's struck at (4782.927,
 -1938.947, 21.149), this build's at (4782.925, -1938.546, 21.183), the
 hull at (4673.791, -1979.002) facing -179.83. `vehicle::damage_scale`
 takes the behind scale only within 20 degrees of the hull's back axis;
-the point lies about 19.99 degrees off it on master (scale 1, 1000
+the point lay about 19.99 degrees off it on master (scale 1, 1000
 damage, the hull burns and blows up 214 ticks on) and about 20.17 here
-(the side's 0.5, 500 damage of 2900, and the tank's gun kills the
-shooter). The shooter is set down 600 units dead behind the hull but
-walks about 110 units aside while the launcher comes up (`think_armor`
+(the side's 0.5, 500 damage of 2900, and the tank's gun killed the
+shooter). The shooter was set down 600 units dead behind the hull and
+walked about 110 units aside while the launcher came up (`think_armor`
 keeps the path's keys while the muzzle is not clear), and where that
-walk ends decides the zone. The test rides a fifth of a degree; the
-fix is the test's or the shooter's, and is left open.
+walk ended decided the zone.
+
+The test now holds him on the back axis with a script `setOrigin` each
+tick until the rocket goes (`Server::test_script_set_origin`;
+`place_client` respawns the body and the launcher never comes up). He
+fires at tick 91 from (5275.4, -1979.0, -7.75) and the tank blows up 214
+ticks on (VERIFIED, measured), the kill assertion kept. Held 500 units
+back it fires at 21 and 400 back at 52; 700 back, and 900 to 1450 back
+unheld, it never does (no ground, or the line blocked).
+
+### 11.4 The hand-back
+
+Before it, the turn limit doubled mp_depot's `tdm` stalls (above). The
+stall column counts a bot holding cover as stalled, so I traced where
+they sat. VERIFIED (measured, temporary per-tick dumps in `bot_match`,
+mp_depot `tdm` 12 bots, seeds 3 and 5, master then the build without
+11.4): the stalled bot-ticks were 6 342 and 21 294; engaged and on a
+held cover spot 4 459 and 16 567, with the view within 10 degrees of
+the target on 69% and 81% of the targeted ones; walking 459 and 617. So
+no bot walked into a fight facing its path. Engaged bot-ticks rose
+84 685 to 115 317, mostly at 600 to 1000 units (26 759 to 42 535), both
+sides on cover 50.6 to 56.2% of them.
+
+The fights themselves (a bot on one target, gaps under a second), seed
+5 then seed 3: 744 to 1 171 and 963 to 1 007 fights; those ending with
+the target down 40 to 28% and 39 to 35%; those over 10 s 18 to 33 and 14
+to 20. The same pair fighting again within 10 s of the last, 189 to 416
+and 226 to 299, more often with the view already within 30 degrees of
+the target at the first tick. INFERRED (read off that and the code): a
+peek, a recall look or a fight let go, and the view came back round to
+the path from the threat at the walking rate, so the bot leaving its
+cover saw the same enemy again, dug back in, and the two traded rounds
+from cover at range. Where the snap had turned it away, it walked on.
+
+With the hand-back, the same dumps (VERIFIED, measured): stalled 3 240
+on seed 3 and 5 386 on seed 5 (master 2 895 and 3 447, without the
+hand-back 9 345 and 11 949); seed 5's fights over 10 s 21 (master 18)
+and those ending with the target down 33% (master 40%, without 28%). The
+same pair again within 10 s is still 385 and 405 against master's 226
+and 189; its cause is not traced. Without the hand-back
+`bots::tests::the_walking_view_takes_the_path_at_once_after_a_fight`
+fails.

@@ -3812,7 +3812,7 @@ merge, the same detector; ship seeds in three blocks of 768):
 `Follower::pull` (`nav.rs`) takes the waypoint one node further along
 the plan a tick, so a bot crossing open floor heads straight for a node
 up to `PULL_STEPS` (3) grid steps off instead of stepping the grid's 45
-degree kinks (bot-combat.md section 10). A pull needs all of:
+degree kinks (bot-combat.md section 11). A pull needs all of:
 
 - The body on the ground, off the rungs, past the plan's first node
   (`proved_start` and `jump_start` keep their meaning), no point goal
@@ -3844,7 +3844,8 @@ Reaching a node, by reach or by passing it, ends the pull
 (`a_waypoint_is_pulled_along_a_clear_straight_line`).
 
 VERIFIED (measured, release `ship_stalls`, master d3b03cb0 then this
-change with the walking view's turn limit too): `mp_ship` at 1.1,
+change with the walking view's turn limit too; bot-combat.md 11.4's
+hand-back moves no number here, as nothing fights with fire off): `mp_ship` at 1.1,
 seeds 1 to 31 odd, stalled 0 / 0, falls 0 / 0. `mp_cassino` at a stock
 UO install (`UO=1`), seeds 1 to 31 odd, stalled 1 / 174, falls 1 / 2;
 seeds 33 to 63 odd, 196 / 34 and 0 / 0; together 197 / 208. Each total

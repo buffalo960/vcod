@@ -267,7 +267,9 @@ fn tank_bots_lay_their_guns_on_an_enemy() {
 
 /// A bot on foot with a rocket launcher draws it on an enemy driving a
 /// tank in its sight and fires (the tank's driver is no target for its
-/// rifle: no round reaches him), and the tank is wrecked.
+/// rifle: no round reaches him), and the tank is wrecked. The shooter is
+/// held dead behind the hull until he fires, so the rocket strikes inside
+/// the 20 degree cone where the behind scale applies.
 #[test]
 #[ignore = "builds mp_cassino's UO graph and runs two bots 20 s of game time, ~10 s in release; run with --ignored"]
 fn a_bot_fires_rockets_at_an_enemy_tank() {
@@ -307,10 +309,21 @@ fn a_bot_fires_rockets_at_an_enemy_tank() {
     let p = sv
         .test_ground_under(behind)
         .expect("ground behind the tank");
-    sv.place_client(shooter, [p[0], p[1], p[2] + 0.125], at.yaw);
+    let spot = [p[0], p[1], p[2] + 0.125];
+    sv.place_client(shooter, spot, at.yaw);
+    // Held on the hull's back axis until the rocket goes, by a script
+    // `setOrigin` (no reset of the launcher coming up):
+    // `vehicle::damage_scale` takes the behind scale only within 20 degrees
+    // of that axis, and left to walk aside while the launcher came up he
+    // struck the rear face 19.99 degrees off it on one build and 20.17 on
+    // the next, the side's half, and the tank lived (bot-combat.md 11.3).
     let fired = (0..400).find(|_| {
         run(&mut sv, &mut now, 1);
-        sv.bot_body(shooter).is_some_and(|b| b.rockets_at_armor > 0)
+        let shot = sv.bot_body(shooter).is_some_and(|b| b.rockets_at_armor > 0);
+        if !shot {
+            sv.test_script_set_origin(shooter, spot);
+        }
+        shot
     });
     eprintln!("first rocket at tick {fired:?}");
     assert!(fired.is_some(), "no rocket at the enemy tank");
