@@ -2652,6 +2652,24 @@ fn stance_speed_scale(ps: &PlayerState) -> f32 {
     move_stance(ps).speed_scale()
 }
 
+/// [`stance_speed_scale`] as 1.5b's walk scale reads it: a leg's blend
+/// left on the x87 stack (0x1f2b5-0x1f36d), the lerp fraction a float.
+fn stance_speed_scale_kept(ps: &PlayerState) -> f64 {
+    let blend = |f: f32, to: f32, from: f32| {
+        let f = f64::from(f);
+        f64::from(to) * f + (1.0 - f) * f64::from(from)
+    };
+    let f = view_lerp_frac(ps, VIEW_CROUCH, VIEW_PRONE);
+    if f != 0.0 {
+        return blend(f, SCALE_PRONE, SCALE_CROUCH);
+    }
+    let f = view_lerp_frac(ps, VIEW_PRONE, VIEW_CROUCH);
+    if f != 0.0 {
+        return blend(f, SCALE_CROUCH, SCALE_PRONE);
+    }
+    f64::from(move_stance(ps).speed_scale())
+}
+
 /// `fTorsoHeight`, `fTorsoPitch`, `fWaistPitch`: the chest's height off the
 /// origin and the pitches of the torso and the legs along the ground, in
 /// degrees, wire convention.
@@ -3941,45 +3959,60 @@ fn friction_stored(ps: &mut PlayerState, speed: f32, dt: f32, spectator: bool) {
 /// `pml.right` flattened, clipped onto the ground plane and normalized, then
 /// combined by the cmd bytes and normalized again; the speed is that
 /// length times the stored scale, left unrounded.
-fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3, f64) {
+fn wish(
+    ps: &PlayerState,
+    input: &PmInput,
+    weapon: Option<&WeaponDef>,
+    stored: bool,
+) -> (Vec3, f64) {
     let (f, r) = (
         (input.forward * 127.0).round(),
         (input.right * 127.0).round(),
     );
     let (fd, rd) = (f64::from(f), f64::from(r));
-    let back = if f < 0.0 {
+    // `stored`: 1.5b's walk scale (0x1f08b), which UO shares, stores the
+    // max, the length, the base scale and each factor's product; 1.1d and
+    // the Windows cgames keep the product on the x87 stack.
+    let st = |x: f64| if stored { f64::from(x as f32) } else { x };
+    let back = st(if f < 0.0 {
         (fd * f64::from(SCALE_BACK)).abs()
     } else {
         fd.abs()
-    };
-    let max = back.max((rd * f64::from(SCALE_STRAFE)).abs());
+    });
+    let max = back.max(st((rd * f64::from(SCALE_STRAFE)).abs()));
     if max == 0.0 {
         return (Vec3::ZERO, 0.0);
     }
-    let total = (fd * fd + rd * rd).sqrt();
-    let mut scale = (f64::from(ps.speed) * max) / (total * 127.0);
+    let total = st((fd * fd + rd * rd).sqrt());
+    let mut scale = st((f64::from(ps.speed) * max) / (total * 127.0));
     // UO walks an LMG's breakdown (0x23af5).
     let breakdown = ps.lmg && ps.weaponstate == weapon::WEAPON_BREAKDOWN;
     if ps.walking || input.walk_slow || breakdown && ps.rules == MoveRules::Uo {
-        scale *= f64::from(SCALE_WALK);
+        scale = st(scale * f64::from(SCALE_WALK));
     } else if ps.lean != 0.0 {
-        scale *= f64::from(SCALE_LEAN);
+        scale = st(scale * f64::from(SCALE_LEAN));
     } else if ps.sprinting {
-        scale *= f64::from(SCALE_SPRINT);
+        scale = st(scale * f64::from(SCALE_SPRINT));
     }
-    let stance = stance_speed_scale(ps);
+    // 1.5b blends a stance leg's two scales on the stack (0x1f2b5, 0x1f335).
+    let stance = if stored {
+        stance_speed_scale_kept(ps)
+    } else {
+        f64::from(stance_speed_scale(ps))
+    };
     if stance != 1.0 {
-        scale *= f64::from(stance);
+        scale = st(scale * stance);
     }
     if ps.water_level > 0 {
-        scale *= 1.0 - f64::from(ps.water_level) / 3.0 * f64::from(WADE_SCALE);
+        let wade = st(f64::from(ps.water_level) / 3.0);
+        scale = st(scale * st(1.0 - wade * f64::from(WADE_SCALE)));
     }
     // A sprint leaves the weapon's scale out (UO 0x23af5).
     if let Some(w) = weapon.filter(|w| w.move_speed_scale > 0.0 && !ps.sprinting) {
-        scale *= f64::from(w.move_speed_scale);
+        scale = st(scale * f64::from(w.move_speed_scale));
     }
     if input.shellshock {
-        scale *= f64::from(SCALE_SHELLSHOCK);
+        scale = st(scale * f64::from(SCALE_SHELLSHOCK));
     }
     let scale = scale as f32;
 
@@ -4240,7 +4273,8 @@ fn walk_move(
     events: Option<&mut Vec<PmEvent>>,
 ) {
     // along the slope, so it costs no speed
-    let (dir, wishspeed) = wish(ps, input, weapon);
+    let stored = ps.rules.v15() && world.world.arith() != crate::patch::Arith::Msvc;
+    let (dir, wishspeed) = wish(ps, input, weapon, stored);
     // Slick ground or a hit's knockback (0x2f492, 0x2f58c).
     let sliding = on_slick(ps) || ps.knockback_flags & PMF_TIME_DAMAGE != 0;
     let mut accel = f64::from(match move_stance(ps) {
@@ -5166,9 +5200,30 @@ mod tests {
             shellshock: true,
             ..run
         };
-        let (_, free) = wish(&ps, &run, None);
-        let (_, slow) = wish(&ps, &shocked, None);
+        let (_, free) = wish(&ps, &run, None, false);
+        let (_, slow) = wish(&ps, &shocked, None, false);
         assert!((slow - free * 0.4).abs() < 1e-4, "{slow} {free}");
+    }
+
+    /// 1.5b's walk scale (0x1f08b) stores the length, the base scale and
+    /// each factor, where 1.1d rounds the whole product once: a diagonal
+    /// run at 190 wishes a float step more (cod15-movement.md 8, "The
+    /// walk's cmd scale").
+    #[test]
+    fn the_1_5_walk_scale_rounds_each_step() {
+        let mut ps = PlayerState::spawn(Vec3::new(0.0, 0.0, 0.1), 0.0);
+        ps.rules = MoveRules::V1_5;
+        assert_eq!(ps.speed, 190.0);
+        let run = PmInput {
+            forward: 1.0,
+            right: 1.0,
+            ..Default::default()
+        };
+        let len = f64::from(32258f32.sqrt());
+        let (_, kept) = wish(&ps, &run, None, false);
+        let (_, stored) = wish(&ps, &run, None, true);
+        assert_eq!(kept / len, f64::from(f32::from_bits(0x3f87687d)));
+        assert_eq!(stored / len, f64::from(f32::from_bits(0x3f87687e)));
     }
 
     /// `PM_WalkMove`'s accel and `PM_Friction`'s ground control both scale
