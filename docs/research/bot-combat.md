@@ -286,7 +286,9 @@ section 6 re-measures all of them on `bot_match`.
 - Dry: the clip at 0 with rounds in the reserve, an enemy in sight and no
   switch under way at the end of the think, so a pistol draw
   (`Bot::sidearm`) comes first. It ends once the clip holds a round and the
-  weapon is idle, or the reserve is gone.
+  weapon is idle, or the reserve is gone. Once per dry clip (`Bot::dry_had`,
+  cleared when the clip holds a round or the reserve is gone): one that
+  found no cover reloads where it stands, as 6.4 explains.
 - Cover (`cover_spot`): the nearest graph node by path from the body,
   within 1200 units of path and 300 nodes tested (the graph's nodes sit a
   few tens of units apart: on mp_carentan, mp_harbor and mp_depot the
@@ -489,6 +491,29 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   suicides and team kills; sixteen matches leave every margin within
   about one standard error of nothing; the retreat's share of wounded
   deaths falls 13 points, as on 1.1.
-- VERIFIED (measured, the table's runs): UO's axis bots start three to
-  four times the dry retreats its allies do (958 against 292 in the
-  stock run; 1.1's two sides start 112 and 149). Not followed up here.
+- VERIFIED (measured, the table's runs): UO's axis bots started three to
+  four times the dry retreats its allies did (958 against 292 in the
+  stock run; 1.1's two sides start 112 and 149), nearly all of them on
+  mp_kursk (axis 942, allies 278; mp_cassino 18 and 26). Logging each
+  start showed one dry clip starting a retreat every other tick through
+  its whole reload (`busy_ms` 2400, 2300, ... 30): a retreat that found no
+  cover ended on its next tick (`cover_spot` `None`), and the tick after
+  that started it again on the same clip, re-running the cover search.
+  mp_kursk is open ground, so a reload there rarely finds cover, and the
+  axis carry the 5-round kar98k (423 of the 1264 logged starts), the
+  gewehr43 (259) and the luger (147).
+- VERIFIED (measured, same command and seeds, 2026-10-21): with one dry
+  retreat per clip (section 5) the dry starts fall to axis 69, allies 48
+  (mp_kursk 51 and 22; mp_cassino's 18 and 26 unchanged, and its
+  matches identical line for line). Kills, deaths and lives move inside
+  the noise (mp_kursk 93 kills to 99): a retreat with no cover never
+  changed the keys (`retreat_keys` returns on `None`), so the flapping
+  cost counts and cover searches, not play. The axis side's remaining
+  1.4x is its weapons: of the 69 axis starts, 28 were on the kar98k
+  (5 rounds) and 14 on the luger, against the allies' 71-round ppsh on
+  mp_kursk. No weapon or ammo read was wrong: the logged `clipSize`s
+  match the weapon files in the `pakuo` paks (kar98k 5, gewehr43 10).
+- VERIFIED (measured, 6.1's stock run again with the fix): 1.1's dry
+  starts go from 261 to 241 (allies 116, axis 125); kills 5237 to 5265,
+  lives 24.8 s to 24.7 s. 1.1's four maps nearly always had cover, so
+  little flapped there. The tables above predate the fix.
