@@ -393,6 +393,18 @@ pub fn throw_velocity(ps: &PlayerState, aim: [f32; 2], def: &WeaponDef) -> (Vec3
     )
 }
 
+/// `fire_rocket` normalizes the direction it is handed once more before it
+/// scales it (1.1d 0x54627, 1.5b 0x5559a, UO 0x5fc8c): a launcher's
+/// already normalized one can move a last bit under 1.5b's and UO's
+/// stored `VectorNormalize` (combat doc 13.6). `stored` is 1.5b's and UO's.
+pub(crate) fn rocket_launch_dir(dir: Vec3, stored: bool) -> Vec3 {
+    if stored {
+        vcod_common::x87::normalize_stored(dir)
+    } else {
+        vcod_common::x87::normalize_in_place(dir)
+    }
+}
+
 /// `BG_EvaluateTrajectoryDelta` for the two types a missile ever carries:
 /// `delta.z - dt * 800` on the x87 stack, rounded once. `kept` is 1.1d's
 /// build (`.so` 0x2c964), whose `ms * 0.001` stays on the stack; 1.5b and
@@ -1557,6 +1569,7 @@ impl Missiles {
             e.engine[slot] = Value::String(cx.intern_exact("rocket"));
         }
         set_script_origin(ents, id, start);
+        let dir = rocket_launch_dir(dir, self.falls);
         let delta = self
             .rocket_deltas
             .pop_front()

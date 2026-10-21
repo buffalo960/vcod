@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use vcod_common::movetrace::Body;
 use vcod_common::net::msg::{UserCmd, WBUTTON_CROUCH, WBUTTON_PRONE};
 use vcod_common::net::protocol::PROTOCOL_V1;
-use vcod_common::net::{NetClient, NetEvent};
+use vcod_common::net::{NetClient, NetEvent, NetState};
 use vcod_server::Server;
 
 type Client = NetClient<ClientEnd>;
@@ -371,12 +371,16 @@ fn a_spectator_anywhere_disables_the_push() {
         cs.send_frame(&vcod_common::net::msg::NULL_USERCMD);
         ca.send_frame(&vcod_common::net::msg::NULL_USERCMD);
         cb.send_frame(&vcod_common::net::msg::NULL_USERCMD);
-        let (_, ea, eb) = common::step_trio(
+        // Once both are in, B's packets go ahead of A's, so A answers and
+        // spawns first (`common::join_pair_stamped`).
+        let entered = ca.state() == NetState::Active && cb.state() == NetState::Active;
+        let (_, ea, eb) = common::step_trio_ordered(
             &mut sv,
             (common::ADDR_C, &qs, &mut cs),
             (common::ADDR, &qa, &mut ca),
             (common::ADDR_B, &qb, &mut cb),
             now,
+            if entered { [0, 2, 1] } else { [0, 1, 2] },
         );
         for e in ea {
             if let NetEvent::ServerCommand(tokens) = e {

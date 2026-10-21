@@ -2,8 +2,8 @@
 
 How vcod's debug bots (`--bots`) play stock Search & Destroy, Retrieval
 (section 4) and Behind Enemy Lines (section 5), what changes on a
-United Offensive server (section 6), and UO's own `ctf`, `dom`, `hq` and
-`bas` (section 7). The brain is
+United Offensive server (section 6), UO's own `ctf`, `dom`, `hq` and
+`bas` (section 7), and UO's vehicles (section 10). The brain is
 `crates/server/src/bots.rs` (`ObjTarget`, `think_objective`); the server fills
 `BotView::sd` and `BotView::linked` in `crates/server/src/server.rs`
 (`bot_sd`, `site_stand`) from `ScriptRuntime::sd_objectives`
@@ -117,8 +117,8 @@ Line numbers are `maps/MP/gametypes/sd.gsc` in `pak5.pk3`.
 ## 3. The brain
 
 Goal order: a plant or defuse in progress (use held, or linked), a live
-frag, a retreat's cover (bot-combat.md 4), a visible enemy, a health pack for a
-hurt bot (bot-combat.md 4), objective travel, then the rest. Use is pressed only at the
+frag, a retreat's cover (bot-combat.md 5), a visible enemy, a health pack for a
+hurt bot (bot-combat.md 5), objective travel, then the rest. Use is pressed only at the
 objective, since its rising edge also picks up weapons and mounts turrets.
 
 - Sites are dealt out by rank: a bot's place among its team's bots by slot
@@ -1283,3 +1283,115 @@ rounds that ended (168 of 273) against 47% on master. In `re` the
 captures doubled (9 to 18); pickups and round wins stay inside the run to
 run spread. Captures are still rare: most carriers die on the way, and
 the rounds end on eliminations (section 4.2).
+
+## 10. United Offensive vehicles
+
+vcod's own, like section 8: retail has no bots. A bot uses a vehicle
+through the keys a client sends from a seat (coduo-vehicles.md 1 and 2),
+nothing else. The brain is `crates/server/src/bots/vehicle.rs`; the
+server half, the seat and the vehicles near each bot, and the driver's
+route, is `crates/server/src/server/bot_vehicles.rs`. `vc_bot_vehicles 0`
+stops boarding.
+
+### 10.1 What the server tells the brain
+
+- `BotView::vehicles`: each linked vehicle whose box stands within 900
+  units across of the bot and that `seat::usable` passes for its slot
+  (`G_IsVehicleUsable`: a free seat, under 100 units/s, alive, no grenade
+  in hand, every rider a teammate), in pool order. Only for a bot on foot.
+- `BotView::seat`: the seat, the hull's origin, yaw and forward speed,
+  whether anyone drives, whether another bot walks up to board it, and the
+  world yaw of the seat's gun: a tank's turret off the hull
+  (`angles2[1]`) for its driver, the gunner's MG off the turret
+  (`origin2[1]`) for seat 2, none for a four-wheel's driver or a
+  passenger.
+
+### 10.2 Boarding
+
+- A bot with no enemy, no frag near, no plant or defuse under way and no
+  throw in hand looks for one. With no objective (`dm`, `tdm`) any vehicle
+  in the list will do; with an objective more than 1500 units off only one
+  within 400; with an objective nearer it walks on. The nearest wins and
+  the graph walks the bot to it (`Bot::goal`, ahead of the objective).
+- Within 90 units of the hull the bot faces the box's centre, closes to 30
+  and taps use on every other tick: the server boards on the press's edge
+  (`item_pass`) and takes the first free seat from 1, so a second bot
+  boarding a driven tank gets the gunner's seat.
+- 20 s of walking or 2 s of pressing without a seat gives the vehicle up
+  for 30 s; so does every exit.
+
+### 10.3 Driving
+
+- The driver's waypoint is not the walk's follower: infantry passes
+  (leaps, flings, ladder holds) prove walks from where a body stands, and
+  a hull is not a body. `drive_waypoint` runs A* over the graph's nodes a
+  box of 0.75 of the vehicle's half width fits on (clear of the world and
+  the vehicle clip, contents 0x201, from 18 over the node up 48), leaving
+  out jump and leap edges and any edge rising more than a step; a goal out
+  of reach routes to the node nearest it. The waypoint is the first route
+  node 220 or more across from the hull; nodes within 110 are passed. A
+  route goes again when its goal moves 300, after 5 s without closing on
+  its next node, and every 15 s.
+- The goal is the brain's own (`Bot::goal`): an enemy, the objective or a
+  roam, which picks a node a hull fits on at least 1200 away.
+- `rightmove` steers both kinds toward the waypoint's bearing past 6
+  degrees (positive lowers the yaw: `physics::targets`, the port of
+  0x7d709, raises it for `rightmove < 0`);
+  a tank more than 50 degrees off turns in place. A driver with the
+  throttle open under 30 units/s for 1.5 s backs off for 1.5 s with the
+  steer held one way; four back-offs with no 300 units made gets it out.
+- A tank's driver holds the hull still while an enemy is in sight, and
+  every driver waits up to 10 s for a teammate walking up to board.
+
+### 10.4 Guns and getting out
+
+- The view goes to the enemy's chest; the server steps the turret or MG
+  toward it (coduo-vehicles.md 2), and `buttons` 0x1 fires once the seat's
+  gun yaw is within 4 degrees and nobody else's body is in the line. A crew
+  mate in the same vehicle is left out of the friend check
+  (`bot_friend_in_line`). A passenger fires his own weapon a tap at a time.
+  An enemy no round goes at is given up on as on foot (`count_futile`).
+- A seated bot with an enemy in range reads as engaged
+  (`BotBody::engaged`), as a bot holding still to aim on foot does.
+- Out: a route's end, 5 s in a standing vehicle with nobody to shoot (a
+  rider) or with nothing to drive to (a driver), 90 s in the seat, or
+  four stalls. The bot taps use until the server lets it out; a tank holds
+  its driver for 1.5 s after the entry (`VEH_UnlinkPlayer`).
+
+### 10.5 A stock script error the riders bring out
+
+INFERRED (the stock script, `pakuo01.pk3` `maps/mp/_jeepdrive_gmi.gsc`
+435-470): `process_deactivate`, run on each rider's exit, starts a 90 s
+self-destruct once `riding_count` is 0, ended only by `stop_self_destruct`
+(a boarding, `delayed_process_activate`). A jeep destroyed in those 90 s,
+or with a rider in it (the death's unlink is his exit, coduo-vehicles.md
+11.2), is deleted, and the timer's `self dodamage` at 469 lands on a dead
+entity. vcod's VM reports it as a script error; the `bas` gates in
+`tests/bots.rs` leave that line out, as they do `BaseAssault_bomb_think`'s.
+
+### 10.6 Measured
+
+`cargo run --release -p vcod-server --example bot_vehicles [seed...]`
+with `COD_DIR` at a UO install plays one game with `vc_bot_vehicles 0` and
+one with 1 per seed (six shooting bots, `tdm` on mp_cassino, 3 min of game
+time; `MAP=`, `GAMETYPE=`, `BOTS=`, `TICKS=` change that) and prints the
+kills, those off a vehicle's guns (`*turret*`, `*gunner*`), the boardings,
+the bot-ticks seated and the units the driven vehicles went.
+
+| seed | vehicles | kills | off the guns | boardings | bot-ticks seated | units driven |
+|---|---|---|---|---|---|---|
+| 1 | off | 39 | 0 | 0 | 0 | 0 |
+| 1 | on | 24 | 10 | 12 | 7713 | 19070 |
+| 3 | off | 32 | 0 | 0 | 0 | 0 |
+| 3 | on | 25 | 11 | 10 | 6326 | 18315 |
+| 5 | off | 41 | 0 | 0 | 0 | 0 |
+| 5 | on | 30 | 12 | 10 | 7300 | 20947 |
+| 7 | off | 39 | 0 | 0 | 0 | 0 |
+| 7 | on | 30 | 12 | 6 | 6925 | 21216 |
+
+(2026-10-20.) With vehicles on, a third of the bots' time is spent seated
+(21600 bot-ticks a game) and the tanks' guns score about 40 per cent of
+the kills, but the game has about 30 per cent fewer kills: a tank's driver
+is out of every round's reach (coduo-vehicles.md 13) and a tank is slow
+to lay its gun. The `bas` gates on mp_foy (`tests/bots.rs`) end their
+rounds on their bases with 9 to 18 boardings.

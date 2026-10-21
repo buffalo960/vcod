@@ -4,7 +4,7 @@
 //! on the threat, reloads there and holds a while facing the way the threat
 //! was, then fights or plays on. A bot with a duty no retreat should break
 //! (a carrier, a defuser, a body holding a zone) stays.
-//! docs/research/bot-combat.md 4.
+//! docs/research/bot-combat.md 5.
 
 use super::*;
 use crate::nav::NavGraph;
@@ -150,7 +150,12 @@ impl Bot {
     /// A hurt fighting bot with nothing in sight and no duty walks to a
     /// health item lying near ([`Vitals::heal`]).
     pub(super) fn heal_goal(&self, view: &BotView) -> Option<Goal> {
-        if !self.retreat_on || !self.shoot || self.retreat.is_some() || view.enemy.is_some() {
+        if !self.retreat_on
+            || !self.shoot
+            || self.retreat.is_some()
+            || view.enemy.is_some()
+            || view.seat.is_some()
+        {
             return None;
         }
         let p = view.survive.heal?;
@@ -201,7 +206,7 @@ impl Bot {
             return look;
         };
         // Backing off, the sights stay up on an enemy in sight; dropped, the
-        // retreating side scored fewer kills (bot-combat.md 4).
+        // retreating side scored fewer kills (bot-combat.md 5).
         if view.enemy.is_none() {
             cmd.buttons &= !msg::BUTTON_ADS;
         }
