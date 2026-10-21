@@ -872,6 +872,11 @@ pub struct BotBody {
     pub clip_size: i16,
     /// Grenades it let go this game ([`Bot::throws`]).
     pub throws: u32,
+    /// The view's yaw in degrees, and whether the last think steered the
+    /// body along its waypoint with no target tracked: `bot_match`'s
+    /// walking turn columns.
+    pub yaw: f32,
+    pub walking: bool,
 }
 
 pub struct Bot {
@@ -923,6 +928,9 @@ pub struct Bot {
     unstick_ticks: u32,
     /// The last think was on a leg a bot sprints when it has the breath.
     sprint_leg: bool,
+    /// The last think steered the body along its waypoint, no unstick
+    /// spell and no fight ([`BotBody::walking`]).
+    walking: bool,
     /// Ticks since the body was last on the rungs, and whether the spell
     /// under way began within [`RUNG_GRACE`] of them.
     rungs_ago: u32,
@@ -1317,6 +1325,7 @@ impl Bot {
             stall_ticks: 0,
             unstick_ticks: 0,
             sprint_leg: false,
+            walking: false,
             rungs_ago: u32::MAX,
             rung_spell: false,
             unstick_at: [f32::INFINITY; 3],
@@ -2559,6 +2568,7 @@ impl Bot {
     fn think_body(&mut self, view: &BotView) -> UserCmd {
         self.fire_cooldown = self.fire_cooldown.saturating_sub(1);
         self.sprint_leg = false;
+        self.walking = false;
         for s in &mut self.shunned {
             s.1 -= 1;
         }
@@ -3093,6 +3103,7 @@ impl Bot {
             cmd.wbuttons |= msg::WBUTTON_RELOAD;
         }
         self.retreat_update(view);
+        self.walking = steering && view.on_ground && !view.on_ladder && !self.engaged();
         cmd.angles = cmd_angles(view, [pitch, yaw]);
         cmd
     }
@@ -3689,6 +3700,11 @@ impl Bot {
     /// On a leg it sprints when it has the breath ([`BotBody::sprint_leg`]).
     pub fn sprint_leg(&self) -> bool {
         self.sprint_leg
+    }
+
+    /// Steered along its waypoint last think ([`BotBody::walking`]).
+    pub fn walking(&self) -> bool {
+        self.walking
     }
 
     /// Grenades let go this game ([`BotBody::throws`]).

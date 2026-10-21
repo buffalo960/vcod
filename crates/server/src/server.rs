@@ -6107,6 +6107,8 @@ impl Server {
                 .filter(|d| d.weapon_type == "bullet")
                 .map_or(0, |d| d.clip_size.min(i16::MAX as u32) as i16),
             throws: self.bots.get(&slot).map_or(0, |b| b.throws()),
+            yaw: sim.view_angles()[1],
+            walking: self.bots.get(&slot).is_some_and(|b| b.walking()),
         })
     }
 
