@@ -4226,6 +4226,22 @@ of runs does not settle. `pm_type` 7, a dead player still
 linked, takes `0x34220` and does not move at all: vcod runs
 `dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
 
+Where a corpse comes to rest also depends on its client's cmd rate.
+VERIFIED, `client-probes/probe_pronecrouch` on 1.1d, 1.5b and UO
+(2026-10-21, `tests/fixtures/pronecrouch/`): a player held by `setOrigin`
+at z -22.75 over the ground at (844 3480) is killed on the hold's last
+frame. Under the net probe's 60 Hz cmds his body lands at -23.97739 and
+then sinks about 0.0016 every few hundred ms, down to -23.9926 within
+4.4 s. A live player let go there lands at -23.874989. Under one cmd every
+50 ms (`--probe-cmd-ms 50`) the corpse rests at -23.875, and so does the
+live player (a scratch rerun of that layout on 1.1d and UO). INFERRED: the dead arm drops the ground every cmd
+(`PM_CheckLadderMove`, `dead_move`'s comment), so each cmd air-moves the
+body into the ground again. How far one cmd's fall reaches depends on its
+length. `pronecrouch_ab` replays the captured cmds and matches the 60 Hz
+sink snapshot for snapshot on all three servers. A replay that sends one
+cmd a frame after the death (`probe_istouching`'s first gate did) reads
+-23.875.
+
 ### 5.8 A `trigger_hurt` kill and the corpse's fall
 
 VERIFIED, `client-probes/probe_hurtfall` on retail 1.1d, 2026-10-20, three
