@@ -1447,6 +1447,30 @@ impl ScriptRuntime {
             .collect()
     }
 
+    /// Every health item lying in the world to be picked up (`item_health*`,
+    /// a death's `dropHealth`), not taken: where a hurt bot heals
+    /// (`bots/retreat.rs`).
+    pub fn health_items(&mut self) -> Vec<[f32; 3]> {
+        let defs = self.host.defs;
+        let health: Vec<usize> = defs
+            .static_items()
+            .filter(|(_, n, _)| n.starts_with("item_health"))
+            .map(|(i, ..)| i)
+            .collect();
+        let ids: Vec<EntId> = self
+            .host
+            .ents
+            .iter_inuse()
+            .filter_map(|(id, e)| {
+                let item = e.item?;
+                (!item.taken && health.contains(&(item.index as usize))).then_some(id)
+            })
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.entity_origin_of(id))
+            .collect()
+    }
+
     /// One client's health as the script left it, read every frame the way
     /// `client_weapons` is.
     /// `ClientEndFrame`'s `takedamage` write.
@@ -2379,21 +2403,29 @@ impl ScriptRuntime {
     }
 
     /// The entity `Scr_AddEntity` pushes for a damage's attacker: the
-    /// slot's client, or entity 0 for a
-    /// [`crate::game::host::ZEROED_ENTITY`] attacker (combat doc 13.7).
+    /// slot's client, a UO vehicle by its number (a shell's fuse blast), or
+    /// entity 0 for a [`crate::game::host::ZEROED_ENTITY`] attacker (combat
+    /// doc 13.7).
     pub fn attacker_entity(&self, slot: usize) -> Option<EntId> {
         if slot == crate::game::host::ZEROED_ENTITY {
             return self.host.ents.handle(0);
         }
-        self.client_entity(slot)
+        self.attacker_vehicle(slot)
+            .or_else(|| self.client_entity(slot))
+    }
+
+    fn attacker_vehicle(&self, n: usize) -> Option<EntId> {
+        let id = self.host.ents.handle(u32::try_from(n).ok()?)?;
+        self.host.vehicles.live.contains_key(&id).then_some(id)
     }
 
     /// A blast's owner as `G_Damage` is handed it: a slot with no client
     /// left (a UO vehicle shell keeps its driver's `+0x330` after he left)
     /// is the freed entity there, whose number reads 0
-    /// ([`crate::game::host::ZEROED_ENTITY`], combat doc 13.7).
+    /// ([`crate::game::host::ZEROED_ENTITY`], combat doc 13.7). A live
+    /// vehicle's number, a shell's fuse blast, stays.
     pub fn charged_owner(&self, owner: Option<usize>) -> Option<usize> {
-        owner.map(|slot| match self.client_entity(slot) {
+        owner.map(|slot| match self.attacker_entity(slot) {
             Some(_) => slot,
             None => crate::game::host::ZEROED_ENTITY,
         })
@@ -4848,6 +4880,51 @@ mod tests {
         rt.run_frame(50);
         assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
         assert_eq!(rt.client_field(0, "seen").as_deref(), Some("0 0 none"));
+    }
+
+    /// A UO vehicle shell's fuse blast names the vehicle as `eAttacker`
+    /// (`G_ExplodeMissile`'s `parent`, game.mp.uo 0x5e2fc, combat doc 13.7),
+    /// and `charged_owner` keeps its number.
+    #[test]
+    fn a_blast_charged_to_a_vehicle_names_it() {
+        let mut rt = ScriptRuntime::for_test_at(
+            CALLBACK_SETUP,
+            "main() {}\n\
+             CodeCallback_PlayerConnect() {}\n\
+             CodeCallback_PlayerDamage(eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc) {\n\
+                 self.seen = eAttacker getEntityNumber() + \" \" + isPlayer(eAttacker);\n\
+             }\n",
+        );
+        rt.push_client_event(ClientEvent::Connect {
+            slot: 0,
+            name: "vcod".into(),
+        });
+        rt.run_frame(0);
+        rt.host.client_vitals[0].takedamage = true;
+        let tank = rt.vm.with_cx(|cx| rt.host.ents.spawn(cx)).unwrap();
+        rt.host
+            .vehicles
+            .live
+            .insert(tank, crate::game::vehicle::Vehicle::for_test(0));
+        let attacker = rt.charged_owner(Some(tank.0 as usize)).unwrap();
+        assert_eq!(attacker, tank.0 as usize);
+        rt.deliver_hits(vec![crate::game::combat::Hit {
+            victim: 0,
+            attacker,
+            inflictor: None,
+            damage: 30,
+            dflags: crate::game::combat::DFLAG_RADIUS,
+            mod_: "MOD_PROJECTILE_SPLASH",
+            weapon: "none".into(),
+            point: [0.0; 3],
+            dir: [0.0, 0.0, -1.0],
+            hitloc: "none",
+        }]);
+        // The record has no info for the frame's vehicle think.
+        rt.host.vehicles.live.remove(&tank);
+        rt.run_frame(50);
+        assert!(rt.aborts().is_empty(), "{:?}", rt.aborts());
+        assert_eq!(rt.client_field(0, "seen"), Some(format!("{} 0", tank.0)));
     }
 
     /// A UO vehicle shell charges its driver's slot (`+0x330`) after he

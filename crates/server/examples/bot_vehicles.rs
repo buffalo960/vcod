@@ -5,7 +5,9 @@
 //! docs/research/bot-objectives.md section 10.
 //! Run: COD_DIR=<UO install> cargo run --release -p vcod-server --example bot_vehicles [seed...]
 //! `MAP=` picks the map (mp_cassino), `GAMETYPE=` the gametype (tdm),
-//! `BOTS=` how many (6), `TICKS=` the length (3600, 3 min).
+//! `BOTS=` how many (6), `TICKS=` the length (3600, 3 min), `ON_ONLY=1`
+//! skips the games with vehicles off, `VEH_LOG=1` prints the crush and
+//! rocket lines.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -14,9 +16,19 @@ use std::time::{Duration, Instant};
 struct Tally {
     kills: usize,
     gun_kills: usize,
+    /// `D;` lines off a vehicle's guns.
+    gun_hits: usize,
     boardings: u32,
     seated: usize,
     driven: f32,
+    /// `D;` lines of a vehicle's crush on the driver's own team, their
+    /// damage, and the lines on the other team.
+    crush_team: usize,
+    crush_team_dmg: i32,
+    crush_enemy: usize,
+    /// Rockets fired on foot at enemy vehicles, and vehicles gone.
+    rockets: u32,
+    wrecks: usize,
 }
 
 fn game(
@@ -60,7 +72,13 @@ fn game(
                 }
             }
         }
-        for v in sv.test_vehicles() {
+        let now_live = sv.test_vehicles();
+        t.wrecks += last
+            .keys()
+            .filter(|n| !now_live.iter().any(|v| v.num == **n))
+            .count();
+        last.retain(|n, _| now_live.iter().any(|v| v.num == *n));
+        for v in now_live {
             if let Some(p) = last.insert(v.num, v.origin)
                 && driven.contains(&v.num)
             {
@@ -70,6 +88,24 @@ fn game(
     }
     for slot in sv.bot_slots() {
         t.boardings += sv.bot_body(slot).map_or(0, |b| b.boardings);
+        t.rockets += sv.bot_body(slot).map_or(0, |b| b.rockets_at_armor);
+    }
+    for l in sv.script_log() {
+        let d: Vec<&str> = l.trim_end().split(';').collect();
+        let gun = d
+            .get(9)
+            .is_some_and(|w| w.contains("turret") || w.contains("gunner"));
+        if d.first() == Some(&"D") && gun && d.get(11).is_some_and(|m| !m.contains("CRUSH")) {
+            t.gun_hits += 1;
+        }
+        if d.first() == Some(&"D") && d.get(11).is_some_and(|m| m.contains("CRUSH")) {
+            if d[3] == d[7] {
+                t.crush_team += 1;
+                t.crush_team_dmg += d[10].parse::<i32>().unwrap_or(0);
+            } else {
+                t.crush_enemy += 1;
+            }
+        }
     }
     for k in sv.script_log().iter().filter_map(|l| {
         // Not the `TANK;` of a `D;` line's `MOD_CRUSH_TANK`.
@@ -83,6 +119,16 @@ fn game(
         let w = k.get(8).copied().unwrap_or("");
         if w.contains("turret") || w.contains("gunner") {
             t.gun_kills += 1;
+        }
+    }
+    if std::env::var("VEH_LOG").is_ok() {
+        for l in sv.script_log().iter().filter(|l| {
+            l.contains("CRUSH")
+                || l.contains("bazooka")
+                || l.contains("panzerschreck")
+                || l.contains("panzerfaust")
+        }) {
+            eprintln!("{}", l.trim_end());
         }
     }
     t
@@ -103,15 +149,29 @@ fn main() {
     if seeds.is_empty() {
         seeds = vec![1, 3, 5, 7];
     }
-    println!("seed vehicles kills gun_kills boardings seated_ticks driven");
+    println!(
+        "seed vehicles kills gun_kills gun_hits crush_team crush_team_dmg crush_enemy rockets wrecks \
+         boardings seated_ticks driven"
+    );
     for seed in seeds {
-        for on in [false, true] {
+        let modes: &[bool] = if std::env::var("ON_ONLY").is_ok() {
+            &[true]
+        } else {
+            &[false, true]
+        };
+        for &on in modes {
             let t = game(&fs, &bsp, seed, on);
             println!(
-                "{seed} {} {} {} {} {} {:.0}",
+                "{seed} {} {} {} {} {} {} {} {} {} {} {} {:.0}",
                 u8::from(on),
                 t.kills,
                 t.gun_kills,
+                t.gun_hits,
+                t.crush_team,
+                t.crush_team_dmg,
+                t.crush_enemy,
+                t.rockets,
+                t.wrecks,
                 t.boardings,
                 t.seated,
                 t.driven

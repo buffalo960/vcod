@@ -2224,6 +2224,12 @@ impl ClientSim {
         // doc 14.3); without the anim records every clip plays at rate 1
         // from where the channel took it.
         let (mut legs_clock, mut torso_clock) = (self.pose.legs_clock, self.pose.torso_clock);
+        // The legs nodes still weighted after the frame's step: the seat
+        // leaves under one at 0 stand still (`SeatRamp::fade_held`).
+        let weighted: Vec<i32> = match self.seat {
+            Some(_) => legs_clock.layers(now_ms).iter().map(|l| l.index).collect(),
+            None => Vec::new(),
+        };
         let ahead = if std::mem::take(&mut self.dobj_ahead) {
             frametime_ms
         } else {
@@ -2302,6 +2308,7 @@ impl ClientSim {
                 .seat
                 .as_ref()
                 .and_then(|seat| vcod_common::playerpose::seat_inputs(a, legs, seat));
+            seat_ramp.fade_held(|node| weighted.iter().any(|&i| a.index.node_id(i) == Some(node)));
             seat_ramp.set(goal, now_ms, |leaf| a.leaf_motion(leaf));
             self.pose.seat_ramp = seat_ramp;
         }

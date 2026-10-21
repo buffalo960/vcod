@@ -264,6 +264,8 @@ const RUN_IN_SERVER_CRATE: &[&str] = &[
     "probe_stale_hud_method",
     "probe_stale_hud_read",
     "probe_stale_hud_write",
+    "probe_stale_self",
+    "probe_stale_self_hud",
     "probe_testclient",
 ];
 

@@ -840,6 +840,9 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
     // `SEED=<odd n>` replays another game (bot-navigation.md, "Other rules").
     sv.test_seed_rng(std::env::var("SEED").map_or(1, |v| v.parse().expect("SEED")));
+    // On foot: a seated bot holds still on purpose, and the riders bring
+    // out stock script errors (`tests/bot_vehicles.rs` plays the vehicles).
+    sv.set_cvar("vc_bot_vehicles", "0");
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();
@@ -1207,12 +1210,6 @@ fn bas_round(map: &str, bots: usize, shoot: bool) -> Option<vcod_server::Server>
         .script_aborts()
         .into_iter()
         .filter(|a| !a.starts_with("maps/mp/gametypes/bas::BaseAssault_bomb_think:3152:"))
-        // Stock `_jeepdrive_gmi::process_deactivate` starts a 90 s
-        // self-destruct on the last rider's exit, ended only by a boarding:
-        // a jeep destroyed meanwhile (a rider still in it counts, as his
-        // exit is the death's unlink) is deleted, and the timer's
-        // `dodamage` lands on a dead entity (bot-objectives.md 10.5).
-        .filter(|a| !a.starts_with("maps/mp/_jeepdrive_gmi::process_deactivate:469:"))
         .collect();
     assert_eq!(aborts, Vec::<String>::new());
     Some(sv)

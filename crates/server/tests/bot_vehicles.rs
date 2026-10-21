@@ -11,12 +11,16 @@ const MAP: &str = "mp_cassino";
 const FRAME: Duration = Duration::from_millis(50);
 
 fn uo_server(bots: usize, shoot: bool) -> Option<(vcod_server::Server, Instant)> {
+    uo_server_on(MAP, bots, shoot)
+}
+
+fn uo_server_on(map: &str, bots: usize, shoot: bool) -> Option<(vcod_server::Server, Instant)> {
     let fs = vcod_common::testing::uo_fs()?;
-    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map(MAP).unwrap()).unwrap())
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map(map).unwrap()).unwrap())
         .expect("parse the bsp");
     let now = Instant::now();
     let cfg = vcod_server::ServerConfig {
-        map: MAP.into(),
+        map: map.into(),
         hostname: "vcod test".into(),
         max_clients: 8,
         gametype: "tdm".into(),
@@ -109,26 +113,54 @@ fn a_bot_drives_a_tank_off_and_gets_out() {
         return;
     };
     warm_up(&mut sv, &mut now);
-    let slot = sv.bot_slots()[0];
     let tank = sv.test_vehicles()[0];
-    beside(&mut sv, slot, &tank);
-    let Some((num, 1)) = run_until_seated(&mut sv, &mut now, slot, 200) else {
+    drives_off_and_gets_out(&mut sv, &mut now, tank);
+}
+
+/// As the tank, a jeep on mp_kharkov's `tdm`: a four-wheel steers only
+/// rolling and has no gun for its driver.
+#[test]
+#[ignore = "builds mp_kharkov's UO graph and runs a bot 100 s of game time, ~20 s in release; run with --ignored"]
+fn a_bot_drives_a_jeep_off_and_gets_out() {
+    let Some((mut sv, mut now)) = uo_server_on("mp_kharkov", 1, false) else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    warm_up(&mut sv, &mut now);
+    let jeep = sv
+        .test_vehicles()
+        .into_iter()
+        .find(|v| sv.test_vehicle_kind(v.num) == Some(1))
+        .expect("mp_kharkov's tdm has no four-wheel");
+    drives_off_and_gets_out(&mut sv, &mut now, jeep);
+}
+
+/// The lone bot set down beside `veh` boards it in the driver's seat,
+/// drives it over 500 units off and gets out again.
+fn drives_off_and_gets_out(
+    sv: &mut vcod_server::Server,
+    now: &mut Instant,
+    veh: vcod_server::bots::VehicleSpot,
+) {
+    let slot = sv.bot_slots()[0];
+    beside(sv, slot, &veh);
+    let Some((num, 1)) = run_until_seated(sv, now, slot, 200) else {
         panic!("the bot never took the driver's seat");
     };
     let mut far = 0.0f32;
     let mut out = None;
     for tick in 0..2000 {
-        run(&mut sv, &mut now, 1);
+        run(sv, now, 1);
         let at = sv
             .test_vehicles()
             .into_iter()
             .find(|v| v.num == num)
-            .expect("the tank is gone")
+            .expect("the vehicle is gone")
             .origin;
-        far = far.max((at[0] - tank.origin[0]).hypot(at[1] - tank.origin[1]));
+        far = far.max((at[0] - veh.origin[0]).hypot(at[1] - veh.origin[1]));
         if std::env::var("VEH_REPORT").is_ok() && tick % 20 == 0 {
             eprintln!(
-                "{tick} tank {at:?} seat {:?}",
+                "{tick} vehicle {at:?} seat {:?}",
                 sv.bot_body(slot).unwrap().seat
             );
         }
@@ -138,7 +170,7 @@ fn a_bot_drives_a_tank_off_and_gets_out() {
         }
     }
     eprintln!("drove {far:.0} units, out at tick {out:?}");
-    assert!(far > 500.0, "the tank went only {far:.0} units");
+    assert!(far > 500.0, "the vehicle went only {far:.0} units");
     assert!(out.is_some(), "the bot never got out");
     assert!(sv.bot_body(slot).unwrap().playing);
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
@@ -230,5 +262,64 @@ fn tank_bots_lay_their_guns_on_an_enemy() {
             .any(|(by, w)| crew.contains(by) && (w.contains("turret") || w.contains("gunner"))),
         "no kill off the tank's guns: {kills:?}"
     );
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}
+
+/// A bot on foot with a rocket launcher draws it on an enemy driving a
+/// tank in its sight and fires (the tank's driver is no target for its
+/// rifle: no round reaches him), and the tank is wrecked.
+#[test]
+#[ignore = "builds mp_cassino's UO graph and runs two bots 20 s of game time, ~10 s in release; run with --ignored"]
+fn a_bot_fires_rockets_at_an_enemy_tank() {
+    const BEHIND: f32 = 600.0;
+    let Some((mut sv, mut now)) = uo_server(2, true) else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    warm_up(&mut sv, &mut now);
+    let slots = sv.bot_slots();
+    let (driver, shooter) = (slots[0], slots[1]);
+    assert_ne!(sv.bot_team(driver), sv.bot_team(shooter));
+    let tank = sv.test_vehicles()[0];
+    let park = |sv: &mut vcod_server::Server| {
+        let p = sv.test_ground_under([0.0, -1250.0, 64.0]).expect("ground");
+        sv.place_client(shooter, [p[0], p[1], p[2] + 0.125], 0.0);
+    };
+    park(&mut sv);
+    beside(&mut sv, driver, &tank);
+    let seated = (0..200).find_map(|_| {
+        park(&mut sv);
+        run(&mut sv, &mut now, 1);
+        sv.bot_body(driver)?.seat
+    });
+    assert_eq!(seated.map(|s| s.1), Some(1), "the driver never sat");
+    // The shooter stands behind the tank, which holds still for him while
+    // its turret turns round.
+    assert!(sv.test_give_weapon(shooter, "bazooka_mp"));
+    assert!(sv.test_give_max_ammo(shooter, "bazooka_mp"));
+    let at = sv.test_vehicles()[0];
+    let (s, c) = at.yaw.to_radians().sin_cos();
+    let behind = [
+        at.origin[0] - c * BEHIND,
+        at.origin[1] - s * BEHIND,
+        at.origin[2] + 64.0,
+    ];
+    let p = sv
+        .test_ground_under(behind)
+        .expect("ground behind the tank");
+    sv.place_client(shooter, [p[0], p[1], p[2] + 0.125], at.yaw);
+    let fired = (0..400).find(|_| {
+        run(&mut sv, &mut now, 1);
+        sv.bot_body(shooter).is_some_and(|b| b.rockets_at_armor > 0)
+    });
+    eprintln!("first rocket at tick {fired:?}");
+    assert!(fired.is_some(), "no rocket at the enemy tank");
+    // The hit sets the hull burning; it blows up a few seconds on.
+    let wrecked = (0..600).find(|_| {
+        run(&mut sv, &mut now, 1);
+        !sv.test_vehicles().iter().any(|v| v.num == at.num)
+    });
+    eprintln!("the tank blew up {wrecked:?} ticks after");
+    assert!(wrecked.is_some(), "the tank outlived the rocket");
     assert_eq!(sv.script_aborts(), Vec::<String>::new());
 }
