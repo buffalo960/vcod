@@ -3,7 +3,10 @@
 //! 150 units of the first) and the falls (unstick spells that start on the
 //! ground off a ladder and end 48+ lower) and the deaths, and prints where
 //! each stall began and each bot died. A bot with a UO LMG's bipod down
-//! holds still on purpose and is not counted.
+//! holds still on purpose and is not counted. `held` counts the stalled
+//! bot-ticks whose 12 s hold a tick `BotBody::holds` names (with
+//! `SHOOT=1` mostly fights and cover), as `bot_match` splits its count;
+//! each stall line's `ago` is the ticks since the bot last held.
 //! The detector behind the tables in docs/research/bot-navigation.md
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
@@ -87,9 +90,11 @@ fn main() {
         sv.load_scripts(fs.clone()).expect("load the scripts");
         let mut hist: Vec<VecDeque<[f32; 3]>> = vec![VecDeque::new(); slots];
         let mut stalled = vec![false; slots];
+        let mut was_held = vec![false; slots];
+        let mut since_held = vec![usize::MAX; slots];
         let mut spell: Vec<Option<[f32; 3]>> = vec![None; slots];
         let mut was = vec![false; slots];
-        let (mut count, mut falls, mut deaths, mut sprints) = (0, 0, 0, 0);
+        let (mut count, mut held, mut falls, mut deaths, mut sprints) = (0, 0, 0, 0, 0);
         let mut died = vec![false; slots];
         for tick in 0..ticks {
             now += Duration::from_millis(50);
@@ -183,9 +188,16 @@ fn main() {
                     && h.iter().all(|p| {
                         (0..3).map(|i| (p[i] - first[i]).powi(2)).sum::<f32>() < RADIUS * RADIUS
                     });
+                since_held[slot] = if b.holds() {
+                    0
+                } else {
+                    since_held[slot].saturating_add(1)
+                };
                 if near {
                     count += 1;
-                    if !stalled[slot] {
+                    held += usize::from(since_held[slot] < WINDOW);
+                    // A held stall that lets go is printed again.
+                    if !stalled[slot] || (was_held[slot] && !b.holds()) {
                         // The nearest other bot: two on one ladder pin each other.
                         let other = bodies
                             .iter()
@@ -198,11 +210,13 @@ fn main() {
                             })
                             .fold(f32::INFINITY, f32::min);
                         println!(
-                            "  seed {seed} t{tick} bot {slot} stalled at {:?} (12 s at {:?}) lad {} seat {} wp {:?} next {:?} bot {:.0} away",
+                            "  seed {seed} t{tick} bot {slot} stalled at {:?} (12 s at {:?}) lad {} seat {} held {} ago {} wp {:?} next {:?} bot {:.0} away",
                             b.origin.map(|x| x.round()),
                             first.map(|x| x.round()),
                             b.on_ladder as u8,
                             b.seat.map_or(0, |s| s.1),
+                            b.holds() as u8,
+                            since_held[slot].min(9999),
                             wp.map(|p| p.map(|x| x.round())),
                             next.map(|p| p.map(|x| x.round())),
                             other,
@@ -210,10 +224,11 @@ fn main() {
                     }
                 }
                 stalled[slot] = near;
+                was_held[slot] = b.holds();
             }
         }
         println!(
-            "seed {seed}: stalled {count}, falls {falls}, deaths {deaths}, sprinting {sprints}"
+            "seed {seed}: stalled {count}, falls {falls}, deaths {deaths}, sprinting {sprints}, held {held}"
         );
         if shoot {
             // victim guid, num, team, name, attacker guid, num, team, name,
