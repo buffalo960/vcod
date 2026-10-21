@@ -296,7 +296,8 @@ fn listed_client(
 /// Where the mover's move and turn take a point: moved, then turned about the
 /// mover's moved origin (`G_TryPushingEntity`, 0x54956-0x54aae). 1.1d keeps
 /// the turn on the x87 stack and rounds once, adding `org2 - org` to the
-/// stored moved point (cod11-movers.md 21, "The carry's rounding").
+/// stored moved point; 1.5b and UO store `org`, `org2` and `org2 - org`
+/// (cod11-movers.md 21, "The carry's rounding").
 fn carried(step: &Step, at: Vec3, arith: Arith) -> Vec3 {
     let moved = at + (step.to.0 - step.from.0);
     let amove = step.to.1 - step.from.1;
@@ -305,8 +306,12 @@ fn carried(step: &Step, at: Vec3, arith: Arith) -> Vec3 {
     }
     let axis = vcod_common::pmove::aim::angles_to_axis(amove.to_array()).map(Vec3::from);
     if arith != Arith::Kept {
-        let v = moved - step.to.0;
-        return step.to.0 + axis[0] * v.x + axis[1] * v.y + axis[2] * v.z;
+        // `G_RotatePoint` sums each row on the stack and stores it.
+        let org = moved - step.to.0;
+        let o = org.as_dvec3();
+        let org2 = (axis[0].as_dvec3() * o.x + axis[1].as_dvec3() * o.y + axis[2].as_dvec3() * o.z)
+            .as_vec3();
+        return moved + (org2 - org);
     }
     let org = (moved - step.to.0).as_dvec3();
     let org2 = axis[0].as_dvec3() * org.x + axis[1].as_dvec3() * org.y + axis[2].as_dvec3() * org.z;

@@ -1992,6 +1992,12 @@ The 2026-10-20 run is
 client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
 
+The same recipe on 1.5b and UO (2026-10-21, ports 34591 and 34592):
+`COD_VERSION=1.5` or `COD_VERSION=uo` before `tools/run_probe.sh`, and
+`vcod --game-dir <install>` (`--mod-dir uo` for UO) for the client, gave
+`mp_carentan-dm-worldcopy3-1.5.txt` and `-worldcopy3-uo.txt`, the carry's
+rounding on those builds (`docs/research/cod11-movers.md` 21).
+
 ## probe_turnedslab
 
 A turned submodel against `G_MoverPush`'s box tests, for
