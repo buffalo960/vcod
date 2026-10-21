@@ -943,6 +943,36 @@ The rest of the walk, read 2026-10-17 in 1.5b's `game.mp.i386.so`:
   (0x2e554-0x2e565). VERIFIED. vcod: `pmove::friction_stored` under
   `MoveRules::v15()`, whose water term already ran in that order; no capture
   wades, so none measures it.
+- The walk's cmd scale (0x1f08b, called from `PM_WalkMove` at 0x202ec)
+  stores every step: the back and strafe products after `fabs`
+  (0x1f0c9 or 0x1f0e1, 0x1f107), the max (0x1f12c), the length, `sqrt` of
+  the int sum (0x1f18a), the base `(speed * max) / (length * 127)`
+  (0x1f1aa), and the product after the walk or run scale (0x1f1f3,
+  0x1f20b), the stance scale (0x1f386, 0x1f3a4), the wade factor
+  `1 - (1 - pm_waterSwimScale) * (waterlevel / 3)` and its product
+  (0x1f3d7, 0x1f3f3, 0x1f3fc), the weapon's `moveSpeedScale` (0x1f462)
+  and the shellshock's 0.4 (0x1f47d). A stance leg's blend
+  `to * f + (1 - f) * from` stays on the stack and is
+multiplied in with one store (0x1f2e8, 0x1f368); `f` is the float
+  `PM_GetViewHeightLerpTime` returns. VERIFIED, disassembly. 1.1d keeps
+  the whole product on the stack (`cod11-mantle.md`, "The wish speed"),
+  and so does the Windows cgame (`cgame_mp15.dll` 0x30007e40, INFERRED
+  from Ghidra's float10 chain). VERIFIED, gdb on 1.5b (2026-10-21, a
+  `--probe-patchwalk 180` kerb run, dprintfs on `Pmove` and on
+  `PM_StepSlideMove` past its prologue, 0x29957): of 2097 cmds the
+  velocity entering `PM_StepSlideMove` differed from ours in 223, by one
+  to three ulps; with these stores ported it differs in none but a
+  teleport's cmds and one cmd retail ran as 50 ms where the capture logs
+  six. VERIFIED, the same run: the cmd that put ours a float step off
+  retail's kerb (x 1007.12506 against 1007.125) had the same origin and
+  velocity going in. INFERRED, from 0x295aa-0x2961e: the slide there meets
+  the `x = 992` wall and the slope of brush 2281 in one bump, and
+  `DotProduct(clipVelocity, planes[i])` after the two clips is 9.7e-7 over
+  0 with our old wish speed and under 0 with one a float step larger, so
+  retail slides along the crease (`CrossProduct`, 0x29667) and holds x.
+  vcod: `pmove::wish`'s `stored` arm, under `MoveRules::v15()` off
+  `Arith::Msvc`; `predict_ab`'s 1.5b kerb (ct 29991) and pole (ct 30492)
+  rows match since. VERIFIED, `predict_ab`.
 - `PM_StepSlideMove` (0x29942) forms the step-up's end on the stack
   (`stepSize + 1` plus the start's z, 0x29ccf-0x29ce2) and stores what
   the up trace left, `(stepSize + 1) * fraction - 1` (0x29d46-0x29d5f);
