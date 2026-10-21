@@ -2655,18 +2655,10 @@ fn the_hitlog_capture_matches_uo_on_mp_carentan() {
         "hitfine-uo",
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
-        &[
-            ("[hit] 30150 0 ", MUZZLE_GAP),
-            ("[hit] 30200 0 ", KNOCKBACK_GAP),
-        ],
+        &[("[hit] 30200 0 ", KNOCKBACK_GAP)],
     );
 }
 
-/// A wound a float step off retail's: the round's muzzle. Ours reaches
-/// `tag_flash`'s bind-pose distance along the aim from `tag_player` turned
-/// about `tag_aim`; retail poses `tag_flash` on its own chain, which puts it
-/// up to 0.006 nearer (`cod11-turrets.md` 13.8).
-const MUZZLE_GAP: &str = "the muzzle's reach off the bind pose (turrets doc 13.8)";
 /// A kill on the knockback's first frame: the body turned about a
 /// hundredth of a degree off retail's, cause not found (`cod11-turrets.md`
 /// 13.6).
@@ -2766,10 +2758,7 @@ fn the_hitgrid_capture_matches_retail_on_mp_carentan() {
         vcod_common::testing::game_fs_11,
         &PROTOCOL_V1,
         HEAD_HITGRID,
-        &[
-            ("[hit] 30400 0 ", MUZZLE_GAP),
-            ("[hit] 30450 0 ", KNOCKBACK_GAP),
-        ],
+        &[("[hit] 30450 0 ", KNOCKBACK_GAP)],
     );
 }
 
@@ -2827,10 +2816,7 @@ fn the_grounded_hitgrid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         HITGRID_GROUND,
-        &[
-            ("[hit] 30350 0 ", MUZZLE_GAP),
-            ("[hit] 30400 0 ", KNOCKBACK_GAP),
-        ],
+        &[("[hit] 30400 0 ", KNOCKBACK_GAP)],
     );
 }
 

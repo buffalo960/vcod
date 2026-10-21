@@ -138,6 +138,22 @@ pub fn step_pair_b_first(
     (ea, eb)
 }
 
+/// One frame of two clients joining together: while either is still
+/// connecting `a`'s packets go first, so `a` takes the lower slot; once both
+/// are in, `b`'s do. A frame runs the menu threads of its later packet first
+/// (`client-probes/probe_threadorder`), so `a` answers and spawns ahead of
+/// `b`, as a retail client that joined first does. Hands back the frame's
+/// packets as [`step_pair_seen`] does.
+pub fn step_pair_joining(
+    sv: &mut Server,
+    a: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    b: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    now: Instant,
+) -> (Vec<NetEvent>, Vec<NetEvent>, SentPackets) {
+    let entered = a.1.state() == NetState::Active && b.1.state() == NetState::Active;
+    exchange_pair(sv, a, b, now, entered)
+}
+
 fn exchange_pair(
     sv: &mut Server,
     a: (&Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
@@ -174,7 +190,23 @@ pub fn step_trio(
     c: (SocketAddr, &Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
     now: Instant,
 ) -> (Vec<NetEvent>, Vec<NetEvent>, Vec<NetEvent>) {
-    for (addr, q) in [(a.0, a.1), (b.0, b.1), (c.0, c.1)] {
+    step_trio_ordered(sv, a, b, c, now, [0, 1, 2])
+}
+
+/// [`step_trio`] handing the three clients' packets to the server in
+/// `order` (indices into `a`, `b`, `c`). A frame runs the menu threads of
+/// its later packet first (`client-probes/probe_threadorder`), so clients
+/// that answer their menus in one frame spawn in the reverse of `order`.
+pub fn step_trio_ordered(
+    sv: &mut Server,
+    a: (SocketAddr, &Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    b: (SocketAddr, &Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    c: (SocketAddr, &Rc<RefCell<Queues>>, &mut NetClient<ClientEnd>),
+    now: Instant,
+    order: [usize; 3],
+) -> (Vec<NetEvent>, Vec<NetEvent>, Vec<NetEvent>) {
+    let peers = [(a.0, a.1), (b.0, b.1), (c.0, c.1)];
+    for (addr, q) in order.map(|i| peers[i]) {
         let pending: Vec<Vec<u8>> = q.borrow_mut().to_server.drain(..).collect();
         for p in pending {
             sv.handle_packet(addr, &p, now);
@@ -242,10 +274,7 @@ pub fn join_pair_stamped(
 /// the frame's time. Empty, every client sends one cmd a frame on its own
 /// clock.
 ///
-/// Once both are in, `b`'s packets reach the server first: a frame runs the
-/// menu threads of its later packet first (`client-probes/probe_threadorder`),
-/// so `a` answers and spawns ahead of `b`, as a retail client that joined
-/// first does.
+/// Each frame goes through [`step_pair_joining`], so `a` spawns ahead of `b`.
 ///
 /// `b` connects `b_after_ms` after `a` (a frame at a time), as a retail
 /// client started later does; until then `a` joins and plays alone. A late
@@ -310,11 +339,7 @@ pub fn join_pair_staggered(
             }
         }
         cb.send_frame(&holding(&cb));
-        let (ea, eb) = if ca.state() == NetState::Active && cb.state() == NetState::Active {
-            step_pair_b_first(sv, (qa, &mut ca), (qb, &mut cb), *now)
-        } else {
-            step_pair(sv, (qa, &mut ca), (qb, &mut cb), *now)
-        };
+        let (ea, eb, _) = step_pair_joining(sv, (qa, &mut ca), (qb, &mut cb), *now);
         for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
             for e in events {
                 match e {
@@ -365,8 +390,9 @@ pub fn stamped(
 }
 
 /// Three clients through the stock menus, as [`join_pair`] does two, at
-/// [`ADDR`], [`ADDR_B`] and [`ADDR_C`] and stepped with [`step_trio`], so each
-/// frame's packets reach the server in that order.
+/// [`ADDR`], [`ADDR_B`] and [`ADDR_C`]. Until all three are in, each frame's
+/// packets reach the server in that order; from then on in the reverse, so
+/// the three answer and spawn in slot order, as [`join_pair_stamped`] does.
 pub fn join_trio(
     sv: &mut Server,
     q: [&Rc<RefCell<Queues>>; 3],
@@ -382,13 +408,15 @@ pub fn join_trio(
         for c in cl.iter_mut() {
             c.send_frame(&holding(c));
         }
+        let entered = cl.iter().all(|c| c.state() == NetState::Active);
         let [a, b, c] = &mut cl;
-        let events = step_trio(
+        let events = step_trio_ordered(
             sv,
             (ADDR, q[0], a),
             (ADDR_B, q[1], b),
             (ADDR_C, q[2], c),
             *now,
+            if entered { [2, 1, 0] } else { [0, 1, 2] },
         );
         for (i, events) in <[Vec<NetEvent>; 3]>::from(events).into_iter().enumerate() {
             for e in events {

@@ -318,10 +318,15 @@ VERIFIED (capture):
   run reads 90 and the back -63 on the wire; with it clear, 224 and -157.
 
 `crates/server/tests/shellshock_ab.rs` replays the client's cmds on
-vcod-server under the same gsc: the three fields match on every one of
-retail's snapshots, the velocity too, and from 300 ms after the placement
-every origin step matches to 0.01 (the first replayed cmd runs 18 ms longer
-on ours, the join's phase, which leaves a constant 1.66 units).
+vcod-server under the same gsc: the three fields, the origin and the
+velocity match exactly on every one of retail's snapshots, the placement's
+included. VERIFIED (capture, replay): the placement snapshot (t 15000)
+acknowledged commandTime 14968, and the client half's first `!cmd` is
+15018; retail also ran a holding cmd at 15000 that the probe sent before
+it saw the placement and did not log (cod11-movers.md 15, "The cmd at the
+placement"). The gate runs the placement frame to 14968 and that cmd at
+15000 ahead of the log's first; without it the first forward cmd ran
+from 14950 and left a constant 1.66 units on the origin.
 
 ## vcod
 
