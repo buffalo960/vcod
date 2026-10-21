@@ -349,6 +349,65 @@ pub fn spawn_scripted_hurt(host: &mut GameHost, cx: &mut Cx, id: EntId, spawnfla
     link(host, cx, id, spawnflags);
 }
 
+/// `SP_trigger_multiple` and `SP_trigger_once` for a script `spawn`: no
+/// keys, so `wait` 0.5 (a `trigger_once` always -1), and no `model`, so
+/// inline model 0, a copy of the world at the origin, as
+/// [`spawn_scripted_hurt`] links (cod11-combat.md 5.9, "useBy").
+pub fn spawn_scripted_multi(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    id: EntId,
+    kind: TriggerKind,
+    spawnflags: i32,
+) {
+    let (mins, maxs) = host.model_bounds.first().copied().unwrap_or_default();
+    let shape = TriggerShape {
+        mins,
+        maxs,
+        model: Some(0),
+    };
+    let wait = if kind == TriggerKind::Once {
+        ONCE_WAIT_MS
+    } else {
+        MULTIPLE_DEFAULT_WAIT_MS
+    };
+    host.triggers.register(id, kind, shape, wait);
+    link(host, cx, id, spawnflags);
+}
+
+/// `Use_Multi` (1.1d 0x6594c, 1.5b 0x7a2f2, UO 0x865c7), `Touch_Multi`'s
+/// arm without the notify: unless the trigger's think is `enableLinkTo`'s or
+/// already armed, a `wait` above 0 arms `multi_wait` (which gates nothing),
+/// and any other spends the trigger and frees it 100 ms on
+/// (cod11-movers.md 17). Returns false for anything not a
+/// `trigger_multiple` or `trigger_once`.
+pub fn use_multi(host: &mut GameHost, id: EntId) -> bool {
+    let Some(t) = host
+        .triggers
+        .get(id)
+        .filter(|t| matches!(t.kind, TriggerKind::Multiple | TriggerKind::Once))
+        .copied()
+    else {
+        return false;
+    };
+    let armed = host.ents.get(id).is_some_and(|e| e.nextthink != 0);
+    if t.spent || armed || host.links.is_enabled(id) {
+        return true;
+    }
+    let now = host.level_time_ms;
+    if t.wait_ms > 0 {
+        use crate::game::entity::ThinkFn;
+        host.ents.schedule(id, ThinkFn::MultiWait, now + t.wait_ms);
+    } else {
+        if let Some(t) = host.triggers.get_mut(id) {
+            t.spent = true;
+        }
+        let free = crate::game::entity::ThinkFn::Free;
+        host.ents.schedule(id, free, now + SPENT_FREE_MS);
+    }
+    true
+}
+
 /// `G_SoundAliasIndex` of a `trigger_hurt`'s `sound`, counted from
 /// `CS_SOUNDS`; 0 (no sound) when the range is full.
 pub fn hurt_sound_index(host: &mut GameHost, alias: &str) -> i32 {
@@ -602,6 +661,22 @@ pub fn touched(host: &mut GameHost, cx: &mut Cx, slot: usize, origin: [f32; 3]) 
             let b = abs_bounds(t_origin, &t);
             if !boxes_overlap(exact, b) {
                 return false;
+            }
+            // A script-spawned trigger's inline model 0 is a copy of the
+            // world at its origin: the box's position test against that
+            // copy's clip, under `trap_EntityContact`'s -1 (combat doc 5.9).
+            if t.shape.model == Some(0)
+                && let Some(w) = host.world.as_ref()
+            {
+                let tr = w.collision.pusher_box_trace(
+                    vcod_common::collision::Pusher::Copy(id.0),
+                    centre,
+                    centre,
+                    -half,
+                    half,
+                    u32::MAX,
+                );
+                return tr.startsolid || tr.allsolid;
             }
             match t
                 .shape

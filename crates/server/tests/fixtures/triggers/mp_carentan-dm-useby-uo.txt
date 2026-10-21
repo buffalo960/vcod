@@ -1,0 +1,57 @@
+# Retail United Offensive 1.51b Linux dedicated server, 2026-10-21, no client:
+#   COD_VERSION=uo COD_DIR=<a UO install> COD_LNXDED_HOME=<absolute, no '+'> PORT=34763 SECS=15 \
+#       tools/run_probe.sh client-probes/probe_useby mp_carentan
+# probe: crates/gsc/tests/fixtures/semantics/client-probes/probe_useby.gsc
+# useBy on a script-spawned trigger_once, trigger_multiple, trigger_damage and
+# func_static, each at the world origin (the func_static then lifted 8 by an
+# origin write), no client. The trigger_once's use frees it 150 ms on; the
+# func_static's first use takes it out of a bulletTrace and the second puts
+# it back. All three servers logged the same lines.
+# The PROBE lines are the server's games_mp.log; hurtfall_ab.rs replays them.
+# docs/research/cod11-combat.md 5.9 reads it.
+PROBE user 170
+PROBE spawned once 171 trigger_once
+PROBE use once 1550
+PROBE def once 1550 1
+PROBE trigger once 1550 170
+PROBE def once 1600 1
+PROBE def once 1650 1
+PROBE def once 1700 0
+PROBE def once 1750 0
+PROBE spawned multiple 172 trigger_multiple
+PROBE use multiple 2300
+PROBE def multiple 2300 1
+PROBE trigger multiple 2300 170
+PROBE def multiple 2350 1
+PROBE def multiple 2400 1
+PROBE def multiple 2450 1
+PROBE def multiple 2500 1
+PROBE use multiple 2550
+PROBE def multiple 2550 1
+PROBE trigger multiple 2550 170
+PROBE def multiple 2600 1
+PROBE def multiple 2650 1
+PROBE spawned damage 173 trigger_damage
+PROBE use damage 3200
+PROBE def damage 3200 1
+PROBE trigger damage 3200 170
+PROBE def damage 3250 1
+PROBE def damage 3300 1
+PROBE def damage 3350 1
+PROBE def damage 3400 1
+PROBE use damage 3450
+PROBE def damage 3450 1
+PROBE trigger damage 3450 170
+PROBE def damage 3500 1
+PROBE def damage 3550 1
+PROBE spawned static 174 func_static
+PROBE trace static 4100 -35.1604 ent174
+PROBE use static 4100
+PROBE trace static 4100 -43.1604 world
+PROBE trigger static 4100 170
+PROBE trace static 4150 -43.1604 world
+PROBE use static 4150
+PROBE trace static 4150 -35.1604 ent174
+PROBE trigger static 4150 170
+PROBE trace static 4200 -35.1604 ent174
+PROBE done

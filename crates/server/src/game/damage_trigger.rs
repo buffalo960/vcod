@@ -109,6 +109,22 @@ pub fn responds(spawnflags: i32, mod_: i32, uo: bool) -> bool {
         .any(|(bit, mods)| f(*bit) && mods.contains(&mod_))
 }
 
+/// `Use_trigger_damage` (1.1d 0x65d10, 1.5b 0x7ab3c, UO 0x86e77), a
+/// `useBy`'s: [`activate`] with `accumulate + 1` and mod -1. Returns false
+/// for anything not a `trigger_damage`.
+pub fn use_trigger(host: &mut GameHost, cx: &mut Cx, id: EntId, user: EntId) -> bool {
+    let Some(spec) = host
+        .triggers
+        .get(id)
+        .filter(|t| t.kind == TriggerKind::Damage)
+        .and_then(|t| t.spec)
+    else {
+        return false;
+    };
+    activate(host, cx, id, user, spec.accumulate + 1, -1);
+    true
+}
+
 /// `Activate_trigger_damage(self, attacker, damage, mod)`: refused while a
 /// wait is armed (unless `enableLinkTo` set its think), under `threshold`,
 /// for a means of death the spawnflags refuse, or while `accumulate` is

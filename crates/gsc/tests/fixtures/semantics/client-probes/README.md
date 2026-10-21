@@ -2126,7 +2126,38 @@ each. A read-only write is fatal at `developer 1`, so that run takes
 are `mp_carentan-dm-hurtuse*.txt` (`+set probe_spawn 17 +set probe_dmg 25
 +set probe_drop -30 +set probe_use 1000`) and `-hurtwrite*.txt` (`+set
 probe_spawn 17 +set probe_drop -30 +set probe_write 1`); UO's write run
-ends at the first write, where the server aborts.
+ends at the first write, where the server aborts. The 1.5b write run was
+taken again on port 34770 the same day, its first take's body having
+drifted sideways.
+
+`probe_spawn_x`, `probe_spawn_y` and `probe_spawn_z` put the spawned hurt
+at that point instead of (900 1930 -20). The 2026-10-21 runs on all three
+servers, `mp_carentan-dm-hurtfar*.txt` (`+set probe_spawn 16 +set
+probe_dmg 25 +set probe_drop -30 +set probe_spawn_x 0 +set probe_spawn_y 0
++set probe_spawn_z 8`), spawn it 1900 units from the body; its inline
+model 0, the world lifted 8, still hurts the body on the street.
+
+## probe_useby
+
+`useBy` on the entities whose `use` is not `hurt_use`
+(`docs/research/cod11-combat.md` 5.9). No client. It spawns a
+`trigger_once`, a `trigger_multiple`, a `trigger_damage` and a
+`func_static` at the world origin in turn, lifts the static 8 by an origin
+write, calls `useBy` with a `script_origin` and logs every `"trigger"`
+notify, `isdefined` for a few frames, and for the static a `bulletTrace`
+down on to the street at (900 1930). Under `+set probe_life 1` it runs only
+the `life` phase: `useBy` on mp_carentan's `trigger_hurt` and `isdefined`
+for 3 s, which needs the slab's `"dmg" "1000"` replaced by `"life" "2.5"`
+(same length) in a `zzz_hurtlife.pk3` in the homepath's game dir
+(`uo/` on UO); `hurtlife_bsp` in `crates/server/tests/hurtfall_ab.rs`
+applies the same edit. The 2026-10-21 runs on 1.1d, 1.5b and UO are
+`crates/server/tests/fixtures/triggers/mp_carentan-dm-useby*.txt` and
+`-hurtlife*.txt`; `hurtfall_ab.rs` replays them.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=34761 SECS=15 \
+    tools/run_probe.sh client-probes/probe_useby mp_carentan [+set probe_life 1]
+```
 
 ## probe_linkto2
 

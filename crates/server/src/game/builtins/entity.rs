@@ -114,10 +114,14 @@ fn set_hint_string(
 }
 
 /// `ent useBy(user)` (1.1d 0x5d774, 1.5b 0x5d413, UO 0x68698): notifies
-/// `"trigger"` on `ent` with `user` on the spot, then calls `ent->use`. Of
-/// the use functions only a `trigger_hurt`'s `hurt_use` is modelled: it
-/// toggles the touch, and under a `life` key arms `hurt_think`'s free
-/// (cod11-combat.md 5.9).
+/// `"trigger"` on `ent` with `user` on the spot, then calls `ent->use`: a
+/// `trigger_hurt`'s `hurt_use` toggles the touch and under a `life` key
+/// arms `hurt_think`'s free, a `trigger_multiple`'s or `trigger_once`'s
+/// `Use_Multi` arms its wait or spends it, a `trigger_damage`'s
+/// `Use_trigger_damage` activates it, and a `func_static`'s `Use_Static`
+/// toggles its link. A turret's `turret_use`, a sine mover's
+/// `Use_BinaryMover` and `misc_spawner_use` are not modelled
+/// (cod11-combat.md 5.9, "useBy").
 fn use_by(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -131,9 +135,15 @@ fn use_by(
     let trigger = cx.intern_folded("trigger");
     cx.notify(Target::Entity(id), trigger, vec![Value::Entity(user)]);
     let now = host.level_time_ms;
-    if let Some(Some(end)) = host.triggers.use_hurt(id, now) {
-        let first = now + crate::game::entity::HURT_LIFE_FIRST_THINK_MS;
-        host.ents.schedule(id, ThinkFn::HurtLife(end), first);
+    if let Some(life) = host.triggers.use_hurt(id, now) {
+        if let Some(end) = life {
+            let first = now + crate::game::entity::HURT_LIFE_FIRST_THINK_MS;
+            host.ents.schedule(id, ThinkFn::HurtLife(end), first);
+        }
+    } else if !crate::game::trigger::use_multi(host, id)
+        && !crate::game::damage_trigger::use_trigger(host, cx, id, user)
+    {
+        crate::game::mover::toggle_static(host, cx, id);
     }
     Ok(Value::Undefined)
 }
@@ -468,6 +478,12 @@ fn spawn_entity(host: &mut GameHost, cx: &mut Cx, args: &[Value]) -> Result<Valu
         crate::game::damage_trigger::spawn_scripted(host, cx, id, flags);
     } else if name == "trigger_hurt" {
         crate::game::trigger::spawn_scripted_hurt(host, cx, id, flags);
+    } else if let Some(
+        kind @ (crate::game::trigger::TriggerKind::Multiple
+        | crate::game::trigger::TriggerKind::Once),
+    ) = crate::game::trigger::kind_of(&name)
+    {
+        crate::game::trigger::spawn_scripted_multi(host, cx, id, kind, flags);
     } else {
         crate::game::mover::spawn_sine(host, cx, id, &name, None);
     }

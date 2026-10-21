@@ -225,8 +225,8 @@ struct Mover {
     /// Spawned through `InitMover` (0x56454), which writes `eType` 5: the
     /// sine movers and a `func_static`.
     init_mover: bool,
-    /// A `func_static` with `takedamage` (0x5828a, 0x582d0): its `use` is
-    /// `Use_Static`, which `G_Damage` calls in place of any damage.
+    /// A `func_static` with `takedamage` (0x5828a, 0x582d0): `G_Damage`
+    /// calls its `use`, `Use_Static`, in place of any damage.
     use_static: bool,
     /// The groups whose running segment ended this frame: one
     /// `Reached_ScriptMover` link each (0x5fa17, 0x5faba).
@@ -888,7 +888,20 @@ pub fn damageable_statics(host: &GameHost) -> Vec<EntId> {
 /// (movers doc 21); a blast only reaches a linked one. Returns whether `id`
 /// took that arm.
 pub fn use_static(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> bool {
-    if !host.movers.rows.get(&id).is_some_and(|m| m.use_static) {
+    host.movers.rows.get(&id).is_some_and(|m| m.use_static) && toggle_static(host, cx, id)
+}
+
+/// `Use_Static` (1.1d 0x58070, 1.5b 0x697a3, UO 0x742e7), which
+/// `SP_func_static` installs as every `func_static`'s `use`, takedamage or
+/// not, so a script `useBy` reaches it too (cod11-combat.md 5.9, "useBy").
+/// Returns false for anything not a `func_static`.
+pub fn toggle_static(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> bool {
+    if !host
+        .movers
+        .rows
+        .get(&id)
+        .is_some_and(|m| m.init_mover && !m.sine)
+    {
         return false;
     }
     if host.area.last_link(id.0).is_some() {
