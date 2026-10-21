@@ -2330,6 +2330,16 @@ impl Follower {
         };
         let w = g.nodes[w as usize];
         if flat(w) > OFF_PATH_STEPS * g.spacing {
+            // Fallen this far off the edge under way, still in the air: round
+            // it, as a landing under it below plans. Planned again with it,
+            // a bot ran off mp_ship's ledge at (7256, 237, 166) down the
+            // roof to the hull floor four times in 20 s (seed 125,
+            // bot-navigation.md section 3).
+            if self.next > 0 && !self.climbing(g) && w.z - here.z > FELL_BELOW {
+                let edge = (self.path[self.next - 1], self.path[self.next]);
+                self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
+                self.fell = true;
+            }
             self.path.clear();
             return None;
         }
@@ -5759,6 +5769,30 @@ mod tests {
         assert!(step(&mut f, [70.0, 0.0, -10.0], air).is_some());
         assert_eq!(step(&mut f, [72.0, 0.0, -23.0], Footing::STANDING), None);
         assert!(f.fell && f.avoid.len() == 1);
+    }
+
+    /// Off the side of an edge and still falling past the waypoint's reach:
+    /// the plan is dropped round the edge, as a landing under it drops it.
+    /// Knocked as far off on its floor, the plan is only dropped.
+    #[test]
+    fn a_fall_off_the_path_past_its_reach_plans_round_the_edge() {
+        use crate::bots::Goal;
+        let g = row();
+        let goal = Goal::To([160.0, 0.0, 0.0]);
+        let air = Footing {
+            on_ground: false,
+            ..Footing::STANDING
+        };
+        for (z, avoided) in [(-100.0, true), (0.0, false)] {
+            let mut f = Follower::default();
+            let mut budget = 100;
+            let mut step = |f: &mut Follower, at: [f32; 3], body: Footing| {
+                f.waypoint(&g, None, goal, at, body, &mut budget, &mut || 0)
+            };
+            assert!(step(&mut f, [40.0, 0.0, 0.0], Footing::STANDING).is_some());
+            assert_eq!(step(&mut f, [70.0, 200.0, z], air), None);
+            assert_eq!((f.fell, f.avoid.len() == 1), (avoided, avoided), "z {z}");
+        }
     }
 
     /// A point goal that moves off and comes back within `PARK_TICKS`
