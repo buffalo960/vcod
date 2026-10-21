@@ -2493,8 +2493,36 @@ in floats as `pusher + R * (point - pusher)` left the rider 0.0002 a frame
 off retail's through each turn, 0.0017 by the pitch's rest, and every
 `PROBE g` row of the pitch missed the ten-thousandth (182 rows). With 1.1d's
 order and one rounding (`push::carried`, in `f64`) all of them match.
-1.5b's and UO's carry keep the float order: their stored build was not
-read here.
+
+VERIFIED, 1.5b `game.mp.i386.so` `G_TryPushingEntity` 0x55aa1: the moved
+point is stored (`fstps [ebp-0xd8..-0xd0]`, 0x55aef, 0x55b06, 0x55b1d);
+`G_CreateRotationMatrix` (0x55943: `AngleVectors`, then `VectorInverse`
+of the right row) and `G_TransposeMatrix` (0x5598f) build the matrix
+(0x55b33, 0x55b48); `org`, the point less the pusher's `r.currentOrigin`
+(`fsubs [eax+0x138]`), is stored (0x55b5c, 0x55b6e, 0x55b80) and copied to
+`org2`; `G_RotatePoint` (0x559fa) sums each row's three products on the
+stack and stores it (`fstps` 0x55a43, 0x55a70, 0x55a9d); `org2 - org` is
+stored (0x55bad, 0x55bb6, 0x55bbf) and so is the moved point plus it
+(0x55bcb, 0x55bda, 0x55be9), the trace start. VERIFIED, UO 1.51b
+`game.mp.uo.i386.so` `G_TryPushingEntity` 0x605e5: the same sequence
+(pusher origin at `+0x13c`; `G_RotatePoint` 0x6053e with the same three
+`fstps`, `G_CreateRotationMatrix` 0x60487). So 1.5b and UO round `org`,
+each turned row, `org2 - org` and the sum to floats (`push::carried`
+under `Arith::Stored`).
+
+VERIFIED, vcod measurement: `probe_worldcopy3` on 1.5b and UO
+(`-worldcopy3-1.5.txt`, `-worldcopy3-uo.txt`, 2026-10-21, one
+`--probe-ride` client each), replayed by `worldcopy_ab`. With the stored
+order every player row (`PROBE f` column 0 to 0.05, every `PROBE g` row to
+the ten-thousandth) matches on both. The float order vcod kept before,
+`pusher + R * (point - pusher)`, missed 169 rows on 1.5b and 127 on UO.
+
+VERIFIED, the same UO capture: the health pack on the turning copy lands a
+second time at yaw 10.5 (16100, lifted -15.69 to -14.83) where ours rests
+on, so ours' pack falls off the copy's slope a frame early (`yaw45` frame 13
+against retail's 14) and stays off retail's from there. 1.5b's pack
+matches. Not read: UO's `G_RunItem` ground test on a rotating mover;
+`worldcopy_ab`'s `PACK_GAPS_UO` names the rows.
 
 ### The turned centre
 
