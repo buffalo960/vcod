@@ -5095,16 +5095,18 @@ impl Server {
     }
 
     /// [`crate::bots::BotView::lob`] for the body in `slot` throwing grenade
-    /// `weapon` at `target`: of the lobs 5 to 40 degrees over the line from
-    /// the eye, every 5, nearest first to the one the range asks for, the
-    /// first whose flight (the throw's own launch, gravity, 50 ms steps for
-    /// 1.5 s) meets nothing, a wall or a body, before 0.6 of the range and
-    /// [`crate::bots::GRENADE_MIN`] across. The aim as (pitch, yaw), wire
-    /// degrees. A UO frag bounces off a wall or a body at full speed, so a
-    /// lob into a ceiling, a window frame or a teammate comes back at the
-    /// thrower (bot-objectives.md 6). None while a live teammate stands
-    /// within the frag's `explosionRadius` of `target`: friendly fire may
-    /// be on.
+    /// `weapon` at `target`: of the throws from 10 degrees down to 85 up,
+    /// every 5, the one whose frag, flown by the missile code to its burst
+    /// (`Missiles::predict_flight`), goes off nearest `target`, within
+    /// [`crate::bots::LOB_MISS`]. The aim as (pitch, yaw), wire degrees.
+    /// A frag leaves at `projectileSpeed` whatever the pitch, so the pitch
+    /// alone sets where it comes down: lobbed 5 to 40 degrees over the
+    /// line, frags flew on to a median 1.8 times the range and went off a
+    /// median 490 units from where they went (bot-combat.md 12). A throw
+    /// whose early arc meets a body is not taken: a UO frag bounces off one
+    /// at full speed. With friendly fire on, None while a live teammate,
+    /// where he stands or where his pace takes him, is within the frag's
+    /// `explosionRadius` of `target` or of where it may go off.
     fn lob_probe(
         &self,
         slot: usize,
@@ -5112,31 +5114,42 @@ impl Server {
         target: [f32; 3],
         teams: &[i32],
     ) -> Option<[f32; 2]> {
-        use crate::bots::{GRENADE_MIN, GRENADE_RANGE, LOB_DEG};
+        use crate::bots::{LOB_MISS, LOB_REACH_SLACK, LOB_SLACK};
         use vcod_common::net::trajectory::DEFAULT_GRAVITY;
         let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
         let def = self.weapon_table.get(weapon as usize)?;
+        let rt = self.script.as_ref()?;
         let my_team = teams.get(slot).copied().unwrap_or(0);
         let radius = def.explosion_radius;
-        let mate_near = (my_team == script::TEAM_AXIS || my_team == script::TEAM_ALLIES)
-            && self.clients.iter().enumerate().any(|(i, c)| {
-                i != slot
-                    && teams.get(i).copied() == Some(my_team)
-                    && c.as_ref().and_then(|c| c.sim.as_ref()).is_some_and(|o| {
-                        o.pm_type == crate::spectate::PmType::Normal
-                            && !o.dead
-                            && o.ps.origin.distance(glam::Vec3::from(target)) < radius
-                    })
-            });
-        if mate_near {
+        let target = glam::Vec3::from(target);
+        // Teammates matter only with friendly fire on (1.1's `tdm` ships
+        // with it off; 2 and 3 hurt the thrower or both).
+        let teamplay = (my_team == script::TEAM_AXIS || my_team == script::TEAM_ALLIES)
+            && crate::game::builtins::cvar::atoi(&self.live_cvar("scr_friendlyfire", "0")) != 0;
+        let mates: Vec<(glam::Vec3, glam::Vec3)> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| teamplay && *i != slot && teams.get(*i).copied() == Some(my_team))
+            .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
+            .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
+            .map(|o| (o.ps.origin, o.ps.velocity))
+            .collect();
+        // A teammate where he stands or where his pace takes him while the
+        // frag flies: one running after the same enemy came into the blast.
+        let mate_near = |at: glam::Vec3| {
+            mates.iter().any(|(m, v)| {
+                (0..=crate::bots::MATE_LEAD_S).any(|t| (*m + *v * t as f32).distance(at) < radius)
+            })
+        };
+        if mate_near(target) {
             return None;
         }
         let world = &self.world.as_ref()?.collision;
         let eye = crate::game::combat::muzzle_point(&sim.ps);
-        let to = glam::Vec3::from(target) - eye;
+        let to = target - eye;
         let range = to.truncate().length();
         let yaw = to.y.atan2(to.x).to_degrees();
-        let pitch = -to.z.atan2(range).to_degrees();
         let bodies: Vec<(glam::Vec3, glam::Vec3)> = self
             .clients
             .iter()
@@ -5144,63 +5157,111 @@ impl Server {
             .filter(|(i, _)| *i != slot)
             .filter_map(|(_, c)| c.as_ref()?.sim.as_ref())
             .filter(|o| o.pm_type == crate::spectate::PmType::Normal && !o.dead)
-            .map(|o| (o.ps.origin + o.ps.mins(), o.ps.origin + o.ps.maxs()))
+            .map(|o| {
+                let grow = glam::Vec3::splat(crate::bots::LOB_BODY_GROW);
+                (
+                    o.ps.origin + o.ps.mins() - grow,
+                    o.ps.origin + o.ps.maxs() + grow,
+                )
+            })
             .collect();
-        let want = (range / GRENADE_RANGE * LOB_DEG).clamp(5.0, LOB_DEG);
-        let mut lobs: Vec<f32> = (1..=8).map(|i| i as f32 * 5.0).collect();
-        lobs.sort_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()));
-        let clear = (range * 0.6).max(GRENADE_MIN);
-        // Nor a lob whose frag, flown on past the arc's first contact by
-        // the missile code, can go off within its blast radius of the
-        // thrower: on mp_cassino a UO stick grenade lobbed at an enemy 550
-        // off met a wall past the arc's 60 per cent, came back and went off
-        // 340 from the wounded thrower, whose run from it fell short of the
-        // 350 radius (seed 19, bot-combat.md 6.5). A cook burns up to
-        // `COOK_MOST_MS` of the fuse in the hand, so the burst is looked
-        // for from that much short of the full fuse on.
+        // When it goes off: a 1.1 or 1.5 fuse runs in full from the
+        // release; a UO cook burns `COOK_MEAN_MS` of it in the hand on the
+        // mean and up to `COOK_MOST_MS`, so a burst near the thrower is
+        // looked for from that much short of the full fuse on. On
+        // mp_cassino a UO stick grenade lobbed at an enemy 550 off met a
+        // wall, came back and went off 340 from the wounded thrower, whose
+        // run from it fell short of the 350 radius (seed 19, bot-combat.md
+        // 6.5).
         let fuse = vcod_common::weapon::stored_ms(def.fuse_time);
-        let earliest = if def.cook_off_hold {
-            fuse - crate::bots::COOK_MOST_MS
+        let (burst_ms, earliest) = if def.cook_off_hold {
+            (
+                fuse - crate::bots::COOK_MEAN_MS,
+                fuse - crate::bots::COOK_MOST_MS,
+            )
         } else {
-            fuse
+            (fuse, fuse)
         };
         let (lo, hi) = (sim.ps.origin + sim.ps.mins(), sim.ps.origin + sim.ps.maxs());
-        let burst_clear = |aim: [f32; 2]| {
-            let Some(rt) = self.script.as_ref() else {
-                return true;
-            };
+        let half_g = 0.5 * DEFAULT_GRAVITY;
+        // Where a throw along `aim` goes off, and whether it stays clear of
+        // the thrower and the teammates from `earliest` on, wherever a cook
+        // that long or short leaves the burst; None when the flight is cut
+        // short (out of the world, or onto the sky).
+        let fly = |aim: [f32; 2]| {
             let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
-            rt.missiles()
-                .predict_flight(world, weapon, origin, velocity, sim.ps.velocity, fuse)
+            let flight = rt.missiles().predict_flight(
+                world,
+                weapon,
+                origin,
+                velocity,
+                sim.ps.velocity,
+                fuse,
+            );
+            let burst = *flight.get((burst_ms / FRAME_MS).max(1) as usize - 1)?;
+            let clear = flight
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| (*i as i32 + 1) * FRAME_MS >= earliest)
-                .all(|(_, p)| p.clamp(lo, hi).distance(*p) > radius)
+                .all(|(_, p)| p.clamp(lo, hi).distance(*p) > radius && !mate_near(*p));
+            Some((burst, clear))
         };
-        lobs.into_iter().find_map(|lob| {
-            let aim = [pitch - lob, yaw];
+        let mut best: Option<([f32; 2], f32)> = None;
+        for up in (-2..=17).map(|i| i as f32 * 5.0) {
+            let aim = [-up, yaw];
             let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
-            let at =
-                |t: f32| origin + velocity * t - glam::Vec3::Z * (0.5 * DEFAULT_GRAVITY * t * t);
+            // Where the arc comes down to the target's height with nothing
+            // in its way: only a throw that lands near the range is flown.
+            let disc = velocity.z * velocity.z - 4.0 * half_g * (target.z - origin.z);
+            if disc < 0.0 {
+                continue;
+            }
+            let down = (velocity.z + disc.sqrt()) / (2.0 * half_g);
+            if (velocity.truncate().length() * down - range).abs() > LOB_REACH_SLACK {
+                continue;
+            }
+            // The arc's first 1.5 s meets a body before the world.
+            let at = |t: f32| origin + velocity * t - glam::Vec3::Z * (half_g * t * t);
             let mut from = origin;
+            let mut body = false;
             for i in 1..=30 {
                 let next = at(i as f32 * 0.05);
                 let tr = world.missile_trace(from, next);
-                let body = bodies
+                body = bodies
                     .iter()
                     .filter_map(|(lo, hi)| crate::game::combat::ray_box(from, next, *lo, *hi))
                     .any(|f| f < tr.fraction);
-                if body {
-                    return None;
-                }
-                if tr.fraction < 1.0 {
-                    let reach = (tr.endpos - origin).truncate().length();
-                    return (reach >= clear && burst_clear(aim)).then_some(aim);
+                if body || tr.fraction < 1.0 {
+                    break;
                 }
                 from = next;
             }
-            burst_clear(aim).then_some(aim)
-        })
+            if body {
+                continue;
+            }
+            let Some((burst, true)) = fly(aim) else {
+                continue;
+            };
+            let miss = burst.distance(target);
+            if miss >= LOB_MISS {
+                continue;
+            }
+            // The release may be `LOB_SLACK` off the probed pitch: a frag
+            // let go half a degree under a lob the probe flew clear struck
+            // something 110 units out and went off 220 behind its thrower
+            // (bot-combat.md 12).
+            let slack = [-LOB_SLACK, LOB_SLACK];
+            if !slack
+                .iter()
+                .all(|d| fly([aim[0] + d, yaw]).is_some_and(|(_, c)| c))
+            {
+                continue;
+            }
+            if best.is_none_or(|(_, m)| miss < m) {
+                best = Some((aim, miss));
+            }
+        }
+        best.map(|(aim, _)| aim)
     }
 
     /// The rocket launchers lying about, on a `bas` level only: what a bot
@@ -5445,25 +5506,30 @@ impl Server {
             grenade_cooks: grenade
                 .and_then(|g| weapons.get(g as usize))
                 .is_some_and(|d| d.cook_off_hold),
+            grenade_ready: sim.ps.grenade_time_left_ms > 0 && sim.ps.weapon_delay_ms <= 1,
             frag_near: self.script.as_ref().and_then(|rt| {
                 let at = sim.ps.origin;
                 let eye = glam::Vec3::from(sim.eye_origin());
                 rt.missiles()
                     .armed()
-                    .filter(|(_, w, _)| {
+                    .filter(|(_, w, _, _)| {
                         weapons.get(*w as usize).is_some_and(|d| {
                             d.explosion_radius > 0.0 && d.explosion_inner_damage > 0
                         })
                     })
-                    .filter(|(o, _, owner)| {
+                    // A cook dropped by a thrower killed holding it is seen
+                    // fall: one went off by a teammate 3.5 s on and killed
+                    // him (bot-combat.md 12).
+                    .filter(|(o, _, owner, dropped)| {
                         *owner == Some(slot)
+                            || *dropped
                             || self.world.as_ref().is_none_or(|w| {
                                 crate::bots::notices_frag(eye, sim.view_angles()[1], *o, |a, b| {
                                     w.collision.shot_trace(a, b).fraction >= 1.0
                                 })
                             })
                     })
-                    .map(|(o, _, _)| o)
+                    .map(|(o, _, _, _)| o)
                     .filter(|o| {
                         (o.z - at.z).abs() < crate::bots::FLEE_HEIGHT
                             && (*o - at).truncate().length() < crate::bots::FLEE_REACH

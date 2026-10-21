@@ -30,11 +30,21 @@ pub use skill::{DEFAULT_LEVEL, MAX_LEVEL};
 pub(crate) const SHOOT_RANGE: f32 = 1500.0;
 /// A frag goes at a target this close and no further, and no nearer than
 /// `GRENADE_MIN`, inside which the 350-unit blast takes a third or more of
-/// the thrower's health too; thrown `LOB_DEG` over the line to it at the
-/// longest range.
-pub(crate) const GRENADE_RANGE: f32 = 600.0;
-pub(crate) const GRENADE_MIN: f32 = 250.0;
-pub(crate) const LOB_DEG: f32 = 25.0;
+/// the thrower's health too; before a lob is probed the view turns
+/// `LOB_DEG` over the line to it at the longest range.
+const GRENADE_RANGE: f32 = 800.0;
+const GRENADE_MIN: f32 = 250.0;
+const LOB_DEG: f32 = 25.0;
+/// A probed lob's frag goes off this near its target or is not thrown;
+/// a throw is flown in full only when its arc, unhindered, comes down
+/// this near the range (`Server::lob_probe`).
+pub(crate) const LOB_MISS: f32 = 150.0;
+pub(crate) const LOB_REACH_SLACK: f32 = 250.0;
+/// A teammate is kept out of the blast for this many seconds of his pace,
+/// and a body out of the throw's early arc by this much all round, as it
+/// may step in before the release (bot-combat.md 12).
+pub(crate) const MATE_LEAD_S: u32 = 2;
+pub(crate) const LOB_BODY_GROW: f32 = 24.0;
 /// A live grenade this near is run from: a frag's blast is 350 across,
 /// and a bot that followed its enemy after a throw, or stood where the
 /// frag rolled back to, took its own blast (bot-objectives.md 6).
@@ -68,6 +78,9 @@ pub(crate) fn notices_frag(
 const AWAY_PITCH: f32 = -30.0;
 const AWAY_DEG: f32 = 30.0;
 const AWAY_TICKS: u32 = 16;
+/// Ticks past the hold a frag waits for its pin ([`BotView::grenade_ready`])
+/// before it is put back: the raise and the pullback take 17 at most.
+const PIN_WAIT_TICKS: u32 = 30;
 /// A UO cook's hold: `COOK_TICKS` plus a draw under `COOK_SPREAD`, the
 /// sight button down from `COOK_SPOON_AFTER` ticks in (`Bot::think_grenade`).
 const COOK_TICKS: u32 = 24;
@@ -77,11 +90,19 @@ const COOK_SPOON_AFTER: u32 = 4;
 /// longest spooned hold and the longest wait for the view after it.
 pub(crate) const COOK_MOST_MS: i32 =
     ((COOK_TICKS + COOK_SPREAD - 1 - COOK_SPOON_AFTER + AWAY_TICKS) * FRAME_MS as u32) as i32;
+/// What the spooned hold burns on the mean, the view already on the lob:
+/// where the probe looks for the burst.
+pub(crate) const COOK_MEAN_MS: i32 =
+    ((COOK_TICKS + COOK_SPREAD / 2 - COOK_SPOON_AFTER) * FRAME_MS as u32) as i32;
 /// A turned-away throw is probed at a spot this far off along its yaw.
 const AWAY_REACH: f32 = 400.0;
+/// The view's pitch either way of level: past pmove's 16000-short clamp
+/// (87.9) no further, and high enough for a lob that comes down 250 off
+/// (`Server::lob_probe` tries 85).
+const PITCH_MOST: f32 = 85.0;
 /// A release on a probed lob waits until the view is this near it in
 /// pitch and yaw, under a lob step of the probe.
-const LOB_SLACK: f32 = 2.0;
+pub(crate) const LOB_SLACK: f32 = 2.0;
 /// Ticks a dead bot waits before its first use press.
 const RESPAWN_DELAY: u32 = 30;
 /// Ticks between use-press retries, and the press length: two ticks down,
@@ -278,6 +299,10 @@ pub struct BotView {
     pub grenade: Option<u8>,
     /// The frag's fuse runs from a spoon in the hand (UO's `cookOffHold`).
     pub grenade_cooks: bool,
+    /// A frag is in the hand with its pin out and the pullback's
+    /// `holdFireTime` run (`grenadeTimeLeft` set, `weaponDelay` at 1 or
+    /// less): the trigger coming up now throws it.
+    pub grenade_ready: bool,
     /// The nearest thrown frag or satchel still to go off within
     /// [`FLEE_REACH`] across and [`FLEE_HEIGHT`] up or down, anyone's own
     /// included: the bot runs from it.
@@ -1084,6 +1109,8 @@ pub struct Bot {
     /// yaw it goes to. And the ticks a throw has been held past its release
     /// for the view to come round onto its yaw.
     throw_away: Option<f32>,
+    /// Ticks the hold has waited for the pin ([`PIN_WAIT_TICKS`]).
+    pin_wait: u32,
     held_over: u32,
     /// Where the enemy a throw in hand goes at was last seen: one that left
     /// sight mid-hold is still thrown at, by a probed lob.
@@ -1424,6 +1451,7 @@ impl Bot {
             ignored: None,
             lmg_linger: 0,
             throw_away: None,
+            pin_wait: 0,
             throw_at: None,
             throw_for: ThrowFor::Any,
             throws: 0,
@@ -3649,7 +3677,10 @@ impl Bot {
         } else {
             1.0
         };
-        [(cur[0] + d[0] * k).clamp(-80.0, 80.0), cur[1] + d[1] * k]
+        [
+            (cur[0] + d[0] * k).clamp(-PITCH_MOST, PITCH_MOST),
+            cur[1] + d[1] * k,
+        ]
     }
 
     /// Semi-autos tap, at least `fireTime` apart (AGENTS.md, "Fire is
@@ -3927,7 +3958,12 @@ impl Bot {
     /// pointed, often into a wall at the thrower's feet.
     fn lob_angles(&self, view: &BotView) -> [i32; 3] {
         let aim = match self.throw_target(view) {
-            Some(_) if let Some(aim) = view.lob => self.turn_toward(view, aim),
+            // The throw leaves along the aim, the view and the gun's
+            // offset off it, as a round does ([`BotView::gun_offset`]).
+            Some(_) if let Some(aim) = view.lob => {
+                let g = view.gun_offset;
+                self.turn_toward(view, [aim[0] - g[0], aim[1] - g[1]])
+            }
             // Turning away to throw it clear, no lob found yet: up and behind.
             _ if let Some(yaw) = self.throw_away => self.turn_toward(view, [AWAY_PITCH, yaw]),
             Some(at) => {
@@ -4004,12 +4040,23 @@ impl Bot {
         let blocked = target.is_some() && view.lob.is_none();
         let off = match lob {
             Some(l) => {
-                yaw_diff(l[0], yaw_diff(view.view[0], 0.0)).abs() > LOB_SLACK
-                    || yaw_diff(l[1], view.view[1]).abs() > LOB_SLACK
+                let g = view.gun_offset;
+                yaw_diff(l[0], yaw_diff(view.view[0] + g[0], 0.0)).abs() > LOB_SLACK
+                    || yaw_diff(l[1], view.view[1] + g[1]).abs() > LOB_SLACK
             }
             None => yaw.is_some_and(|y| yaw_diff(y, view.view[1]).abs() > AWAY_DEG),
         };
-        let turning = left <= 1 && self.held_over < AWAY_TICKS && (blocked || off);
+        // The pin is not out yet, or the pullback's `holdFireTime` not run:
+        // the trigger stays down. A release before it waits for the pin
+        // in pmove, and the next tick's switch to the rifle cancelled the
+        // throw: 1.1's hold of 6 to 13 ticks from the switch is shorter
+        // than the 0.25 s raise and 0.6 s hold, and 30 of 31 frags never
+        // left the hand (bot-combat.md 12).
+        let pinned = left <= 1 && !view.grenade_ready;
+        if pinned {
+            self.pin_wait += 1;
+        }
+        let turning = left <= 1 && !pinned && self.held_over < AWAY_TICKS && (blocked || off);
         if turning {
             self.held_over += 1;
         }
@@ -4017,13 +4064,18 @@ impl Bot {
         // frag with no fuse running is put back, the switch cancelling the
         // pullback with the clip unspent (cod11-combat.md 1.14). One let go
         // anyway met the wall the probe saw and came back at the thrower.
-        if left <= 1 && !turning && (blocked || off) && !view.grenade_cooks {
+        let put_back = if pinned {
+            self.pin_wait > PIN_WAIT_TICKS
+        } else {
+            left <= 1 && !turning && (blocked || off) && !view.grenade_cooks
+        };
+        if put_back {
             self.end_throw();
             cmd.weapon = self.rifle;
             self.stage = Stage::BackToRifle { weapon: self.rifle };
             return cmd;
         }
-        if left > 1 || turning {
+        if left > 1 || turning || pinned {
             cmd.buttons = msg::BUTTON_ATTACK;
             if left <= spoon {
                 cmd.buttons |= msg::BUTTON_ADS;
@@ -4055,6 +4107,7 @@ impl Bot {
     fn end_throw(&mut self) {
         self.throw_away = None;
         self.held_over = 0;
+        self.pin_wait = 0;
         self.throw_at = None;
         self.throw_for = ThrowFor::Any;
     }
@@ -4156,7 +4209,7 @@ const GRENADE_COOLDOWN_TICKS: u32 = 200;
 /// An enemy in sight this many ticks with no round at him is thrown at;
 /// one lost from sight between these ticks ago is thrown at where he went
 /// ([`Bot::throw_spot`]).
-const COVER_THROW_TICKS: u32 = 30;
+const COVER_THROW_TICKS: u32 = 20;
 const LOST_THROW_MIN: u32 = 4;
 const LOST_THROW_TICKS: u32 = 60;
 /// ...if he was slower than this when lost, units/s: a frag at the spot a
@@ -4425,6 +4478,7 @@ mod tests {
             use_takes_weapon: false,
             grenade: Some(6),
             grenade_cooks: false,
+            grenade_ready: true,
             frag_near: None,
             lob: None,
             waypoint: None,
@@ -7012,6 +7066,85 @@ mod tests {
         assert!(switched.is_some(), "the bot never switched to the frag");
         assert!(held, "the pullback never held the trigger");
         assert!(released, "the cooked throw never released");
+    }
+
+    /// The hold runs out before the raise and the pullback's
+    /// `holdFireTime` have: the trigger stays down until the pin is out,
+    /// and only then comes up. Let go early, the throw waited for the pin
+    /// and the next tick's switch to the rifle cancelled it.
+    #[test]
+    fn a_frag_is_held_until_its_pin_is_out() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        v.view = [-12.0, 0.0, 0.0];
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [300.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        v.lob = Some([-12.0, 0.0]);
+        v.grenade_ready = false;
+        bot.stage = Stage::Cook { left: 1, spoon: 0 };
+        for _ in 0..10 {
+            let cmd = bot.think(&v);
+            assert_ne!(cmd.buttons & BUTTON_ATTACK, 0, "let go on the pin");
+            assert_eq!(cmd.weapon, 6);
+        }
+        v.grenade_ready = true;
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "held past the pin");
+        assert_eq!(bot.throws(), 1);
+    }
+
+    /// The view on the lob with the gun kicked 17 degrees up off it (a
+    /// blast's knock): the release waits until the view plus the offset is
+    /// on the lob. UO mp_cassino seed 13 let go there, the frag went up
+    /// at 87 degrees and came down on its thrower.
+    #[test]
+    fn a_throw_waits_for_the_aim_not_the_view() {
+        let mut bot = Bot::new("allies", true, 1);
+        let mut v = view();
+        v.weapon = 6;
+        v.view = [-70.0, 173.0, 0.0];
+        v.gun_offset = [-17.0, 0.0];
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [-300.0, 40.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        v.lob = Some([-70.0, 173.0]);
+        bot.stage = Stage::Cook { left: 1, spoon: 0 };
+        let cmd = bot.think(&v);
+        assert_ne!(cmd.buttons & BUTTON_ATTACK, 0, "let go off the aim");
+        let pitch = cmd.angles[0] as f32 / ANGLE2SHORT;
+        assert!(pitch > -70.0, "the view goes down under the kick: {pitch}");
+        v.view = [-53.0, 173.0, 0.0];
+        let cmd = bot.think(&v);
+        assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "held on the aim");
+    }
+
+    /// A pin that never comes out (the raise refused) puts the frag back.
+    #[test]
+    fn a_frag_whose_pin_never_comes_out_is_put_back() {
+        let mut bot = Bot::new("allies", true, 1);
+        bot.rifle = 10;
+        let mut v = view();
+        v.weapon = 6;
+        v.view = [-12.0, 0.0, 0.0];
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [300.0, 0.0, 40.0],
+            velocity: [0.0; 3],
+        });
+        v.lob = Some([-12.0, 0.0]);
+        v.grenade_ready = false;
+        bot.stage = Stage::Cook { left: 1, spoon: 0 };
+        for _ in 0..=PIN_WAIT_TICKS + 1 {
+            bot.think(&v);
+        }
+        assert!(matches!(bot.stage, Stage::BackToRifle { weapon: 10 }));
+        assert_eq!(bot.throws(), 0);
     }
 
     /// Through the throw the view turns toward the enemy and up over it,

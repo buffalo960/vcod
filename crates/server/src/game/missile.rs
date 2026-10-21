@@ -262,6 +262,9 @@ pub struct Missile {
     free_at_ms: Option<i32>,
     /// UO's shootable grenade, the satchel charge.
     pub shootable: Option<Shootable>,
+    /// Dropped live by a thrower killed with it cooking (combat doc 5.1
+    /// step 5), not thrown: bots by him see it fall.
+    pub dropped: bool,
     /// The water entry splash this step raised (12.1), which the pool
     /// hands its caller to spawn.
     splash: Option<crate::game::temp_entity::TempEntity>,
@@ -1393,6 +1396,7 @@ impl Missiles {
             rocket: false,
             free_at_ms: None,
             shootable: None,
+            dropped: false,
             splash: None,
         });
         Ok(id)
@@ -1448,6 +1452,7 @@ impl Missiles {
             rocket: false,
             free_at_ms: None,
             shootable: None,
+            dropped: false,
             splash: None,
         };
         let mut draws = Draws::default();
@@ -1603,6 +1608,7 @@ impl Missiles {
             rocket: false,
             free_at_ms: None,
             shootable: None,
+            dropped: false,
             splash: None,
         });
         Ok(id)
@@ -1691,6 +1697,7 @@ impl Missiles {
             rocket: true,
             free_at_ms: None,
             shootable: None,
+            dropped: false,
             splash: None,
         });
         Ok(id)
@@ -1813,17 +1820,25 @@ impl Missiles {
         std::mem::take(&mut self.splashes)
     }
 
-    /// Whether `id` is a missile this pool runs.
-    /// The thrown grenades still to go off, as `(origin, weapon, owner)`:
-    /// what a bot runs from (`crate::bots::BotView::frag_near`). Shells and
-    /// the ones already gone off are left out.
-    pub fn armed(&self) -> impl Iterator<Item = (Vec3, u8, Option<usize>)> + '_ {
+    /// The grenades still to go off, as `(origin, weapon, owner, dropped)`
+    /// ([`Missile::dropped`]): what a bot runs from
+    /// (`crate::bots::BotView::frag_near`). Shells and the ones already
+    /// gone off are left out.
+    pub fn armed(&self) -> impl Iterator<Item = (Vec3, u8, Option<usize>, bool)> + '_ {
         self.live
             .iter()
             .filter(|m| m.shell.is_none() && m.exploded_ms.is_none())
-            .map(|m| (m.origin, m.weapon, m.owner))
+            .map(|m| (m.origin, m.weapon, m.owner, m.dropped))
     }
 
+    /// Marks a grenade [`Missile::dropped`].
+    pub fn mark_dropped(&mut self, id: EntId) {
+        if let Some(m) = self.live.iter_mut().find(|m| m.id == id) {
+            m.dropped = true;
+        }
+    }
+
+    /// Whether `id` is a missile this pool runs.
     pub fn contains(&self, id: EntId) -> bool {
         self.live.iter().any(|m| m.id == id)
     }
