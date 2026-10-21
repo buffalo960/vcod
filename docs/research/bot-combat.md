@@ -32,8 +32,9 @@ balance (for `dm`). Without them the bots join as `--bots` does, at
 Feature arms: `COVER=` (section 4, `Server::test_bot_cover`), `RETREAT=`
 (section 5, `test_bot_retreat`) and `TEAMPLAY=` (`bot-objectives.md` 9,
 `test_bot_team_play`: off, a bot ranks by slot, every attacker keeps by
-an `re` carrier, nobody covers a planter, plans pay no crowd cost and a
-carrier fights as any bot, the brain before team play) each take `all`
+an `re` carrier, nobody covers a planter, plans pay no crowd cost, a
+carrier fights as any bot and every noise draws the bot, the brain
+before team play; section 7) each take `all`
 (the default), `none`, `axis`, `allies` or `alt` (axis on odd seeds,
 allies on even, so the map's own asymmetry cancels over an even seed
 count). A default arm never calls its hook, so an all-default run plays
@@ -60,6 +61,7 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | wounds, dead in 5 s | bodies | A life's first tick under 50 health while `BotBody::engaged`, and the share of those whose bot died within 5 s. |
 | retreats hurt, dry | bodies | `BotBody::retreating` going from 0 to 1 (hurt) or 2 (dry): retreats started (section 5). |
 | cover hold, lean | `bot_cover_state` | Bot-ticks playing on a held cover spot, and with `ps.lean` off zero (section 4). |
+| mate, packed | bodies | How close a team keeps. Each bot-tick playing with a teammate playing adds its distance to the nearest one (3D, units): `mate` is the mean. `packed` is the share of those bot-ticks with two or more teammates within 400 units, the bot and two others in one room. Bots only; a corpse or spectator is left out. `dm` has no teammates and prints 0. |
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
@@ -397,6 +399,14 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
 | | control | 2903 | 3125 | 0.93 | 20.7 | 2377 | 85% | 1833 | |
 | one side `vc_bot_skill 2` | hard | 3790 | 1747 | 2.17 | 36.7 | 1228 | 66% | 1150 | +31.9 +- 1.6 |
 | | normal | 1747 | 3790 | 0.46 | 17.0 | 2672 | 80% | 3080 | |
+| stock, noise answering (section 7) | both | 4667 | 4671 | 1.00 | 28.2 | 3446 | 72% | 1918 | -0.2 +- 1.1 |
+| `TEAMPLAY=alt`, answering one side | teamplay | 2313 | 2607 | 0.89 | 25.2 | 1860 | 76% | 2065 | -4.5 +- 1.2 |
+| | control | 2603 | 2314 | 1.12 | 27.9 | 1717 | 72% | 1399 | |
+
+The last three rows came later, on branch `feat/bot-spread` (section 7),
+where the stock run before the change gave 5265 kills and lives of
+24.9 s (the dry-start fix below). In 1.1 `tdm` team play is only the
+noise answering, so `TEAMPLAY=alt` pits it against the old rule.
 
 The skill row is two runs: `AXIS_SKILL=2` on seeds 1..=8 and
 `ALLIES_SKILL=2` on 9..=16 (the other side at 1), summed.
@@ -517,3 +527,122 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   starts go from 261 to 241 (allies 116, axis 125); kills 5237 to 5265,
   lives 24.8 s to 24.7 s. 1.1's four maps nearly always had cover, so
   little flapped there. The tables above predate the fix.
+
+## 7. A side spread over the map (2026-10-21)
+
+A playtest report: with many bots in `tdm` nearly a whole team moved
+together. `bot_match`'s `mate` and `packed` columns (section 1) count
+it.
+
+### 7.1 Why
+
+- VERIFIED (measured, ours, `bot_match`, 12 bots, `tdm`, mp_carentan,
+  mp_harbor, mp_brecourt, mp_depot, seeds 1..=6, 6000 ticks): 72% of
+  playing bot-ticks had two or more teammates within 400 units, the
+  nearest one 210 units off on average. The packing did not loosen
+  over a life: 68% in a life's first 5 s, 73-74% from 5 s on (that
+  split measured with the crowd cost below on, which moved nothing).
+  INFERRED: `tdm.gsc`'s `getSpawnpoint_NearTeam` puts a respawn near
+  the living teammates, and the brain kept the team there.
+- VERIFIED (same runs, the brain's goal tallied each tick with a
+  temporary counter): a seen enemy was the goal 43% of bot-ticks (83%
+  of those packed), a remembered sighting 14% (79%), a heard noise 16%
+  (57%), the roam 11% (33%).
+- VERIFIED (same runs): with no noise heard at all the share packed fell
+  to 29% and the nearest teammate stood 493 units off, and the seen
+  enemy's ticks fell to 42% packed. INFERRED: the noise was what
+  gathered a side. `bots::loudest` gives every bot the noise loudest to
+  it out of every shot within `HEAR_GUNFIRE` (2000) units, teammates'
+  shots included, so a whole side within 2000 units of a fight ran to
+  the same spot, met the enemy there as one, and its shots drew the
+  rest (`Server::bot_think`'s view pass, `view.noise`).
+- VERIFIED (same runs): the route spreading of `bot-objectives.md` 9
+  (`team::crowd`) switched on for `tdm` moved nothing (72.4% packed,
+  mate 206): the team's paths shared a goal, not a corridor.
+
+### 7.2 The rule
+
+A bot on a side with team play on hears a noise only when fewer than
+`team::ANSWERS` (2) of its playing teammates stand nearer it, the
+shooter who made it not counted (`team::answers`, applied in the view
+pass before `bots::loudest`). The two nearest answer a shot; the rest
+keep to their roam or their own noise. Off with `TEAMPLAY=none` (a bot
+then hears every noise, as before). `dm` has no sides and is unchanged.
+
+Variants measured on 7.1's runs (kills over the 24 matches, share
+packed, mean nearest teammate), each VERIFIED (measured, ours,
+`bot_match`). Rows marked * ran with the crowd cost on in `tdm` as
+well, which alone moved nothing (with it, the shipped rule read 2519,
+35.9%, 417):
+
+| Variant | Kills | Packed | Mate |
+|---|---|---|---|
+| before | 3404 | 72.1% | 210 |
+| no noise at all * | 2241 | 29.3% | 493 |
+| enemy shots only * | 3296 | 62.2% | 272 |
+| the 3 nearest answer | 2823 | 51.4% | 335 |
+| the 2 nearest answer (shipped) | 2580 | 39.5% | 398 |
+| the 2 nearest answer, the others go 500 units to one side of it * | 3127 | 58.8% | 262 |
+| the 2 nearest answer, the others 900 units to one side * | 2577 | 44.3% | 326 |
+
+- VERIFIED (the table): every variant traded kills for spread along one
+  curve; sending the others to a flank point bought nothing over
+  dropping the noise for them. The plain rule stayed.
+
+### 7.3 Before and after
+
+`tdm`, mp_carentan, mp_harbor, mp_brecourt, mp_depot, 6000 ticks a
+match, team play on for both sides. VERIFIED (measured, ours,
+`bot_match`, before on master d82876e1, after on `feat/bot-spread`):
+
+| Bots, seeds | Run | Kills | Life s | Mate | Packed | Stalled |
+|---|---|---|---|---|---|---|
+| 6, 1..=8 | before | 1712 | 28.9 | 572 | 19.1% | 28361 |
+| | after | 1780 | 27.6 | 570 | 19.4% | 28073 |
+| 8, 1..=16 | before | 5265 | 24.9 | 355 | 42.7% | 120746 |
+| | after | 4667 | 28.2 | 472 | 29.9% | 85739 |
+| 12, 1..=6 | before | 3404 | 21.7 | 210 | 72.1% | 71300 |
+| | after | 2580 | 28.6 | 398 | 39.5% | 34176 |
+| 12, 7..=12 | before | 3560 | 20.3 | 199 | 75.2% | 66364 |
+| | after | 2529 | 29.3 | 397 | 40.8% | 38703 |
+| 16, 1..=6 | before | 4419 | 20.2 | 139 | 85.8% | 87379 |
+| | after | 3336 | 29.4 | 354 | 47.2% | 47855 |
+
+Per map, 12 bots, seeds 1..=6 (before, after):
+
+| Map | Kills | Mate | Packed |
+|---|---|---|---|
+| mp_carentan | 871, 699 | 167, 292 | 77.1%, 51.0% |
+| mp_harbor | 920, 701 | 177, 335 | 76.8%, 46.1% |
+| mp_brecourt | 781, 537 | 309, 612 | 61.5%, 22.7% |
+| mp_depot | 832, 643 | 185, 352 | 73.0%, 38.7% |
+
+Objective levels, 8 bots, mp_carentan, mp_harbor, mp_brecourt,
+mp_depot, mp_dawnville, seeds 1..=6 (30 matches a row):
+
+| Run | Kills | Wins axis, allies | Actions | Mate | Packed |
+|---|---|---|---|---|---|
+| `sd` before | 856 | 64, 86 | 120 plants, 31 defuses | 183 | 48.6% |
+| `sd` after | 842 | 63, 82 | 123 plants, 31 defuses | 174 | 48.6% |
+| `re` before | 988 | 96, 77 | 129 pickups, 26 captures | 210 | 63.2% |
+| `re` after | 1020 | 105, 71 | 131 pickups, 23 captures | 204 | 63.7% |
+
+- VERIFIED (the tables): from 8 bots up a side spreads: at 12 the
+  share packed halves (72-75% to 40-41%) and the nearest teammate
+  stands twice as far off; at 16, 86% to 47%. Three a side never had
+  two others near and does not change.
+- VERIFIED (the tables): the cost is fights. With 12 bots kills fall
+  24-29% and lives run 7-9 s longer; with 8, 11%. K/D, the share of
+  wounded bots dead in 5 s (71-75% against 74-75%) and TTK barely move.
+  `stalled` falls 29-52%, INFERRED: fewer bots holding cover in one big
+  fight.
+- VERIFIED (the tables): `sd` and `re` keep their plants, defuses,
+  pickups, captures and wins within a few of before; their bots gather
+  at the objectives, so the spread does not move there.
+- VERIFIED (measured, `TEAMPLAY=alt`): a spread side loses to one that
+  converges: 8 bots, seeds 1..=16, -4.5 +- 1.2 a match (K/D 0.89 against
+  1.12, section 6.1); 12 bots, seeds 1..=12, -11.5 +- 2.0 (0.82 against
+  1.21); the 3-nearest rule at 12 bots, -9.7 +- 2.4. INFERRED: a whole
+  side arriving at once outnumbers whoever it meets. Both sides play by
+  the same rule in a real match, and a human now meets two or three bots
+  at a fight instead of a side.
