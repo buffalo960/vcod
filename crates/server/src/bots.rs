@@ -885,6 +885,28 @@ pub struct BotBody {
     /// walking turn columns.
     pub yaw: f32,
     pub walking: bool,
+    /// Holding a cover spot ([`cover`]).
+    pub holds_cover: bool,
+    /// Planting, defusing, or standing at its objective's spot (a guard
+    /// ring, a site, the HQ radio) last think.
+    pub on_objective: bool,
+}
+
+impl BotBody {
+    /// Holding still on purpose: tracking an enemy, on a cover spot,
+    /// retreating or at the cover, bipod down, in a seat or holding the
+    /// hull for crew, or at its objective. `bot_match` counts a 12 s
+    /// stall tick that holds as `held`, the rest as `stalled`
+    /// (bot-combat.md section 1).
+    pub fn holds(&self) -> bool {
+        self.engaged
+            || self.holds_cover
+            || self.retreating != 0
+            || self.deployed
+            || self.seat.is_some()
+            || self.crew_wait
+            || self.on_objective
+    }
 }
 
 pub struct Bot {
@@ -945,6 +967,9 @@ pub struct Bot {
     /// The last think steered the body along its waypoint, no unstick
     /// spell and no fight ([`BotBody::walking`]).
     walking: bool,
+    /// The last think's objective had the bot stand: a plant or defuse
+    /// under way, or at its objective's spot ([`BotBody::on_objective`]).
+    on_objective: bool,
     /// The last think's view was set by a fight, a hurt look, a cover
     /// peek, a recalled spot or a retreat, not the walk: the walking
     /// view takes the path's heading at once ([`Bot::walk_turn`]).
@@ -1346,6 +1371,7 @@ impl Bot {
             unstick_ticks: 0,
             sprint_leg: false,
             walking: false,
+            on_objective: false,
             view_owned: false,
             rungs_ago: u32::MAX,
             rung_spell: false,
@@ -2556,6 +2582,11 @@ impl Bot {
     /// The tick's usercmd. The driver stamps `server_time` and pushes the
     /// cmd into the client's queue.
     pub(crate) fn think(&mut self, view: &BotView) -> UserCmd {
+        // Read before the think moves the objective's state, as the goal was.
+        self.on_objective = self.objective_busy(view)
+            || self
+                .objective_target(view)
+                .is_some_and(|t| Self::at_objective(view, &t));
         let cmd = self.think_body(view);
         self.count_futile(view, &cmd);
         self.fired = cmd.buttons & msg::BUTTON_ATTACK != 0;
@@ -3777,6 +3808,11 @@ impl Bot {
     /// Steered along its waypoint last think ([`BotBody::walking`]).
     pub fn walking(&self) -> bool {
         self.walking
+    }
+
+    /// Stood at its objective last think ([`BotBody::on_objective`]).
+    pub fn on_objective(&self) -> bool {
+        self.on_objective
     }
 
     /// Grenades let go this game ([`BotBody::throws`]).

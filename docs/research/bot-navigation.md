@@ -3531,7 +3531,13 @@ bot-tick, seeds 1-63 odd.
 The detector is `crates/server/examples/ship_stalls.rs` (`MAP=`, `TICKS=`,
 `TRACE=<slot,...>:<from>:<to>` prints those bots' every tick with their
 waypoints and ladder waits; each stall line ends with the distance to the
-nearest other bot).
+nearest other bot). It counts every playing bot-tick 12 s within 150
+units and leaves out only a body with a UO LMG's bipod down; with its
+defaults (`dm`, fire off) nothing else holds a bot still. `tests/bots.rs`'s
+`uo_tdm_games_that_stalled_or_never_sprinted` also skips engaged and
+crew-wait ticks, which never enter its window. `bot_match` keeps the
+window as `ship_stalls` has it and splits the count into `stalled` and
+`held` by `BotBody::holds` (bot-combat.md section 1).
 
 The probe costs 25 us a body (8 octants, up to five capsule traces
 each) and 43 us with 10-13d's half-way samples. VERIFIED (measured
