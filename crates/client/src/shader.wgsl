@@ -68,6 +68,8 @@ const F_EYE_OFFSET: u32 = 256u;
 const F_SKY: u32 = 512u;
 // rgbGen vertex: vertex rgb scaled by identityLight
 const F_VERTEX_HALF: u32 = 1024u;
+// blended onto GL_ONE: fog towards black (0x4d2ad0)
+const F_FOG_BLACK: u32 = 2048u;
 // identityLighting, constLighting, wave: the tint rgb scales by identityLight
 const F_TINT_LIGHT: u32 = 4096u;
 // tcGen environment on bundle 0 / 1
@@ -436,7 +438,11 @@ fn fs_stage(in: VsOut) -> @location(0) vec4<f32> {
         rgb *= sun_shadow(in.world_pos, face_n, camera.eye_fog_mode.xyz);
     }
     if (!sky_unfogged && (stage.flags & F_NOFOG) == 0u) {
-        rgb = apply_fog(rgb, in.world_pos);
+        if ((stage.flags & F_FOG_BLACK) != 0u) {
+            rgb *= 1.0 - fog_amount(in.world_pos);
+        } else {
+            rgb = apply_fog(rgb, in.world_pos);
+        }
     }
     return vec4<f32>(rgb, col.a);
 }

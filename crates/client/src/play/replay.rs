@@ -763,6 +763,71 @@ fn a_1_1_follow_capture_plays_each_shot_once() {
     }
 }
 
+/// Every grenade or rocket explode a capture's entity rings carry, once per
+/// missile, against what the client's frame played and how many effects
+/// those plays spawned.
+fn explodes(p: &'static Protocol, tag: &str, fs: Option<&Pk3Fs>) -> (usize, usize, usize) {
+    use vcod_common::net::event_ids::{EV_GRENADE_EXPLODE, EV_ROCKET_EXPLODE};
+    let explode = |e: i32| matches!(e, EV_GRENADE_EXPLODE | EV_ROCKET_EXPLODE);
+    let gs = vcod_common::testing::fixture_gamestate(p, &format!("net/gamestate{tag}.bin"));
+    let mut tracker = EventTracker::new();
+    let ctx = ResolveCtx {
+        muzzles: &HashMap::new(),
+        shot_fallbacks: &HashMap::new(),
+        weapon_flash: &HashMap::new(),
+        view_flash: None,
+        view_body: None,
+        blood: true,
+        brass: &HashMap::new(),
+        weapons: &[],
+        eject_brass: false,
+        configstrings: &gs.configstrings,
+        cs: &p.cs,
+    };
+    let mut exploded = std::collections::BTreeSet::new();
+    let (mut played, mut spawns) = (0, 0);
+    for f in vcod_common::testing::fixture_frames(
+        p,
+        &format!("net/gamestate{tag}.bin"),
+        &format!("net/snapshots{tag}.bin"),
+    ) {
+        for (&num, e) in &f.snapshot.entities {
+            if (0..4).any(|i| explode((p.event_to_v1)(e.field_i32(p, &format!("events[{i}]"))))) {
+                exploded.insert(num);
+            }
+        }
+        for ev in tracker.drain(&f.snapshot, p) {
+            if explode(ev.event) {
+                played += 1;
+                if let Some(fs) = fs {
+                    spawns += registry::resolve_in(fs, &ev, &ctx)
+                        .iter()
+                        .filter(|r| matches!(r, Resolved::Spawn { .. }))
+                        .count();
+                }
+            }
+        }
+    }
+    (exploded.len(), played, spawns)
+}
+
+/// Retail's own frags and panzerfaust shells, watched: each missile's
+/// explode plays once and spawns one effect, the impact table's row for its
+/// surface (cod11-events-and-fx.md, "One effect per explode").
+#[test]
+fn each_retail_explode_plays_one_effect() {
+    let fs = vcod_common::testing::game_fs_11();
+    for tag in ["-skyfrag", "-corpseblast", "-panzer", "-panzer-wall"] {
+        let (missiles, played, spawns) = explodes(&PROTOCOL_V1, tag, fs.as_ref());
+        println!("{tag}: {missiles} missiles exploded, {played} played, {spawns} effects");
+        assert!(missiles > 0, "{tag}: no explode in the capture");
+        assert_eq!(played, missiles, "{tag}: explodes played");
+        if fs.is_some() {
+            assert_eq!(spawns, missiles, "{tag}: effects spawned");
+        }
+    }
+}
+
 /// The followed gunner of `*-15-turret.bin` (1.5b, mp_carentan's MG42,
 /// `client-probes/probe_turret`) through 1.5's turret view (1.5 cgame
 /// 0x300348c0). The gun sends its arcs from its first manned frame, and

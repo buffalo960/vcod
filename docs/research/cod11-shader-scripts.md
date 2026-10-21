@@ -310,6 +310,15 @@ The dlight pass in detail, all CoDMP.exe 1.1:
   fogged surface's copy fogs towards black: its light scales by the fog
   factor. `dlightshader` is `nofog` (`scripts/gfx.shader`), so the blob
   draws unfogged, and a `perLight` stage fogs as its own shader does.
+- INFERRED, from 0x4d2ad0 and the per-stage GL_State call: the black fog
+  colour holds for every fogged stage whose destination factor is
+  `GL_ONE`, world, model or effect, whatever its source factor, so an
+  additive stage fades to nothing with distance instead of greying
+  towards the fog colour. vcod: `STAGE_FLAG_FOG_BLACK` (`renderer.rs`),
+  set by `stage_params` for a stage blended onto `GL_ONE`, makes
+  `fs_stage` scale by `1 - fog` (`shader.wgsl`); `fx.wgsl`'s additive draw
+  did so already. Before 2026-10-21 the world's additive stages fogged
+  towards the fog colour.
 - VERIFIED, which surfaces a light reaches: the world walk (0x4e4c10)
   visits the cells the portals show (0x4e44d0), tests each surface against
   the frustum and portal planes (0x4e3070, 0x4e4120) and hands it to

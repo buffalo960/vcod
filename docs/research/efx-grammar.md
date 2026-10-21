@@ -532,6 +532,60 @@ the `size2` slots, so the sprite is square.
 The `Cylinder` primitive (FUN_00511350 @ `0x511350`) uses the same two values
 as ring radii: `size2` at `origin`, `size` at `oldorigin`.
 
+### `nonUniformScale` and `size2`, in detail
+
+- VERIFIED, CoDMP.exe 1.1, the key parser 0x49d8b0: `nonUniformScale`
+  stores `atol(value) != 0` as a byte at template `+0xc0`.
+- VERIFIED: the sprite spawn passes that byte as the constructor's fourth
+  argument (`mov dl,[ebp+0xc0]` at 0x495888, pushed at 0x49589f, the call
+  at 0x4958b0). VERIFIED, 0x49f360: with the byte 0 the instance's `size2`
+  start and end (`+0x100`, `+0x104`) and parm (`+0x108`) take `size`'s
+  (`+0xf4`, `+0xf8`, `+0xfc`) and the flag word's size nibble (bits 8..11)
+  is copied into the `size2` nibble (bits 16..19); with it set they take the
+  template's `size2` curve.
+- VERIFIED, 0x48e4f0: each frame `size2` lands at instance `+0xa0` (the
+  refEntity's `+0x64`) as `f * start + (1 - f) * end` under its own nibble
+  (`linear` 0x10000), the shape of `size` at 0x48e3a0.
+- VERIFIED, 0x5101d0 (`reType` 4) and 0x5103c0 (`reType` 0xc): `size`
+  (`+0x7c`) scales the view's left axis, `size2` (`+0x64`) the view's up
+  axis, both turned by `rotation` (`+0x80`) when it is non-zero.
+- VERIFIED, string search of the 1.1 paks' `.efx` blocks (2026-10-21): 81
+  blocks in 58 files carry `nonUniformScale`, every one a `Particle`; they
+  include `fx/impacts/blast_flash.efx` and `blast_flash2.efx`, the
+  `FxRunner` flash of every stock `grenade_explode` row.
+- INFERRED, from the curves: `blast_flash2`'s four `groundflash1` sprites
+  run `size` 10 to 200 and `size2` 122 to 2 over 100 ms, a flash that
+  spreads flat along the ground. Drawn square on `size`, as vcod did before
+  2026-10-21, they reach 400 units tall and cover about 1.56 times the
+  fade-weighted area.
+- vcod: `efx::Emitter::size2` and `non_uniform_scale`; `fx::sim` samples
+  `size2` only under the flag and draws a sprite `size` across the view and
+  `size2` up it (`a_non_uniform_sprite_takes_size2_up_the_view`).
+
+### A sprite's vertex colour: `rgb`, then `alpha`
+
+- VERIFIED, CoDMP.exe 1.1, the sprite update 0x48de90: after the move
+  (0x48df20) it evaluates `size` (0x48e3a0), `size2` (0x48e4f0), the `rgb`
+  curve (0x48e640) and the `alpha` curve (0x48e7d0), in that order.
+- VERIFIED, 0x48e640: the colour is `f * A + (1 - f) * B` per channel, the
+  start and end triples at instance `+0x10c` and `+0x118`, `f` stepped by the curve
+  nibble at bits 4..7 (`linear` 0x10 is `1 - t`), written as bytes clamped
+  to 0..255 through 0x48d680.
+- VERIFIED, 0x48e7d0: the alpha is the same lerp under bits 0..3, clamped to
+  0..1 (0x48e8d8..0x48e904). With `useAlpha` (instance flag 0x8000000,
+  tested at 0x48e92c) it is written to the alpha byte through `__ftol2`
+  (0x538be0) of `alpha * 255` and the rgb bytes stay; without it each rgb
+  byte is multiplied by the alpha (0x48e94e..0x48e9a2) and the alpha byte
+  is set to 255 (0x48e9a8).
+- INFERRED, with the blend: a `GL_ONE GL_ONE` sprite with `useAlpha` (54
+  stock elements, string search 2026-10-21) never fades on its alpha
+  curve, and a blended (`blendfunc blend`) sprite without it darkens
+  instead of turning transparent.
+- vcod: `fx::sim::vertex_colour` builds the colour that way, and
+  `Renderer::set_fx_quads` gives a `GL_ONE GL_ONE` material vertex alpha
+  1, so its draw reads none. Before 2026-10-21 every sprite carried its
+  alpha curve in its vertex alpha.
+
 ### An element with no shaders
 
 - VERIFIED, CoDMP.exe 1.1: the `shaders` key's handler (0x49c8b0)
@@ -1029,7 +1083,8 @@ angle about its forward, and a `Point` spawn had world axes (forward +x).
 ## What vcod implements from this, and what it doesn't
 
 Implemented in `crates/client/src/fx/sim.rs`: R3 (unflagged curves hold
-`start`; `length` only on `Tail`/`Line`), R4's half-extent reading, R5 (tail anchoring and full length), R6's
+`start`; `length` only on `Tail`/`Line`), R4's half-extent reading and
+`size2` under `nonUniformScale`, the vertex colour's `useAlpha` split, R5 (tail anchoring and full length), R6's
 spawn-flag handling, R7's per-key defaults, R8 (`FxSystem::spawn_tracer`,
 fed by `Resolved::Tracer` from 173 to 176), and R9 (physics, `bounce`,
 `impactfx`, `Emitter` debris models), R10 (chaining, `relative`) and R11
@@ -1037,10 +1092,6 @@ fed by `Resolved::Tracer` from 173 to 176), and R9 (physics, `bounce`,
 
 Not implemented, deliberately:
 
-- `size2` / `nonUniformScale`. The `Emitter` struct in
-  `crates/client/src/fx/efx.rs` has no `size2` field, so every sprite is
-  square. 168 of the 1089 size-carrying blocks set `size2`; none of the
-  muzzle-flash or impact effects vcod plays today do.
 - The `nonlinear` / `wave` / `clamp` / `random` curve modes. Only the
   `linear`-vs-constant distinction is honoured. One `size` block and five
   `alpha`/`rgb` blocks in the whole corpus use a mode other than `linear`.

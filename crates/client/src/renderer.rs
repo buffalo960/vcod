@@ -901,6 +901,9 @@ pub const STAGE_FLAG_SKY: u32 = 512;
 /// `rgbGen vertex` scales the vertex rgb by identityLight; `exactVertex`
 /// stays raw (RTCW-MP tr_shade.c CGEN_VERTEX vs CGEN_EXACT_VERTEX).
 pub const STAGE_FLAG_VERTEX_RGB_HALF: u32 = 1024;
+/// The stage blends onto `GL_ONE`: GL_State loads a black fog colour for
+/// it (CoDMP.exe 0x4d2ad0), so fog fades it instead of greying it.
+pub const STAGE_FLAG_FOG_BLACK: u32 = 2048;
 /// The tint rgb scales by identityLight, which the camera uniform carries:
 /// `identityLighting`, `constLighting` and `wave` (0x4ffa60).
 pub const STAGE_FLAG_TINT_LIGHT: u32 = 4096;
@@ -1185,6 +1188,9 @@ pub(crate) fn stage_params(shader: &Shader, idx: usize, t: f32) -> Option<StageP
     }
     if shader.nofog {
         flags |= STAGE_FLAG_NOFOG;
+    }
+    if matches!(st.blend, Some((_, BlendFactor::One))) {
+        flags |= STAGE_FLAG_FOG_BLACK;
     }
     if shader.sort_value() > SORT_DECAL && lays_own_colour(&st.blend) {
         flags |= STAGE_FLAG_SUN_SHADOW;
@@ -3986,8 +3992,12 @@ impl Renderer {
                 self.fx.textures.insert(quad.shader.clone(), bg);
             }
 
-            let k = colour_scale(self.shader_lib.get(&quad.shader), self.identity_light);
-            let [r, g, b, a] = quad.rgba;
+            let sh = self.shader_lib.get(&quad.shader);
+            let k = colour_scale(sh, self.identity_light);
+            let [r, g, b, mut a] = quad.rgba;
+            if ignores_vertex_alpha(sh) {
+                a = 1.0;
+            }
             let size = quad_half_extent(&quad.verts);
             for i in 0..4 {
                 verts.push(FxVert {
@@ -6456,6 +6466,21 @@ fn colour_scale(shader: Option<&Shader>, identity_light: f32) -> f32 {
     }
 }
 
+/// Whether the material's image stage blends `GL_ONE GL_ONE`, which reads
+/// no source alpha: a `useAlpha` sprite's vertex alpha changes nothing
+/// there (the fx pass's additive draw scales by it otherwise).
+fn ignores_vertex_alpha(shader: Option<&Shader>) -> bool {
+    shader
+        .and_then(|sh| {
+            sh.stages.iter().find(|st| {
+                st.bundles
+                    .iter()
+                    .any(|b| matches!(b.image, ImageRef::Path(_)))
+            })
+        })
+        .is_some_and(|st| st.blend == Some((BlendFactor::One, BlendFactor::One)))
+}
+
 /// A HUD colour is a display value; `scale` (`colour_scale`) takes it into
 /// the framebuffer, and the ramp's overbright doubling brings a lit gen back
 /// on display. Alpha is a coverage weight.
@@ -8084,6 +8109,43 @@ mod tests {
         assert_eq!(p.uv1, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
         assert_eq!(p.tint, [0.5, 0.25, 0.125, 0.75]);
         assert_eq!(p.turb01, [0.0; 4]);
+    }
+
+    /// Every stage blended onto `GL_ONE` fogs towards black (0x4d2ad0's
+    /// `(state & 0xf0) == 0x20`), whatever its source factor; the rest fog
+    /// towards the fog colour.
+    #[test]
+    fn stage_params_fog_a_stage_blended_onto_one_towards_black() {
+        let with = |blend| {
+            let sh = Shader {
+                name: "test/glow".into(),
+                stages: vec![Stage {
+                    bundles: vec![Bundle {
+                        image: ImageRef::Path("a".into()),
+                        anim: None,
+                        clamp: Clamp::NONE,
+                        tcmods: vec![],
+                        tc_gen: TcGen::Base,
+                        env: TexEnv::Modulate,
+                    }],
+                    blend,
+                    depth_write: None,
+                    alpha_func: None,
+                    depth_func: DepthFunc::LessEqual,
+                    rgb_gen: RgbGen::Identity,
+                    alpha_gen: AlphaGen::Identity,
+                }],
+                ..Default::default()
+            };
+            stage_params(&sh, 0, 0.0).unwrap().flags & STAGE_FLAG_FOG_BLACK != 0
+        };
+        use BlendFactor::*;
+        assert!(with(Some((One, One))));
+        assert!(with(Some((SrcAlpha, One))));
+        assert!(with(Some((DstColor, One))));
+        assert!(!with(Some((SrcAlpha, OneMinusSrcAlpha))));
+        assert!(!with(Some((DstColor, Zero))));
+        assert!(!with(None));
     }
 
     #[test]

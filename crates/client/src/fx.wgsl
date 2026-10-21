@@ -70,9 +70,10 @@ fn shade(in: VsOut) -> vec4<f32> {
     return vec4(rgb, t.a * in.rgba.a);
 }
 
-// GL_ONE GL_ONE ignores source alpha, so the fade scales the colour. The
-// engine likewise bakes the alpha curve into vertex RGB for emitters without
-// `useAlpha` (docs/research/efx-grammar.md, section 3). Texture alpha is never read.
+// A sprite without `useAlpha` carries its fade in its rgb and alpha 1
+// (`fx::sim`, CoDMP.exe 0x48e7d0); a `GL_ONE GL_ONE` material reads no
+// source alpha, so `Renderer::set_fx_quads` hands it alpha 1 too. What alpha
+// is left scales the colour. Texture alpha is never read.
 // Additive fog fades toward black, not the fog colour (Q3 fogColorMask): adding
 // fog colour would brighten glows the further into the fog they sit.
 fn shade_additive(in: VsOut) -> vec4<f32> {

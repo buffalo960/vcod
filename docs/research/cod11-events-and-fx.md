@@ -810,6 +810,23 @@ There is no `weapon` axis on impacts: the weapon only selects small-vs-large
 server-side, and adds its own `projExplosionEffect` on top for
 `EV_GRENADE_EXPLODE` / `EV_ROCKET_EXPLODE`.
 
+#### One effect per explode
+
+- VERIFIED, `weapons/mp/fraggrenade_mp` (`pak0.pk3`): `projExplosionEffect`
+  is empty, so a frag's explode plays only its `grenade_explode` row.
+- VERIFIED, the committed 1.1d captures `net/snapshots-skyfrag.bin`,
+  `-corpseblast.bin`, `-panzer.bin` and `-panzer-wall.bin`: each carries
+  one missile whose ring holds an explode, and no temp entity carries a
+  second.
+- vcod: `play::replay::each_retail_explode_plays_one_effect` runs those
+  captures through the event drain and the resolver, one explode played and
+  one effect resolved per missile; `play::loopback::each_thrown_frag_explodes_once`
+  throws two frags on vcod-server through the client's input and drain and
+  plays two explodes. A doubled effect is not why vcod's frag flash read
+  too bright and white (2026-10-21); the flash's shape and fade were, see
+  `efx-grammar.md` R4, "`nonUniformScale` and `size2`, in detail" and "A
+  sprite's vertex colour".
+
 `CG_BulletHitWall` @ `0x30039640` picks the small pair of handle tables
 (`bullet_small_normal`, `bullet_small_reflect`) when the event is 173 and the
 large pair otherwise, and reads the normal and reflect handles at `[surfType]`.
