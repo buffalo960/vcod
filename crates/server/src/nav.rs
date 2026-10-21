@@ -1726,6 +1726,15 @@ const SPRINT_LOOK: usize = 40;
 /// A seen enemy has to move this far off the planned destination before the
 /// path is planned again.
 const RETARGET: f32 = 128.0;
+/// [`Follower::pull`]: how far, in grid steps, a pulled waypoint may lie
+/// flat (under [`OFF_PATH_STEPS`], past which the follower replans), how
+/// far a skipped node may stand off the line to it, the floor probe's
+/// spacing along that line ([`straight_floor`]), and the ticks between
+/// tries after one fails.
+const PULL_STEPS: f32 = 3.0;
+const PULL_SLACK: f32 = 0.75;
+const PULL_PROBE: f32 = 16.0;
+const PULL_RETRY: u32 = 4;
 
 /// What the body a [`Follower`] steers stands on this tick.
 #[derive(Clone, Copy)]
@@ -1851,6 +1860,12 @@ pub struct Follower {
     /// The point goal's plan the last goal move left, for a goal that
     /// comes back.
     parked: Option<Parked>,
+    /// The waypoint before [`Self::pull`] took it further along the plan,
+    /// while the pulled one is still ahead: a re-check that fails falls
+    /// back toward it.
+    pull_base: Option<usize>,
+    /// Ticks before the next pull is tried, after one failed.
+    pull_wait: u32,
 }
 
 /// A [`Follower`] plan set aside when its point goal moved off, and the
@@ -2202,12 +2217,17 @@ impl Follower {
             }
             if level && (reached || past) {
                 self.held = None;
+                self.pull_base = None;
                 self.next += 1;
                 self.best = f32::INFINITY;
                 self.idle = 0;
             } else {
                 break;
             }
+        }
+        // Not on a landing: the landing is read against the edge under way.
+        if !landed {
+            self.pull(g, world, here, body);
         }
         let Some(&w) = self.path.get(self.next) else {
             // Arrived. A roam picks somewhere new; a point is walked at.
@@ -3503,6 +3523,103 @@ impl Follower {
         true
     }
 
+    /// String-pulling: takes the waypoint on to the next node of the plan
+    /// when a body walks there straight from where it stands
+    /// ([`straight_floor`], then a walk from the body at its pace that
+    /// arrives without a jump, a dip or a slide), so a bot cuts the grid's
+    /// 45 degree kinks. Only along a run of plain edges
+    /// ([`NavGraph::plain_edge`]) whose last node leaves by one too: a
+    /// jump, leap, ladder, drop or risky edge is still come onto along the
+    /// edge the graph proved. One node a tick, no further than
+    /// [`PULL_STEPS`] grid steps and a step's height away, every node
+    /// skipped within [`PULL_SLACK`] steps of the line, on the ground
+    /// past the plan's first node. While a pulled waypoint is ahead the
+    /// straight line to it is checked again every tick; a failed check
+    /// falls back to the furthest skipped node it still reaches
+    /// (bot-navigation.md, "String-pulling").
+    fn pull(&mut self, g: &NavGraph, world: Option<&CollisionWorld>, here: Vec3, body: Footing) {
+        let Some(world) = world else {
+            return;
+        };
+        if !body.on_ground || body.on_ladder || self.arrived || self.next >= self.path.len() {
+            return;
+        }
+        let node = |i: usize| g.nodes[self.path[i] as usize];
+        if let Some(base) = self.pull_base
+            && !straight_floor(world, here, node(self.next))
+        {
+            let back = (base + 1..self.next)
+                .rev()
+                .find(|&j| straight_floor(world, here, node(j)));
+            self.next = back.unwrap_or(base);
+            if back.is_none() {
+                self.pull_base = None;
+            }
+            self.best = f32::INFINITY;
+            self.idle = 0;
+            self.pull_wait = PULL_RETRY;
+            return;
+        }
+        if self.pull_wait > 0 {
+            self.pull_wait -= 1;
+            return;
+        }
+        let k = self.next + 1;
+        if self.next == 0 || k >= self.path.len() || self.held.is_some() {
+            return;
+        }
+        let plain = |i: usize| {
+            i + 1 >= self.path.len()
+                || (g.plain_edge(self.path[i], self.path[i + 1])
+                    && !self
+                        .avoid
+                        .iter()
+                        .any(|e| (e.0, e.1) == (self.path[i], self.path[i + 1])))
+        };
+        if !(plain(self.next - 1) && plain(self.next) && plain(k)) {
+            return;
+        }
+        let to = node(k);
+        let line = (to - here).truncate();
+        if line.length() > PULL_STEPS * g.spacing
+            || (to.z - here.z).abs() > vcod_common::pmove::STEPSIZE
+        {
+            return;
+        }
+        // The node skipped stays near the line: off it the grid went round
+        // something no trace sees (a hazard's edge, a fall beside a run).
+        let skipped = (node(self.next) - here).truncate();
+        let t = (skipped.dot(line) / line.length_squared().max(1.0)).clamp(0.0, 1.0);
+        if (skipped - line * t).length() > PULL_SLACK * g.spacing {
+            return;
+        }
+        let mut trail = Trail::default();
+        let walked = straight_floor(world, here, to)
+            && matches!(
+                walk_sliding(
+                    world,
+                    here,
+                    Some(body.velocity),
+                    self.move_scale,
+                    to.truncate(),
+                    Some(to.z),
+                    Gait::Forward,
+                    &mut trail,
+                ),
+                Walked::Arrived(_, false)
+            )
+            && trail.dip <= vcod_common::pmove::STEPSIZE
+            && trail.slid.is_empty();
+        if !walked {
+            self.pull_wait = PULL_RETRY;
+            return;
+        }
+        self.pull_base.get_or_insert(self.next);
+        self.next = k;
+        self.best = f32::INFINITY;
+        self.idle = 0;
+    }
+
     /// Where a walked-out point goal is headed: the point, or the
     /// destination node when [`NavGraph::goal_node`] kept it off a perch
     /// the point stands on.
@@ -3515,6 +3632,7 @@ impl Follower {
 
     fn reset(&mut self) {
         self.held = None;
+        self.pull_base = None;
         self.dest = None;
         self.search = None;
         self.path.clear();
@@ -3523,6 +3641,19 @@ impl Follower {
 }
 
 impl NavGraph {
+    /// Whether the edge `a` to `b` is a plain walk on one floor: no jump,
+    /// leap, crouched jump or risky drop, and no more than a step between
+    /// its ends. What [`Follower::pull`] cuts across.
+    pub fn plain_edge(&self, a: u32, b: u32) -> bool {
+        let e = (a, b);
+        !self.jumps.contains(&e)
+            && !self.leaps.contains(&e)
+            && !self.crouch_jumps.contains(&e)
+            && !self.risky.contains(&e)
+            && (self.nodes[a as usize].z - self.nodes[b as usize].z).abs()
+                <= vcod_common::pmove::STEPSIZE
+    }
+
     /// For a body at `p` on a ladder, the point level with it across the
     /// face and at the middle of the ladder along it: a climb strafes
     /// toward it, since what overhangs a ladder (a spar, a hatch's rim)
@@ -5169,6 +5300,26 @@ const JUMP_SLACK: f32 = 2.0;
 /// over the feet, not at the head: mp_carentan's terrain runs 38 units over
 /// the base brush west of its boundary wall, and from the head a flood
 /// seeded there walked under it into the town.
+/// Whether a standing body at `from` on the ground walks straight to `to`
+/// on one floor: its capsule swept a step up clears, and every
+/// [`PULL_PROBE`] units along the line there is ground a body stands on
+/// within a step of the line's height ([`Follower::pull`]).
+fn straight_floor(world: &CollisionWorld, from: Vec3, to: Vec3) -> bool {
+    let step = vcod_common::pmove::STEPSIZE;
+    let ps = body(from, 0.0);
+    let up = Vec3::Z * step;
+    let sweep = world.move_trace(from + up, to + up, ps.mins(), ps.maxs(), MASK_PLAYERSOLID);
+    if sweep.startsolid || sweep.fraction < 1.0 {
+        return false;
+    }
+    let n = ((to - from).truncate().length() / PULL_PROBE).ceil() as usize;
+    (1..n).all(|i| {
+        let p = from.lerp(to, i as f32 / n as f32);
+        let t = world.point_trace(p + up, p - up, MASK_PLAYERSOLID, false);
+        !t.startsolid && t.fraction < 1.0 && t.normal.z >= vcod_common::pmove::MIN_WALK_NORMAL
+    })
+}
+
 fn under_ground(world: &CollisionWorld, p: Vec3) -> bool {
     let start = p + Vec3::Z * vcod_common::pmove::STEPSIZE;
     let up = world.point_trace(start, start + Vec3::Z * 8192.0, MASK_PLAYERSOLID, false);
@@ -5614,6 +5765,65 @@ mod tests {
         }
         assert_eq!(seen, [32.0, 64.0, 96.0, 128.0, 160.0, 170.0]);
         assert_eq!(Some(budget), planned, "one plan for the whole walk");
+    }
+
+    /// A two-way chain of nodes 0.125 over `test_world`'s floor: the grid's
+    /// stair-step across a diagonal, east then north-east by turns.
+    fn zigzag() -> NavGraph {
+        let nodes: Vec<Vec3> = [(0, 0), (32, 0), (64, 32), (96, 32), (128, 64), (160, 64)]
+            .iter()
+            .map(|&(x, y)| Vec3::new(x as f32, y as f32, 0.125))
+            .collect();
+        let n = nodes.len() as u32;
+        let edges = (0..n)
+            .map(|i| {
+                [i.wrapping_sub(1), i + 1]
+                    .into_iter()
+                    .filter(|&j| j < n)
+                    .collect()
+            })
+            .collect();
+        NavGraph::from_parts(nodes, edges)
+    }
+
+    /// Along plain edges the waypoint is pulled on to the furthest node a
+    /// straight walk reaches, one a tick: a pillar on the line holds it at
+    /// the grid's next node, and so does a jump edge.
+    #[test]
+    fn a_waypoint_is_pulled_along_a_clear_straight_line() {
+        use crate::bots::Goal;
+        let goal = Goal::To([160.0, 64.0, 0.125]);
+        let run = |g: &NavGraph, world: &CollisionWorld, at: [[f32; 2]; 2]| {
+            let mut f = Follower::default();
+            let mut budget = 100;
+            at.map(|[x, y]| {
+                f.waypoint(
+                    g,
+                    Some(world),
+                    goal,
+                    [x, y, 0.125],
+                    Footing::STANDING,
+                    &mut budget,
+                    &mut || 0,
+                )
+                .map(|w| [w[0], w[1]])
+            })
+        };
+        let open = vcod_common::collision::test_world(&[]);
+        let at = [[0.0, 0.0], [40.0, 10.0]];
+        assert_eq!(
+            run(&zigzag(), &open, at),
+            [Some([64.0, 32.0]), Some([96.0, 32.0])]
+        );
+        // Clear of node 1's capsule, across the line from node 0 to node 2.
+        let pillar = vcod_common::collision::test_world(&[(
+            Vec3::new(24.0, 20.0, 0.0),
+            Vec3::new(40.0, 28.0, 100.0),
+        )]);
+        assert_eq!(run(&zigzag(), &pillar, at)[0], Some([32.0, 0.0]));
+        let mut g = zigzag();
+        g.jumps.insert((1, 2));
+        assert_eq!(run(&g, &open, at)[0], Some([32.0, 0.0]));
     }
 
     /// A `side` x `side` two-way grid 32 apart, and one node 1000 units off

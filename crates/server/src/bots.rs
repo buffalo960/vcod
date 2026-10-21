@@ -162,6 +162,9 @@ pub struct Skill {
     /// the view. A tracked target, the attacker of a fresh hit
     /// ([`BotView::hurt`]) and what the bot hears are known outside it.
     pub fov_deg: f32,
+    /// The most the walking view turns in one tick, degrees: the keys
+    /// keep the path while it comes round ([`Bot::walk_turn`]).
+    pub walk_turn_deg: f32,
 }
 
 impl Default for Skill {
@@ -183,6 +186,7 @@ impl Default for Skill {
             noise_ticks: 200,
             hearing: 1.0,
             fov_deg: 120.0,
+            walk_turn_deg: 24.0,
         }
     }
 }
@@ -2985,6 +2989,28 @@ impl Bot {
             }
             _ => self.unpin = None,
         }
+        // A plain run on the ground: the view comes round to the path's
+        // heading at `walk_turn_deg` a tick and the keys keep the body on
+        // the heading meanwhile. A climb, a back down, a jump, a run off a
+        // drop and a leap's or a creep's foot keep the view the walk that
+        // proved them had (bot-combat.md section 10).
+        if steering
+            && view.on_ground
+            && !view.on_ladder
+            && pitch == 0.0
+            && forward == 127
+            && cmd.right == 0
+            && cmd.up == 0
+            && foot.is_none()
+            && !view.stop
+            && !view.jump
+            && !view.run_off
+            && self.pushed_off.is_none()
+            && self.unpin.is_none()
+            && !self.creep.creeping()
+        {
+            (forward, cmd.right, yaw) = self.walk_turn(view, yaw);
+        }
         // On the ground the keys are cut to the graph's pace: its walks ran
         // at 190 units/s, and a light weapon's 215 to 228 flies a run off
         // mp_ship's mast platform at (3564, -127, 896) over the narrow ledge
@@ -3532,6 +3558,25 @@ impl Bot {
         }
         cmd.buttons |= msg::BUTTON_ADS;
         view.deployed && view.ads_frac >= LMG_READY_FRAC
+    }
+
+    /// The walking view one tick on toward the path's heading `want`, at
+    /// most [`Skill::walk_turn_deg`], and the (forward, right) keys that run
+    /// the body along `want` from it ([`rekey`]'s turn), scaled so the
+    /// larger is 127: `PM_CmdScale` then gives the run's full speed.
+    fn walk_turn(&self, view: &BotView, want: f32) -> (i8, i8, f32) {
+        let cur = view.view[1];
+        let d = yaw_diff(want, cur);
+        let most = self.skill.walk_turn_deg;
+        if d.abs() <= most {
+            return (127, 0, want);
+        }
+        let look = cur + d.clamp(-most, most);
+        let off = yaw_diff(want, look).to_radians();
+        let (f, r) = (off.cos(), -off.sin());
+        let m = f.abs().max(r.abs());
+        let key = |k: f32| (k / m * 127.0).round().clamp(-127.0, 127.0) as i8;
+        (key(f), key(r), look)
     }
 
     /// The (pitch, yaw) one tick's turn takes the view to on its way to
@@ -4788,6 +4833,7 @@ mod tests {
             let mut v = sd_view(role);
             v.origin = [800.0, 0.0, 64.0];
             v.waypoint = Some([700.0, 0.0, 64.0]);
+            v.view[1] = 180.0;
             assert_eq!(bot.goal(&v), Goal::To([0.0, 0.0, 64.0]), "{role:?}");
             for _ in 0..100 {
                 let cmd = bot.think(&v);
@@ -5107,6 +5153,38 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(cmd.forward, 127);
         assert_eq!(cmd.angles, [0, deg_short(90.0), 0], "level, facing +y");
+    }
+
+    /// A waypoint off the walking view's heading: the view comes round at
+    /// `walk_turn_deg` a tick while the keys, full, run the body at the
+    /// waypoint all along.
+    #[test]
+    fn the_walking_view_comes_round_while_the_keys_keep_the_path() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = view();
+        v.waypoint = Some([100.0, 0.0, 64.0]);
+        let most = bot.skill.walk_turn_deg;
+        let mut ticks = 0;
+        loop {
+            let cmd = bot.think(&v);
+            let yaw = cmd.angles[1] as f32 / ANGLE2SHORT;
+            let turn = yaw_diff(yaw, v.view[1]);
+            assert!(turn.abs() <= most + 0.01, "turned {turn}");
+            let way = yaw + (-(cmd.right as f32)).atan2(cmd.forward as f32).to_degrees();
+            assert!(yaw_diff(way, 0.0).abs() < 1.0, "keys run at {way}");
+            assert_eq!(
+                cmd.forward.unsigned_abs().max(cmd.right.unsigned_abs()),
+                127
+            );
+            v.view[1] = yaw;
+            ticks += 1;
+            if yaw_diff(yaw, 0.0).abs() < 0.01 {
+                assert_eq!((cmd.forward, cmd.right), (127, 0));
+                break;
+            }
+            assert!(ticks < 10);
+        }
+        assert_eq!(ticks, (90.0 / most).ceil() as i32);
     }
 
     /// On UO a bot sprints a long straight leg with breath to spare, at
@@ -5890,7 +5968,9 @@ mod tests {
             let cmd = bot.think(&v);
             assert_eq!((cmd.up, cmd.forward, cmd.angles), (0, 127, out));
         }
+        // Landed facing the waypoint, it runs on.
         v.on_ground = true;
+        v.view[1] = (-229.9f32 + 230.0).atan2(2144.7 - 2146.5).to_degrees();
         assert_eq!(bot.think(&v).forward, 127);
     }
 
