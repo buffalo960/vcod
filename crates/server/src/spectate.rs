@@ -261,12 +261,12 @@ pub struct ClientSim {
     /// cmd by cmd: what a weapon event raised in the next pmove selects by
     /// on 1.1 (player-model-anim-system.md, "The weapon event's movetype").
     pub footsteps_movetype: vcod_common::animscript::Movetype,
-    /// The turret placement's leaf blend for the gun this client mans,
+    /// The turret placement's rows and leaves for the gun this client mans,
     /// which its legs pose by while mounted.
-    pub gunner_leaves: Option<Vec<(usize, f32)>>,
+    pub gunner_leaves: Option<Vec<vcod_common::turretpose::TurretRow>>,
     /// The turret group the placement last set before the current one, with
     /// its leaves: what the legs blend out of on an aim-fire change.
-    pub gunner_left: Option<(usize, Vec<(usize, f32)>)>,
+    pub gunner_left: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
     /// The group `gunner_leaves` sit under.
     gunner_node: Option<usize>,
     /// The takeoff anim a move raised since the last `update_anims`, and the
@@ -2248,7 +2248,7 @@ impl ClientSim {
         {
             self.gunner_left = self.gunner_node.zip(self.gunner_leaves.take());
         }
-        self.gunner_leaves = placed.map(|g| g.leaves.clone());
+        self.gunner_leaves = placed.map(|g| g.posed_rows(self.ps.rules.v15()));
         self.gunner_node = placed.map(|g| g.node);
         if placed.is_none() {
             self.gunner_left = None;

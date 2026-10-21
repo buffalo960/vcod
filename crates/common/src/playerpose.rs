@@ -8,7 +8,8 @@ use crate::pmove::MoveRules;
 use crate::pmove::aim::{
     angle_normalize_180, angle_normalize_360 as angle_mod, angle_subtract, lean_fraction,
 };
-use crate::skeleton::{AnimBinding, PoseBuffer, Record, Skeleton};
+use crate::skeleton::{AnimBinding, Blend, PoseBuffer, Record, Skeleton};
+use crate::turretpose::TurretRow;
 use crate::xanim::XAnim;
 use glam::{Quat, Vec3};
 use std::rc::Rc;
@@ -1068,14 +1069,14 @@ pub struct PoseInputs<'a> {
     /// Engine degrees, down positive: what an MG42 aim group descends by
     /// when no placement blend is given.
     pub group_pitch: f32,
-    /// A gunner's legs: the turret anim's leaves and the weights the body
-    /// placement gave them (`turretpose::GunnerPlacement::leaves`), in
-    /// place of the legs clip.
-    pub turret_leaves: Option<&'a [(usize, f32)]>,
-    /// The turret group a gunner's legs last left, and the leaf weights its
+    /// A gunner's legs: the turret anim's rows and leaves and the weights
+    /// the body placement gave them (`turretpose::GunnerPlacement::rows`),
+    /// in place of the legs clip.
+    pub turret_leaves: Option<&'a [TurretRow]>,
+    /// The turret group a gunner's legs last left, and the rows its
     /// placement last gave it, which it blends out on
     /// (cod11-turrets.md 13.9).
-    pub turret_left: Option<(usize, &'a [(usize, f32)])>,
+    pub turret_left: Option<(usize, &'a [TurretRow])>,
     /// `None` for a mounted or dead body.
     pub controllers: Option<Controllers>,
     /// A UO rider's [`seat_leaves`]: each node they were set under with its
@@ -1110,20 +1111,22 @@ pub fn pose_player(
 ) -> PoseBuffer {
     let mut pose = PoseBuffer::new(skel);
     let tree = &inputs.anims.tree;
-    // The legs clips, or a gunner's placement leaves.
-    let legs: Vec<(Rc<XAnim>, f32, f32)> = match inputs.turret_leaves {
-        Some(leaves) => {
-            // The current clip is the turret anim's group, the leaves its
+    // The legs clips, or a gunner's placement rows as nodes of their own
+    // under the turret group.
+    let mut legs: Vec<(Rc<XAnim>, f32, f32)> = Vec::new();
+    let mut shape: Vec<LegsShape> = Vec::new();
+    match inputs.turret_leaves {
+        Some(rows) => {
+            // The current clip is the turret anim's group, the rows its
             // placement weighted; a turret group still blending out keeps
-            // the leaves its own placement left (`turret_left`), any other
+            // the rows its own placement left (`turret_left`), any other
             // clip blends out as itself. Every leaf takes its group's time
             // (UO 0x80bd7e4).
             let layers = &inputs.legs_layers;
-            let mut out = Vec::new();
             for (i, l) in layers.iter().enumerate() {
                 let node = inputs.anims.index.node_id(l.index);
                 let group = if i + 1 == layers.len() {
-                    Some(leaves)
+                    Some(rows)
                 } else {
                     inputs
                         .turret_left
@@ -1131,36 +1134,75 @@ pub fn pose_player(
                         .map(|(_, w)| w)
                 };
                 let Some(group) = group else {
-                    out.extend(layer_clips(inputs, std::slice::from_ref(l), &mut clip));
+                    for c in layer_clips(inputs, std::slice::from_ref(l), &mut clip) {
+                        shape.push(LegsShape::Clip(legs.len()));
+                        legs.push(c);
+                    }
                     continue;
                 };
                 let node_t = l.time.filter(|_| inputs.node_time);
-                for &(leaf, w) in group {
-                    let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
-                        continue;
-                    };
-                    let frame = match node_t {
-                        Some(nt) => nt * anim.frame_count.saturating_sub(1) as f32,
-                        None => anim.frame_pos(l.seconds, anim.looping),
-                    };
-                    out.push((anim, frame, l.weight * w));
+                let mut group_rows = Vec::new();
+                for (rw, leaves) in group {
+                    let mut ids = Vec::new();
+                    for &(leaf, w) in leaves {
+                        let Some(anim) = tree.nodes.get(leaf).and_then(|n| clip(&n.name)) else {
+                            continue;
+                        };
+                        let frame = match node_t {
+                            Some(nt) => nt * anim.frame_count.saturating_sub(1) as f32,
+                            None => anim.frame_pos(l.seconds, anim.looping),
+                        };
+                        ids.push(legs.len());
+                        legs.push((anim, frame, w));
+                    }
+                    group_rows.push((*rw, ids));
                 }
+                shape.push(LegsShape::Group(l.weight, group_rows));
             }
-            out
         }
-        None => layer_clips(inputs, &inputs.legs_layers, &mut clip),
-    };
+        None => {
+            for c in layer_clips(inputs, &inputs.legs_layers, &mut clip) {
+                shape.push(LegsShape::Clip(legs.len()));
+                legs.push(c);
+            }
+        }
+    }
     let torso = layer_clips(inputs, &inputs.torso_layers, &mut clip);
     let bind = |clips: &[(Rc<XAnim>, f32, f32)]| -> Vec<_> {
         clips.iter().map(|(a, ..)| skel.bind(a)).collect()
     };
     let (legs_bind, torso_bind) = (bind(&legs), bind(&torso));
     let (legs, torso) = (clips_at(&legs, &legs_bind), clips_at(&torso, &torso_bind));
-    pose.blend_nodes(&[(&legs, inputs.nodes.legs), (&torso, inputs.nodes.torso)]);
+    let legs_node = shape
+        .iter()
+        .map(|s| match s {
+            LegsShape::Clip(i) => Blend::Clip(legs[*i]),
+            LegsShape::Group(w, rows) => Blend::Node(
+                *w,
+                rows.iter()
+                    .map(|(rw, ids)| {
+                        Blend::Node(*rw, ids.iter().map(|&i| Blend::Clip(legs[i])).collect())
+                    })
+                    .collect(),
+            ),
+        })
+        .collect();
+    let torso_node = torso.iter().map(|&c| Blend::Clip(c)).collect();
+    pose.blend_tree(&[
+        Blend::Node(inputs.nodes.legs, legs_node),
+        Blend::Node(inputs.nodes.torso, torso_node),
+    ]);
     if let Some(c) = &inputs.controllers {
         apply_controllers(&mut pose, skel, c);
     }
     pose
+}
+
+/// The legs node's children by index into its clips: a clip, or a turret
+/// group at its weight over its rows, each a weight over its leaves.
+enum LegsShape {
+    Clip(usize),
+    Group(f32, Vec<(f32, Vec<usize>)>),
 }
 
 fn clips_at<'a>(

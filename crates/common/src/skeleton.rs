@@ -226,26 +226,67 @@ impl Skeleton {
 /// its weight.
 pub type ClipAt<'a> = (&'a XAnim, &'a AnimBinding, f32, f32);
 
-/// The sampler's per-bone sums over `layers` (0x080b8370): rotation, offset
-/// and weight, each clip with a track for the bone adding its keys times its
-/// weight.
-fn clip_sums(n: usize, layers: &[ClipAt]) -> (Vec<glam::Vec4>, Vec<Vec3>, Vec<f32>) {
+/// A child of an anim tree node in a blend: a clip at its weight, or a node
+/// of its own at a weight over its children (an MG42 group over its rows, a
+/// row over its leaves), which the walk normalizes to that weight before its
+/// parent sums it (cod11-combat.md 3.1, "The pose on 1.5 and UO";
+/// cod11-turrets.md 13.9).
+#[derive(Clone)]
+pub enum Blend<'a> {
+    Clip(ClipAt<'a>),
+    Node(f32, Vec<Blend<'a>>),
+}
+
+impl Blend<'_> {
+    fn weight(&self) -> f32 {
+        match self {
+            Blend::Clip(c) => c.3,
+            Blend::Node(w, _) => *w,
+        }
+    }
+}
+
+/// The sampler's per-bone sums over a node's `children` (0x080b8370):
+/// rotation, offset and weight, each clip with a track for the bone adding
+/// its keys times its weight, each child node its own sums' unit rotation
+/// and mean offset times its weight.
+fn node_sums(n: usize, children: &[Blend]) -> (Vec<glam::Vec4>, Vec<Vec3>, Vec<f32>) {
     let mut rot = vec![glam::Vec4::ZERO; n];
     let mut pos = vec![Vec3::ZERO; n];
     let mut weight = vec![0.0f32; n];
-    for &(anim, binding, frame_pos, w) in layers {
+    for child in children {
+        let w = child.weight();
         if w <= 0.0 {
             continue;
         }
-        for (track, slot) in anim.tracks.iter().zip(&binding.0) {
-            let Some(bi) = *slot else { continue };
-            let (p, q) = track.sample(frame_pos);
-            // Signed as the loader left the track (`xanim::parse`): the
-            // sampler adds the raw keys.
-            let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
-            rot[bi] += q * w;
-            pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
-            weight[bi] += w;
+        match child {
+            &Blend::Clip((anim, binding, frame_pos, _)) => {
+                for (track, slot) in anim.tracks.iter().zip(&binding.0) {
+                    let Some(bi) = *slot else { continue };
+                    let (p, q) = track.sample(frame_pos);
+                    // Signed as the loader left the track (`xanim::parse`):
+                    // the sampler adds the raw keys.
+                    let q = glam::Vec4::from(q.unwrap_or(Quat::IDENTITY));
+                    rot[bi] += q * w;
+                    pos[bi] += p.unwrap_or(Vec3::ZERO) * w;
+                    weight[bi] += w;
+                }
+            }
+            Blend::Node(_, kids) => {
+                let (r, p, k) = node_sums(n, kids);
+                for bi in 0..n {
+                    if k[bi] <= 0.0 || r[bi] == glam::Vec4::ZERO {
+                        continue;
+                    }
+                    // Raw signed sums, no hemisphere alignment: two nodes on
+                    // opposite hemispheres swing the long way round, as
+                    // retail's reload blend-out does (cod11-movers.md 15,
+                    // "Torso over legs").
+                    rot[bi] += r[bi].normalize() * w;
+                    pos[bi] += p[bi] / k[bi] * w;
+                    weight[bi] += w;
+                }
+            }
         }
     }
     (rot, pos, weight)
@@ -353,31 +394,21 @@ impl PoseBuffer {
     /// key it. A bone one node alone keys takes that node's pose whatever its
     /// weight. cod11-movers.md 15, "Torso over legs".
     pub fn blend_nodes(&mut self, nodes: &[(&[ClipAt], f32)]) {
+        let nodes: Vec<Blend> = nodes
+            .iter()
+            .map(|&(clips, w)| Blend::Node(w, clips.iter().map(|&c| Blend::Clip(c)).collect()))
+            .collect();
+        self.blend_tree(&nodes);
+    }
+
+    /// [`PoseBuffer::blend_nodes`] over the root's children as a tree, where
+    /// a node may hold nodes of its own ([`Blend`]).
+    pub fn blend_tree(&mut self, nodes: &[Blend]) {
         if let Some(r) = self.records.as_mut() {
             walk_records(r, nodes);
         }
         let n = self.locals.len();
-        let mut rot = vec![glam::Vec4::ZERO; n];
-        let mut pos = vec![Vec3::ZERO; n];
-        let mut weight = vec![0.0f32; n];
-        for &(layers, node_weight) in nodes {
-            if node_weight <= 0.0 {
-                continue;
-            }
-            let (r, p, w) = clip_sums(n, layers);
-            for bi in 0..n {
-                if w[bi] <= 0.0 || r[bi] == glam::Vec4::ZERO {
-                    continue;
-                }
-                // Raw signed sums, no hemisphere alignment: two nodes on
-                // opposite hemispheres swing the long way round, as retail's
-                // reload blend-out does (cod11-movers.md 15, "Torso over
-                // legs").
-                rot[bi] += r[bi].normalize() * node_weight;
-                pos[bi] += p[bi] / w[bi] * node_weight;
-                weight[bi] += node_weight;
-            }
-        }
+        let (rot, pos, weight) = node_sums(n, nodes);
         for bi in 0..n {
             if weight[bi] > 0.0 {
                 self.locals[bi] = (
@@ -612,12 +643,6 @@ fn sample_records(
     }
 }
 
-/// A node of [`walk_records`]' tree: a clip, or children with weights.
-enum WalkNode<'a> {
-    Clip(&'a ClipAt<'a>),
-    Inner(Vec<(WalkNode<'a>, f32)>),
-}
-
 /// UO's tree walk 0x80bdbdc on `node` at `weight` into `dest`: `first`
 /// clears it, `nested` keeps a node with two or more weighted children
 /// from dividing by its weight sum. One weighted child passes the call
@@ -626,19 +651,18 @@ enum WalkNode<'a> {
 /// rotation sum to its weight, scales the offsets to its weight over their
 /// sum and (into `dest` when it had a buffer of its own) adds them, while
 /// the root divides every sum by the summed weight.
-fn walk(node: &WalkNode, weight: f32, dest: &mut [Record], first: bool, nested: bool) {
+fn walk(node: &Blend, weight: f32, dest: &mut [Record], first: bool, nested: bool) {
     let children = match node {
-        WalkNode::Clip(clip) => {
-            let &(anim, binding, frame, _) = *clip;
+        &Blend::Clip((anim, binding, frame, _)) => {
             if first {
                 dest.fill(Record::ZERO);
             }
             sample_records(dest, anim, binding, frame, weight);
             return;
         }
-        WalkNode::Inner(c) => c,
+        Blend::Node(_, c) => c,
     };
-    let active: Vec<&(WalkNode, f32)> = children.iter().filter(|(_, w)| *w != 0.0).collect();
+    let active: Vec<&Blend> = children.iter().filter(|c| c.weight() > 0.0).collect();
     match active.as_slice() {
         [] => {
             if first {
@@ -646,7 +670,7 @@ fn walk(node: &WalkNode, weight: f32, dest: &mut [Record], first: bool, nested: 
             }
             return;
         }
-        [(only, _)] => return walk(only, weight, dest, first, nested),
+        [only] => return walk(only, weight, dest, first, nested),
         _ => {}
     }
     let mut own = if first {
@@ -659,8 +683,8 @@ fn walk(node: &WalkNode, weight: f32, dest: &mut [Record], first: bool, nested: 
             Some(b) => b,
             None => dest,
         };
-        for (i, (child, w)) in active.iter().enumerate() {
-            walk(child, *w, buf, i == 0, true);
+        for (i, child) in active.iter().enumerate() {
+            walk(child, child.weight(), buf, i == 0, true);
         }
     }
     let w = f64::from(weight);
@@ -711,33 +735,29 @@ fn walk(node: &WalkNode, weight: f32, dest: &mut [Record], first: bool, nested: 
     }
 }
 
-/// [`PoseBuffer::blend_nodes`]' nodes through UO's anim calc (0x80bf2a8):
+/// [`PoseBuffer::blend_tree`]'s nodes through UO's anim calc (0x80bf2a8):
 /// the root's walk at weight 1 over the nodes and their clips, then every
 /// bone no clip keys back at its bind record.
-fn walk_records(records: &mut [Record], nodes: &[(&[ClipAt], f32)]) {
+fn walk_records(records: &mut [Record], nodes: &[Blend]) {
     let bind: Vec<Record> = records.to_vec();
-    let tree = WalkNode::Inner(
-        nodes
-            .iter()
-            .map(|&(clips, w)| {
-                let leaves = clips
-                    .iter()
-                    .filter(|c| c.3 > 0.0)
-                    .map(|c| (WalkNode::Clip(c), c.3))
-                    .collect();
-                (WalkNode::Inner(leaves), if w > 0.0 { w } else { 0.0 })
-            })
-            .collect(),
-    );
+    let tree = Blend::Node(1.0, nodes.to_vec());
     // The bones a walked clip carries a track for (UO 0x80bab1c's mask).
-    let mut keyed = vec![false; records.len()];
-    for &(clips, _) in nodes.iter().filter(|n| n.1 > 0.0) {
-        for &(_, binding, _, _) in clips.iter().filter(|c| c.3 > 0.0) {
-            for bi in binding.0.iter().flatten() {
-                keyed[*bi] = true;
+    fn mark(node: &Blend, keyed: &mut [bool]) {
+        match node {
+            Blend::Clip((_, binding, _, _)) => {
+                for bi in binding.0.iter().flatten() {
+                    keyed[*bi] = true;
+                }
+            }
+            Blend::Node(_, kids) => {
+                for k in kids.iter().filter(|k| k.weight() > 0.0) {
+                    mark(k, keyed);
+                }
             }
         }
     }
+    let mut keyed = vec![false; records.len()];
+    mark(&tree, &mut keyed);
     walk(&tree, 1.0, records, true, false);
     for (i, r) in records.iter_mut().enumerate() {
         if !keyed[i] {

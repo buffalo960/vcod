@@ -2419,6 +2419,9 @@ fn hitfine<'a>(log: impl Iterator<Item = &'a str>) -> Vec<(String, [f64; 3], [f6
 const HIT_NEAR: f64 = 0.02;
 /// How far a hit-grid cell may sit from retail's along its ray, units.
 const GRID_NEAR: f64 = 0.1;
+/// How far a gunner-grid cell may: every cell of both captures but one
+/// edge cell sits within 0.05 of retail's (cod11-turrets.md 13.9).
+const GUNGRID_NEAR: f64 = 0.05;
 
 /// The captures that log `probe_hitlog`: every hit at retail's time, on the
 /// same victim, location and damage, its point retail's as `fine1` prints
@@ -2521,7 +2524,7 @@ fn hitgrid_rows<'a>(
 /// (`eFlags & 0xc000`) against ours, cell by cell along its ray: the
 /// gunner's own pose, his fire leaves included (`cod11-turrets.md` 13.9).
 /// A row reads `[gungrid] <phase> t=<time> ...`; a cell past
-/// [`GRID_NEAR`] or met by one side only is a row.
+/// [`GUNGRID_NEAR`] or met by one side only is a row.
 fn gungrid_rows<'a>(
     cap: &Capture,
     theirs: impl Iterator<Item = &'a str>,
@@ -2563,7 +2566,7 @@ fn gungrid_rows<'a>(
             if report() {
                 eprintln!("gungrid t={t} cell {j}: {off:?}");
             }
-            if off.is_none_or(|d| d.abs() > GRID_NEAR) {
+            if off.is_none_or(|d| d.abs() > GUNGRID_NEAR) {
                 rows.push(format!(
                     "[gungrid] {phase} t={t} cell {j}: retail {r:?} ours {o:?}"
                 ));
@@ -2685,18 +2688,9 @@ const GUNGRID_15: &[(&str, &str)] = &[
     ("probe_head", "basehead_axis_a_09"),
 ];
 
-/// The re-mount from a crouch in the `crouch` phase: the head-height cells
-/// (row 54) 0.1 to 0.14 off for six frames on UO, and one cell on its first
-/// frames (1.7 on UO, 0.15 and 0.27 on 1.5b) (cod11-turrets.md 13.9, "What
+/// One edge cell (row 36, 12 right) on one frame of 1.5b's yaw sweep, 0.12
+/// off where the rest of the frame is within 0.005 (turrets doc 13.9, "What
 /// is left").
-const GUNGRID_CROUCH_GAP: &str = "the crouched re-mount's few cells (turrets doc 13.9)";
-/// One cell (row 42, 12 right) 2.45 nearer on ours on every frame the
-/// barrel rests at the yaw sweep's right arc (2.6 on UO's first), the same on 1.5b and UO:
-/// ours grazes `bip01 r finger22`'s box 0.22 deep, retail meets the hand's
-/// box behind it (turrets doc 13.9, "What is left").
-const GUNGRID_ARC_GAP: &str = "one edge cell at the right arc (turrets doc 13.9)";
-/// A single cell on one frame of the mount, the yaw or the pitch sweep, 0.1
-/// to 1.6 off (turrets doc 13.9, "What is left").
 const GUNGRID_SWEEP_GAP: &str = "one edge cell on one frame (turrets doc 13.9)";
 
 /// A firing gunner's own pose on UO, every frame he mans the gun: his fire
@@ -2709,22 +2703,7 @@ fn the_gunner_grid_capture_matches_uo_on_mp_carentan() {
         vcod_common::testing::uo_fs,
         &PROTOCOL_V22,
         GUNGRID_UO,
-        &[
-            ("t=33800 cell 9:", GUNGRID_CROUCH_GAP),
-            ("t=33800 cell 13:", GUNGRID_CROUCH_GAP),
-            ("t=33900 cell 22:", GUNGRID_CROUCH_GAP),
-            ("t=33900 cell 23:", GUNGRID_CROUCH_GAP),
-            ("t=33950 cell 23:", GUNGRID_CROUCH_GAP),
-            ("t=34000 cell 22:", GUNGRID_CROUCH_GAP),
-            ("t=34050 cell 22:", GUNGRID_CROUCH_GAP),
-            ("t=34100 cell 22:", GUNGRID_CROUCH_GAP),
-            ("cell 10: retail Some(37.2635", GUNGRID_ARC_GAP),
-            ("t=22050 cell 10:", GUNGRID_ARC_GAP),
-            ("t=20450 cell 14:", GUNGRID_SWEEP_GAP),
-            ("t=21100 cell 17:", GUNGRID_SWEEP_GAP),
-            ("t=24850 cell 23:", GUNGRID_SWEEP_GAP),
-            ("t=24950 cell 18:", GUNGRID_SWEEP_GAP),
-        ],
+        &[],
     );
 }
 
@@ -2739,15 +2718,7 @@ fn the_gunner_grid_capture_matches_15b_on_mp_carentan() {
         },
         &PROTOCOL_V6,
         GUNGRID_15,
-        &[
-            ("t=32550 cell 13:", GUNGRID_CROUCH_GAP),
-            ("t=32600 cell 13:", GUNGRID_CROUCH_GAP),
-            ("cell 10: retail Some(37.2635", GUNGRID_ARC_GAP),
-            ("t=19050 cell 18:", GUNGRID_SWEEP_GAP),
-            ("t=19100 cell 14:", GUNGRID_SWEEP_GAP),
-            ("t=20200 cell 5:", GUNGRID_SWEEP_GAP),
-            ("t=20450 cell 15:", GUNGRID_SWEEP_GAP),
-        ],
+        &[("t=20200 cell 5:", GUNGRID_SWEEP_GAP)],
     );
 }
 
