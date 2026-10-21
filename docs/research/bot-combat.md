@@ -60,10 +60,14 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | wounds, dead in 5 s | bodies | A life's first tick under 50 health while `BotBody::engaged`, and the share of those whose bot died within 5 s. |
 | retreats hurt, dry | bodies | `BotBody::retreating` going from 0 to 1 (hurt) or 2 (dry): retreats started (section 5). |
 | cover hold, lean | `bot_cover_state` | Bot-ticks playing on a held cover spot, and with `ps.lean` off zero (section 4). |
+| grenades thrown | bodies | Frags let go (`BotBody::throws`, counted at the release; a throw put back is not one). |
+| grenade hits, kills | `D;`, `K;` | Lines with means of death `MOD_GRENADE_SPLASH` on another player, by the thrower; kills are the `K;` ones. A frag that kills its own thrower is a suicide. |
+| engagements, clip at start | bodies | `BotBody::engaged` going from off to on with a bullet weapon in hand, and the mean of its clip over its `clipSize` on that tick. |
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
-first. Each row prints twice: the log's columns, then the bodies'.
+first. Each row prints three times: the log's columns, the bodies', then
+the grenades and the clip.
 
 A change to bot behaviour reports its before and after on the same seeds,
 map and gametype, in this doc's section for it.
@@ -517,3 +521,68 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   starts go from 261 to 241 (allies 116, axis 125); kills 5237 to 5265,
   lives 24.8 s to 24.7 s. 1.1's four maps nearly always had cover, so
   little flapped there. The tables above predate the fix.
+
+### 6.5 Grenades and the tactical reload (2026-10-21)
+
+`bot_match` 1.1 (`COD_DIR` at the 1.1 install), seeds 1..=4, 12000 ticks:
+`tdm` on mp_carentan, mp_harbor, mp_depot and mp_brecourt with 12 bots
+(16 matches, every one ended on the score), `dm` on mp_carentan,
+mp_harbor and mp_depot with 10 (12 matches, none ended). Before is the
+harness commit, after the branch tip.
+
+What changed (`Bot::throw_spot`, `Bot::think_cook`, `bots::notices_frag`,
+`Server::lob_probe`):
+
+- A throw no longer goes at an enemy the gun can hit. It goes at one in
+  sight no round has gone at for 1.5 s (`COVER_THROW_TICKS`: behind cover,
+  or never lined up), or at the spot a seen enemy was lost at 0.2 to 3 s
+  ago, if he was slower than 100 units/s then (`LOST_STILL`), 250 to 600
+  units off, from a body under 60 units/s with its eye settled. The 1-in-4
+  roll is gone and the cooldown is 10 s (was 20).
+- `lob_probe` finds no lob while a live teammate stands within the frag's
+  `explosionRadius` of the target.
+- A throw under way follows the enemy it started at, and a lost spot's
+  throw follows nobody: one held for one enemy went at another who came
+  into sight in the hold, released on the old view, and killed its
+  thrower.
+- A 1.1 or 1.5 frag (no `cookOffHold`) still without a clear lob, or with
+  the view off it, once the 16-tick wait is out is put back: the cmd that
+  lets the trigger go asks for the rifle, and the switch cancels the
+  pullback with the clip unspent (`cod11-combat.md` 1.14). A UO frag,
+  its fuse running, is still let go.
+- Another's frag is run from only once noticed: in a clear line and
+  within 60 degrees of the view's yaw, or within 150 units. A bot's own
+  is always run from.
+- A clip under half reloads once no enemy has been in sight for 1 s
+  (`QUIET_RELOAD_TICKS`), retreat or not (before, only a dry clip did
+  outside a retreat); not the pistol, which goes back by then.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | Kills | Suicides | Life s | TTK mean / median ms | Wounds | Dead in 5 s | Retreats dry | Stalled | Thrown | Hits | Grenade kills | Clip at start |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `tdm` before | 2908 | 4 | 22.0 | 1270 / 0 | 2160 | 76% | 102 | 65863 | 1941 | 39 | 5 | 94% |
+| `tdm` after | 3001 | 0 | 20.2 | 1266 / 0 | 2246 | 76% | 61 | 81750 | 720 | 53 | 7 | 96% |
+| `dm` before | 3116 | 0 | 20.1 | 1253 / 300 | 2333 | 74% | 132 | 45053 | 1729 | 9 | 1 | 90% |
+| `dm` after | 3163 | 0 | 19.7 | 1335 / 300 | 2376 | 75% | 75 | 45452 | 1052 | 9 | 0 | 93% |
+
+- VERIFIED (measured, the table): a `tdm` frag hits someone 7.4% of the
+  time against 2.0%, with a third of the throws; grenade kills stay
+  rare (7 of 3001). Dry retreats fall by 40% in both gametypes, and the
+  clip a fight starts on rises 2 to 3 points.
+- VERIFIED (measured, ours, the same `dm` seeds on mp_carentan and
+  mp_harbor, each throw and probe logged): with only the new targets, 7
+  of 10 grenade kills were the thrower's own. All seven released with no
+  clear lob after the wait: one held for an enemy who left while another
+  came into sight; the rest started on the run or crouched, slid or
+  stood up through the switch to a spot where a wall stopped every lob,
+  and the hold let go into it. With the rules above, none.
+- VERIFIED (measured, ours, `tdm` before the noticing rule): run from
+  wherever it lay, no frag killed anyone: 718 thrown, 0 grenade kills.
+- `dm` frags still hit almost nobody (9 of 1052). INFERRED: with no
+  teams every enemy in sight is a candidate, so a throw at one is in
+  front of him and he notices it.
+- `tdm`'s `stalled` count rises 24% while `dm`'s holds. INFERRED: bots
+  stand through a throw's switch and hold, and through a reload they
+  did not do before; read it against this row, not the older tables.
+

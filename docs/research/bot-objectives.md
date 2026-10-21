@@ -487,15 +487,23 @@ files):
     The release waits until the view is on that lob, or within 30
     degrees of the throw's yaw without one, 16 ticks at most (a UO frag
     cooks on meanwhile, with 2.5 s or more left).
-  - `BotView::frag_near`: a live frag or satchel, anyone's, within 400
-    across and 160 up or down. The goal is away from it and the keys run
-    that way, the view still on the fight.
+  - `BotView::frag_near`: a live frag or satchel within 400 across and
+    160 up or down, the bot's own or one it notices (`bots::notices_frag`,
+    since 2026-10-21: in a clear line and within 60 degrees of the view,
+    or within 150; bot-combat.md 6.5). The goal is away from it and the
+    keys run that way, the view still on the fight.
   VERIFIED (measured, ours, 2026-10-15, release `ship_stalls` `UO=1
   SHOOT=1`, `mp_cassino` `tdm`, 6 bots, 120 s, seeds 1 to 39 odd): with
   the turn-away and the release wait alone, 5 of 35 frag kills were the
   thrower's own; with the flight from live frags too, 4 of 17; with the
   lob probe, 0 of 12, among 499 kills. Fewer frags kill at all: the
   probe passes on most throws from indoors, and everyone runs from one.
+- Since 2026-10-21 (bot-combat.md 6.5) a throw goes only where the gun
+  cannot: at an enemy in sight no round has gone at for 1.5 s, or where
+  a slow one was lost 0.2 to 3 s ago; from a body at rest; never with a
+  teammate within the blast of the landing (`Server::lob_probe`). A 1.1
+  or 1.5 frag with no clear lob once the hold's wait is out is put back
+  through a switch to the rifle rather than let go.
 - By 2026-10-16 three releases still went off the probed flight
   (VERIFIED, measured, ours, release `ship_stalls` `UO=1 SHOOT=1`,
   `mp_cassino` `tdm`, 6 bots, 120 s, each throw logged): the release
