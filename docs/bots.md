@@ -185,7 +185,8 @@ its sight. Bots get out when they arrive, when stuck, or after 90 seconds
 - `status` shows a bot's address as `127.0.0.1:-1`.
 - In UO, bots drive vehicles along the infantry graph over ground the hull
   fits, so a tank can still wedge itself; a driver backs off and gets out
-  after four stalls or 8 s without headway, and every rider gets out of a
+  after four stalls or 8 s without headway, a rider with nobody to shoot
+  gives up the same 8 s, and every rider gets out of a
   hull that has scraped something for 5 s, before the engine's 7 s stuck
   kill. A tank sliding into a wall with nobody aboard still destroys
   itself. They never change seats, use the hatch or drive a

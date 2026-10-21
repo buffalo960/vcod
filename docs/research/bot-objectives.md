@@ -1352,7 +1352,10 @@ stops boarding.
   in place under 15 degrees, backs off for 1.5 s with the steer held one
   way; four back-offs, or 8 s of driving, with no 300 units made get it
   out. The window counts ground made, not speed: a hull wedged on a wall
-  bounces, and read off its speed it never stalled.
+  bounces, and read off its speed it never stalled. Ground made counts
+  from where a hold (a fight, a crew wait) left the hull: from the spot
+  before a 5 s fight, seed 25's tank read its drive back across it as
+  headway and dithered round (2540, -2600) past the 12 s gate.
 - The hull's unbroken contact (`SeatView::contact_ms`, the stuck clock
   coduo-vehicles.md 12 "Self-damage" kills it on at 7 s) backs the
   driver off at 2.5 s and gets every rider out at 5 s: a tank sliding
@@ -1399,10 +1402,14 @@ stops boarding.
   (`BotBody::engaged`), as a bot holding still to aim on foot does.
 - Out: a route's end, 5 s in a standing vehicle with nobody to shoot (a
   rider) or with nothing to drive to (a driver), 90 s in the seat, four
-  stalls or 8 s of driving under 300 units, 2 s idle in a vehicle
-  nobody drives, or 5 s of the hull's
-  unbroken contact (10.3). The bot taps use until the server lets it out; a tank holds
-  its driver for 1.5 s after the entry (`VEH_UnlinkPlayer`).
+  stalls or 8 s of driving under 300 units, the same 8 s for a rider
+  with nobody to shoot, 2 s idle in a vehicle nobody drives, or 5 s of
+  the hull's unbroken contact (10.3). Seed 45's gunner, without the
+  rider's own headway window, sat out the driver's 8 s and then the
+  undriven seat's 2 s and walked off past the 12 s gate. The bot taps
+  use until the server lets it out, on one frame in four, its seat's
+  (`level.time / 50 % 4 == seat - 1`, 10.7); a tank holds its driver for
+  1.5 s after the entry (`VEH_UnlinkPlayer`).
 
 ### 10.5 The jeep self-destruct timer outlives no jeep
 
@@ -1511,3 +1518,52 @@ row's two 12 s spells (seeds 9 and 11) are not traced. Each stuck kill
 before killed its riders with the tank as attacker, the stock tdm 815
 error `uo_bots_fight_and_sprint_in_tdm` failed on. That gate plays with
 vehicles on again and passes seeds 1 to 15.
+
+Fourth (2026-10-21), that gate over odd seeds, vehicles on and off
+(`vc_bot_vehicles 0`), release, VERIFIED (measured):
+
+| | on, 1 to 49 | off, 1 to 49 | on, 51 to 63 | off, 51 to 63 |
+|---|---|---|---|---|
+| c8c3fd1f | 17, 19, 33, 45 fail | 1, 13, 19, 31, 33 fail | | |
+| f47dafed | 29, 45 fail | none fail | 63 fails | none fail |
+
+Before: 17 the ledge under a jump edge (bot-navigation.md "Jumps"), 19,
+33 and 13 too few sprint legs (bot-navigation.md section 4, "Pre-aim"),
+45 the gunner's wait (10.4), 1 a plan from across a wall
+(bot-navigation.md section 3), 31 a stall the later games no longer
+reach. On the way, 15 and 25 failed on 10.7's lost exit and the stale
+headway anchor (10.3). After: 29 is a bot on mp_cassino's roofs at
+(4850 to 4950, -1290 to -1440, 256 to 303), a chain of 24-unit jump
+edges each waited on for UO's jump penalty, one jump bouncing back off
+the step; seed 45 on c8c3fd1f stalled at the same roofs. 45 is a tank
+driven back and forth over 350 units near (-150, -400) whose ground made
+from the anchor reached 300 on each reversal, then the driver's walk in
+the same spot. 63 is a bot's own frag. Not traced further.
+`uo_tdm_games_that_stalled_or_never_sprinted` replays seeds 15, 17, 19,
+25 and 33 with vehicles and 1 and 31 without.
+
+### 10.7 Two exits on one frame
+
+INFERRED (the stock script, `pakuo01.pk3` `maps/mp/_tankdrive_gmi.gsc`,
+and the engine notify rule in cod11-gsc-language.md "Engine notifies and
+the trigger queue"): `delayed_process_activate` starts one
+`deactivated(activator)` thread per rider (line 280). Each waits for the
+tank's `"deactivated"`, and one woken by another rider's exit loops back
+to its `waittill` (lines 487-493). `VEH_UnlinkPlayer` raises that notify
+inside the leaving client's cmd (coduo-vehicles.md 11.2), and an engine
+notify only wakes its waiters; they run at the frame's
+`Scr_RunCurrentThreads`. So when two riders leave on one frame, the
+thread the first exit woke is not waiting when the second exit's notify
+goes out, and the second rider's `process_deactivate` never runs: no
+`stop_tank_hud`, `riding_count` not decremented, the seat's field
+(`self.driver` or `self.gunner`) left set. The HUD itself goes, off the
+player's own `vehicle_deactivated` (`tank_hud_destroy_thread`, line 653),
+so the driver's `tank_hud_fireicon_run` lives on and, at the next driver's
+shot, reads the destroyed fire icons (lines 856-869) and threads
+`fadeoff` on them (827-829): VERIFIED (measured, ours,
+`uo_bots_fight_and_sprint_in_tdm` `SEED=15`, 2026-10-21, with the
+riders' headway window in and the seat's exit frames not yet) 75 `dead entity is not an object`
+aborts from tick 1037, after a driver and a gunner left one tank on tick
+938. Not measured on retail, which needs two clients' exits on one
+frame. Bots now press use on frames of their own seat's, so none of
+theirs coincide.

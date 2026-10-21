@@ -460,6 +460,17 @@ over the 18-unit step. Two kinds of edge use it, kept in
   from rest on the foot a body reads pinned on its first tick (closing
   0), so the pinned cue needs a move key held the tick before
   (`bots::tests::a_bot_set_off_from_rest_is_not_pinned`).
+- A body more than 8 units over the foot, and under a step, waits where
+  it stands instead (`nav::tests::a_jump_edge_is_waited_on_from_a_ledge_above_its_foot`).
+  VERIFIED (measured, `uo_bots_fight_and_sprint_in_tdm` `SEED=17`, UO
+  rules, 2026-10-21): mp_cassino's edge from (3648, -1249, 111.4) to
+  (3698, -1200, 128.1) is a jump edge; the graph's walk steps up 17 onto
+  a ledge at 128 about 8 units wide, pins on the 164 block beyond, and
+  jumps from the ledge. A bot pinned on the step's face jumped there
+  instead, landed on the ledge inside the jump penalty, and was sent back
+  down to the foot; from the foot, 53 under the block, its jump peaks at
+  150 and lands it on the ledge again, penalty and all, for 12 s (ticks
+  760 to 999).
 - A pinned walk jumps under a ceiling lower than the jump's 39 units too:
   `jump_clear` looks for room ahead at the height the body rises to, not
   at the full jump's. A floor-bound walk (node to node) also jumps where
@@ -1314,7 +1325,15 @@ else a spot it remembers or heard, section 4), `Roam`, or `Away(threat)`
   arrives, the 8 nearest flat among the nodes more than a jump below the
   body get the same walk. Any plan from a body whose nearest node stands
   more than a step (18) off its height starts the same way
-  (`NavGraph::off_floor`; 2026-10-12c, below). A plan begun on a
+  (`NavGraph::off_floor`; 2026-10-12c, below), and so does the plan
+  after one the body never closed on the first node of (the follower's
+  stuck arm before its first node): VERIFIED (measured,
+  `uo_bots_fight_and_sprint_in_tdm` `SEED=1` with `vc_bot_vehicles 0`,
+  2026-10-21) an unstick spell left a bot in a slot on mp_cassino at
+  (945, -775, 64) whose nearest node, (1008, -767, 64), stands across
+  its east wall; every plan started there and the bot pressed at the
+  wall from tick 1572 to the 12 s gate. With the walked start it plans
+  from (912, -719, 64) and is out at tick 1722. A plan begun on a
   ladder starts at the nearest, by the same score, of the nodes a climb
   of more than a jump leaves from or leads to within two columns
   (`NavGraph::nearest_ladder_end`): the node nearest a body on the rungs
