@@ -534,11 +534,13 @@ fn every_slot_name_switches_the_held_weapon() {
 /// Two frags thrown on vcod-server through `PlayInput` (the grenade slot,
 /// the trigger held and let go), watched until both blow: each frag's
 /// explode plays once off the snapshot drain, as each of retail's does
-/// (`replay::each_retail_explode_plays_one_effect`).
+/// (`replay::each_retail_explode_plays_one_effect`). UO's battle rank 0
+/// hands out one frag, so the test fills the grenade's clip first; UO's
+/// explode arrives as its own `EV_PROJECTILE_EXPLODE`.
 #[test]
 fn each_thrown_frag_explodes_once() {
     use super::input::{Action, Held, PlayInput};
-    use vcod_common::net::event_ids::EV_GRENADE_EXPLODE;
+    use vcod_common::net::event_ids::{EV_GRENADE_EXPLODE, EV_UO_PROJECTILE_EXPLODE};
     use vcod_common::net::flags::ET_MISSILE;
     let Some((fs, p)) = setup() else {
         return;
@@ -554,6 +556,15 @@ fn each_thrown_frag_explodes_once() {
     let q = Rc::new(RefCell::new(common::Queues::default()));
     let (mut net, _) = common::join(&mut sv, &q, &mut now, "axis", "kar98k_mp");
     let weapons = vcod_common::weapon_table::from_configstring(&fs, net.configstring(7));
+    let ps = &net.snapshots().newest().unwrap().ps;
+    let frag = Held::from_ps(ps, p, &weapons).slots[4] as usize;
+    let frag = net
+        .configstring(7)
+        .split(' ')
+        .nth(frag - 1)
+        .unwrap()
+        .to_owned();
+    assert!(sv.test_give_max_ammo(0, &frag), "fill {frag}");
     let mut input = PlayInput::default();
     input.new_gamestate();
     let mut tracker = EventTracker::new();
@@ -574,7 +585,7 @@ fn each_thrown_frag_explodes_once() {
             played += tracker
                 .drain(s, p)
                 .iter()
-                .filter(|e| e.event == EV_GRENADE_EXPLODE)
+                .filter(|e| matches!(e.event, EV_GRENADE_EXPLODE | EV_UO_PROJECTILE_EXPLODE))
                 .count();
         }
     };
