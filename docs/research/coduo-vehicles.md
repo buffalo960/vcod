@@ -976,6 +976,21 @@ stood off retail's by up to 0.84 degrees on the change's snapshot.
   `vehicle_motion` (`idle`, `forward`, `reversing`) (VERIFIED decompile),
   and `playeranim.script`'s clauses pick them; the selection runs for a
   rider though it is off the ground (INFERRED; the replay's legs match).
+- Slot 4 takes `ps.vehMotion` (`ps+0x61c`) as it stands (VERIFIED
+  decompile, 0x1c973), and its value table opens on `** UNUSED **`:
+  `.data` 0xa92a0 holds `** UNUSED **`, `IDLE`, `FORWARD`, `REVERSING`,
+  each with a -1 (VERIFIED, file bytes and `.rel.dyn`).
+  `VEH_LinkPlayer` writes `vehPos` and `vehType` but not `vehMotion`
+  (11.1), the exit keeps it (11.2) and the spawn's memset zeroes it
+  (11.7), so a boarding after a spawn runs its cmds before the end frame
+  under motion 0, which no `vehicle_motion` clause names (INFERRED, off
+  the three). The seat's legs then wait for the end frame's `vehMotion` and
+  the next frame's cmds: the jeep driver boarded by a use cmd at 29716,
+  with a seated cmd at 29733 in the same frame, is sent with the on-foot
+  idle (697) at 29750 and the seat's (94) at 29800, and his bones begin
+  the glide down a frame after vcod's did (VERIFIED, capture 2026-10-21,
+  `mp_peaks-jeep-glide-uo.txt`). vcod: the boarding keeps the sim's
+  `veh_motion` and `seat_conditions` names no motion for 0.
 
 ### 11.5 A spawn out of a seat
 
@@ -2130,6 +2145,56 @@ face.
       `vehicle_ab`'s seated origins, so the lag is in what his marks
       read (the `G_RunClient` refresh above), not in his placement
       (INFERRED). Not ported.
+    - **The glides on the jeep.** A fresh retail jeep run (2026-10-21,
+      port 34691, `probe_bones 1`, seat changes at 29750, 41900, 53900,
+      out at 65900) cut to every glide and the exit's fall is
+      `mp_peaks-jeep-glide-uo.txt`, the tank's exit from the same day
+      `mp_cassino-tank-exit-uo.txt`; both keep the two net probes'
+      `CMDS` lines, which `vehicle_armor_ab` replays as each client's
+      cmd times (`Capture::cmds`). Against them (VERIFIED, replay,
+      `the_jeep_rider_glides_into_each_seat_and_falls_out_as_on_retail`,
+      `the_tank_driver_falls_off_the_hull_as_on_retail`):
+      - The boarding's 12 units, ours a frame ahead, was the seat's legs
+        set a frame early (11.4, `vehMotion`); with the motion held every
+        bone of the glide sits within the print's 0.01 of retail's.
+      - The gunner's seat glides within 0.02 on every frame: the marks'
+        frame lag while the gun swings is gone since `G_RunClient`'s seat
+        link refresh (above).
+      - The exit's fall, 0.3 to 1.5 off in z on the tank before, was the
+        replay's cmd split, not the engine's: the harness sent 16 ms
+        cmds up to the next frame's time, where retail's 60 Hz client
+        had run through 33 ms past the snapshot (ct 65933 at 65950).
+        On the capture's own cmd times both bodies fall frame for frame
+        to the print and land on retail's spot (jeep x -4048.06).
+      - Left, as the gates' `JEEP_GLIDE_GAPS` and `TANK_EXIT_GAPS`: the
+        first frame after each change that hides or shows the rider's
+        own weapon (the boarding 29800, 2.36 on `bip01 l hand`; the
+        passenger's seat 53950, 2.64 on the head; the jeep's exit 65950,
+        25.9 on the left hand, and 66000, 0.86; the tank's exit 65750 and
+        65800, 0.95 and 0.87). The legs and pelvis match on each; the
+        spine up does not. A change between two seats that hold no
+        weapon (driver to gunner, gunner back to driver) matches.
+        VERIFIED decompile, `BG_UpdatePlayerDObj` (0x1f556): a rider whose
+        seat `BG_AllowPlayerWeaponAtVehiclePos` refuses builds his DObj
+        with weapon 0, and a weapon other than the one the DObj was built
+        with frees it and builds a new one. INFERRED: the new DObj's
+        first builds pose the controls apart from the record vcod eases;
+        not traced. VERIFIED, vcod measurement: holding every build's
+        controls unchanged since the spawn puts 29800 within 0.22 and
+        65950 within 0.10 of retail's but breaks every other frame;
+        zeroed controls, or the record held without its ease, for that
+        frame's builds change nothing.
+      - Not gated: the passenger's 55400 and 55450 read the body turned
+        23 units from ours; retail's net probe stalled there (no cmd ran
+        from 55250 to 55416, its `ct=` pairs), and the harness sends
+        cmds through a stall.
+      - Open: the tank driver's idle in the fresh run sits a steady 100
+        ms of clip ahead of ours through the first stint (up to 1.68
+        units on the hands, 0.34 into the gunner's glide), with the
+        shooter placed at 23500 as on retail; with the shooter joined
+        beside the target (placed at 19500) and 16 ms cmds every bone of
+        the stint matches. The silhouette gate's committed tank fixture
+        does not show it (one profile a seat). Not traced.
   `vehicle_armor_ab`'s silhouette tests compare every seat ray for ray
   within a quarter unit, the stints after the gunner's seat included.
 - **The inflictor swap.** `Bullet_Fire_Extended` (0x7b13c..0x7b1ae) uses

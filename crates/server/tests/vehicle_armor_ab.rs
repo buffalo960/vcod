@@ -888,7 +888,7 @@ fn compare_glide(fixture: &str, ours: &[String], gaps: &[i32]) {
 /// weapon (`BG_UpdatePlayerDObj` rebuilds the DObj on a weapon change:
 /// boarding, the passenger's seat, the exit) and, for the exit, the frame
 /// after: the upper body parts from retail's, the legs and body do not
-/// (coduo-vehicles.md 13, "The first frame after a weapon change").
+/// (coduo-vehicles.md 13, "The glides on the jeep").
 const JEEP_GLIDE_GAPS: [i32; 4] = [29800, 53950, 65950, 66000];
 
 /// The jeep's rider into each seat and out, against retail's bones: the
