@@ -1139,6 +1139,35 @@ ms after the jeep's first move in the standing run (VERIFIED, capture);
 the gate matches each one's time from that move, alias and snapped
 origin on ours (`compare_impacts`).
 
+- **The first drop.** The probe sets the victim down 8 over the
+  jeep's line on the first frame he plays, and he falls about 14 units to rest
+  before the second placement a second later (VERIFIED, `try_victim` in
+  `probe_vehicle_ram.gsc` and the captures). The four retail runs fall
+  differently from the same spot (VERIFIED, captures: z at the first four
+  frames past the placement, stand -76.13, -77.47, -82.77, -90.05; prone
+  -76.11, -78.40, -82.69, -88.98; prone under a teammate -75.81, -79.64,
+  -81.12, -89.06; bail -76.29, -78.78, -83.23, -89.77). The vertical
+  drops read as a fall from rest after a whole number of the probe
+  client's ~16.7 ms cmds: two, four and eight by the first three frames
+  standing, one, six and seven under the teammate, two, five and eight
+  prone (INFERRED, `400 t^2` against each drop). In the bail run he also
+  slides 13.9 units/s across the ground from the first frame on. Nothing
+  in the gsc moves him sideways, so that is velocity his spawn left: a
+  frame of his cmds ran between the spawn and the placement (INFERRED,
+  `replace_victim`'s comment; the spawn point is not logged). Ours runs
+  the probe's 16, 16 and 18 ms cmds and he carries no velocity into the
+  placement, so his first drop reads two, five and eight cmds from rest on
+  every run (VERIFIED, `RUNOVER_DUMP` of all four tests).
+  That is retail's prone run to the hundredth, rest spot included
+  (VERIFIED, the gate). Joining him later moves none of it (VERIFIED,
+  measured on ours): with our victim placed at retail's
+  7850, 7900 and 7950 ms instead of 2900, the rows are the same lines at
+  the shifted times. `vehicle_runover_ab` compares the prone run's first
+  drop line for line (`compare_first_drop`) and names the other three in
+  `FIRST_DROP_GAPS`. Comparing them needs a recapture with the victim's
+  `CMDS` lines replayed through `ProbeHold::times`, plus his spawn
+  pinned.
+
 Measured, retail UO 1.51b, 2026-10-20, the same probe with
 `--probe-vehicle bail` for the driver (out at full throttle a second into
 the drive) and the victim 300 ahead (fixture
