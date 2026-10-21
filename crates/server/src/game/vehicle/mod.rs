@@ -201,8 +201,9 @@ pub struct Vehicles {
     pub infos: VehicleInfos,
     pub slots: [Option<EntId>; MAX_VEHICLES],
     pub live: HashMap<EntId, Vehicle>,
-    /// `fireTurret`, `fireAltTurret` and `fireGunner` calls this frame, for
-    /// the server to trace (it holds the bodies).
+    /// `fireTurret`, `fireAltTurret` and `fireGunner` calls on a bullet gun
+    /// this frame, for the server to trace (it holds the bodies); a shell
+    /// gun fires inside the call (`fire::launch_shell`).
     pub fire_ops: Vec<(EntId, Gun)>,
     /// Vehicles whose health ran out outside a builtin, for
     /// `Scr_Vehicle_Die` ([`die::drain`]).

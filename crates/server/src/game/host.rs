@@ -2219,7 +2219,8 @@ impl Host for GameHost {
     }
 
     /// The field write, then `Scr_SetOrigin`'s link (0x5c64f) for an
-    /// `origin` on an entity with no client: the setter script reaches and
+    /// `origin` on an entity with no client (on a missile its `G_SetOrigin`
+    /// stops the flight, `Missiles::set_origin`): the setter script reaches and
     /// the one every engine move here (an item's flight, a drop, a placement)
     /// stands in for. `angles` has no link behind it (`Scr_SetAngles`).
     fn set_field(
@@ -2231,6 +2232,9 @@ impl Host for GameHost {
     ) -> Result<(), ErrorKind> {
         self.write_field(cx, ent, field, value)?;
         if ent.0 < FIRST_HUD_ELEM && cx.resolve_folded(field) == "origin" {
+            if let Value::Vector(v) = value {
+                self.missiles.set_origin(ent, glam::Vec3::from_array(v));
+            }
             self.link_entity(cx, ent);
         }
         Ok(())
