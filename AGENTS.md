@@ -234,7 +234,7 @@ check.
   `TEAMPLAY=`, `AWARE=`, `FOOTWORK=`, `WARY=` arms) and prints kills,
   deaths, damage, time-to-kill, wins, objective actions, lives, wounds
   survived, retreats, cover holds, peeks and hunts and the deaths after
-  them, hits answered, deaths blindsided, stalls, shots, hits, accuracy
+  them, hits answered, deaths blindsided, stalls (split from deliberate holds), shots, hits, accuracy
   and sight to first shot per team, skill and arm. It is the one bot measuring tool:
   extend it rather than add another example. A bot behaviour change
   reports its before and after on the same seeds in

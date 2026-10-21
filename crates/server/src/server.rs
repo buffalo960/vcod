@@ -6143,6 +6143,8 @@ impl Server {
             throws: self.bots.get(&slot).map_or(0, |b| b.throws()),
             yaw: sim.view_angles()[1],
             walking: self.bots.get(&slot).is_some_and(|b| b.walking()),
+            holds_cover: self.bots.get(&slot).is_some_and(|b| b.holds_cover()),
+            on_objective: self.bots.get(&slot).is_some_and(|b| b.on_objective()),
         })
     }
 
