@@ -68,15 +68,20 @@ fn seat_conditions(seat: Option<Seat>) -> (Option<String>, Option<String>, Optio
         5 => "flak88",
         _ => "jeep",
     };
+    // Slot 4 takes `vehMotion` as it stands, and its value table opens on
+    // `** UNUSED **` (game.mp.uo .data 0xa92a0): a first boarding's cmds
+    // before the end frame sets the motion match no `vehicle_motion`
+    // clause (coduo-vehicles.md 11.4).
     let motion = match s.motion {
-        2 => "forward",
-        3 => "reversing",
-        _ => "idle",
+        1 => Some("idle"),
+        2 => Some("forward"),
+        3 => Some("reversing"),
+        _ => None,
     };
     (
         Some(mounted),
         Some(vehicle.to_string()),
-        Some(motion.to_string()),
+        motion.map(str::to_string),
     )
 }
 
