@@ -240,13 +240,18 @@ impl LegsProbe {
 
     /// A cmd as it went on the wire, beside the world angles it was built
     /// from.
+    /// Before the placement it goes in as `!pcmd`, without `ms`.
     pub fn record(&mut self, now: Instant, sent: UserCmd, world: [i32; 3]) {
-        let Some(ms) = self.ms(now) else { return };
         if self.done {
             return;
         }
+        let head = match self.ms(now) {
+            Some(ms) => format!("!cmd ms={ms}"),
+            None if self.seen.is_some() => "!pcmd".to_string(),
+            None => return,
+        };
         self.lines.push(format!(
-            "!cmd ms={ms} st={} buttons={} wbuttons={} weapon={} up={} forward={} right={} angles={},{},{} world={},{},{}",
+            "{head} st={} buttons={} wbuttons={} weapon={} up={} forward={} right={} angles={},{},{} world={},{},{}",
             sent.server_time,
             sent.buttons,
             sent.wbuttons,
@@ -264,25 +269,28 @@ impl LegsProbe {
     }
 
     /// Takes the placement off the first snapshot that stands on the mark,
-    /// and logs every snapshot after it. True once the script has run out
-    /// and a second has passed.
+    /// and logs every snapshot: `!psnap` from the join to the placement,
+    /// `!snap` from it on. True once the script has run out and a second
+    /// has passed.
     pub fn observe(&mut self, now: Instant, s: &Snapshot) -> bool {
         let p = crate::probe::wire();
         let o = s.ps.origin(p);
-        if self.placed.is_none() {
-            if (o[0] - LEGS_SPOT[0]).abs() < 0.5 && (o[1] - LEGS_SPOT[1]).abs() < 0.5 {
-                self.placed = Some((now, s.server_time));
-                println!("legs: placed at serverTime {}", s.server_time);
-            } else {
-                return false;
-            }
+        if self.placed.is_none()
+            && (o[0] - LEGS_SPOT[0]).abs() < 0.5
+            && (o[1] - LEGS_SPOT[1]).abs() < 0.5
+        {
+            self.placed = Some((now, s.server_time));
+            println!("legs: placed at serverTime {}", s.server_time);
         }
         if self.seen != Some(s.message_num) {
             self.seen = Some(s.message_num);
             let v = [0, 1, 2].map(|i| s.ps.field_f32(p, &format!("velocity[{i}]")));
-            let label = self.step(now).map_or("end", |st| st.label);
+            let (head, label) = match self.placed {
+                Some(_) => ("!snap", self.step(now).map_or("end", |st| st.label)),
+                None => ("!psnap", "join"),
+            };
             self.lines.push(format!(
-                "!snap msg={} t={} ct={} step={label} origin={},{},{} vel={},{},{} legs={} torso={} movementDir={} pm_flags={} view={},{} weaponstate={} weapAnim={}",
+                "{head} msg={} t={} ct={} step={label} origin={},{},{} vel={},{},{} legs={} torso={} movementDir={} pm_flags={} view={},{} weaponstate={} weapAnim={} pm_type={} delta={},{}",
                 s.message_num,
                 s.server_time,
                 s.ps.field_i32(p, "commandTime"),
@@ -300,6 +308,9 @@ impl LegsProbe {
                 s.ps.viewangles(p)[1],
                 s.ps.field_i32(p, "weaponstate"),
                 s.ps.field_i32(p, "weapAnim"),
+                s.ps.field_i32(p, "pm_type"),
+                s.ps.field_i32(p, "delta_angles[0]"),
+                s.ps.field_i32(p, "delta_angles[1]"),
             ));
         }
         let total: u128 = self.script.iter().map(|s| s.ms).sum();
@@ -365,7 +376,8 @@ impl LegsProbe {
         out.push_str(
             "# !cmd is a usercmd as it went on the wire (angles rebased on delta_angles; world=\n\
              # the angles before), ms after the placement. !snap is the playerstate per\n\
-             # snapshot: t serverTime, ct commandTime, legs/torso the wire anim values.\n",
+             # snapshot: t serverTime, ct commandTime, legs/torso the wire anim values.\n\
+             # !pcmd and !psnap are the same from the join to the placement.\n",
         );
         if !self.done {
             out.push_str("# BROKEN the run ended before the script did\n");
