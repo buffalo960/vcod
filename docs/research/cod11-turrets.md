@@ -2140,9 +2140,17 @@ frame, at weight 0).
   a degree off retail's on the knockback's first frame, the frame its legs
   take clip 157 at weight 0, the same on all three; which input turns it
   is not found.
+- vcod measurement, 2026-10-21 (`TURRET_REPORT=1`): with the legs and
+  torso ramps starting a node at 0 from `0.001 * goal` (13.9, "The
+  weights across frames") the kill lands on retail's bits on
+  `-hitgrid-15`, `-hitgrid-uo-spawn2` and `-hitgrid-uo-ground`, and sits
+  2e-6 off on `-hitfine-uo` (30200), 1.7e-4 off on `-hitgrid-uo` and on
+  1.1d's `-hitgrid` (30450). Every grid cell is within 0.0011 of retail's
+  on 1.1d and within 7e-5 on 1.5b and UO. INFERRED: the turn was clip 157
+  at weight 0 where retail's setter had raised it to 0.001.
 - vcod: `turret_ab`'s `hit_gate` replays each capture as `spawn_gate` does
   and holds the target's playerstate, each hit's point (to the bit, 13.8)
-  and each grid cell (0.1) to retail's; the gunner's own rows are the
+  and each grid cell (`GRID_NEAR`, 0.005) to retail's; the gunner's own rows are the
   `-spawn` gates'.
 
 ### 13.7 The frame ahead: UO's spawn DObj and the script trace
@@ -2277,7 +2285,7 @@ module, after the fire's muzzle stores (0x5aa90).
 vcod: `combat::bullet_range` (`UO_BULLET_RANGE` on UO), `combat::bullet_end`,
 `turret::AimRule::fire_angles`, `turret::muzzle`. `turret_ab`'s hit rows
 must be retail's to the bit. Each gate names the rows it tolerates
-(`KNOCKBACK_GAP`), and those stay within `HIT_NEAR` (0.02).
+(`KNOCKBACK_GAP`), and those stay within `HIT_NEAR` (0.001).
 
 ### 13.9 The gunner's own pose: the sync group's time and the blend out
 
@@ -2330,7 +2338,7 @@ grid of `bulletTrace`s through his back along the gun's base forward
 (rows 30..54 over his origin, 6 apart) and logs each cell's distance to
 him (`probe_turret.gsc` gungrid). `turret_ab`'s
 `the_gunner_grid_capture_matches_*` replay them on retail's clock and
-hold every cell on a mounted frame within `GUNGRID_NEAR` (0.05). A first
+hold every cell on a mounted frame within `GUNGRID_NEAR` (0.0005). A first
 1.5b take had a 200 ms client stall at 27600 and a second the gunner off
 the gun by 4.8 at the first snapshot; both were discarded (the captures
 are the third).
@@ -2355,7 +2363,7 @@ Ghidra's addresses, 0x10000 over the file's): each row and leaf goal
 goes to `trap_XAnimSetGoalWeight` with a blend time of `1 / (1000 /
 level.frametime * |weight - goal|)` (constants 1.0 at 0xb1578, 1000.0 at
 0xb157c, `level+0x1f4`), or 0 when that rate is 0 (0.0 at 0xb1574), and
-rate 1.0. VERIFIED, 1.5b `cod_lnxded` 0x080bd674: the setter keeps
+rate 1.0. VERIFIED, 1.1d `cod_lnxded` 0x080bd674 (1.5b 0x80cb20e, UO 0x80c05a2): the setter keeps
 `|goal - weight| * time` as the node's remaining time, sets the weight
 to the goal under 0.001, and raises a weight of 0 to `0.001 * goal`.
 INFERRED: the remaining time is one frame, so every leaf (from
@@ -2419,11 +2427,11 @@ none of them, so they stand beside the blend. The rows walked first are
 walks past nothing.
 
 vcod: `GunnerPlacement::rows` (each row's weight and its leaves', engine
-order) and `passed` (the rows walked past, at the first pass's goals);
-`GunnerPlacement::posed_rows` puts the passed ones at 0.001 times their
-goals ahead of the blend on 1.5 and UO (`ClientSim::set_gunner_blend`),
-and `pose_player` hands the group to the walk as a node over row nodes
-(`skeleton::Blend`, `PoseBuffer::blend_tree`).
+order), `passed` (the rows walked past, at the first pass's goals) and
+`walked` (both sets' row nodes); `pose_player` hands the group to the
+walk as a node over row nodes (`skeleton::Blend`,
+`PoseBuffer::blend_tree`). On 1.5 and UO the rows posed are the carried
+weights below.
 
 vcod measurement (`TURRET_REPORT=1`): before either change every frame
 on two rows sat 0.01 to 0.03 off, frames on `15up` alone exact. The
@@ -2437,15 +2445,76 @@ re-mount (UO up to 1.7 off before, 1.5b 0.27) sits within 0.021 and the
 mount's frames within 0.05, every frame of both captures within 0.05
 but one cell.
 
-#### What is left
+#### The weights across frames
 
-- vcod measurement: one edge cell on one frame, 1.5b 20200 cell 5 (row
-  36, 12 right) 0.12 off while the rest of the frame is within 0.005.
-- vcod measurement: frames where the blend changes rows or columns (the
-  mount, the crouch re-mount, column changes in the sweeps) read 0.01 to
-  0.05 off. INFERRED, 0x80c05a2: a leaf entering the blend stands at
-  `0.001 * goal` until the weight step and one leaving keeps its weight
-  under the strict clear, which vcod does not keep across frames.
+VERIFIED, game.mp.uo (symbols): `G_RunFrame` (0x69c21) runs
+`Scr_RunCurrentThreads`, then `G_XAnimUpdate` (0x69983), then the entity
+pass and each client's `ClientEndFrame`, whose `turret_think_client`
+reaches the placement (0x6bb49 into 0x6ac06). `G_XAnimUpdate` calls
+`trap_DObjInitServerTime` (syscall 0x71) on every entity with a DObj,
+then `G_DObjUpdateServerTime` (0x70), each with `0.001 *
+level.frametime`.
+
+VERIFIED, `coduo_lnxded`: syscall 0x71 is 0x808eb63 into 0x80bf11c and
+the weight step 0x80bcc1e on the node record's second half (`+0x34` goal
+time, `+0x38` goal, `+0x3c` weight; every caller of 0x80c0c82, which
+picks the half, passes 1). The step copies the time to the old time, then
+lands the weight on the goal and zeroes the goal time when the goal time
+is under the step plus 0.001 (0x80ea1d4), else adds `(goal - weight) *
+dt / goalTime`, raises a weight under 1e-6 (0x80ea1d8) to `0.001 *
+goal`, and takes `dt` off the goal time. It recurses into the children
+of a node with weight or goal; under a node with neither, 0x80bca32 lands
+each descendant on its goal at once and frees those left at 0. VERIFIED,
+1.5b `cod_lnxded` 0x80c788a and 1.1d 0x80bb130: the same step. VERIFIED,
+0x80bef88 (`trap_XAnimGetWeight`, syscall 0x6c) reads the weight and
+0x80be810 (`trap_XAnimCalcAbsDelta` 0x65 through 0x80bf696, which sets
+0x84561a0) the goal; the tree walk 0x80bdbdc reads the weight. VERIFIED,
+0x80bfc22 under the strict clear: a node counts as active when every
+ancestor has weight (0x80bfa7c) and it has weight with a weighted leaf at
+or below it (0x80bfafc). VERIFIED, 0x80c1072: a goal under 0.001
+(0x80ea578) is taken as 0.
+
+INFERRED, off those: the placement's search and the gunner's origin read
+the goals, and a trace reads the weights. The second pass's goal time is
+one frame, so the next step lands every kept node on its goal; the
+strict clear sends every other node to 0 at once. Until that step, so
+for every trace in the next frame's thread pass and cmds, a kept row or
+leaf reads the goal the last placement but one gave it, a row or leaf
+the placement added reads `0.001` times its first pass's goal, and one
+it dropped keeps its weight. A group the legs leave keeps its rows at
+their goals through every later step, and the DObj keeps them past a
+dismount, so a re-mount on the same life finds them.
+
+The legs and torso anims' own setter does the same (1.1d 0x080bd674,
+1.5b 0x80cb20e, UO 0x80c05a2): a node at 0 starts its ramp at `0.001 *
+goal`, its goal time the whole distance's (cod11-movers.md 15, "The
+weight ramp"). INFERRED: a body traced before the next step reads a clip
+just set at 0.001, not 0.
+
+vcod: `turretpose::GunnerTree` holds a 1.5 or UO gunner's rows and
+leaves as the anim info does: `GunnerTree::place` runs the strict clear,
+the first pass, the strict clear and the second pass on
+`GunnerPlacement::walked`, `GunnerTree::step` the weight step.
+`ClientSim::set_gunner_blend` places and hands the pose the result at
+once; `commit_pose` steps at each end frame, ahead of the placement. The
+tree lives until the next spawn (INFERRED, off UO's `G_DObjUpdate`
+rebuilding the DObj when the spawn sets the model, 13.7). 1.1d's gunner
+keeps the placement's rows as before. `animclock`'s `Ramp::raised` starts
+a node at 0 from `0.001 * goal`. `pose_player` matches the current and
+the left turret group to legs layers by node: on a group's first frame
+its layer reads weight 0 and drops out, and the layer before it (the
+idle at the mount, the aim group at the first shot) poses as itself.
+
+vcod measurement, 2026-10-21 (`TURRET_REPORT=1`, both gunner-grid
+captures): before, 20 UO frames and 22 1.5b frames had a cell past 0.005,
+up to 0.049 (UO 33700, the crouch re-mount) and 0.12 (1.5b 20200 cell
+5); the mount's frames 0.01 to 0.04, each row or column change 0.007 to
+0.036. The node match and the carried rows alone left the mount's frames
+and the group changes at 0.008 to 0.039; the setter's 0.001 start on the
+legs ramp put every cell but the re-mount's first frame (UO 0.0063)
+within 0.005; keeping the rows past the dismount put every cell of both
+captures within 0.0001 (UO 5.7e-5, 1.5b 8.4e-5). `turret_ab` holds the
+gunner grids to `GUNGRID_NEAR` (0.0005) with no gap.
 
 ## 14. The client
 

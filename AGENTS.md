@@ -967,9 +967,12 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   fire group its leaves' weighted mean, `set_sync_frequency`), not its seconds
   (combat doc 3.1, "The clip's float time"). A gunner's turret group is a
   node over row nodes (`skeleton::Blend`), each row normalized to its
-  weight, and on 1.5 and UO the rows the placement walked past stand at
-  0.001 beside them (`GunnerPlacement::posed_rows`, turrets doc 13.9,
-  "The rows").
+  weight. On 1.5 and UO its rows and leaves carry their weights from
+  frame to frame (`turretpose::GunnerTree`, turrets doc 13.9, "The
+  weights across frames"): a trace before the next end frame reads last
+  frame's goals, a row or leaf just added at 0.001 times its goal, one
+  just dropped at its old weight. A node any setter starts from 0 ramps
+  from `0.001 * goal` (`Ramp::raised`), so a clip just set never reads 0.
 - The 24/30/32 pt fonts span two or three atlas pages per glyph, named in the
   `.dat`. HUD colours are display values, scaled into the framebuffer by
   the material's gen (`colour_scale`) in the HUD pass.

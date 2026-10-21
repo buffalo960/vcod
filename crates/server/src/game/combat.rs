@@ -1344,8 +1344,9 @@ pub struct BodyPose {
     pub input: vcod_common::playerpose::BodyInput,
     pub angles: vcod_common::playerpose::BodyAngles,
     pub slope: vcod_common::playerpose::BodySlope,
-    /// A gunner's legs blend, the turret placement's rows.
-    pub turret_leaves: Option<Vec<vcod_common::turretpose::TurretRow>>,
+    /// A gunner's legs blend: the turret group and the rows its placement
+    /// gave it.
+    pub turret_leaves: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
     /// `ClientSim::gunner_left`.
     pub turret_left: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
     /// A UO rider's seat: the frame the body is posed in and the
@@ -1397,7 +1398,11 @@ impl BodyPose {
             // Down positive, as `descend_aim` reads it; only a gunner with no
             // placement blend descends an aim group.
             group_pitch: vcod_common::pmove::aim::angle_normalize_180(self.input.view[0]),
-            turret_leaves: self.turret_leaves.as_deref().filter(|_| mounted),
+            turret_leaves: self
+                .turret_leaves
+                .as_ref()
+                .map(|(n, l)| (*n, l.as_slice()))
+                .filter(|_| mounted),
             turret_left: self
                 .turret_left
                 .as_ref()

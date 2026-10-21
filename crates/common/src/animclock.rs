@@ -208,6 +208,19 @@ impl Ramp {
         }
     }
 
+    /// The setter's ramp from a weight of `from` over `ms`: a node at 0 with
+    /// a goal starts at `0.001 * to` (1.1d 0x080bd7e9, 1.5b 0x80cb20e, UO
+    /// 0x80c05a2), its time still the whole distance's. A body traced before
+    /// the next frame's step reads that, not 0 (cod11-turrets.md 13.9).
+    fn raised(from: f32, to: f32, start_ms: i32, ms: f32) -> Ramp {
+        let start = if from == 0.0 && ms > 0.0 {
+            (f64::from(0.001f32) * f64::from(to)) as f32
+        } else {
+            from
+        };
+        Ramp::new(start, to, start_ms, ms)
+    }
+
     fn at(&self, now_ms: i32) -> f32 {
         if self.ms <= 0.0 {
             return self.to;
@@ -596,7 +609,7 @@ impl ChannelClock {
                 sync: false,
             },
         };
-        self.weight = Ramp::new(from, 1.0, now_ms, (1.0 - from) * blend);
+        self.weight = Ramp::raised(from, 1.0, now_ms, (1.0 - from) * blend);
         if !legs {
             let (torso, legs) = if new_index == 0 {
                 (0.0, 1.0)
@@ -781,7 +794,7 @@ fn parent(anims: &PlayerAnims, id: usize) -> Option<usize> {
 /// to `to` over `|to - weight| * blend_ms`.
 fn goal(ramp: Ramp, to: f32, now_ms: i32, blend_ms: f32) -> Ramp {
     let from = ramp.at(now_ms);
-    Ramp::new(from, to, now_ms, (to - from).abs() * blend_ms)
+    Ramp::raised(from, to, now_ms, (to - from).abs() * blend_ms)
 }
 
 /// `lf->animationTime`, the blend a new anim gets (0x2a698..0x2a855). The
@@ -979,6 +992,13 @@ mod tests {
         assert_eq!(r.at(1100), 0.625);
         assert_eq!(r.at(1300), 1.0);
         assert_eq!(Ramp::new(0.0, 1.0, 1000, 0.0).at(1000), 1.0);
+        // The setter raises a node at 0 to 0.001 of its goal, its time the
+        // whole distance's; at once with no blend.
+        let r = Ramp::raised(0.0, 1.0, 1000, 200.0);
+        assert_eq!(r.at(1000), 0.001);
+        assert!((r.at(1100) - 0.5005).abs() < 1e-6);
+        assert_eq!(r.at(1200), 1.0);
+        assert_eq!(Ramp::raised(0.0, 1.0, 1000, 0.0).at(1000), 1.0);
     }
 
     /// The first anim a stock event clause names on `torso` or the legs.
@@ -1136,9 +1156,10 @@ mod tests {
         c.update(&anims, false, 0, &seen(0.0, 0), at(1000));
         assert_eq!(c.node_weights(1000), NodeWeights::default());
         c.update(&anims, false, fire, &seen(0.0, 0), at(1000));
+        // The torso node starts from the setter's 0.001.
         let w = c.node_weights(1015);
         assert!(
-            (w.torso - 0.5).abs() < 1e-6 && (w.legs - 0.5).abs() < 1e-6,
+            (w.torso - 0.5005).abs() < 1e-6 && (w.legs - 0.5).abs() < 1e-6,
             "{w:?}"
         );
         assert_eq!(
@@ -1180,7 +1201,7 @@ mod tests {
         legs.update_windowed(&anims, true, crouch, &seen(0.0, 0), at(2000), &mut window);
         assert_eq!(window, 2400);
         torso.update_windowed(&anims, false, fire, &seen(0.0, 0), at(2100), &mut window);
-        assert!((weight(&torso, 2250) - 0.5).abs() < 1e-6);
+        assert!((weight(&torso, 2250) - 0.5005).abs() < 1e-6);
         // 1.1's setter keeps the fire anim's own blend.
         let mut plain = ChannelClock::default();
         plain.update(&anims, false, fire, &seen(0.0, 0), at(2100));

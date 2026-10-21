@@ -1558,6 +1558,13 @@ VERIFIED, vcod measurement, `legs_ab`: runbk, idle and runbk again on three
 end frames in a row read 4.79 units and 14.5 degrees off retail's with every
 ramp over the whole blend time and every fading clip re-ramped at each
 change, and 0.23 and 0.54 with the rule above.
+INFERRED, off the setter's raise: a node set from 0 runs from `0.001 *
+goal`, not from 0, over the whole distance's time. vcod:
+`animclock::Ramp::raised`. VERIFIED, vcod measurement, 2026-10-21: the
+MG42 mount and the first frame of each aim and fire group moved from
+0.008 to 0.039 off retail's gunner grid to within 0.005, and the
+knockback kills of `cod11-turrets.md` 13.6 onto or within 2e-4 of
+retail's points (turrets doc 13.9, "The weights across frames").
 
 VERIFIED, retail capture 2026-10-12:
 `crates/server/tests/fixtures/movers/mp_carentan-dm-legs.txt` (the server

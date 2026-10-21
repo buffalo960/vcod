@@ -261,14 +261,15 @@ pub struct ClientSim {
     /// cmd by cmd: what a weapon event raised in the next pmove selects by
     /// on 1.1 (player-model-anim-system.md, "The weapon event's movetype").
     pub footsteps_movetype: vcod_common::animscript::Movetype,
-    /// The turret placement's rows and leaves for the gun this client mans,
-    /// which its legs pose by while mounted.
-    pub gunner_leaves: Option<Vec<vcod_common::turretpose::TurretRow>>,
+    /// The turret group the placement last set, with its rows and leaves
+    /// for the gun this client mans, which its legs pose by while mounted.
+    pub gunner_leaves: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
     /// The turret group the placement last set before the current one, with
     /// its leaves: what the legs blend out of on an aim-fire change.
     pub gunner_left: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
-    /// The group `gunner_leaves` sit under.
-    gunner_node: Option<usize>,
+    /// A 1.5 or UO gunner's turret rows and leaves as the anim info carries
+    /// them from frame to frame (cod11-turrets.md 13.9).
+    gunner_tree: vcod_common::turretpose::GunnerTree,
     /// The takeoff anim a move raised since the last `update_anims`, and the
     /// hold-clock time its timer was set on: the cmd's serverTime, or its
     /// start when the move's `PM_DropTimers` ran it down
@@ -638,7 +639,7 @@ impl ClientSim {
             footsteps_movetype: Default::default(),
             gunner_leaves: None,
             gunner_left: None,
-            gunner_node: None,
+            gunner_tree: Default::default(),
             jumped: None,
             breakdown_continue: Vec::new(),
             jump_time: 0,
@@ -867,6 +868,9 @@ impl ClientSim {
         let rules = self.ps.rules;
         self.ps = pmove::PlayerState::spawn(Vec3::from(origin), yaw_deg);
         self.ps.rules = rules;
+        // The turret rows live in the DObj's anim info, which outlives a
+        // dismount; a spawn's `G_DObjUpdate` builds a fresh one.
+        self.gunner_tree = Default::default();
         // The spawn's `ClientEndFrame` stores a player's speed ahead of its
         // think (0x42a75); a spectator's think is `SpectatorThink`'s 400.
         self.ps.speed = match mode {
@@ -2233,25 +2237,39 @@ impl ClientSim {
         self.ci_seat_angles = angles;
     }
 
-    /// The controls the last skeleton build eased to, which the record
     /// The turret placement's leaf blend at level time `now_ms`, `None`
     /// off a `turretanim` anim: the legs pose by its leaves, and its sync
     /// group steps at the mean frequency their weights give from the next
-    /// frame on (cod11-turrets.md 13.9).
+    /// frame on (cod11-turrets.md 13.9). On 1.5 and UO the rows are the
+    /// carried weights (`gunner_tree`) the placement leaves, which the pose
+    /// reads at once, until the next end frame's step.
     pub fn set_gunner_blend(
         &mut self,
         placed: Option<&vcod_common::turretpose::GunnerPlacement>,
         now_ms: i32,
     ) {
+        let carried = self.ps.rules.v15();
         if let Some(g) = placed
-            && self.gunner_node.is_some_and(|n| n != g.node)
+            && self
+                .gunner_leaves
+                .as_ref()
+                .is_some_and(|(n, _)| *n != g.node)
         {
-            self.gunner_left = self.gunner_node.zip(self.gunner_leaves.take());
+            self.gunner_left = self.gunner_leaves.take();
         }
-        self.gunner_leaves = placed.map(|g| g.posed_rows(self.ps.rules.v15()));
-        self.gunner_node = placed.map(|g| g.node);
-        if placed.is_none() {
-            self.gunner_left = None;
+        match placed {
+            Some(g) if carried => {
+                self.gunner_tree.place(g, crate::server::FRAME_MS);
+                self.gunner_leaves = Some((g.node, Vec::new()));
+                self.gunner_rows_from_tree();
+                self.pose.turret_leaves.clone_from(&self.gunner_leaves);
+                self.pose.turret_left.clone_from(&self.gunner_left);
+            }
+            Some(g) => self.gunner_leaves = Some((g.node, g.rows.clone())),
+            None => {
+                self.gunner_leaves = None;
+                self.gunner_left = None;
+            }
         }
         if let Some(g) = placed {
             let legs = self.anim.legs();
@@ -2261,6 +2279,15 @@ impl ClientSim {
         }
     }
 
+    /// `gunner_leaves` and `gunner_left` as `gunner_tree` holds them now.
+    fn gunner_rows_from_tree(&mut self) {
+        let tree = &self.gunner_tree;
+        for (n, rows) in self.gunner_leaves.iter_mut().chain(&mut self.gunner_left) {
+            *rows = tree.rows(*n);
+        }
+    }
+
+    /// The controls the last skeleton build eased to, which the record
     /// keeps for the next build's ease (coduo-vehicles.md 13).
     pub fn keep_eased(&mut self, c: vcod_common::playerpose::Controllers) {
         if self.pose.eased.is_some() {
@@ -2342,6 +2369,13 @@ impl ClientSim {
         angles.movetype = self.movetype.bit();
         angles.step(&input, frametime_ms, swing_speed);
         angles.update_conditions(&input);
+        // `G_XAnimUpdate`'s weight step, ahead of the end frames (UO
+        // game.mp 0x69983; cod11-turrets.md 13.9).
+        if self.ps.rules.v15() {
+            let dt = (f64::from(0.001f32) * f64::from(frametime_ms)) as f32;
+            self.gunner_tree.step(dt);
+            self.gunner_rows_from_tree();
+        }
         let (eased, mut seat_ramp) = (self.pose.eased, self.pose.seat_ramp.clone());
         self.pose = crate::game::combat::BodyPose {
             assembly: self.assembly.clone(),
