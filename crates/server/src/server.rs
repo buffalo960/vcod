@@ -571,7 +571,9 @@ fn apply_seat_ops(clients: &mut [Option<Client>], rt: &mut script::ScriptRuntime
                     vehicle,
                     pos: seat,
                     kind,
-                    motion: 1,
+                    // `VEH_LinkPlayer` leaves `vehMotion` as the last ride
+                    // or the spawn's memset left it; the end frame sets it.
+                    motion: sim.veh_motion,
                     angles,
                     hull_view: true,
                     overheated: false,
@@ -1330,7 +1332,7 @@ fn mirror_for_callback(
     // What `cloneplayer` and the dropped cook read.
     rt.set_client_entity_state(slot, Some(sim.to_entity(proto, slot, st)));
     rt.set_client_grenade_ms(slot, sim.ps.grenade_time_left_ms);
-    rt.set_client_height(slot, sim.ps.box_height());
+    rt.set_client_height(slot, sim.box_height());
     // What `dropItem` hands the dropped weapon, and where it starts.
     rt.set_client_ammo(slot, sim.ps.ammo, sim.ps.ammoclip);
     rt.set_client_dobj(slot, sim.dobj(slot));
@@ -9493,7 +9495,7 @@ impl Server {
                 rt.set_client_body(slot, sim.and_then(|(s, _)| s.hit_body(slot)));
                 rt.set_client_dobj(slot, sim.and_then(|(s, _)| s.dobj(slot)));
                 if let Some((s, _)) = sim {
-                    rt.set_client_height(slot, s.ps.box_height());
+                    rt.set_client_height(slot, s.box_height());
                     rt.set_client_link_origin(slot, s.link_origin().into());
                 }
             }
@@ -13691,13 +13693,11 @@ mod tests {
         );
         let rt = sv.script.as_mut().unwrap();
         let hurt = rt.spawn_map_entity_for_test([0.0, 0.0, 0.0]);
-        rt.triggers_mut().register_hurt(
+        rt.register_hurt_for_test(
             hurt,
             crate::game::trigger::TriggerShape::boxed([-64.0, -64.0, -8.0], [64.0, 64.0, 64.0]),
             1000,
-            0,
         );
-        rt.link_trigger_for_test(hurt);
         sv.clients[0].as_mut().unwrap().pending.push(cook(i).into());
         sv.replay_moves();
 
