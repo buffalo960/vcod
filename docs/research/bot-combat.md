@@ -32,10 +32,14 @@ balance (for `dm`). Without them the bots join as `--bots` does, at
 Feature arms: `COVER=` (section 4, `Server::test_bot_cover`), `RETREAT=`
 (section 5, `test_bot_retreat`), `TEAMPLAY=` (`bot-objectives.md` 9,
 `test_bot_team_play`: off, a bot ranks by slot, every attacker keeps by
-an `re` carrier, nobody covers a planter, plans pay no crowd cost and a
-carrier fights as any bot, the brain before team play) and `FOOTWORK=`
-(section 7, `test_bot_footwork`: off, a bot stands still on its sights,
-never backs off and never lies down) each take `all`
+an `re` carrier, nobody covers a planter, plans pay no crowd cost, a
+carrier fights as any bot and every noise draws the bot, the brain
+before team play; section 7) and `AWARE=` (section 8, `test_bot_aware`:
+off, a bot sees all round, fights the nearest enemy in sight, pays the
+full reaction and error on every switch and ignores hits from out of
+sight) and `FOOTWORK=` (section 9, `test_bot_footwork`: off, a bot
+stands still on its sights, never backs off and never lies down) each
+take `all`
 (the default), `none`, `axis`, `allies` or `alt` (axis on odd seeds,
 allies on even, so the map's own asymmetry cancels over an even seed
 count). A default arm never calls its hook, so an all-default run plays
@@ -62,6 +66,12 @@ Everything it counts comes off the script's `logPrint` lines, the same
 | wounds, dead in 5 s | bodies | A life's first tick under 50 health while `BotBody::engaged`, and the share of those whose bot died within 5 s. |
 | retreats hurt, dry | bodies | `BotBody::retreating` going from 0 to 1 (hurt) or 2 (dry): retreats started (section 5). |
 | cover hold, lean | `bot_cover_state` | Bot-ticks playing on a held cover spot, and with `ps.lean` off zero (section 4). |
+| answered | `D;`, bodies | Of the hits a bot takes from an enemy (one per attacker until it is answered or 1 s passes), the share it answers within 1 s: a tick after the hit's with `BotBody::firing` and that attacker as `BotBody::target`. Fire at someone else does not count; a bot killed inside the second has not answered. Printed with the hit count. |
+| blindsided | `K;`, bodies | Of a bot's deaths to an enemy, the share whose killer was never its `BotBody::target` that life, reaction delay included. Printed with the death count. |
+| mate, packed | bodies | How close a team keeps. Each bot-tick playing with a teammate playing adds its distance to the nearest one (3D, units): `mate` is the mean. `packed` is the share of those bot-ticks with two or more teammates within 400 units, the bot and two others in one room. Bots only; a corpse or spectator is left out. `dm` has no teammates and prints 0. |
+| grenades thrown | bodies | Frags let go (`BotBody::throws`, counted at the release; a throw put back is not one). |
+| grenade hits, kills | `D;`, `K;` | Lines with means of death `MOD_GRENADE_SPLASH` on another player, by the thrower; kills are the `K;` ones. A frag that kills its own thrower is a suicide. |
+| engagements, clip at start | bodies | `BotBody::engaged` going from off to on with a bullet weapon in hand, and the mean of its clip over its `clipSize` on that tick. |
 | shots | bodies | Rounds fired: each tick's drop in the held clip while the weapon stays the same bullet gun (`weaponType bullet`, `BotBody::gun`). Grenades, rockets and a mounted MG's rounds are not counted. |
 | hits | `D;`, `K;` | Lines on another player whose means of death is a bullet (`MOD_RIFLE_BULLET`, `MOD_PISTOL_BULLET`, `MOD_HEAD_SHOT`). A mounted MG's hits land here too; bots seldom use one. |
 | accuracy | | Hits over shots. |
@@ -69,8 +79,8 @@ Everything it counts comes off the script's `logPrint` lines, the same
 
 Each match prints one line, then the totals by team, by skill level and,
 with an arm one-sided, by arm; with several maps a block per map comes
-first. Each row prints three lines: the log's columns, the bodies', then
-the aim's.
+first. Each row prints four lines: the log's columns, the bodies', the
+grenades and the clip, then the aim.
 
 A change to bot behaviour reports its before and after on the same seeds,
 map and gametype, in this doc's section for it.
@@ -110,13 +120,14 @@ the skill branch, before and after merging master.
 | forget a target, ticks | 16 | 20 | 30 | 40 |
 | remember a spot, a noise, ticks | 70, 140 | 100, 200 | 140, 260 | 180, 300 |
 | hearing scale | 0.75 | 1 | 1.25 | 1.5 |
+| sight cone for a new target, degrees across | 100 | 120 | 140 | 160 |
 
 Normal's reaction (5 + 6), error start (48) and decay (0.88) changed with
-section 7; the measurements below are from before it.
+section 9; the measurements below are from before it.
 
 The miss is `(error + across * track_lag) * (1 + range / error_range) *
 moving`, `across` the target's speed across the line and `moving` `1 +
-(error_moving - 1) * (speed / 190)^2` (section 7). Until section 7 the
+(error_moving - 1) * (speed / 190)^2` (section 9). Until section 9 the
 trigger only went down while the gun's line passed within `HIT_RADIUS`
 (10 units) of the target's chest (`Bot::trigger`), so the error floor set
 the range a bot could fire at at all: `floor * (1 + range / error_range) *
@@ -413,9 +424,21 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
 | | control | 2903 | 3125 | 0.93 | 20.7 | 2377 | 85% | 1833 | |
 | one side `vc_bot_skill 2` | hard | 3790 | 1747 | 2.17 | 36.7 | 1228 | 66% | 1150 | +31.9 +- 1.6 |
 | | normal | 1747 | 3790 | 0.46 | 17.0 | 2672 | 80% | 3080 | |
+| `AWARE=alt` (section 8) | aware | 2882 | 2330 | 1.24 | 27.7 | 1719 | 72% | 1882 | +8.7 +- 1.6 |
+| | control | 2326 | 2890 | 0.80 | 22.6 | 2188 | 75% | 2035 | |
+| stock, noise answering (section 7) | both | 4667 | 4671 | 1.00 | 28.2 | 3446 | 72% | 1918 | -0.2 +- 1.1 |
+| `TEAMPLAY=alt`, answering one side | teamplay | 2313 | 2607 | 0.89 | 25.2 | 1860 | 76% | 2065 | -4.5 +- 1.2 |
+| | control | 2603 | 2314 | 1.12 | 27.9 | 1717 | 72% | 1399 | |
+
+The last three rows came later, on branch `feat/bot-spread` (section 7),
+where the stock run before the change gave 5265 kills and lives of
+24.9 s (the dry-start fix below). In 1.1 `tdm` team play is only the
+noise answering, so `TEAMPLAY=alt` pits it against the old rule.
 
 The skill row is two runs: `AXIS_SKILL=2` on seeds 1..=8 and
-`ALLIES_SKILL=2` on 9..=16 (the other side at 1), summed.
+`ALLIES_SKILL=2` on 9..=16 (the other side at 1), summed. The `AWARE`
+row is a later tip (branch `feat/bot-awareness`), whose `AWARE=none` run
+prints 5265 kills, the stock run's figure after the dry-retreat fix below.
 
 - VERIFIED (measured, the table): skill is the one large effect: a hard side outscores a normal one 2.2
   to 1, as section 3's three-a-side runs found (2.3 to 2.6).
@@ -534,9 +557,98 @@ VERIFIED (measured, ours, `bot_match`, 2026-10-21):
   lives 24.8 s to 24.7 s. 1.1's four maps nearly always had cover, so
   little flapped there. The tables above predate the fix.
 
-### 6.5 Aim and footwork: `tdm` and `dm`, 12 and 10 bots (2026-10-21)
+### 6.5 Grenades and the tactical reload (2026-10-21)
 
-Section 7's change, before (master d82876e1) and after on the same seeds.
+`bot_match` 1.1 (`COD_DIR` at the 1.1 install), seeds 1..=4, 12000 ticks:
+`tdm` on mp_carentan, mp_harbor, mp_depot and mp_brecourt with 12 bots
+(16 matches, every one ended on the score), `dm` on mp_carentan,
+mp_harbor and mp_depot with 10 (12 matches, none ended). Before is the
+harness commit, after the branch tip.
+
+What changed (`Bot::throw_spot`, `Bot::think_cook`, `bots::notices_frag`,
+`Server::lob_probe`):
+
+- A throw no longer goes at an enemy the gun can hit. It goes at one in
+  sight no round has gone at for 1.5 s (`COVER_THROW_TICKS`: behind cover,
+  or never lined up), or at the spot a seen enemy was lost at 0.2 to 3 s
+  ago, if he was slower than 100 units/s then (`LOST_STILL`), 250 to 600
+  units off, from a body under 60 units/s with its eye settled. The 1-in-4
+  roll is gone and the cooldown is 10 s (was 20).
+- `lob_probe` finds no lob while a live teammate stands within the frag's
+  `explosionRadius` of the target.
+- A throw under way follows the enemy it started at, and a lost spot's
+  throw follows nobody: one held for one enemy went at another who came
+  into sight in the hold, released on the old view, and killed its
+  thrower.
+- A 1.1 or 1.5 frag (no `cookOffHold`) still without a clear lob, or with
+  the view off it, once the 16-tick wait is out is put back: the cmd that
+  lets the trigger go asks for the rifle, and the switch cancels the
+  pullback with the clip unspent (`cod11-combat.md` 1.14). A UO frag,
+  its fuse running, is still let go.
+- Another's frag is run from only once noticed: in a clear line and
+  within 60 degrees of the view's yaw, or within 150 units. A bot's own
+  is always run from.
+- A clip under half reloads once no enemy has been in sight for 1 s
+  (`QUIET_RELOAD_TICKS`), retreat or not (before, only a dry clip did
+  outside a retreat); not the pistol, which goes back by then.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | Kills | Suicides | Life s | TTK mean / median ms | Wounds | Dead in 5 s | Retreats dry | Stalled | Thrown | Hits | Grenade kills | Clip at start |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `tdm` before | 2908 | 4 | 22.0 | 1270 / 0 | 2160 | 76% | 102 | 65863 | 1941 | 39 | 5 | 94% |
+| `tdm` after | 3001 | 0 | 20.2 | 1266 / 0 | 2246 | 76% | 61 | 81750 | 720 | 53 | 7 | 96% |
+| `dm` before | 3116 | 0 | 20.1 | 1253 / 300 | 2333 | 74% | 132 | 45053 | 1729 | 9 | 1 | 90% |
+| `dm` after | 3163 | 0 | 19.7 | 1335 / 300 | 2376 | 75% | 75 | 45452 | 1052 | 9 | 0 | 93% |
+
+- VERIFIED (measured, the table): a `tdm` frag hits someone 7.4% of the
+  time against 2.0%, with a third of the throws; grenade kills stay
+  rare (7 of 3001). Dry retreats fall by 40% in both gametypes, and the
+  clip a fight starts on rises 2 to 3 points.
+- VERIFIED (measured, ours, the same `dm` seeds on mp_carentan and
+  mp_harbor, each throw and probe logged): with only the new targets, 7
+  of 10 grenade kills were the thrower's own. All seven released with no
+  clear lob after the wait: one held for an enemy who left while another
+  came into sight; the rest started on the run or crouched, slid or
+  stood up through the switch to a spot where a wall stopped every lob,
+  and the hold let go into it. With the rules above, none.
+- VERIFIED (measured, ours, `tdm` before the noticing rule): run from
+  wherever it lay, no frag killed anyone: 718 thrown, 0 grenade kills.
+- `dm` frags still hit almost nobody (9 of 1052). INFERRED: with no
+  teams every enemy in sight is a candidate, so a throw at one is in
+  front of him and he notices it.
+- `tdm`'s `stalled` count rises 24% while `dm`'s holds. INFERRED: bots
+  stand through a throw's switch and hold, and through a reload they
+  did not do before; read it against this row, not the older tables.
+
+A probed lob is flown on to its burst (2026-10-21). `Server::lob_probe`
+takes a lob only when the frag, flown by the missile code from the release
+to the end of its fuse (`Missiles::predict_flight`: `Missile::step` against
+the world, no bodies or models), stays farther than its `explosionRadius`
+from the thrower's box at every frame the fuse can end on: from
+`COOK_MOST_MS` (2250 ms) short of the full fuse for a UO cook, at the full
+fuse elsewhere. The arc check alone ends at the first contact.
+
+- VERIFIED (measured, ours, release, stock UO paks, `ship_stalls` with a
+  per-tick dump, seed 19 `tdm` on 2180b31d): a stick grenade lobbed from
+  (2583, -925, 0) at an enemy 550 off met a wall about 310 out, past the
+  arc check's 60 per cent, came back and rolled to (2558, -1126, 2); the
+  wounded thrower ran from it to (2518, -791, 4), 337 off, and died of its
+  9 points.
+- VERIFIED (`weapons/mp/stielhandgranate_mp` in `pakuo04.pk3`):
+  `explosionRadius 350`, `explosionInnerDamage 120`,
+  `explosionOuterDamage 5`, `fuseTime 4`.
+- VERIFIED (measured, ours, release, stock UO paks, burst test off and
+  on): `ship_stalls` with `UO=1 MAP=mp_cassino GAMETYPE=tdm SHOOT=1
+  TICKS=1800` over seeds 1 to 63 odd, own frags 1 to 0, frag kills 4 to
+  3, kills 502 to 507; `bot_match` with `UO=1
+  MAPS=mp_cassino,mp_kursk BOTS=10` over seeds 1 to 8, thrown 176 to 151,
+  hits 74 to 46, grenade kills 7 to 5, kills 1613 to 1586. Its `suicides`
+  (43 and 47) counts every self-kill and is not split by cause.
+
+### 6.6 Aim and footwork: `tdm` and `dm`, 12 and 10 bots (2026-10-21)
+
+Section 9's change, before (master d82876e1) and after on the same seeds.
 `tdm`: mp_carentan, mp_harbor, mp_depot, mp_brecourt, `BOTS=12`, seeds
 1..=8 (32 matches a row, every one ended at the score limit). `dm`:
 mp_carentan, mp_harbor, mp_depot, `BOTS=10`, seeds 1..=4 (12 matches, none
@@ -585,10 +697,237 @@ footwork side's score less the other's per match:
   INFERRED: twice the rounds empty twice the clips, and a dry clip holds
   a cover spot to reload (section 5).
 
-## 7. Aim and footwork
+## 7. A side spread over the map (2026-10-21)
+
+A playtest report: with many bots in `tdm` nearly a whole team moved
+together. `bot_match`'s `mate` and `packed` columns (section 1) count
+it.
+
+### 7.1 Why
+
+- VERIFIED (measured, ours, `bot_match`, 12 bots, `tdm`, mp_carentan,
+  mp_harbor, mp_brecourt, mp_depot, seeds 1..=6, 6000 ticks): 72% of
+  playing bot-ticks had two or more teammates within 400 units, the
+  nearest one 210 units off on average. The packing did not loosen
+  over a life: 68% in a life's first 5 s, 73-74% from 5 s on (that
+  split measured with the crowd cost below on, which moved nothing).
+  INFERRED: `tdm.gsc`'s `getSpawnpoint_NearTeam` puts a respawn near
+  the living teammates, and the brain kept the team there.
+- VERIFIED (same runs, the brain's goal tallied each tick with a
+  temporary counter): a seen enemy was the goal 43% of bot-ticks (83%
+  of those packed), a remembered sighting 14% (79%), a heard noise 16%
+  (57%), the roam 11% (33%).
+- VERIFIED (same runs): with no noise heard at all the share packed fell
+  to 29% and the nearest teammate stood 493 units off, and the seen
+  enemy's ticks fell to 42% packed. INFERRED: the noise was what
+  gathered a side. `bots::loudest` gives every bot the noise loudest to
+  it out of every shot within `HEAR_GUNFIRE` (2000) units, teammates'
+  shots included, so a whole side within 2000 units of a fight ran to
+  the same spot, met the enemy there as one, and its shots drew the
+  rest (`Server::bot_think`'s view pass, `view.noise`).
+- VERIFIED (same runs): the route spreading of `bot-objectives.md` 9
+  (`team::crowd`) switched on for `tdm` moved nothing (72.4% packed,
+  mate 206): the team's paths shared a goal, not a corridor.
+
+### 7.2 The rule
+
+A bot on a side with team play on hears a noise only when fewer than
+`team::ANSWERS` (2) of its playing teammates stand nearer it, the
+shooter who made it not counted (`team::answers`, applied in the view
+pass before `bots::loudest`). The two nearest answer a shot; the rest
+keep to their roam or their own noise. Off with `TEAMPLAY=none` (a bot
+then hears every noise, as before). `dm` has no sides and is unchanged.
+
+Variants measured on 7.1's runs (kills over the 24 matches, share
+packed, mean nearest teammate), each VERIFIED (measured, ours,
+`bot_match`). Rows marked * ran with the crowd cost on in `tdm` as
+well, which alone moved nothing (with it, the shipped rule read 2519,
+35.9%, 417):
+
+| Variant | Kills | Packed | Mate |
+|---|---|---|---|
+| before | 3404 | 72.1% | 210 |
+| no noise at all * | 2241 | 29.3% | 493 |
+| enemy shots only * | 3296 | 62.2% | 272 |
+| the 3 nearest answer | 2823 | 51.4% | 335 |
+| the 2 nearest answer (shipped) | 2580 | 39.5% | 398 |
+| the 2 nearest answer, the others go 500 units to one side of it * | 3127 | 58.8% | 262 |
+| the 2 nearest answer, the others 900 units to one side * | 2577 | 44.3% | 326 |
+
+- VERIFIED (the table): every variant traded kills for spread along one
+  curve; sending the others to a flank point bought nothing over
+  dropping the noise for them. The plain rule stayed.
+
+### 7.3 Before and after
+
+`tdm`, mp_carentan, mp_harbor, mp_brecourt, mp_depot, 6000 ticks a
+match, team play on for both sides. VERIFIED (measured, ours,
+`bot_match`, before on master d82876e1, after on `feat/bot-spread`):
+
+| Bots, seeds | Run | Kills | Life s | Mate | Packed | Stalled |
+|---|---|---|---|---|---|---|
+| 6, 1..=8 | before | 1712 | 28.9 | 572 | 19.1% | 28361 |
+| | after | 1780 | 27.6 | 570 | 19.4% | 28073 |
+| 8, 1..=16 | before | 5265 | 24.9 | 355 | 42.7% | 120746 |
+| | after | 4667 | 28.2 | 472 | 29.9% | 85739 |
+| 12, 1..=6 | before | 3404 | 21.7 | 210 | 72.1% | 71300 |
+| | after | 2580 | 28.6 | 398 | 39.5% | 34176 |
+| 12, 7..=12 | before | 3560 | 20.3 | 199 | 75.2% | 66364 |
+| | after | 2529 | 29.3 | 397 | 40.8% | 38703 |
+| 16, 1..=6 | before | 4419 | 20.2 | 139 | 85.8% | 87379 |
+| | after | 3336 | 29.4 | 354 | 47.2% | 47855 |
+
+Per map, 12 bots, seeds 1..=6 (before, after):
+
+| Map | Kills | Mate | Packed |
+|---|---|---|---|
+| mp_carentan | 871, 699 | 167, 292 | 77.1%, 51.0% |
+| mp_harbor | 920, 701 | 177, 335 | 76.8%, 46.1% |
+| mp_brecourt | 781, 537 | 309, 612 | 61.5%, 22.7% |
+| mp_depot | 832, 643 | 185, 352 | 73.0%, 38.7% |
+
+Objective levels, 8 bots, mp_carentan, mp_harbor, mp_brecourt,
+mp_depot, mp_dawnville, seeds 1..=6 (30 matches a row):
+
+| Run | Kills | Wins axis, allies | Actions | Mate | Packed |
+|---|---|---|---|---|---|
+| `sd` before | 856 | 64, 86 | 120 plants, 31 defuses | 183 | 48.6% |
+| `sd` after | 842 | 63, 82 | 123 plants, 31 defuses | 174 | 48.6% |
+| `re` before | 988 | 96, 77 | 129 pickups, 26 captures | 210 | 63.2% |
+| `re` after | 1020 | 105, 71 | 131 pickups, 23 captures | 204 | 63.7% |
+
+- VERIFIED (the tables): from 8 bots up a side spreads: at 12 the
+  share packed halves (72-75% to 40-41%) and the nearest teammate
+  stands twice as far off; at 16, 86% to 47%. Three a side never had
+  two others near and does not change.
+- VERIFIED (the tables): the cost is fights. With 12 bots kills fall
+  24-29% and lives run 7-9 s longer; with 8, 11%. K/D, the share of
+  wounded bots dead in 5 s (71-75% against 74-75%) and TTK barely move.
+  `stalled` falls 29-52%, INFERRED: fewer bots holding cover in one big
+  fight.
+- VERIFIED (the tables): `sd` and `re` keep their plants, defuses,
+  pickups, captures and wins within a few of before; their bots gather
+  at the objectives, so the spread does not move there.
+- VERIFIED (measured, `TEAMPLAY=alt`): a spread side loses to one that
+  converges: 8 bots, seeds 1..=16, -4.5 +- 1.2 a match (K/D 0.89 against
+  1.12, section 6.1); 12 bots, seeds 1..=12, -11.5 +- 2.0 (0.82 against
+  1.21); the 3-nearest rule at 12 bots, -9.7 +- 2.4. INFERRED: a whole
+  side arriving at once outnumbers whoever it meets. Both sides play by
+  the same rule in a real match, and a human now meets two or three bots
+  at a fight instead of a side.
+## 8. Target choice and sight (2026-10-21)
+
+Before this, `Server::bot_enemy` handed a bot the nearest enemy within
+`SHOOT_RANGE` whose chest or eye its eye line reached, all round, picked
+afresh every `ENEMY_REFRESH_MS` (100); `Bot::track` gave every change of
+slot the full reaction delay and `error_start`, and a hit told the brain
+nothing. A bot between two enemies at like range swapped targets, paying
+the delay each time, and one shot from out of sight ignored it.
+
+Now (`crates/server/src/bots.rs`, `server.rs`, `spectate.rs`):
+
+- `ClientSim::last_hit`: each `SimOp::Damaged` with another client as
+  attacker and damage above 0 records his slot, the frame's `sv_time` and
+  the damage direction; a spawn clears it. `Server::bot_hurt` hands it to
+  the brain as `BotView::hurt` for `HURT_MS` (2 s) while the attacker
+  plays.
+- `bots::pick_enemy`: the attacker of that hit when the eye line reaches
+  him, else a new enemy nearer than `RETARGET_RATIO` (0.6) of the tracked
+  target's range, else the tracked target while in sight, else the
+  nearest.
+- A sight cone, `Skill::fov_deg` across (100, 120, 140, 160 by level,
+  section 3), about the view (`bots::in_sight_cone`, on the chest), for
+  every other enemy; the tracked target and the attacker pass it on any
+  bearing. A bot in a vehicle seat sees all round: its view is the
+  seat's, and with the cone the tank driver of
+  `a_bot_fires_rockets_at_an_enemy_tank` (`tests/bot_vehicles.rs`) no
+  longer held still for the rocket man behind his hull, and the tank
+  survived the rocket.
+- `Bot::track`: a target let go of within `forget_ticks` (`Bot::prior`)
+  is taken again on a third of the drawn reaction and its old error times
+  1.25, between `error_floor` and `error_start`; the attacker of the hit
+  on half the reaction and 0.75 of `error_start`; anyone else on the full
+  ones, as before.
+- `Bot::face_hurt`: with nothing in sight, a hit in the last
+  `HURT_LOOK_MS` (1.5 s) turns the view back along the damage direction
+  at `turn_deg`, the path's keys rotated to keep the path; the cone
+  sweeps over the shooter.
+- Hearing has no cone (`bots::loudest`, bot-navigation.md section 4): a
+  shot behind the bot pulls it as one ahead does.
+- `Bot::aware` off (`AWARE=`, `Server::test_bot_aware`) restores all of
+  the before.
+
+### 8.1 Before and after
+
+`AWARE=none` replays master line for line: both sets below print master's
+match lines (kills, deaths, damage, ticks, stalls) with it, so it is the
+before and supplies the `turned` column master's harness lacks.
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21): `tdm`, 12 bots,
+mp_carentan, mp_harbor, mp_depot and mp_brecourt, seeds 1..=4 (16
+matches, all ended); `dm`, 10 bots, mp_carentan, mp_harbor and mp_depot,
+seeds 1..=4 (12 matches, none ended in 12000 ticks):
+
+| Run | Kills | K/D | Life s | TTK mean / median ms | Wounds | Dead in 5 s | Turned | Answered | Blindsided | Cover hold | Stalled |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `tdm` before | 2908 | 1.00 | 22.0 | 1270 / 0 | 2160 | 76% | 63% | 17% of 4324 | 12% of 2908 | 483913 | 65863 |
+| `tdm` after | 2935 | 1.00 | 22.0 | 1357 / 0 | 2179 | 74% | 92% | 19% of 4237 | 13% of 2935 | 642973 | 127392 |
+| `dm` before | 3116 | 1.00 | 20.1 | 1253 / 300 | 2333 | 74% | 92% | 37% of 3726 | 2% of 3116 | 635254 | 45053 |
+| `dm` after | 2895 | 1.00 | 21.7 | 1136 / 350 | 2275 | 79% | 96% | 28% of 3406 | 14% of 2895 | 574948 | 30322 |
+
+`Turned` is the share of hits whose attacker the bot targeted within 1 s;
+`answered` (section 1) adds the trigger down.
+
+- VERIFIED (measured, the table): in `tdm` the attacker becomes the
+  target within 1 s after 92% of hits, from 63%.
+- VERIFIED (measured, the table): `answered` barely moves (17% to 19% in
+  `tdm`). INFERRED (`Bot::trigger`): the trigger waits until the aim's
+  miss falls inside the 10-unit cone, and 0.75 of `error_start` (36
+  units) decays under it in about 13 ticks at 360 units standing, longer
+  moving; the turn and that wait, not the choice, hold the answer past a
+  second.
+- VERIFIED (measured, the table): in `dm` the share blindsided goes from
+  2% to 14% and `answered` falls from 37% to 28%. INFERRED: before, a
+  `dm` bot saw every player all round and was on the nearest; with the
+  cone a shot from behind lands before a 180 degree turn (12 ticks at 15
+  degrees a tick).
+- VERIFIED (measured, the table): `tdm` stalls nearly double, `dm` stalls
+  fall a third. On the branch with the parts switched off one at a time
+  (mp_carentan, mp_depot, mp_brecourt, `tdm`, 12 bots, seeds 1..=4),
+  stalled bot-ticks with no target fell from 6793 to 2903 and those
+  holding cover against a target rose from 41k to 80k, all on versus all
+  off; on seeds 1..=8 the reacquire and hit-by discounts each raised the
+  total alone (124k off, 141k and 143k each alone, 178k both). INFERRED:
+  the extra stalls are bots fighting longer from cover, not lost bots.
+- VERIFIED (measured, release, stock UO paks): `uo_bots_fight_and_sprint_in_tdm`
+  seeds 1 and 19 stalled a bot on mp_cassino's roofs (bot-objectives.md
+  10.6) on this branch alone; merged with section 7's noise answering and
+  6.5's grenade rules seed 1 passes, and the replay list plays 13 for 19,
+  whose game there ends on a bot's own frag.
+
+### 8.2 One-sided
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21): `AWARE=alt`, `tdm`,
+12 bots, the four maps above, seeds 1..=16 (64 matches, all ended):
+
+| Arm | Kills | Deaths | K/D | Life s | Dead in 5 s | Turned | Answered | Blindsided | Wins |
+|---|---|---|---|---|---|---|---|---|---|
+| aware | 6386 | 4351 | 1.47 | 26.7 | 71% | 91% | 21% | 13% | 62 |
+| control | 4344 | 6399 | 0.68 | 18.0 | 75% | 59% | 13% | 14% | 2 |
+
+- VERIFIED (measured, the table): the aware side scores 31.9 +- 1.9 more
+  a match and wins 62 of 64, as large as a skill level (6.1's `vc_bot_skill
+  2` row, +31.9 +- 1.6); in 6.1's shorter eight-bot matches it is +8.7 +-
+  1.6.
+- VERIFIED (measured, the table): a blindsided death is no likelier on
+  the aware side (13% against 14%) though it sees a cone. INFERRED: it
+  turns on its attacker and keeps its target where the control flips to
+  the nearest.
+
+## 9. Aim and footwork
 
 `Bot::engage`, `Bot::trigger` and `Bot::footwork` in
-`crates/server/src/bots.rs`; measured in 6.5.
+`crates/server/src/bots.rs`; measured in 6.6.
 
 Before this, the aim error only shrank with time on the target, and the
 trigger waited until the gun's miss fell inside the 10-unit cone: a bot
@@ -597,7 +936,7 @@ A target's movement added nothing, so strafing did not help against a
 settled bot, and a bot on its sights never moved: the x1.75 error while
 moving cost more than anything moving bought.
 
-### 7.1 The miss
+### 9.1 The miss
 
 The aimed point is off the target's chest by
 
@@ -617,9 +956,9 @@ The aimed point is off the target's chest by
   brain's own. INFERRED (the formula, a half-key strafe on the sights at
   about 45 units/s): such a strafe costs 4% at normal skill, where linear
   in speed it cost 18%; the footwork side lost more on the linear build
-  (6.5).
+  (6.6).
 
-### 7.2 The trigger
+### 9.2 The trigger
 
 Inside the cone the trigger goes down as before. Past it, it goes down
 with chance `(reach - r) / (reach - 1)` a tick, `r` the miss in cones:
@@ -641,7 +980,7 @@ round was about 8.7 ticks of reaction, 5 waiting on the sights and 4 on
 the aim. INFERRED: the sights' wait is the weapon's `adsTransInTime`,
 so the reaction was what was left to cut.
 
-### 7.3 Footwork
+### 9.3 Footwork
 
 Each strafe spell (8 to 23 ticks) rolls once against `Skill::footwork`
 (0.25, 0.45, 0.6, 0.75). A spell that wins, while the bot is on its
@@ -660,7 +999,7 @@ was. `Bot::footwork` false (`FOOTWORK=` in `bot_match`,
 `Server::test_bot_footwork`) skips the roll's effects: the sighted body
 stands still, never backs off and never lies down.
 
-### 7.4 What the UO bot gates found
+### 9.4 What the UO bot gates found
 
 VERIFIED (measured, ours, `tests/bots.rs` ignored tests at a stock UO
 install, 2026-10-21): with this change two pinned games fail.

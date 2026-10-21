@@ -433,7 +433,15 @@ fn apply_sim_op(
         SimOp::WeaponDisabled(on) => sim.ps.weapon_disabled = on,
         SimOp::ViewKick { force, from } => sim.view_kick(force, from),
         SimOp::VehiclePain { damage, from } => sim.vehicle_pain(damage, from),
-        SimOp::Damaged { .. } => {
+        SimOp::Damaged {
+            attacker,
+            damage,
+            dir,
+            ..
+        } => {
+            if let Some(a) = attacker.filter(|&a| a != slot && damage > 0) {
+                sim.last_hit = Some((a, now_ms, dir));
+            }
             let index = sim.ps.weapon as usize;
             let inputs = anims.map(|anims| crate::spectate::AnimInputs {
                 anims,
@@ -4440,6 +4448,20 @@ impl Server {
             .script
             .as_mut()
             .map_or(Vec::new(), |rt| rt.health_items());
+        // Every playing client on a side, by slot, team and feet: who stands
+        // nearer a noise than a bot (`team::answers`).
+        let on_side: Vec<(usize, i32, [f32; 3])> = self
+            .clients
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, c)| {
+                let sim = c.as_ref()?.sim.as_ref()?;
+                let team = teams.get(slot).copied()?;
+                let playing = sim.pm_type == crate::spectate::PmType::Normal && !sim.dead;
+                (playing && (team == script::TEAM_AXIS || team == script::TEAM_ALLIES))
+                    .then(|| (slot, team, sim.ps.origin.into()))
+            })
+            .collect();
         let mut views: Vec<(usize, crate::bots::BotView)> = slots
             .iter()
             .filter_map(|slot| {
@@ -4459,7 +4481,25 @@ impl Server {
                     enemy.filter(|e| !self.bots.get(slot).is_some_and(|b| b.ignores(e.slot)));
                 let mut view = self.bot_view(*slot, enemy)?;
                 let hearing = self.bots.get(slot).map_or(1.0, |b| b.skill.hearing);
-                view.noise = crate::bots::loudest(&noises, *slot, view.origin, hearing);
+                // On a side with team play on, only the teammates nearest a
+                // noise go to it.
+                let mine = on_side.iter().find(|c| c.0 == *slot).map(|c| c.1);
+                let heard: Vec<crate::bots::Noise> = match mine {
+                    Some(mine) if self.bots.get(slot).is_some_and(|b| b.team_play) => {
+                        let mates: Vec<(usize, [f32; 3])> = on_side
+                            .iter()
+                            .filter(|(s, t, _)| s != slot && *t == mine)
+                            .map(|(s, _, p)| (*s, *p))
+                            .collect();
+                        noises
+                            .iter()
+                            .filter(|n| crate::bots::team::answers(view.origin, n, &mates))
+                            .copied()
+                            .collect()
+                    }
+                    _ => noises.clone(),
+                };
+                view.noise = crate::bots::loudest(&heard, *slot, view.origin, hearing);
                 view.survive.heal = crate::bots::retreat::nearest_pack(&view, &packs);
                 let held = self.bot_sidesteps.remove(slot);
                 if let Some(e) = enemy {
@@ -4785,7 +4825,10 @@ impl Server {
                     }
                     view.stop = follower.holding(&g);
                     if let Some(foot) = ps.as_ref().and_then(|ps| follower.jump_wait(&g, at, ps)) {
-                        view.waypoint = Some(foot);
+                        // A jump that fails from rest there is planned
+                        // round; the body holds still meanwhile.
+                        let round = world.is_some_and(|w| follower.rest_jump_fails(&g, w, foot));
+                        view.waypoint = Some(if round { at } else { foot });
                         view.stop = true;
                         view.jump = false;
                     }
@@ -4846,7 +4889,7 @@ impl Server {
             if let Some(b) = self.bots.get(&slot).filter(|b| b.wants_lob(&view))
                 && let (Some(g), Some(at)) = (view.grenade, b.throw_target(&view))
             {
-                view.lob = self.lob_probe(slot, g, at);
+                view.lob = self.lob_probe(slot, g, at, &teams);
             }
             if let Some(bot) = self.bots.get_mut(&slot) {
                 let cmd = bot.think(&view);
@@ -5049,12 +5092,35 @@ impl Server {
     /// [`crate::bots::GRENADE_MIN`] across. The aim as (pitch, yaw), wire
     /// degrees. A UO frag bounces off a wall or a body at full speed, so a
     /// lob into a ceiling, a window frame or a teammate comes back at the
-    /// thrower (bot-objectives.md 6).
-    fn lob_probe(&self, slot: usize, weapon: u8, target: [f32; 3]) -> Option<[f32; 2]> {
+    /// thrower (bot-objectives.md 6). None while a live teammate stands
+    /// within the frag's `explosionRadius` of `target`: friendly fire may
+    /// be on.
+    fn lob_probe(
+        &self,
+        slot: usize,
+        weapon: u8,
+        target: [f32; 3],
+        teams: &[i32],
+    ) -> Option<[f32; 2]> {
         use crate::bots::{GRENADE_MIN, GRENADE_RANGE, LOB_DEG};
         use vcod_common::net::trajectory::DEFAULT_GRAVITY;
         let sim = self.clients[slot].as_ref()?.sim.as_ref()?;
         let def = self.weapon_table.get(weapon as usize)?;
+        let my_team = teams.get(slot).copied().unwrap_or(0);
+        let radius = def.explosion_radius;
+        let mate_near = (my_team == script::TEAM_AXIS || my_team == script::TEAM_ALLIES)
+            && self.clients.iter().enumerate().any(|(i, c)| {
+                i != slot
+                    && teams.get(i).copied() == Some(my_team)
+                    && c.as_ref().and_then(|c| c.sim.as_ref()).is_some_and(|o| {
+                        o.pm_type == crate::spectate::PmType::Normal
+                            && !o.dead
+                            && o.ps.origin.distance(glam::Vec3::from(target)) < radius
+                    })
+            });
+        if mate_near {
+            return None;
+        }
         let world = &self.world.as_ref()?.collision;
         let eye = crate::game::combat::muzzle_point(&sim.ps);
         let to = glam::Vec3::from(target) - eye;
@@ -5074,6 +5140,33 @@ impl Server {
         let mut lobs: Vec<f32> = (1..=8).map(|i| i as f32 * 5.0).collect();
         lobs.sort_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()));
         let clear = (range * 0.6).max(GRENADE_MIN);
+        // Nor a lob whose frag, flown on past the arc's first contact by
+        // the missile code, can go off within its blast radius of the
+        // thrower: on mp_cassino a UO stick grenade lobbed at an enemy 550
+        // off met a wall past the arc's 60 per cent, came back and went off
+        // 340 from the wounded thrower, whose run from it fell short of the
+        // 350 radius (seed 19, bot-combat.md 6.5). A cook burns up to
+        // `COOK_MOST_MS` of the fuse in the hand, so the burst is looked
+        // for from that much short of the full fuse on.
+        let fuse = vcod_common::weapon::stored_ms(def.fuse_time);
+        let earliest = if def.cook_off_hold {
+            fuse - crate::bots::COOK_MOST_MS
+        } else {
+            fuse
+        };
+        let (lo, hi) = (sim.ps.origin + sim.ps.mins(), sim.ps.origin + sim.ps.maxs());
+        let burst_clear = |aim: [f32; 2]| {
+            let Some(rt) = self.script.as_ref() else {
+                return true;
+            };
+            let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
+            rt.missiles()
+                .predict_flight(world, weapon, origin, velocity, sim.ps.velocity, fuse)
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| (*i as i32 + 1) * FRAME_MS >= earliest)
+                .all(|(_, p)| p.clamp(lo, hi).distance(*p) > radius)
+        };
         lobs.into_iter().find_map(|lob| {
             let aim = [pitch - lob, yaw];
             let (origin, velocity) = crate::game::missile::throw_velocity(&sim.ps, aim, def);
@@ -5092,11 +5185,11 @@ impl Server {
                 }
                 if tr.fraction < 1.0 {
                     let reach = (tr.endpos - origin).truncate().length();
-                    return (reach >= clear).then_some(aim);
+                    return (reach >= clear && burst_clear(aim)).then_some(aim);
                 }
                 from = next;
             }
-            Some(aim)
+            burst_clear(aim).then_some(aim)
         })
     }
 
@@ -5331,6 +5424,7 @@ impl Server {
             dead: sim.dead,
             playing: sim.pm_type == crate::spectate::PmType::Normal && !sim.dead,
             enemy,
+            hurt: self.bot_hurt(sim),
             // Checked in pass 2 against this tick's teammates.
             friend_in_line: false,
             sidestep: None,
@@ -5342,14 +5436,23 @@ impl Server {
                 .is_some_and(|d| d.cook_off_hold),
             frag_near: self.script.as_ref().and_then(|rt| {
                 let at = sim.ps.origin;
+                let eye = glam::Vec3::from(sim.eye_origin());
                 rt.missiles()
                     .armed()
-                    .filter(|(_, w)| {
+                    .filter(|(_, w, _)| {
                         weapons.get(*w as usize).is_some_and(|d| {
                             d.explosion_radius > 0.0 && d.explosion_inner_damage > 0
                         })
                     })
-                    .map(|(o, _)| o)
+                    .filter(|(o, _, owner)| {
+                        *owner == Some(slot)
+                            || self.world.as_ref().is_none_or(|w| {
+                                crate::bots::notices_frag(eye, sim.view_angles()[1], *o, |a, b| {
+                                    w.collision.shot_trace(a, b).fraction >= 1.0
+                                })
+                            })
+                    })
+                    .map(|(o, _, _)| o)
                     .filter(|o| {
                         (o.z - at.z).abs() < crate::bots::FLEE_HEIGHT
                             && (*o - at).truncate().length() < crate::bots::FLEE_REACH
@@ -5732,9 +5835,14 @@ impl Server {
         p
     }
 
-    /// The nearest live, playing client on another team with a clear eye
-    /// line. Team rules: axis and allies only fight each other; everyone
-    /// else is fair game to everyone (`dm` carries no teams).
+    /// The live, playing client on another team with a clear eye line that
+    /// the bot in `slot` fights: the one who hit it within
+    /// [`crate::bots::HURT_MS`], else the target it tracks while in sight,
+    /// unless a new one in the sight cone stands nearer than
+    /// [`crate::bots::RETARGET_RATIO`] of its range, else the nearest in
+    /// the cone ([`crate::bots::Skill::fov_deg`]). Team rules: axis and
+    /// allies only fight each other; everyone else is fair game to everyone
+    /// (`dm` carries no teams).
     fn bot_enemy(&self, slot: usize, teams: &[i32]) -> Option<crate::bots::EnemyView> {
         if !self.bot_admin.shoot {
             return None;
@@ -5751,9 +5859,21 @@ impl Server {
         };
         let my_eye: glam::Vec3 = me.eye_origin().into();
         let world = self.world.as_ref().map(|w| &w.collision);
-        // In-range candidates nearest first; the first one the sightline
-        // reaches is the nearest visible enemy, so the trace loop stops
-        // early instead of scoring every candidate in a crowd.
+        let bot = self.bots.get(&slot);
+        let tracked = bot.and_then(|b| b.target_slot());
+        let aware = bot.is_none_or(|b| b.aware);
+        let attacker = self.bot_hurt(me).map(|h| h.slot).filter(|_| aware);
+        let tracked = tracked.filter(|_| aware);
+        // A seat's view is the seat's (a tank's driver looks down the
+        // hull), not where the bot turns its head: crews see all round.
+        let fov = match bot {
+            Some(b) if b.aware && me.seat.is_none() => b.skill.fov_deg,
+            Some(_) => 360.0,
+            None => crate::bots::Skill::default().fov_deg,
+        };
+        let view = me.view_angles();
+        // In-range candidates nearest first: the tracked target and the
+        // attacker wherever they stand, the rest only inside the cone.
         let mut candidates: Vec<(f32, glam::Vec3, crate::bots::EnemyView)> = Vec::new();
         for (i, c) in self.clients.iter().enumerate() {
             if i == slot {
@@ -5781,24 +5901,51 @@ impl Server {
             if d > crate::bots::SHOOT_RANGE * crate::bots::SHOOT_RANGE {
                 continue;
             }
+            let chest = crate::bots::chest(s.ps.origin.into(), s.ps.view_height());
+            let known = Some(i) == tracked || Some(i) == attacker;
+            if !known && !crate::bots::in_sight_cone(my_eye, view, chest.into(), fov) {
+                continue;
+            }
             candidates.push((
                 d,
                 s.ps.view().eye,
                 crate::bots::EnemyView {
                     slot: i,
-                    origin: crate::bots::chest(s.ps.origin.into(), s.ps.view_height()),
+                    origin: chest,
                     velocity: s.ps.velocity.into(),
                 },
             ));
         }
         candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let Some(w) = world else {
-            return candidates.into_iter().next().map(|c| c.2);
+        let sighted = |(_, eye, enemy): &(f32, glam::Vec3, crate::bots::EnemyView)| {
+            let Some(w) = world else {
+                return Some(*enemy);
+            };
+            let clear = |to: glam::Vec3| w.shot_trace(my_eye, to).fraction >= 1.0;
+            let origin = crate::bots::aim_point(enemy.origin, (*eye).into(), |p| clear(p.into()))?;
+            Some(crate::bots::EnemyView { origin, ..*enemy })
         };
-        let clear = |to: glam::Vec3| w.shot_trace(my_eye, to).fraction >= 1.0;
-        candidates.into_iter().find_map(|(_, eye, enemy)| {
-            let origin = crate::bots::aim_point(enemy.origin, eye.into(), |p| clear(p.into()))?;
-            Some(crate::bots::EnemyView { origin, ..enemy })
+        let order: Vec<(f32, usize)> = candidates.iter().map(|c| (c.0, c.2.slot)).collect();
+        crate::bots::pick_enemy(&order, attacker, tracked, |i| sighted(&candidates[i]))
+    }
+
+    /// [`crate::bots::BotView::hurt`] for the body `sim`: its last hit by
+    /// another client within [`crate::bots::HURT_MS`], while he still
+    /// plays.
+    fn bot_hurt(&self, sim: &crate::spectate::ClientSim) -> Option<crate::bots::Hurt> {
+        let (a, at, dir) = sim.last_hit?;
+        let ago_ms = self.sv_time_ms.wrapping_sub(at);
+        if !(0..crate::bots::HURT_MS).contains(&ago_ms) {
+            return None;
+        }
+        let s = self.clients.get(a)?.as_ref()?.sim.as_ref()?;
+        if s.pm_type != crate::spectate::PmType::Normal || s.dead {
+            return None;
+        }
+        Some(crate::bots::Hurt {
+            slot: a,
+            ago_ms,
+            dir,
         })
     }
 
@@ -5942,7 +6089,6 @@ impl Server {
                 .weapon_table
                 .get(sim.ps.weapon as usize)
                 .is_some_and(|d| d.weapon_type == "bullet"),
-            target: self.bots.get(&slot).and_then(|b| b.target_slot()),
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
@@ -5953,6 +6099,14 @@ impl Server {
             crew_wait: self.bots.get(&slot).is_some_and(|b| b.waiting_for_crew()),
             boardings: self.bots.get(&slot).map_or(0, |b| b.boardings()),
             rockets_at_armor: self.bots.get(&slot).map_or(0, |b| b.rockets_at_armor()),
+            target: self.bots.get(&slot).and_then(|b| b.target_slot()),
+            firing: self.bots.get(&slot).is_some_and(|b| b.fired()),
+            clip_size: self
+                .weapon_table
+                .get(sim.ps.weapon as usize)
+                .filter(|d| d.weapon_type == "bullet")
+                .map_or(0, |d| d.clip_size.min(i16::MAX as u32) as i16),
+            throws: self.bots.get(&slot).map_or(0, |b| b.throws()),
         })
     }
 
@@ -5974,6 +6128,14 @@ impl Server {
     pub fn test_bot_footwork(&mut self, slot: usize, on: bool) {
         if let Some(bot) = self.bots.get_mut(&slot) {
             bot.footwork = on;
+        }
+    }
+
+    /// Test-facing: whether a bot reacts to hits, keeps its target and
+    /// sees in a cone (`Bot::aware`).
+    pub fn test_bot_aware(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.aware = on;
         }
     }
 
@@ -10657,7 +10819,14 @@ fn breach_aim(
                 Some(o) => o == base,
                 None => best.0 < 1.0 && burst.distance(base) < BREACH_NEAR,
             }
-            && spread_clear(world, models, muzzle, dir);
+            && cone_clear(
+                world,
+                models,
+                muzzle,
+                dir,
+                BREACH_SPREAD_DEG,
+                crate::bots::BREACH_CLEAR,
+            );
         ok.then_some(spot.into())
     })
 }
@@ -10676,25 +10845,32 @@ fn held_rocket(hand: u8, loaded: u64, launcher: impl Fn(u8) -> bool) -> Option<u
 /// bazooka and the panzerschreck, 3.5 for the panzerfaust).
 const BREACH_SPREAD_DEG: f32 = 4.0;
 
-/// Whether rockets along the edge of the sighted spread cone round `dir`
-/// meet nothing within [`crate::bots::BREACH_CLEAR`] of the muzzle: the
-/// line's middle alone left a bot now and then killed by a rocket the
-/// spread carried into the cover by its stand. Only the near part of the
-/// cone counts; where the rest bursts the base's checks already rule.
-fn spread_clear(
+/// Whether rockets along `dir` and the edge of a `spread_deg` cone round
+/// it meet nothing within `reach` of the muzzle. A breach stand checks the
+/// sighted cone out to [`crate::bots::BREACH_CLEAR`]: the line's middle
+/// alone left a bot now and then killed by a rocket the spread carried
+/// into the cover by its stand. Only the near part of the cone counts;
+/// where the rest bursts the base's checks already rule.
+pub(crate) fn cone_clear(
     world: &vcod_common::collision::CollisionWorld,
     models: &[crate::game::combat::PlacedModel],
     muzzle: glam::Vec3,
     dir: glam::Vec3,
+    spread_deg: f32,
+    reach: f32,
 ) -> bool {
-    use crate::bots::BREACH_CLEAR;
     let right = dir.cross(glam::Vec3::Z).normalize_or(glam::Vec3::X);
     let up = right.cross(dir);
-    let r = BREACH_SPREAD_DEG.to_radians().tan();
-    (0..8).all(|k| {
+    let r = spread_deg.to_radians().tan();
+    (0..9).all(|k| {
         let a = k as f32 * std::f32::consts::FRAC_PI_4;
-        let ray = (dir + (right * a.cos() + up * a.sin()) * r).normalize();
-        let end = muzzle + ray * BREACH_CLEAR;
+        let edge = if k == 8 {
+            glam::Vec3::ZERO
+        } else {
+            (right * a.cos() + up * a.sin()) * r
+        };
+        let ray = (dir + edge).normalize();
+        let end = muzzle + ray * reach;
         world.missile_trace(muzzle, end).fraction >= 1.0
             && models.iter().all(|m| {
                 m.clip(muzzle, end, crate::game::missile::MISSILE_MODEL_MASK, 1.0)
@@ -10715,6 +10891,34 @@ mod tests {
         assert_eq!(held_rocket(5, loaded, launcher), Some(43));
         assert_eq!(held_rocket(43, loaded | (1 << 5), launcher), Some(43));
         assert_eq!(held_rocket(9, 1 << 9, launcher), None);
+    }
+
+    /// A launcher's widest hip cone (12 degrees) out to its 256 splash and
+    /// the margin (`Server::armor_view`): a wall 200 ahead of the muzzle
+    /// fails it, one 400 ahead does not, and neither does the floor under
+    /// a standing body's level view.
+    #[test]
+    fn a_wall_inside_the_splash_by_the_muzzle_closes_the_cone() {
+        let muzzle = glam::Vec3::new(0.0, 0.0, 64.0);
+        let reach = 256.0 + crate::bots::ROCKET_CLEAR_MARGIN;
+        let wall = |x: f32| {
+            vcod_common::collision::test_world(&[(
+                glam::Vec3::new(x, -512.0, 0.0),
+                glam::Vec3::new(x + 16.0, 512.0, 512.0),
+            )])
+        };
+        let clear = |w: &vcod_common::collision::CollisionWorld| {
+            cone_clear(w, &[], muzzle, glam::Vec3::X, 12.0, reach)
+        };
+        assert!(!clear(&wall(200.0)));
+        assert!(clear(&wall(400.0)));
+        // A wall beside the line, inside the cone's edge.
+        let beside = vcod_common::collision::test_world(&[(
+            glam::Vec3::new(100.0, 40.0, 0.0),
+            glam::Vec3::new(300.0, 56.0, 512.0),
+        )]);
+        assert!(!clear(&beside));
+        assert!(cone_clear(&beside, &[], muzzle, glam::Vec3::X, 4.0, reach));
     }
 
     use super::*;

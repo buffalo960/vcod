@@ -216,6 +216,7 @@ without a leading `/` or `\` is chat, as in retail. `;` separates commands.
 | `connect <ip:port>`, `disconnect`, `reconnect`, `quit` | What they say |
 | `say`, `say_team` | Chat |
 | `cmd <text>` | Send a raw client command |
+| `rcon <command>` | Run a server console command with `rconPassword`; goes to the connected server, else to `rconAddress` (`ip[:port]`, port 28960 by default). The reply prints in the console |
 | `bind`, `unbind`, `unbindall`, `bindlist` | Binds |
 | `set`, `seta`, `toggle`, `<cvar> [value]` | Cvars; `seta` also saves |
 | `cvarlist`, `cmdlist`, `echo`, `clear` | The usual |
@@ -234,7 +235,7 @@ held; `m_forward`, and `m_side` under `+strafe`), `cg_fov`
 and by `vid_restart`, which also reloads the menus closed; see
 [Window and fullscreen](#window-and-fullscreen)), `com_maxfps`
 (retail's frame cap, `timedemo` included: `1000 / com_maxfps` whole ms a frame; vcod defaults to 0, no cap past vsync, where retail defaults to 85, about 90 fps),
-`password` and the browser's `ui_netSource`,
+`password`, `rconPassword` and `rconAddress` (neither saved), and the browser's `ui_netSource`,
 `ui_joinGametype` and `ui_browserShow*`. `exec <file>` runs a config from the paks or `main/`,
 and `ui_load` reloads the menus off the list `ui_menuFiles` names.
 Binds only act while connected.

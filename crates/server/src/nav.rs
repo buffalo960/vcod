@@ -1255,6 +1255,18 @@ impl NavGraph {
     /// whose way out is a drop scores the floors over its rim nearest
     /// (mp_ship's boat at (5250, -500, 27), bot-navigation.md section 3).
     pub fn nearest_walkable(&self, world: &CollisionWorld, p: Vec3) -> Option<u32> {
+        self.walkable_start(world, p).map(|(n, _)| n)
+    }
+
+    /// [`Self::nearest_walkable`], and whether the walk there takes a jump.
+    /// Where no walk arrives without one, the first of the nearest few a
+    /// bot's walk ([`as_a_bot`]) arrives at with its jump: a dent off the
+    /// graph walled higher than a step all round has no other way out, and
+    /// the bot runs that first leg as a jump edge ([`Follower::jumping`]).
+    /// mp_cassino's roof dent at (4948, -1413, 280), 23 under the roof
+    /// round it, held a bot pressing at the node at 280 beyond its wall for
+    /// 12 s (bot-objectives.md 10.6).
+    pub fn walkable_start(&self, world: &CollisionWorld, p: Vec3) -> Option<(u32, bool)> {
         use vcod_common::pmove::JUMP_HEIGHT;
         let (cx, cy) = self.column(p);
         let mut near: Vec<(f32, u32)> = (-2..=2)
@@ -1283,12 +1295,34 @@ impl NavGraph {
             .map(|&(_, n)| ((self.nodes[n as usize] - p).truncate().length(), n))
             .collect();
         below.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        // Up out of it, from rest: a body that found no walk out stands.
+        let jumps = |n: u32| {
+            let to = self.nodes[n as usize];
+            to.z - p.z > vcod_common::pmove::STEPSIZE
+                && matches!(
+                    as_a_bot(|| walk_with(
+                        world,
+                        p,
+                        Some(Vec3::ZERO),
+                        to.truncate(),
+                        Some(to.z),
+                        Gait::Forward
+                    )),
+                    Walked::Arrived(_, true)
+                )
+        };
         tried
             .iter()
             .chain(below.iter().take(WALKABLE_TRIES))
             .find(|&&(_, n)| walks(n))
-            .or(near.first())
-            .map(|&(_, n)| n)
+            .map(|&(_, n)| (n, false))
+            .or_else(|| {
+                tried
+                    .iter()
+                    .find(|&&(_, n)| jumps(n))
+                    .map(|&(_, n)| (n, true))
+            })
+            .or(near.first().map(|&(_, n)| (n, false)))
     }
 
     /// A* from `from` to `to` over the directed edges, Euclidean cost and
@@ -1763,6 +1797,13 @@ pub struct Follower {
     /// The plan under way starts at a node a walk from the body reached
     /// or at a ladder's end, not merely the nearest.
     proved_start: bool,
+    /// That walk from the body arrived only with a jump
+    /// ([`NavGraph::walkable_start`]): the way to the first node is run as
+    /// a jump edge.
+    jump_start: bool,
+    /// The last jump edge waited on, and whether its jump lands from rest
+    /// ([`Self::rest_jump_fails`]).
+    rest_jump: Option<((u32, u32), bool)>,
     /// The last drop asked about, and whether the graph's walk ran off it
     /// ([`Self::runs_off`]).
     run_off: Option<((u32, u32), bool)>,
@@ -2284,10 +2325,14 @@ impl Follower {
         }
         if self.search.is_none() {
             self.proved_start = true;
+            self.jump_start = false;
             let start = match world {
                 _ if self.on_rungs => g.nearest_ladder_end(here),
                 Some(w) if std::mem::take(&mut self.fell) || g.off_floor(here) => {
-                    g.nearest_walkable(w, here)
+                    g.walkable_start(w, here).map(|(n, jump)| {
+                        self.jump_start = jump;
+                        n
+                    })
                 }
                 _ => {
                     self.proved_start = false;
@@ -3257,10 +3302,12 @@ impl Follower {
         run
     }
 
-    /// Whether the way to the current waypoint is a jump edge.
+    /// Whether the way to the current waypoint is a jump edge, or the way
+    /// from the body to a plan's first node that only a jump walked
+    /// ([`Self::jump_start`]).
     pub fn jumping(&self, g: &NavGraph) -> bool {
         let Some(i) = self.next.checked_sub(1) else {
-            return false;
+            return self.jump_start && !self.path.is_empty();
         };
         match (self.path.get(i), self.path.get(self.next)) {
             (Some(&a), Some(&b)) => g.jumps.contains(&(a, b)),
@@ -3312,7 +3359,11 @@ impl Follower {
         if !self.jumping(g) || !ps.on_ground || ps.on_ladder || jump_ready(ps) {
             return None;
         }
-        let foot = g.nodes[self.path[self.next - 1] as usize];
+        // A jump start's foot is where the body stands.
+        let Some(i) = self.next.checked_sub(1) else {
+            return Some(at);
+        };
+        let foot = g.nodes[self.path[i] as usize];
         let rise = at[2] - foot.z;
         if rise.abs() >= vcod_common::pmove::STEPSIZE {
             return None;
@@ -3325,6 +3376,60 @@ impl Follower {
         let top = g.nodes[self.path[self.next] as usize];
         let ledge = rise > ARRIVE && top.z - at[2] > vcod_common::pmove::STEPSIZE;
         Some(if ledge { at } else { foot.into() })
+    }
+
+    /// Whether the jump edge [`Self::jump_wait`] holds the body at `spot`
+    /// for fails from there at rest, where the wait leaves it: then the
+    /// plan is dropped and the edge avoided. The graph proved the edge
+    /// with a running start, and mp_cassino's from the roof at (4992,
+    /// -1338, 295) to (4938, -1393, 303) clears the trench at 256 between
+    /// them only so: a UO bot that waited out the penalty there walked
+    /// into the trench and jumped at the roof's face 47 over it until it
+    /// gave up (bot-objectives.md 10.6). An edge already avoided had no
+    /// way round and is waited on. A jump start has no edge and is kept.
+    pub fn rest_jump_fails(
+        &mut self,
+        g: &NavGraph,
+        world: &CollisionWorld,
+        spot: [f32; 3],
+    ) -> bool {
+        let (Some(i), Some(&b)) = (self.next.checked_sub(1), self.path.get(self.next)) else {
+            return false;
+        };
+        let edge = (self.path[i], b);
+        if self.avoid.iter().any(|e| (e.0, e.1) == edge) {
+            return false;
+        }
+        let lands = match self.rest_jump {
+            Some((e, lands)) if e == edge => lands,
+            _ => {
+                let top = g.nodes[b as usize];
+                let gait = if g.crouch_jumps.contains(&edge) {
+                    Gait::CrouchJump
+                } else {
+                    Gait::Forward
+                };
+                let walked = as_a_bot(|| {
+                    walk_with(
+                        world,
+                        spot.into(),
+                        Some(Vec3::ZERO),
+                        g.aim(edge.0, edge.1),
+                        Some(top.z),
+                        gait,
+                    )
+                });
+                let lands = matches!(walked, Walked::Arrived(..));
+                self.rest_jump = Some((edge, lands));
+                lands
+            }
+        };
+        if lands {
+            return false;
+        }
+        self.avoid.push((edge.0, edge.1, self.clock + AVOID_TICKS));
+        self.reset();
+        true
     }
 
     /// Where a walked-out point goal is headed: the point, or the

@@ -4,6 +4,7 @@
 
 pub mod keys;
 pub mod log;
+pub mod rcon;
 pub mod shell;
 
 use std::collections::VecDeque;

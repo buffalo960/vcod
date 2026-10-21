@@ -231,7 +231,7 @@ something, the bullet links it.
   flips `r_fullscreen` and restarts the video, as retail's does
   (cod11-front-end.md section 21).
 - Retail's drop-down console on `` ` ``. It takes the commands under
-  [Console](usage.md#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
+  [Console](usage.md#console), retail's `rcon` among them; binds and archived cvars persist in `main/vcod_mp.cfg`.
 - `vc_bicubic 1` (archived, live, default 0) filters lightmaps with a cubic
   B-spline instead of retail's bilinear, so low-res shadow edges stop
   stepping. A deliberate divergence from retail's look.
@@ -421,12 +421,18 @@ something, the bullet links it.
 - `--bots` adds bots that join through the stock menus and roam a nav graph
   built from pmove runs, ladders and jumps. They play the objectives: S&D
   plants and defuses, Retrieval carries and escorts, Behind Enemy Lines
-  hunts. With `--bots-shoot` they fight back, with a reaction delay, a turn
+  hunts. Only the two teammates nearest a shot go to it, so a big team
+  spreads out instead of moving as one. With `--bots-shoot` they fight back, with a reaction delay, a turn
   cap and aim that settles on target and trails a target crossing their
-  view, firing before it settles, strafing on their sights, from behind a low wall they duck
+  view, firing before it settles and strafing on their sights. They spot new enemies in a sight
+  cone, keep their target, and turn on whoever shoots them. They fight from behind a low wall they duck
   under to reload or round a corner they lean out of. A hurt bot, or one whose clip ran
   dry, backs off to a spot out of its enemy's sight, reloads and waits
-  there, and a hurt one walks to a health pack lying near. They are still
+  there, and a hurt one walks to a health pack lying near. A clip under
+  half reloads once the fight goes quiet. A frag goes at an enemy behind
+  cover the gun cannot reach, or where a standing one was lost from
+  sight, never by a teammate, and a bot runs from a live frag it sees or
+  hears land near. They are still
   bad at it. So am I.
   On a 1.5 or UO server the graph is proven under that patch's movement.
   UO bots sprint long straight legs while they have the breath, pick from

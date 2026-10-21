@@ -8,10 +8,16 @@
 //! team scores. Each bot-tick adds its life, its wounds (health first
 //! under 50 in a fight this life) and those it died of within 5 s, the
 //! retreats it starts (hurt, dry), and the ticks it holds a cover spot and
-//! leans; and the aim: rounds fired (a bullet gun's clip drops), bullet
-//! hits off the `D;`/`K;` lines, and the time from acquiring a target with
-//! none tracked to the first round at it. It also counts stalled bot-ticks as `ship_stalls` does (12 s
-//! within 150 units).
+//! leans, the grenades it throws and the clip it starts each fight on
+//! (grenade kills come off the `K;` lines), and its aim: rounds fired (a
+//! bullet gun's clip drops), bullet hits off the `D;`/`K;` lines, and the
+//! time from acquiring a target with none tracked to the first round at
+//! it. It also counts stalled
+//! bot-ticks as `ship_stalls` does (12 s within 150 units), how close
+//! a team keeps: each playing bot-tick's distance to its nearest teammate
+//! and whether two or more stand within 400 units, the hits bots answer
+//! with fire at the attacker within 1 s and the deaths to a killer the
+//! bot never targeted.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
 //! `BOTS=` (6), `TICKS=` (12000, ten minutes), `JOBS=` (4, matches run in
@@ -19,10 +25,10 @@
 //! server. `AXIS_SKILL=` / `ALLIES_SKILL=` add the bots per side at those
 //! `vc_bot_skill` levels, half each (dm: `SKILLS=a,b,...`, one bot per
 //! entry); without them `BOTS` join by balance at `vc_bot_skill`.
-//! One-sided feature arms: `COVER=`, `RETREAT=`, `TEAMPLAY=` and
+//! One-sided feature arms: `COVER=`, `RETREAT=`, `TEAMPLAY=`, `AWARE=` and
 //! `FOOTWORK=` (cover and lean, `bots/cover.rs`; the retreat,
-//! `bots/retreat.rs`; team play, `bots/team.rs`; moving while fighting,
-//! `Bot::footwork`) each take `all` (the default), `none`, `axis`, `allies`
+//! `bots/retreat.rs`; team play, `bots/team.rs`; `Bot::aware`; moving
+//! while fighting, `Bot::footwork`) each take `all` (the default), `none`, `axis`, `allies`
 //! or `alt` (axis on odd seeds, allies on even, so the map's own
 //! asymmetry cancels); `dm` has no sides, so only `all` and `none` there.
 //! With an arm one-sided the totals add a row per arm, named by the
@@ -36,6 +42,10 @@ use std::time::{Duration, Instant};
 const TICK_MS: u64 = 50;
 const WINDOW: usize = 240;
 const RADIUS: f32 = 150.0;
+/// A bot-tick is packed with this many teammates or more within
+/// `PACK_RANGE` of it.
+const PACK: usize = 2;
+const PACK_RANGE: f32 = 400.0;
 
 /// Which side a feature is on for (`COVER=`, `RETREAT=`, `TEAMPLAY=`,
 /// `FOOTWORK=`).
@@ -88,12 +98,12 @@ struct Opts {
     /// Console lines run once the level is up (the per-side `addbot`s).
     console: Vec<String>,
     verbose: bool,
-    /// cover, retreat, team play, footwork.
-    arms: [Arm; 4],
+    /// cover, retreat, team play, awareness, footwork.
+    arms: [Arm; 5],
 }
 
-const FEATURES: [&str; 4] = ["cover", "retreat", "teamplay", "footwork"];
-const ARMS: [&str; 4] = ["COVER", "RETREAT", "TEAMPLAY", "FOOTWORK"];
+const FEATURES: [&str; 5] = ["cover", "retreat", "teamplay", "aware", "footwork"];
+const ARMS: [&str; 5] = ["COVER", "RETREAT", "TEAMPLAY", "AWARE", "FOOTWORK"];
 
 impl Opts {
     /// The one-sided features on for `team`, the arm its tallies land in.
@@ -133,7 +143,78 @@ struct Tally {
     /// Bot-ticks holding a cover spot, and leaning.
     hold: u64,
     lean: u64,
+    /// Hits a bot took from an enemy (one per attacker until answered or
+    /// 1 s on), those whose attacker it targeted within 1 s, and those it
+    /// answered within 1 s with its trigger down and that attacker its
+    /// target.
+    hits_taken: u32,
+    turned: u32,
+    answered: u32,
+    /// A bot's deaths to an enemy, and those whose killer it never
+    /// targeted this life.
+    killed: u32,
+    blindsided: u32,
+    /// Bot-ticks playing with a teammate playing, the sum of their
+    /// distances to the nearest one, and those with [`PACK`] or more
+    /// teammates inside [`PACK_RANGE`].
+    mate_ticks: u64,
+    mate_dist: f64,
+    packed: u64,
     aim: Aim,
+    kit: Kit,
+}
+
+/// Grenades and the clip a fight starts on: throws, the hits and kills
+/// their blasts made on others (`MOD_GRENADE_SPLASH`), engagements started
+/// with a bullet weapon in hand and the clip fractions they started on,
+/// summed.
+#[derive(Default, Clone)]
+struct Kit {
+    throws: u32,
+    grenade_hits: u32,
+    grenade_kills: u32,
+    engages: u32,
+    clip_sum: f64,
+}
+
+impl Kit {
+    fn add(&mut self, o: &Kit) {
+        self.throws += o.throws;
+        self.grenade_hits += o.grenade_hits;
+        self.grenade_kills += o.grenade_kills;
+        self.engages += o.engages;
+        self.clip_sum += o.clip_sum;
+    }
+
+    fn line(&self) -> String {
+        format!(
+            "grenades thrown {:4} hits {:3} kills {:3} engagements {:5} clip at start {:3.0}%",
+            self.throws,
+            self.grenade_hits,
+            self.grenade_kills,
+            self.engages,
+            100.0 * self.clip_sum / f64::from(self.engages.max(1)),
+        )
+    }
+
+    /// One bot-tick: the throws since `life`'s last count, and an
+    /// engagement on the tick tracking starts.
+    fn step(life: &mut Life, body: Option<&vcod_server::bots::BotBody>) -> Kit {
+        let mut k = Kit::default();
+        let throws = body.map_or(life.throws, |b| b.throws);
+        k.throws = throws.saturating_sub(life.throws);
+        life.throws = throws;
+        let engaged = body.is_some_and(|b| b.playing && b.engaged);
+        if engaged
+            && !life.engaged
+            && let Some(b) = body.filter(|b| b.clip_size > 0 && b.clip >= 0)
+        {
+            k.engages = 1;
+            k.clip_sum = f64::from(b.clip) / f64::from(b.clip_size);
+        }
+        life.engaged = engaged;
+        k
+    }
 }
 
 /// The aim columns (bot-combat.md section 1): rounds fired, bullet hits,
@@ -197,12 +278,21 @@ impl Tally {
         self.hold += o.hold;
         self.lean += o.lean;
         self.aim.add(&o.aim);
+        self.hits_taken += o.hits_taken;
+        self.answered += o.answered;
+        self.turned += o.turned;
+        self.killed += o.killed;
+        self.blindsided += o.blindsided;
+        self.mate_ticks += o.mate_ticks;
+        self.mate_dist += o.mate_dist;
+        self.packed += o.packed;
+        self.kit.add(&o.kit);
     }
 
     /// The per-bot-tick line under [`Tally::line`].
     fn survive(&self) -> String {
         format!(
-            "life {:5.1} s wounds {:4} dead in 5 s {:3.0}% retreats hurt {:4} dry {:4} cover hold {:6} lean {:6}",
+            "life {:5.1} s wounds {:4} dead in 5 s {:3.0}% retreats hurt {:4} dry {:4} cover hold {:6} lean {:6} mate {:4.0} packed {:4.1}% turned {:3.0}% answered {:3.0}% of {:5} blindsided {:3.0}% of {:4}",
             self.life_ticks as f32 * TICK_MS as f32 / 1000.0 / self.lives.max(1) as f32,
             self.wounds,
             100.0 * self.wound_deaths as f32 / self.wounds.max(1) as f32,
@@ -210,6 +300,13 @@ impl Tally {
             self.dry,
             self.hold,
             self.lean,
+            self.mate_dist / self.mate_ticks.max(1) as f64,
+            100.0 * self.packed as f64 / self.mate_ticks.max(1) as f64,
+            100.0 * self.turned as f32 / self.hits_taken.max(1) as f32,
+            100.0 * self.answered as f32 / self.hits_taken.max(1) as f32,
+            self.hits_taken,
+            100.0 * self.blindsided as f32 / self.killed.max(1) as f32,
+            self.killed,
         )
     }
 
@@ -308,7 +405,7 @@ fn main() {
         seeds = (1..=8).collect();
     }
     println!(
-        "maps {} gametype {} bots {} ticks {} uo {} set {:?} console {:?} cover/retreat/teamplay/footwork {:?}",
+        "maps {} gametype {} bots {} ticks {} uo {} set {:?} console {:?} cover/retreat/teamplay/aware/footwork {:?}",
         opts.maps.join(","),
         opts.gametype,
         opts.bots,
@@ -426,6 +523,7 @@ fn summarize(what: &str, results: &[&Match]) {
             println!("  {kind} {k:<13} {}", t.line());
             println!("  {kind} {k:<13} {}", t.survive());
             println!("  {kind} {k:<13} {}", t.aim.line());
+            println!("  {kind} {k:<13} {}", t.kit.line());
         }
     };
     rows("team ", &by_team);
@@ -489,13 +587,14 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
     let mut first_hit: HashMap<(String, String), usize> = HashMap::new();
     let mut hist: HashMap<usize, VecDeque<[f32; 3]>> = HashMap::new();
     let mut bots: HashMap<usize, Life> = HashMap::new();
+    let mut react = React::default();
     for tick in 0..o.ticks {
         now += Duration::from_millis(TICK_MS);
         // A default arm never calls its hook, so an all-on run is the
         // stock game.
         for slot in sv.bot_slots() {
             let team = team_name(&mut sv, slot, m.dm);
-            let [cover, retreat, team_play, footwork] = o.arms;
+            let [cover, retreat, team_play, aware, footwork] = o.arms;
             if cover != Arm::All {
                 sv.test_bot_cover(slot, cover.on(team, seed));
             }
@@ -504,6 +603,9 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             }
             if team_play != Arm::All {
                 sv.test_bot_team_play(slot, team_play.on(team, seed));
+            }
+            if aware != Arm::All {
+                sv.test_bot_aware(slot, aware.on(team, seed));
             }
             if footwork != Arm::All {
                 sv.test_bot_footwork(slot, footwork.on(team, seed));
@@ -524,6 +626,12 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             .collect();
         let lines: Vec<String> = sv.script_log().get(seen..).unwrap_or_default().to_vec();
         seen += lines.len();
+        react.watch(&mut sv, m.dm, tick, |num, team, f| {
+            let t = tally(&mut m, o, num, team, &skill);
+            f(t.0);
+            f(t.1);
+            f(t.2);
+        });
         for l in &lines {
             let f: Vec<&str> = l.trim_end().split(';').collect();
             match f[0] {
@@ -549,6 +657,20 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         first_hit
                             .entry((anum.to_string(), vnum.to_string()))
                             .or_insert(tick);
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            att.0.kit.grenade_hits += 1;
+                            att.1.kit.grenade_hits += 1;
+                            att.2.kit.grenade_hits += 1;
+                        }
+                        let vteam = f[2 + g];
+                        if m.dm || ateam.is_empty() || ateam != vteam {
+                            react.hit(vnum, anum, tick, |t| {
+                                let v = tally(&mut m, o, vnum, vteam, &skill);
+                                v.0.hits_taken += t;
+                                v.1.hits_taken += t;
+                                v.2.hits_taken += t;
+                            });
+                        }
                     }
                 }
                 "K" if f.len() >= 11 => {
@@ -585,6 +707,15 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         a.1.team_kills += 1;
                         a.2.team_kills += 1;
                     } else {
+                        let blind = react.killed(vnum, anum);
+                        if let Some(blind) = blind {
+                            let v = tally(&mut m, o, vnum, vteam, &skill);
+                            for t in [v.0, v.1, v.2] {
+                                t.killed += 1;
+                                t.blindsided += u32::from(blind);
+                            }
+                        }
+                        let a = tally(&mut m, o, anum, ateam, &skill);
                         a.0.kills += 1;
                         a.1.kills += 1;
                         a.2.kills += 1;
@@ -594,6 +725,14 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         a.0.ttk_ms.push(ttk);
                         a.1.ttk_ms.push(ttk);
                         a.2.ttk_ms.push(ttk);
+                        if f[9 + 2 * g] == "MOD_GRENADE_SPLASH" {
+                            a.0.kit.grenade_hits += 1;
+                            a.1.kit.grenade_hits += 1;
+                            a.2.kit.grenade_hits += 1;
+                            a.0.kit.grenade_kills += 1;
+                            a.1.kit.grenade_kills += 1;
+                            a.2.kit.grenade_kills += 1;
+                        }
                     }
                 }
                 // [guid,] num, team, name, action
@@ -636,6 +775,35 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             let life = bots.entry(slot).or_default();
             let t = tally(&mut m, o, &num, team, &skill);
             life.step(body.as_ref(), cover, t);
+        }
+        // Each playing bot's distance to its nearest playing teammate, and
+        // how many stand inside PACK_RANGE.
+        let playing: Vec<(usize, [f32; 3])> = sv
+            .bot_slots()
+            .into_iter()
+            .filter_map(|s| Some((s, sv.bot_body(s).filter(|b| b.playing && !b.dead)?.origin)))
+            .collect();
+        let playing: Vec<(usize, &'static str, [f32; 3])> = playing
+            .into_iter()
+            .map(|(s, p)| (s, team_name(&mut sv, s, m.dm), p))
+            .filter(|(_, t, _)| *t != "none")
+            .collect();
+        for &(slot, team, at) in &playing {
+            let d: Vec<f32> = playing
+                .iter()
+                .filter(|(s, t, _)| *s != slot && *t == team)
+                .map(|(_, _, p)| (0..3).map(|i| (p[i] - at[i]).powi(2)).sum::<f32>().sqrt())
+                .collect();
+            let Some(near) = d.iter().copied().reduce(f32::min) else {
+                continue;
+            };
+            let close = d.iter().filter(|&&x| x < PACK_RANGE).count();
+            let t = tally(&mut m, o, &slot.to_string(), team, &skill);
+            for t in [t.0, t.1, t.2] {
+                t.mate_ticks += 1;
+                t.mate_dist += f64::from(near);
+                t.packed += u64::from(close >= PACK);
+            }
         }
         for slot in sv.bot_slots() {
             let Some(b) = sv.bot_body(slot).filter(|b| b.playing && !b.deployed) else {
@@ -706,6 +874,9 @@ struct Life {
     /// The target acquired with none tracked, and the ticks since, until
     /// its first round.
     acquired: Option<(usize, Option<u64>)>,
+    /// [`Kit::step`]'s last throw count and tracking.
+    throws: u32,
+    engaged: bool,
 }
 
 impl Life {
@@ -763,6 +934,7 @@ impl Life {
             }
             (None, _) => None,
         };
+        d.kit = Kit::step(self, body);
         if let Some(b) = body.filter(|b| b.playing) {
             if self.wound.is_none() && b.engaged && b.health < 50 {
                 self.wound = Some(0);
@@ -796,4 +968,87 @@ impl Life {
 /// The `vc_bot_skill` level a bot plays at, as text.
 fn skill_of(sv: &vcod_server::Server, slot: usize) -> String {
     sv.bot_skill(slot).map_or("-".into(), |l| l.to_string())
+}
+
+/// Ticks a hit's answer is waited for: 1 s.
+const ANSWER_TICKS: usize = (1000 / TICK_MS) as usize;
+
+/// How bots answer hits and whom they had in their sights when killed
+/// (`turned`, `answered`, `blindsided`; bot-combat.md section 1).
+#[derive(Default)]
+struct React {
+    /// (victim, attacker) -> tick of the hit still waiting on an answer,
+    /// and whether the victim has targeted the attacker since.
+    pending: HashMap<(usize, usize), (usize, bool)>,
+    /// Per bot: the slots it targeted this life, and whether it played
+    /// last tick.
+    targeted: HashMap<usize, (std::collections::HashSet<usize>, bool)>,
+}
+
+impl React {
+    /// One tick's bodies, read before its log lines: on a tick after the
+    /// hit's, the attacker as target turns, the trigger down besides
+    /// answers. `add` credits a slot's tallies.
+    fn watch(
+        &mut self,
+        sv: &mut vcod_server::Server,
+        dm: bool,
+        tick: usize,
+        mut add: impl FnMut(&str, &str, &mut dyn FnMut(&mut Tally)),
+    ) {
+        for slot in sv.bot_slots() {
+            let Some(b) = sv.bot_body(slot) else {
+                continue;
+            };
+            let (seen, was) = self.targeted.entry(slot).or_default();
+            if b.playing && !*was {
+                seen.clear();
+            }
+            *was = b.playing;
+            if !b.playing {
+                continue;
+            }
+            seen.extend(b.target);
+            let team = team_name(sv, slot, dm);
+            let num = slot.to_string();
+            self.pending.retain(|(v, a), (t, turned)| {
+                if *v != slot || *t >= tick || b.target != Some(*a) {
+                    return true;
+                }
+                if !*turned {
+                    *turned = true;
+                    add(&num, team, &mut |t| t.turned += 1);
+                }
+                if b.firing {
+                    add(&num, team, &mut |t| t.answered += 1);
+                }
+                !b.firing
+            });
+        }
+        self.pending.retain(|_, (t, _)| tick - *t < ANSWER_TICKS);
+    }
+
+    /// A hit on `victim` by `attacker` at `tick`; `count(1)` when it opens
+    /// a window (the victim is a bot with none open on that attacker).
+    fn hit(&mut self, victim: &str, attacker: &str, tick: usize, count: impl FnOnce(u32)) {
+        let (Ok(v), Ok(a)) = (victim.parse(), attacker.parse()) else {
+            return;
+        };
+        if !self.targeted.contains_key(&v) || self.pending.contains_key(&(v, a)) {
+            return;
+        }
+        self.pending.insert((v, a), (tick, false));
+        count(1);
+    }
+
+    /// A bot `victim` killed by enemy `killer`: whether it never targeted
+    /// him this life; `None` when the victim is no bot.
+    fn killed(&mut self, victim: &str, killer: &str) -> Option<bool> {
+        let (Ok(v), Ok(k)) = (victim.parse::<usize>(), killer.parse::<usize>()) else {
+            return None;
+        };
+        self.pending.retain(|(pv, _), _| *pv != v);
+        let (seen, _) = self.targeted.get(&v)?;
+        Some(!seen.contains(&k))
+    }
 }

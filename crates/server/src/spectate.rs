@@ -355,6 +355,11 @@ pub struct ClientSim {
     pub head_icon_team: i32,
     damage: DamageAccum,
     feedback: DamageFeedback,
+    /// The last hit another client dealt this life: his slot, the
+    /// `sv_time` it landed and the damage direction (from him toward this
+    /// body; zero when it carried none). Read by the bots
+    /// (`bots::Hurt`), never sent.
+    pub last_hit: Option<(usize, i32, [f32; 3])>,
     /// `ps.stats[1]`, the yaw toward the killer (combat doc, 5.1, item 11).
     dead_yaw: i32,
     /// When the next `EV_PAIN` may fire.
@@ -655,6 +660,7 @@ impl ClientSim {
             dead_eye: false,
             damage: DamageAccum::default(),
             feedback: DamageFeedback::default(),
+            last_hit: None,
             dead_yaw: 0,
             pain_after_ms: 0,
             // Clear, the way `ClientConnect`'s memset leaves `ps.eFlags`:
@@ -905,6 +911,7 @@ impl ClientSim {
         self.dead_eye = false;
         self.damage = DamageAccum::default();
         self.feedback = DamageFeedback::default();
+        self.last_hit = None;
         self.dead_yaw = 0;
         self.pain_after_ms = 0;
         self.spawn_count = self.spawn_count.wrapping_add(1);

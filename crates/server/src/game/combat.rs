@@ -490,6 +490,12 @@ fn spread_deg(def: &WeaponDef, sim: &ClientSim, ads: bool, stance: &SpreadStance
     min + (def.hip_spread_max - min) * scale
 }
 
+/// [`spread_deg`] from the hip for a shot `sim` fires on its next cmd,
+/// standing as it stands now.
+pub(crate) fn hip_spread_now(def: &WeaponDef, sim: &ClientSim) -> f32 {
+    spread_deg(def, sim, false, &SpreadStance::of(&sim.ps, 0, 0))
+}
+
 /// `gunrandom` (combat doc, 2.2): a point in the unit disc with the radius
 /// drawn uniformly, so the cone is denser at its centre.
 pub(crate) fn gun_random(rng: &mut u64) -> (f32, f32) {

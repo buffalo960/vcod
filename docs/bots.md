@@ -77,14 +77,15 @@ startup. A change takes effect within half a second, with no restart.
 ## Skill
 
 Four levels set how fast a bot reacts and turns, how well it aims, how long
-it remembers an enemy it lost sight of, and how far it hears gunfire:
+it remembers an enemy it lost sight of, how far it hears gunfire and how
+wide it sees:
 
-| Level | Name | Reaction | Turn rate | Aim error at first sight, settled | Hearing |
-|---|---|---|---|---|---|
-| 0 | easy | 400-650 ms | 200°/s | 64, 5 units | 0.75x |
-| 1 | normal (default) | 200-350 ms | 300°/s | 36, 4 units | 1x |
-| 2 | hard | 150-300 ms | 440°/s | 32, 2.5 units | 1.25x |
-| 3 | expert | 100-150 ms | 600°/s | 24, 1.5 units | 1.5x |
+| Level | Name | Reaction | Turn rate | Aim error at first sight, settled | Hearing | Sight cone |
+|---|---|---|---|---|---|---|
+| 0 | easy | 400-650 ms | 200°/s | 64, 5 units | 0.75x | 100° |
+| 1 | normal (default) | 200-350 ms | 300°/s | 36, 4 units | 1x | 120° |
+| 2 | hard | 150-300 ms | 440°/s | 32, 2.5 units | 1.25x | 140° |
+| 3 | expert | 100-150 ms | 600°/s | 24, 1.5 units | 1.5x | 160° |
 
 The aim error is how far from the target's chest a shot would land; it
 shrinks every tick the bot stays on the target and grows with range, with
@@ -93,7 +94,16 @@ fires before its aim has settled: an automatic sprays early, a bolt rifle
 waits for a closer line. On its sights a bot now and then strafes slowly,
 backs away from a close enemy with a bolt rifle, or lies down at long
 range; a higher level does so more often. A higher level also remembers a
-lost enemy and a heard shot longer. How the levels play against each other is measured in
+lost enemy and a heard shot longer.
+
+A bot spots a new enemy only inside its sight cone, centred on where it
+looks; a bot in a vehicle seat sees all round. It keeps fighting the enemy
+it already has while he stays in sight, unless another comes much closer.
+An enemy who shoots it comes first: the bot turns on him, and if it can't
+see him it turns toward where the shot came from. Switching back to an
+enemy it was just fighting, or onto one who just hit it, costs less
+reaction time and aim than a fresh one. Gunfire it hears takes it toward
+the sound from any direction. How the levels play against each other is measured in
 [research/bot-combat.md](research/bot-combat.md).
 
 `vc_bot_skill` changes every bot without its own level at once, mid-fight

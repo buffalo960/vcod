@@ -1429,19 +1429,6 @@ fn main() -> Result<()> {
         (Mode::Idle, None, version_tag())
     };
 
-    println!("click to capture mouse, Esc to release");
-    if args.walk {
-        println!("WASD move, Space jump, Ctrl crouch, Z prone, Q/E lean, Shift walk");
-        println!("LMB fire, RMB aim, R reload, 1-6 weapons");
-    } else if args.connect.is_some() {
-        println!("WASD move, Space jump/stand, C crouch, Ctrl prone, Q/E lean, Shift melee, F use");
-        println!("LMB fire, RMB aim, R reload, 1-4 weapon slots, wheel next/prev weapon");
-        println!("Esc or M opens the script menu; mouse, digits, arrows + Enter pick");
-    } else if args.map.is_some() {
-        println!("WASD + Space/Ctrl fly, Shift boost, scroll changes speed");
-    }
-    println!("` opens the console");
-
     fx::registry::init(&fs);
 
     let console = console::Console::new(&fs);
@@ -1504,6 +1491,7 @@ fn main() -> Result<()> {
         os_cursor: true,
         captured: false,
         server_process: None,
+        rcon: Default::default(),
         timedemo: Default::default(),
         exec_depth: 0,
         error: None,
@@ -2326,6 +2314,9 @@ struct App {
     /// The `vcod-server` Start New Server launched; dropping it kills it,
     /// so it goes with the client.
     server_process: Option<frontend::create::ServerProcess>,
+    /// `rcon`'s socket while not connected; its `print` replies are polled
+    /// each loop.
+    rcon: console::rcon::RconSocket,
     /// The playing demo's `timedemo` count.
     timedemo: play::demos::TimeDemo,
     /// Nested `exec`s running.
@@ -2816,6 +2807,7 @@ impl App {
                     Mode::Online { view, .. } => view.shock_command = Some(args),
                     _ => console::log::print("Unknown command \"cg_shellshock\""),
                 },
+                Effect::Rcon(args) => self.rcon(&args),
                 Effect::Forward(line) => match &mut self.mode {
                     Mode::Online { net, .. } if net.state() != net::NetState::Disconnected => {
                         net.send_reliable(&line)
@@ -3270,6 +3262,36 @@ impl App {
 
     /// `connect`: leaves any server first, then joins `addr` the way
     /// `--connect` does. Like retail's `CL_Connect_f`, it closes the console.
+    /// `rcon` (CoDMP.exe 0x40f880): to the server once its `connectResponse`
+    /// came, else to `rconAddress` (port 28960 when it names none). A bad
+    /// address sends nothing, as retail's `NA_BAD` does.
+    fn rcon(&mut self, args: &[String]) {
+        use console::rcon;
+        let password = self.shell.cvar("rconPassword").unwrap_or("");
+        let Some(packet) = rcon::packet(password, args) else {
+            console::log::print(rcon::TOO_LONG);
+            return;
+        };
+        if let Mode::Online { net, .. } = &mut self.mode
+            && matches!(
+                net.state(),
+                net::NetState::LoadingGamestate | net::NetState::Active
+            )
+        {
+            net.send_oob(&packet);
+            return;
+        }
+        let address = self.shell.cvar("rconAddress").unwrap_or("");
+        if address.is_empty() {
+            console::log::print(rcon::NOT_CONNECTED);
+            return;
+        }
+        match net::master::parse_address(address) {
+            Some(to) => self.rcon.send(to, &packet),
+            None => log::debug!("rcon: bad rconAddress {address:?}"),
+        }
+    }
+
     fn connect(&mut self, addr: String) {
         if matches!(self.mode, Mode::Online { .. }) {
             self.disconnect(None);
@@ -3742,6 +3764,9 @@ impl ApplicationHandler for App {
             event_loop.exit();
         }
         self.poll_server_join();
+        for text in self.rcon.poll() {
+            console::log::print(&text);
+        }
         let pending = std::mem::take(&mut self.ui_pending);
         self.ui_effects(event_loop, pending);
         self.sync_menu_mouse();

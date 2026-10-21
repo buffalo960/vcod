@@ -264,3 +264,64 @@ off the cvar) sets `PlayInput::talking` before each frame's cmds;
 light `EF_TALK` for it. vcod has no cgame key catcher. The cgame draws
 the bit as `headiconTalkBalloon` over a teammate's head
 (`cod11-gametypes-re-bel.md` 7.3, "The second sprite").
+
+## 7. `rcon`
+
+VERIFIED, `CL_Init` (0x411e60) registers `rconPassword` with the default
+`""` (0x559228) and flags 0x100 (Q3's `CVAR_TEMP`, never saved), and
+`rconAddress` with `""` and flags 0. 1.5 `CoDMP.exe` and UO
+`CoDUOMP.exe` register both with the same defaults and flags. There is no
+`rcon_password` cvar; the name survives only in a message (below).
+
+VERIFIED, the command `rcon` (name at 0x566570) is registered with the
+handler 0x40f880 (`push 0x40f880` at 0x4126d7). What it does, read off
+its disassembly:
+
+- It tests `rconPassword`'s string pointer, not its first byte
+  (`mov eax,[edx+4]; test eax,eax` at 0x40f8a1). VERIFIED. INFERRED: a
+  cvar's string is never null, so `You must set 'rcon_password'
+  before\nissuing an rcon command.\n` (0x5673fc) never prints, and an
+  empty password goes out as it stands.
+- It builds the message in a 0x400-byte buffer: four 0xff bytes, `rcon `
+  (0x5673f4), the password, then for each argument from argv 1 a space
+  (0x568a9c) and the argument, wrapped in `"` when it is empty or holds a
+  byte at or below 0x20 (0x40f926..0x40f9cd). VERIFIED. So the line is
+  rebuilt from its tokens, not sent as typed, the way the server rebuilds
+  it again (`cod11-server-handshake.md`, "rcon").
+- A message that reaches 0x400 bytes prints `rcon command too long\n`
+  (0x5673dc) and sends nothing (0x40f9d3). VERIFIED.
+- With `cls.state` (0x155f2c0) at 3 or more it sends to the connection's
+  address (the 20 bytes at 0x15ef028), whatever `rconAddress` says
+  (0x40f9f1). VERIFIED. INFERRED: 3 is the state the `connectResponse`
+  branch of `CL_ConnectionlessPacket` (0x4109d0) sets, so a client still
+  challenging or connecting uses `rconAddress`.
+- Otherwise an empty `rconAddress` prints `You must either be
+  connected,\nor set the 'rconAddress' cvar\nto issue rcon commands\n`
+  (0x567388, one string) and sends nothing; a set one goes through
+  `NET_StringToAdr` (0x449690) and a port of 0 becomes `htons(0x7120)`,
+  28960 (0x40fa0c..0x40fa61). VERIFIED.
+- It sends `strlen + 1` bytes, the NUL included (0x40fa66..0x40fa8f).
+  VERIFIED.
+
+VERIFIED, 1.5 `CoDMP.exe` 0x410490 and UO `CoDUOMP.exe` 0x4111c0 are the
+same function: the pointer test, `rcon command too long` (1.5 0x5a6a3c, UO
+0x594704), the not-connected message (0x5a69e8, 0x5946b0), the state
+compare against 3 (`cls.state` at 0x15b8aa0, 0x4ad3d60) and the port
+0x7120. The packet is the same on all three protocols.
+
+The reply: `CL_ConnectionlessPacket`'s `print` branch (the word at
+0x566e68, branch at 0x410db1) reads the rest of the packet
+(`MSG_ReadString`, 0x444e00), copies up to 255 bytes into `clc`'s server
+message (0x15ce888) and prints it with `%s` (0x568b34). VERIFIED. INFERRED
+off the branch order: nothing on that path tests the state or the sender,
+so a reply prints whether the client is connected or not.
+
+vcod: `console::rcon` builds the packet and reads a `print` back. While
+the connection is past `connectResponse` it goes out on the connection's
+socket (`NetClient::send_oob`) and the reply comes back as a
+`NetEvent::Print`, which `NetClient` raises for a `print` in any state.
+Otherwise it goes to `rconAddress` from a socket of its own, which the
+main loop polls for `print` packets in every mode, the main menu
+included. A `rconAddress` that does not resolve sends nothing, where
+retail's `NET_StringToAdr` leaves a bad address that sends nothing either
+(INFERRED from Q3's `NET_SendPacket`, which drops `NA_BAD`).

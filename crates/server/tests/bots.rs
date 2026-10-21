@@ -839,22 +839,77 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     );
 }
 
+/// mp_cassino's roof dent at (4948, -1413, 280), off the graph between
+/// roof nodes at 303 and walled 23 units high on every side: only a jump
+/// gets out. Seed 17 on master 973e0e94 dropped a bot into it off the walk
+/// from (4938, -1393, 303) to (4991, -1440, 303) and held it there 12 s,
+/// pressing at the node at 280 beyond the wall (bot-objectives.md 10.6).
+#[test]
+#[ignore = "builds mp_cassino's UO graph and runs a bot for 30 s of game time; run with --ignored"]
+fn a_uo_bot_in_mp_cassinos_roof_dent_jumps_out() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        eprintln!("COD_DIR has no uo/: skipping");
+        return;
+    };
+    let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_cassino").unwrap()).unwrap())
+        .expect("parse the bsp");
+    let mut now = Instant::now();
+    let mut cfg = cfg(1, false, "tdm");
+    cfg.map = "mp_cassino".into();
+    let mut sv = vcod_server::Server::new(cfg, now);
+    sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
+    sv.set_cvar("vc_bot_vehicles", "0");
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    let goal = [4896.0, -1337.0, 280.0];
+    let slot = (0..900)
+        .find_map(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_slots().into_iter().find(|s| {
+                sv.bot_body(*s).is_some_and(|b| b.playing)
+                    && sv.test_nav_route([4944.0, -1433.0, 303.0], goal).is_some()
+            })
+        })
+        .expect("the bot plays on the built graph");
+    for spot in [[4951.7, -1414.5, 280.125], [4943.0, -1418.0, 280.125]] {
+        sv.place_client(slot, spot, 180.0);
+        sv.test_bot_goal(slot, Some(goal));
+        let out = (0..300).any(|_| {
+            run(&mut sv, &mut now, 1);
+            sv.bot_body(slot).is_some_and(|b| {
+                b.on_ground && (b.origin[0] - 4948.0).hypot(b.origin[1] + 1413.0) > 40.0
+            })
+        });
+        assert!(
+            out,
+            "from {spot:?} still in the dent at {:?}",
+            sv.bot_body(slot).map(|b| b.origin)
+        );
+    }
+}
+
 /// The games of [`uo_bots_fight_and_sprint_in_tdm`] that failed it before
 /// the fixes they name (bot-navigation.md "Jumps", bot-objectives.md 10.3,
 /// 10.4 and 10.7), with vehicles off for two, one thread each.
 #[test]
-#[ignore = "runs seven 90 s mp_cassino UO games, ~10 s in release on 7 threads; run with --ignored"]
+#[ignore = "runs eight 90 s mp_cassino UO games, ~10 s in release on 8 threads; run with --ignored"]
 fn uo_tdm_games_that_stalled_or_never_sprinted() {
     if vcod_common::testing::uo_fs().is_none() {
         return;
     }
-    // Seed, vehicles: 17 a jump's penalty, 19 pre-aim off the sprint, 15
-    // two exits on one frame, 25 a tank's headway, 33 sprint legs; with
-    // vehicles off, 1 a plan from across a wall, 31 a stall. Seed 45's
-    // rider headway is fixed, but its game now dithers a tank elsewhere.
+    // Seed, vehicles: 17 a jump's penalty, then a jump waited on that
+    // lands only from a run and a roof dent off the graph, 13 and 19
+    // pre-aim off the sprint (19's game also lobbed a stick grenade whose
+    // bounce back killed its thrower), 43 two exits on one frame (a driver and a gunner leave one tank a frame
+    // apart; seed 15's game lost that pair to the grenade rules' draws and
+    // stalls a bot on a ledge instead), 25 a tank's headway, 33 sprint
+    // legs; with vehicles off, 1 a plan from across a wall, 31 a stall.
+    // Seed 45's rider headway is fixed, but its game now dithers a tank
+    // elsewhere.
     let games = [
-        (15, true),
+        (43, true),
         (17, true),
+        (13, true),
         (19, true),
         (25, true),
         (33, true),

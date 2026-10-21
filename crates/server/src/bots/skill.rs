@@ -32,6 +32,7 @@ impl Skill {
                 memory_ticks: 70,
                 noise_ticks: 140,
                 hearing: 0.75,
+                fov_deg: 100.0,
                 ..Skill::default()
             },
             1 => Skill::default(),
@@ -50,6 +51,7 @@ impl Skill {
                 memory_ticks: 140,
                 noise_ticks: 260,
                 hearing: 1.25,
+                fov_deg: 140.0,
                 ..Skill::default()
             },
             _ => Skill {
@@ -67,6 +69,7 @@ impl Skill {
                 memory_ticks: 180,
                 noise_ticks: 300,
                 hearing: 1.5,
+                fov_deg: 160.0,
                 ..Skill::default()
             },
         }
@@ -100,6 +103,7 @@ mod tests {
             assert!(hi.footwork > lo.footwork);
             assert!(hi.forget_ticks > lo.forget_ticks && hi.memory_ticks > lo.memory_ticks);
             assert!(hi.noise_ticks > lo.noise_ticks && hi.hearing > lo.hearing);
+            assert!(hi.fov_deg > lo.fov_deg);
         }
         assert_eq!(Skill::level(MAX_LEVEL + 5), Skill::level(MAX_LEVEL));
     }
