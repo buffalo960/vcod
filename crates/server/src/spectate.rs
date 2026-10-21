@@ -2281,7 +2281,7 @@ impl ClientSim {
         anims: Option<&vcod_common::animtree::PlayerAnims>,
     ) {
         use vcod_common::animclock::{self, ChannelClock, Seen, Times};
-        use vcod_common::playerpose::{BodyInput, BodySlope};
+        use vcod_common::playerpose::{BodyInput, BodySlope, SeatWeapon};
         let EndFrame {
             frametime_ms,
             command_time,
@@ -2332,6 +2332,9 @@ impl ClientSim {
             movement_dir: self.ps.movement_dir as f32,
             eflags: self.entity_eflags(),
             legs: anims.map(|a| a.record(legs)).unwrap_or_default(),
+            seat_weapon: self.seat.map_or(SeatWeapon::Barred, |s| {
+                SeatWeapon::of(s.kind, s.pos, self.ps.weapon.into(), self.ci_seat_angles[1])
+            }),
         };
         let mut angles = self.pose.angles;
         // Pmove writes the movetype condition each cmd, ahead of the end

@@ -2290,6 +2290,33 @@ face.
         bone of both glide fixtures sits within the print's 0.01 of
         retail's, the frames above included, and `JEEP_GLIDE_GAPS` and
         `TANK_EXIT_GAPS` are gone.
+      - **The angle updater on a rider.** The UO cgame's updater
+        (`uo_cgame_mp_x86.dll` 0x30004550, the counterpart of 1.1's
+        0x300040e0) tests `s.eFlags & 0x106000` at the same three places
+        as the server's (0x1dbac): it sets the torso yaw, pitch and legs
+        flags (`+0x3b4`, `+0x3bc`, `+0x384`) at 0x30004596, sets the
+        torso and legs yaw (`+0x3b0`, `+0x380`) to the view's at
+        0x300047c7 and swings the torso pitch to 0 at 0x300047f6
+        (VERIFIED, disassembly). Both copies skip the flag setting for
+        a rider whose seat allows his weapon: the cgame tests `s+0x88`
+        `& 0x38 == 8` and `& 7 == 3` inline (0x300045b7), the server
+        calls `BG_AllowPlayerWeaponAtVehiclePos` (0x23148) on the same
+        bits (VERIFIED, disassembly and decompile). For that seat with
+        `s+0xcc` (the weapon) non-zero, both swing the legs toward the
+        record's `+0x3f8`, the seat tag's yaw, instead of the view's
+        (cgame 0x300046c6..0x300046f2, VERIFIED disassembly; server
+        0x1dbac, VERIFIED decompile). The yaw overwrite that follows
+        hides both from the angles; they show only in the legs' flag,
+        which the exit frame's on-foot swing reads (INFERRED, control
+        flow: a set flag swings the legs at tolerance 0, a clear one at
+        40).
+        1.1's cgame (0x30004126) and 1.5's (`cgame_mp15.dll` 0x30004376)
+        test `eFlags & 0xc000`, the turret bits only, with no seat test
+        (VERIFIED, disassembly), so a 1.1 or 1.5 gunner's updater is the
+        server's. vcod: `BodyInput::seat_weapon` (`SeatWeapon`) carries
+        the seat test on both sides; vcod had read the flag branch off
+        `EF_MOUNTED` alone, so a rider in any seat kept the on-foot
+        flags.
       - Not gated: the passenger's 55400 and 55450 read the body turned
         23 units from ours; retail's net probe stalled there (no cmd ran
         from 55250 to 55416, its `ct=` pairs), and the harness sends

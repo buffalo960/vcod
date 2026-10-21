@@ -108,6 +108,38 @@ pub struct BodyInput {
     pub eflags: i32,
     /// The legs anim's record (`BG_ParseCommands`' flags).
     pub legs: crate::animscript::AnimRecord,
+    /// UO: what the rider's seat lets him hold. Read only under a rider
+    /// bit; 1.1's and 1.5's updaters have no such test.
+    pub seat_weapon: SeatWeapon,
+}
+
+/// UO's seat test in the angle updater (game.mp.uo 0x1dbac, uo cgame
+/// 0x30004550): `BG_AllowPlayerWeaponAtVehiclePos` on the entity's seat
+/// (`s+0x88`: a four-wheel's seat 3) and the entity's `weapon` (`s+0xcc`).
+/// coduo-vehicles.md 13, "The angle updater on a rider".
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub enum SeatWeapon {
+    /// On foot, on a turret, or in a seat that holds no weapon: a rider
+    /// here swings all three angles every frame.
+    #[default]
+    Barred,
+    /// The weapon seat, empty handed.
+    Allowed,
+    /// The weapon seat with a weapon in hand: the legs swing toward the
+    /// seat tag's yaw (the record's `+0x3f8`) before the rider's yaw
+    /// overwrites them.
+    Held { seat_yaw: f32 },
+}
+
+impl SeatWeapon {
+    /// The test off the seat's `(kind, seat)` and the entity's `weapon`.
+    pub fn of(kind: i32, seat: i32, weapon: i32, seat_yaw: f32) -> Self {
+        match (kind == 1 && seat == 3, weapon != 0) {
+            (false, _) => SeatWeapon::Barred,
+            (true, false) => SeatWeapon::Allowed,
+            (true, true) => SeatWeapon::Held { seat_yaw },
+        }
+    }
 }
 
 impl BodyInput {
@@ -118,9 +150,22 @@ impl BodyInput {
         self.eflags & EF_MOUNTED != 0
     }
     /// On a turret or, on UO, in a vehicle seat: UO's updater tests
-    /// `eFlags & 0x106000` (game.mp.uo 0x1dbac).
+    /// `eFlags & 0x106000` (game.mp.uo 0x1dbac, uo cgame 0x30004550), 1.1's
+    /// and 1.5's `0xc000` (cgame 0x300040e0, 1.5 cgame 0x30004330).
     fn rides(&self) -> bool {
         self.eflags & (EF_MOUNTED | crate::net::flags::EF_IN_VEHICLE_V22) != 0
+    }
+    /// A rider the updater swings all three angles for: any but one in the
+    /// seat that allows his weapon.
+    fn rides_bare(&self) -> bool {
+        self.rides() && self.seat_weapon == SeatWeapon::Barred
+    }
+    /// The seat yaw a rider's legs swing toward instead of the view's.
+    fn held_seat_yaw(&self) -> Option<f32> {
+        match self.seat_weapon {
+            SeatWeapon::Held { seat_yaw } if self.rides() => Some(seat_yaw),
+            _ => None,
+        }
     }
     fn prone(&self) -> bool {
         self.eflags & EF_PRONE != 0
@@ -170,13 +215,16 @@ impl BodyAngles {
     /// The angle updater (`game.mp.i386.so` 0x2af78, cgame 0x300040e0) for
     /// one frame of `frametime_ms`: the torso yaw toward the view (less 0.3
     /// of the legs' heading off it), the legs toward their heading once 40
-    /// degrees off it, the torso pitch toward 0.6 of the view's.
+    /// degrees off it, the torso pitch toward 0.6 of the view's. A rider
+    /// faces the view with no pitch; the UO server's and cgame's copies
+    /// (game.mp.uo 0x1dbac, uo cgame 0x30004550) add the seat test of
+    /// [`SeatWeapon`].
     pub fn step(&mut self, input: &BodyInput, frametime_ms: i32, swing_speed: f32) {
         let ft = frametime_ms as f32;
         let m = input.movement_dir;
         let yaw = angle_mod(input.view[1]);
         let climbing = self.movetype & MOVETYPE_CLIMB != 0;
-        if !input.mounted() && !climbing && self.movetype & MOVETYPE_IDLE != 0 {
+        if !input.rides_bare() && !climbing && self.movetype & MOVETYPE_IDLE != 0 {
             if self.firing {
                 self.torso_yawing = true;
                 self.pitching = true;
@@ -221,8 +269,11 @@ impl BodyAngles {
                 &mut a.legs_yawing,
             );
         };
+        // An armed rider's legs swing toward the seat, which only moves
+        // their flag: the rider's yaw below overwrites the angle.
+        let seat = input.held_seat_yaw();
         if input.dead() {
-            legs(yaw, 0.0, self);
+            legs(seat.unwrap_or(yaw), 0.0, self);
         } else if input.prone() {
             self.legs_yawing = false;
             self.legs_yaw = m + yaw;
@@ -230,9 +281,9 @@ impl BodyAngles {
             self.legs_yawing = false;
             legs(yaw, 0.0, self);
         } else if self.legs_yawing {
-            legs(yaw + m, 0.0, self);
+            legs(seat.unwrap_or(yaw + m), 0.0, self);
         } else {
-            legs(yaw + m, 40.0, self);
+            legs(seat.unwrap_or(yaw + m), 40.0, self);
         }
         if input.rides() {
             self.torso_yaw = yaw;
@@ -1497,6 +1548,46 @@ main
         assert!(near(s.legs_yaw, 200.0) && near(s.torso_yaw, 200.0));
         assert_eq!(s.pitch, 0.0);
         assert!(Controllers::new(&s, &mounted, &BodySlope::default()).is_none());
+    }
+
+    /// UO's updater swings all three angles for a rider unless his seat
+    /// allows his weapon, and an armed one's legs toward the seat's yaw:
+    /// only the legs' flag shows it, on the frame he gets out.
+    #[test]
+    fn a_uo_riders_seat_decides_whether_his_legs_swing_out() {
+        use crate::net::flags::EF_IN_VEHICLE_V22;
+        let legs_after_exit = |seat_weapon| {
+            let mut s = BodyAngles {
+                legs_yaw: 100.0,
+                torso_yaw: 100.0,
+                movetype: MOVETYPE_IDLE,
+                ..Default::default()
+            };
+            let seated = BodyInput {
+                view: [0.0, 100.0, 0.0],
+                movement_dir: 30.0,
+                eflags: EF_IN_VEHICLE_V22,
+                seat_weapon,
+                ..Default::default()
+            };
+            s.step(&seated, 50, BG_SWING_SPEED);
+            assert!(near(s.legs_yaw, 100.0) && near(s.torso_yaw, 100.0));
+            let out = BodyInput {
+                eflags: 0,
+                seat_weapon: SeatWeapon::Barred,
+                ..seated
+            };
+            s.step(&out, 50, BG_SWING_SPEED);
+            s.legs_yaw
+        };
+        // Forced, the flag outlives the seat: 15 of the 30 off the view.
+        assert!(near(legs_after_exit(SeatWeapon::Barred), 115.0));
+        // Inside the 40 degree tolerance the legs never start.
+        assert!(near(legs_after_exit(SeatWeapon::Allowed), 100.0));
+        let held = SeatWeapon::of(1, 3, 5, 190.0);
+        assert_eq!(held, SeatWeapon::Held { seat_yaw: 190.0 });
+        assert!(near(legs_after_exit(held), 115.0));
+        assert_eq!(SeatWeapon::of(1, 2, 5, 0.0), SeatWeapon::Barred);
     }
 
     /// The split: the back takes the torso pitch 0.2 / 0.3 / 0.5 and its yaw
