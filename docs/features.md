@@ -336,7 +336,10 @@ something, the bullet links it.
   ([coduo-vehicles.md](research/coduo-vehicles.md) 10-14).
 - Runs Activision's own gametype and map scripts on `vcod-gsc`, a VM for
   CoD's `.gsc` language that lives in this repo. Menus, spawns, scoring,
-  rounds and limits all come from the stock scripts, not from Rust. All five
+  rounds and limits all come from the stock scripts, not from Rust. A
+  script runtime error ends its thread only under `developer 1`; below it
+  the thread runs on, as retail's does
+  ([cod11-gsc-language.md](research/cod11-gsc-language.md)). All five
   stock gametypes are checked against retail: `dm`, `tdm` and `sd` end to
   end, `re` and `bel` through their key events
   ([cod11-gametypes-re-bel.md](research/cod11-gametypes-re-bel.md)).

@@ -718,6 +718,8 @@ pub struct BotBody {
     pub retreating: u8,
     /// The UO vehicle (entity number) and seat it sits in.
     pub seat: Option<(u32, i32)>,
+    /// Driving, and holding the hull for a teammate walking up to board.
+    pub crew_wait: bool,
     /// Times it got into a vehicle.
     pub boardings: u32,
     /// Rockets it fired on foot at enemy vehicles.
@@ -6913,6 +6915,7 @@ mod tests {
             boarding: false,
             gun_speed: 10000.0,
             crowd,
+            contact_ms: 0,
         });
         v
     }
@@ -6948,6 +6951,54 @@ mod tests {
         assert_eq!((cmd.forward, cmd.right), (0, -127), "a turn in place");
         v.seat.as_mut().unwrap().crowd.beside = true;
         assert_eq!(bot.think(&v).right, 0);
+    }
+
+    /// Hemmed in at a back corner, a turn in place rolls on ahead when the
+    /// way ahead is clear (seed 1 of `uo_bots_fight_and_sprint_in_tdm`).
+    #[test]
+    fn a_turn_held_from_behind_rolls_on_ahead() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd {
+            beside: true,
+            behind: true,
+            ..Crowd::default()
+        });
+        v.waypoint = Some([0.0, 1000.0, 64.0]);
+        let rolls = (0..60).find(|_| bot.think(&v).forward > 0);
+        assert!(rolls.is_some(), "the hull never rolled on");
+    }
+
+    /// A hull wedged on something bounces off it, so its speed never
+    /// reads stalled: its unbroken contact backs it off, and gets the
+    /// driver out before the seven seconds that destroy it (seed 9).
+    #[test]
+    fn a_driver_backs_off_and_then_leaves_a_hull_wedged_in_contact() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd::default());
+        v.seat.as_mut().unwrap().contact_ms = 2600;
+        assert!((0..2).any(|_| bot.think(&v).forward < 0), "no back-off");
+        v.seat.as_mut().unwrap().contact_ms = 5000;
+        let out = (0..4).any(|_| bot.think(&v).buttons & msg::BUTTON_USE != 0);
+        assert!(out, "the driver stays in");
+    }
+
+    /// A tank turning in place between walls shrugs a few degrees each
+    /// way: a window that turned it under 15 degrees backs it off.
+    #[test]
+    fn a_tank_that_cannot_turn_in_place_backs_off() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd::default());
+        v.waypoint = Some([0.0, 1000.0, 64.0]);
+        v.seat.as_mut().unwrap().speed = 0.0;
+        let backs = (0..40).find(|_| bot.think(&v).forward < 0);
+        assert!(backs.is_some(), "the turn in place never backed off");
+        // Turning, it does not.
+        let mut bot = Bot::new("allies", false, 1);
+        let backs = (0..40).find(|i| {
+            v.seat.as_mut().unwrap().yaw = -2.0 * *i as f32;
+            bot.think(&v).forward < 0
+        });
+        assert_eq!(backs, None);
     }
 
     fn armored(at: [f32; 3]) -> BotView {
