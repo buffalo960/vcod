@@ -1022,12 +1022,17 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   `Gait::Backward`; re-prove a backed drop with the creep.
 - A bot on a jump edge jumps by the walk's own rule (`nav::PinJump`:
   two pinned ticks, a bob, or right under the top; no `jump_clear` room
-  test, pinned off its pace toward the top) and steers at
+  test, pinned off its pace toward the top and, on the ground, off the
+  distance moved too) and steers at
   `NavGraph::aim`. Every non-leap jump edge is walked again that way,
   aimed there (`NavGraph::reprove_jumps`, `nav::as_a_bot`); a change to
   the bot's jump goes in `PinJump` or `as_a_bot`, or the bot and the
   graph part. What a bot's jump adds (no room test, the ramp wait) stays
-  out of the flood's walks: in them it reshapes the graph.
+  out of the flood's walks: in them it reshapes the graph. A jump edge
+  is run forward whatever its drop: only the forward walk jumps, so
+  every jump edge was proved that way.
+- A plan round avoided edges takes no risky edge (`nav::Search`); a
+  risky drop is taken only by a plan that avoids nothing.
 - A following bot runs at the graph's 190 units/s: on the ground its keys
   are cut by the weapon's `moveSpeedScale` (`nav::paced_key`), never on a
   jump's tick, in the air or on the rungs. A probe that runs the bot's

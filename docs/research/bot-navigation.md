@@ -3732,8 +3732,10 @@ merge, the same detector; ship seeds in three blocks of 768):
   to master's 48; pinned off its pace toward the top, as master's bot
   was, 149, and they reached the floor at 204 88 times to master's 62.
   VERIFIED (measured, traces and tick counts). The two pinned ticks
-  stay (`bots::tests::a_bot_sliding_along_a_ledges_face_is_pinned`,
-  `bots::tests::a_bot_jumps_on_its_second_tick_not_closing_on_the_top`).
+  stay (`bots::tests::a_bot_jumps_on_its_second_tick_not_closing_on_the_top`).
+  On the ground the body has to move under the pinned pace as well since
+  "The recheck's leftovers" (below):
+  `bots::tests::a_bot_sliding_along_a_ledges_face_jumps_where_it_comes_to_rest`.
 - Tried and dropped, both measured in the table: one jump an edge, as
   the walk takes (bots stood pinned at that stair top and fell off it
   on unstick spells, 20 falls), and master's one pinned tick under a
@@ -3967,13 +3969,13 @@ ran them again on master 028799bf (past botrng, shipedges, jumpcue and
 the UO pins). VERIFIED (measured, release `ship_stalls`, `dm`, 6 bots,
 4000 ticks, fire off; ours only; stalled bot-ticks / falls / deaths):
 
-| map | seeds | master 028799bf | the fall off the path past its reach |
-|---|---|---|---|
-| `mp_ship` | 1-1535 odd | 78 / 1 / 1 | 43 / 1 / 1 |
-| `mp_dawnville` | 1-383 odd | 0 / 2 / 0 | 0 / 2 / 0 |
-| `mp_depot` | 1-767 odd | 8 / 5 / 0 | 8 / 5 / 0 |
-| `mp_cassino` (UO, `tdm`, 2400 ticks) | 1-63 odd | 31 / 0 / 22 | 31 / 0 / 22 |
-| `mp_uo_stanjel` (UO, `tdm`, 2400 ticks) | 1-63 odd | 28 / 1 / 0 | 28 / 1 / 0 |
+| map | seeds | master 028799bf | the fall off the path past its reach | the leftovers below |
+|---|---|---|---|---|
+| `mp_ship` | 1-1535 odd | 78 / 1 / 1 | 43 / 1 / 1 | 41 / 4 / 1 |
+| `mp_dawnville` | 1-383 odd | 0 / 2 / 0 | 0 / 2 / 0 | 0 / 1 / 0 |
+| `mp_depot` | 1-767 odd | 8 / 5 / 0 | 8 / 5 / 0 | 0 / 2 / 0 |
+| `mp_cassino` (UO, `tdm`, 2400 ticks) | 1-63 odd | 31 / 0 / 22 | 31 / 0 / 22 | 70 / 0 / 18 |
+| `mp_uo_stanjel` (UO, `tdm`, 2400 ticks) | 1-63 odd | 28 / 1 / 0 | 28 / 1 / 0 | 0 / 1 / 0 |
 
 - The unstick falls the lip walk left are gone on master: `mp_depot`
   seed 663 and `mp_ship` seed 225 stall 0 with no fall, and no
@@ -4015,8 +4017,152 @@ the UO pins). VERIFIED (measured, release `ship_stalls`, `dm`, 6 bots,
   4); the stairwell over the drop to (5404, 354, 204), from (5451, 350,
   240) (1275: 10). Seed 661's fall is an unstick spell from (6198, -67,
   108) to 56; seed 969's death at (4973, -33, 616) is under the mast.
-  None traced. `mp_dawnville`'s falls are spells off (-1200, -16934, 97)
-  and (-1641, -18304, 94), about 50 down.
+  `mp_dawnville`'s falls are spells off (-1200, -16934, 97) and (-1641,
+  -18304, 94), about 50 down. Traced and fixed in "The recheck's
+  leftovers" below, which the last column measures.
+
+### The recheck's leftovers
+
+Each leftover above traced per tick (`ship_stalls` `TRACE=`, with a
+temporary per-tick log of the bot's view and cmd), on the recheck's last
+column, release, 1.1:
+
+- The mast hatch at x 3696 (seeds 233, 1031, 1227). Off the rungs at
+  (3704.9, 57.9, 992) bound for the exit node (3705, 85, 992) and on to
+  (3648, 71, 994), the bot read the exit as passed 27 short of it: nearer
+  the next node than the exit is (`Follower::follow`, the pass loop's
+  `past`). Headed straight for (3648, 71), it crossed the hatch at
+  (3687, 65), fell to the deck at 760 and climbed again (seed 1031, t2456
+  to t2475, then again from t2540). `past` now needs floor all the way to
+  the next node (`straight_floor`, the string-pull's probe). Seeds 233,
+  1031 and 1227 stall 0;
+  `nav::tests::a_walk_on_that_falls_at_the_weapons_scale_is_not_taken`
+  holds the exit from the same spot. VERIFIED (trace, seed 1031; the
+  table below).
+- The crow's nest's risky drops (seed 969's death; part of seeds 1233
+  and 307). Its head nodes (4964, 36, 1219) and (4964, 93, 1219) each
+  have a risky edge down the hatch to (4929, 68, 692). After a meeting
+  at the head the ladder edge (4964, 64, 1219) -> (4959, 64, 692) was
+  avoided, and the plan round it took the risky drop, which `RISK_COST`
+  only made dear. In seed 969 bot 5, bound from (4964, 93) for (4964, 36)
+  and the drop, took `unpin_yaw`'s heading of -126 degrees at t2623, crossed
+  the hatch at (4957, 59), fell past the rungs to 616 and died. A plan
+  that avoids stuck edges now takes no risky edge (`Search::run`); when
+  none goes round, the plan through the stuck edge comes next, as before
+  (`nav::tests::a_plan_round_a_stuck_edge_takes_no_risky_drop`). Seed 969
+  has no death. VERIFIED (traces, seeds 969 and 1233, whose bot turned for
+  the drop at t3414; the graph's edges, `nav_build` `EDGES=1`).
+- The stairwell's jump drop (seed 1275). (5402, 321, 344) -> (5404, 354,
+  204) is a jump edge, 140 down, which only a forward walk proves
+  (`walk_sliding` arms the jump for no other gait). `Bot::steer` backed
+  every waypoint more than `BACK_DOWN_HEIGHT` under the feet that is no
+  run off, so the bot crept backwards at it, the jump cue fired while it
+  backed (cmd forward -15, up 127, t3045), and the jump put it on the
+  stair at 378, down which it slid to (5514, 360, 204). Running back west
+  for the node it hopped in the crease at (5451, 350, 240) until the stall
+  (t2997 to t3093). A jump edge is now never backed. Seed 1275 stalls 0.
+  VERIFIED (trace, seed 1275).
+- The spar off the crow's nest (seed 307, and seed 1233's first trip).
+  Bound for the spar at (4888, 65, 1212), the bot came onto the rim node
+  (4929, 61, 1254) at the pace its jump up from the head left it; the walk
+  on from there missed the spar (`edge_holds`), so the edge was avoided
+  and the plan reset, and the reset dropped the roam's destination. The
+  next roam went back down the ladder and met the next bot coming up
+  (t312). Now a drop more than a step down whose walk on from rest on
+  the node arrives is taken from rest there, as `Follower::flings` takes
+  its drops; from rest the bot walks onto the spar (t316). Holding for
+  any failed edge brought a bot to rest on the hull rib at (2214, -325,
+  -48) and its next plan's jump edge, which the graph proved with a
+  running start, slid it into the crease at (2189, -292, -45) (seed 603,
+  22 stalled bot-ticks); holding for a run off a rim stopped bots at each
+  of `mp_depot`'s pit drops at 212 in turn (seed 149, 36). Neither is
+  held now. VERIFIED (traces, seeds 307, 603 and 149; 603 and 149
+  measured with each change switched off in turn).
+- The slope at (-1193, -16944, 102) on `mp_dawnville` (seeds 239, 313).
+  Up the slope the body passed the node 12 under it, 4 units off the
+  line, and `edge_holds` took the walk on as proved: it exempted any body
+  more than `ARRIVE` under the node, meant for one on a ladder under its
+  head. From there the walk on to (-1193, -16989, 119) pins
+  (`Walked::Fell`, a test walk from the traced spots), as the bot did, at
+  (-1199.6, -16934.8, 97.9) for 18 ticks; the unstick spell then walked it
+  53 down the slope, which the detector counts as a fall. The exemption
+  is now for a body on the rungs only (`edge_holds`' `on_rungs`). With
+  this change alone on the recheck's tip, seeds 239 and 313 fall 0 and
+  the bot plans round the edge from the node (t1071). VERIFIED (traces,
+  seed 239 on the tip and with the change).
+- The crate at (6207, -90, 80) (seed 661). Run into at 189 units/s on
+  the jump edge (6207, -58, 56) -> (6207, -90, 80), the body slid west
+  along the crate's face at 52 units/s. INFERRED (that slide): the face
+  stands about 15 degrees off square to the edge. VERIFIED (trace, seed
+  661): the
+  bot read the tick as pinned (its pace toward the top was 0.8 a tick)
+  and jumped at (6200, -60), where the walk, which reads a tick pinned off
+  the distance moved (2.6), slid on to the corner. It came down on the
+  80 crate's edge at (6189, -67), jumped again onto the 108 crate beside
+  it, stalled there and the spell ran it off the far side to 56. On the
+  ground a tick is now pinned only when the body also moved under the
+  pinned pace (`Bot::think`); the bot slides to (6199, -61), jumps there
+  and lands on the crate (t156). VERIFIED (measured, the seed sets, and
+  traces of seeds 409 and 905): read off the distance moved in the air
+  too, as the walk does everywhere, bots sliding on the hull's curve
+  toward (2176, -319, -32) never jumped, and the hull crease at (2189,
+  -292, -45) held bots in 2 to 16 of the 768 seeds (80 to 1683 stalled
+  bot-ticks) as the other changes varied, in none on the recheck's tip.
+
+VERIFIED (measured, the recheck's detector and seed sets, base the
+recheck's tip; stalled bot-ticks / falls / deaths, `seated` the stalled
+ticks in a UO vehicle's seat, which `ship_stalls` now prints):
+
+| map | the recheck's tip | the leftovers fixed |
+|---|---|---|
+| `mp_ship` 1-1535 odd | 43 / 1 / 1 | 41 / 4 / 1 |
+| `mp_dawnville` 1-383 odd | 0 / 2 / 0 | 0 / 1 / 0 |
+| `mp_depot` 1-767 odd | 8 / 5 / 0 | 0 / 2 / 0 |
+| `mp_cassino` (UO, `tdm`, 2400) 1-63 odd | 31 / 0 / 21, 31 seated | 70 / 0 / 18, 70 seated |
+| `mp_uo_stanjel` (UO, `tdm`, 2400) 1-63 odd | 28 / 1 / 0 | 0 / 1 / 0 |
+
+The recheck's tip gave 21 deaths on `mp_cassino` here, the table above
+22. VERIFIED (the same runs): every leftover the recheck listed is gone: `mp_ship` seeds 233, 307,
+661, 969, 1031, 1227, 1233's mast stall and 1275, `mp_dawnville` 239 and
+313. So are `mp_depot` 641's 8 (the pit at (-1432, 2083, 212)) and its
+falls in 437, 483, 639 and 677, and `mp_uo_stanjel` 21's 10 and 41's 18
+at (-629, 956, 352) and (-767, 996, 352). INFERRED (the pin rule alone
+among the changes, each switched off in turn, brings them back; not
+traced): the stanjel bots jumped off their pace. Seeds that changed for
+the worse:
+
+- `mp_ship` 1233 (28) and 1521 (10, 2 falls): the stairwell. Two bots
+  pressed at its top at (5343, 333, 352) for 100 ticks, then the forward
+  run off the drop to (5404, 354, 204) jumped at the rail and came down
+  in the crease at (5445, 355, 292) (1233, t2082 to t2148). VERIFIED
+  (trace, seed 1233; 1521 not traced). INFERRED: the bot's run differs
+  from the walk's, which starts on the node.
+- `mp_ship` 1381's death: two bots met head-on on the spar at
+  (4676, 64, 1172); the stall's unstick spell headed along the spar a few
+  degrees off it and ran off its side to 535. VERIFIED (trace). INFERRED
+  (the spar's traffic): more bots reach the spar since the rim's drop is
+  taken from rest.
+- `mp_ship` 991: a bot ran into another passing at (3789, -207, 352)
+  and stood against it; the stall's spell walked 50 down the dome's
+  slope to 303, which the detector counts as a fall. VERIFIED (trace).
+  797 falls from the same spot, not traced. 1345 (3) at (4195, 504, 83),
+  not traced.
+- Not traced: `mp_dawnville` 243, a spell off (1208, -15099, -23) to
+  -73; `mp_depot` 249, a spell off the pit's rim at (-1251, 2095, 227),
+  where 529 already fell on the recheck's tip.
+- `mp_cassino` 19 (61) and 31 (9) are drivers in the seat
+  (`seated`); no seed has a stall on foot, as before. VERIFIED (the
+  same runs).
+
+VERIFIED (measured on the same sets): tried and dropped, pinned off
+the distance moved in the air too (above), and the follower's walk on
+along a jump edge run as a bot (`as_a_bot`: no room test, the bob) on
+top of the kept rule, which cleared seed 1233's stairwell but trapped
+seed 113 in the hull crease (`mp_ship` 97 / 2 / 1). VERIFIED (traces,
+seeds 307 and 661): keeping the roam's destination when an edge is
+avoided at the rim cleared seed 307, but seed 661's bot replanned for
+the next drop at (2560, -127, 385) and fell off the hatch's lip there to
+its death; dropped too.
 
 ## 4. Memory and hearing
 
