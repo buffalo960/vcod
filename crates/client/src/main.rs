@@ -6470,7 +6470,10 @@ impl ApplicationHandler for App {
                                 let screen = r.screen_size();
                                 let fovs = (fov, camera::fov_y(fov, aspect));
                                 let at = hud::scope::gun_point(gun_pose.angles, fovs, screen);
-                                hud::scope::build(&w.def, at, screen, &mut scope_quads);
+                                let layout = hud::scope::Layout::of(
+                                    net::protocol::install_protocol(&self.fs),
+                                );
+                                hud::scope::build(&w.def, layout, at, screen, &mut scope_quads);
                                 // The gun hides under it, as online.
                                 scoped = true;
                             }

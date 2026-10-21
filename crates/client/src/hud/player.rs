@@ -125,6 +125,7 @@ pub struct Context<'a> {
     /// The key text a command is bound to, `None` while unbound.
     pub bound_key: &'a dyn Fn(&str) -> Option<String>,
     pub draw: super::DrawToggles,
+    pub scope: scope::Layout,
 }
 
 /// The state the native HUD keeps across frames.
@@ -180,7 +181,7 @@ impl PlayerHud {
             .filter(|def| scope::overlay_frac(def, p.ads_frac, raising).is_some());
         if let Some(def) = scoped {
             let at = scope::gun_point(p.gun_angles.unwrap_or_default(), p.fov, screen);
-            scope::build(def, at, screen, out);
+            scope::build(def, cx.scope, at, screen, out);
         }
         // The 2D pass draws the flash ahead of the hit icons (0x3001884a).
         self.damage.build_flash(now, &v, out);
@@ -1502,6 +1503,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let def = carbine();
         let arms = |eflags: i32| {
@@ -1548,6 +1550,7 @@ mod tests {
                 entity_origin: &origin,
                 bound_key: &|_| None,
                 draw: super::super::DrawToggles { crosshair, status },
+                scope: Default::default(),
             };
             let mut out = Vec::new();
             PlayerHud::default().build(&p, &cx, 0, &Virtual::new((640.0, 480.0)), &mut out);
@@ -1582,6 +1585,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let def = WeaponDef {
             aim_down_sight: true,
@@ -1634,6 +1638,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let mg = WeaponDef {
             reticle_center: Some("gfx/reticle/mg42_cross.tga".into()),
@@ -1701,6 +1706,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let mut out = Vec::new();
         let v = Virtual::new((640.0, 480.0));
@@ -1863,6 +1869,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let def = carbine();
         let p = PlayerView {
@@ -1902,6 +1909,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let def = WeaponDef {
             mode_icon: Some("gfx/hud/hud@weaponmode_full.tga".into()),
@@ -2020,6 +2028,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let icons = |def: &WeaponDef| {
             let p = PlayerView {
@@ -2063,6 +2072,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let def = carbine();
         let p = PlayerView {
@@ -2101,6 +2111,7 @@ mod tests {
             entity_origin: &origin,
             bound_key: &|_| None,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let p = PlayerView {
             health: 50,
@@ -2138,6 +2149,7 @@ mod tests {
                 status: true,
                 crosshair: true,
             },
+            scope: Default::default(),
         };
         let def = carbine();
         let p = PlayerView {
@@ -2379,6 +2391,7 @@ LANG_ENGLISH "Press USE [%s] to pickup health"
             entity_origin: &origin,
             bound_key: &key,
             draw: Default::default(),
+            scope: Default::default(),
         };
         let ammo = [0i16; 64];
         let text = |hint: i32, held: usize, slots: [u8; 8], string: i32| {

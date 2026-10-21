@@ -474,6 +474,7 @@ impl Hud {
                     entity_origin: f.entity_origin,
                     bound_key: f.bound_key,
                     draw: f.draw,
+                    scope: scope::Layout::of(f.protocol),
                 };
                 self.player.build(&view, &cx, f.server_time, &v, &mut out);
                 // `Menu_PaintAll` paints the rest of hud.menu over the native items.

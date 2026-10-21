@@ -1702,6 +1702,20 @@ refdef's size (`0x30209584`, `0x30209588`). INFERRED, off the weapon setup
 that falls through to `0x300358f5`: the material at `0x301a6aa4 + 0x198 * weapon`
 is `adsOverlayShader` registered with trap `0x58`.
 
+INFERRED, off UO's `uo_cgame_mp_x86.dll` `0x300195e0` (its copy of
+`0x30015fe0`, gated by `0x30019520`) and its calls to the stretch-pic
+wrapper `0x3003e0f0`: UO draws the image once, `w` by `h` at `(cx - w/2,
+cy - h/2)` with corners `(0,0)-(1,1)`, then the same four bands around
+that box (left and right full height at `s` 0, top and bottom its width at
+`t` 0). VERIFIED: `0x3007bce8` reads 0.5. VERIFIED, `uo/pakuo04.pk3`'s
+`weapons/mp/springfield_mp`: `adsOverlayShader
+gfx/reticle/scope@scope_overlay_us.dds`, `adsOverlayReticle none`, 520 by
+400; `pakuo00.pk3`'s image is a 1024 by 1024 DDS of the whole scope.
+VERIFIED: 1.5's `springfield_mp` keeps `ui/assets/reticle_circle_quarter`
+at 220 by 220. INFERRED: 1.5's cgame keeps 1.1's four quarters. vcod
+picks the layout by protocol (`hud::scope::Layout`); drawn as quarters, the
+UO image showed four whole scopes.
+
 INFERRED, same function, the reticle, drawn over the image whether or not
 the shader is set: `crosshair` draws the weapon's `reticleCenter` material,
 `reticleCenterSize` times the screen scales, centred. `FG42` and `Gewehr43`

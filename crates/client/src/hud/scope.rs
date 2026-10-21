@@ -4,6 +4,7 @@
 
 use super::HudQuad;
 use super::player::DamageFeedback;
+use vcod_common::net::protocol::{PROTOCOL_V22, Protocol};
 use vcod_common::pmove::PlayerState;
 use vcod_common::pmove::aim::{self, AimInput, AimState, DamageKick, GunMove};
 use vcod_common::weapon::{OverlayReticle, WeaponDef};
@@ -159,12 +160,38 @@ fn rect(
     }
 }
 
-/// The overlay centred on `c` (window pixels): the image four times,
-/// mirrored about `c`, black bands from it to the window edges sampled off
-/// the image's own edge, then the reticle lines. Retail scales x and y
+/// How the cgame lays out `adsOverlayShader` (cod11-hud-protocol.md,
+/// "Scope overlay"): 1.1's and 1.5's mirror a quarter image four times
+/// about the centre, UO's draws its whole scope image once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    #[default]
+    Quarters,
+    Whole,
+}
+
+impl Layout {
+    pub fn of(proto: &Protocol) -> Self {
+        if proto.version == PROTOCOL_V22.version {
+            Layout::Whole
+        } else {
+            Layout::Quarters
+        }
+    }
+}
+
+/// The overlay centred on `c` (window pixels): the image laid out by
+/// `layout`, black bands from it to the window edges sampled off the
+/// image's own edge, then the reticle lines. Retail scales x and y
 /// separately by 640 and 480; vcod uses the HUD's one height scale, so the
 /// circle stays round on a wide window and the bands take up the rest.
-pub fn build(def: &WeaponDef, [cx, cy]: [f32; 2], (sw, sh): (f32, f32), out: &mut Vec<HudQuad>) {
+pub fn build(
+    def: &WeaponDef,
+    layout: Layout,
+    [cx, cy]: [f32; 2],
+    (sw, sh): (f32, f32),
+    out: &mut Vec<HudQuad>,
+) {
     const WHITE: [f32; 4] = [1.0; 4];
     const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
     const FULL: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
@@ -173,11 +200,22 @@ pub fn build(def: &WeaponDef, [cx, cy]: [f32; 2], (sw, sh): (f32, f32), out: &mu
     let h = def.ads_overlay_height * scale;
 
     if let Some(shader) = &def.ads_overlay_shader {
-        let (left, top) = (cx - w, cy - h);
-        out.push(rect((left, top, w, h), FULL, WHITE, shader));
-        out.push(rect((cx, top, w, h), [1.0, 0.0, 0.0, 1.0], WHITE, shader));
-        out.push(rect((left, cy, w, h), [0.0, 1.0, 1.0, 0.0], WHITE, shader));
-        out.push(rect((cx, cy, w, h), [1.0, 1.0, 0.0, 0.0], WHITE, shader));
+        // The image's box, (left, top, width, height).
+        let (left, top, bw, bh) = match layout {
+            Layout::Quarters => {
+                let (left, top) = (cx - w, cy - h);
+                out.push(rect((left, top, w, h), FULL, WHITE, shader));
+                out.push(rect((cx, top, w, h), [1.0, 0.0, 0.0, 1.0], WHITE, shader));
+                out.push(rect((left, cy, w, h), [0.0, 1.0, 1.0, 0.0], WHITE, shader));
+                out.push(rect((cx, cy, w, h), [1.0, 1.0, 0.0, 0.0], WHITE, shader));
+                (left, top, 2.0 * w, 2.0 * h)
+            }
+            Layout::Whole => {
+                let at = (cx - w / 2.0, cy - h / 2.0, w, h);
+                out.push(rect(at, FULL, WHITE, shader));
+                at
+            }
+        };
         // The side bands read the image's left column, top and bottom its
         // top row; both are the corner's solid black.
         let column = [0.0, 0.0, 0.0, 1.0];
@@ -185,21 +223,16 @@ pub fn build(def: &WeaponDef, [cx, cy]: [f32; 2], (sw, sh): (f32, f32), out: &mu
         if left > 0.0 {
             out.push(rect((0.0, 0.0, left, sh), column, WHITE, shader));
         }
-        let right = cx + w;
+        let right = left + bw;
         if right < sw {
             out.push(rect((right, 0.0, sw - right, sh), column, WHITE, shader));
         }
         if top > 0.0 {
-            out.push(rect((left, 0.0, 2.0 * w, top), row, WHITE, shader));
+            out.push(rect((left, 0.0, bw, top), row, WHITE, shader));
         }
-        let bottom = cy + h;
+        let bottom = top + bh;
         if bottom < sh {
-            out.push(rect(
-                (left, bottom, 2.0 * w, sh - bottom),
-                row,
-                WHITE,
-                shader,
-            ));
+            out.push(rect((left, bottom, bw, sh - bottom), row, WHITE, shader));
         }
     }
 
@@ -312,7 +345,13 @@ mod tests {
     fn the_overlay_tiles_and_fills_the_window() {
         let def = sniper();
         let mut out = Vec::new();
-        build(&def, [960.0, 540.0], (1920.0, 1080.0), &mut out);
+        build(
+            &def,
+            Layout::Quarters,
+            [960.0, 540.0],
+            (1920.0, 1080.0),
+            &mut out,
+        );
         let shader = "ui/assets/reticle_circle_quarter";
         let images: Vec<_> = out.iter().filter(|q| q.texture == shader).collect();
         assert_eq!(images.len(), 8, "four quarters, four bands");
@@ -328,6 +367,36 @@ mod tests {
         assert_eq!(images[5].verts[0], [960.0 + w, 0.0], "right band");
         let lines = out.iter().filter(|q| q.texture.starts_with("hudSoftLine"));
         assert_eq!(lines.count(), 3, "the FG42 post and two bars");
+    }
+
+    /// UO's `springfield_mp` (520 by 400, reticle `none`): one whole image
+    /// centred on the aim, black bands on all four sides of it, no lines.
+    #[test]
+    fn a_uo_overlay_draws_its_image_once() {
+        let mut def = sniper();
+        let shader = "gfx/reticle/scope@scope_overlay_us.dds";
+        def.ads_overlay_shader = Some(shader.to_string());
+        def.ads_overlay_reticle = OverlayReticle::None;
+        (def.ads_overlay_width, def.ads_overlay_height) = (520.0, 400.0);
+        let mut out = Vec::new();
+        build(
+            &def,
+            Layout::Whole,
+            [960.0, 540.0],
+            (1920.0, 1080.0),
+            &mut out,
+        );
+        assert_eq!(out.len(), 5, "the image, four bands");
+        let (w, h) = (520.0 * 2.25, 400.0 * 2.25);
+        let (left, top) = (960.0 - w / 2.0, 540.0 - h / 2.0);
+        assert_eq!(out[0].verts[0], [left, top]);
+        assert_eq!(out[0].verts[2], [left + w, top + h]);
+        assert_eq!(out[0].uvs[2], [1.0, 1.0]);
+        assert_eq!(out[1].verts[2], [left, 1080.0], "left band");
+        assert_eq!(out[2].verts[0], [left + w, 0.0], "right band");
+        assert_eq!(out[3].verts[2], [left + w, top], "top band");
+        assert_eq!(out[4].verts[0], [left, top + h], "bottom band");
+        assert!(out.iter().all(|q| q.texture == shader));
     }
 
     /// `0x300287f0`'s kick: 0.2 per point of `damageCount` inside 5..90,
