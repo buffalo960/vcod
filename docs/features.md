@@ -231,7 +231,7 @@ something, the bullet links it.
   flips `r_fullscreen` and restarts the video, as retail's does
   (cod11-front-end.md section 21).
 - Retail's drop-down console on `` ` ``. It takes the commands under
-  [Console](usage.md#console); binds and archived cvars persist in `main/vcod_mp.cfg`.
+  [Console](usage.md#console), retail's `rcon` among them; binds and archived cvars persist in `main/vcod_mp.cfg`.
 - `vc_bicubic 1` (archived, live, default 0) filters lightmaps with a cubic
   B-spline instead of retail's bilinear, so low-res shadow edges stop
   stepping. A deliberate divergence from retail's look.

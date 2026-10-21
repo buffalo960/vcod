@@ -26,6 +26,9 @@ pub enum Effect {
     StopRecord,
     /// `demo <name>`.
     Demo(String),
+    /// `rcon <args>`: the arguments after the word, as tokenized
+    /// ([`super::rcon::packet`] rebuilds the line).
+    Rcon(Vec<String>),
     /// A client command for the server: `say`, `say_team`, `cmd <text>`.
     Forward(String),
     /// A command the client does not know. Retail forwards it to the server
@@ -163,6 +166,7 @@ const COMMANDS: &[&str] = &[
     "messagemode2",
     "mp_QuickMessage",
     "quit",
+    "rcon",
     "reconnect",
     "record",
     "say",
@@ -423,6 +427,11 @@ impl Shell {
         // CoDMP.exe registers `password` CVAR_USERINFO, not archived
         // (0x4123ea); the browser's password popup edits it.
         s.register("password", "", USERINFO);
+        // CL_Init (CoDMP.exe 0x411e60; 1.5 and UO alike): "", the password
+        // flags 0x100 (CVAR_TEMP), the address none; `rcon` reads both
+        // (docs/research/cod11-console.md 7).
+        s.register("rconPassword", "", 0);
+        s.register("rconAddress", "", 0);
         // CoDMP.exe registers it "0", archived (0x412152); vcod downloads
         // unless told not to. A server's systeminfo value wins either way.
         s.register("cl_allowDownload", "1", ARCHIVE);
@@ -806,6 +815,7 @@ impl Shell {
                 (Some(name), 2) => out.push(Effect::Demo(name.to_string())),
                 _ => print(out, "playdemo <demoname>".into()),
             },
+            "rcon" => out.push(Effect::Rcon(tokens[1..].to_vec())),
             "say" | "say_team" => out.push(Effect::Forward(line.trim().to_string())),
             "cmd" => out.push(Effect::Forward(args_from(line, 1))),
             "bind" => self.cmd_bind(&tokens, line, out),
