@@ -22,6 +22,7 @@ const SCRIPT_MS: u128 = 11000;
 #[derive(Default)]
 pub struct ShockProbe {
     placed: Option<(Instant, i32)>,
+    before: crate::legs_probe::BeforePlacement,
     seen: Option<u32>,
     /// The newest snapshot's `(serverTime, shellshockTime, shellshockDuration)`.
     shock: (i32, i32, i32),
@@ -58,23 +59,28 @@ impl ShockProbe {
     }
 
     pub fn record(&mut self, now: Instant, sent: UserCmd) {
-        let Some(ms) = self.ms(now) else { return };
         if self.done {
             return;
         }
-        self.lines.push(format!(
-            "!cmd ms={ms} st={} buttons={} wbuttons={} weapon={} forward={} right={} up={} angles={},{},{}",
-            sent.server_time,
-            sent.buttons,
-            sent.wbuttons,
-            sent.weapon,
-            sent.forward,
-            sent.right,
-            sent.up,
-            sent.angles[0],
-            sent.angles[1],
-            sent.angles[2],
-        ));
+        let line = |ms: u128| {
+            format!(
+                "!cmd ms={ms} st={} buttons={} wbuttons={} weapon={} forward={} right={} up={} angles={},{},{}",
+                sent.server_time,
+                sent.buttons,
+                sent.wbuttons,
+                sent.weapon,
+                sent.forward,
+                sent.right,
+                sent.up,
+                sent.angles[0],
+                sent.angles[1],
+                sent.angles[2],
+            )
+        };
+        match self.ms(now) {
+            Some(ms) => self.lines.push(line(ms)),
+            None => self.before.push(sent.server_time, line(0)),
+        }
     }
 
     /// Takes the placement off the first snapshot on the mark and logs every
@@ -85,10 +91,12 @@ impl ShockProbe {
         let f = |name: &str| s.ps.field_i32(p, name);
         self.shock = (s.server_time, f("shellshockTime"), f("shellshockDuration"));
         let o = s.ps.origin(p);
+        let mut pre = Vec::new();
         if self.placed.is_none() {
             if (o[0] - SHOCK_SPOT[0]).abs() < 0.5 && (o[1] - SHOCK_SPOT[1]).abs() < 0.5 {
                 self.placed = Some((now, s.server_time));
                 println!("shock: placed at serverTime {}", s.server_time);
+                pre = self.before.past(f("commandTime")).collect();
             } else {
                 return false;
             }
@@ -113,6 +121,7 @@ impl ShockProbe {
                 f("pm_flags"),
             ));
         }
+        self.lines.extend(pre);
         if self.ms(now).is_some_and(|ms| ms >= SCRIPT_MS + 1000) {
             self.done = true;
         }
@@ -149,7 +158,8 @@ impl ShockProbe {
              # time 15000 and shellshocks it on a schedule (the server half, -shock.txt).\n\
              # Script from the snapshot that showed the placement, world yaw 0: forward and\n\
              # back a second each for 11 s, wbuttons 0x4 while the newest snapshot's\n\
-             # serverTime - shellshockTime is in [0, shellshockDuration).\n",
+             # serverTime - shellshockTime is in [0, shellshockDuration). !cmd ms=0 lines after\n\
+             # the first !snap were sent before the probe saw the placement, past its ct.\n",
         );
         if !self.done {
             out.push_str("# BROKEN the run ended before the script did\n");
