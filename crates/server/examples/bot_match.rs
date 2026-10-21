@@ -8,7 +8,9 @@
 //! team scores. Each bot-tick adds its life, its wounds (health first
 //! under 50 in a fight this life) and those it died of within 5 s, the
 //! retreats it starts (hurt, dry), and the ticks it holds a cover spot and
-//! leans. It also counts stalled bot-ticks as `ship_stalls` does (12 s
+//! leans; and the aim: rounds fired (a bullet gun's clip drops), bullet
+//! hits off the `D;`/`K;` lines, and the time from acquiring a target with
+//! none tracked to the first round at it. It also counts stalled bot-ticks as `ship_stalls` does (12 s
 //! within 150 units).
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
@@ -17,9 +19,10 @@
 //! server. `AXIS_SKILL=` / `ALLIES_SKILL=` add the bots per side at those
 //! `vc_bot_skill` levels, half each (dm: `SKILLS=a,b,...`, one bot per
 //! entry); without them `BOTS` join by balance at `vc_bot_skill`.
-//! One-sided feature arms: `COVER=`, `RETREAT=` and `TEAMPLAY=` (cover and
-//! lean, `bots/cover.rs`; the retreat, `bots/retreat.rs`; team play,
-//! `bots/team.rs`) each take `all` (the default), `none`, `axis`, `allies`
+//! One-sided feature arms: `COVER=`, `RETREAT=`, `TEAMPLAY=` and
+//! `FOOTWORK=` (cover and lean, `bots/cover.rs`; the retreat,
+//! `bots/retreat.rs`; team play, `bots/team.rs`; moving while fighting,
+//! `Bot::footwork`) each take `all` (the default), `none`, `axis`, `allies`
 //! or `alt` (axis on odd seeds, allies on even, so the map's own
 //! asymmetry cancels); `dm` has no sides, so only `all` and `none` there.
 //! With an arm one-sided the totals add a row per arm, named by the
@@ -34,7 +37,8 @@ const TICK_MS: u64 = 50;
 const WINDOW: usize = 240;
 const RADIUS: f32 = 150.0;
 
-/// Which side a feature is on for (`COVER=`, `RETREAT=`, `TEAMPLAY=`).
+/// Which side a feature is on for (`COVER=`, `RETREAT=`, `TEAMPLAY=`,
+/// `FOOTWORK=`).
 #[derive(Clone, Copy, PartialEq)]
 enum Arm {
     All,
@@ -84,11 +88,12 @@ struct Opts {
     /// Console lines run once the level is up (the per-side `addbot`s).
     console: Vec<String>,
     verbose: bool,
-    /// cover, retreat, team play.
-    arms: [Arm; 3],
+    /// cover, retreat, team play, footwork.
+    arms: [Arm; 4],
 }
 
-const FEATURES: [&str; 3] = ["cover", "retreat", "teamplay"];
+const FEATURES: [&str; 4] = ["cover", "retreat", "teamplay", "footwork"];
+const ARMS: [&str; 4] = ["COVER", "RETREAT", "TEAMPLAY", "FOOTWORK"];
 
 impl Opts {
     /// The one-sided features on for `team`, the arm its tallies land in.
@@ -128,6 +133,51 @@ struct Tally {
     /// Bot-ticks holding a cover spot, and leaning.
     hold: u64,
     lean: u64,
+    aim: Aim,
+}
+
+/// The aim columns (bot-combat.md section 1): rounds fired, bullet hits,
+/// targets acquired with none tracked, and the ms from each to its first
+/// round at that target.
+#[derive(Default, Clone)]
+struct Aim {
+    shots: u64,
+    hits: u64,
+    acquired: u32,
+    first_shot_ms: Vec<u64>,
+}
+
+impl Aim {
+    fn add(&mut self, o: &Aim) {
+        self.shots += o.shots;
+        self.hits += o.hits;
+        self.acquired += o.acquired;
+        self.first_shot_ms.extend(&o.first_shot_ms);
+    }
+
+    fn line(&self) -> String {
+        let mut t = self.first_shot_ms.clone();
+        t.sort_unstable();
+        let mean = t.iter().sum::<u64>() / t.len().max(1) as u64;
+        format!(
+            "shots {:6} hits {:5} accuracy {:4.1}% sight to shot mean {:4} median {:4} ms, {:4.1}% of {} acquired fired on",
+            self.shots,
+            self.hits,
+            100.0 * self.hits as f32 / self.shots.max(1) as f32,
+            mean,
+            t.get(t.len() / 2).copied().unwrap_or(0),
+            100.0 * t.len() as f32 / self.acquired.max(1) as f32,
+            self.acquired,
+        )
+    }
+}
+
+/// A means of death a bullet deals: what a hit counts.
+fn bullet(mod_: &str) -> bool {
+    matches!(
+        mod_,
+        "MOD_RIFLE_BULLET" | "MOD_PISTOL_BULLET" | "MOD_HEAD_SHOT"
+    )
 }
 
 impl Tally {
@@ -146,6 +196,7 @@ impl Tally {
         self.dry += o.dry;
         self.hold += o.hold;
         self.lean += o.lean;
+        self.aim.add(&o.aim);
     }
 
     /// The per-bot-tick line under [`Tally::line`].
@@ -246,7 +297,7 @@ fn main() {
             .collect(),
         console,
         verbose: env("VERBOSE", "0") == "1",
-        arms: ["COVER", "RETREAT", "TEAMPLAY"].map(Arm::parse),
+        arms: ARMS.map(Arm::parse),
     };
     let jobs: usize = env("JOBS", "4").parse().expect("JOBS");
     let mut seeds: Vec<u64> = std::env::args()
@@ -257,7 +308,7 @@ fn main() {
         seeds = (1..=8).collect();
     }
     println!(
-        "maps {} gametype {} bots {} ticks {} uo {} set {:?} console {:?} cover/retreat/teamplay {:?}",
+        "maps {} gametype {} bots {} ticks {} uo {} set {:?} console {:?} cover/retreat/teamplay/footwork {:?}",
         opts.maps.join(","),
         opts.gametype,
         opts.bots,
@@ -265,7 +316,7 @@ fn main() {
         opts.uo,
         opts.set,
         opts.console,
-        ["COVER", "RETREAT", "TEAMPLAY"].map(|k| std::env::var(k).unwrap_or_else(|_| "all".into())),
+        ARMS.map(|k| std::env::var(k).unwrap_or_else(|_| "all".into())),
     );
     let started = Instant::now();
     let jobs_list: Vec<(String, u64)> = opts
@@ -374,6 +425,7 @@ fn summarize(what: &str, results: &[&Match]) {
         for (k, t) in map {
             println!("  {kind} {k:<13} {}", t.line());
             println!("  {kind} {k:<13} {}", t.survive());
+            println!("  {kind} {k:<13} {}", t.aim.line());
         }
     };
     rows("team ", &by_team);
@@ -443,7 +495,7 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
         // stock game.
         for slot in sv.bot_slots() {
             let team = team_name(&mut sv, slot, m.dm);
-            let [cover, retreat, team_play] = o.arms;
+            let [cover, retreat, team_play, footwork] = o.arms;
             if cover != Arm::All {
                 sv.test_bot_cover(slot, cover.on(team, seed));
             }
@@ -452,6 +504,9 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             }
             if team_play != Arm::All {
                 sv.test_bot_team_play(slot, team_play.on(team, seed));
+            }
+            if footwork != Arm::All {
+                sv.test_bot_footwork(slot, footwork.on(team, seed));
             }
         }
         sv.tick(now);
@@ -484,9 +539,13 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                     let att = tally(&mut m, o, anum, ateam, &skill);
                     let dmg: u64 = f[8 + 2 * g].parse().unwrap_or(0);
                     if anum != vnum {
+                        let hit = u64::from(bullet(f[9 + 2 * g]));
                         att.0.damage += dmg;
                         att.1.damage += dmg;
                         att.2.damage += dmg;
+                        att.0.aim.hits += hit;
+                        att.1.aim.hits += hit;
+                        att.2.aim.hits += hit;
                         first_hit
                             .entry((anum.to_string(), vnum.to_string()))
                             .or_insert(tick);
@@ -517,6 +576,10 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
                         continue;
                     }
                     let a = tally(&mut m, o, anum, ateam, &skill);
+                    let hit = u64::from(bullet(f[9 + 2 * g]));
+                    a.0.aim.hits += hit;
+                    a.1.aim.hits += hit;
+                    a.2.aim.hits += hit;
                     if !ateam.is_empty() && ateam == vteam && o.gametype != "dm" {
                         a.0.team_kills += 1;
                         a.1.team_kills += 1;
@@ -638,6 +701,11 @@ struct Life {
     /// Ticks since this life's wound, if any.
     wound: Option<u64>,
     retreating: u8,
+    /// The held bullet gun and its clip last tick.
+    gun: Option<(u8, i16)>,
+    /// The target acquired with none tracked, and the ticks since, until
+    /// its first round.
+    acquired: Option<(usize, Option<u64>)>,
 }
 
 impl Life {
@@ -660,6 +728,41 @@ impl Life {
             _ => {}
         }
         self.retreating = r;
+        let fired = match (body.filter(|b| b.playing && b.gun), self.gun) {
+            (Some(b), Some((w, clip))) if b.weapon == w && b.clip < clip => (clip - b.clip) as u64,
+            _ => 0,
+        };
+        d.aim.shots += fired;
+        self.gun = body
+            .filter(|b| b.playing && b.gun)
+            .map(|b| (b.weapon, b.clip));
+        let target = body.filter(|b| b.playing).and_then(|b| b.target);
+        // Ticks since the fresh target came, `None` once it was fired on.
+        self.acquired = match (target, self.acquired) {
+            (Some(t), Some((a, pending))) if t == a => Some((
+                a,
+                pending.and_then(|n| {
+                    if fired > 0 {
+                        d.aim.first_shot_ms.push(n * TICK_MS);
+                        None
+                    } else {
+                        Some(n + 1)
+                    }
+                }),
+            )),
+            // A switch from one target to another is not a fresh sight.
+            (Some(t), Some(_)) => Some((t, None)),
+            (Some(t), None) => {
+                d.aim.acquired += 1;
+                if fired > 0 {
+                    d.aim.first_shot_ms.push(0);
+                    Some((t, None))
+                } else {
+                    Some((t, Some(1)))
+                }
+            }
+            (None, _) => None,
+        };
         if let Some(b) = body.filter(|b| b.playing) {
             if self.wound.is_none() && b.engaged && b.health < 50 {
                 self.wound = Some(0);

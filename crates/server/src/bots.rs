@@ -59,8 +59,24 @@ const RESPAWN_RETRY: u32 = 20;
 /// Half the width of what a shot has to land in (chest or head), units; the
 /// fire cone is the angle it subtends at the target's range.
 const HIT_RADIUS: f32 = 10.0;
-/// A bot moving faster than this aims with [`Skill::error_moving`].
-const MOVING_SPEED: f32 = 20.0;
+/// The run speed at which a moving bot's error takes all of
+/// [`Skill::error_moving`]; slower, it takes that share of it.
+const RUN_SPEED: f32 = 190.0;
+/// A semi-automatic with a `fireTime` at least this long works a bolt.
+const BOLT_MS: i32 = 500;
+/// How far off its line the trigger may go down, in fire cones: past one
+/// the chance falls to none at this ([`Bot::trigger`]). An automatic
+/// sprays early, a bolt rifle waits for its one round.
+const REACH_AUTO: f32 = 4.5;
+const REACH_SEMI: f32 = 3.0;
+const REACH_BOLT: f32 = 2.0;
+/// Inside this an automatic fires from the hip while its sights come up.
+const AUTO_HIP_RANGE: f32 = 700.0;
+/// Inside this a bolt rifle's footwork backs away from the target.
+const BACK_OFF_RANGE: f32 = 300.0;
+/// Past this a footwork spell may lie down; inside three quarters of it
+/// the body gets up again.
+const PRONE_RANGE: f32 = 900.0;
 /// How far a bot hears gunfire and a blast, units. The stock aliases carry
 /// `dist_max` 7800 for every rifle and gun `_fire` and 6000 for
 /// `grenade_explode_*` (`soundaliases/iw_sound.csv`), which covers most of a
@@ -93,8 +109,15 @@ pub struct Skill {
     pub error_decay: f32,
     /// The range at which the error doubles.
     pub error_range: f32,
-    /// Error multiplier while the bot itself moves.
+    /// Error multiplier while the bot itself moves at run speed; slower,
+    /// a share of it ([`RUN_SPEED`]).
     pub error_moving: f32,
+    /// Seconds the aim trails a target moving across the line: its speed
+    /// across times this adds to the miss, in units.
+    pub track_lag: f32,
+    /// The chance a footwork spell on the sights moves (a slow strafe, a
+    /// bolt rifle's back-off); a quarter of it lies down at range.
+    pub footwork: f32,
     /// Past this range a weapon with sights aims down them.
     pub ads_range: f32,
     /// Ticks a lost enemy's last spot stays a goal. Longer than
@@ -110,15 +133,17 @@ pub struct Skill {
 impl Default for Skill {
     fn default() -> Self {
         Skill {
-            reaction_min: 5,
-            reaction_spread: 6,
+            reaction_min: 4,
+            reaction_spread: 4,
             forget_ticks: 20,
             turn_deg: 15.0,
-            error_start: 48.0,
+            error_start: 36.0,
             error_floor: 4.0,
-            error_decay: 0.88,
+            error_decay: 0.85,
             error_range: 1000.0,
             error_moving: 1.75,
+            track_lag: 0.06,
+            footwork: 0.45,
             ads_range: 400.0,
             memory_ticks: 100,
             noise_ticks: 200,
@@ -702,6 +727,12 @@ pub struct BotBody {
     pub dead: bool,
     pub health: i32,
     pub clip: i16,
+    /// `ps.weapon`, and whether it fires bullets (`weaponType bullet`):
+    /// `bot_match` counts a bullet gun's clip drops as rounds fired.
+    pub weapon: u8,
+    pub gun: bool,
+    /// The client slot of the enemy the brain tracks ([`Bot::target_slot`]).
+    pub target: Option<usize>,
     /// On the random heading a stuck bot takes, waypoint or not.
     pub unsticking: bool,
     /// UO's `pm_flags` 0x10000: the last cmd sprinted.
@@ -737,6 +768,10 @@ pub struct Bot {
     /// Shares out an objective round with its team ([`team`]); off, it
     /// plays as before team play did (a `bot_match` measuring arm).
     pub team_play: bool,
+    /// Moves while it fights: strafes on the sights, backs off a close
+    /// enemy with a bolt rifle, lies down at range ([`Bot::footwork`]);
+    /// off, it stands still on the sights as before (a `bot_match` arm).
+    pub footwork: bool,
     /// The team the team menu is answered with.
     team: String,
     /// The menu retail last named in `v g_scriptMainMenu`; the `t` that
@@ -785,10 +820,13 @@ pub struct Bot {
     /// Where to go looking once nothing is in sight.
     recall: Option<Recall>,
     /// Engagement footwork: the strafe direction (`right`), the ticks left
-    /// on it, and the ticks left on a crouch.
+    /// on it, and the ticks left on a crouch; whether the spell moves on
+    /// the sights, and the ticks left lying down.
     strafe: i8,
     strafe_ticks: u32,
     crouch_ticks: u32,
+    shuffle: bool,
+    prone_ticks: u32,
     grenade_cooldown: u32,
     respawn_ticks: u32,
     stage: Stage,
@@ -1123,6 +1161,7 @@ impl Bot {
             skill: Skill::default(),
             cover: cover::Cover::default(),
             team_play: true,
+            footwork: true,
             main_menu: String::new(),
             answered: Vec::new(),
             heading: 0.0,
@@ -1143,6 +1182,8 @@ impl Bot {
             strafe: 0,
             strafe_ticks: 0,
             crouch_ticks: 0,
+            shuffle: false,
+            prone_ticks: 0,
             grenade_cooldown: 200,
             respawn_ticks: 0,
             deaths: 0,
@@ -2451,8 +2492,10 @@ impl Bot {
             cmd.forward = (d.cos() * 127.0).round() as i8;
             cmd.right = (-d.sin() * 127.0).round() as i8;
             cmd.up = 0;
-            cmd.wbuttons &=
-                !(msg::WBUTTON_CROUCH | msg::WBUTTON_LEAN_LEFT | msg::WBUTTON_LEAN_RIGHT);
+            cmd.wbuttons &= !(msg::WBUTTON_CROUCH
+                | msg::WBUTTON_PRONE
+                | msg::WBUTTON_LEAN_LEFT
+                | msg::WBUTTON_LEAN_RIGHT);
         }
     }
 
@@ -3084,6 +3127,7 @@ impl Bot {
         self.target = None;
         self.burst_ticks = 0;
         self.crouch_ticks = 0;
+        self.prone_ticks = 0;
     }
 
     /// One tick against the tracked target: turn toward it at a bounded
@@ -3104,12 +3148,18 @@ impl Bot {
         }
         t.wobble -= 1;
         let dist = dist_sq(view.origin, e.origin).sqrt().max(1.0);
-        let moving = if view.speed > MOVING_SPEED {
-            self.skill.error_moving
-        } else {
-            1.0
-        };
-        let miss = t.error * (1.0 + dist / self.skill.error_range) * moving;
+        let moving =
+            1.0 + (self.skill.error_moving - 1.0) * (view.speed / RUN_SPEED).min(1.0).powi(2);
+        // The target's speed across the line: the aim trails it.
+        let to = [0, 1, 2].map(|i| (e.origin[i] - view.origin[i]) / dist);
+        let along: f32 = (0..3).map(|i| e.velocity[i] * to[i]).sum();
+        let across = (0..3)
+            .map(|i| (e.velocity[i] - along * to[i]).powi(2))
+            .sum::<f32>()
+            .sqrt();
+        let miss = (t.error + across * self.skill.track_lag)
+            * (1.0 + dist / self.skill.error_range)
+            * moving;
         let err_deg = (miss / dist).atan().to_degrees();
         let dir = t.dir;
         self.target = Some(t);
@@ -3158,8 +3208,10 @@ impl Bot {
         if ads {
             cmd.buttons |= msg::BUTTON_ADS;
         }
-        // A scope or sights still coming up would waste the shot on hip spread.
-        let ready = (!ads || view.ads_frac >= 1.0) && view.eye_settled;
+        // A scope or sights still coming up would waste the shot on hip
+        // spread; an automatic inside `AUTO_HIP_RANGE` sprays it anyway.
+        let rising = view.automatic && dist < AUTO_HIP_RANGE;
+        let ready = (!ads || view.ads_frac >= 1.0 || rising) && view.eye_settled;
         self.trigger(view, dist, off, cone, ready, cmd);
         self.footwork(view, dist, ads, cmd);
         // A teammate across the line: step aside, standing and off the
@@ -3174,7 +3226,7 @@ impl Bot {
             cmd.forward = (d.cos() * 127.0).round() as i8;
             cmd.right = (-d.sin() * 127.0).round() as i8;
             cmd.buttons &= !msg::BUTTON_ADS;
-            cmd.wbuttons &= !msg::WBUTTON_CROUCH;
+            cmd.wbuttons &= !(msg::WBUTTON_CROUCH | msg::WBUTTON_PRONE);
             cmd.up = 0;
         } else {
             self.cover_engage(view, e, dist, aim[1], cmd);
@@ -3230,6 +3282,9 @@ impl Bot {
 
     /// Semi-autos tap, at least `fireTime` apart (AGENTS.md, "Fire is
     /// tapped"); automatics hold the bit for a burst, shorter at range.
+    /// Inside the cone the trigger goes down; past it, with a chance that
+    /// falls to none at the weapon's reach ([`REACH_AUTO`]), so a settling
+    /// aim fires before it has settled.
     fn trigger(
         &mut self,
         view: &BotView,
@@ -3243,9 +3298,16 @@ impl Bot {
             self.burst_ticks = 0;
             return;
         }
+        let reach = if view.automatic {
+            REACH_AUTO
+        } else if view.fire_time_ms >= BOLT_MS {
+            REACH_BOLT
+        } else {
+            REACH_SEMI
+        };
         if view.automatic && self.burst_ticks > 0 {
             // A burst rides out recoil and wobble, but not a lost line.
-            if off <= cone * 2.0 {
+            if off <= cone * reach {
                 cmd.buttons |= msg::BUTTON_ATTACK;
                 self.burst_ticks -= 1;
             } else {
@@ -3256,8 +3318,14 @@ impl Bot {
             }
             return;
         }
-        if self.fire_cooldown > 0 || view.busy_ms != 0 || !ready || off > cone {
+        if self.fire_cooldown > 0 || view.busy_ms != 0 || !ready || off >= cone * reach {
             return;
+        }
+        if off > cone {
+            let chance = (reach - off / cone) / (reach - 1.0);
+            if (self.rand_below(1000) as f32) >= chance * 1000.0 {
+                return;
+            }
         }
         cmd.buttons |= msg::BUTTON_ATTACK;
         if view.automatic {
@@ -3277,13 +3345,27 @@ impl Bot {
     }
 
     /// Strafe in spells and crouch now and then while engaging; close in
-    /// only past the weapon's working range. Scoped and sighted shots at
-    /// range stand still, since moving widens the error.
+    /// only past the weapon's working range. On the sights a spell moves
+    /// only with [`Skill::footwork`]'s chance: a slow strafe, or with a bolt
+    /// rifle inside [`BACK_OFF_RANGE`] a step back; at range it may lie
+    /// down instead. A scope holds still. Off ([`Bot::footwork`]), sighted
+    /// shots always stand still, since moving widens the error.
     fn footwork(&mut self, view: &BotView, dist: f32, ads: bool, cmd: &mut UserCmd) {
         if self.strafe_ticks == 0 {
             self.strafe = if self.rand() % 2 == 0 { 127 } else { -127 };
             self.strafe_ticks = 8 + self.rand_below(16);
-            if self.crouch_ticks == 0 && self.rand_below(if view.sniper { 2 } else { 4 }) == 0 {
+            let roll = self.rand_below(1000) as f32 / 1000.0;
+            self.shuffle = self.footwork && roll < self.skill.footwork;
+            if self.shuffle
+                && self.prone_ticks == 0
+                && dist > PRONE_RANGE
+                && roll < self.skill.footwork / 4.0
+            {
+                self.prone_ticks = 40 + self.rand_below(40);
+            } else if self.crouch_ticks == 0
+                && self.prone_ticks == 0
+                && self.rand_below(if view.sniper { 2 } else { 4 }) == 0
+            {
                 self.crouch_ticks = 20 + self.rand_below(30);
             }
         } else {
@@ -3296,9 +3378,33 @@ impl Bot {
         } else {
             700.0
         };
-        cmd.forward = if dist > range { 127 } else { 0 };
-        cmd.right = if ads { 0 } else { self.strafe };
-        if self.crouch_ticks > 0 {
+        let bolt = !view.automatic && view.fire_time_ms >= BOLT_MS;
+        cmd.forward = if dist > range {
+            127
+        } else if self.shuffle && bolt && dist < BACK_OFF_RANGE {
+            -127
+        } else {
+            0
+        };
+        cmd.right = if !ads {
+            self.strafe
+        } else if self.shuffle && !view.sniper {
+            self.strafe / 2
+        } else {
+            0
+        };
+        if self.prone_ticks > 0 && dist < PRONE_RANGE * 0.75 {
+            self.prone_ticks = 0;
+        }
+        if self.prone_ticks > 0 {
+            self.prone_ticks -= 1;
+            // Held like the crouch, with `upmove` -127 (protocol doc,
+            // "Usercmd input bits"); a prone body fires from where it lies.
+            cmd.wbuttons |= msg::WBUTTON_PRONE;
+            cmd.up = -127;
+            cmd.forward = 0;
+            cmd.right = 0;
+        } else if self.crouch_ticks > 0 {
             self.crouch_ticks -= 1;
             // The stance is a held level; retail sends `upmove` -127 with it
             // (protocol doc, "Usercmd input bits").
@@ -3331,6 +3437,11 @@ impl Bot {
     /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
         self.target.is_some() || self.seated_fight()
+    }
+
+    /// The client slot of the enemy being tracked, reaction delay included.
+    pub fn target_slot(&self) -> Option<usize> {
+        self.target.as_ref().map(|t| t.slot)
     }
 
     /// A fresh wander heading, and a new stall baseline to measure it by.
@@ -5661,11 +5772,13 @@ mod tests {
         bot.skill.error_start = 0.0;
         bot.skill.error_floor = 0.0;
         v.sniper = true;
+        v.fire_time_ms = 1300;
         v.ads_frac = 1.0;
         v.enemy.as_mut().unwrap().origin = [1000.0, 0.0, 64.0];
         let (tp, ty) = aim_angles(&v, [1000.0, 0.0, 64.0]);
-        v.gun_offset = [0.5, -0.6];
-        // The view on the chest: the gun is off it, so no shot.
+        v.gun_offset = [1.0, -1.2];
+        // The view on the chest: the gun is off it past a bolt rifle's
+        // reach, so no shot.
         v.view = [tp, ty, 0.0];
         let mut fired = None;
         for tick in 0..10 {
@@ -5679,7 +5792,7 @@ mod tests {
         }
         let (tick, at) = fired.expect("never fired");
         assert!(tick > 0, "fired with the gun off the chest");
-        let miss = yaw_diff(at[0] + 0.5, tp).hypot(yaw_diff(at[1] - 0.6, ty));
+        let miss = yaw_diff(at[0] + 1.0, tp).hypot(yaw_diff(at[1] - 1.2, ty));
         assert!(miss < 0.01, "the gun missed the chest by {miss} degrees");
     }
 
@@ -5955,6 +6068,91 @@ mod tests {
         }
     }
 
+    /// A target running across the line widens the miss by its speed times
+    /// `track_lag`; one running along the line adds nothing.
+    #[test]
+    fn a_target_crossing_the_line_is_missed_by_more() {
+        let miss = |velocity: [f32; 3]| {
+            let (mut bot, mut v) = engaged(5);
+            bot.skill.error_start = bot.skill.error_floor;
+            let at = [900.0, 0.0, 64.0];
+            v.enemy = Some(EnemyView {
+                slot: 3,
+                origin: at,
+                velocity,
+            });
+            let (tp, ty) = aim_angles(&v, at);
+            (0..40)
+                .map(|_| {
+                    let a = bot.think(&v).angles.map(|a| a as f32 / ANGLE2SHORT);
+                    v.view = [a[0], a[1], 0.0];
+                    yaw_diff(a[0], tp).hypot(yaw_diff(a[1], ty))
+                })
+                .sum::<f32>()
+        };
+        let still = miss([0.0; 3]);
+        let along = miss([190.0, 0.0, 0.0]);
+        let across = miss([0.0, 190.0, 0.0]);
+        assert!(along < still * 1.3, "along {along} still {still}");
+        assert!(across > still * 1.8, "across {across} still {still}");
+    }
+
+    /// Off the cone the trigger may still go down: an automatic sprays at a
+    /// line a bolt rifle waits on.
+    #[test]
+    fn an_automatic_fires_off_the_cone_where_a_bolt_rifle_waits() {
+        let fired = |automatic: bool, fire_time_ms: i32| {
+            let (mut bot, mut v) = engaged(7);
+            bot.skill.error_start = 0.0;
+            bot.skill.error_floor = 0.0;
+            v.automatic = automatic;
+            v.fire_time_ms = fire_time_ms;
+            v.ads_frac = 1.0;
+            let at = [700.0, 0.0, 64.0];
+            v.enemy = Some(EnemyView {
+                slot: 3,
+                origin: at,
+                velocity: [0.0; 3],
+            });
+            let (tp, ty) = aim_angles(&v, at);
+            // The gun 2.5 cones off a view held on the chest.
+            let cone = (HIT_RADIUS / 700.0).atan().to_degrees();
+            v.gun_offset = [0.0, 2.5 * cone];
+            v.view = [tp, ty, 0.0];
+            (0..40)
+                .filter(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0)
+                .count()
+        };
+        assert_eq!(fired(false, 1300), 0, "a bolt rifle fired 2.5 cones off");
+        assert!(fired(true, 100) > 0, "an automatic never fired");
+    }
+
+    /// Footwork on the sights: a bolt rifle backs off a close target and
+    /// lies down at range; off, the body never does either.
+    #[test]
+    fn footwork_backs_a_bolt_rifle_off_and_lies_down_at_range() {
+        let keys = |on: bool, dist: f32| {
+            let (mut bot, mut v) = engaged(9);
+            bot.footwork = on;
+            bot.skill.footwork = 1.0;
+            v.fire_time_ms = 1300;
+            v.enemy = Some(EnemyView {
+                slot: 3,
+                origin: [dist, 0.0, 64.0],
+                velocity: [0.0; 3],
+            });
+            (0..200).map(|_| bot.think(&v)).collect::<Vec<_>>()
+        };
+        let prone = |c: &UserCmd| c.wbuttons & msg::WBUTTON_PRONE != 0;
+        assert!(
+            keys(true, 200.0).iter().any(|c| c.forward < 0),
+            "never backed off"
+        );
+        assert!(keys(false, 200.0).iter().all(|c| c.forward >= 0));
+        assert!(keys(true, 1200.0).iter().any(prone), "never lay down");
+        assert!(!keys(false, 1200.0).iter().any(prone));
+    }
+
     #[test]
     fn sights_go_up_at_range_and_hold_fire_until_they_are() {
         let (mut bot, mut v) = engaged(11);
@@ -5967,7 +6165,7 @@ mod tests {
             let cmd = bot.think(&v);
             assert!(cmd.buttons & BUTTON_ADS != 0, "no sights at 900 units");
             assert_eq!(cmd.buttons & BUTTON_ATTACK, 0, "fired from the hip");
-            assert_eq!(cmd.right, 0, "strafed while sighted");
+            assert!(cmd.right.abs() <= 64, "ran while sighted: {}", cmd.right);
         }
         v.ads_frac = 1.0;
         assert!((0..40).any(|_| bot.think(&v).buttons & BUTTON_ATTACK != 0));
