@@ -2244,6 +2244,11 @@ impl Follower {
                     self.avoid.push((from, to, self.clock + AVOID_TICKS));
                 } else {
                     self.rest = REST_TICKS;
+                    // The nearest node may stand across a wall: an unstick
+                    // spell left a bot in mp_cassino's slot at (945, -775,
+                    // 64) pressing at a node 63 east for 7 s (seed 1, no
+                    // vehicles). The next plan starts at one it walks to.
+                    self.fell = true;
                 }
                 self.reset();
                 return None;
@@ -3308,7 +3313,18 @@ impl Follower {
             return None;
         }
         let foot = g.nodes[self.path[self.next - 1] as usize];
-        ((foot.z - at[2]).abs() < vcod_common::pmove::STEPSIZE).then_some(foot.into())
+        let rise = at[2] - foot.z;
+        if rise.abs() >= vcod_common::pmove::STEPSIZE {
+            return None;
+        }
+        // Stepped up off the foot's floor onto a ledge the top still needs
+        // a jump from, it waits where it stands: the walk jumped from up
+        // there too, and one sent back down off mp_cassino's ledge at
+        // (3667, -1240, 128) jumped again from the foot 53 under the top,
+        // into the penalty, and back for good (bot-navigation.md "Jumps").
+        let top = g.nodes[self.path[self.next] as usize];
+        let ledge = rise > ARRIVE && top.z - at[2] > vcod_common::pmove::STEPSIZE;
+        Some(if ledge { at } else { foot.into() })
     }
 
     /// Where a walked-out point goal is headed: the point, or the
@@ -6953,6 +6969,41 @@ mod tests {
         ps.jump_penalty = false;
         assert_eq!(f.jump_wait(&g, at, &ps), None, "ready");
         assert!(ready_to_leap(&ps));
+    }
+
+    /// A body that stepped up off a jump edge's foot onto a ledge under the
+    /// top waits out the penalty there, where the walk jumped from: sent
+    /// back down off mp_cassino's ledge at (3667, -1240, 128) it jumped
+    /// from the foot 53 under the top and came back for good (seed 17).
+    #[test]
+    fn a_jump_edge_is_waited_on_from_a_ledge_above_its_foot() {
+        let (foot, top) = (Vec3::ZERO, Vec3::new(48.0, 0.0, 53.0));
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        let mut ps = PlayerState::spawn(Vec3::new(18.0, 0.0, 16.7), 0.0);
+        ps.rules = MoveRules::Uo;
+        ps.on_ground = true;
+        ps.jump_penalty = true;
+        let at: [f32; 3] = ps.origin.into();
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(at));
+        let at = [-4.0, 0.0, 2.0];
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(foot.into()));
+        // On the top's own floor, beside it: back to the foot, as before
+        // (mp_cassino's ctf at (5065, -1274, 256), a top 16 over its foot).
+        let mut low = NavGraph::from_parts(
+            vec![foot, Vec3::new(48.0, 0.0, 16.0)],
+            vec![vec![1], vec![]],
+        );
+        low.jumps.insert((0, 1));
+        assert_eq!(
+            f.jump_wait(&low, [-20.0, 0.0, 16.0], &ps),
+            Some(foot.into())
+        );
     }
 
     /// The sprint's room runs along a straight, level line of plain edges

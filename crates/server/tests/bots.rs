@@ -828,10 +828,61 @@ fn a_bot_gets_down_off_mp_depots_roof_onto_the_ledges() {
 #[test]
 #[ignore = "builds mp_cassino's UO graph and runs 6 bots for 90 s of game time, ~5 s in release; run with --ignored"]
 fn uo_bots_fight_and_sprint_in_tdm() {
-    let Some(fs) = vcod_common::testing::uo_fs() else {
+    if vcod_common::testing::uo_fs().is_none() {
         eprintln!("COD_DIR has no uo/: skipping");
         return;
-    };
+    }
+    // `SEED=<odd n>` replays another game (bot-navigation.md, "Other rules").
+    uo_tdm_game(
+        std::env::var("SEED").map_or(1, |v| v.parse().expect("SEED")),
+        true,
+    );
+}
+
+/// The games of [`uo_bots_fight_and_sprint_in_tdm`] that failed it before
+/// the fixes they name (bot-navigation.md "Jumps", bot-objectives.md 10.3,
+/// 10.4 and 10.7), with vehicles off for two, one thread each.
+#[test]
+#[ignore = "runs seven 90 s mp_cassino UO games, ~10 s in release on 7 threads; run with --ignored"]
+fn uo_tdm_games_that_stalled_or_never_sprinted() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    // Seed, vehicles: 17 a jump's penalty, 19 pre-aim off the sprint, 15
+    // two exits on one frame, 25 a tank's headway, 33 sprint legs; with
+    // vehicles off, 1 a plan from across a wall, 31 a stall. Seed 45's
+    // rider headway is fixed, but its game now dithers a tank elsewhere.
+    let games = [
+        (15, true),
+        (17, true),
+        (19, true),
+        (25, true),
+        (33, true),
+        (1, false),
+        (31, false),
+    ];
+    std::thread::scope(|s| {
+        let runs: Vec<_> = games
+            .iter()
+            .map(|&(seed, vehicles)| {
+                std::thread::Builder::new()
+                    .name(format!("seed {seed} vehicles {vehicles}"))
+                    .spawn_scoped(s, move || uo_tdm_game(seed, vehicles))
+                    .unwrap()
+            })
+            .collect();
+        let failed: Vec<_> = runs
+            .into_iter()
+            .zip(games)
+            .filter_map(|(r, g)| r.join().is_err().then_some(g))
+            .collect();
+        assert!(failed.is_empty(), "failed (seed, vehicles): {failed:?}");
+    });
+}
+
+/// One game of [`uo_bots_fight_and_sprint_in_tdm`].
+fn uo_tdm_game(seed: u64, vehicles: bool) {
+    let fs = vcod_common::testing::uo_fs().expect("uo/");
     let bsp = vcod_common::bsp::parse(&fs.read(&fs.resolve_map("mp_cassino").unwrap()).unwrap())
         .expect("parse the bsp");
     let mut now = Instant::now();
@@ -839,8 +890,10 @@ fn uo_bots_fight_and_sprint_in_tdm() {
     cfg.map = "mp_cassino".into();
     let mut sv = vcod_server::Server::new(cfg, now);
     sv.set_protocol(&vcod_common::net::protocol::PROTOCOL_V22);
-    // `SEED=<odd n>` replays another game (bot-navigation.md, "Other rules").
-    sv.test_seed_rng(std::env::var("SEED").map_or(1, |v| v.parse().expect("SEED")));
+    sv.test_seed_rng(seed);
+    if !vehicles {
+        sv.set_cvar("vc_bot_vehicles", "0");
+    }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
     let mut hist: [std::collections::VecDeque<[f32; 3]>; 8] = Default::default();

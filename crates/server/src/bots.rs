@@ -2612,12 +2612,23 @@ impl Bot {
         // toward it while the keys keep the path, so a returning enemy is
         // already near the crosshair. The reaction delay is `track`'s
         // business either way.
+        // A UO bot with the breath to sprint a straight that ends short of
+        // the spot runs it looking along the path: turned to the spot, the
+        // keys leave the line and the sprint never starts, and in a game of
+        // running fights that left 64 sprinted leg-ticks in 90 s (seed 19).
+        let sprints_on = |r: &Recall| {
+            view.fatigue
+                .is_some_and(|f| view.sprinting || f >= SPRINT_FRESH)
+                && view.sprint_room >= SPRINT_ROOM
+                && dist_sq(view.origin, r.at) > view.sprint_room * view.sprint_room
+        };
         if self.shoot
             && view.enemy.is_none()
             && pitch == 0.0
             && forward == 127
             && let Some(r) = self.recall
             && dist_sq(view.origin, r.at) < SHOOT_RANGE * SHOOT_RANGE
+            && !sprints_on(&r)
         {
             let (tp, ty) = aim_angles(view, r.at);
             let look = self.turn_toward(view, [tp, ty]);
@@ -4700,6 +4711,34 @@ mod tests {
         v.fatigue = Some(1.0);
         v.jump = true;
         assert!(!sprints(&bot.think(&v)), "not onto a jump edge");
+    }
+
+    /// A remembered spot past the end of a straight the bot has the breath
+    /// to sprint is run at along the path; one short of it turns the view
+    /// (seed 19 of `uo_bots_fight_and_sprint_in_tdm`).
+    #[test]
+    fn a_uo_bot_sprints_toward_a_spot_past_the_straight() {
+        let sprints = |c: &UserCmd| c.buttons & msg::BUTTON_SPRINT_V22 != 0;
+        let mut v = view();
+        v.waypoint = Some([0.0, 100.0, 64.0]);
+        v.sprint_room = 600.0;
+        v.fatigue = Some(1.0);
+        let think = |at: [f32; 3]| {
+            let mut bot = Bot::new("allies", true, 1);
+            bot.recall = Some(Recall {
+                at,
+                ticks: 100,
+                seen: true,
+            });
+            bot.think(&v)
+        };
+        let cmd = think([400.0, 1200.0, 64.0]);
+        assert!(sprints(&cmd), "far spot");
+        assert_eq!((cmd.forward, cmd.right), (127, 0));
+        assert!(
+            !sprints(&think([300.0, 300.0, 64.0])),
+            "spot short of the end"
+        );
     }
 
     /// UO's frag cooks: the sight button goes down a few ticks into the
@@ -7008,6 +7047,7 @@ mod tests {
             gun_speed: 10000.0,
             crowd,
             contact_ms: 0,
+            level_ms: 0,
         });
         v
     }
@@ -7072,6 +7112,85 @@ mod tests {
         v.seat.as_mut().unwrap().contact_ms = 5000;
         let out = (0..4).any(|_| bot.think(&v).buttons & msg::BUTTON_USE != 0);
         assert!(out, "the driver stays in");
+    }
+
+    /// A gunner with nobody to shoot gets out of a hull that makes no
+    /// headway with its driver, not after him (seed 45 of
+    /// `uo_bots_fight_and_sprint_in_tdm`).
+    #[test]
+    fn a_gunner_leaves_a_ride_that_makes_no_headway() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd::default());
+        let seat = v.seat.as_mut().unwrap();
+        seat.seat = 2;
+        // Shuffling back and forth at speed, never 300 units from the start.
+        let out = (0..200).find(|i| {
+            let seat = v.seat.as_mut().unwrap();
+            seat.origin[0] = if i % 40 < 20 { 0.0 } else { 150.0 };
+            seat.level_ms = *i * 50;
+            bot.think(&v).buttons & msg::BUTTON_USE != 0
+        });
+        assert!(out.is_some_and(|i| i > 150), "{out:?}");
+        // A ride on the move keeps him.
+        let mut bot = Bot::new("allies", false, 1);
+        let out = (0..200).find(|i| {
+            let seat = v.seat.as_mut().unwrap();
+            seat.origin[0] = *i as f32 * 10.0;
+            seat.level_ms = *i * 50;
+            bot.think(&v).buttons & msg::BUTTON_USE != 0
+        });
+        assert_eq!(out, None);
+    }
+
+    /// A tank's ground made counts from where a fight's hold left it: the
+    /// way back across an older spot is no headway (seed 25).
+    #[test]
+    fn a_tank_counts_its_headway_from_where_a_fight_held_it() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd::default());
+        let at = |v: &mut BotView, x: f32, f: i32| {
+            let seat = v.seat.as_mut().unwrap();
+            seat.origin[0] = x;
+            seat.level_ms = f * 50;
+        };
+        for f in 0..150 {
+            at(&mut v, -100.0 + (f % 2) as f32, f);
+            bot.think(&v);
+        }
+        at(&mut v, 250.0, 150);
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [900.0, 0.0, 64.0],
+            velocity: [0.0; 3],
+        });
+        bot.think(&v);
+        v.enemy = None;
+        let out = (151..200).find(|&f| {
+            at(&mut v, if f % 2 == 0 { 250.0 } else { 0.0 }, f);
+            bot.think(&v).buttons & msg::BUTTON_USE != 0
+        });
+        assert!(out.is_some_and(|f| f < 175), "{out:?}");
+    }
+
+    /// Leaving riders press use on their own seat's frames: two never get
+    /// out of one vehicle on one frame (seed 15).
+    #[test]
+    fn riders_leave_a_vehicle_on_frames_of_their_own() {
+        let presses = |seat: usize| -> Vec<i32> {
+            let mut bot = Bot::new("allies", false, 1);
+            let mut v = driving(Crowd::default());
+            v.seat.as_mut().unwrap().seat = seat;
+            v.seat.as_mut().unwrap().contact_ms = 5000;
+            (0..12)
+                .filter(|&f| {
+                    v.seat.as_mut().unwrap().level_ms = f * 50;
+                    bot.think(&v).buttons & msg::BUTTON_USE != 0
+                })
+                .collect()
+        };
+        let (d, g) = (presses(1), presses(2));
+        assert!(!d.is_empty() && !g.is_empty());
+        assert!(d.iter().all(|f| !g.contains(f)), "{d:?} {g:?}");
     }
 
     /// A tank turning in place between walls shrugs a few degrees each
