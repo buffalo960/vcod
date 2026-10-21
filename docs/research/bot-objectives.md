@@ -1260,7 +1260,7 @@ view.
 
 `team_tally` has since been folded into `bot_match` (`GAMETYPE=sd`,
 `MAPS=`, `TEAMPLAY=` switching these rules per side in one build);
-`bot-combat.md` 6.2 re-measures this table there.
+`bot-combat.md` 6.3 re-measures this table there.
 
 VERIFIED (measured, ours, 2026-10-20, release, `--example team_tally`, 8
 shooting bots, seeds 1-11 odd, 6000 ticks (300 s) per run, the ten 1.1 maps

@@ -410,7 +410,7 @@ The skill row is two runs: `AXIS_SKILL=2` on seeds 1..=8 and
   unchanged (section 5 found the same).
 - VERIFIED (measured, the table): together on one side they gave +3.5 a match, 1.8 standard errors, and
   the lowest share of wounded deaths against the highest (74% against
-  85%). See 6.3 for the second seed set.
+  85%). 6.2 repeats the three arms on a second seed set.
 - VERIFIED (measured, the table): both features on everywhere make the
   game slower: 21% fewer kills than with both off, lives 24.8 s against
   19.5 s, and the `stalled` count nearly eightfold (104718 bot-ticks
@@ -418,7 +418,31 @@ The skill row is two runs: `AXIS_SKILL=2` on seeds 1..=8 and
   spot or a retreat's cover on purpose, so read `stalled` against a run
   with the same features on.
 
-### 6.2 Team play: `sd` and `re` on the ten 1.1 maps that run both, seeds 1..=6 (60 matches a row)
+### 6.2 The arms again, seeds 17..=32
+
+The same three `alt` runs as 6.1 on fresh seeds (64 matches a row), and
+the two sets pooled (128 matches).
+
+VERIFIED (measured, ours, `bot_match`, 2026-10-21):
+
+| Run | Side | Kills | Deaths | K/D | Dead in 5 s | Margin | Pooled margin |
+|---|---|---|---|---|---|---|---|
+| `COVER=alt` | cover | 2984 | 2871 | 1.04 | 73% | +1.8 +- 1.8 | +0.9 +- 1.3 |
+| | control | 2869 | 2986 | 0.96 | 76% | | |
+| `RETREAT=alt` | retreat | 2725 | 2686 | 1.01 | 72% | +0.7 +- 1.3 | +0.4 +- 1.0 |
+| | control | 2681 | 2728 | 0.98 | 80% | | |
+| `COVER=alt RETREAT=alt` | both on | 3026 | 2894 | 1.05 | 74% | +2.1 +- 1.7 | +2.8 +- 1.3 |
+| | control | 2891 | 3027 | 0.96 | 82% | | |
+
+- VERIFIED (measured, the table): pooled, cover and the retreat
+  together give a side about 2.8 kills a match more than the other
+  (some 2 standard errors, K/D 1.05 to 1.08); each alone stays within
+  one standard error of nothing. Both are on by default, so the shipped
+  game has the pair.
+- VERIFIED (measured, both tables): the retreat cuts the share of
+  wounded bots dead within 5 s by 8 to 10 points in all four runs.
+
+### 6.3 Team play: `sd` and `re` on the ten 1.1 maps that run both, seeds 1..=6 (60 matches a row)
 
 `bot-objectives.md` 9's table compared two builds with `team_tally`;
 `TEAMPLAY=` now switches the same rules per side inside one build, the
@@ -446,7 +470,7 @@ rounds to 157.
   46), as there (9 to 18), but the attackers' round share does not move.
   INFERRED: most rounds end on the clock or in a wipe, not a capture.
 
-### 6.3 United Offensive: `tdm`, mp_cassino and mp_kursk, seeds 1..=8 (16 matches a row)
+### 6.4 United Offensive: `tdm`, mp_cassino and mp_kursk, seeds 1..=8 (16 matches a row)
 
 `UO=1`, `COD_DIR` at a UO install.
 
