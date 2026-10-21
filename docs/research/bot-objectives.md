@@ -1501,14 +1501,13 @@ rule):
 | | stuck kills | stuck drivers | kills | boardings | bot-ticks seated |
 |---|---|---|---|---|---|
 | speed stall | 5 | 3 | 176 | 59 | 38251 |
-| 10.3's rules | 1 | 1 | 197 | 58 | 27905 |
-| the same, on master's later bots | 0 | 2 | 187 | 71 | 31542 |
+| contact, ground-made and turn stalls, 10 s headway | 1 | 1 | 197 | 58 | 27905 |
+| 10.3's rules, on master's later bots | 0 | 2 | 187 | 71 | 31542 |
 
-The second row's one stuck kill is seed 5's Sherman sliding into a wall
-on the slope at (2190, -2278, 40) after both riders got out. Riders give
-up a struggling hull sooner, so fewer bot-ticks are spent seated. The two
-stalled drivers left (seeds 9 and 11) are under the 12 s before the
-no-headway exit and the undriven-seat exit land. Each stuck kill
+The middle row's stuck kill is seed 5's Sherman sliding into a wall on
+the slope at (2190, -2278, 40) after both riders got out. Riders give up
+a struggling hull sooner, so fewer bot-ticks are spent seated. The last
+row's two 12 s spells (seeds 9 and 11) are not traced. Each stuck kill
 before killed its riders with the tank as attacker, the stock tdm 815
 error `uo_bots_fight_and_sprint_in_tdm` failed on. That gate plays with
 vehicles on again and passes seeds 1 to 15.
