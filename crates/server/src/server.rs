@@ -6084,6 +6084,11 @@ impl Server {
                 let d = self.weapon_table.get(sim.ps.weapon as usize);
                 d.map_or(-1, |d| sim.ps.ammoclip[d.clip_index])
             },
+            weapon: sim.ps.weapon,
+            gun: self
+                .weapon_table
+                .get(sim.ps.weapon as usize)
+                .is_some_and(|d| d.weapon_type == "bullet"),
             unsticking: self.bots.get(&slot).is_some_and(|b| b.unsticking()),
             sprinting: sim.ps.sprinting,
             sprint_leg: self.bots.get(&slot).is_some_and(|b| b.sprint_leg()),
@@ -6116,6 +6121,13 @@ impl Server {
     pub fn test_bot_cover(&mut self, slot: usize, on: bool) {
         if let Some(bot) = self.bots.get_mut(&slot) {
             bot.cover.enabled = on;
+        }
+    }
+
+    /// Test-facing: whether a bot moves while it fights (`Bot::footwork`).
+    pub fn test_bot_footwork(&mut self, slot: usize, on: bool) {
+        if let Some(bot) = self.bots.get_mut(&slot) {
+            bot.footwork = on;
         }
     }
 

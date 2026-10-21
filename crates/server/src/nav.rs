@@ -1845,7 +1845,27 @@ pub struct Follower {
     /// The lowest fall that kills this body now ([`fall_that_kills`]):
     /// a hurt bot dies off a shorter ladder. `None` reads [`DEADLY_LADDER`].
     pub fall_kills: Option<f32>,
+    /// Off the ground and off the rungs last tick: a landing is read
+    /// against the edge under way.
+    airborne: bool,
+    /// The point goal's plan the last goal move left, for a goal that
+    /// comes back.
+    parked: Option<Parked>,
 }
+
+/// A [`Follower`] plan set aside when its point goal moved off, and the
+/// tick it was.
+struct Parked {
+    dest: u32,
+    path: Vec<u32>,
+    next: usize,
+    best: f32,
+    idle: u32,
+    at: u32,
+}
+
+/// How long a [`Parked`] plan waits for its goal to come back: a second.
+const PARK_TICKS: u32 = 20;
 
 impl Follower {
     /// The waypoint toward `goal` for a bot standing at `at` on `body`'s
@@ -1912,6 +1932,8 @@ impl Follower {
         use crate::bots::Goal;
         self.clock += 1;
         self.stop_at = None;
+        let landed = self.airborne && body.on_ground;
+        self.airborne = !body.on_ground && !body.on_ladder;
         let clock = self.clock;
         self.avoid.retain(|e| e.2 > clock);
         if self.rest > 0 {
@@ -1937,8 +1959,37 @@ impl Follower {
                     .dest
                     .is_none_or(|d| g.nodes[d as usize].distance(Vec3::from(p)) > RETARGET);
                 if moved {
+                    // A goal back within `PARK_TICKS` takes up the plan it
+                    // left where it was: an enemy in sight for a tick or
+                    // two from mp_cassino's stair at (1440, -700, 24)
+                    // flipped the goal and back, each replan started at
+                    // the node behind the body, and the bot paced the
+                    // step for 12 s (seed 17, bot-navigation.md "Jumps").
+                    let back = self.parked.take().filter(|k| {
+                        clock - k.at <= PARK_TICKS
+                            && g.nodes[k.dest as usize].distance(Vec3::from(p)) <= RETARGET
+                    });
+                    if let Some(d) = self.dest.filter(|_| !self.path.is_empty() && !self.arrived) {
+                        self.parked = Some(Parked {
+                            dest: d,
+                            path: std::mem::take(&mut self.path),
+                            next: self.next,
+                            best: self.best,
+                            idle: self.idle,
+                            at: clock,
+                        });
+                    }
                     self.reset();
-                    self.dest = g.goal_node(p);
+                    match back {
+                        Some(k) => {
+                            self.dest = Some(k.dest);
+                            self.path = k.path;
+                            self.next = k.next;
+                            self.best = k.best;
+                            self.idle = k.idle;
+                        }
+                        None => self.dest = g.goal_node(p),
+                    }
                 } else if self.arrived {
                     let fell = here.z < self.arrived_at.z - ARRIVED_DROP;
                     if !fell {
@@ -2189,6 +2240,25 @@ impl Follower {
             self.fell = true;
             return None;
         }
+        // Landed more than a step under both ends of a level edge that is
+        // no jump: off its side into a pocket the walk never went
+        // through. mp_cassino's roof dent at (4948, -1413, 280), 23 under
+        // the edge from (4938, -1393, 303) to (4991, -1440, 303), took a
+        // bot whose next plan started at the nearest node, level with
+        // the dent's floor behind its wall, and held it 4 s (seed 25,
+        // bot-objectives.md 10.6). Plan again round the edge from a node
+        // it walks or jumps to.
+        if landed && self.next > 0 {
+            let (a, b) = (self.path[self.next - 1], self.path[self.next]);
+            let (za, zb) = (g.nodes[a as usize].z, g.nodes[b as usize].z);
+            let step = vcod_common::pmove::STEPSIZE;
+            if !g.jumps.contains(&(a, b)) && (za - zb).abs() < step && here.z < za.min(zb) - step {
+                self.avoid.push((a, b, self.clock + AVOID_TICKS));
+                self.reset();
+                self.fell = true;
+                return None;
+            }
+        }
         // Down a drop onto a floor partway, the waypoint more than a jump
         // under the feet and within reach flat, the edge's top more than a
         // jump over them: a run off mp_ship's slot at (5403, -160, 396)
@@ -2280,16 +2350,16 @@ impl Follower {
                 // Stuck on the way from the last node: plan round that edge
                 // next tick. Before the first node, leave the bot to its own
                 // unstick for a spell.
+                // Either way the next plan starts at a node a walk from
+                // the body reaches: the nearest may stand across a wall
+                // (mp_cassino's slot at (945, -775, 64), seed 1 with no
+                // vehicles; its roof dent, seed 25, bot-objectives.md 10.6).
+                self.fell = true;
                 if let Some(from) = self.next.checked_sub(1).map(|i| self.path[i]) {
                     let to = self.path[self.next];
                     self.avoid.push((from, to, self.clock + AVOID_TICKS));
                 } else {
                     self.rest = REST_TICKS;
-                    // The nearest node may stand across a wall: an unstick
-                    // spell left a bot in mp_cassino's slot at (945, -775,
-                    // 64) pressing at a node 63 east for 7 s (seed 1, no
-                    // vehicles). The next plan starts at one it walks to.
-                    self.fell = true;
                 }
                 self.reset();
                 return None;
@@ -3007,6 +3077,7 @@ impl Follower {
         {
             self.avoid.push((*from, to, self.clock + AVOID_TICKS));
             self.reset();
+            self.fell = true;
         }
     }
 
@@ -5311,6 +5382,62 @@ mod tests {
             })
             .collect();
         NavGraph::from_parts(nodes, edges)
+    }
+
+    /// Off the side of a level edge into a pocket a step and more under it:
+    /// the landing drops the plan and avoids the edge, and the next plan
+    /// starts at a node a walk reaches.
+    #[test]
+    fn a_landing_under_a_level_edge_plans_again_round_it() {
+        use crate::bots::Goal;
+        let g = row();
+        let mut f = Follower::default();
+        let goal = Goal::To([160.0, 0.0, 0.0]);
+        let mut budget = 100;
+        let mut step = |f: &mut Follower, at: [f32; 3], body: Footing| {
+            f.waypoint(&g, None, goal, at, body, &mut budget, &mut || 0)
+        };
+        assert!(step(&mut f, [40.0, 0.0, 0.0], Footing::STANDING).is_some());
+        let air = Footing {
+            on_ground: false,
+            ..Footing::STANDING
+        };
+        assert!(step(&mut f, [70.0, 0.0, -10.0], air).is_some());
+        assert_eq!(step(&mut f, [72.0, 0.0, -23.0], Footing::STANDING), None);
+        assert!(f.fell && f.avoid.len() == 1);
+    }
+
+    /// A point goal that moves off and comes back within `PARK_TICKS`
+    /// takes up its old plan where it was, with no new search; later, it
+    /// plans afresh.
+    #[test]
+    fn a_goal_back_within_a_second_takes_up_its_old_plan() {
+        use crate::bots::Goal;
+        let g = row();
+        let mut f = Follower::default();
+        let wp = |f: &mut Follower, goal, mut budget| {
+            f.waypoint(
+                &g,
+                None,
+                goal,
+                [40.0, 0.0, 0.0],
+                Footing::STANDING,
+                &mut budget,
+                &mut || 0,
+            )
+        };
+        let far = Goal::To([160.0, 0.0, 0.0]);
+        let first = wp(&mut f, far, 100);
+        assert!(first.is_some());
+        assert!(wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 100).is_some());
+        assert_eq!(wp(&mut f, far, 0), first, "no budget, the old plan");
+        // Flipped away again and left there past the wait: no plan without
+        // a search.
+        wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 100);
+        for _ in 0..=PARK_TICKS {
+            wp(&mut f, Goal::To([0.0, 0.0, 0.0]), 100);
+        }
+        assert_eq!(wp(&mut f, far, 0), None);
     }
 
     /// With no waypoint while the next plan is searched for, the body waits

@@ -82,15 +82,19 @@ wide it sees:
 
 | Level | Name | Reaction | Turn rate | Aim error at first sight, settled | Hearing | Sight cone |
 |---|---|---|---|---|---|---|
-| 0 | easy | 500-850 ms | 160°/s | 80, 10 units | 0.75x | 100° |
-| 1 | normal (default) | 250-500 ms | 300°/s | 48, 4 units | 1x | 120° |
+| 0 | easy | 400-650 ms | 200°/s | 64, 5 units | 0.75x | 100° |
+| 1 | normal (default) | 200-350 ms | 300°/s | 36, 4 units | 1x | 120° |
 | 2 | hard | 150-300 ms | 440°/s | 32, 2.5 units | 1.25x | 140° |
 | 3 | expert | 100-150 ms | 600°/s | 24, 1.5 units | 1.5x | 160° |
 
 The aim error is how far from the target's chest a shot would land; it
-shrinks every tick the bot stays on the target and grows with range and
-while the bot moves. A higher level also remembers a lost enemy and a heard
-shot longer.
+shrinks every tick the bot stays on the target and grows with range, with
+the target's speed across the bot's view, and while the bot runs. A bot
+fires before its aim has settled: an automatic sprays early, a bolt rifle
+waits for a closer line. On its sights a bot now and then strafes slowly,
+backs away from a close enemy with a bolt rifle, or lies down at long
+range; a higher level does so more often. A higher level also remembers a
+lost enemy and a heard shot longer.
 
 A bot spots a new enemy only inside its sight cone, centred on where it
 looks; a bot in a vehicle seat sees all round. It keeps fighting the enemy
@@ -202,7 +206,8 @@ its sight. Bots get out when they arrive, when stuck, or after 90 seconds
   itself. They never change seats, use the hatch or drive a
   vehicle at an enemy to run him over. A bot fires rockets at a vehicle
   only with a launcher already in hand; outside `bas` none fetches one.
-- Skill levels change how bots aim, react and remember, not how they move
-  or what they choose to do: an expert takes the same routes and plays the
-  objectives the same way as an easy bot.
+- Skill levels change how bots aim, react and remember, and how often they
+  move on their sights in a fight, not where they go or what they choose
+  to do: an expert takes the same routes and plays the objectives the same
+  way as an easy bot.
 - A bot picks its cover against the one enemy it is fighting; another enemy may still see it there. It takes no cover while planting, carrying or holding a capture zone, nor within 300 units of the enemy.

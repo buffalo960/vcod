@@ -258,7 +258,10 @@ impl Bot {
         let flat = to[0].hypot(to[1]);
         let hide = view.clip == 0 || view.busy_ms > HIDE_BUSY_MS;
         cmd.up = 0;
-        cmd.wbuttons &= !(msg::WBUTTON_CROUCH | msg::WBUTTON_LEAN_LEFT | msg::WBUTTON_LEAN_RIGHT);
+        cmd.wbuttons &= !(msg::WBUTTON_CROUCH
+            | msg::WBUTTON_PRONE
+            | msg::WBUTTON_LEAN_LEFT
+            | msg::WBUTTON_LEAN_RIGHT);
         if flat > ARRIVE {
             let d = yaw_diff(to[1].atan2(to[0]).to_degrees(), yaw).to_radians();
             let key = (flat / SLOW).min(1.0) * 127.0;

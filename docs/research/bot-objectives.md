@@ -1619,6 +1619,35 @@ units/s). A cue that left out a tick whose closing pace still gained moved
 every game and raised the 32 games' stalled bot-ticks from 5917 to 7024,
 two of its stalls in this box (VERIFIED, measured); it was dropped.
 
+Seed 25 on `feat/bot-aim-footwork` (6b2ab6d1), the dent again. VERIFIED
+(measured, ours, release, stock UO paks, `ship_stalls` with a per-tick
+dump of bot 1's follower): the bot ran the level edge from (4938, -1393,
+303) to (4991, -1440, 303), dropped off its side into the dent at tick
+667 and landed at 280. No rule caught it: the fall was 23, short of
+`FELL_BELOW`'s 48, and the next plan, after the follower's stuck timeout,
+started at `NavGraph::nearest`, (4896, -1384, 280). That node is level
+with the dent's floor, so `off_floor` passed it, but it stands behind the
+dent's west wall. The bot pressed at it, ran an unstick spell, pressed
+again (keys forward 115, bouncing between (4938.8, -1410.0) and (4957.1,
+-1405.5)), and only the stuck timeout's replan (`fell`) jumped it out, at
+tick 782. Two changes in `Follower::follow`:
+
+- A landing after a tick off the ground and the rungs, more than a step
+  under both ends of a level edge that is not a jump, drops the plan,
+  avoids the edge and plans again from `NavGraph::walkable_start`. On
+  seed 25 the bot lands at tick 671 and is out of the dent at 676.
+- Every stuck replan, not only the one before a plan's first node, and
+  the unstick spell's (`Follower::stuck`), starts from `walkable_start`.
+
+After, VERIFIED (measured, `ship_stalls` with `UO=1 MAP=mp_cassino
+GAMETYPE=tdm SHOOT=1 TICKS=1800`, seeds 1 to 63 odd, 6b2ab6d1 against the
+branch tip): stalled bot-ticks 5789 to 5366, the stall at (4957, -1405,
+280) and seed 17's on the stair at (1440, -710) (bot-navigation.md
+"Jumps", "A goal that flickers") gone. One new stall in the roofs' box
+(seed 13, bot 5 at (4859, -1258, 256)) is `engaged` from its start, a
+fight the gates do not count. `uo_bots_fight_and_sprint_in_tdm` passes
+`SEED=25` and `SEED=17` on the branch.
+
 Rockets by the muzzle (2026-10-21). INFERRED (reported on another
 branch's draws for `four_shooting_uo_bots_end_a_bas_round`, mp_foy seed 7,
 not reproduced here): a bot died of its own panzerschreck fired from
