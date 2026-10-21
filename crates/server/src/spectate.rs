@@ -326,6 +326,12 @@ pub struct ClientSim {
     /// The vehicle's steer (`s.leanf`) as the last end frame read it, which
     /// a four-wheel's driver and passenger blend by.
     pub seat_steer: f32,
+    /// The entity fields the controllers' hook reads, as the last
+    /// `BG_PlayerStateToEntityState` wrote them ([`Self::write_entity`]).
+    hook_es: crate::game::combat::HookEs,
+    /// The record's seat angles (`+0x3f4`): the last placement's, kept past
+    /// an exit.
+    ci_seat_angles: [f32; 3],
     /// `ps.vehType` and `ps.vehMotion`, which an exit leaves as they were.
     pub veh_type: i32,
     pub veh_motion: i32,
@@ -641,6 +647,8 @@ impl ClientSim {
             seat: None,
             seat_angles: None,
             seat_steer: 0.0,
+            hook_es: Default::default(),
+            ci_seat_angles: [0.0; 3],
             veh_type: 0,
             veh_motion: 0,
             pers_cmd: msg::NULL_USERCMD,
@@ -1230,6 +1238,8 @@ impl ClientSim {
     pub fn enter_seat(&mut self, seat: Seat, origin: [f32; 3], view: [f32; 3]) {
         self.ps.origin = Vec3::from(origin) + Vec3::Z;
         self.teleport_bit = !self.teleport_bit;
+        // `SetClientOrigin` copies the entity ahead of the seat bits.
+        self.write_entity();
         self.linked_unsnapped = true;
         self.set_view_angle(view);
         self.seat = Some(seat);
@@ -1260,6 +1270,8 @@ impl ClientSim {
         if let Some(o) = origin {
             self.ps.origin = Vec3::from(o) + Vec3::Z;
             self.teleport_bit = !self.teleport_bit;
+            // `SetClientOrigin`, past the seat bits' clear.
+            self.write_entity();
             self.linked_unsnapped = true;
         }
         if let Some(v) = velocity {
@@ -2188,14 +2200,37 @@ impl ClientSim {
         if self.pm_type != PmType::Normal {
             return None;
         }
+        let mut pose = self.pose.clone();
+        pose.es = self.hook_es;
+        pose.ci_seat_angles = self.ci_seat_angles;
         Some(crate::game::combat::HitBody {
             slot,
             origin: self.ps.origin,
             yaw: self.ps.yaw,
             mins: self.ps.mins(),
             maxs: self.ps.maxs(),
-            pose: self.pose.clone(),
+            pose,
         })
+    }
+
+    /// `BG_PlayerStateToEntityState`'s copy of what the controllers' hook
+    /// reads off the entity: whether and where he rides, and his weapon.
+    /// `ClientThink_real` runs it after each cmd's move (game.mp.uo
+    /// 0x40c91), `SetClientOrigin` (0x44210) and `ClientEndFrame` too
+    /// (coduo-vehicles.md 13, "The weapon-swap frame").
+    pub fn write_entity(&mut self) {
+        self.hook_es = crate::game::combat::HookEs {
+            seat: self.seat.map(|s| (s.kind, s.pos)),
+            weapon: self.ps.weapon.into(),
+        };
+    }
+
+    /// `G_PlayerVehiclePositionAndBlend`'s seat tag angles: into the
+    /// placement and into the record (`+0x3f4`), which keeps them past an
+    /// exit.
+    pub fn place_seat_angles(&mut self, angles: [f32; 3]) {
+        self.seat_angles = Some(angles);
+        self.ci_seat_angles = angles;
     }
 
     /// The controls the last skeleton build eased to, which the record
@@ -2330,7 +2365,11 @@ impl ClientSim {
             eased: None,
             seat_ramp: Default::default(),
             ease_ms: frametime_ms,
+            // `dobj` fills both in as the entity stands when it is asked.
+            es: Default::default(),
+            ci_seat_angles: [0.0; 3],
         };
+        self.write_entity();
         // The end frame only sets the targets: the hook eases toward them
         // on each skeleton build that follows (`combat::DobjStamps`;
         // docs/research/coduo-vehicles.md 14, "The controllers").

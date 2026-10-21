@@ -978,7 +978,7 @@ fn place_rider(rt: &mut script::ScriptRuntime, slot: usize, sim: &mut ClientSim)
     };
     sim.seat_steer = steer;
     sim.ps.origin = at.0;
-    sim.seat_angles = Some(vcod_common::turretpose::quat_angles(at.1));
+    sim.place_seat_angles(vcod_common::turretpose::quat_angles(at.1));
     rt.set_client_origin(slot, at.0.to_array());
 }
 
@@ -9585,6 +9585,9 @@ impl Server {
             };
             round.last_cmd = Some(cmd);
             sim.pers_cmd = cmd;
+            // `ClientThink_real`'s `BG_PlayerStateToEntityState`, past the
+            // move and ahead of the use key.
+            sim.write_entity();
             c.last_processed_st = cmd.server_time;
             m.first_cmd_st.get_or_insert(cmd.server_time);
             m.last_cmd_st = Some(cmd.server_time);
