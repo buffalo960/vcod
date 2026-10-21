@@ -30,6 +30,8 @@ const SEATED_MS: i64 = 2000;
 const AHEAD_MS: i64 = 6000;
 /// `BAIL`: the throttle's time before the exit, which keeps it held.
 const BAIL_MS: i64 = 1000;
+/// The recipes start the driver's probe 2 s after the victim's.
+const DRIVER_LATE_MS: i64 = 2000;
 
 /// Our PROBE lines, and the `EV_SOUND_ALIAS` temp entities the victim's
 /// snapshots carried, each once as `VEH <time> temp <n> ev 172 parm <p>
@@ -72,9 +74,11 @@ fn ours(
         Rc::new(RefCell::new(Queues::default())),
         Rc::new(RefCell::new(Queues::default())),
     );
-    // The victim connects first, so he is client 0.
+    // The victim connects first, so he is client 0; the driver connects
+    // `DRIVER_LATE_MS` after him, as the recipes' second client did, so the
+    // two never join in one frame.
     let mut ca = NetClient::start_with_qport(ClientEnd(qa.clone()), now, 0x2001);
-    let mut cb = NetClient::start_with_qport(ClientEnd(qb.clone()), now, 0x2002);
+    let mut cb: Option<NetClient<ClientEnd>> = None;
     let mut ja = Join::new("allies", "mosin_nagant_mp");
     let weapon = if driver_team == "axis" {
         "kar98k_mp"
@@ -98,6 +102,13 @@ fn ours(
     let mut seen = std::collections::BTreeSet::new();
     for i in 0..3000i64 {
         now += frame;
+        if cb.is_none() && i * common::FRAME_MS >= DRIVER_LATE_MS {
+            cb = Some(NetClient::start_with_qport(
+                ClientEnd(qb.clone()),
+                now,
+                0x2002,
+            ));
+        }
         let since = placed_at.map(|at| (i - at) * common::FRAME_MS);
         let ahead = SETTLE_MS + TAP_MS + SEATED_MS;
         if since.is_some_and(|ms| ms >= ahead + AHEAD_MS) {
@@ -117,10 +128,12 @@ fn ours(
         if hold.base.is_none() {
             hold.base = placed_yaw(sv.script_log(), "PROBE place ").map(|y| [10.0, y, 0.0]);
         }
-        for (cl, h, buttons) in [
-            (&mut ca, &mut victim_hold, 0),
-            (&mut cb, &mut hold, if tap { BUTTON_USE } else { 0 }),
-        ] {
+        let clients = [
+            Some((&mut ca, &mut victim_hold, 0)),
+            cb.as_mut()
+                .map(|cb| (cb, &mut hold, if tap { BUTTON_USE } else { 0 })),
+        ];
+        for (cl, h, buttons) in clients.into_iter().flatten() {
             if h.base.is_none() || cl.state() != NetState::Active {
                 if let Some(c) = cl.send_frame(&UserCmd::default()) {
                     h.last = c.server_time;
@@ -136,12 +149,20 @@ fn ours(
             }
             cl.send_cmds(&cmds);
         }
-        let (ea, eb) = step_pair(&mut sv, (&qa, &mut ca), (&qb, &mut cb), now);
-        for (events, join, cl) in [(ea, &mut ja, &mut ca), (eb, &mut jb, &mut cb)] {
-            for e in events {
+        let ea = if let Some(cb) = cb.as_mut() {
+            let (ea, eb) = step_pair(&mut sv, (&qa, &mut ca), (&qb, cb), now);
+            for e in eb {
                 if let NetEvent::ServerCommand(tokens) = e {
-                    join.on_server_command(&tokens, cl, now);
+                    jb.on_server_command(&tokens, cb, now);
                 }
+            }
+            ea
+        } else {
+            common::step_at(&mut sv, common::ADDR, &qa, &mut ca, now)
+        };
+        for e in ea {
+            if let NetEvent::ServerCommand(tokens) = e {
+                ja.on_server_command(&tokens, &mut ca, now);
             }
         }
         if let Some(s) = ca.snapshots().newest() {

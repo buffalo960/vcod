@@ -816,6 +816,19 @@ measured). `mp_ship`'s cycles moved within the noise (VERIFIED, measured, three 
   it lands, the bots' paths and zone stands dropped (`Server::relink_nav`;
   bot-objectives.md 7). `bas` deletes a breached base's walls, which is
   the only way to its charge.
+- The copy keeps the mover poses, the world copies and the vehicles'
+  collmap instances where they stand, so a rebuild walks round a parked
+  tank. Since 2026-10-21 the cache keys on those too
+  (`CollisionWorld::placements`) and keeps the last 24 graphs. Keyed on
+  the links alone, a test got the graph whichever test in the same
+  process first reached those links had built round its own vehicles:
+  VERIFIED (measured, release, UO mp_foy bas, 4 shooting bots, seed 7),
+  the graph in use at ticks 6040 and 7040, after a rebuild at the same
+  links, digested `04c80a17fac01c91` where a fresh build over the
+  collision then digested `12e1ab16edbe74f5`. The same match alone ran
+  identical in three processes side by side at load average 40 and in
+  two full `bots.rs --ignored` runs. A graph is now a function of its key
+  (`nav::tests::the_cache_key_covers_every_placement`).
 - A background build's walks leave one core to the tick (`nav::par_map`
   under `SPARE_CORE`). `vcod-server --trace` logs a `tick:` line a second:
   mean and slowest `Server::tick` and the worst lag of a tick's start behind

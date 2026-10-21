@@ -1615,6 +1615,40 @@ impl CollisionWorld {
         }
     }
 
+    /// Every placement a trace reads beyond the static lumps and the link
+    /// bits, as bits in stored order: the arithmetic, the posed submodels,
+    /// the world copies and the submodel instances (vehicles). Two worlds
+    /// over the same lumps and links trace alike when these match.
+    pub fn placements(&self) -> Vec<u32> {
+        fn eat(out: &mut Vec<u32>, v: Vec3) {
+            out.extend(v.to_array().map(f32::to_bits));
+        }
+        fn pose(out: &mut Vec<u32>, p: &ModelPose) {
+            eat(out, p.origin);
+            p.axis.iter().for_each(|&a| eat(out, a));
+        }
+        let mut out = vec![self.arith.load(Ordering::Acquire) as u32];
+        for (m, p) in self.poses.read().unwrap_or_else(|e| e.into_inner()).iter() {
+            out.push(*m as u32);
+            pose(&mut out, p);
+        }
+        for c in self.copies.read().unwrap_or_else(|e| e.into_inner()).iter() {
+            out.extend([u32::MAX, c.entity, c.contents]);
+            eat(&mut out, c.origin);
+            c.axis.iter().flatten().for_each(|&a| eat(&mut out, a));
+        }
+        for i in self
+            .instances
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+        {
+            out.extend([u32::MAX - 1, i.entity, i.model as u32, i.contents]);
+            pose(&mut out, &i.pose);
+        }
+        out
+    }
+
     /// Puts model `model`'s brushes where an entity at `origin` with
     /// `angles` holds them: a script mover's brush model follows its entity
     /// (docs/research/cod11-movers.md, section 11). The spawn placement, the
