@@ -7,6 +7,8 @@
 //! bot-ticks whose 12 s hold a tick `BotBody::holds` names (with
 //! `SHOOT=1` mostly fights and cover), as `bot_match` splits its count;
 //! each stall line's `ago` is the ticks since the bot last held.
+//! `seated` counts the stalled bot-ticks in a UO vehicle's seat, which
+//! the driver's route owns, not the walk's follower.
 //! The detector behind the tables in docs/research/bot-navigation.md
 //! section 3.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example ship_stalls [seed...]
@@ -95,6 +97,7 @@ fn main() {
         let mut spell: Vec<Option<[f32; 3]>> = vec![None; slots];
         let mut was = vec![false; slots];
         let (mut count, mut held, mut falls, mut deaths, mut sprints) = (0, 0, 0, 0, 0);
+        let mut seated = 0;
         let mut died = vec![false; slots];
         for tick in 0..ticks {
             now += Duration::from_millis(50);
@@ -195,6 +198,7 @@ fn main() {
                 };
                 if near {
                     count += 1;
+                    seated += usize::from(b.seat.is_some());
                     held += usize::from(since_held[slot] < WINDOW);
                     // A held stall that lets go is printed again.
                     if !stalled[slot] || (was_held[slot] && !b.holds()) {
@@ -228,7 +232,7 @@ fn main() {
             }
         }
         println!(
-            "seed {seed}: stalled {count}, falls {falls}, deaths {deaths}, sprinting {sprints}, held {held}"
+            "seed {seed}: stalled {count}, falls {falls}, deaths {deaths}, sprinting {sprints}, held {held}, seated {seated}"
         );
         if shoot {
             // victim guid, num, team, name, attacker guid, num, team, name,
