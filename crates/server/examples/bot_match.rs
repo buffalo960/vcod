@@ -20,7 +20,11 @@
 //! with fire at the attacker within 1 s and the deaths to a killer the
 //! bot never targeted. It counts peeks from cover, those that repeat the
 //! spot and pose of the one before, hunts that reach a lost enemy's spot
-//! (or the vantage over it), and the deaths within 2 s of each.
+//! (or the vantage over it), and the deaths within 2 s of each. A fight
+//! is a bot's ticks on one target with gaps under 1 s; it counts
+//! how fights end (target down, the bot down, broken off) and the
+//! re-engagements: the same bot on the same target again within 10 s of
+//! a fight broken off with both alive.
 //! Run: COD_DIR=<install> cargo run --release -p vcod-server --example bot_match [seed...]
 //! `MAPS=` a comma list (`MAP=` alias; mp_carentan), `GAMETYPE=` (tdm),
 //! `BOTS=` (6), `TICKS=` (12000, ten minutes), `JOBS=` (4, matches run in
@@ -39,7 +43,7 @@
 //! one-sided features on for it. `VERBOSE=1` prints every kill. Seeds
 //! default to 1..=8.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -173,6 +177,7 @@ struct Tally {
     walk_ticks: u64,
     walk_turn: f64,
     snaps: u64,
+    fights: Fights,
 }
 
 /// A walking view turned more than this in one tick has snapped.
@@ -311,6 +316,7 @@ impl Tally {
         self.walk_ticks += o.walk_ticks;
         self.walk_turn += o.walk_turn;
         self.snaps += o.snaps;
+        self.fights.add(&o.fights);
     }
 
     /// The walking view's line (bot-combat.md section 1).
@@ -565,6 +571,7 @@ fn summarize(what: &str, results: &[&Match]) {
             println!("  {kind} {k:<13} {}", t.kit.line());
             println!("  {kind} {k:<13} {}", t.peeks.line());
             println!("  {kind} {k:<13} {}", t.walk());
+            println!("  {kind} {k:<13} {}", t.fights.line());
         }
     };
     rows("team ", &by_team);
@@ -817,6 +824,13 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             break;
         }
         m.scores = sv.team_scores();
+        // Bots dead or off the field this tick: a fight on one ends with
+        // its target down.
+        let down: HashSet<usize> = sv
+            .bot_slots()
+            .into_iter()
+            .filter(|&s| sv.bot_body(s).is_none_or(|b| !b.playing || b.dead))
+            .collect();
         for slot in sv.bot_slots() {
             let team = team_name(&mut sv, slot, m.dm);
             // Still picking a team.
@@ -829,7 +843,7 @@ fn run(o: &Opts, map: &str, seed: u64) -> Option<Match> {
             let tactics = sv.bot_tactics(slot);
             let life = bots.entry(slot).or_default();
             let t = tally(&mut m, o, &num, team, &skill);
-            life.step(body.as_ref(), cover, tactics, t);
+            life.step(body.as_ref(), cover, tactics, tick, &down, t);
         }
         // Each playing bot's distance to its nearest playing teammate, and
         // how many stand inside PACK_RANGE.
@@ -939,6 +953,7 @@ struct Life {
     peeks: PeekLife,
     /// The view's yaw last tick when the bot walked then.
     walk_yaw: Option<f32>,
+    fight: FightLife,
 }
 
 impl Life {
@@ -948,6 +963,8 @@ impl Life {
         body: Option<&vcod_server::bots::BotBody>,
         cover: Option<(bool, f32)>,
         tactics: Option<[u32; 3]>,
+        tick: usize,
+        down: &HashSet<usize>,
         t: (&mut Tally, &mut Tally, &mut Tally),
     ) {
         let (mut d, playing, dead) = (
@@ -999,6 +1016,7 @@ impl Life {
         };
         d.kit = Kit::step(self, body);
         d.peeks = Peeks::step(&mut self.peeks, tactics, dead);
+        d.fights = Fights::step(&mut self.fight, body, tick, down);
         let walking = body.filter(|b| b.playing && b.walking);
         if let (Some(b), Some(y)) = (walking, self.walk_yaw) {
             let turn = (b.yaw - y + 180.0).rem_euclid(360.0) - 180.0;
@@ -1198,5 +1216,104 @@ impl Peeks {
         }
         life.dead = dead;
         p
+    }
+}
+
+/// Gap in a fight's tracking that ends it: 1 s.
+const FIGHT_GAP: usize = (1000 / TICK_MS) as usize;
+/// A fight on the same target this soon after one broken off is a
+/// re-engagement: 10 s.
+const REENGAGE_TICKS: usize = (10_000 / TICK_MS) as usize;
+/// A fight this long or longer is long: 10 s.
+const LONG_FIGHT: usize = (10_000 / TICK_MS) as usize;
+
+/// Fights (bot-combat.md section 1): a bot's ticks with `BotBody::target`
+/// on one slot, gaps under [`FIGHT_GAP`] (another target in between
+/// included). Each ends with the target down (dead or off the field), the
+/// bot down, or broken off (the gap) with both alive. A re-engagement is a
+/// fight on the target of one broken off within [`REENGAGE_TICKS`].
+#[derive(Default, Clone)]
+struct Fights {
+    fights: u32,
+    downed: u32,
+    died: u32,
+    broken: u32,
+    long: u32,
+    reengaged: u32,
+}
+
+/// One bot's fights under way by target (first and last tracked tick),
+/// and its fights broken off by target (last tracked tick).
+#[derive(Default)]
+struct FightLife {
+    on: HashMap<usize, (usize, usize)>,
+    broke: HashMap<usize, usize>,
+}
+
+impl Fights {
+    fn add(&mut self, o: &Fights) {
+        self.fights += o.fights;
+        self.downed += o.downed;
+        self.died += o.died;
+        self.broken += o.broken;
+        self.long += o.long;
+        self.reengaged += o.reengaged;
+    }
+
+    fn line(&self) -> String {
+        let pct = |d: u32| 100.0 * d as f32 / self.fights.max(1) as f32;
+        format!(
+            "fights {:6} target down {:4.1}% bot down {:4.1}% broken {:4.1}% over 10 s {:4} re-engaged in 10 s {:5} ({:4.1}% of broken)",
+            self.fights,
+            pct(self.downed),
+            pct(self.died),
+            pct(self.broken),
+            self.long,
+            self.reengaged,
+            100.0 * self.reengaged as f32 / self.broken.max(1) as f32,
+        )
+    }
+
+    /// One bot-tick: the fights that ended or started on it.
+    fn step(
+        life: &mut FightLife,
+        body: Option<&vcod_server::bots::BotBody>,
+        tick: usize,
+        down: &HashSet<usize>,
+    ) -> Fights {
+        let mut f = Fights::default();
+        let alive = body.is_some_and(|b| b.playing && !b.dead);
+        let target = body.filter(|_| alive).and_then(|b| b.target);
+        life.broke
+            .retain(|t, end| !down.contains(t) && tick - *end <= REENGAGE_TICKS);
+        let ended = |f: &mut Fights, (start, last): (usize, usize)| {
+            f.fights += 1;
+            f.long += u32::from(last - start >= LONG_FIGHT);
+        };
+        for (t, (start, last)) in std::mem::take(&mut life.on) {
+            if !alive {
+                f.died += 1;
+            } else if down.contains(&t) {
+                f.downed += 1;
+            } else if target != Some(t) && tick - last >= FIGHT_GAP {
+                f.broken += 1;
+                life.broke.insert(t, last);
+            } else {
+                let last = if target == Some(t) { tick } else { last };
+                life.on.insert(t, (start, last));
+                continue;
+            }
+            ended(&mut f, (start, last));
+        }
+        if !alive {
+            life.broke.clear();
+        }
+        if let Some(t) = target.filter(|t| !down.contains(t))
+            && !life.on.contains_key(&t)
+        {
+            f.reengaged += u32::from(life.broke.remove(&t).is_some());
+            life.on.insert(t, (tick, tick));
+        }
+        f
     }
 }
