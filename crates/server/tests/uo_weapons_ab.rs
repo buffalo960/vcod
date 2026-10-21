@@ -188,6 +188,18 @@ fn retail(tag: &str) -> (Run, [f32; 3], f32) {
 /// `origin` facing `yaw`, driven by `script` from its first playing
 /// snapshot for `secs`, every event its snapshots carried.
 fn ours(weapon: &str, script: &[Step], origin: [f32; 3], yaw: f32, secs: i64) -> Run {
+    ours_with(weapon, script, origin, yaw, secs, |_| {})
+}
+
+/// [`ours`] with `setup` run on the server once its scripts are loaded.
+fn ours_with(
+    weapon: &str,
+    script: &[Step],
+    origin: [f32; 3],
+    yaw: f32,
+    secs: i64,
+    setup: impl FnOnce(&mut vcod_server::Server),
+) -> Run {
     let fs = vcod_common::testing::uo_fs().unwrap();
     let p: &'static Protocol = &PROTOCOL_V22;
     let src = format!("../gsc/tests/fixtures/semantics/client-probes/{PROBE}.gsc");
@@ -201,6 +213,7 @@ fn ours(weapon: &str, script: &[Step], origin: [f32; 3], yaw: f32, secs: i64) ->
     sv.set_cvar("probe_weapon", weapon);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    setup(&mut sv);
     common::run_alone(&mut sv, &mut now, common::PROBE_JOIN_MS);
     let q = Rc::new(RefCell::new(common::Queues::default()));
     let mut cl = common::connect(&mut sv, &q, &mut now);
@@ -987,6 +1000,66 @@ fn the_bazooka_rocket_flies_and_explodes_as_on_uo() {
         "{}",
         t.hit.map(|h| world.describe(h)).unwrap_or_default()
     );
+}
+
+/// The bazooka round of `*-uo-bazooka-draw.bin` (2026-10-21, the
+/// `*-uo-bazooka.bin` recipe on port 34531 with the server under gdb):
+/// ours fires it from retail's spot along retail's view with the
+/// `gunrandom` pair gdb read off retail's `Weapon_RocketLauncher_Fire`
+/// (x 0xbea62115, y 0xbf0d3c83), and its `trBase` and `trDelta` go out
+/// on retail's bits (combat doc 13.6).
+#[test]
+fn the_bazooka_rocket_leaves_on_retails_bits() {
+    if vcod_common::testing::uo_fs().is_none() {
+        return;
+    }
+    let (retail, origin, yaw) = retail("bazooka-draw");
+    let p = &PROTOCOL_V22;
+    let frames = vcod_common::testing::fixture_frames(
+        p,
+        "net/gamestate-uo-bazooka-draw.bin",
+        "net/snapshots-uo-bazooka-draw.bin",
+    );
+    let fire_t = retail.first(EV_FIRE_WEAPON_LASTSHOT).t;
+    let view = frames
+        .iter()
+        .map(|f| &f.snapshot)
+        .take_while(|s| s.server_time < fire_t)
+        .last()
+        .expect("a snapshot before the fire")
+        .ps
+        .viewangles(p);
+    let aim = [view[0], view[1] - yaw];
+    let script = [
+        foot(5000, 0, aim),
+        foot(150, BUTTON_ATTACK, aim),
+        foot(10_000, 0, aim),
+    ];
+    let draw = (f32::from_bits(0xbea62115), f32::from_bits(0xbf0d3c83));
+    let ours = ours_with("bazooka_mp", &script, origin, yaw, 8, |sv| {
+        sv.pin_spread_draws(vec![draw])
+    });
+    let first = |run: &Run| {
+        let fire = run.first(EV_FIRE_WEAPON_LASTSHOT).t;
+        let f = run
+            .missiles
+            .iter()
+            .find(|(t, ..)| *t >= fire)
+            .expect("the rocket on a snapshot")
+            .2;
+        (f.base.map(f32::to_bits), f.delta.map(f32::to_bits))
+    };
+    let r = first(&retail);
+    // gdb's `fire_rocket` stores (base, delta) for the same round.
+    assert_eq!(
+        r,
+        (
+            [0xc42bb959, 0xc491015f, 0x4304af98],
+            [0x452e7000, 0x42de0000, 0xc33d0000]
+        ),
+        "the capture's round is gdb's"
+    );
+    assert_eq!(first(&ours), r);
 }
 
 /// `client-probes/probe_satchelshot` on ours, its client driven as the
