@@ -576,6 +576,12 @@ impl Bot {
         let Some(to) = to.filter(|_| !hold) else {
             r.stall = 0;
             r.idle = if hold { 0 } else { r.idle + 1 };
+            // Ground made counts from where a hold left the hull: from an
+            // older spot, the way back across it after a fight read as
+            // headway and a tank dithered 12 s round one place (seed 25).
+            if hold {
+                r.progress_from = seat.origin;
+            }
             return;
         };
         r.idle = 0;

@@ -7011,6 +7011,36 @@ mod tests {
         assert_eq!(out, None);
     }
 
+    /// A tank's ground made counts from where a fight's hold left it: the
+    /// way back across an older spot is no headway (seed 25).
+    #[test]
+    fn a_tank_counts_its_headway_from_where_a_fight_held_it() {
+        let mut bot = Bot::new("allies", false, 1);
+        let mut v = driving(Crowd::default());
+        let at = |v: &mut BotView, x: f32, f: i32| {
+            let seat = v.seat.as_mut().unwrap();
+            seat.origin[0] = x;
+            seat.level_ms = f * 50;
+        };
+        for f in 0..150 {
+            at(&mut v, -100.0 + (f % 2) as f32, f);
+            bot.think(&v);
+        }
+        at(&mut v, 250.0, 150);
+        v.enemy = Some(EnemyView {
+            slot: 3,
+            origin: [900.0, 0.0, 64.0],
+            velocity: [0.0; 3],
+        });
+        bot.think(&v);
+        v.enemy = None;
+        let out = (151..200).find(|&f| {
+            at(&mut v, if f % 2 == 0 { 250.0 } else { 0.0 }, f);
+            bot.think(&v).buttons & msg::BUTTON_USE != 0
+        });
+        assert!(out.is_some_and(|f| f < 175), "{out:?}");
+    }
+
     /// Leaving riders press use on their own seat's frames: two never get
     /// out of one vehicle on one frame (seed 15).
     #[test]
