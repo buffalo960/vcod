@@ -2605,11 +2605,29 @@ the ten-thousandth) matches on both. The float order vcod kept before,
 `pusher + R * (point - pusher)`, missed 169 rows on 1.5b and 127 on UO.
 
 VERIFIED, the same UO capture: the health pack on the turning copy lands a
-second time at yaw 10.5 (16100, lifted -15.69 to -14.83) where ours rests
-on, so ours' pack falls off the copy's slope a frame early (`yaw45` frame 13
-against retail's 14) and stays off retail's from there. 1.5b's pack
-matches. Not read: UO's `G_RunItem` ground test on a rotating mover;
-`worldcopy_ab`'s `PACK_GAPS_UO` names the rows.
+second time at yaw 10.5 (sample 16000 at -15.69, sample 16100 at -14.83,
+a lift of 0.86 off a floor at -15.69).
+
+INFERRED, UO `game.mp.uo.i386.so` `G_RunItem` (0x56876) and 1.5b's
+(0x4d63d), off the decompiled control flow: the same as 1.1d's. A ground
+of `ENTITYNUM_NONE` (`+0x7c` 0x3ff) turns `s.pos` to `TR_GRAVITY` at
+`level.time`, a stationary `s.pos` only thinks, and the sweep's mask is
+`clipmask` or 0x491. UO's `G_TryPushingEntity` (0x605e5) tests the carried
+spot, the jitter, then the item's own spot (`G_TestEntityPosition` 0x60378
+at `r.currentOrigin`, one zero-length `trap_Trace`); a clear own spot sets
+the ground to 0x3ff. `G_MoverPush` (static, 0x60c1b) relinks an `eType` 3
+that fits nowhere and goes on, its ground untouched. vcod's `fit_item` and
+`place_pushed` follow that order.
+
+VERIFIED, vcod measurement: the difference was `worldcopy_ab`'s, not the
+server's. The harness lifted ours' pack to retail's rest after the landing
+frame, so that frame's push (the copy is entity 171, after the pack's 170)
+tested the pack's own spot 0.93 low, inside the turned slope, and left its
+ground on the copy. With retail's lift drawn inside the landing (a second
+pass carries a lift a mover's step corrected after the frame) ours' own
+spot is clear on that frame, as retail's was: the pack drops, lands again
+at 16050 with 0.86 and leaves the slope on retail's frame. Every row of
+`-worldcopy3-uo.txt` matches with no gap, and 1.5b's and 1.1d's still do.
 
 ### The turned centre
 
