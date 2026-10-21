@@ -643,8 +643,10 @@ dropped, so test such a builtin through `ScriptRuntime`.
   unit. A turned copy or submodel is traced in its own frame: the box's
   centre turned, not the origin, so a pitch shifts a player's capsule, and
   the box axial there, not in the world. A capsule meets the axial sides
-  as its upright world box, `|turned sphere offset| + r` a side
-  (movers doc 21, 22).
+  as its upright world box, `|turned sphere offset| + r` a side, and a
+  non-axial side with the offset's y negated, so on a roll it is not
+  upright. The turn takes the engine's `AngleVectors` rounding
+  (`x87::angles_to_axis`), not the game module's (movers doc 21, 22).
 - A fall onto a slope slides as far as its cmd split lets it: a cmd that
   starts within the ground trace's reach turns the fall into ground speed.
   An A/B over one replays the client's three cmds a frame, never one

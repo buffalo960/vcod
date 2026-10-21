@@ -14,9 +14,12 @@
 //! Three more captures, each header with its recipe, movers doc 21:
 //! `-worldcopy2.txt` turns a copy under the player and blasts three
 //! `func_static`s, `-worldcopy3.txt` reruns its turns with the player
-//! printed to the ten-thousandth, and `-sinecrush.txt` crushes the player
+//! printed to the ten-thousandth (`-1.5.txt` and `-uo.txt` on 1.5b and
+//! UO), and `-sinecrush.txt` crushes the player
 //! under a `func_bobbing`. `mp_harbor-dm-turnedslab.txt` stands the player
-//! beside a turned submodel as it lifts.
+//! beside a turned submodel as it lifts. `mp_harbor-dm-tiltslab*.txt` and
+//! `mp_depot-dm-rollramp.txt` drop him onto a pitched or rolled submodel,
+//! the latter onto a non-axial side (movers doc 22).
 //!
 //! Each capture holds its client's cmds (`CMDS` lines), and ours replays them
 //! (`ProbeHold::framed`): where a fall lands and slides rides on where its
@@ -34,8 +37,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use vcod_common::net::protocol::PROTOCOL_V1;
+use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6};
 use vcod_common::net::{NetClient, NetEvent};
+use vcod_common::pk3::Pk3Fs;
 
 const MAP: &str = "mp_carentan";
 const SERVER: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy.txt";
@@ -46,6 +50,8 @@ const SERVER2: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy2.txt";
 const PROBE2: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy2.gsc");
 const SERVER3: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy3.txt";
+const SERVER3_15: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy3-1.5.txt";
+const SERVER3_UO: &str = "tests/fixtures/movers/mp_carentan-dm-worldcopy3-uo.txt";
 const PROBE3: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_worldcopy3.gsc");
 const CRUSH: &str = "tests/fixtures/movers/mp_carentan-dm-sinecrush.txt";
@@ -56,6 +62,9 @@ const TILT: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab.txt";
 const TILT_RIDE: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-ride.txt";
 const PROBE_TILT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
+const ROLL: &str = "tests/fixtures/movers/mp_depot-dm-rollramp.txt";
+const PROBE_ROLL: &str =
+    include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_rollramp.gsc");
 const PROBE_CRUSH: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_sinecrush.gsc");
 
@@ -242,6 +251,12 @@ fn ours_tilt_ride() -> Option<&'static Ours> {
         .as_ref()
 }
 
+fn ours_roll() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| run_ours("mp_depot", "probe_rollramp", PROBE_ROLL, ROLL, true))
+        .as_ref()
+}
+
 fn ours_crush() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| run_ours(MAP, "probe_sinecrush", PROBE_CRUSH, CRUSH, true))
@@ -251,7 +266,26 @@ fn ours_crush() -> Option<&'static Ours> {
 /// [`run_once`], run again once if the client's first snapshot missed
 /// retail's: how long ours takes to join differs by map.
 fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool) -> Option<Ours> {
-    let ours = run_once(map, name, probe, fixture, probe_rate, 0)?;
+    run_ours_on(
+        vcod_common::testing::game_fs_11,
+        map,
+        name,
+        probe,
+        fixture,
+        probe_rate,
+    )
+}
+
+/// [`run_ours`] on `fs`'s install, under its protocol.
+fn run_ours_on(
+    fs: fn() -> Option<Pk3Fs>,
+    map: &str,
+    name: &str,
+    probe: &str,
+    fixture: &str,
+    probe_rate: bool,
+) -> Option<Ours> {
+    let ours = run_once(fs()?, map, name, probe, fixture, probe_rate, 0)?;
     let text = std::fs::read_to_string(fixture).unwrap();
     let Some(&(first, _)) = common::cmds_ran(&text, "").first() else {
         return Some(ours);
@@ -259,7 +293,7 @@ fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool)
     match ours.first_snap {
         Some(t) if t != first => {
             let late = (t - first) as i64;
-            run_once(map, name, probe, fixture, probe_rate, late)
+            run_once(fs()?, map, name, probe, fixture, probe_rate, late)
         }
         _ => Some(ours),
     }
@@ -272,6 +306,7 @@ fn run_ours(map: &str, name: &str, probe: &str, fixture: &str, probe_rate: bool)
 /// `probe_rate` sends the probe client's three cmds a frame instead of one.
 #[allow(clippy::too_many_arguments)]
 fn run_once(
+    fs: Pk3Fs,
     map: &str,
     name: &str,
     probe: &str,
@@ -279,11 +314,12 @@ fn run_once(
     probe_rate: bool,
     late_ms: i64,
 ) -> Option<Ours> {
-    let fs = vcod_common::testing::game_fs_11()?;
+    let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(map).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(map, name), now);
+    sv.set_protocol(p);
     sv.overlay_script(&format!("maps/mp/gametypes/{name}"), probe);
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     sv.load_scripts(Rc::new(fs)).expect("load the scripts");
@@ -338,11 +374,11 @@ fn run_once(
     }
     let q = Rc::new(RefCell::new(Queues::default()));
     let mut cl = NetClient::start_with_qport(ClientEnd(q.clone()), now, 0x2001);
-    // mp_harbor's allies are Russian.
-    let weapon = if map == "mp_harbor" {
-        "mosin_nagant_mp"
-    } else {
-        "m1carbine_mp"
+    // mp_harbor's allies are Russian, mp_depot's British.
+    let weapon = match map {
+        "mp_harbor" => "mosin_nagant_mp",
+        "mp_depot" => "enfield_mp",
+        _ => "m1carbine_mp",
     };
     let mut join = Join::new("allies", weapon);
     let mut present: Option<std::collections::BTreeSet<u32>> = None;
@@ -355,7 +391,7 @@ fn run_once(
         let live = cl
             .snapshots()
             .newest()
-            .is_some_and(|s| matches!(s.ps.field_i32(&PROTOCOL_V1, "pm_type"), 0 | 1 | 6));
+            .is_some_and(|s| matches!(s.ps.field_i32(p, "pm_type"), 0 | 1 | 6));
         if replay && live {
             let cmds = hold.cmds(&cl, 0);
             cl.send_cmds(&cmds);
@@ -377,7 +413,6 @@ fn run_once(
         }
         if let Some(s) = cl.snapshots().newest() {
             first_snap.get_or_insert(s.server_time);
-            let p = &PROTOCOL_V1;
             if let Some(present) = &present {
                 for (&n, e) in s.entities.iter().filter(|(n, _)| !present.contains(n)) {
                     new.entry(n).or_insert(Sent {
@@ -607,11 +642,62 @@ fn a_turned_world_copy_clips_and_pushes_like_retail() {
 /// does and the jitter lands where retail's did (cod11-movers.md 21).
 #[test]
 fn a_pitched_copy_blocks_its_rider_like_retail() {
-    let Some(Ours { log, .. }) = ours3() else {
-        eprintln!("COD_DIR unset or has no main/: skipping");
+    pitched_matches(SERVER3, ours3(), &[]);
+}
+
+/// The same on 1.5b and UO, whose `G_TryPushingEntity` stores each step of
+/// the carry (cod11-movers.md 21, "The carry's rounding").
+#[test]
+fn a_pitched_copy_blocks_its_rider_like_retail_on_15() {
+    pitched_matches(SERVER3_15, run3_on(fs_15, SERVER3_15), &[]);
+}
+
+#[test]
+fn a_pitched_copy_blocks_its_rider_like_retail_on_uo() {
+    pitched_matches(
+        SERVER3_UO,
+        run3_on(vcod_common::testing::uo_fs, SERVER3_UO),
+        PACK_GAPS_UO,
+    );
+}
+
+/// UO's health pack on the turning copy, from each phase's frame on: retail's
+/// lands again at yaw 10.5 (16100, a second lift) where ours rests on, so
+/// ours falls off the copy's slope a frame early and the harness's lift
+/// raise holds it there (cod11-movers.md 21, "The carry's rounding"). The
+/// player's rows are held on every frame.
+const PACK_GAPS_UO: &[(&str, usize)] = &[
+    ("yaw45", 8),
+    ("yaw90", 0),
+    ("yaw0", 0),
+    ("pitch", 0),
+    ("unpitch", 0),
+];
+
+/// The 1.5b install's paks, `None` elsewhere (a UO install's `main/` is
+/// 1.5's, so this runs there too).
+fn fs_15() -> Option<Pk3Fs> {
+    let fs = vcod_common::testing::game_fs()?;
+    (vcod_server::server::install_protocol(&fs).version == PROTOCOL_V6.version).then_some(fs)
+}
+
+fn run3_on(fs: fn() -> Option<Pk3Fs>, fixture: &str) -> Option<Ours> {
+    run_ours_on(fs, MAP, "probe_worldcopy3", PROBE3, fixture, true)
+}
+
+/// `probe_worldcopy3`'s rows, every frame to the ten-thousandth, but the
+/// pack's (`PROBE f` column 1) from each `pack_gaps` phase's frame on.
+fn pitched_matches(
+    fixture: &str,
+    ours: Option<impl std::borrow::Borrow<Ours>>,
+    pack_gaps: &[(&str, usize)],
+) {
+    let Some(ours) = ours else {
+        eprintln!("no install of this version under COD_DIR: skipping");
         return;
     };
-    let text = std::fs::read_to_string(SERVER3).unwrap();
+    let log = &ours.borrow().log;
+    let text = std::fs::read_to_string(fixture).unwrap();
     let retail = phases(text.lines());
     let ours = phases(log.iter().map(String::as_str));
     let (rp, op) = (
@@ -626,6 +712,14 @@ fn a_pitched_copy_blocks_its_rider_like_retail() {
         }
     }
     let mut bad = compare_phases(&retail, &ours);
+    bad.retain(|row| {
+        !pack_gaps.iter().any(|&(phase, from)| {
+            row.strip_prefix(&format!("{phase} frame "))
+                .and_then(|r| r.split_once(" column 1:"))
+                .and_then(|(k, _)| k.parse::<usize>().ok())
+                .is_some_and(|k| k >= from)
+        })
+    });
     // Every frame to the ten-thousandth: the lift's slide down the copy's
     // slope, the carry through the turns, the pitch's blocked frame and the
     // jitter's fall.
@@ -767,6 +861,14 @@ fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
 #[test]
 fn a_capsule_lands_on_a_tilted_submodel_like_retail_again() {
     tilt_matches(TILT_RIDE, ours_tilt_ride());
+}
+
+/// `probe_rollramp`'s capture: a player dropped onto a rolled submodel's
+/// non-axial side, where the turned sphere offset's `-l.z` sign picks the
+/// sphere (movers doc 22, "A rolled submodel's non-axial side").
+#[test]
+fn a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail() {
+    tilt_matches(ROLL, ours_roll());
 }
 
 #[test]

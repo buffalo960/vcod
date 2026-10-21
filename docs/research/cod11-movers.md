@@ -2462,7 +2462,9 @@ terrain sweep (0x8052a58) and position test (0x8053280) read only the
 radius and half height (`+0xf8`, `+0xfc`) and shift z. INFERRED: against a
 turned model's brushes the capsule stays upright in the world, give or take
 the `-left.z` sign that only a roll reaches; against its terrain it tilts
-with the model.
+with the model. VERIFIED, section 22 ("A rolled submodel's non-axial
+side"): against a rolled model's non-axial side the capsule sits as the
+mirrored offset puts it, not upright.
 
 vcod: `WorldCopy::sphere` turns the offset and `clip_brush_capsule` takes it;
 terrain and patches keep the upright one.
@@ -2547,8 +2549,36 @@ in floats as `pusher + R * (point - pusher)` left the rider 0.0002 a frame
 off retail's through each turn, 0.0017 by the pitch's rest, and every
 `PROBE g` row of the pitch missed the ten-thousandth (182 rows). With 1.1d's
 order and one rounding (`push::carried`, in `f64`) all of them match.
-1.5b's and UO's carry keep the float order: their stored build was not
-read here.
+
+VERIFIED, 1.5b `game.mp.i386.so` `G_TryPushingEntity` 0x55aa1: the moved
+point is stored (`fstps [ebp-0xd8..-0xd0]`, 0x55aef, 0x55b06, 0x55b1d);
+`G_CreateRotationMatrix` (0x55943: `AngleVectors`, then `VectorInverse`
+of the right row) and `G_TransposeMatrix` (0x5598f) build the matrix
+(0x55b33, 0x55b48); `org`, the point less the pusher's `r.currentOrigin`
+(`fsubs [eax+0x138]`), is stored (0x55b5c, 0x55b6e, 0x55b80) and copied to
+`org2`; `G_RotatePoint` (0x559fa) sums each row's three products on the
+stack and stores it (`fstps` 0x55a43, 0x55a70, 0x55a9d); `org2 - org` is
+stored (0x55bad, 0x55bb6, 0x55bbf) and so is the moved point plus it
+(0x55bcb, 0x55bda, 0x55be9), the trace start. VERIFIED, UO 1.51b
+`game.mp.uo.i386.so` `G_TryPushingEntity` 0x605e5: the same sequence
+(pusher origin at `+0x13c`; `G_RotatePoint` 0x6053e with the same three
+`fstps`, `G_CreateRotationMatrix` 0x60487). So 1.5b and UO round `org`,
+each turned row, `org2 - org` and the sum to floats (`push::carried`
+under `Arith::Stored`).
+
+VERIFIED, vcod measurement: `probe_worldcopy3` on 1.5b and UO
+(`-worldcopy3-1.5.txt`, `-worldcopy3-uo.txt`, 2026-10-21, one
+`--probe-ride` client each), replayed by `worldcopy_ab`. With the stored
+order every player row (`PROBE f` column 0 to 0.05, every `PROBE g` row to
+the ten-thousandth) matches on both. The float order vcod kept before,
+`pusher + R * (point - pusher)`, missed 169 rows on 1.5b and 127 on UO.
+
+VERIFIED, the same UO capture: the health pack on the turning copy lands a
+second time at yaw 10.5 (16100, lifted -15.69 to -14.83) where ours rests
+on, so ours' pack falls off the copy's slope a frame early (`yaw45` frame 13
+against retail's 14) and stays off retail's from there. 1.5b's pack
+matches. Not read: UO's `G_RunItem` ground test on a rotating mover;
+`worldcopy_ab`'s `PACK_GAPS_UO` names the rows.
 
 ### The turned centre
 
@@ -2811,8 +2841,60 @@ second capture) and `a_capsule_lands_on_a_tilted_submodel_like_retail_again`
 (the third, its `PROBE r` lines included) replay each capture with its
 cmds. Every row matches to the print's ten-thousandth, and there is no
 separate tolerance for the tilted faces.
-Not measured: a rolled submodel's non-axial sides, where the turned
-sphere offset's `-l.z` sign picks the sphere; the slab has none.
+
+### A rolled submodel's non-axial side
+
+The slab above has only axial sides, which take `|sphere offset| +
+radius` and so never read the offset's sign. A non-axial side does: the
+brush arm (0x8054e90, 0x805506d..0x8055080) shifts the start by minus or
+plus the offset, whichever sphere the side's normal faces, so the capsule
+meets a side `radius + |n . offset|` off its centre, where `n` is the side's
+normal in the model's frame. INFERRED: with `(f.z, -l.z, u.z)` that is
+`|n . (f.z, -l.z, u.z)| * (half height - radius)`, where an upright capsule
+would take `|n . (f.z, l.z, u.z)|`; the two differ only when both `n.y` and
+`l.z` are non-zero, so only a roll reaches it. Under a pure roll `rho` the
+capsule's axis is the world's up turned by `2 rho` about x.
+
+VERIFIED, a capture on the retail 1.1d Linux server, mp_depot, one
+`--probe-ride` client on port 34621, 2026-10-21:
+`crates/server/tests/fixtures/movers/mp_depot-dm-rollramp.txt`, off
+`client-probes/probe_rollramp.gsc`. mp_depot's script_brushmodel `*3`
+(BSP entity 232, the last script_brushmodel, which no script moves) has
+a ramp: its brushes 3, 4 and 5 share the non-axial side `n = (0,
+-0.19611613, 0.9805807)`, `d = -38.438763` (bsp lump read). The probe
+turns the model and moves it so the ramp point `(-1310, y, on the side)`
+lands at (-2624, -264, 16), over an open floor at z -24, and drops the
+player onto it from z 120: `down` (0, 0, -25), the ramp 13.7 degrees off
+level; `steep` (0, 0, -40), 28.7; `turned` (-10, 90, -30), 21.1. The
+player slides a few units and rests on the ramp in every pose. With the
+pose's truncated angles (`PROBE r`: -24.99939, -39.99573 and (-9.99756,
+90, -29.99817)), its centre rests off the ramp's plane by 31.2416, 27.6283
+and 29.9203: `radius + 0.125 + |n . (f.z, -l.z, u.z)| * 20` to the fourth
+decimal in all three, where an upright capsule would rest at 34.5569,
+32.6703 and 33.7828 (hand computation off the `PROBE g` rest rows).
+
+VERIFIED, `cod_lnxded` `AngleVectors` (0x8063388), which
+`CM_TransformedBoxTrace` calls at 0x8056a6f and whose right 0x8065c38
+negates: each angle is multiplied by the double at 0x80cdfe8 (`M_PI * 2 /
+360`) and stored as a float (`fstps -0x1c(%ebp)`), `fsincos` runs on that
+float and both results are stored as floats; each component of right and
+up (`-sr*sp*cy + cr*sy` and the rest) is summed on the x87 stack and stored
+once. VERIFIED, the capture's `turned` pose: with every product rounded to
+a float (`pmove::aim::angles_to_axis`, the game module's copy), ours landed
+on the same frame and then slid 0.0017, 0.0024 and 0.0059 short of retail
+over the next three rows; with the engine's rounding every row matches.
+`down` and `steep`, a roll alone, matched either way. VERIFIED, the
+normal back into the world (0x8056c4d..0x8056d10) is the turn's
+transpose, not Quake III's `CreateRotationMatrix` of the negated angles;
+keeping its dots unrounded moved no row.
+
+vcod: `x87::angles_to_axis` builds the turn for a posed submodel
+(`CollisionWorld::model_pose`) and a world copy (`set_world_copy`).
+`worldcopy_ab.rs`'s
+`a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail`
+replays the capture with its cmds; every row matches to the print's
+ten-thousandth. With `+l.z` in the sphere offset the poses rest 3.2, 6.2
+and 3.6 units higher than retail's.
 
 ## 23. Mover script reads: `.speed`, `.dmg`, `movegravity`, `.angles`
 
