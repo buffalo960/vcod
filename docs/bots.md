@@ -211,3 +211,4 @@ its sight. Bots get out when they arrive, when stuck, or after 90 seconds
   to do: an expert takes the same routes and plays the objectives the same
   way as an easy bot.
 - A bot picks its cover against the one enemy it is fighting; another enemy may still see it there. It takes no cover while planting, carrying or holding a capture zone, nor within 300 units of the enemy.
+- A bot in cover swaps between the spot's two ways out (both lean sides, or standing and a crouched lean) from one peek to the next, sometimes moves to the next spot over while it reloads, and holds the spot for a time that depends on its skill once its enemy is out of sight. To go after an enemy it lost, it heads for a nearby spot that looks onto where he was, not onto that spot itself, and gives up sooner the higher its skill.

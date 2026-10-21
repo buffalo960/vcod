@@ -9,6 +9,7 @@
 //! `server.rs`.
 
 pub(crate) mod cover;
+pub(crate) mod hunt;
 
 use crate::server::FRAME_MS;
 pub mod team;
@@ -261,6 +262,9 @@ pub struct BotView {
     /// With [`Self::enemy`] in sight, a graph node near that hides the
     /// body from its eye and peeks at it ([`cover::find`]).
     pub cover: Option<cover::Spot>,
+    /// A node near the spot a seen enemy was lost at whose eye sees it
+    /// ([`hunt::vantage`]), for the spot [`Bot::hunt_query`] names.
+    pub hunt: Option<[f32; 3]>,
     /// The cursor hint the end frame left is a weapon lying in reach: a
     /// use press from this view takes it (`Cmd_Activate_f` picks what
     /// `G_GetActivateEnt` scores best) and swaps the held weapon away.
@@ -892,6 +896,12 @@ pub struct Bot {
     /// ([`Skill::fov_deg`]); off, it fights the nearest enemy in sight all
     /// round, as before (a `bot_match` measuring arm).
     pub aware: bool,
+    /// Varies its peeks from cover and comes at a lost enemy's spot from a
+    /// vantage over it ([`cover`], [`hunt`]); off, it peeks the one way
+    /// and walks onto the spot, as before (a `bot_match` measuring arm).
+    pub wary: bool,
+    /// Hunts that reached the spot or its vantage (the `bot_match` column).
+    hunts: u32,
     /// The team the team menu is answered with.
     team: String,
     /// The menu retail last named in `v g_scriptMainMenu`; the `t` that
@@ -1308,6 +1318,8 @@ impl Bot {
             team_play: true,
             footwork: true,
             aware: true,
+            wary: true,
+            hunts: 0,
             main_menu: String::new(),
             answered: Vec::new(),
             heading: 0.0,
@@ -2477,15 +2489,14 @@ impl Bot {
         self.hurt_at = i32::MAX;
         self.dry_had = false;
         self.prior = None;
+        self.cover.end_life();
     }
 
     /// The remembered spot not yet reached, else this tick's noise. The same
     /// rule [`Bot::remember`] applies a tick later, so the two agree.
     fn recall_goal(&self, view: &BotView) -> Option<[f32; 3]> {
-        match self.recall {
-            Some(r) if !arrived(view.origin, r.at) => Some(r.at),
-            _ => view.noise.filter(|n| !arrived(view.origin, *n)),
-        }
+        self.hunt_goal(view)
+            .or_else(|| view.noise.filter(|n| !arrived(view.origin, *n)))
     }
 
     /// Keeps [`Bot::recall`] current: a visible enemy is remembered where it
@@ -2504,9 +2515,12 @@ impl Bot {
         if let Some(r) = self.recall.as_mut() {
             r.ticks = r.ticks.saturating_sub(1);
         }
-        if self
-            .recall
-            .is_some_and(|r| r.ticks == 0 || arrived(view.origin, r.at))
+        let hunted = self.hunt_arrived(view);
+        self.hunts += u32::from(hunted);
+        if hunted
+            || self
+                .recall
+                .is_some_and(|r| r.ticks == 0 || arrived(view.origin, r.at))
         {
             self.recall = None;
         }
@@ -3696,6 +3710,13 @@ impl Bot {
         self.throws
     }
 
+    /// Peeks from cover started, those that repeated the spot and pose of
+    /// the one before, and hunts that reached their spot or vantage
+    /// (bot-combat.md section 1).
+    pub fn tactics(&self) -> [u32; 3] {
+        [self.cover.peeks, self.cover.repeeks, self.hunts]
+    }
+
     /// Tracking an enemy ([`BotBody::engaged`]), on foot or from a seat.
     pub fn engaged(&self) -> bool {
         self.target.is_some() || self.seated_fight()
@@ -4289,6 +4310,7 @@ mod tests {
             friend_in_line: false,
             sidestep: None,
             cover: None,
+            hunt: None,
             use_takes_weapon: false,
             grenade: Some(6),
             grenade_cooks: false,
@@ -4971,6 +4993,7 @@ mod tests {
     #[test]
     fn a_lost_enemy_is_looked_for_where_it_was_headed_until_memory_runs_out() {
         let (mut bot, v) = lost([500.0, 0.0, 104.0], [200.0, 0.0, 0.0]);
+        bot.wary = false;
         let spot = Goal::To([500.0 + 200.0 * MEMORY_LEAD_S, 0.0, 104.0]);
         assert_eq!(bot.goal(&v), spot);
         for _ in 1..bot.skill.memory_ticks {
@@ -4979,6 +5002,37 @@ mod tests {
         assert_eq!(bot.goal(&v), spot, "forgotten early");
         bot.think(&v);
         assert_eq!(bot.goal(&v), Goal::Roam, "never forgotten");
+    }
+
+    /// A wary bot heads for the server's vantage over the spot, and gives
+    /// the spot up before its memory of it runs out.
+    #[test]
+    fn a_wary_bot_hunts_from_the_vantage_and_gives_up_sooner() {
+        let (mut bot, mut v) = lost([500.0, 0.0, 104.0], [0.0; 3]);
+        assert_eq!(bot.hunt_query(), Some([500.0, 0.0, 104.0]));
+        v.hunt = Some([400.0, 150.0, 64.0]);
+        assert_eq!(bot.goal(&v), Goal::To([400.0, 150.0, 64.0]));
+        let hunt = 70.min(bot.skill.memory_ticks);
+        assert!(hunt < bot.skill.memory_ticks);
+        for _ in 1..hunt {
+            bot.think(&v);
+        }
+        assert_eq!(bot.goal(&v), Goal::To([400.0, 150.0, 64.0]));
+        bot.think(&v);
+        bot.think(&v);
+        assert_eq!(bot.goal(&v), Goal::Roam, "hunted past its budget");
+        assert_eq!(bot.hunt_query(), None);
+        assert!(bot.recall.is_some(), "the spot is still remembered");
+    }
+
+    #[test]
+    fn reaching_the_vantage_ends_the_hunt() {
+        let (mut bot, mut v) = lost([500.0, 0.0, 104.0], [0.0; 3]);
+        v.hunt = Some([400.0, 150.0, 64.0]);
+        v.origin = [390.0, 140.0, 64.0];
+        bot.think(&v);
+        assert!(bot.recall.is_none());
+        assert_eq!(bot.tactics()[2], 1);
     }
 
     #[test]

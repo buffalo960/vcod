@@ -19,6 +19,9 @@ pub enum Peek {
     /// Standing, the body is hidden; leaning this way (-1 left, 1 right),
     /// the eye sees the threat.
     Lean(i8),
+    /// Crouched, the body is hidden; leaning this way crouched, the eye
+    /// sees the threat. Only ever a [`Spot::alt`].
+    LowLean(i8),
 }
 
 /// A spot to fight from, as the server found it ([`BotView::cover`]).
@@ -27,6 +30,24 @@ pub struct Spot {
     /// A graph node: the feet.
     pub at: [f32; 3],
     pub peek: Peek,
+    /// A second way to show from the same spot, other than [`Self::peek`]
+    /// ([`Sight::alt`]).
+    pub alt: Option<Peek>,
+    /// The next nearest spot in reach at least [`SHIFT_MIN`] from this one,
+    /// and its peek: where a wary bot shifts between peeks.
+    pub next: Option<([f32; 3], Peek)>,
+}
+
+impl Spot {
+    /// A spot with no second peek and no neighbour.
+    pub fn new(at: [f32; 3], peek: Peek) -> Spot {
+        Spot {
+            at,
+            peek,
+            alt: None,
+            next: None,
+        }
+    }
 }
 
 /// A cover spot is looked for this far along level edges from the body.
@@ -51,8 +72,41 @@ const SLOW: f32 = 48.0;
 /// reload or a bolt's rechamber, not a semi-automatic's tap spacing.
 const HIDE_BUSY_MS: i32 = 300;
 /// Ticks a held spot outlives the threat's last sighting: the bot peeks
-/// for it again, then goes after it.
+/// for it again, then goes after it. A wary bot draws its own
+/// ([`WARY`]).
 const WAIT_TICKS: u32 = 60;
+/// A neighbouring spot is at least this far from the one held.
+const SHIFT_MIN: f32 = 48.0;
+/// The crouched lean's limit on all three servers (`pmove::lean_scale`).
+const LEAN_CROUCH: f32 = 0.5;
+
+/// A wary bot's hold at a spot, per `vc_bot_skill` level: the ticks it
+/// outlives the threat's last sighting as (least, spread), and the chance
+/// in 8 that ducking back to reload moves it to the neighbouring spot
+/// (bot-combat.md 10).
+struct Wary {
+    wait: (u32, u32),
+    shift: u32,
+}
+
+const WARY: [Wary; 4] = [
+    Wary {
+        wait: (70, 20),
+        shift: 0,
+    },
+    Wary {
+        wait: (45, 30),
+        shift: 3,
+    },
+    Wary {
+        wait: (40, 30),
+        shift: 4,
+    },
+    Wary {
+        wait: (35, 30),
+        shift: 4,
+    },
+];
 
 /// What a cover search traces with.
 pub struct Sight<'a> {
@@ -83,24 +137,57 @@ impl Sight<'_> {
             .all(|p| !(self.clear)(self.threat_eye, p))
     }
 
+    /// Whether an eye leaning `side` up to `limit`, as far as the wall lets
+    /// it, sees the target.
+    fn leans_clear(&self, eye: Vec3, side: i8, limit: f32) -> bool {
+        let to = self.target - eye;
+        let yaw = to.y.atan2(to.x);
+        let s = f32::from(side);
+        let room = (self.lean_room)(eye, eye + aim::lean_offset(yaw, s));
+        let lean = limit.min(aim::unget_lean_fraction(room));
+        lean > 0.0 && (self.clear)(eye + aim::lean_offset(yaw, s * lean), self.target)
+    }
+
     /// How a body at `at` fights from it, or `None` when it is no cover.
     pub fn peek(&self, at: Vec3) -> Option<Peek> {
         let eye = at + Vec3::Z * pmove::VIEW_STAND;
         if self.hidden(at, pmove::VIEW_STAND) {
-            let to = self.target - eye;
-            let yaw = to.y.atan2(to.x);
-            for side in [1i8, -1] {
-                let s = f32::from(side);
-                let room = (self.lean_room)(eye, eye + aim::lean_offset(yaw, s));
-                let lean = self.lean.min(aim::unget_lean_fraction(room));
-                if lean > 0.0 && (self.clear)(eye + aim::lean_offset(yaw, s * lean), self.target) {
-                    return Some(Peek::Lean(side));
-                }
-            }
-            return None;
+            return [1i8, -1]
+                .into_iter()
+                .find(|&side| self.leans_clear(eye, side, self.lean))
+                .map(Peek::Lean);
         }
         (self.hidden(at, pmove::VIEW_CROUCH) && (self.clear)(eye, self.target))
             .then_some(Peek::Stand)
+    }
+
+    /// A second way to show from `at` besides `peek`: the other lean side,
+    /// else a crouched lean from a body hidden crouched.
+    pub fn alt(&self, at: Vec3, peek: Peek) -> Option<Peek> {
+        if let Peek::Lean(side) = peek
+            && self.leans_clear(at + Vec3::Z * pmove::VIEW_STAND, -side, self.lean)
+        {
+            return Some(Peek::Lean(-side));
+        }
+        let eye = at + Vec3::Z * pmove::VIEW_CROUCH;
+        if !self.hidden(at, pmove::VIEW_CROUCH) {
+            return None;
+        }
+        [1i8, -1]
+            .into_iter()
+            .find(|&side| self.leans_clear(eye, side, LEAN_CROUCH))
+            .map(Peek::LowLean)
+    }
+
+    /// `spot` checked again against this sight: its peek and second peek
+    /// anew, its neighbour kept; `None` once it hides or peeks no more.
+    pub fn recheck(&self, spot: Spot) -> Option<Spot> {
+        let peek = self.peek(spot.at.into())?;
+        Some(Spot {
+            peek,
+            alt: self.alt(spot.at.into(), peek),
+            ..spot
+        })
     }
 }
 
@@ -140,20 +227,22 @@ pub fn find(g: &NavGraph, from: Vec3, sight: &Sight) -> Option<Spot> {
         .chain([(0.0, from)])
         .collect();
     spots.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut lean = None;
-    for (_, p) in spots {
-        match sight.peek(p) {
-            Some(Peek::Stand) => {
-                return Some(Spot {
-                    at: p.into(),
-                    peek: Peek::Stand,
-                });
-            }
-            Some(peek) if lean.is_none() => lean = Some(Spot { at: p.into(), peek }),
-            _ => {}
-        }
-    }
-    lean
+    let peeks: Vec<(Vec3, Option<Peek>)> = spots.iter().map(|&(_, p)| (p, sight.peek(p))).collect();
+    let (at, peek) = peeks
+        .iter()
+        .find(|(_, k)| *k == Some(Peek::Stand))
+        .or_else(|| peeks.iter().find(|(_, k)| k.is_some()))
+        .map(|&(p, k)| (p, k.unwrap()))?;
+    let next = peeks
+        .iter()
+        .find(|(p, k)| k.is_some() && (*p - at).truncate().length() >= SHIFT_MIN)
+        .map(|&(p, k)| (p.into(), k.unwrap()));
+    Some(Spot {
+        at: at.into(),
+        peek,
+        alt: sight.alt(at, peek),
+        next,
+    })
 }
 
 /// The brain's side: the spot it holds and whom it hides from.
@@ -164,13 +253,26 @@ pub(super) struct Hold {
     threat: [f32; 3],
     /// Ticks since the threat was last in sight.
     unseen: u32,
+    /// How the body shows itself: [`Spot::peek`] or [`Spot::alt`].
+    pose: Peek,
+    /// Ticks the hold outlives the threat's last sighting.
+    wait: u32,
 }
 
-/// A bot's cover state: whether it takes cover at all, and the spot held.
+/// A bot's cover state: whether it takes cover at all, the spot held, and
+/// its peeks this life.
 #[derive(Clone, Copy, Debug)]
 pub struct Cover {
     pub enabled: bool,
     pub(super) hold: Option<Hold>,
+    /// The last peek's spot and pose, and whether the body showed itself
+    /// last tick.
+    last_peek: Option<([f32; 3], Peek)>,
+    showing: bool,
+    /// Peeks started, and those from the spot and pose of the one before
+    /// (the `bot_match` re-peek column).
+    pub(super) peeks: u32,
+    pub(super) repeeks: u32,
 }
 
 impl Default for Cover {
@@ -178,8 +280,25 @@ impl Default for Cover {
         Cover {
             enabled: true,
             hold: None,
+            last_peek: None,
+            showing: false,
+            peeks: 0,
+            repeeks: 0,
         }
     }
+}
+
+impl Cover {
+    /// A new life: no peek to repeat.
+    pub(super) fn end_life(&mut self) {
+        self.last_peek = None;
+        self.showing = false;
+    }
+}
+
+/// Two spots this near across are one.
+fn same_spot(a: [f32; 3], b: [f32; 3]) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) <= ARRIVE
 }
 
 impl Bot {
@@ -203,10 +322,21 @@ impl Bot {
         self.cover.hold.is_some()
     }
 
+    /// The spot held, which the server checks again before it looks for
+    /// another: a wary bot may have shifted off the one it was given.
+    pub fn held_spot(&self) -> Option<Spot> {
+        self.cover.hold.map(|h| h.spot)
+    }
+
     /// The bot holds a spot and still knows where the threat is: a target
     /// out of sight behind its own cover is not lost (`Bot::track`).
     pub(super) fn covering(&self) -> bool {
-        self.cover.hold.is_some_and(|h| h.unseen <= WAIT_TICKS)
+        self.cover.hold.is_some_and(|h| h.unseen <= h.wait)
+    }
+
+    /// A draw of `(least, spread)` ticks.
+    fn draw(&mut self, (least, spread): (u32, u32)) -> u32 {
+        least + self.rand_below(spread)
     }
 
     /// The fight's footwork from cover, with `e` in sight at `dist` and the
@@ -223,22 +353,41 @@ impl Bot {
         let spot = view
             .cover
             .filter(|_| dist >= MIN_RANGE && self.may_cover(view));
-        self.cover.hold = spot.map(|spot| Hold {
-            spot,
-            threat: e.origin,
-            unseen: 0,
+        let prior = self.cover.hold;
+        self.cover.hold = spot.map(|spot| {
+            // A wary bot keeps the pose it took while the spot still has it.
+            let pose = prior
+                .filter(|h| self.wary && same_spot(h.spot.at, spot.at))
+                .map(|h| h.pose)
+                .filter(|p| *p == spot.peek || Some(*p) == spot.alt)
+                .unwrap_or(spot.peek);
+            Hold {
+                spot,
+                threat: e.origin,
+                unseen: 0,
+                pose,
+                wait: WAIT_TICKS,
+            }
         });
+        if self.cover.hold.is_none() {
+            self.cover.showing = false;
+        }
         self.cover_keys(view, yaw, cmd);
     }
 
     /// With nothing in sight, a held spot keeps the body there for
-    /// [`WAIT_TICKS`], peeking where the threat was. The view's (pitch,
-    /// yaw), or `None` once the hold is let go.
+    /// [`WAIT_TICKS`] (a wary bot's own draw, [`WARY`]), peeking where the
+    /// threat was. The view's (pitch, yaw), or `None` once the hold is let
+    /// go.
     pub(super) fn cover_unseen(&mut self, view: &BotView, cmd: &mut UserCmd) -> Option<[f32; 2]> {
         let mut h = self.cover.hold?;
         h.unseen += 1;
-        if h.unseen > WAIT_TICKS || !self.may_cover(view) {
+        if self.wary && h.unseen == 1 {
+            h.wait = self.draw(WARY[self.skill_level()].wait);
+        }
+        if h.unseen > h.wait || !self.may_cover(view) {
             self.cover.hold = None;
+            self.cover.showing = false;
             return None;
         }
         self.cover.hold = Some(h);
@@ -249,9 +398,12 @@ impl Bot {
     }
 
     /// The keys at a held spot: walk to it, then hold still, peeking while
-    /// the weapon is ready and behind the cover while it is busy.
-    fn cover_keys(&self, view: &BotView, yaw: f32, cmd: &mut UserCmd) {
-        let Some(h) = self.cover.hold else {
+    /// the weapon is ready and behind the cover while it is busy. A wary
+    /// bot ducking back may move to the neighbouring spot ([`Wary::shift`]),
+    /// and about to peek again from the spot and pose of its last peek
+    /// takes the spot's other pose.
+    fn cover_keys(&mut self, view: &BotView, yaw: f32, cmd: &mut UserCmd) {
+        let Some(mut h) = self.cover.hold else {
             return;
         };
         let to = [h.spot.at[0] - view.origin[0], h.spot.at[1] - view.origin[1]];
@@ -263,6 +415,7 @@ impl Bot {
             | msg::WBUTTON_LEAN_LEFT
             | msg::WBUTTON_LEAN_RIGHT);
         if flat > ARRIVE {
+            self.cover.showing = false;
             let d = yaw_diff(to[1].atan2(to[0]).to_degrees(), yaw).to_radians();
             let key = (flat / SLOW).min(1.0) * 127.0;
             cmd.forward = (d.cos() * key).round() as i8;
@@ -274,22 +427,56 @@ impl Bot {
         }
         cmd.forward = 0;
         cmd.right = 0;
-        match h.spot.peek {
-            Peek::Stand if hide => {
-                // The stance is a held level; retail sends `upmove` -127
-                // with it (protocol doc, "Usercmd input bits").
-                cmd.wbuttons |= msg::WBUTTON_CROUCH;
-                cmd.up = -127;
-            }
-            Peek::Lean(side) if !hide => {
-                cmd.wbuttons |= if side > 0 {
-                    msg::WBUTTON_LEAN_RIGHT
-                } else {
-                    msg::WBUTTON_LEAN_LEFT
-                };
-            }
-            _ => {}
+        if hide
+            && self.cover.showing
+            && self.wary
+            && let Some((at, peek)) = h.spot.next
+            && self.rand_below(8) < WARY[self.skill_level()].shift
+        {
+            h.spot = Spot {
+                at,
+                peek,
+                alt: None,
+                next: Some((h.spot.at, h.spot.peek)),
+            };
+            h.pose = peek;
+            self.cover.hold = Some(h);
+            self.cover.showing = false;
+            return;
         }
+        if !hide && !self.cover.showing {
+            let repeats = |c: &Cover, h: &Hold| {
+                c.last_peek
+                    .is_some_and(|(at, p)| same_spot(at, h.spot.at) && p == h.pose)
+            };
+            if self.wary
+                && repeats(&self.cover, &h)
+                && let Some(alt) = h.spot.alt
+            {
+                h.pose = if h.pose == alt { h.spot.peek } else { alt };
+                self.cover.hold = Some(h);
+            }
+            self.cover.peeks += 1;
+            self.cover.repeeks += u32::from(repeats(&self.cover, &h));
+            self.cover.last_peek = Some((h.spot.at, h.pose));
+        }
+        self.cover.showing = !hide;
+        let (crouch, lean) = match h.pose {
+            Peek::Stand => (hide, 0),
+            Peek::Lean(side) => (false, if hide { 0 } else { side }),
+            Peek::LowLean(side) => (true, if hide { 0 } else { side }),
+        };
+        if crouch {
+            // The stance is a held level; retail sends `upmove` -127
+            // with it (protocol doc, "Usercmd input bits").
+            cmd.wbuttons |= msg::WBUTTON_CROUCH;
+            cmd.up = -127;
+        }
+        cmd.wbuttons |= match lean {
+            1 => msg::WBUTTON_LEAN_RIGHT,
+            -1 => msg::WBUTTON_LEAN_LEFT,
+            _ => 0,
+        };
     }
 }
 
@@ -397,7 +584,7 @@ mod tests {
     fn at_cover(peek: Peek) -> (Bot, BotView) {
         let (bot, mut v) = engaged(1);
         v.enemy.as_mut().unwrap().origin = [600.0, 0.0, 124.0];
-        v.cover = Some(Spot { at: v.origin, peek });
+        v.cover = Some(Spot::new(v.origin, peek));
         (bot, v)
     }
 
@@ -449,6 +636,7 @@ mod tests {
     #[test]
     fn a_hidden_threat_is_peeked_for_then_let_go() {
         let (mut bot, mut v) = at_cover(Peek::Lean(1));
+        bot.wary = false;
         bot.think(&v);
         v.enemy = None;
         v.cover = None;
@@ -461,6 +649,65 @@ mod tests {
         let cmd = bot.think(&v);
         assert_eq!(leans(&cmd), 0);
         assert!(!bot.holds_cover());
+    }
+
+    /// A wary bot's peeks alternate between the spot's two ways out, and
+    /// it lets the spot go inside its drawn hold.
+    #[test]
+    fn a_wary_bot_peeks_each_way_by_turns() {
+        let (mut bot, mut v) = at_cover(Peek::Lean(1));
+        v.cover.as_mut().unwrap().alt = Some(Peek::Lean(-1));
+        let mut peeks = Vec::new();
+        for i in 0..6 {
+            v.busy_ms = if i % 2 == 0 { 0 } else { 1500 };
+            for _ in 0..3 {
+                let l = leans(&bot.think(&v));
+                if l != 0 && peeks.last() != Some(&l) {
+                    peeks.push(l);
+                }
+            }
+        }
+        assert_eq!(peeks.len(), 3, "{peeks:?}");
+        assert_eq!(bot.tactics()[1], 0);
+        v.enemy = None;
+        v.cover = None;
+        v.busy_ms = 0;
+        let mut held = 0;
+        while bot.holds_cover() {
+            bot.think(&v);
+            held += 1;
+            assert!(held < 200);
+        }
+        let w = &WARY[1];
+        assert!(held <= w.wait.0 + w.wait.1 + 1, "{held}");
+    }
+
+    #[test]
+    fn a_wary_bot_ducking_back_may_shift_to_the_next_spot() {
+        let (mut bot, mut v) = at_cover(Peek::Stand);
+        let next = [0.0, 60.0, 64.0];
+        v.cover.as_mut().unwrap().next = Some((next, Peek::Lean(1)));
+        let mut shifted = 0;
+        for _ in 0..40 {
+            v.busy_ms = 0;
+            bot.think(&v);
+            v.busy_ms = 1500;
+            bot.think(&v);
+            if bot.held_spot().is_some_and(|s| s.at == next) {
+                shifted += 1;
+            }
+        }
+        assert!(shifted > 0);
+    }
+
+    #[test]
+    fn a_crouched_lean_is_the_second_way_over_a_low_wall_by_an_edge() {
+        // A low wall in front, ending 9 units left of the line.
+        let wall = (Vec3::new(90.0, -100.0, 0.0), Vec3::new(100.0, 9.0, 48.0));
+        sight(&[wall], |s| {
+            assert_eq!(s.peek(Vec3::ZERO), Some(Peek::Stand));
+            assert_eq!(s.alt(Vec3::ZERO, Peek::Stand), Some(Peek::LowLean(-1)));
+        });
     }
 
     #[test]
