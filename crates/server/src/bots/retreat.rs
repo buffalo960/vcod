@@ -246,6 +246,13 @@ impl Bot {
         if view.survive.health > self.hurt_at {
             self.hurt_at = i32::MAX;
         }
+        let loaded = view.loaded >> view.weapon.min(63) & 1 == 1;
+        let dry = view.clip == 0 && loaded;
+        // Loaded again, or nothing left to load: the next dry clip counts
+        // afresh.
+        if !dry {
+            self.dry_had = false;
+        }
         let duty = self.duty_bound(view);
         let seen = view.enemy.and(view.survive.enemy_eye);
         if let Some(r) = self.retreat.as_mut() {
@@ -257,7 +264,6 @@ impl Bot {
             if r.cover.is_some_and(|c| at_cover(view.origin, c)) {
                 r.held += 1;
             }
-            let loaded = view.loaded >> view.weapon.min(63) & 1 == 1;
             let done = match r.why {
                 // A health item near ends the wait: the heal goal takes over.
                 Why::Hurt => {
@@ -279,14 +285,15 @@ impl Bot {
         }
         let v = &view.survive;
         let hurt = v.health * 100 < v.max_health * HURT_PCT && v.health < self.hurt_at;
-        let loaded = view.loaded >> view.weapon.min(63) & 1 == 1;
-        let dry = view.clip == 0 && loaded;
         let why = if hurt {
             // Once per wound: a bot that held its cover fights on until it
             // is hit again.
             self.hurt_at = v.health;
             Why::Hurt
-        } else if dry {
+        } else if dry && !self.dry_had {
+            // Once per dry clip: one that found no cover reloads where it
+            // stands rather than asking again every other tick.
+            self.dry_had = true;
             Why::Dry
         } else {
             return;
@@ -442,6 +449,27 @@ mod tests {
         v.busy_ms = 0;
         bot.think(&v);
         assert_eq!(bot.retreating(), 0);
+    }
+
+    #[test]
+    fn a_dry_clip_with_no_cover_reloads_in_place_once() {
+        let (mut bot, mut v) = engaged(1);
+        v.survive.enemy_eye = Some([100.0, 0.0, 144.0]);
+        v.clip = 0;
+        v.busy_ms = 2000;
+        bot.think(&v);
+        assert_eq!(bot.retreating(), 2);
+        // No cover found: the retreat ends and the same clip starts none.
+        for _ in 0..20 {
+            bot.think(&v);
+            assert_eq!(bot.retreating(), 0, "restarted on one dry clip");
+        }
+        // The reload lands; the next dry clip retreats again.
+        (v.clip, v.busy_ms) = (8, 0);
+        bot.think(&v);
+        v.clip = 0;
+        bot.think(&v);
+        assert_eq!(bot.retreating(), 2);
     }
 
     #[test]

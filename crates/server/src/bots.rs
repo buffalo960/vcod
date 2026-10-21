@@ -883,10 +883,12 @@ pub struct Bot {
     /// The client-command sequence the bot's own replies use.
     pub(crate) next_command_seq: i32,
     /// The retreat (`bots/retreat.rs`): whether this bot retreats at all,
-    /// the one under way, and the health the last hurt one started at.
+    /// the one under way, the health the last hurt one started at, and
+    /// whether this dry clip already had its retreat.
     retreat_on: bool,
     retreat: Option<retreat::Retreat>,
     hurt_at: i32,
+    dry_had: bool,
     /// Boarding, driving and leaving a vehicle (`vehicle`).
     rider: vehicle::Rider,
 }
@@ -1183,6 +1185,7 @@ impl Bot {
             retreat_on: true,
             retreat: None,
             hurt_at: i32::MAX,
+            dry_had: false,
         }
     }
 
@@ -2238,6 +2241,7 @@ impl Bot {
         self.calm_ticks = 0;
         self.retreat = None;
         self.hurt_at = i32::MAX;
+        self.dry_had = false;
     }
 
     /// The remembered spot not yet reached, else this tick's noise. The same
