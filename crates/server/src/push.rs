@@ -116,7 +116,9 @@ pub fn push(
                     .filter_map(|(_, (s, o))| o.body(*s as u32))
                     .collect();
                 let old = sims[i].1.ps.origin;
-                let Some(fit) = try_push(step, sims[i].0, sims[i].1, &bodies, world) else {
+                let ps = &sims[i].1.ps;
+                let shape = (ps.origin, (ps.mins(), ps.maxs()));
+                let Some(fit) = try_push(step, sims[i].0, shape, &bodies, world) else {
                     if crate::game::mover::is_sine(host, step.ent) {
                         crushed.push(sims[i].0);
                         continue;
@@ -399,22 +401,21 @@ enum Fit {
     Stays,
 }
 
-/// Where a player can go: the carried spot, the first clear jitter around it in
+/// Where a player standing at `here` (`ps.origin`) with his box can go:
+/// the carried spot, the first clear jitter around it in
 /// `G_TryPushingEntity`'s order, or its own spot. `None` when the mover has
 /// nowhere to put it.
 fn try_push(
     step: &Step,
     slot: usize,
-    sim: &ClientSim,
+    (here, (mins, maxs)): (Vec3, (Vec3, Vec3)),
     bodies: &[Body],
     world: &CollisionWorld,
 ) -> Option<Fit> {
-    let (mins, maxs) = (sim.ps.mins(), sim.ps.maxs());
     let mw = MoveWorld::new(world, bodies, slot as u32);
     // `G_TryPushingEntity` moves `r.currentOrigin` (0x54956); the ride
     // capture keeps `ps.origin`'s fraction through every push, so that is
     // what it reads.
-    let here = sim.ps.origin;
     let target = carried(step, here, world.arith());
     let pusher = step.pusher;
     // Retail's test is one `trap_Trace` at the spot (game.mp 0x54b3b). Ours
@@ -500,5 +501,103 @@ mod tests {
         // Standing on the top face: absmin.z = 8 + 0 - 1 = 7 overlaps.
         assert!(overlaps_moved(&s, player(32.0)));
         assert!(!overlaps_moved(&s, None));
+    }
+
+    /// The retail rest spots `tag` logged for slots 1 and 2 in a pushcand
+    /// capture (`PROBE <tag> <slot> (x, y, z)`).
+    fn rest_spots(fixture: &str, tag: &str) -> [Vec3; 2] {
+        [1, 2].map(|slot| {
+            let head = format!("PROBE {tag} {slot} (");
+            let l = fixture
+                .lines()
+                .find_map(|l| l.strip_prefix(&head))
+                .expect("the tag in the fixture");
+            let v: Vec<f32> = l
+                .trim_end_matches(')')
+                .split(", ")
+                .map(|c| c.parse().unwrap())
+                .collect();
+            Vec3::new(v[0], v[1], v[2])
+        })
+    }
+
+    /// On 1.5b and UO `StuckInClient` shoves the stacked and half pairs
+    /// ~100 apart before the slab moves, and the slab still stalls (movers
+    /// doc 12, "The candidate trace"). The partner is not what blocks it:
+    /// one of each pair comes to rest with his capsule clear of the slab's
+    /// clip_metal brush 4277 (its underside slopes), but his box inside it.
+    /// The candidate trace (a box) names the slab, and every spot
+    /// `G_TryPushingEntity` tries with its box (1.5b 0x55bff, 0x55eb7,
+    /// 0x5609a) is in 4277, the plate 4281, the next brush or the street,
+    /// so the push fails on every frame. The lone player's spot is the
+    /// control: carried 8.
+    #[test]
+    fn on_15_and_uo_a_body_whose_box_is_under_the_slab_stalls_it() {
+        // A UO install's `main/` is 1.5's, so both run there.
+        let fs_15 = || {
+            let fs = vcod_common::testing::game_fs()?;
+            let p = crate::server::install_protocol(&fs);
+            (p.version == vcod_common::net::protocol::PROTOCOL_V6.version).then_some(fs)
+        };
+        let cases = [
+            (
+                fs_15(),
+                include_str!("../tests/fixtures/movers/mp_carentan-dm-pushcand-1.5.txt"),
+            ),
+            (
+                vcod_common::testing::uo_fs(),
+                include_str!("../tests/fixtures/movers/mp_carentan-dm-pushcand-uo.txt"),
+            ),
+        ];
+        let mut ran = 0;
+        for (fs, fixture) in cases {
+            let Some(fs) = fs else { continue };
+            ran += 1;
+            let p = crate::server::install_protocol(&fs);
+            let bsp_path = fs.resolve_map("mp_carentan").unwrap();
+            let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+            let world = crate::world::World::from_bsp(&bsp, Some(&fs)).collision;
+            world.set_arith(Arith::for_protocol(p));
+            let (mins, maxs) = (Vec3::new(-15.0, -15.0, 0.0), Vec3::new(15.0, 15.0, 70.0));
+            let slab = Pusher::Model(5);
+            let push = Step {
+                number: 177,
+                pusher: slab,
+                from: (Vec3::ZERO, Vec3::ZERO),
+                to: (Vec3::new(0.0, -8.0, 0.0), Vec3::ZERO),
+                ..step((Vec3::ZERO, Vec3::ZERO))
+            };
+            for tag in ["after_stack", "after_half"] {
+                let spots = rest_spots(fixture, tag);
+                // The slab at rest: where pmove left them.
+                world.set_model_pose(5, Vec3::ZERO, Vec3::ZERO);
+                let under: Vec<Vec3> = spots
+                    .into_iter()
+                    .filter(|&at| {
+                        world
+                            .pusher_box_trace(slab, at, at, mins, maxs, MASK_PLAYERSOLID)
+                            .startsolid
+                    })
+                    .collect();
+                assert_eq!(under.len(), 1, "{tag}: one of {spots:?} under the slab");
+                let at = under[0];
+                let capsule = world.move_trace(at, at, mins, maxs, MASK_PLAYERSOLID);
+                assert!(!capsule.startsolid, "{tag}: the capsule at {at} is clear");
+                world.set_model_pose(5, push.to.0, Vec3::ZERO);
+                assert!(
+                    try_push(&push, 2, (at, (mins, maxs)), &[], &world).is_none(),
+                    "{tag}: the slab finds {at} a spot"
+                );
+            }
+            let alone = rest_spots(fixture, "set_alone")[0];
+            assert!(matches!(
+                try_push(&push, 1, (alone, (mins, maxs)), &[], &world),
+                Some(Fit::At(at)) if at == alone - Vec3::Y * 8.0
+            ));
+            world.set_model_pose(5, Vec3::ZERO, Vec3::ZERO);
+        }
+        if ran == 0 {
+            eprintln!("no 1.5 or UO install under COD_DIR: skipping");
+        }
     }
 }
