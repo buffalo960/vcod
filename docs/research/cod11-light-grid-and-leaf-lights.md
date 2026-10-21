@@ -358,11 +358,11 @@ vcod (`vs_prop` in `shader.wgsl`):
   `game.mp.i386.so`, and `SP_light` (0x53204) only calls `G_FreeEntity`.
   INFERRED: so no script field reaches the field and stock content never
   sets it; only the panzerfaust's light is live. vcod adds the cgame's
-  lights to the entity pick and to the world's dlight pass. INFERRED,
-  from the copy's `rgbGen identity` (0x4fc440, 0x4fb3c0): on a
-  lightmapped surface the pass ignores a light's colour, so the black
-  rocket light still brightens the walls it passes; under `dlightshader`
-  it adds nothing.
+  lights to the entity pick and to the world's dlight pass. VERIFIED,
+  0x4ffa60 under the copy's `rgbGen identity` (0x4fc440, 0x4fb3c0;
+  `cod11-shader-scripts.md` section 3): on a lightmapped surface the pass
+  ignores a light's colour, so the black rocket light still brightens the
+  walls it passes; under `dlightshader` it adds nothing.
 
 ## 12. Shadows
 

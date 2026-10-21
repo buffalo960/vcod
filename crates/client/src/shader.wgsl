@@ -510,6 +510,7 @@ struct DlVsOut {
     @location(3) out_lo: vec3<f32>,
     // ... and s > 1, t > 1, depth > r
     @location(4) out_hi: vec3<f32>,
+    @location(5) world_pos: vec3<f32>,
 };
 
 // 0x4ff690 per vertex: the light's offset projected on the vertex's tangent
@@ -525,6 +526,7 @@ fn vs_dlight(in: DlVsIn) -> DlVsOut {
     let pos = deformed.pos;
     let world = camera.model * vec4<f32>(pos, 1.0);
     out.clip = camera.view_proj * world;
+    out.world_pos = world.xyz;
     let m3 = mat3x3<f32>(camera.model[0].xyz, camera.model[1].xyz, camera.model[2].xyz);
     var n = m3 * normal;
     var s_axis = m3 * in.s_axis;
@@ -578,8 +580,9 @@ fn vs_dlight(in: DlVsIn) -> DlVsOut {
 }
 
 // A bundle on the lightmap's coordinates samples the dlight image there.
-// Unfogged: RTCW-MP's dlight pass turns fog off (tr_shade.c
-// ProjectDlightTexture); CoD's own fog state there is not traced.
+// A fogged stage (no `nofog`) fogs towards black, as GL_State gives every
+// stage blended onto GL_ONE (0x4d2ad0), so the light fades with the fog;
+// every dlight stage blends onto GL_ONE (shader doc 3).
 @fragment
 fn fs_dlight(in: DlVsOut) -> @location(0) vec4<f32> {
     var c0: vec4<f32>;
@@ -603,5 +606,9 @@ fn fs_dlight(in: DlVsOut) -> @location(0) vec4<f32> {
     if (!alphafunc_pass(col.a)) {
         discard;
     }
-    return col;
+    var rgb = col.rgb;
+    if ((stage.flags & F_NOFOG) == 0u) {
+        rgb *= 1.0 - fog_amount(in.world_pos);
+    }
+    return vec4<f32>(rgb, col.a);
 }
