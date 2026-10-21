@@ -214,6 +214,18 @@ carentan `strafe_left` at 8.0 u/s and `strafe_right` at 3.2 u/s read 122 as
 well, and pavlov `crouch_run` at 0 u/s reads 111. `ANIM_IDLE_SPEED`
 (`crates/server/src/spectate.rs`) is that literal.
 
+**The speed it compares.** VERIFIED: 1.5b's `PmoveSingle` main arm
+calls `PM_Footsteps` (Ghidra 0x34ae8, file 0x24ae8) ahead of the move
+clamp block and `trap_SnapVector(ps->velocity)`, its last call, so
+`xyspeed` is the unsnapped velocity. INFERRED: 1.1d is the same; its
+`PmoveSingle` calls `PM_Footsteps` at 0x34336, ahead of the calls at
+0x34364 and 0x34390, which `pmove.rs` ports as the clamp and the snap. VERIFIED, live (retail 1.5b, 2026-10-20,
+`mp_carentan-dm-legs-client-stopgo-1.5.txt` at serverTime 36750): a
+strafe reversal's last cmd leaves a velocity that snaps to (0, 10, 0)
+and retail reads the idle (122); the snapped 10.0 is not under the
+threshold, so the speed the compare read was. vcod keeps the footsteps'
+speed in `PlayerState::footsteps_xyspeed` and selects on it.
+
 **The direction.** VERIFIED: above the threshold the movetype is the stance
 crossed with `pm_flags` 0x40, backwards, and `pm_flags` 0x80, walk. The walk bit
 is masked out of `pm_flags` once at 0x32499 and the stance dispatches at

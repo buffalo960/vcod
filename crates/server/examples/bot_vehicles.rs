@@ -2,7 +2,7 @@
 //! `vc_bot_vehicles 0` and one with 1, each printing the kills, those off a
 //! vehicle's guns, the boardings, the bot-ticks spent seated, and how far
 //! the driven vehicles went. The measurement behind
-//! docs/research/bot-objectives.md section 9.
+//! docs/research/bot-objectives.md section 10.
 //! Run: COD_DIR=<UO install> cargo run --release -p vcod-server --example bot_vehicles [seed...]
 //! `MAP=` picks the map (mp_cassino), `GAMETYPE=` the gametype (tdm),
 //! `BOTS=` how many (6), `TICKS=` the length (3600, 3 min).

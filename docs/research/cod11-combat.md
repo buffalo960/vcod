@@ -2050,6 +2050,45 @@ with its unlink (`game.mp.i386.so` 0x5da81; the slot's reuse waits); vcod
 kept clipping it until the slot freed. `scriptmodel_ab` replays both
 probe parts (the trace on 1.1d and UO, the rounds on UO).
 
+**The whole-model bounds reject.** VERIFIED, decompile: the bounds the
+entity clip tests come from the DObj's first model (DObj `+0x1c`), whose
+asset record's `+4` points at the loaded model; its `+0x4c..+0x60` are the
+six floats the header parser copies from the descriptor's bytes 2..26, the
+`mins`/`maxs` after the version (1.1d getter `0x80c4f6c` over `0x80c28e0`,
+parser `0x80c1164`, loader `0x80c13f8`; 1.5b
+`0x80d17a2` over `0x80cec5c`; UO `0x80c6b36` over `0x80c3ff0`, parser
+`0x80c3310`, loader `0x80c382c`). The test is the slab walk over `[0, fraction]` (1.1d
+`0x805a788`, 1.5b `0x805e553`, UO `0x805e387`) on those bounds added to
+`r.currentOrigin`, never turned, in the clip of all three (1.1d
+`0x809105c`, 1.5b `0x8099732`, UO `0x809a72a`). VERIFIED, off the paks:
+1002 of the 1012 1.1 descriptors store a cube centred on the origin, and
+the other 10 store all zeros, two of those with collision (`cow_dead2`,
+`vehicle_german_yacht_openingsequence_animrig`). 384 1.1 models carry
+collision; it pokes out of the cube on seven (`vehicle_car` by 17 units
+at the nose, `x` to 111.2 against 94.37;
+`static_turret_flak88_static_antitank` to 240.2 against 222.2; the two
+`vehicle_german_condor_lowpoly`s, the two T-34 wrecks, and `v2rocket` by
+under a hundredth), and UO adds many single-player rigs whose bounds are
+zero. INFERRED: on every other model the cube, whatever the
+yaw, holds the whole collision mesh, so the reject only saves work there.
+
+VERIFIED, live (retail 1.1d, 1.5b and UO 1.51b, mp_carentan, 2026-10-20,
+`client-probes/probe_modelbounds`, fixtures
+`mp_carentan-scriptmodel-bounds{,-1.5,-uo}.txt`, recipe in each header):
+level `bulletTrace`s across a `vehicle_car` 200 above the first tdm spawn
+stop on it at its nose's 94 and not at 95 or past, at yaw 0, 90 and 180;
+at yaw 45 they stop on it out to 98 along its forward (69 on each axis,
+inside the cube). No trace stops on `cow_dead2` at any yaw. The three
+servers log the same rows; 1.5b and UO match each other to the digit and
+1.1d one fraction in its last digit.
+
+vcod: `PlacedModel::bounds` holds the descriptor's bounds
+(`GameHost::model_bounds_of`, the cache the area tree links a script model
+with) for a script model and a UO vehicle, and `PlacedModel::clip` runs
+`collision::segment_misses_box` on them about the origin before any
+triangle. `model_bounds_ab` replays the probe on 1.1d, 1.5b and UO, every
+row to 1e-5.
+
 VERIFIED, live (retail 1.1d, mp_carentan, 2026-10-16, `probe_scriptmodel`'s
 pair parts, `+set probe_part rounds|grenade|blast`, fixtures
 `mp_carentan-scriptmodel-{rounds,grenade,blast}.txt`; recipe in each
@@ -2489,8 +2528,9 @@ vcod: `PlayerAnims::leaf_motion` holds the frequency of each leaf under
 a plain `complete` group, `playerpose::SeatRamp` starts a
 `animclock::LeafTime` at 0 for a leaf set from no weight and keeps it
 while the leaf keeps weight, and the server's 1.5 and UO pose samples a
-seat leaf at it (`PoseInputs::leaf_times`). A sync group's leaves (an
-MG42 gunner's, the tank gunner's seat) stay on the seconds. VERIFIED,
+seat leaf at it (`PoseInputs::leaf_times`). A sync group's leaves sample
+the group's own time: an MG42 gunner's at the weighted mean frequency
+(cod11-turrets.md 13.9); the tank gunner's seat stays on the seconds. VERIFIED,
 vcod measurement (2026-10-20): `vehicle_ab`'s jeep driver bones move by
 at most 0.01 on 8 of 2170 samples, and no UO vehicle or turret gate
 changes: every stock seat leaf is a single frame (`c_mp_jeep_driver_turnL`,
@@ -2549,6 +2589,20 @@ modelled (INFERRED edge): a node the other channel holds. A legs anim
 the torso has at weight, or a torso restart of a node the legs set this
 frame, would read the shared node's weight and time. vcod's two lerp
 frames keep separate clocks.
+
+VERIFIED, live (retail 1.5b and UO 1.51b, 2026-10-20, `probe_legs` with
+a `--save-legs --capture-tag stopgo-*` client, fixtures
+`movers/mp_carentan-dm-legs{,-client}-stopgo-{1.5,uo}.txt`, recipe in
+each header): the legs leave a run some 350 ms after its keys let go
+(the body has to slow under 10 units/s), and a go 400-500 ms after the
+release takes the run back 100-200 ms into its blend to the idle. On
+both servers the run's bones then go on from the run's own time:
+`legs_ab`'s `a_body_stopping_and_going_is_posed_like_retail_on_15` /
+`_on_uo` match every row from the first stop on to 0.05 units and 0.3
+degrees, and with `animclock::restart_weighted_nodes` forcing 1.1's
+restart the same replays miss 83 (1.5b) and 78 (UO) rows from the first
+go on, up to 29 units and 97 degrees. A strafe swap (right, 150 ms
+left, right) takes the right strafe back the same way.
 
 #### The prone strike on mp_carentan
 
@@ -4130,6 +4184,46 @@ residual 3 units are within what one run of each measures, which this pair
 of runs does not settle. `pm_type` 7, a dead player still
 linked, takes `0x34220` and does not move at all: vcod runs
 `dead_linked_move` for it (`cod11-player-clip.md` 1.1 has the capture).
+
+### 5.8 A `trigger_hurt` kill and the corpse's fall
+
+VERIFIED, `client-probes/probe_hurtfall` on retail 1.1d, 2026-10-20, three
+runs (`crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtfall.txt`,
+`-hurtlow.txt`, `-hurtland.txt`, recipes in their headers). The probe lifts
+mp_carentan's one `trigger_hurt` (entity 72, `dmg 1000`, model `*1`, the
+kill slab at z -176..-160 under the whole map) by an origin write and drops
+a `--probe-ride` client from z 362 over the street at (900 1930) through
+it. The origin write moves the slab's touch volume: every run killed at the
+lifted height.
+
+- VERIFIED, all three: the damage callback gets the trigger as inflictor
+  and attacker, `dflags` 0, `MOD_TRIGGER_HURT`, weapon `none`, an
+  undefined point and an undefined direction, hitloc `none`; the killed
+  callback's direction prints `(0.00, 0.00, 0.00)`. INFERRED: the undefined
+  pair is `hurt_touch`'s (0x64dc4) null point and direction through
+  `Scr_PlayerDamage` (0x5ca18), the shape the sine crush showed
+  (`cod11-movers.md` 21), so stock `dm.gsc` adds `iDFLAGS_NO_KNOCKBACK`
+  and `finishPlayerDamage` sets no knockback timer (0x43952).
+- VERIFIED, `-hurtfall.txt` (slab at 224..240, kill at z 233): the corpse
+  falls the remaining 276 on the client's cmds, lands at -43.19 at 3450 and
+  then creeps south about 0.05 a frame for 2.5 s, the street's grade under
+  `PM_DeadMove` (5.7).
+- VERIFIED, `-hurtlow.txt` (slab moved to 27..43 at the drop, kill at z 24):
+  the corpse lands 150 ms after the kill at y 1928.90 and creeps the same
+  way. A 120 ms knockback timer on the kill would have slid it on to y
+  1905 (vcod before the fix; `hurtfall_ab` fails on that).
+- VERIFIED, `-hurtland.txt` (slab at -56..-40 from the first frame, its top
+  3 over the street): the kill comes first, at origin -42.00 with the street
+  at -43.17 under it, and the landing's fall damage callback follows in the
+  same frame (both read 3350): 66 points on a body at health 0, which reads
+  -66 from then on, with no second killed callback. INFERRED: the kill is
+  the touch pass of a cmd still airborne and the fall damage the next cmd's
+  `PM_CrashLand` through `ClientEvents` (0x3fda8), the dead player's landing
+  of `cod11-player-clip.md` 8.8.
+
+**As implemented.** `ScriptRuntime::deliver_world_hit` passes the callback
+undefined vectors. `crates/server/tests/hurtfall_ab.rs` replays each
+capture's cmds on vcod-server and holds every `PROBE` line exact.
 
 ---
 
@@ -6632,8 +6726,35 @@ barrage whose caller left hangs shells with `r.ownerNum` 0x3ff and `parent`
 shell goes off on contact through `G_MissileImpact`, whose 0x3ff test
 (0x5dccc) leaves inflictor and attacker NULL: no splash, and a direct hit
 with both undefined. Only `G_DropArtillery`'s 15 s fallback,
-`G_ExplodeMissile`, reads `parent`, and so would walk its splash with entity
-1023 as the attacker; vcod does not model that path for a disowned shell.
+`G_ExplodeMissile`, reads `parent`, and so walks its splash with entity
+1023 as the attacker.
+
+VERIFIED, UO: `G_DropArtillery` (0x5eabe) sets the shell's `nextthink` to
+`level.time + 15000` (0x5eadc, 0x5eae1) and its `think` to
+`G_ExplodeMissile` (0x5eaf0). VERIFIED: `G_ExplodeMissile` first copies
+`+0x330` into `r.ownerNum` when that is 0x3ff (0x5e2db..0x5e2f3), then takes
+`parent` (`+0x1a8`, 0x5e2fc..0x5e308) as `G_RadiusDamage`'s attacker, with
+the shell as inflictor and ignore and `+0x25c` as the means of death
+(0x5e79c). VERIFIED: `fire_artillery` writes `+0x25c` 14 and no `+0x330`
+(0x5ff4a..0x601fb); `fire_rocket` writes `+0x25c` 6. INFERRED: `+0x330`
+is then the 0 that `G_FreeEntity`'s memset or `G_InitGame`'s left. INFERRED: a shell that strikes nothing in 15 s goes off as
+`MOD_ARTILLERY_SPLASH`, charged to its caller while he is there, to no one
+when his leave swept `parent` to NULL, and to `&g_entities[1023]` when the
+barrage hung it after he left. VERIFIED: `G_InitGame` (0x586cf) memsets
+`g_entities` (0xd3000 bytes), and the only reference to `g_entities +
+0xd2cb4` (entity 1023) in the module is a compare; `Scr_AddEntity`
+(0x7239f) pushes `Scr_AddEntityNum` of the entity's first word, `s.number`.
+INFERRED: entity 1023's number reads 0, so `CodeCallback_PlayerDamage` gets
+entity 0 as `eAttacker` from that splash. vcod: the drop arms
+`Missile::explode_at_ms` 15 s on, a shell `fire_artillery` hangs with no
+owner keeps `parent_unspawned`, and its fuse blast is charged to
+`host::ZEROED_ENTITY`, which `ScriptRuntime::attacker_entity` reads as entity
+0. A fuse blast's means of death is the missile's own splash one (a rocket's
+`MOD_PROJECTILE_SPLASH`, a shell's `MOD_ARTILLERY_SPLASH`); before
+2026-10-20 vcod named every fuse blast `MOD_GRENADE_SPLASH`. Not modelled
+(INFERRED): a UO vehicle shell's fuse blast is charged to `parent`, the
+vehicle, where vcod charges the driver, and the explode's `r.ownerNum` of 0
+for a disowned artillery shell passes nothing vcod traces.
 
 VERIFIED, UO `fire_rocket` (0x5fc74): from a vehicle (`eType` 12) the
 rocket's `+0x330` takes the vehicle's own `r.ownerNum` (0x5fd3f, 0x5fd45),
@@ -6647,8 +6768,18 @@ with it, as vcod charges the slot (`Missile::owner`, kept by
 `free_owner_refs` for a vehicle's shell). A vehicle freed under its shell
 sweeps the shell's `r.ownerNum` to 0x3ff, which drops the `+0x330` read:
 vcod's `Missiles::free_vehicle_refs`, from `GameHost::free_entity`.
-INFERRED, not modelled: with the slot empty retail charges the freed
-entity, whose number `G_FreeEntity`'s memset zeroed; vcod drops the hit.
+VERIFIED, UO: `ClientDisconnect` (0x45433) ends in `G_FreeEntity`, whose
+memset clears the whole 0x34c-byte entity, `s.number` with it.
+VERIFIED: `G_DamageClient` passes the attacker on untouched to
+`Scr_PlayerDamage`, whose `GScr_AddEntity` pushes a non-NULL one through
+`Scr_AddEntity`, `Scr_AddEntityNum(ent->s.number, 0)`; `G_Damage`'s other
+arms push it through `Scr_AddEntity` too. INFERRED: with the slot empty
+the shell's direct hit and splash are charged to the freed entity and the
+callback sees entity 0 as `eAttacker`: the client in slot 0 when there is
+one. vcod: `ScriptRuntime::charged_owner` turns an owner slot with no client
+into `host::ZEROED_ENTITY`, delivered as entity 0. Not modelled: with no
+entity 0 in use vcod passes undefined, where retail pushes the free
+entity's object.
 
 VERIFIED, UO: with the owner 0x3ff `G_MissileImpact` keeps the inflictor
 NULL too (0x5dc8e), `G_Damage` hands a client victim to `G_DamageClient`
@@ -6685,11 +6816,21 @@ way still goes off in `G_MissileImpact`. INFERRED, from Q3's `G_RunFrame`:
 an exploded missile riding out its event runs no think, so a free set then
 changes nothing. vcod: `ScriptRuntime::run_entity` hands a `ThinkFn::Free`
 armed on a missile's entity to `Missiles::schedule_free` before its turn,
-and the pool frees it on the turn the think is due. Not modelled: a shell
-that strikes on the same turn its free is due is freed by retail before its
-event goes out, and vcod sends the explode. Pinned by
-`a_deleted_grenade_flies_on_and_goes_unexploded` and
-`on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded`.
+and the pool frees it on the turn the think is due.
+
+A shell that strikes on the very turn its free is due. VERIFIED:
+`G_RunMissile` tests `eType` against 4 straight after `G_MissileImpact`
+and skips `G_RunThink` when it changed (1.1d 0x54354..0x54358, UO
+0x5f574..0x5f578), and the explode writes `eType` 0. VERIFIED, UO:
+`G_RunEntity` (0x59a35) frees an entity whose `freeAfterEvent` (`+0x194`) is
+set once 300 ms have passed since its event (0x59ac5..0x59aec) and runs
+nothing else on it (0x59b5c); 1.1d's (0x502bc, `+0x184`) is the same.
+INFERRED: the strike's explode goes out and the entity rides out its 300 ms
+whatever free is pending, as vcod's pool does (`free_at_ms` cleared on a
+strike). The earlier note that retail frees it before its event goes out
+was wrong. Pinned by `a_deleted_grenade_flies_on_and_goes_unexploded`,
+`on_1_1_a_grenade_on_an_evicted_ring_number_goes_unexploded` and
+`a_shell_striking_as_its_free_falls_due_rides_out_its_event`.
 
 ## 14. `G_RadiusDamage` and `CanDamage`
 
@@ -9199,13 +9340,47 @@ truncated: 1.1d's 92 frames at 30 read 3066, where a rounded 3067 was
 vcod's before 2026-10-19. INFERRED: 1.5b and UO store it the same way
 (their clips here are exact or round down either way).
 
+VERIFIED (capture), 2026-10-20, a death raised inside the packet pass on
+all three servers (`mp_carentan-dm-hit-target-killtimers{,-1.5,-uo}.txt`,
+the `--probe-kill-cmds 1,3` target with `ct`, `legsTimer` and `torsoTimer`
+on each `!trace`): the `kill` runs ahead of its message's cmd, and the
+probe's cmds behind it are 1 ms apart, so the death frame reads the
+clip's length + 50 less 1 or less 3 (949 and 947 for a 900 ms clip; 27
+deaths, each read against its own clip). The hold is set on the last cmd
+ahead of the `kill`, and every cmd behind it runs it down, alive or dead.
+VERIFIED (capture), 1.1d, a bullet death inside the shooter's cmd
+(`mp_carentan-dm-hit-target-paintimers.txt`, ms 26759, index 21, 900 ms):
+`ct + timer` reads 304200, so the hold was set at 303250, between the
+victim's snapshot cmds 303233 and 303284; that is the frame's
+`level.time` too, so this one capture does not split the two clocks; the
+`kill` captures do. VERIFIED (capture), same file: its two surviving
+hits (ms 26200, health 60; ms 26557, health 24) leave both timers at 0
+and `legsAnim` on the idle or the knockback's run.
+
+VERIFIED (disassembly), the event argument at every `BG_AnimScriptEvent`
+call site: 1.1d `game.mp.i386.so` (13 `.rel.text` relocations, 0x2ee1a ..
+0x49b85) passes 1, 2, 3, 4, 5, 6, 7, 10 or 13; 1.5b (16 PLT calls, 0x1fcb8
+.. 0x46f5d) and UO (19, 0x247f7 .. 0x4fb93) the same set, UO adding 14 and
+15. VERIFIED (data), the event name table (8-byte rows: 1.1d 0x7b478,
+1.5b 0x80120, UO 0xa9120) starts `PAIN`, `DEATH`, `FIREWEAPON`, `JUMP`,
+`JUMPBK`, `LAND`, `DROPWEAPON`, `RAISEWEAPON`, `CLIMBMOUNT`,
+`CLIMBDISMOUNT`, `RELOAD`, `CROUCH_TO_PRONE`, `PRONE_TO_CROUCH`,
+`MELEEATTACK` (UO then `LMG_DEPLOY`, `LMG_BREAKDOWN`). So no server game
+module raises `PAIN` (0): a surviving hit sets no anim and no timer, and
+`DEATH` (1) is raised only from `player_die` (1.1d 0x49b85, 1.5b 0x46f5d,
+UO 0x4fb93).
+
 Ours: `BodyPose::target_controllers` runs on a dead body, eased under 1.5
 and UO like any other; `dyingpose_ab::a_dying_body_poses_like_{retail,15,uo}`
 hold every bone of all 60 frames within 0.015 of retail's (the logs'
 rounding). `AnimState::timers` writes `legsTimer` and `torsoTimer` off each
 event's hold, `take_damage` stamps the death's on the client's last cmd
-(`dyingpose_ab::a_death_runs_its_timers_down_like_*`), and
-`xanim::duration_ms` truncates in extended precision.
+(`dyingpose_ab::a_death_runs_its_timers_down_like_*`, and inside the
+packet pass `kill_cmds_ab::a_kills_death_timers_match_*_by_its_cmds`, which
+fail with the frame clock), a surviving hit returns before the anim, and
+`combat.rs::a_shot_takes_health_and_a_second_one_kills` holds a hit's and a
+bullet death's timers on ours, `a_shot_sets_the_victims_timers_as_retail_does`
+on the capture. `xanim::duration_ms` truncates in extended precision.
 
 ### 16.5 `eFlags` 0x400, the trigger held
 

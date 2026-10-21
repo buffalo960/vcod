@@ -10,6 +10,11 @@
 //! dead and the dead arm of `PM_Weapon` keeps whatever state was left
 //! (combat doc 9.2, "The death frame's `weaponstate`").
 //!
+//! The `killtimers` captures (`-killtimers{,-1.5,-uo}.txt`) also log the
+//! anim timers: the death's hold, the clip + 50, is set on the last cmd
+//! ahead of the `kill` and the cmds behind it run it down (combat doc 16.4,
+//! "The dying body").
+//!
 //! Each gate returns early unless `COD_DIR` is the install its capture came
 //! from.
 
@@ -19,6 +24,7 @@ use common::Queues;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use vcod_common::animtree::PlayerAnims;
 use vcod_common::net::msg::{BUTTON_USE, NULL_USERCMD, UserCmd};
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, PROTOCOL_V22, Protocol};
 use vcod_common::pk3::Pk3Fs;
@@ -30,6 +36,19 @@ struct Death {
     weaponstate: i32,
     event_sequence: i32,
     events: String,
+    /// What the cmds behind the `kill` ran off the death's `legsTimer` and
+    /// `torsoTimer`, each read against the clip's length + 50 that
+    /// `player_die`'s `BG_AnimScriptEvent` set them to: the msec the
+    /// frame's cmds ran past the death. Only in captures that log the
+    /// timers (`killtimers`).
+    timers_run: Option<(i32, i32)>,
+}
+
+/// The death clip's hold, its length + 50 (`BG_PlayAnim`), for a wire
+/// `legsAnim`.
+fn death_hold(anims: &PlayerAnims, legs_anim: i32) -> i32 {
+    let name = anims.name(legs_anim & 511).expect("a death clip");
+    anims.length_ms(name).expect("its length") as i32 + 50
 }
 
 fn field<'a>(line: &'a str, key: &str) -> &'a str {
@@ -39,7 +58,7 @@ fn field<'a>(line: &'a str, key: &str) -> &'a str {
 }
 
 /// Every kill of the capture, each with the first dead `!trace` after it.
-fn retail(path: &str) -> Vec<Death> {
+fn retail(path: &str, anims: &PlayerAnims) -> Vec<Death> {
     let full = format!("{}/tests/fixtures/{path}", env!("CARGO_MANIFEST_DIR"));
     let text = std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full}: {e}"));
     let traces: Vec<&str> = text.lines().filter(|l| l.starts_with("!trace ")).collect();
@@ -58,6 +77,11 @@ fn retail(path: &str) -> Vec<Death> {
                 weaponstate: field(dead, "weaponstate").parse().unwrap(),
                 event_sequence: field(dead, "eventSequence").parse().unwrap(),
                 events: field(dead, "events").to_string(),
+                timers_run: dead.contains(" legsTimer=").then(|| {
+                    let hold = death_hold(anims, field(dead, "legsAnim").parse().unwrap());
+                    let timer = |k| hold - field(dead, k).parse::<i32>().unwrap();
+                    (timer("legsTimer"), timer("torsoTimer"))
+                }),
             }
         })
         .collect()
@@ -66,7 +90,8 @@ fn retail(path: &str) -> Vec<Death> {
 /// The same kills on ours: alive two seconds, then `kill` and its cmds in
 /// one frame, one message each as the probe sent them, and a frame with no
 /// cmd at all; then the use press until the respawn.
-fn ours(proto: &'static Protocol, fs: Pk3Fs, kills: &[usize]) -> Vec<Death> {
+fn ours(proto: &'static Protocol, fs: Pk3Fs, kills: &[usize], timers: bool) -> Vec<Death> {
+    let anims = PlayerAnims::load(&fs).expect("the player anims");
     let bsp_path = fs.resolve_map("mp_carentan").expect("map");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let fs = Rc::new(fs);
@@ -129,6 +154,13 @@ fn ours(proto: &'static Protocol, fs: Pk3Fs, kills: &[usize]) -> Vec<Death> {
             weaponstate: ps.field_i32(p, "weaponstate"),
             event_sequence: seq,
             events: events.join(","),
+            timers_run: timers.then(|| {
+                let hold = death_hold(&anims, ps.field_i32(p, "legsAnim"));
+                (
+                    hold - ps.field_i32(p, "legsTimer"),
+                    hold - ps.field_i32(p, "torsoTimer"),
+                )
+            }),
         });
         // The quiet frame: nothing behind the burst, as the probe sent.
         now += Duration::from_millis(common::FRAME_MS as u64);
@@ -139,13 +171,15 @@ fn ours(proto: &'static Protocol, fs: Pk3Fs, kills: &[usize]) -> Vec<Death> {
 }
 
 fn check(proto: &'static Protocol, fs: Pk3Fs, fixture: &str) {
-    let retail = retail(fixture);
+    let anims = PlayerAnims::load(&fs).expect("the player anims");
+    let retail = retail(fixture, &anims);
     assert!(
         retail.iter().any(|d| d.cmds == 1) && retail.iter().any(|d| d.cmds > 1),
         "{fixture}: the capture needs both a lone cmd and a burst"
     );
     let kills: Vec<usize> = retail.iter().map(|d| d.cmds).collect();
-    let ours = ours(proto, fs, &kills);
+    let timers = retail.iter().all(|d| d.timers_run.is_some());
+    let ours = ours(proto, fs, &kills, timers);
     assert_eq!(ours, retail, "{fixture}");
 }
 
@@ -186,5 +220,47 @@ fn a_kills_death_frame_matches_uo_by_its_cmds() {
         &PROTOCOL_V22,
         fs,
         "playerstate/mp_carentan-dm-hit-target-killcmds-uo.txt",
+    );
+}
+
+/// The `killtimers` captures log the timers too: the death's hold is set at
+/// the `kill`, on the last cmd ahead of it, and each cmd behind runs it
+/// down (cod11-combat.md 16.4, "The dying body").
+#[test]
+fn a_kills_death_timers_match_11d_by_its_cmds() {
+    let Some(fs) = vcod_common::testing::game_fs_11() else {
+        return;
+    };
+    check(
+        &PROTOCOL_V1,
+        fs,
+        "playerstate/mp_carentan-dm-hit-target-killtimers.txt",
+    );
+}
+
+#[test]
+fn a_kills_death_timers_match_15b_by_its_cmds() {
+    let Some(fs) = vcod_common::testing::game_fs() else {
+        return;
+    };
+    if vcod_server::server::install_protocol(&fs).version != PROTOCOL_V6.version {
+        return;
+    }
+    check(
+        &PROTOCOL_V6,
+        fs,
+        "playerstate/mp_carentan-dm-hit-target-killtimers-1.5.txt",
+    );
+}
+
+#[test]
+fn a_kills_death_timers_match_uo_by_its_cmds() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    check(
+        &PROTOCOL_V22,
+        fs,
+        "playerstate/mp_carentan-dm-hit-target-killtimers-uo.txt",
     );
 }

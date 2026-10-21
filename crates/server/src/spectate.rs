@@ -259,6 +259,11 @@ pub struct ClientSim {
     /// The turret placement's leaf blend for the gun this client mans,
     /// which its legs pose by while mounted.
     pub gunner_leaves: Option<Vec<(usize, f32)>>,
+    /// The turret group the placement last set before the current one, with
+    /// its leaves: what the legs blend out of on an aim-fire change.
+    pub gunner_left: Option<(usize, Vec<(usize, f32)>)>,
+    /// The group `gunner_leaves` sit under.
+    gunner_node: Option<usize>,
     /// The takeoff anim a move raised since the last `update_anims`, and the
     /// hold-clock time its timer was set on: the cmd's serverTime, or its
     /// start when the move's `PM_DropTimers` ran it down
@@ -608,6 +613,8 @@ impl ClientSim {
             movetype: Default::default(),
             footsteps_movetype: Default::default(),
             gunner_leaves: None,
+            gunner_left: None,
+            gunner_node: None,
             jumped: None,
             breakdown_continue: Vec::new(),
             jump_time: 0,
@@ -1567,7 +1574,8 @@ impl ClientSim {
         let linked_idle = self.ps.linked && self.ps.rules.v15();
         // Retail's compare is `xyspeed < 10.0`, so the constant itself is
         // moving.
-        let xyspeed = self.ps.velocity.truncate().length();
+        // What the footsteps read, before the clamp and the snap.
+        let xyspeed = self.ps.footsteps_xyspeed;
         let moving = xyspeed >= ANIM_IDLE_SPEED;
         let stopping = cmd.forward == 0 && cmd.right == 0 && xyspeed <= ANIM_STOP_SPEED;
         let back = self.ps.backwards_run;
@@ -1988,9 +1996,9 @@ impl ClientSim {
         self.damage.taken += damage;
         self.damage.from = has_dir.then_some(dir);
         if !fatal {
-            // No `pain` animscript event: retail's server raises none for a
-            // surviving hit, and the hit frame keeps `legsAnim` 634 and
-            // `torsoAnim` 0 in both captures (combat doc, 8.4 and 3.4). The
+            // No `pain` animscript event: no server game module raises one
+            // (combat doc 16.4), and the hit frame keeps `legsAnim` 634,
+            // `torsoAnim` 0 and both timers in the captures (8.4, 3.4). The
             // stock clause would put `pb_crouch_pain_holdStomach` on a
             // standing player for 1.35 s, doubling it under the next shot.
             return;
@@ -2147,6 +2155,33 @@ impl ClientSim {
     }
 
     /// The controls the last skeleton build eased to, which the record
+    /// The turret placement's leaf blend at level time `now_ms`, `None`
+    /// off a `turretanim` anim: the legs pose by its leaves, and its sync
+    /// group steps at the mean frequency their weights give from the next
+    /// frame on (cod11-turrets.md 13.9).
+    pub fn set_gunner_blend(
+        &mut self,
+        placed: Option<&vcod_common::turretpose::GunnerPlacement>,
+        now_ms: i32,
+    ) {
+        if let Some(g) = placed
+            && self.gunner_node.is_some_and(|n| n != g.node)
+        {
+            self.gunner_left = self.gunner_node.zip(self.gunner_leaves.take());
+        }
+        self.gunner_leaves = placed.map(|g| g.leaves.clone());
+        self.gunner_node = placed.map(|g| g.node);
+        if placed.is_none() {
+            self.gunner_left = None;
+        }
+        if let Some(g) = placed {
+            let legs = self.anim.legs();
+            self.pose
+                .legs_clock
+                .set_sync_frequency(legs, now_ms, g.frequency, g.looping);
+        }
+    }
+
     /// keeps for the next build's ease (coduo-vehicles.md 13).
     pub fn keep_eased(&mut self, c: vcod_common::playerpose::Controllers) {
         if self.pose.eased.is_some() {
@@ -2236,6 +2271,7 @@ impl ClientSim {
                 waist_pitch: body.waist_pitch,
             },
             turret_leaves: self.gunner_leaves.clone(),
+            turret_left: self.gunner_left.clone(),
             seat: self.seat.zip(self.seat_angles).map(|(s, a)| {
                 vcod_common::playerpose::BodySeat::new(a, s.kind, s.pos, self.seat_steer)
                     .armed(self.ps.weapon.into())
@@ -3196,6 +3232,7 @@ mod tests {
             sim.ps.on_ground = true;
             sim.ps.backwards_run = *back;
             sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
+            sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
             let cmd = UserCmd {
                 forward: *forward,
                 right: *right,
@@ -3346,6 +3383,7 @@ mod tests {
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(190.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.update_anims(&inputs, &running, (1000, 1000), &[], &mut 1u64);
         assert_eq!(
             anims.name(sim.anim.legs()),
@@ -3388,6 +3426,7 @@ mod tests {
         sim.ps.on_ground = false;
         sim.ps.on_ladder = true;
         sim.ps.velocity = Vec3::new(0.0, 0.0, 60.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.update_anims(&inputs, &NULL_USERCMD, (1050, 1050), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_climbup"));
 
@@ -3420,6 +3459,7 @@ mod tests {
         sim.update_anims(&inputs, &NULL_USERCMD, (1000, 1000), &[], &mut 1u64);
         assert_eq!(sim.movetype, vcod_common::animscript::Movetype::IdleCr);
         sim.ps.velocity = Vec3::new(60.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         let fwd = UserCmd {
             forward: 127,
             ..NULL_USERCMD
@@ -3427,6 +3467,7 @@ mod tests {
         sim.update_anims(&inputs, &fwd, (1050, 1050), &[], &mut 1u64);
         assert_eq!(sim.movetype, vcod_common::animscript::Movetype::WalkProne);
         sim.ps.velocity = Vec3::ZERO;
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.ps.view_lerp_target = pmove::VIEW_PRONE;
         sim.update_anims(&inputs, &NULL_USERCMD, (1100, 1100), &[], &mut 1u64);
         assert_eq!(sim.movetype, vcod_common::animscript::Movetype::IdleProne);
@@ -3457,6 +3498,7 @@ mod tests {
         sim.ps.backwards_run = true;
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         sim.update_anims(&inputs, &back, (1000, 1000), &[], &mut 1u64);
         assert_eq!(anims.name(sim.anim.legs()), Some("pb_crouch_run_back"));
 
@@ -3496,6 +3538,7 @@ mod tests {
         sim.become_player([0.0, 0.0, 8.0], 0.0, NULL_USERCMD.angles);
         sim.ps.on_ground = true;
         sim.ps.velocity = Vec3::new(120.0, 0.0, 0.0);
+        sim.ps.footsteps_xyspeed = sim.ps.velocity.truncate().length();
         let strafe = UserCmd {
             right: 127,
             ..NULL_USERCMD

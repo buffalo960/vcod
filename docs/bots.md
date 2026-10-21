@@ -45,15 +45,16 @@ rcon is refused until the server has `rconPassword` set.
 
 | Command | Does |
 |---|---|
-| `addbot [allies\|axis\|auto] [count]` | Adds `count` bots (default 1). The words can come in either order. `auto` (the default) puts each bot on whichever team balance asks for. Naming a team puts the bots there and pins them, so balance never moves them. |
+| `addbot [allies\|axis\|auto] [count] [skill N]` | Adds `count` bots (default 1). The words can come in any order. `auto` (the default) puts each bot on whichever team balance asks for. Naming a team puts the bots there and pins them, so balance never moves them. `skill N` sets the bots' skill level (0-3, see [Skill](#skill)); `vc_bot_skill` never changes it afterwards. |
 | `removebot [name\|all\|count]` | With no argument, removes one bot. A name removes that bot; the `[BOT] ` prefix is optional and case doesn't matter. `all` removes every bot. A number removes that many, lowest score first. |
-| `listbots` | Prints every bot's slot, team, score, whether it is pinned, and its name, then the human and bot counts and the current `vc_bot_*` values. |
+| `listbots` | Prints every bot's slot, team, score, whether it is pinned, its skill level and its name, then the human and bot counts and the current `vc_bot_*` values. |
 
 Examples:
 
 ```
 rcon addbot 4
 rcon addbot axis 2
+rcon addbot allies 3 skill 3
 rcon removebot NadeSpammer
 rcon removebot all
 rcon listbots
@@ -71,6 +72,33 @@ startup. A change takes effect within half a second, with no restart.
 | `vc_bot_shoot` | 1 | 0 stops bots from firing. `--bots` without `--bots-shoot` sets it to 0. |
 | `vc_bot_names` | 1 | 0 names new bots `bot<slot>` instead of drawing a funny name. |
 | `vc_bot_vehicles` | 1 | United Offensive only. 0 stops bots getting into vehicles; a bot already in one rides on until it gets out. |
+| `vc_bot_skill` | 1 | The skill level, 0 to 3, of every bot that `addbot ... skill N` didn't set. See [Skill](#skill). |
+
+## Skill
+
+Four levels set how fast a bot reacts and turns, how well it aims, how long
+it remembers an enemy it lost sight of, and how far it hears gunfire:
+
+| Level | Name | Reaction | Turn rate | Aim error at first sight, settled | Hearing |
+|---|---|---|---|---|---|
+| 0 | easy | 500-850 ms | 160°/s | 80, 10 units | 0.75x |
+| 1 | normal (default) | 250-500 ms | 300°/s | 48, 4 units | 1x |
+| 2 | hard | 150-300 ms | 440°/s | 32, 2.5 units | 1.25x |
+| 3 | expert | 100-150 ms | 600°/s | 24, 1.5 units | 1.5x |
+
+The aim error is how far from the target's chest a shot would land; it
+shrinks every tick the bot stays on the target and grows with range and
+while the bot moves. A higher level also remembers a lost enemy and a heard
+shot longer. How the levels play against each other is measured in
+[research/bot-combat.md](research/bot-combat.md).
+
+`vc_bot_skill` changes every bot without its own level at once, mid-fight
+included. To mix levels, give each `addbot` its own:
+
+```
+rcon addbot axis 4 skill 0
+rcon addbot allies 4 skill 3
+```
 
 ## How the minimum player count works
 
@@ -135,13 +163,20 @@ changes how a seeded server plays.
 Bots play on 1.1, 1.5 and United Offensive servers, in every stock gametype:
 `dm`, `tdm`, `sd`, `re` and `bel`, and UO's `ctf`, `dom`, `hq` and `bas`.
 They are not very good. They find their way around stock maps, play each
-gametype's objectives, and fight when `vc_bot_shoot` is on. On a United
-Offensive map with vehicles, a bot with no fight and no objective close by
-walks to a vehicle near it and gets in with the use key, like a player. A
-driver drives toward its objective or an enemy, waits a moment for a
-teammate walking up to board, and in a tank stops to lay the turret on an
-enemy and fire. A gunner fires the vehicle's machine gun. Bots get out when
-they arrive, when stuck, or after 90 seconds.
+gametype's objectives, and fight when `vc_bot_shoot` is on.
+On objective gametypes a team spreads its bots over different routes,
+reshuffles who guards what each round, sends all its S&D attackers to one
+site and covers a planter, and in Retrieval escorts the carrier and holds
+the goal ahead of him
+([research/bot-objectives.md](research/bot-objectives.md) section 9).
+
+On a United Offensive map with vehicles, a bot with no fight and no
+objective close by walks to a vehicle near it and gets in with the use key,
+like a player. A driver drives toward its objective or an enemy, waits a
+moment for a teammate walking up to board, and in a tank stops to lay the
+turret on an enemy and fire. A gunner fires the vehicle's machine gun. Bots
+get out when they arrive, when stuck, or after 90 seconds (section 10 of
+the same page).
 
 ## Known limits
 
@@ -150,4 +185,6 @@ they arrive, when stuck, or after 90 seconds.
   fits, so a tank can still wedge itself; a driver backs off and gets out
   after four stalls. They never change seats, use the hatch or drive a
   vehicle at an enemy to run him over.
-- Bot skill has no cvar; aim, reaction and memory are fixed in `bots.rs` (`Skill`).
+- Skill levels change how bots aim, react and remember, not how they move
+  or what they choose to do: an expert takes the same routes and plays the
+  objectives the same way as an easy bot.

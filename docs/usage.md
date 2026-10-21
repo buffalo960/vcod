@@ -115,9 +115,9 @@ rcon (`--set rconPassword=<pw>`):
 
 | Command | Does |
 |---|---|
-| `addbot [allies\|axis\|auto] [count]` | Adds `count` bots (1). `auto`, the default, deals them by balance; a named team pins them there. |
+| `addbot [allies\|axis\|auto] [count] [skill N]` | Adds `count` bots (1). `auto`, the default, deals them by balance; a named team pins them there. `skill N` (0-3) fixes their skill level, which `vc_bot_skill` then leaves alone. |
 | `removebot [name\|all\|count]` | Removes one bot by name (`[BOT] ` optional), all of them, or `count` (1), lowest score first. |
-| `listbots` | Slot, team, score and name of each bot, then the counts and cvars. |
+| `listbots` | Slot, team, score, skill level and name of each bot, then the counts and cvars. |
 
 The `set`/`seta` cvars below apply within half a second, over rcon or
 as `--set`:
@@ -128,6 +128,7 @@ as `--set`:
 | `vc_bot_autobalance` | 1 | In team gametypes (all but `dm` and `bel`) bots join the smaller team and move so the teams differ by at most one. A bot moves only while dead or spectating; humans and pinned bots never move. |
 | `vc_bot_shoot` | 1 | 0 leaves the bots walking the map without fighting. |
 | `vc_bot_names` | 1 | 0 names new bots `bot<slot>`. |
+| `vc_bot_skill` | 1 | Skill level 0-3 (easy, normal, hard, expert) of every bot `addbot ... skill` didn't set: reaction time, turn rate, aim error, memory and hearing. |
 | `vc_bot_vehicles` | 1 | United Offensive: 0 stops bots getting into vehicles. |
 
 Bots never take a private slot (`sv_privateClients`). `addbot` can fill

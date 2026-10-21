@@ -3,7 +3,7 @@
 How vcod's debug bots (`--bots`) play stock Search & Destroy, Retrieval
 (section 4) and Behind Enemy Lines (section 5), what changes on a
 United Offensive server (section 6), UO's own `ctf`, `dom`, `hq` and
-`bas` (section 7), and UO's vehicles (section 9). The brain is
+`bas` (section 7), and UO's vehicles (section 10). The brain is
 `crates/server/src/bots.rs` (`ObjTarget`, `think_objective`); the server fills
 `BotView::sd` and `BotView::linked` in `crates/server/src/server.rs`
 (`bot_sd`, `site_stand`) from `ScriptRuntime::sd_objectives`
@@ -1225,7 +1225,65 @@ tick (every 500 ms, or the tick after an `addbot` or `removebot`).
   `EXE_PLAYERKICKED`, so the game's `ClientDisconnect` and the drop notice
   run as for a kick, and the slot frees at once (a bot leaves no zombie).
 
-## 9. United Offensive vehicles
+## 9. Team play
+
+vcod's own, with nothing on retail to measure against. `bots::team` holds
+the rules; the server applies them once a frame with the whole team in
+hand (`Server::bot_think`'s view pass) and puts the answers in each bot's
+view.
+
+- Per-round deal. The rank that deals out S&D sites and `re` objectives
+  is the team shuffled by the level's `sv_serverid` (`team::round_rank`),
+  which every `map_restart` moves on, so a bot that guarded A last round
+  may guard B this one. Until 2026-10-20 it was the bot's place by slot,
+  and the same bot went to the same site every round of a map.
+- S&D attackers go together. Every attacker goes for one site, picked per
+  round (`team::round_shift`, `team::site_rank`); the defenders still
+  split over both. A failed plant moves the bot on to the other site as
+  before.
+- Plant cover. An attacker with a teammate held at a plant
+  (`linkTo`, inside a zone) within 1500 units guards him from 96 to 250
+  units off (`SdView::cover`) instead of making for its own site.
+- `re` escort. Only the attacker nearest the carrier
+  (`team::ESCORTS`, `ReView::escort`) keeps by him; the rest go ahead and
+  hold the ring round the goal he makes for. The carrier himself keeps
+  his path keys through a fight and only turns the view to shoot
+  (`Bot::carrying`), as a `bas` bot clearing a charge's blast does: before,
+  he went `Goal::To` whatever he saw and chased it off the way home.
+- Route spreading. On an objective level (`sd`, `re`, UO's `ctf`, `dom`,
+  `hq`, `bas`) a plan pays double length on an edge a teammate's path
+  ahead still runs along (`nav::CROWD_COST`, `team::crowd`,
+  `Follower::crowd`), so a way round up to twice as long is taken over
+  the teammate's. Read when a plan starts; `dm`, `tdm` and `bel` plan as
+  before, so the `dm` stall runs (`ship_stalls`) are unchanged.
+
+VERIFIED (measured, ours, 2026-10-20, release, `--example team_tally`, 8
+shooting bots, seeds 1-11 odd, 6000 ticks (300 s) per run, the ten 1.1 maps
+that run both gametypes, totals over 60 runs each). Columns: plants,
+defuses, pickups, captures, the attackers' round wins, the defenders',
+kills. The machine was under heavy load; the runs are tick-driven and
+seeded, so load does not move them.
+
+| Build | sd plant | defuse | att W | def W | re pickup | capture | att W | def W |
+|---|---|---|---|---|---|---|---|---|
+| master (6f1b7fb2) | 217 | 80 | 138 | 154 | 234 | 9 | 164 | 198 |
+| shuffle + cover + escort + crowd, attackers split | 186 | 75 | 117 | 160 | 221 | 9 | 184 | 175 |
+| crowd alone | 215 | 87 | 124 | 149 | 232 | 10 | 176 | 183 |
+| shuffle + cover + escort alone | 211 | 78 | 130 | 149 | 239 | 5 | 182 | 184 |
+| all, attackers on one site (S&D) | 232 | 65 | 168 | 105 | | | | |
+| all + carrier keeps running (`re`) | | | | | 231 | 18 | 164 | 189 |
+
+The last two rows are the shipped build: the one-site rule touches no
+`re` level and the carrier rule no `sd` one.
+
+Spreading attackers over both sites lost S&D rounds: one or two bots at a
+site met the defenders' half alone. Sent together they won 62% of the
+rounds that ended (168 of 273) against 47% on master. In `re` the
+captures doubled (9 to 18); pickups and round wins stay inside the run to
+run spread. Captures are still rare: most carriers die on the way, and
+the rounds end on eliminations (section 4.2).
+
+## 10. United Offensive vehicles
 
 vcod's own, like section 8: retail has no bots. A bot uses a vehicle
 through the keys a client sends from a seat (coduo-vehicles.md 1 and 2),
@@ -1234,7 +1292,7 @@ server half, the seat and the vehicles near each bot, and the driver's
 route, is `crates/server/src/server/bot_vehicles.rs`. `vc_bot_vehicles 0`
 stops boarding.
 
-### 9.1 What the server tells the brain
+### 10.1 What the server tells the brain
 
 - `BotView::vehicles`: each linked vehicle whose box stands within 900
   units across of the bot and that `seat::usable` passes for its slot
@@ -1247,7 +1305,7 @@ stops boarding.
   (`origin2[1]`) for seat 2, none for a four-wheel's driver or a
   passenger.
 
-### 9.2 Boarding
+### 10.2 Boarding
 
 - A bot with no enemy, no frag near, no plant or defuse under way and no
   throw in hand looks for one. With no objective (`dm`, `tdm`) any vehicle
@@ -1261,7 +1319,7 @@ stops boarding.
 - 20 s of walking or 2 s of pressing without a seat gives the vehicle up
   for 30 s; so does every exit.
 
-### 9.3 Driving
+### 10.3 Driving
 
 - The driver's waypoint is not the walk's follower: infantry passes
   (leaps, flings, ladder holds) prove walks from where a body stands, and
@@ -1284,7 +1342,7 @@ stops boarding.
 - A tank's driver holds the hull still while an enemy is in sight, and
   every driver waits up to 10 s for a teammate walking up to board.
 
-### 9.4 Guns and getting out
+### 10.4 Guns and getting out
 
 - The view goes to the enemy's chest; the server steps the turret or MG
   toward it (coduo-vehicles.md 2), and `buttons` 0x1 fires once the seat's
@@ -1299,7 +1357,7 @@ stops boarding.
   four stalls. The bot taps use until the server lets it out; a tank holds
   its driver for 1.5 s after the entry (`VEH_UnlinkPlayer`).
 
-### 9.5 A stock script error the riders bring out
+### 10.5 A stock script error the riders bring out
 
 INFERRED (the stock script, `pakuo01.pk3` `maps/mp/_jeepdrive_gmi.gsc`
 435-470): `process_deactivate`, run on each rider's exit, starts a 90 s
@@ -1310,7 +1368,7 @@ or with a rider in it (the death's unlink is his exit, coduo-vehicles.md
 entity. vcod's VM reports it as a script error; the `bas` gates in
 `tests/bots.rs` leave that line out, as they do `BaseAssault_bomb_think`'s.
 
-### 9.6 Measured
+### 10.6 Measured
 
 `cargo run --release -p vcod-server --example bot_vehicles [seed...]`
 with `COD_DIR` at a UO install plays one game with `vc_bot_vehicles 0` and
