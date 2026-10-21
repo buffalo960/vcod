@@ -53,6 +53,7 @@ const SLAB: &str = "tests/fixtures/movers/mp_harbor-dm-turnedslab.txt";
 const PROBE_SLAB: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_turnedslab.gsc");
 const TILT: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab.txt";
+const TILT_RIDE: &str = "tests/fixtures/movers/mp_harbor-dm-tiltslab-ride.txt";
 const PROBE_TILT: &str =
     include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_tiltslab.gsc");
 const PROBE_CRUSH: &str =
@@ -66,22 +67,6 @@ const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
 
 /// The `PROBE g` print's ten-thousandth plus the carry's float error.
 const PRECISE_TOL: f32 = 0.0003;
-
-/// `probe_tiltslab`'s `PROBE g` print, six digits, and the 0.003 a rest
-/// on a tilted face sits off retail's along its normal.
-const TILT_TOL: f32 = 0.005;
-
-/// How far a rest on `probe_tiltslab`'s tilted faces sits along them from
-/// retail's: with retail's cmds replayed, the same 0.003 as [`TILT_TOL`]
-/// off the face, carried down it over the slide (cod11-movers.md 22).
-const TILT_SLIDE: f32 = 0.015;
-
-/// `probe_tiltslab`'s two tilted faces off C: the upward normal and a point
-/// on the face (the probe's header).
-const TILT_PLANES: &[(&str, [f32; 3], [f32; 3])] = &[
-    ("slope", [-0.5, 0.0, 0.866_025_4], [-1.0, 0.0, 28.732_05]),
-    ("roll", [0.0, -0.5, 0.866_025_4], [0.0, -14.0, 74.248_71]),
-];
 
 /// The most `G_BounceItem` lifts a landing item off its floor:
 /// `0.5 + 0.5 * rand() * -2^-31` (items doc 14.2).
@@ -248,6 +233,12 @@ fn ours_slab() -> Option<&'static Ours> {
 fn ours_tilt() -> Option<&'static Ours> {
     static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
     RUN.get_or_init(|| run_ours("mp_harbor", "probe_tiltslab", PROBE_TILT, TILT, true))
+        .as_ref()
+}
+
+fn ours_tilt_ride() -> Option<&'static Ours> {
+    static RUN: std::sync::OnceLock<Option<Ours>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| run_ours("mp_harbor", "probe_tiltslab", PROBE_TILT, TILT_RIDE, true))
         .as_ref()
 }
 
@@ -721,13 +712,24 @@ fn tilt_rows<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<(String, [f32; 3],
         .collect()
 }
 
-#[test]
-fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
-    let Some(Ours { log, .. }) = ours_tilt() else {
+/// Every `probe_tiltslab` row of `fixture` against ours' run of it, to
+/// the print's ten-thousandth.
+fn tilt_matches(fixture: &str, ours: Option<&'static Ours>) {
+    let Some(Ours { log, .. }) = ours else {
         eprintln!("COD_DIR unset or has no main/: skipping");
         return;
     };
-    let retail = tilt_rows(std::fs::read_to_string(TILT).unwrap().lines());
+    let text = std::fs::read_to_string(fixture).unwrap();
+    // The pose's last bits, where the capture prints them.
+    let poses = |it: &mut dyn Iterator<Item = &str>| -> Vec<String> {
+        it.filter_map(|l| l.find("PROBE r ").map(|i| l[i..].trim_end().to_string()))
+            .collect()
+    };
+    let retail_poses = poses(&mut text.lines());
+    if !retail_poses.is_empty() {
+        assert_eq!(poses(&mut log.iter().map(String::as_str)), retail_poses);
+    }
+    let retail = tilt_rows(text.lines());
     let ours = tilt_rows(log.iter().map(String::as_str));
     if report() {
         for (r, o) in retail.iter().zip(&ours) {
@@ -735,48 +737,36 @@ fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
         }
     }
     assert_eq!(ours.len(), retail.len(), "row count");
-    let mut bad = Vec::new();
-    for (r, o) in retail.iter().zip(&ours) {
-        assert_eq!(r.0, o.0, "pose order");
-        if r.2 != o.2 {
-            bad.push(format!("ground: retail {r:?}\nours   {o:?}"));
-            continue;
-        }
-        // With retail's cmds replayed every fall lands on retail's frame
-        // and place, to the print's ten-thousandth.
-        let tilted = TILT_PLANES.iter().find(|p| p.0 == r.0);
-        let off = match tilted.filter(|_| r.2) {
-            // At rest on a tilted face: the lower sphere's distance from it,
-            // and how far the landing slid down it.
-            Some(&(_, n, p)) => {
-                let d = |v: [f32; 3]| {
-                    (0..3)
-                        .map(|i| n[i] * (v[i] - p[i] + if i == 2 { 15.0 } else { 0.0 }))
-                        .sum::<f32>()
-                };
-                let slide = diff(r.1, o.1);
-                if slide > TILT_SLIDE {
-                    bad.push(format!("slid {slide}: retail {r:?}\nours   {o:?}"));
-                }
-                (d(r.1) - d(o.1)).abs()
-            }
-            None => diff(r.1, o.1),
-        };
-        let tol = if tilted.is_some() && r.2 {
-            TILT_TOL
-        } else {
-            PRECISE_TOL
-        };
-        if off > tol {
-            bad.push(format!("off {off}: retail {r:?}\nours   {o:?}"));
-        }
-    }
+    let bad: Vec<String> = retail
+        .iter()
+        .zip(&ours)
+        .filter(|(r, o)| {
+            assert_eq!(r.0, o.0, "pose order");
+            r.2 != o.2 || diff(r.1, o.1) > PRECISE_TOL
+        })
+        .map(|(r, o)| format!("retail {r:?}\nours   {o:?}"))
+        .collect();
     assert!(
         bad.is_empty(),
         "{} rows differ:\n{}",
         bad.len(),
         bad.join("\n")
     );
+}
+
+/// With retail's cmds replayed every fall lands on retail's frame and
+/// place, and every rest on the tilted faces slides as far: the pose is the
+/// quantized `r.currentAngles` `Reached_ScriptMover` leaves (movers doc 22).
+#[test]
+fn a_capsule_lands_on_a_pitched_and_a_rolled_submodel_like_retail() {
+    tilt_matches(TILT, ours_tilt());
+}
+
+/// The same probe's second capture, whose `PROBE r` lines show the pose's
+/// quantized angles.
+#[test]
+fn a_capsule_lands_on_a_tilted_submodel_like_retail_again() {
+    tilt_matches(TILT_RIDE, ours_tilt_ride());
 }
 
 #[test]

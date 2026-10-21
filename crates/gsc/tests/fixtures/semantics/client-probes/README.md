@@ -2019,7 +2019,9 @@ A player's capsule against a pitched and a rolled submodel, for
 `docs/research/cod11-movers.md` 22. The same `bel` slab is laid in four
 poses over the same floor: pitched 90 (lying flat), rolled 90 (on its
 side), pitched 60 and rolled -60 (a 30-degree face). In each the player is
-stood at z 110 over it and falls onto its upward face. A `PROBE f` and a
+stood at z 110 over it and falls onto its upward face. A `PROBE r` line
+per pose (the slab's origin and angles less their targets, in
+ten-thousandths and millionths of a degree), then a `PROBE f` and a
 `PROBE g` line per frame.
 
 ```
@@ -2029,10 +2031,11 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=33882 SECS=45 \
 cargo run -p vcod -- --net-probe 127.0.0.1:33882 --probe-team allies --probe-ride --probe-secs 32
 ```
 
-The 2026-10-20 run is
-`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt`, the `PROBE` lines and then the
+The 2026-10-20 runs are
+`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt` (before the
+`PROBE r` line) and `-tiltslab-ride.txt`, each the `PROBE` lines and then the
 client's `CMDS` lines (`--probe-ride` logs them);
-`crates/server/tests/worldcopy_ab.rs` replays it.
+`crates/server/tests/worldcopy_ab.rs` replays both.
 
 ## probe_moverreads
 

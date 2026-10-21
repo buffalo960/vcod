@@ -23,6 +23,12 @@
 //	PROBE vdamage <time> <amount> <mod>
 //	PROBE collision <time> <point> <normal>
 //
+//	With `probe_link` set, a script_model spawned 100 units over the struck
+//	vehicle and linked to it, its origin every frame after the `b` line
+//	(coduo-vehicles.md 12, "The think's turn"):
+//
+//	PROBE l <time> <origin x> <y> <z>
+//
 //	With `probe_victim` `stand` or `prone`, a run-over
 //	(coduo-vehicles.md 11.6, 13): client 0 is the victim, put once
 //	`probe_victim_ahead` units (default 150) ahead of the vehicle on its
@@ -158,6 +164,13 @@ watch_places()
 	fine = getcvarint("probe_fine");
 	o0 = other.origin;
 	a0 = other.angles;
+	link = undefined;
+	if (getcvarint("probe_link"))
+	{
+		link = spawn("script_model", other.origin + (0, 0, 100));
+		link linkto(other);
+		logPrint("PROBE link " + link getEntityNumber() + "\n");
+	}
 	for (;;)
 	{
 		players = getentarray("player", "classname");
@@ -178,6 +191,11 @@ watch_places()
 		{
 			logPrint("PROBE a " + gettime() + " " + veh.origin + " " + veh.angles + " " + veh.speed + "\n");
 			logPrint("PROBE b " + gettime() + " " + other.origin + " " + other.angles + " " + other.speed + "\n");
+			if (isdefined(link))
+			{
+				o = link.origin;
+				logPrint("PROBE l " + gettime() + " " + o[0] + " " + o[1] + " " + o[2] + "\n");
+			}
 			if (fine)
 			{
 				o = other.origin;
