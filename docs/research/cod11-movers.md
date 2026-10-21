@@ -2927,6 +2927,34 @@ replays the capture with its cmds; every row matches to the print's
 ten-thousandth. With `+l.z` in the sphere offset the poses rest 3.2, 6.2
 and 3.6 units higher than retail's.
 
+#### On 1.5b and United Offensive
+
+The same recipe ran on the retail 1.5b and UO 1.51b Linux servers on
+2026-10-21 (ports 34611 and 34612, a `--probe-ride` client each):
+`mp_harbor-dm-tiltslab-1.5.txt` and `mp_harbor-dm-tiltslab-uo.txt` in
+`crates/server/tests/fixtures/movers/`.
+
+VERIFIED, both captures' `PROBE r` lines match 1.1d's: `flat` and `edge`
+read 0, `slope` pitch -3662.11 and `roll` roll +3662.11. INFERRED: both
+servers' `Reached_ScriptMover` truncates `r.currentAngles` to 65536ths of
+a turn as 1.1d's does. The addresses in `cod_lnxded` 1.5b and
+`coduo_lnxded` were not looked up.
+
+VERIFIED, both captures: `flat` rests at 32.1251 (UO 32.1254) and `edge`
+at 57.1251 (UO 57.1249). On `slope` the player stays at x -15 and rests at
+z 23.1204 (UO 23.3404), where 1.1d's slides 10.1 down the face. On `roll`
+it slides 5.6 to y -25.5962, z 70.0223 (UO -25.5879, 70.0272).
+
+VERIFIED, vcod measurement: `worldcopy_ab.rs`'s
+`a_capsule_lands_on_a_tilted_submodel_like_retail_on_1_5` and `_on_uo`
+replay each capture with its cmds on ours, which runs the same clip as on
+1.1. Every row matches to the print's ten-thousandth, and the `PROBE r`
+lines match exactly. When `ModelPose::to_local` rounds each product to a
+float, 37 rows of each capture fail. INFERRED: the 1.5b and UO builds keep
+`CM_TransformedBoxTrace`'s three products on the x87 stack until the
+store, as 1.1d's does, though they store every float variable
+(`cod15-movement.md` 7).
+
 ## 23. Mover script reads: `.speed`, `.dmg`, `movegravity`, `.angles`
 
 One capture on the retail 1.1d Linux server, mp_carentan, no client,
