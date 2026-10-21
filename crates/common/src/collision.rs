@@ -204,6 +204,21 @@ pub fn cm_endpos(
     )
 }
 
+/// Where `SV_Trace` puts a trace an entity's clip cut short of the
+/// world's, over the end point the entity's clip left: `start + fraction *
+/// (end - start)` off the unshifted points, each component rounded once.
+/// 1.1d keeps the delta on the x87 stack (`cod_lnxded` 0x8091a06..
+/// 0x8091a51); 1.5b and UO store it as a float (1.5b 0x809a45f..0x809a4d4,
+/// UO `coduo_lnxded` 0x809b457..0x809b4cc). Movers doc 22, "On 1.5b and
+/// United Offensive".
+fn sv_trace_endpos(start: Vec3, end: Vec3, fraction: f32, arith: Arith) -> Vec3 {
+    let f = f64::from(fraction);
+    Vec3::from(std::array::from_fn::<f32, 3, _>(|i| {
+        let delta = arith.gcc_var(f64::from(end[i]) - f64::from(start[i]));
+        (f64::from(start[i]) + delta * f) as f32
+    }))
+}
+
 /// How far outside an edge plane the static-model clip still counts a
 /// crossing as inside the triangle (`cod_lnxded` rodata 0x80db974 and
 /// 0x80db978: -0.001 and 1.001).
@@ -2583,6 +2598,7 @@ impl CollisionWorld {
             },
             &mut trace,
         );
+        let world_fraction = trace.fraction;
         self.trace_posed(
             start,
             end,
@@ -2608,7 +2624,12 @@ impl CollisionWorld {
             skip_copy,
             &mut trace,
         );
-        trace.endpos = cm_endpos(start, end, mins, maxs, trace.fraction, self.arith());
+        let arith = self.arith();
+        trace.endpos = if arith != Arith::Msvc && trace.fraction < world_fraction {
+            sv_trace_endpos(start, end, trace.fraction, arith)
+        } else {
+            cm_endpos(start, end, mins, maxs, trace.fraction, arith)
+        };
         trace
     }
 

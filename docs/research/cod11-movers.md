@@ -2605,11 +2605,29 @@ the ten-thousandth) matches on both. The float order vcod kept before,
 `pusher + R * (point - pusher)`, missed 169 rows on 1.5b and 127 on UO.
 
 VERIFIED, the same UO capture: the health pack on the turning copy lands a
-second time at yaw 10.5 (16100, lifted -15.69 to -14.83) where ours rests
-on, so ours' pack falls off the copy's slope a frame early (`yaw45` frame 13
-against retail's 14) and stays off retail's from there. 1.5b's pack
-matches. Not read: UO's `G_RunItem` ground test on a rotating mover;
-`worldcopy_ab`'s `PACK_GAPS_UO` names the rows.
+second time at yaw 10.5 (sample 16000 at -15.69, sample 16100 at -14.83,
+a lift of 0.86 off a floor at -15.69).
+
+INFERRED, UO `game.mp.uo.i386.so` `G_RunItem` (0x56876) and 1.5b's
+(0x4d63d), off the decompiled control flow: the same as 1.1d's. A ground
+of `ENTITYNUM_NONE` (`+0x7c` 0x3ff) turns `s.pos` to `TR_GRAVITY` at
+`level.time`, a stationary `s.pos` only thinks, and the sweep's mask is
+`clipmask` or 0x491. UO's `G_TryPushingEntity` (0x605e5) tests the carried
+spot, the jitter, then the item's own spot (`G_TestEntityPosition` 0x60378
+at `r.currentOrigin`, one zero-length `trap_Trace`); a clear own spot sets
+the ground to 0x3ff. `G_MoverPush` (static, 0x60c1b) relinks an `eType` 3
+that fits nowhere and goes on, its ground untouched. vcod's `fit_item` and
+`place_pushed` follow that order.
+
+VERIFIED, vcod measurement: the difference was `worldcopy_ab`'s, not the
+server's. The harness lifted ours' pack to retail's rest after the landing
+frame, so that frame's push (the copy is entity 171, after the pack's 170)
+tested the pack's own spot 0.93 low, inside the turned slope, and left its
+ground on the copy. With retail's lift drawn inside the landing (a second
+pass carries a lift a mover's step corrected after the frame) ours' own
+spot is clear on that frame, as retail's was: the pack drops, lands again
+at 16050 with 0.86 and leaves the slope on retail's frame. Every row of
+`-worldcopy3-uo.txt` matches with no gap, and 1.5b's and 1.1d's still do.
 
 ### The turned centre
 
@@ -2950,10 +2968,67 @@ VERIFIED, vcod measurement: `worldcopy_ab.rs`'s
 replay each capture with its cmds on ours, which runs the same clip as on
 1.1. Every row matches to the print's ten-thousandth, and the `PROBE r`
 lines match exactly. When `ModelPose::to_local` rounds each product to a
-float, 37 rows of each capture fail. INFERRED: the 1.5b and UO builds keep
-`CM_TransformedBoxTrace`'s three products on the x87 stack until the
-store, as 1.1d's does, though they store every float variable
-(`cod15-movement.md` 7).
+float, 37 rows of each capture fail. VERIFIED, the disassembly: the 1.5b
+and UO builds keep `CM_TransformedBoxTrace`'s three products on the x87
+stack until the store, as 1.1d's does, though they store every float
+variable (`cod15-movement.md` 7): `RotatePoint` (UO `coduo_lnxded`
+0x8057b18, 1.5b 0x8057ce4) sums each dot on the stack and stores it once.
+
+**The turn's axis.** VERIFIED, the disassembly: `CM_TransformedBoxTrace`
+(1.5b 0x805b366, UO 0x805b19a) builds its matrix through
+`CreateRotationMatrix` (1.5b 0x8057df6, UO 0x8057c2a: `AngleVectors`,
+then `VectorInverse` on the right), and that `AngleVectors` (1.5b
+0x806759d, UO 0x80674ad) is 1.1d's 0x8063388 instruction for instruction
+in its rounding: each angle times the double at 1.5b 0x80d7fb8 / UO
+0x80dd7f8, bytes `39 9d 52 a2 46 df 91 3f` (the same double `M_PI * 2 /
+360` and `M_PI / 180` both give), stored as a float; `fsincos` on that
+float with both results stored (1.5b 0x806b570, UO 0x806b4de); the -1.0
+of the right a float constant (1.5b 0x80d7fc0, UO 0x80dd800); each
+component's products and sum on the stack and stored once.
+`x87::angles_to_axis` is that arithmetic on all three servers.
+INFERRED, off vcod's code: `combat::angles_to_axis_stored`, the body
+frame's port of the same `AngleVectors`, rounds alike.
+
+**The rolled ramp.** The `probe_rollramp` recipe above ran on the retail
+1.5b and UO 1.51b Linux servers on 2026-10-21 (ports 34661 and 34662, a
+`--probe-ride` client each, `COD_DIR` the UO install whose `main/` is
+1.5's): `mp_depot-dm-rollramp-1.5.txt` and `mp_depot-dm-rollramp-uo.txt`.
+VERIFIED, both captures' `PROBE r` lines match 1.1d's. VERIFIED, the
+rests: `down` at (0, -2.32526, 13.7258) on 1.5b and (0, -2.63382,
+13.8009) on UO, `steep` at (0, 4.6915, 9.96) and (0, 4.71423, 9.94756),
+`turned` at (-1.24976, -0.795105, 12.5732) and (-0.898438, -0.59256,
+12.7295); how far each slides is its cmd split's.
+
+**The end point of a trace an entity cut short.** VERIFIED, vcod
+measurement: before this fix ours missed 63 rows of the 1.5b capture
+(`down` from its third frame on ground, 0.0043 short, and `turned`, 0.005)
+and 31 of UO's (`steep`, 0.014). VERIFIED, gdb on two more 1.5b runs of
+the probe (2026-10-21, ports 34663 and 34664; dprintfs on `PmoveSingle`,
+`PM_ClipVelocity` and the return of 0x805b366): every
+`CM_TransformedBoxTrace` returned the fraction and normal ours did, to the
+bit, but the origin after the landing cmd sat a few ulps off retail's, and
+a few cmds later one of ours' slide traces met the ramp again where
+retail's ran clear, so ours nudged the velocity off the face (`PM_SlideMove`'s
+same-plane nudge) and slid 0.004-0.011 further.
+
+VERIFIED, `SV_Trace` (1.5b 0x8099fd1, UO the same body at 0x809b445 on,
+1.1d 0x80916f4): the world trace runs first (`CM_BoxTrace` on the trace's
+own start, end and bounds), then the entities' clip on the box centred
+(`start + mid`, `end + mid`, the half extents either side). When the
+entities' fraction is below the world's (1.5b 0x809a44d `ja`, 1.1d
+0x80919f9 `fcoms` with `ah & 0x45 == 1`), the end point is set again off
+the unshifted points: `start + (end - start) * fraction`, each delta
+stored as a float on 1.5b (0x809a469, 0x809a47c, 0x809a48f) and UO
+(0x809b461 on), kept on the stack on 1.1d (`fsub` then `fsts`, the stack
+copy used, 0x8091a10..0x8091a28), each component rounded once. The world
+trace's end point is `CM_BoxTrace`'s (`collision::cm_endpos`), whose delta
+runs between the shifted points. vcod: `CollisionWorld::trace` takes
+`sv_trace_endpos` when a posed model, a world copy or a model instance
+lowered the world's fraction. VERIFIED, vcod measurement: with it every
+row of both new captures and of both gdb runs matches, and the 1.1d gates
+in `worldcopy_ab.rs` still match. `worldcopy_ab.rs`'s
+`a_capsule_lands_on_a_rolled_submodels_non_axial_side_like_retail_on_1_5`
+and `_on_uo` replay the captures.
 
 ## 23. Mover script reads: `.speed`, `.dmg`, `movegravity`, `.angles`
 
