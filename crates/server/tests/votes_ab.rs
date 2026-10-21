@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::protocol::{PROTOCOL_V1, PROTOCOL_V6, Protocol};
-use vcod_common::net::{NetClient, NetEvent, Userinfo};
+use vcod_common::net::{NetClient, NetEvent, NetState, Userinfo};
 
 const NAMES: [&str; 3] = ["Able", "Baker", "Charlie"];
 const PICKS: [(&str, &str); 3] = [
@@ -131,7 +131,18 @@ fn run(fixture: &str, proto: &'static Protocol, cvars: &[(&str, &str)], order: [
                 }
             }
         }
-        for &i in &order[..live] {
+        // Once all three are in and until the pair has joined, the packets
+        // go in the reverse of `order`, so the clients answer and spawn in
+        // `order` (`common::join_pair_stamped`). After that the packets
+        // keep `order`, so two clients' votes in one frame arrive in it, and
+        // the clients a vote's restart sends back through the menus spawn
+        // in the reverse, which no compared line reads (with every frame
+        // reversed the lines are the same).
+        let mut packets: Vec<usize> = order[..live].to_vec();
+        if joined.is_none() && cl.iter().all(|c| c.state() == NetState::Active) {
+            packets.reverse();
+        }
+        for i in packets {
             cl[i].send_frame(&vcod_common::net::msg::NULL_USERCMD);
             let pending: Vec<Vec<u8>> = queues[i].borrow_mut().to_server.drain(..).collect();
             for p in pending {
