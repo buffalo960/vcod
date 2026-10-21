@@ -3244,7 +3244,16 @@ impl Follower {
             return None;
         }
         let foot = g.nodes[self.path[self.next - 1] as usize];
-        ((foot.z - at[2]).abs() < vcod_common::pmove::STEPSIZE).then_some(foot.into())
+        let rise = at[2] - foot.z;
+        if rise.abs() >= vcod_common::pmove::STEPSIZE {
+            return None;
+        }
+        // Stepped up off the foot's floor on the way to the top, it waits
+        // where it stands: the walk jumped from up there too, and one sent
+        // back down off mp_cassino's ledge at (3667, -1240, 128) jumped
+        // again from the foot 53 under the top, into the penalty, and
+        // back for good (bot-navigation.md "Jumps").
+        Some(if rise > ARRIVE { at } else { foot.into() })
     }
 
     /// Where a walked-out point goal is headed: the point, or the
@@ -6766,6 +6775,30 @@ mod tests {
         ps.jump_penalty = false;
         assert_eq!(f.jump_wait(&g, at, &ps), None, "ready");
         assert!(ready_to_leap(&ps));
+    }
+
+    /// A body that stepped up off a jump edge's foot onto a ledge under the
+    /// top waits out the penalty there, where the walk jumped from: sent
+    /// back down off mp_cassino's ledge at (3667, -1240, 128) it jumped
+    /// from the foot 53 under the top and came back for good (seed 17).
+    #[test]
+    fn a_jump_edge_is_waited_on_from_a_ledge_above_its_foot() {
+        let (foot, top) = (Vec3::ZERO, Vec3::new(48.0, 0.0, 53.0));
+        let mut g = NavGraph::from_parts(vec![foot, top], vec![vec![1], vec![]]);
+        g.jumps.insert((0, 1));
+        let f = Follower {
+            path: vec![0, 1],
+            next: 1,
+            ..Follower::default()
+        };
+        let mut ps = PlayerState::spawn(Vec3::new(18.0, 0.0, 16.7), 0.0);
+        ps.rules = MoveRules::Uo;
+        ps.on_ground = true;
+        ps.jump_penalty = true;
+        let at: [f32; 3] = ps.origin.into();
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(at));
+        let at = [-4.0, 0.0, 2.0];
+        assert_eq!(f.jump_wait(&g, at, &ps), Some(foot.into()));
     }
 
     /// The sprint's room runs along a straight, level line of plain edges
