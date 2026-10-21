@@ -1,13 +1,17 @@
 //! A vehicle's guns firing (docs/research/coduo-vehicles.md 13):
-//! `CMD_VEH_FireTurret` (game.mp.uo 0x7ee02), `CMD_VEH_FireAltTurret`
-//! (0x7f57e) and `G_VEH_FireGunner` (0x7fc7a). The host aims the round off
+//! `CMD_VEH_FireTurret` (game.mp.uo 0x8ee02), `CMD_VEH_FireAltTurret`
+//! (0x8f57e) and `G_VEH_FireGunner` (0x8fc7a). The host aims the round off
 //! the posed vehicle; the server traces it against the bodies and hands the
 //! result back to [`landed`].
 
+use super::physics::angle_subtract;
 use super::{Gun, seat};
+use crate::game::builtins::math::vectoangles;
+use crate::game::combat::{UO_BULLET_RANGE, gun_random, rocket_dir, spread_point};
 use crate::game::host::GameHost;
 use glam::{Quat, Vec3};
 use vcod_common::net::event_ids::{EV_FIRE_WEAPON, EV_FIRE_WEAPONB, EV_UO_FIRE_WEAPONC};
+use vcod_common::patch::Arith;
 use vcod_gsc::{Cx, EntId};
 
 /// The driver's aim point reaches this far along the view (0x86c57).
@@ -16,10 +20,10 @@ const AIM_REACH: f32 = 10240.0;
 /// 0x2000, so no vehicle's hull or body stops the aim.
 const AIM_MASK: u32 = 0x2091;
 /// A turret round bends toward the driver's aim point by at most this much
-/// pitch and yaw off the barrel (0x7ee02).
+/// pitch and yaw off the barrel (0x8ee02).
 const NUDGE_PITCH: f32 = 5.0;
 const NUDGE_YAW: f32 = 2.0;
-/// The main gun jolts the hull this hard (0x7ee02).
+/// The main gun jolts the hull this hard (0x8ee02).
 const MAIN_JOLT: f32 = 0.75;
 /// The MG loops' hold after each round (`rec+0x2e4`, `0x2f0`).
 const LOOP_HOLD_MS: i32 = 200;
@@ -38,8 +42,11 @@ pub struct Shot {
     pub attacker: usize,
     pub weapon: usize,
     pub muzzle: Vec3,
-    /// The direction, spread already in.
+    /// A shell's launch direction; a bullet's forward, before its spread.
     pub dir: Vec3,
+    /// Where a bullet's round ends, spread in (`BG_Bullet_Endpos`); a
+    /// shell's muzzle.
+    pub end: Vec3,
     pub damage: i32,
     pub rifle_bullet: bool,
     /// A projectile weapon's shell rather than a bullet.
@@ -48,21 +55,23 @@ pub struct Shot {
     pub barrel: Vec3,
 }
 
-fn angles_of(v: Vec3) -> [f32; 3] {
-    let yaw = v.y.atan2(v.x).to_degrees();
-    let pitch = (-v.z).atan2(v.x.hypot(v.y)).to_degrees();
-    [pitch, yaw, 0.0]
-}
-
-fn sub180(a: f32) -> f32 {
-    let mut a = a % 360.0;
-    if a > 180.0 {
-        a -= 360.0;
-    }
-    if a < -180.0 {
-        a += 360.0;
-    }
-    a
+/// The bend toward the driver's aim point as the fire calls run it
+/// (`CMD_VEH_FireTurret` 0x8f0fe..0x8f2ae, the alt gun's alike):
+/// `aim - muzzle` stored and `VectorNormalize`d, both directions through
+/// `vectoangles`, their `AnglesSubtract` clamped to `NUDGE_PITCH` and
+/// `NUDGE_YAW`, the barrel's angles less that through `AnglesSubtract`
+/// again (roll 0), and `AngleVectors`' forward of the result.
+fn bend(barrel: Vec3, muzzle: Vec3, aim: [f32; 3]) -> Vec3 {
+    let want = vcod_common::x87::normalize_stored(Vec3::from(aim) - muzzle);
+    let have = vectoangles(barrel.to_array());
+    let want = vectoangles(want.to_array());
+    let dp = angle_subtract(have[0], want[0]).clamp(-NUDGE_PITCH, NUDGE_PITCH);
+    let dy = angle_subtract(have[1], want[1]).clamp(-NUDGE_YAW, NUDGE_YAW);
+    Vec3::from(crate::game::spawn::angle_forward([
+        angle_subtract(have[0], dp),
+        angle_subtract(have[1], dy),
+        0.0,
+    ]))
 }
 
 /// What the driver's reader leaves for the guns.
@@ -158,15 +167,7 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
         && !barrel_blocked
         && let Some(aim) = aim_point
     {
-        let want = angles_of((Vec3::from(aim) - muzzle).normalize_or_zero());
-        let have = angles_of(dir);
-        let dp = sub180(have[0] - want[0]).clamp(-NUDGE_PITCH, NUDGE_PITCH);
-        let dy = sub180(have[1] - want[1]).clamp(-NUDGE_YAW, NUDGE_YAW);
-        dir = Vec3::from(crate::game::spawn::angle_forward([
-            have[0] - dp,
-            have[1] - dy,
-            0.0,
-        ]));
+        dir = bend(dir, muzzle, aim);
     }
     let barrel_tag = posed.tag("tag_barrel");
     let barrel = barrel_tag.map_or(dir, |(_, r)| r * Vec3::X);
@@ -180,18 +181,24 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
         _ => muzzle,
     };
     let projectile = def.weapon_type == "projectile";
-    if !projectile {
-        // `minSpread + rand * maxSpread` degrees (sic).
+    // Both arms get the flash tag's frame with the bent forward: its left
+    // (`axis[1]`) as the spread's right, its up, then the muzzle.
+    let frame = [dir, rot * Vec3::Y, rot * Vec3::Z];
+    let (dir, end) = if projectile {
+        // `Weapon_Artillery_Fire(vehicle, 0, frame)` (0x7b594): the rocket's
+        // spread point 16 out at spread 0, `gunrandom` drawn all the same,
+        // then normalized; `fire_rocket` normalizes it again.
+        let draw = gun_random(&mut host.rng);
+        (rocket_dir(&frame, 0.0, draw, Arith::Stored), muzzle)
+    } else {
+        // `minSpread + rand * maxSpread` degrees (sic) into `Bullet_Fire`'s
+        // `BG_Bullet_Endpos`.
         let (lo, hi) = (def.min_spread.unwrap_or(0.0), def.max_spread.unwrap_or(0.0));
         let spread = lo + host.rand_unit() * hi;
-        let r = spread.to_radians().tan();
-        let angle = host.rand_unit() * std::f32::consts::TAU;
-        let radius = host.rand_unit();
-        let right = rot * Vec3::NEG_Y;
-        let up = rot * Vec3::Z;
-        dir = (dir + right * (radius * angle.cos() * r) + up * (radius * angle.sin() * r))
-            .normalize_or_zero();
-    }
+        let draw = gun_random(&mut host.rng);
+        let end = spread_point(&frame, muzzle, spread, UO_BULLET_RANGE, draw, Arith::Stored);
+        (dir, end)
+    };
     Some(Shot {
         vehicle: id,
         gun,
@@ -199,6 +206,7 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
         weapon,
         muzzle,
         dir,
+        end,
         damage: def.damage,
         rifle_bullet: def.sounds.rifle_bullet,
         projectile,
@@ -246,5 +254,62 @@ pub fn landed(host: &mut GameHost, shot: &Shot, struck_player: bool) {
     };
     if let Some(e) = host.ents.get_mut(shot.vehicle) {
         e.events.add(event, parm);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// mp_kharkov's Panzer IV under `probe_vehicle_shell`, read under gdb
+    /// on retail UO 1.51b (coduo-vehicles.md 13, "The shell's bits"): the
+    /// flash tag's forward and origin, the driver's aim point, the bend's
+    /// angles, the bent forward, `Weapon_Artillery_Fire`'s spread point 16
+    /// out for each of the three shells' `gunrandom` pairs, and the
+    /// `trDelta` `fire_rocket` truncates at 10000.
+    #[test]
+    fn a_uo_tank_shell_leaves_on_retails_bits() {
+        let v = |h: [u32; 3]| Vec3::from_array(h.map(f32::from_bits));
+        let bits = |v: Vec3| v.to_array().map(f32::to_bits);
+        let barrel = v([0xbf78dce3, 0xbdc941b0, 0xbe5a0188]);
+        let left = v([0x3e49d831, 0x3e18d830, 0xbf780d35]);
+        let up = v([0x3e020b47, 0xbf7be108, 0xbe00bf80]);
+        let muzzle = v([0xc4aef53e, 0x45c1ad08, 0x40e2db6a]);
+        let aim = v([0xc4b81b42, 0x45c18e96, 0xc27985ae]).to_array();
+
+        let want = vcod_common::x87::normalize_stored(Vec3::from(aim) - muzzle);
+        assert_eq!(bits(want), [0xbf398ad8, 0xbd1a5de2, 0xbf301dc5]);
+        let have = vectoangles(barrel.to_array());
+        let want = vectoangles(want.to_array());
+        assert_eq!(have.map(f32::to_bits), [0x4144aca2, 0x4339c5b6, 0]);
+        assert_eq!(want.map(f32::to_bits), [0x422ddfa1, 0x4336fa03, 0]);
+        let sub = [
+            angle_subtract(have[0], want[0]),
+            angle_subtract(have[1], want[1]),
+        ];
+        assert_eq!(sub.map(f32::to_bits), [0xc1f968f1, 0x4032ecc0]);
+
+        // Clamped to (-5, 2) and taken off the barrel's angles: the yaw
+        // wraps to -176.2.
+        let fwd = bend(barrel, muzzle, aim);
+        assert_eq!(bits(fwd), [0xbf73e64d, 0xbd80a6b4, 0xbe98305e]);
+
+        let frame = [fwd, left, up];
+        for draw in [
+            [0x3df487c8, 0x3f5a556d],
+            [0xbe941d87, 0x3eeec3b0],
+            [0x3eb95d37, 0xbeaeb1e1],
+        ] {
+            let draw = (f32::from_bits(draw[0]), f32::from_bits(draw[1]));
+            let pre = spread_point(&frame, Vec3::ZERO, 0.0, 16.0, draw, Arith::Stored);
+            assert_eq!(bits(pre), [0xc173e64d, 0xbf80a6b4, 0xc098305e]);
+            let dir = rocket_dir(&frame, 0.0, draw, Arith::Stored);
+            assert_eq!(bits(dir), bits(fwd));
+            let dir = crate::game::missile::rocket_launch_dir(dir, true);
+            assert_eq!(
+                bits((dir * 10000.0).trunc()),
+                [0xc614dc00, 0xc41d0000, 0xc539c000]
+            );
+        }
     }
 }

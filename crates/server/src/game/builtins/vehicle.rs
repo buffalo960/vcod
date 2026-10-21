@@ -332,8 +332,8 @@ fn clear_turret_target(
 }
 
 /// The three fire methods queue the shot for the server, which traces it
-/// against the bodies (`CMD_VEH_FireTurret` 0x7ee02, `CMD_VEH_FireAltTurret`
-/// 0x7f57e, `G_VEH_FireGunner` 0x7fc7a).
+/// against the bodies (`CMD_VEH_FireTurret` 0x8ee02, `CMD_VEH_FireAltTurret`
+/// 0x8f57e, `G_VEH_FireGunner` 0x8fc7a).
 fn fire(
     host: &mut GameHost,
     cx: &mut Cx,
