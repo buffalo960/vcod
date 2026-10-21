@@ -221,3 +221,38 @@ fn no_stock_vehicle_takes_the_stuck_kill_at_the_start() {
     assert!(seen > 0, "no vehicle logged");
     assert!(dead.is_empty(), "{dead:?}");
 }
+
+/// Stock `_jeepdrive_gmi::process_deactivate`'s self-destruct timer on a
+/// jeep destroyed and deleted while it waits: the free ends the thread,
+/// whose `self` it is, so the timer's `dodamage` never runs on the dead
+/// entity (bot-objectives.md 10.5, `probe_stale_self`). Retail's lines
+/// under `client-probes/probe_jeepdeact`, no client joined.
+#[test]
+fn a_deleted_jeeps_self_destruct_timer_ends_with_it() {
+    let Some(fs) = vcod_common::testing::uo_fs() else {
+        return;
+    };
+    let map = "mp_foy";
+    let probe = "probe_jeepdeact";
+    let fixture = include_str!("fixtures/vehicles/mp_foy-jeep-deactivate-uo.txt");
+    let retail: Vec<&str> = fixture.lines().filter(|l| l.starts_with("PROBE")).collect();
+    let src = format!("../gsc/tests/fixtures/semantics/client-probes/{probe}.gsc");
+    let gsc = std::fs::read_to_string(src).expect("read the probe");
+    let bsp_path = fs.resolve_map(map).expect("the map in the UO paks");
+    let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
+    let mut now = Instant::now();
+    let mut sv = vcod_server::Server::new(common::cfg(map, probe), now);
+    sv.set_protocol(&PROTOCOL_V22);
+    sv.overlay_script(&format!("maps/mp/gametypes/{probe}"), &gsc);
+    sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    sv.load_scripts(Rc::new(fs)).expect("load the scripts");
+    common::run_alone(&mut sv, &mut now, 25_000);
+    let log = sv.script_log();
+    let ours: Vec<&str> = log
+        .iter()
+        .map(|l| l.trim_end())
+        .filter(|l| l.starts_with("PROBE"))
+        .collect();
+    assert_eq!(ours, retail);
+    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+}

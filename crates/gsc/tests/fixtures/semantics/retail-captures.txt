@@ -576,6 +576,13 @@ PROBE_FATAL dead entity is not an object
 PROBE at stale_hud_write
 PROBE_FATAL dead entity is not an object
 
+# probe_stale_self
+PROBE stale_self_holder_woke 0
+PROBE stale_self_after
+
+# probe_stale_self_hud
+PROBE stale_self_hud_after
+
 # probe_string_index
 PROBE at string_index
 PROBE string_index b 1 4

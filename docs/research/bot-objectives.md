@@ -1358,16 +1358,21 @@ stops boarding.
   four stalls. The bot taps use until the server lets it out; a tank holds
   its driver for 1.5 s after the entry (`VEH_UnlinkPlayer`).
 
-### 10.5 A stock script error the riders bring out
+### 10.5 The jeep self-destruct timer outlives no jeep
 
 INFERRED (the stock script, `pakuo01.pk3` `maps/mp/_jeepdrive_gmi.gsc`
 435-470): `process_deactivate`, run on each rider's exit, starts a 90 s
-self-destruct once `riding_count` is 0, ended only by `stop_self_destruct`
+self-destruct once `riding_count` is 0, ended by `stop_self_destruct`
 (a boarding, `delayed_process_activate`). A jeep destroyed in those 90 s,
 or with a rider in it (the death's unlink is his exit, coduo-vehicles.md
-11.2), is deleted, and the timer's `self dodamage` at 469 lands on a dead
-entity. vcod's VM reports it as a script error; the `bas` gates in
-`tests/bots.rs` leave that line out, as they do `BaseAssault_bomb_think`'s.
+11.2), is deleted while the timer waits. VERIFIED on UO 1.51b
+(`client-probes/probe_jeepdeact`, `crates/server/tests/fixtures/vehicles/
+mp_foy-jeep-deactivate-uo.txt`): the free ends the timer's thread, whose
+`self` the jeep is, so its `dodamage` at 469 never runs and the console
+shows no error (cod11-gsc-language.md, "Freeing an object ends every
+thread whose `self` it is"). vcod raised a dead-entity script error there
+until 2026-10-21; the `bas` gates in `tests/bots.rs` no longer leave one
+out.
 
 ### 10.6 Measured
 
