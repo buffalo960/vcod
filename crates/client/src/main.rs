@@ -1429,19 +1429,6 @@ fn main() -> Result<()> {
         (Mode::Idle, None, version_tag())
     };
 
-    println!("click to capture mouse, Esc to release");
-    if args.walk {
-        println!("WASD move, Space jump, Ctrl crouch, Z prone, Q/E lean, Shift walk");
-        println!("LMB fire, RMB aim, R reload, 1-6 weapons");
-    } else if args.connect.is_some() {
-        println!("WASD move, Space jump/stand, C crouch, Ctrl prone, Q/E lean, Shift melee, F use");
-        println!("LMB fire, RMB aim, R reload, 1-4 weapon slots, wheel next/prev weapon");
-        println!("Esc or M opens the script menu; mouse, digits, arrows + Enter pick");
-    } else if args.map.is_some() {
-        println!("WASD + Space/Ctrl fly, Shift boost, scroll changes speed");
-    }
-    println!("` opens the console");
-
     fx::registry::init(&fs);
 
     let console = console::Console::new(&fs);
