@@ -99,6 +99,10 @@ pub enum ClientEvent {
     Disconnect(usize),
 }
 
+/// The `r.maxs[2]` `player_die` writes between its unlink and link (1.1d
+/// 0x49d6d, 1.5b 0x470d5, UO 0x4fd0b; cod11-gsc-object-model.md 22.3).
+pub const PLAYER_DIE_HEIGHT: f32 = 30.0;
+
 /// One `self spawn(origin, angles)` the script performed, by client slot.
 /// The other direction from `ClientEvent`, and queued for the same reason:
 /// the client's sim lives in `Server`, which a builtin cannot reach.
@@ -779,12 +783,18 @@ impl GameHost {
         v.health = 0;
         v.dead = true;
         v.takedamage = true;
-        // `player_die` unlinks and links again with `CONTENTS_CORPSE`, so the
-        // dying player goes to its node's head (combat doc 14.7).
+        // `player_die` unlinks and links again with `CONTENTS_CORPSE` and
+        // `r.maxs[2]` 30, so the dying player goes to its node's head (combat
+        // doc 14.7) with the box `isTouching` reads until his next cmd
+        // (object-model doc 22.3).
+        self.client_height[slot] = PLAYER_DIE_HEIGHT;
         if let Some(link) = self.area.last_link(slot as u32) {
             let contents = vcod_common::movetrace::CONTENTS_CORPSE as i32;
+            let mut link = link.with_contents(contents);
+            // The link grows the box a unit each way; a player's mins z is 0.
+            link.absmax[2] = link.absmin[2] + PLAYER_DIE_HEIGHT + 2.0;
             self.area.unlink(slot as u32);
-            self.area.link(slot as u32, &link.with_contents(contents));
+            self.area.link(slot as u32, &link);
         }
     }
 

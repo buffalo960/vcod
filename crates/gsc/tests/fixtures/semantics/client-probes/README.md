@@ -2621,6 +2621,25 @@ script on any 1.1d map and blasts at it twice.
 Retail's lines are in `crates/server/tests/dmgtrig_ab.rs` (the
 belltower's, the touch walks') and `cod11-combat.md` 14.8 (the spawn).
 
+## probe_istouching
+
+`isTouching` against a standing, crouched, prone and dead player
+(`docs/research/cod11-gsc-object-model.md` 22.3): one direct-mode client
+on mp_carentan, the map's trigger_hurt swept past his box in one frame
+per face. `COD_VERSION=1.5` or `uo` (with that install as `COD_DIR` and
+the client's `--game-dir`, `--mod-dir uo` for UO) runs the same recipe.
+
+```
+COD_DIR=<1.1 install> COD_LNXDED_HOME=<absolute, no '+'> PORT=34671 SECS=40 \
+    tools/run_probe.sh client-probes/probe_istouching mp_carentan
+# 8 s later:
+cargo run -p vcod -- --net-probe 127.0.0.1:34671 --probe-team axis \
+    --probe-weapon kar98k_mp --probe-uo-weapon direct --probe-secs 30
+```
+
+Retail's logs are `crates/server/tests/fixtures/istouching/`, replayed by
+`crates/server/tests/istouching_ab.rs`.
+
 ## probe_threadorder
 
 Which order a frame runs the threads one client packet woke

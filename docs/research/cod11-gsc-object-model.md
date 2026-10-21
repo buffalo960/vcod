@@ -2062,11 +2062,43 @@ one its last cmd's pmove left, not the standing 70.
 - VERIFIED: no write to `ent+0x100..+0x11c` in `SpectatorThink` on any
   of the three, so a spectator keeps the standing box `ClientSpawn` left.
 
+- VERIFIED, 1.1d `game.mp.i386.so`: `player_die` stores `.rodata`
+  0x743f0 (30.0) into `ent+0x114`, `r.maxs[2]`, at 0x49d6d-0x49d73,
+  between its `trap_UnlinkEntity` (0x49d68) and `trap_LinkEntity`
+  (0x49d7d). 1.5b stores the immediate 0x41f00000 into `ent+0x118` at
+  0x470d5 (between the calls at 0x470cd and 0x470e5), UO into `ent+0x11c`
+  at 0x4fd0b (0x4fd03, 0x4fd1b). So a dying player is linked 30 high
+  whatever his stance, until his next cmd's think copies `pm.maxs`.
+- VERIFIED, `PM_CheckDuck`'s `pm_type > 5` arm sets `pm.maxs[2]` from the
+  playerstate's own maxs, not from the stance: 1.1d `ps+0x338` at
+  0x317f6-0x317fc, 1.5b `ps+0x338` at 0x2352c-0x23532, UO `ps+0x570` at
+  0x2807e-0x28084, after the arm's shared copy of `ps` mins and maxs x, y
+  (1.1d 0x317a7-0x317dd). INFERRED: that word is the standing 70
+  `ClientSpawn` wrote; the live rows below read 70.
+- VERIFIED live (2026-10-21, `client-probes/probe_istouching` on
+  mp_carentan, one `--probe-uo-weapon direct` client on probe_legs' floor;
+  1.1d, 1.5b and UO 1.51b logged the same lines, committed in
+  `crates/server/tests/fixtures/istouching/`): the map's trigger_hurt
+  brush, moved so its bottom face sits `v` over the player's feet,
+  reads `isTouching` both ways for `v` up to the box height inclusive,
+  70 standing, 50 crouched, 30 prone, 30 in the frame `suicide` ran
+  (crouched), 70 from the next frame on and after the dead body's keys
+  let go. Its top face touches from 0 at the feet up, its -x face out to
+  15 inclusive, in every stance and dead. A dead client still touches:
+  the contents check of 22.2 bites only on a temp box model, and the
+  client is the trace's box here.
+- VERIFIED live, same day, UO only: a client crouched and then holding
+  prone stayed crouched for 2 s (`pm_flags` 0x48002 decoded, no prone
+  bit), so a UO prone row starts from standing.
+
 vcod holds the height per client (`GameHost::client_height`, mirrored off
 the sim after each cmd and set by the `spawn` builtin's think,
-`PlayerState::box_height`) and builds `GameHost::client_box` from it;
-`trigger::touched` and `trigger::entity_contact` read that box. VERIFIED,
-read out of `crates/server/src/game/trigger.rs`.
+`ClientSim::box_height`: `PlayerState::box_height` alive, 70 once a cmd
+ran dead, `player_die`'s 30 until then, which `GameHost::die` also links
+with) and builds `GameHost::client_box` from it; `trigger::touched` and
+`trigger::entity_contact` read that box. VERIFIED, read out of
+`crates/server/src/game/trigger.rs`; `istouching_ab` replays the probe on
+all three and matches retail line for line.
 
 ## 23. The aim trace, linking, objectives and the HUD tweens
 

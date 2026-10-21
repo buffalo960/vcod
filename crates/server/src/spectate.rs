@@ -295,6 +295,9 @@ pub struct ClientSim {
     /// read, so the cmds a death lands ahead of still run the live move
     /// (`docs/research/cod11-combat.md` 9.2).
     pm_dead: bool,
+    /// `player_die`'s 30-unit `r.maxs[2]`, which holds until the next cmd's
+    /// think copies `pm.maxs` over it ([`ClientSim::box_height`]).
+    died_box: bool,
     /// The script's `sessionstate` as the frame's end frame found it;
     /// `None` with no script client behind the sim, where `dead` stands
     /// in. `ClientEndFrame` keys its arms on the session, not the health,
@@ -642,6 +645,7 @@ impl ClientSim {
             max_health: 0,
             dead: false,
             pm_dead: false,
+            died_box: false,
             session: None,
             dead_eye: false,
             damage: DamageAccum::default(),
@@ -795,6 +799,21 @@ impl ClientSim {
         }
     }
 
+    /// The height of `r.maxs`, which the touch pass and `isTouching` read:
+    /// `player_die` writes 30 (1.1d 0x49d6d, 1.5b 0x470d5, UO 0x4fd0b) until
+    /// the next cmd's think, a dead think copies `PM_CheckDuck`'s dead arm,
+    /// `ps.maxs`, the standing 70 (1.1d 0x317f6, 1.5b 0x2352c, UO 0x2807e),
+    /// and a live one the stance box (cod11-gsc-object-model.md 22.3).
+    pub fn box_height(&self) -> f32 {
+        if self.died_box {
+            crate::game::host::PLAYER_DIE_HEIGHT
+        } else if self.pm_dead {
+            pmove::HEIGHT_STAND
+        } else {
+            self.ps.box_height()
+        }
+    }
+
     /// `ps.groundEntityNum != ENTITYNUM_NONE`, which is what
     /// `PlayerCmd_isOnGround` answers off. The linked arm writes
     /// `ENTITYNUM_NONE`, so `isOnGround` is false under a link from the first
@@ -877,6 +896,7 @@ impl ClientSim {
         // respawn (combat doc, 8.4), and so does the dead yaw.
         self.dead = false;
         self.pm_dead = false;
+        self.died_box = false;
         self.dead_eye = false;
         self.damage = DamageAccum::default();
         self.feedback = DamageFeedback::default();
@@ -1120,6 +1140,7 @@ impl ClientSim {
             // view loses its pitch, a seated rider's too.
             self.view_angles = [0.0, self.view_angles[1], 0.0];
             self.ps.pitch = 0.0;
+            self.died_box = true;
             // `player_die`'s relink (combat doc 5.1 step 13): `solid` 0
             // until the next link, even for a body whose session stays
             // `playing`.
@@ -1473,6 +1494,7 @@ impl ClientSim {
         // nothing it presses reaches the mover or the weapon (combat doc,
         // 1.12 and 6, the `pm_type > 5` returns).
         if self.pm_dead {
+            self.died_box = false;
             // `pm_type` 7 takes the linked arm (`cmd::dead_step`).
             self.ps.linked = self.link_to.is_some() || self.seat.is_some() || self.unseated;
             if let Some(w) = world {
@@ -1501,6 +1523,7 @@ impl ClientSim {
         if self.pm_type == PmType::Intermission {
             return Vec::new();
         }
+        self.died_box = false;
         match (self.pm_type, world) {
             // Taken by the early return above.
             (PmType::Intermission, _) => {}
