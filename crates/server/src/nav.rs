@@ -2184,6 +2184,11 @@ impl Follower {
                     self.avoid.push((from, to, self.clock + AVOID_TICKS));
                 } else {
                     self.rest = REST_TICKS;
+                    // The nearest node may stand across a wall: an unstick
+                    // spell left a bot in mp_cassino's slot at (945, -775,
+                    // 64) pressing at a node 63 east for 7 s (seed 1, no
+                    // vehicles). The next plan starts at one it walks to.
+                    self.fell = true;
                 }
                 self.reset();
                 return None;
