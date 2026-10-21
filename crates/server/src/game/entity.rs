@@ -287,7 +287,13 @@ pub enum ThinkFn {
     /// `trigger_damage` takes no damage while it is armed
     /// (`crate::game::damage_trigger`).
     MultiWait,
+    /// `hurt_think` (1.1d 0x65b5c): re-arms 100 ms on and frees the hurt on
+    /// the spot once the level time passes the float `hurt_use` stored.
+    HurtLife(f32),
 }
+
+/// `hurt_use`'s first `nextthink`, `level.time + 50` (0x65bdd).
+pub const HURT_LIFE_FIRST_THINK_MS: i32 = 50;
 
 /// `Concussive_think`'s re-arm and the first think `G_ExplodeMissile` arms
 /// (0x54833, 0x53fa8).
@@ -711,6 +717,14 @@ impl ObjectTable {
                 if let Some(item) = e.item.as_mut() {
                     item.owner = None;
                 }
+                None
+            }
+            ThinkFn::HurtLife(end) => {
+                if end < now_ms as f32 {
+                    return Some(ThinkFn::Free);
+                }
+                e.think = Some(think);
+                e.nextthink = now_ms + CONCUSSIVE_THINK_MS;
                 None
             }
             ThinkFn::Concussive(end_ms) => {

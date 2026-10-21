@@ -2118,6 +2118,16 @@ probe_dmg 30 +set probe_drop -30`), `-hurtslow*.txt` (`+set probe_spawn 16
 probe_spawn 44 +set probe_dmg 10 +set probe_drop -30`), each with a
 `--probe-secs 12` client; `docs/research/cod11-combat.md` 5.9 reads them.
 
+`probe_use <ms>` logs every `"trigger"` on the spawned hurt and calls its
+`useBy` with the player `<ms>` and twice that after the drop; `probe_write 1`
+writes the spawned hurt's `spawnflags`, `classname` and `model`, one thread
+each. A read-only write is fatal at `developer 1`, so that run takes
+`PRE_MAP_ARGS='+set developer 0'`. The 2026-10-21 runs on all three servers
+are `mp_carentan-dm-hurtuse*.txt` (`+set probe_spawn 17 +set probe_dmg 25
++set probe_drop -30 +set probe_use 1000`) and `-hurtwrite*.txt` (`+set
+probe_spawn 17 +set probe_drop -30 +set probe_write 1`); UO's write run
+ends at the first write, where the server aborts.
+
 ## probe_linkto2
 
 `linkTo`'s second round on mp_carentan. Once an allied player has spawned it
@@ -2734,3 +2744,25 @@ Retail's lines, 2026-10-20, are
 `crates/server/tests/fixtures/missiles/mp_cassino-satchel{shot,chain}-uo.txt`
 with the snapshot pairs `*-uo-satchel{shot,chain}.bin`, which
 `uo_weapons_ab.rs` replays on ours.
+
+## probe_pronecrouch
+
+A crouch then prone press on probe_legs' flat floor, the same keys under a
+`setOrigin` hold at mp_carentan's tdm spawn (844 3480) facing 180 and 135,
+and a body let go there alive and dead (`docs/research/cod11-mantle.md`,
+"Prone under a setOrigin hold"; `cod11-combat.md` 5.7). Run it at the net
+probe's default 60 Hz cmds: the hold's outcome and the corpse's rest depend
+on the cmd split.
+
+```
+[COD_VERSION=1.5|uo] COD_DIR=<install> PORT=34715 SECS=95 \
+    tools/run_probe.sh client-probes/probe_pronecrouch mp_carentan
+# second shell, 6 s later:
+vcod --net-probe 127.0.0.1:34715 --game-dir <install> [--mod-dir uo] --probe-team allies \
+    --probe-weapon m1carbine_mp --probe-uo-weapon direct --save-slope --slope-every-state \
+    --capture-tag pronecrouch-<server> --probe-secs 82
+```
+
+`crates/server/tests/fixtures/pronecrouch/mp_carentan-{1.1,1.5,uo}.txt` are
+the 2026-10-21 captures, cut to the fields `pronecrouch_ab.rs` reads, with
+the server's `PROBE` lines.

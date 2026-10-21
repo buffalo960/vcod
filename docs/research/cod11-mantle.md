@@ -887,6 +887,53 @@ is a user switch that, set non-zero, stops the forced-stance events from
 moving `cl_stance`, and no stock code sets it. vcod registers it with that
 default and `forced_stance` honours it.
 
+### Prone under a setOrigin hold
+
+The question came from `probe_istouching`'s first layout (2026-10-20): a
+client set by `setOrigin` every frame at (844 3480 -23.75), mp_carentan's
+tdm spawn at (844 3480 -8), crouched and then held prone. UO kept him
+crouched for the whole 2 s, and 1.1d and 1.5b laid him down.
+
+VERIFIED, retail, 2026-10-21: I reran that layout on UO 1.51b and 1.1d,
+with the same 60 Hz cmds and no `--probe-cmd-ms`. UO's snapshots flipped
+`pm_flags` between 0x48002 and 0x40002 for the whole prone hold. That is a
+refusal (Prone Blocked, above) on every other frame. The view read yaw 135,
+the angle the tdm spawn gave him. `client-probes/probe_pronecrouch` then
+held the same spot facing 180 and facing 135, on all three servers:
+
+- Facing 180, the crouch-then-prone press lies down on 1.1d, 1.5b and UO.
+- Facing 135, all three refuse it, held or standing on the ground. The
+  events read the same way: 141 from a crouch, 140 from a stand.
+  - 1.1d raises the event on every cmd.
+  - 1.5b and UO raise it on about one cmd a frame.
+
+INFERRED: a prone body facing 135 there does not fit (`BG_CheckProneValid`,
+above), so this is not a UO rule. The other servers lay him down in the
+first layout because his yaw on those runs was not 135.
+
+The hold itself (VERIFIED, same captures): the snapshots read z -22.75,
+1.125 over the ground's -23.875, because the script's `setOrigin` runs
+after the frame's cmds. Each frame's first cmd starts there and falls. 1.5b
+and UO drop a prone press silently on any cmd that starts airborne:
+UO's `PM_CheckDuck` (`game.mp.uo.i386.so` 0x27e16) compares
+`groundEntityNum` against 0x3ff at 0x28356 ahead of `BG_CheckProne`
+(0x28474) and sets 0x8000 and the event only past a second compare
+(0x284c8; VERIFIED, disassembly). 1.1d has no such compare, so it raises
+the refusal on every cmd. A prone press that fits lies down on the first
+grounded cmd on all three.
+
+On probe_legs' flat floor (932 -376 -151.875), crouch then prone lies
+down at once on all three, with `up` 0 or -127 (VERIFIED, same probe).
+
+`pronecrouch_ab` replays each capture's cmds on the side of a frame
+retail ran them on (`ProbeHold::ran`). It holds ours to every snapshot's
+`pm_flags & 3`, height and events, with no gap rows on 1.1d, 1.5b or UO,
+and it passed without any pmove change. One thing to watch: the probe's
+first `setOrigin` drop of a unit lands at -151.64139 on three of four retail
+runs and at -151.875 on the fourth, depending on how the cmds split it. A
+replay has to send the captured cmds from before the drop, so the probe
+waits 4 s before it moves the player.
+
 ### `pm_flags` 0x4000
 
 VERIFIED, `game.mp.i386.so`, its readers: `PmoveSingle` tests it at

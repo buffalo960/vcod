@@ -541,7 +541,7 @@ impl Vm {
                                 notifies,
                                 spawns: &mut field_spawns,
                             };
-                            host.set_field(&mut cx, id, name, v).map_err(err)?;
+                            host.store_field(&mut cx, id, name, v).map_err(err)?;
                             debug_assert!(
                                 field_spawns.is_empty(),
                                 "Cx::spawn is only honoured from a builtin"
@@ -662,7 +662,7 @@ impl Vm {
                                         notifies,
                                         spawns: &mut field_spawns,
                                     };
-                                    host.set_field(&mut cx, eid, name, Value::Array(id))
+                                    host.store_field(&mut cx, eid, name, Value::Array(id))
                                         .map_err(err)?;
                                     debug_assert!(
                                         field_spawns.is_empty(),
