@@ -9,6 +9,11 @@
 //! the parked tank's wheel traces end a last bit apart from think to think,
 //! as United Offensive's terrain clip rounds them.
 //!
+//! `mp_kharkov-jeep-ram-link-uo.txt` repeats the ram with a script_model
+//! linked over the tank (`probe_link`): the tank's think runs on its own
+//! turn in the entity pass, so the model, numbered after it, follows it in
+//! the same frame (coduo-vehicles.md 12, "The think's turn").
+//!
 //! `RAM_REPORT=1` prints both sides' poses, `RAM_DUMP=<path>` writes ours'
 //! PROBE lines. Needs `COD_DIR` at a UO install; without one it returns
 //! early.
@@ -31,7 +36,7 @@ const SEATED_MS: i64 = 2000;
 const AHEAD_MS: i64 = 6000;
 const STOP_MS: i64 = 3000;
 
-fn ours() -> Option<Vec<String>> {
+fn ours(extra: &[(&str, &str)]) -> Option<Vec<String>> {
     let fs = vcod_common::testing::uo_fs()?;
     let bsp_path = fs.resolve_map(MAP).expect("map in the UO paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
@@ -46,7 +51,10 @@ fn ours() -> Option<Vec<String>> {
         ("probe_vehicletype", "horch_mp"),
         ("probe_index", "1"),
         ("probe_ahead", "680"),
-    ] {
+    ]
+    .iter()
+    .chain(extra)
+    {
         sv.set_cvar(k, v);
     }
     sv.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
@@ -170,7 +178,7 @@ fn first_hit(log: &[String]) -> i32 {
 
 #[test]
 fn a_jeep_driven_into_a_tank_shoves_it_as_on_uo() {
-    let Some(log) = ours() else {
+    let Some(log) = ours(&[]) else {
         return;
     };
     let fixture = include_str!("fixtures/vehicles/mp_kharkov-jeep-ram-uo.txt");
@@ -302,4 +310,48 @@ fn second_hit(log: &[String]) -> i32 {
         .find(|w| w[1].0 > first + 100 && w[1].1 < 0.5 * w[0].1)
         .map(|w| w[1].0)
         .expect("the driver struck twice")
+}
+
+/// The linked model's `(time past the placement, origin)` per frame.
+fn link_origins(log: &[String]) -> Vec<(i32, [f32; 3])> {
+    let placed: i32 = log
+        .iter()
+        .find_map(|l| l.trim().strip_prefix("PROBE place "))
+        .and_then(|r| r.split(' ').next()?.parse().ok())
+        .expect("the driver was placed");
+    log.iter()
+        .filter_map(|l| l.trim().strip_prefix("PROBE l "))
+        .map(|l| {
+            let v: Vec<f32> = l.split(' ').map(|x| x.parse().unwrap()).collect();
+            (v[0] as i32 - placed, [v[1], v[2], v[3]])
+        })
+        .collect()
+}
+
+#[test]
+fn a_model_linked_to_a_shoved_tank_moves_on_the_tanks_frame() {
+    let Some(log) = ours(&[("probe_link", "1")]) else {
+        return;
+    };
+    let fixture = include_str!("fixtures/vehicles/mp_kharkov-jeep-ram-link-uo.txt");
+    let retail: Vec<String> = fixture.lines().map(str::to_string).collect();
+    let (rl, ol) = (link_origins(&retail), link_origins(&log));
+    let (rh, oh) = (first_hit(&retail), first_hit(&log));
+    let upto = second_hit(&retail) - rh + 1000;
+    let mut checked = 0;
+    for (t, r) in rl.iter().filter(|(t, _)| (-200..upto).contains(&(t - rh))) {
+        let at = t - rh + oh;
+        let o = ol
+            .iter()
+            .find(|p| p.0 == at)
+            .expect("ours logged the frame")
+            .1;
+        assert!(
+            (0..3).all(|i| (r[i] - o[i]).abs() < 0.02),
+            "the linked model {} ms past the first hit: retail {r:?}, ours {o:?}",
+            t - rh
+        );
+        checked += 1;
+    }
+    assert!(checked > 25, "only {checked} frames past the first hit");
 }

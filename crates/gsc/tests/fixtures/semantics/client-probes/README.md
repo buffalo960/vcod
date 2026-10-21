@@ -2019,7 +2019,9 @@ A player's capsule against a pitched and a rolled submodel, for
 `docs/research/cod11-movers.md` 22. The same `bel` slab is laid in four
 poses over the same floor: pitched 90 (lying flat), rolled 90 (on its
 side), pitched 60 and rolled -60 (a 30-degree face). In each the player is
-stood at z 110 over it and falls onto its upward face. A `PROBE f` and a
+stood at z 110 over it and falls onto its upward face. A `PROBE r` line
+per pose (the slab's origin and angles less their targets, in
+ten-thousandths and millionths of a degree), then a `PROBE f` and a
 `PROBE g` line per frame.
 
 ```
@@ -2029,10 +2031,11 @@ COD_LNXDED_HOME=<absolute, no '+'> PORT=33882 SECS=45 \
 cargo run -p vcod -- --net-probe 127.0.0.1:33882 --probe-team allies --probe-ride --probe-secs 32
 ```
 
-The 2026-10-20 run is
-`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt`, the `PROBE` lines and then the
+The 2026-10-20 runs are
+`crates/server/tests/fixtures/movers/mp_harbor-dm-tiltslab.txt` (before the
+`PROBE r` line) and `-tiltslab-ride.txt`, each the `PROBE` lines and then the
 client's `CMDS` lines (`--probe-ride` logs them);
-`crates/server/tests/worldcopy_ab.rs` replays it.
+`crates/server/tests/worldcopy_ab.rs` replays both.
 
 ## probe_moverreads
 
@@ -2073,6 +2076,27 @@ The 2026-10-20 run is
 `crates/server/tests/fixtures/movers/mp_carentan-dm-sinecrush.txt`, `PROBE`
 lines and then the client's `CMDS` lines (`--probe-ride` logs them);
 `crates/server/tests/worldcopy_ab.rs` replays it.
+
+## probe_hurtfall
+
+A `trigger_hurt` kill and the corpse's fall, for
+`docs/research/cod11-combat.md` 5.8. It lifts mp_carentan's kill slab
+(entity 72) 400 by an origin write on the first frame (`probe_lift` sets
+another lift; `probe_late_lift` moves it again at the drop), stands the
+first playing client 400 over the street at (900 1930) at 2400, and logs
+`PROBE f <time> <origin> <health> <sessionstate>` every frame, the damage
+and killed callbacks' arguments, and `PROBE done` 3 s after the kill. As
+with `probe_sinecrush`, the client has to be playing by 2.4 s of level time.
+
+```
+COD_LNXDED_HOME=<absolute, no '+'> PORT=34331 SECS=20 \
+    tools/run_probe.sh client-probes/probe_hurtfall mp_carentan &
+sleep 0.3; cargo run -p vcod -- --net-probe 127.0.0.1:34331 --probe-team allies --probe-ride --probe-secs 15
+```
+
+The 2026-10-20 runs are `crates/server/tests/fixtures/triggers/mp_carentan-dm-hurtfall.txt`
+(no `+set`), `-hurtlow.txt` (`+set probe_late_lift 203`) and `-hurtland.txt`
+(`+set probe_lift 120`); `crates/server/tests/hurtfall_ab.rs` replays them.
 
 ## probe_linkto2
 

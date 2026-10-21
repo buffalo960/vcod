@@ -64,7 +64,7 @@ instead of leaving the fact in a commit message.
 | Main menu, server browser, options screens, Start New Server, script menus in the UI | `cod11-front-end.md` |
 | Chat, quick chat | `cod11-chat.md`, `cod11-quick-chat.md` |
 | Votes: `callvote`, `vote`, `CheckVote`, the vote lines on the HUD | `cod11-votes.md` |
-| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md` |
+| Bots | `bot-navigation.md` (its Build times set the census floors), `bot-objectives.md`, `bot-combat.md` (skill levels, the `bot_match` harness) |
 | Player models, anims, formats | `player-model-anim-system.md`, `xmodel-v14-format.md`, `xanim-v14-format.md` |
 | Shader scripts, light grid, prop and entity lighting | `cod11-shader-scripts.md`, `cod11-light-grid-and-leaf-lights.md` |
 | Gamma, overbright, `r_intensity` | `cod11-gamma.md` |
@@ -127,7 +127,8 @@ check.
   ~12 s, 60 s of CPU); with a 1.1 install they return at once. `cargo run
   --release -p vcod-server --example ship_stalls` is the stall detector
   behind `bot-navigation.md`'s tables (`UO=1` for a UO server), and
-  `--example nav_build` the build-time table's (`UO=1`, `RULES=`); its
+  `--example nav_build` the build-time table's (`UO=1`, `RULES=`), and
+  `--example team_tally` `bot-objectives.md` 9's 1.1 `sd`/`re` objective tally; its
   `digest` matches across two builds only when they built the same graph,
   the check for a collision change meant to move no trace.
 - The all-maps census tests scope to stock `pak[0-9].pk3`. Map downloads drop
@@ -167,12 +168,12 @@ check.
   unless `--set protocol=` says otherwise; its per-version tables (weapon
   list, item rows, means of death) are `server::defs::Defs::of(proto)` and
   its configstring blocks `proto.cs`, never the 1.1 constants.
-  `configstrings_15_ab`, `timeout_15_ab` and `turret_ab`'s 1.5 replay
+  `configstrings_15_ab`, `timeout_15_ab`, `legs_ab`'s 1.5 walks (the stop and go too) and `turret_ab`'s 1.5 replay
   run only with `COD_DIR` at a 1.5 install (a UO one's `main/` is 1.5's);
   `moves_ab`'s UO replays (sprint, mounts and cook),
   `configstrings_uo_ab`, `playerstate_uo_ab`, `playerstate_combat_ab`'s
   UO capture,
-  `mount_uo_ab`, `uo_weapons_ab` and `turret_ab`'s UO replay only with it
+  `mount_uo_ab`, `uo_weapons_ab`, `legs_ab`'s UO walks and `turret_ab`'s UO replay only with it
   at a UO install (its `uo/` beside `main/`,
   `testing::uo_fs`).
 - Client modes: `vcod <map>` flies, `vcod <map> --walk` walks offline, bare
@@ -223,6 +224,13 @@ check.
 - To reproduce a screenshot spot in fly mode, add a temporary
   `VCOD_POS="x y z yaw"` override to the `FlyCamera::new` spawn in `main.rs`
   and remove it before committing.
+- Bot play is measured, not eyeballed: `cargo run --release -p vcod-server
+  --example bot_match [seed...]` runs seeded bot-vs-bot matches (`MAP=`,
+  `GAMETYPE=`, `BOTS=`, `TICKS=`, `JOBS=`, `SET=`, `UO=1`) and prints
+  kills, deaths, damage, time-to-kill, wins, objective actions and stalls
+  per team. A bot behaviour change reports its before and after on the
+  same seeds in `docs/research/bot-combat.md`, whose section 1 says what
+  each number means. Retail has no bots, so this is the only yardstick.
 - Pixel and by-ear checks (aim sign, lean direction, shading, sound) belong to
   the human. Report them as pending.
 
@@ -355,6 +363,8 @@ header of the fixture it produced.
 - `--probe-vehicle seats|drive --save-slope` writes a seated capture whose
   snapshot lines carry the vehicle's whole entity state (`veh=`), what
   `vehicle_ab` replays on ours (recipe in `coduo-vehicles.md` 8 and 14).
+  It starts 3 s past the weapon pick, after the seat; `--slope-from-spawn`
+  logs from the spawn, whose pick sets the seat's `legsAnim` toggle (13).
 - On 1.5 (protocol 6) and UO (22) every mode reads through the
   connection's protocol (`probe::wire()`): netfield tables, configstring
   blocks, the event ring and temp entities, means of death. Event ids and
@@ -678,10 +688,14 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   clients' packets by the capture's `w=` send stamps (`push_candidate_ab`).
 - One spectator anywhere turns `StuckInClient` off on 1.1 only; 1.5's and
   UO's scans pass over him, so two players set down on one spot part at
-  once there, in a `rand()` direction a gate pins from the capture
-  (`Server::pin_stuck_velocities`, player-clip doc 6.2).
+  once there, in a `rand()` direction a gate replays from the glibc seed
+  recovered off the capture (`Server::pin_stuck_rand`, player-clip doc
+  13.4).
 - `setOrigin` and a teleport link at the unsnapped origin until the next cmd
   relinks.
+- A brush model is traced at its live `r.currentAngles`, not its link's: a
+  finished rotate leaves them truncated to 65536ths (60 reads 59.99634),
+  so the clip turns by that (movers doc 22).
 - A cmd's `Pmove` is one `movetrace::Pm`, handed to every chopped step's
   world (`MoveWorld::in_pmove`): 1.5's and UO's `PM_trace` drops bodies
   from its mask for the rest of the cmd once a trace starts in one, and
@@ -696,8 +710,10 @@ so do a missile's arc and bounce (`Missile::kept`, combat doc 12.5) and the
   received (`coduo-vehicles.md` 11.4, 12). The cmds left in an exit's
   frame run linked and move nothing (`pm_type` 1 until `G_RunClient`,
   11.2) but stand the rider's legs up: 1.5's and UO's `PM_Footsteps`
-  select a linked player's idle, airborne or not (14), and the undriven vehicles think before the driven ones step, so
-  a pushed vehicle moves the frame after the hit (12).
+  select a linked player's idle, airborne or not (14), and an undriven
+  vehicle thinks on its own turn in the entity pass, by number, the
+  driven ones after it, so a pushed vehicle moves the frame after the hit
+  and what is linked to it moves with it (12, "The think's turn").
 - A UO vehicle's `eType` 12 and its sound blends' 9 are not 1.1's types:
   the server builds them with `game::wire::ET_RAW` so the protocol map
   leaves the type alone and still maps the events. Vehicle clip brushes

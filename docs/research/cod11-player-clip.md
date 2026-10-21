@@ -1696,6 +1696,39 @@ separates two playing players a script put together. INFERRED: what reaches
 frame, before the end frame's push: the spawn's think above, or a cmd
 after a callback that moved a player.
 
+The direction to the bit. VERIFIED, 1.1d `StuckInClient`: the jitter is
+`fild` of `rand()` times -2^-31 (0x72d30), doubled, less `fld1` and plus
+the separation on the x87 stack, stored as a float (0x40ce9..0x40d35);
+`VectorNormalize2D` (0x3d938) sums the squares and takes `fsqrt` on the
+stack, stores only the length, and multiplies each component by `1 /
+length` on the stack before its store. VERIFIED, 1.5b: the sum is stored
+the same way (0x3a86c..0x3a8bb); its `VectorNormalize2D` (0x33028) stores
+the squared length as a float, takes `sqrt` in double, stores the length,
+stores `1.0 / length` (0x3307d..0x33086) and multiplies each component by
+that float. VERIFIED: the velocity is the stored direction times `fild`
+of `ps.speed` (0x3a925), one rounding on all three.
+
+VERIFIED, by replay: glibc's `rand()` seeded `srand(s)` gives every
+velocity of a push the captures logged with an exact position, to the
+bit, under the formula above, at draws past `k`:
+
+| Capture | Module | `s` | `k` | Pushes |
+|---|---|---|---|---|
+| `mp_carentan-dm-bump-overlap-*` | 1.1d | 631 | 6 | six frames from 34900 and 52900 |
+| `movers/mp_carentan-dm-pushcand-1.5.txt` | 1.5b | 428 | 8 | 17750, 20950 (17800 to its print) |
+| `movers/mp_carentan-dm-pushcand-uo.txt` | UO | 439 | 8 | 18100, 21300 (18150 to its print) |
+
+Each push frame draws four, two per slot of the pair, lower slot first,
+and nothing else draws between the pushes. The search tried every `s` in
+[0, 20000) over its first 2^18 draws for each 1.5 and UO capture's two
+exact pushes on draws in order, and found one seed each. For 1.1d it
+tried `s` in [0, 100000) for the first push alone within 5000 draws:
+some forty seeds fit somewhere, only 631 at a draw under 100, and the
+five later pushes then fit it on consecutive draws. INFERRED: the seed is
+`G_InitGame`'s `srand(Com_Milliseconds())` (map-cycle doc 4.8), 428 to
+631 ms into the server's life, and the draws before the first push are
+the joins' challenges, two per client, plus two.
+
 ### 13.5 As implemented
 
 `movetrace::Pm` is one `Pmove`'s state: the dropped mask and the touch
@@ -1710,7 +1743,9 @@ and ahead of the use key (`ClientThink_real` 0x40614), the `spawn`
 builtin inside the call. The spawn's think moves among the other live
 players (`GameHost::move_bodies`). `spawnbody_ab.rs` holds every trial's origin
 and touches against the three captures; `stuck_ab.rs` holds 13.4's
-capture.
+capture. `game::stuck`'s unit tests replay 13.4's pushes from their
+seeds (`vcod_common::rng::GlibcRand`), and `push_candidate_ab` the 1.5
+and UO captures through the server (`Server::pin_stuck_rand`).
 
 Not modelled: an entity's own touch function from `ClientImpacts` (none
 on a player); a body

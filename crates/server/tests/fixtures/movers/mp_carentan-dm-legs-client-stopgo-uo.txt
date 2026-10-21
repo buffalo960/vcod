@@ -1,0 +1,1285 @@
+# Retail CoD UO 1.51b dedicated server: one player walking a fixed script, the
+# client half of the moving-body pose capture.
+# map mp_carentan, gametype probe_legs, team=allies weapon=m1carbine_mp
+# placed serverTime=25000 spot=932,-376,-151.875
+# client-probes/probe_legs under tools/run_probe.sh puts the player on the spot at
+# level time 25000 and logs its bones per frame (the server half, -legs.txt).
+# Script from the snapshot that showed the placement, world yaw 0 throughout:
+# settle 1500ms f0 r0; run 1000ms f127 r0; stop 1000ms f0 r0; back 1000ms f-127 r0; back_stop 400ms f0 r0; back_go 700ms f-127 r0; stop2 1000ms f0 r0; go 700ms f127 r0; go_stop 400ms f0 r0; go2 500ms f127 r0; go_stop2 450ms f0 r0; go3 400ms f127 r0; go_stop3 500ms f0 r0; go4 400ms f127 r0; stop3 1000ms f0 r0; strafe_right 700ms f0 r127; strafe_swap 150ms f0 r-127; strafe_right2 600ms f0 r127; stop4 1000ms f0 r0; strafe_left 1300ms f0 r-127; stop5 1000ms f0 r0;
+# !cmd is a usercmd as it went on the wire (angles rebased on delta_angles; world=
+# the angles before), ms after the placement. !snap is the playerstate per
+# snapshot: t serverTime, ct commandTime, legs/torso the wire anim values.
+!snap msg=271 t=25000 ct=24987 step=settle origin=932,-376,-150.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=18 st=25018 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=38 st=25050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=272 t=25050 ct=25018 step=settle origin=932,-376,-151.1622 vel=0,0,-19 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=54 st=25066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=73 st=25085 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=91 st=25100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=273 t=25100 ct=25085 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=109 st=25117 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=126 st=25134 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=143 st=25150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=274 t=25150 ct=25134 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=160 st=25166 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=180 st=25186 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=196 st=25200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=275 t=25200 ct=25186 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=213 st=25217 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=233 st=25250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=276 t=25250 ct=25217 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=251 st=25268 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=269 st=25285 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=288 st=25300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=277 t=25300 ct=25285 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=307 st=25318 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=326 st=25338 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=343 st=25350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=278 t=25350 ct=25338 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=361 st=25367 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=379 st=25400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=279 t=25400 ct=25367 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=397 st=25417 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=419 st=25439 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=436 st=25450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=280 t=25450 ct=25439 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=456 st=25469 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=477 st=25491 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=494 st=25500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=281 t=25500 ct=25491 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=510 st=25516 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=533 st=25550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=282 t=25550 ct=25516 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=550 st=25566 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=570 st=25586 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=586 st=25600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=283 t=25600 ct=25586 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=606 st=25620 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=625 st=25638 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=641 st=25650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=284 t=25650 ct=25638 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=660 st=25668 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=677 st=25686 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=695 st=25700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=285 t=25700 ct=25686 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=711 st=25716 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=731 st=25750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=286 t=25750 ct=25716 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=747 st=25766 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=765 st=25783 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=781 st=25800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=287 t=25800 ct=25783 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=798 st=25816 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=814 st=25833 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=830 st=25849 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=849 st=25850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=288 t=25850 ct=25833 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=866 st=25867 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=885 st=25900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=289 t=25900 ct=25867 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=901 st=25916 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=920 st=25935 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=936 st=25950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=290 t=25950 ct=25935 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=953 st=25966 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=969 st=25982 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=988 st=26000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=291 t=26000 ct=25982 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1004 st=26016 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1023 st=26034 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1040 st=26050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=292 t=26050 ct=26034 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1056 st=26066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1074 st=26084 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1091 st=26100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=293 t=26100 ct=26084 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1107 st=26116 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1123 st=26132 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1143 st=26150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=294 t=26150 ct=26132 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1162 st=26168 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1179 st=26185 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1196 st=26200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=295 t=26200 ct=26185 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1216 st=26219 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1236 st=26250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=296 t=26250 ct=26219 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1253 st=26267 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1270 st=26284 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1286 st=26300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=297 t=26300 ct=26284 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1304 st=26317 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1320 st=26333 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1338 st=26350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=298 t=26350 ct=26333 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1355 st=26367 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1372 st=26384 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1391 st=26400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=299 t=26400 ct=26384 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1411 st=26420 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1428 st=26437 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1446 st=26450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=300 t=26450 ct=26437 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1463 st=26467 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1481 st=26484 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1497 st=26500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=301 t=26500 ct=26484 step=settle origin=932,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1514 st=26516 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1532 st=26534 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1548 st=26550 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=302 t=26550 ct=26534 step=run origin=933.5681,-376,-151.875 vel=58,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1567 st=26568 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1584 st=26600 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=303 t=26600 ct=26568 step=run origin=936.8055,-376,-151.875 vel=107,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1600 st=26616 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1618 st=26633 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1634 st=26650 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=304 t=26650 ct=26633 step=run origin=947.67596,-376,-151.875 vel=190,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1651 st=26666 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1667 st=26683 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1684 st=26700 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=305 t=26700 ct=26683 step=run origin=958.53564,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1701 st=26716 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1717 st=26732 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1733 st=26750 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=306 t=26750 ct=26732 step=run origin=969.5215,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1752 st=26768 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1768 st=26784 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1784 st=26800 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=307 t=26800 ct=26784 step=run origin=981.1799,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1803 st=26818 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1819 st=26834 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1835 st=26850 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=308 t=26850 ct=26834 step=run origin=992.3899,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1852 st=26866 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1869 st=26883 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1886 st=26900 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=309 t=26900 ct=26883 step=run origin=1003.37573,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1907 st=26920 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1924 st=26937 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1942 st=26950 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=310 t=26950 ct=26937 step=run origin=1015.48254,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=1961 st=26968 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1977 st=26984 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=1994 st=27000 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=311 t=27000 ct=26984 step=run origin=1026.0199,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2011 st=27016 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2030 st=27035 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2047 st=27050 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=312 t=27050 ct=27035 step=run origin=1037.454,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2063 st=27066 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2080 st=27100 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=313 t=27100 ct=27066 step=run origin=1044.4042,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2096 st=27116 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2114 st=27133 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2130 st=27150 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=314 t=27150 ct=27133 step=run origin=1059.4255,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2147 st=27167 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2163 st=27183 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2180 st=27200 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=315 t=27200 ct=27183 step=run origin=1070.6355,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2197 st=27216 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2215 st=27235 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2236 st=27250 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=316 t=27250 ct=27235 step=run origin=1082.2938,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2252 st=27266 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2270 st=27283 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2288 st=27300 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=317 t=27300 ct=27283 step=run origin=1093.0554,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2305 st=27317 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2322 st=27333 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2341 st=27350 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=318 t=27350 ct=27333 step=run origin=1104.2654,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2357 st=27366 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2374 st=27382 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2393 st=27400 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=319 t=27400 ct=27382 step=run origin=1115.2511,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2412 st=27419 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2432 st=27450 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=320 t=27450 ct=27419 step=run origin=1123.5465,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2453 st=27471 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2471 st=27489 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2488 st=27500 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=321 t=27500 ct=27489 step=run origin=1139.2406,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2505 st=27516 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2522 st=27534 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2541 st=27550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=322 t=27550 ct=27534 step=stop origin=1148.2838,-376,-151.875 vel=184,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2561 st=27570 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2581 st=27600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=323 t=27600 ct=27570 step=stop origin=1153.9591,-376,-151.875 vel=150,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2599 st=27618 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2618 st=27636 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2638 st=27650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=324 t=27650 ct=27636 step=stop origin=1161.5764,-376,-151.875 vel=102,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2658 st=27669 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2674 st=27685 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2692 st=27700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=325 t=27700 ct=27685 step=stop origin=1165.685,-376,-151.875 vel=75,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2710 st=27717 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2727 st=27734 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2744 st=27750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=326 t=27750 ct=27734 step=stop origin=1168.4934,-376,-151.875 vel=49,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2762 st=27767 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2778 st=27783 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2797 st=27800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=327 t=27800 ct=27783 step=stop origin=1170.0128,-376,-151.875 vel=22,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2814 st=27816 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2833 st=27850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=328 t=27850 ct=27816 step=stop origin=1170.2952,-376,-151.875 vel=4,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2849 st=27866 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2867 st=27883 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2883 st=27900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=329 t=27900 ct=27883 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2901 st=27917 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2919 st=27936 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2936 st=27950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=330 t=27950 ct=27936 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=2954 st=27967 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2972 st=27985 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=2988 st=28000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=331 t=28000 ct=27985 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3005 st=28016 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3022 st=28033 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3041 st=28050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=332 t=28050 ct=28033 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3059 st=28067 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3076 st=28085 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3099 st=28100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=333 t=28100 ct=28085 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3116 st=28116 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3134 st=28150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=334 t=28150 ct=28116 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3155 st=28170 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3173 st=28188 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3189 st=28200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=335 t=28200 ct=28188 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3207 st=28218 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3225 st=28236 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3243 st=28250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=336 t=28250 ct=28236 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3261 st=28267 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3278 st=28300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=337 t=28300 ct=28267 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3294 st=28316 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3313 st=28335 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3330 st=28350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=338 t=28350 ct=28335 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3347 st=28367 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3366 st=28386 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3383 st=28400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=339 t=28400 ct=28386 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3400 st=28417 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3417 st=28433 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3434 st=28450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=340 t=28450 ct=28433 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3451 st=28467 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3468 st=28483 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3485 st=28500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=341 t=28500 ct=28483 step=stop origin=1170.2952,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3503 st=28518 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3521 st=28535 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3539 st=28550 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=342 t=28550 ct=28535 step=back origin=1169.1633,-376,-151.875 vel=-40,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3555 st=28566 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3572 st=28582 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3590 st=28600 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=343 t=28600 ct=28582 step=back origin=1166.0076,-376,-151.875 vel=-81,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3610 st=28620 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3627 st=28637 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3643 st=28650 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=344 t=28650 ct=28637 step=back origin=1159.8201,-376,-151.875 vel=-127,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3661 st=28667 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3677 st=28683 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3696 st=28700 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=345 t=28700 ct=28683 step=back origin=1153.0378,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3712 st=28716 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3732 st=28750 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=346 t=28750 ct=28716 step=back origin=1147.8589,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3750 st=28767 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3766 st=28784 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3783 st=28800 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3802 st=28800 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=347 t=28800 ct=28800 step=back origin=1134.676,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3819 st=28817 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3838 st=28850 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=348 t=28850 ct=28817 step=back origin=1132.008,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3856 st=28867 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3873 st=28885 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3890 st=28900 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=349 t=28900 ct=28885 step=back origin=1121.336,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3909 st=28918 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3926 st=28935 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3943 st=28950 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=350 t=28950 ct=28935 step=back origin=1113.489,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3960 st=28967 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=3980 st=29000 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=351 t=29000 ct=28967 step=back origin=1108.4669,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=3998 st=29018 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4016 st=29036 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4035 st=29050 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=352 t=29050 ct=29036 step=back origin=1097.638,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4052 st=29066 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4069 st=29083 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4085 st=29100 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=353 t=29100 ct=29083 step=back origin=1090.2618,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4103 st=29117 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4119 st=29133 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4142 st=29150 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=354 t=29150 ct=29133 step=back origin=1082.4149,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4158 st=29166 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4176 st=29184 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4193 st=29200 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=355 t=29200 ct=29184 step=back origin=1074.411,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4209 st=29216 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4226 st=29233 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4244 st=29250 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=356 t=29250 ct=29233 step=back origin=1066.7211,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4260 st=29266 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4277 st=29283 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4295 st=29300 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=357 t=29300 ct=29283 step=back origin=1058.8741,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4312 st=29316 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4328 st=29333 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4345 st=29350 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=358 t=29350 ct=29333 step=back origin=1051.0272,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4367 st=29372 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4384 st=29400 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=359 t=29400 ct=29372 step=back origin=1044.9066,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4403 st=29419 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4421 st=29437 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4437 st=29450 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=360 t=29450 ct=29437 step=back origin=1034.7056,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4456 st=29468 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4472 st=29485 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4490 st=29500 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=361 t=29500 ct=29485 step=back origin=1027.1725,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4508 st=29517 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4524 st=29534 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4543 st=29550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=362 t=29550 ct=29534 step=back_stop origin=1020.21063,-376,-151.875 vel=-129,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4560 st=29567 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4577 st=29584 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4594 st=29600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=363 t=29600 ct=29584 step=back_stop origin=1014.8609,-376,-151.875 vel=-97,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4611 st=29617 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4627 st=29633 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4645 st=29650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=364 t=29650 ct=29617 step=back_stop origin=1012.1127,-376,-151.875 vel=-79,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4663 st=29668 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4680 st=29700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=365 t=29700 ct=29668 step=back_stop origin=1009.0386,-376,-151.875 vel=-51,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4698 st=29718 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4714 st=29734 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4732 st=29752 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4751 st=29750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=366 t=29750 ct=29734 step=back_stop origin=1007.32684,-376,-151.875 vel=-14,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4771 st=29769 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4789 st=29800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=367 t=29800 ct=29769 step=back_stop origin=1007.25305,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4807 st=29818 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4824 st=29834 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4841 st=29850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=368 t=29850 ct=29834 step=back_stop origin=1007.25305,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4859 st=29867 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4875 st=29883 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4893 st=29900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=369 t=29900 ct=29883 step=back_stop origin=1007.25305,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4909 st=29916 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4926 st=29933 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4942 st=29950 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=370 t=29950 ct=29933 step=back_go origin=1006.2512,-376,-151.875 vel=-38,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4960 st=29967 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=4979 st=30000 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=371 t=30000 ct=29967 step=back_go origin=1004.2057,-376,-151.875 vel=-68,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=4996 st=30017 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5013 st=30033 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5029 st=30050 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5045 st=30050 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=372 t=30050 ct=30050 step=back_go origin=994.8408,-376,-151.875 vel=-136,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5063 st=30067 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5080 st=30100 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=373 t=30100 ct=30067 step=back_go origin=992.3368,-376,-151.875 vel=-147,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5096 st=30116 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5113 st=30133 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5130 st=30150 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5149 st=30150 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=374 t=30150 ct=30150 step=back_go origin=979.3108,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5167 st=30168 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5185 st=30200 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=375 t=30200 ct=30168 step=back_go origin=976.4859,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5202 st=30216 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5219 st=30234 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5236 st=30250 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=376 t=30250 ct=30234 step=back_go origin=966.12787,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5253 st=30267 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5272 st=30286 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5292 st=30300 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=377 t=30300 ct=30286 step=back_go origin=957.967,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5311 st=30318 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5327 st=30335 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5344 st=30350 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=378 t=30350 ct=30335 step=back_go origin=950.277,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5361 st=30367 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5378 st=30383 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5396 st=30400 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=379 t=30400 ct=30383 step=back_go origin=942.74384,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5415 st=30418 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5434 st=30450 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=380 t=30450 ct=30418 step=back_go origin=937.251,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5455 st=30471 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5471 st=30487 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5488 st=30500 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=381 t=30500 ct=30487 step=back_go origin=926.4221,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5506 st=30517 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5524 st=30535 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5542 st=30550 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=382 t=30550 ct=30535 step=back_go origin=918.88904,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5558 st=30566 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5576 st=30584 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5594 st=30600 buttons=0 wbuttons=0 weapon=23 up=0 forward=-127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=383 t=30600 ct=30584 step=back_go origin=911.199,-376,-151.875 vel=-157,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5613 st=30619 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5629 st=30635 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5647 st=30650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=384 t=30650 ct=30635 step=stop2 origin=903.95917,-376,-151.875 vel=-129,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5666 st=30669 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5686 st=30700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=385 t=30700 ct=30669 step=stop2 origin=900.1761,-376,-151.875 vel=-106,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5704 st=30717 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5722 st=30735 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5738 st=30750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=386 t=30750 ct=30735 step=stop2 origin=894.86957,-376,-151.875 vel=-69,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5755 st=30766 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5774 st=30785 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5793 st=30800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=387 t=30800 ct=30785 step=stop2 origin=892.3337,-376,-151.875 vel=-42,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5811 st=30817 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5828 st=30835 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5849 st=30850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=388 t=30850 ct=30835 step=stop2 origin=891.1366,-376,-151.875 vel=-15,0,0 legs=156 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5867 st=30868 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5884 st=30900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=389 t=30900 ct=30868 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5901 st=30917 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5921 st=30936 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5939 st=30950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=390 t=30950 ct=30936 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=5957 st=30968 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5975 st=30986 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=5991 st=31000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=391 t=31000 ct=30986 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6007 st=31016 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6028 st=31036 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6048 st=31050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=392 t=31050 ct=31036 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6064 st=31066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6082 st=31100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=393 t=31100 ct=31066 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6100 st=31118 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6118 st=31135 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6136 st=31150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=394 t=31150 ct=31135 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6154 st=31168 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6170 st=31184 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6187 st=31200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=395 t=31200 ct=31184 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6208 st=31220 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6226 st=31238 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6242 st=31250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=396 t=31250 ct=31238 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6258 st=31266 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6279 st=31287 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6296 st=31300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=397 t=31300 ct=31287 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6312 st=31316 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6329 st=31333 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6346 st=31350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=398 t=31350 ct=31333 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6362 st=31366 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6380 st=31400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=399 t=31400 ct=31366 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6397 st=31416 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6417 st=31436 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6433 st=31450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=400 t=31450 ct=31436 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6449 st=31466 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6467 st=31484 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6485 st=31500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=401 t=31500 ct=31484 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6503 st=31517 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6521 st=31535 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6537 st=31550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=402 t=31550 ct=31535 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6555 st=31568 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6572 st=31584 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6590 st=31600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=403 t=31600 ct=31584 step=stop2 origin=891.03534,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262208 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6608 st=31617 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6624 st=31633 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6642 st=31650 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=404 t=31650 ct=31633 step=go origin=892.5382,-376,-151.875 vel=57,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6658 st=31666 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6675 st=31682 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6691 st=31700 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=405 t=31700 ct=31682 step=go origin=897.66785,-376,-151.875 vel=128,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6710 st=31718 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6726 st=31735 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6746 st=31750 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=406 t=31750 ct=31735 step=go origin=906.76556,-376,-151.875 vel=191,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6762 st=31766 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6780 st=31800 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=407 t=31800 ct=31766 step=go origin=913.3707,-376,-151.875 vel=220,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6798 st=31817 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6815 st=31834 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6833 st=31850 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=408 t=31850 ct=31834 step=go origin=928.61633,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6850 st=31866 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6868 st=31884 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6884 st=31900 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=409 t=31900 ct=31884 step=go origin=939.82635,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6901 st=31916 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6919 st=31934 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6935 st=31950 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=410 t=31950 ct=31934 step=go origin=951.0364,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=6952 st=31966 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6968 st=31982 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=6985 st=32000 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=411 t=32000 ct=31982 step=go origin=961.79803,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7005 st=32019 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7026 st=32041 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7042 st=32050 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=412 t=32050 ct=32041 step=go origin=975.0258,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7059 st=32067 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7076 st=32083 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7092 st=32100 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=413 t=32100 ct=32083 step=go origin=984.44226,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7110 st=32117 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7126 st=32133 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7142 st=32150 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=414 t=32150 ct=32133 step=go origin=995.6523,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7161 st=32169 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7178 st=32185 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7194 st=32200 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=415 t=32200 ct=32185 step=go origin=1007.3107,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7213 st=32218 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7231 st=32236 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7250 st=32250 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=416 t=32250 ct=32236 step=go origin=1018.7449,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7267 st=32267 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7285 st=32300 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=417 t=32300 ct=32267 step=go origin=1025.6951,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7303 st=32318 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7323 st=32337 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7341 st=32350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=418 t=32350 ct=32337 step=go_stop origin=1040.1633,-376,-151.875 vel=181,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7357 st=32366 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7375 st=32384 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7395 st=32400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=419 t=32400 ct=32384 step=go_stop origin=1047.2809,-376,-151.875 vel=138,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7413 st=32418 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7430 st=32450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=420 t=32450 ct=32418 step=go_stop origin=1051.338,-376,-151.875 vel=114,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7448 st=32468 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7466 st=32486 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7482 st=32500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=421 t=32500 ct=32486 step=go_stop origin=1057.1915,-376,-151.875 vel=74,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7499 st=32517 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7517 st=32534 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7534 st=32550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=422 t=32550 ct=32534 step=go_stop origin=1059.8928,-376,-151.875 vel=48,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7552 st=32568 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7571 st=32587 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7588 st=32600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=423 t=32600 ct=32587 step=go_stop origin=1061.3962,-376,-151.875 vel=19,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7609 st=32620 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7626 st=32638 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7644 st=32650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=424 t=32650 ct=32638 step=go_stop origin=1061.5703,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7661 st=32667 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7679 st=32685 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7697 st=32700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=425 t=32700 ct=32667 step=go_stop origin=1061.5703,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7715 st=32718 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7731 st=32734 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7751 st=32750 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=426 t=32750 ct=32734 step=go2 origin=1063.1759,-376,-151.875 vel=59,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7767 st=32766 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7787 st=32800 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=427 t=32800 ct=32766 step=go2 origin=1066.1833,-376,-151.875 vel=105,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7803 st=32816 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7820 st=32833 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7837 st=32850 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=428 t=32850 ct=32833 step=go2 origin=1077.4312,-376,-151.875 vel=191,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7854 st=32866 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7872 st=32884 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7889 st=32900 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=429 t=32900 ct=32884 step=go2 origin=1088.5304,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7906 st=32916 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7922 st=32933 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7940 st=32950 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=430 t=32950 ct=32933 step=go2 origin=1099.5161,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=7957 st=32967 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7974 st=32984 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=7993 st=33000 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=431 t=33000 ct=32984 step=go2 origin=1110.9503,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8011 st=33018 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8028 st=33034 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8044 st=33050 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=432 t=33050 ct=33018 step=go2 origin=1118.5731,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8061 st=33066 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8079 st=33084 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8097 st=33100 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=433 t=33100 ct=33084 step=go2 origin=1133.3702,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8114 st=33116 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8130 st=33150 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=434 t=33150 ct=33116 step=go2 origin=1140.5446,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8146 st=33166 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8165 st=33184 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8181 st=33200 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=435 t=33200 ct=33184 step=go2 origin=1155.7902,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8199 st=33218 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8216 st=33234 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8232 st=33250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=436 t=33250 ct=33234 step=go_stop2 origin=1166.6815,-376,-151.875 vel=204,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8249 st=33266 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8266 st=33283 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8282 st=33300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=437 t=33300 ct=33283 step=go_stop2 origin=1174.9922,-376,-151.875 vel=154,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8301 st=33318 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8317 st=33334 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8335 st=33350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=438 t=33350 ct=33334 step=go_stop2 origin=1181.4745,-376,-151.875 vel=115,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8351 st=33366 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8368 st=33383 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8384 st=33400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=439 t=33400 ct=33383 step=go_stop2 origin=1186.1577,-376,-151.875 vel=87,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8401 st=33416 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8421 st=33436 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8437 st=33450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=440 t=33450 ct=33436 step=go_stop2 origin=1189.745,-376,-151.875 vel=58,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8456 st=33468 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8473 st=33485 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8489 st=33500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=441 t=33500 ct=33485 step=go_stop2 origin=1191.692,-376,-151.875 vel=31,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8507 st=33518 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8524 st=33534 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8541 st=33550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=442 t=33550 ct=33534 step=go_stop2 origin=1192.3364,-376,-151.875 vel=4,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8560 st=33568 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8576 st=33584 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8592 st=33600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=443 t=33600 ct=33584 step=go_stop2 origin=1192.3364,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8610 st=33617 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8628 st=33635 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8644 st=33650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=444 t=33650 ct=33635 step=go_stop2 origin=1192.3364,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8662 st=33667 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8679 st=33684 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8695 st=33700 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=445 t=33700 ct=33684 step=go3 origin=1193.9218,-376,-151.875 vel=59,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8713 st=33718 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8731 st=33750 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=446 t=33750 ct=33718 step=go3 origin=1197.193,-376,-151.875 vel=108,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8748 st=33766 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8766 st=33784 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8782 st=33800 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=447 t=33800 ct=33784 step=go3 origin=1208.3301,-376,-151.875 vel=192,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8800 st=33818 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8818 st=33836 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8835 st=33850 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=448 t=33850 ct=33836 step=go3 origin=1219.6948,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8853 st=33868 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8869 st=33884 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8888 st=33900 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=449 t=33900 ct=33884 step=go3 origin=1230.4564,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8904 st=33916 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8921 st=33933 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8937 st=33950 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=450 t=33950 ct=33933 step=go3 origin=1241.4421,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=8955 st=33968 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8971 st=33984 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=8988 st=34000 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=451 t=34000 ct=33984 step=go3 origin=1252.8763,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9005 st=34016 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9021 st=34033 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9038 st=34050 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=452 t=34050 ct=34033 step=go3 origin=1263.862,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9054 st=34066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9074 st=34086 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9096 st=34100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=453 t=34100 ct=34086 step=go_stop3 origin=1274.5732,-376,-151.875 vel=182,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9112 st=34116 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9129 st=34150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=454 t=34150 ct=34116 step=go_stop3 origin=1279.3765,-376,-151.875 vel=153,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9148 st=34169 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9167 st=34187 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9185 st=34200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=455 t=34200 ct=34187 step=go_stop3 origin=1287.5156,-376,-151.875 vel=100,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9202 st=34217 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9219 st=34234 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9237 st=34250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=456 t=34250 ct=34234 step=go_stop3 origin=1291.4137,-376,-151.875 vel=75,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9254 st=34267 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9270 st=34283 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9288 st=34300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=457 t=34300 ct=34283 step=go_stop3 origin=1294.2072,-376,-151.875 vel=48,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9309 st=34320 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9327 st=34338 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9343 st=34350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=458 t=34350 ct=34338 step=go_stop3 origin=1295.7501,-376,-151.875 vel=18,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9359 st=34366 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9377 st=34384 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9397 st=34400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=459 t=34400 ct=34384 step=go_stop3 origin=1295.9221,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9415 st=34418 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9431 st=34450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=460 t=34450 ct=34418 step=go_stop3 origin=1295.9221,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9449 st=34467 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9466 st=34484 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9486 st=34500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=461 t=34500 ct=34484 step=go_stop3 origin=1295.9221,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9506 st=34520 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9524 st=34537 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9540 st=34550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=462 t=34550 ct=34537 step=go_stop3 origin=1295.9221,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9556 st=34566 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9575 st=34585 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9593 st=34600 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=463 t=34600 ct=34585 step=go4 origin=1297.5765,-376,-151.875 vel=60,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9613 st=34619 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9629 st=34635 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9647 st=34650 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=464 t=34650 ct=34635 step=go4 origin=1303.0164,-376,-151.875 vel=133,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9667 st=34669 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9683 st=34700 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=465 t=34700 ct=34669 step=go4 origin=1308.6154,-376,-151.875 vel=174,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9702 st=34718 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9720 st=34736 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9737 st=34750 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=466 t=34750 ct=34736 step=go4 origin=1323.0753,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9757 st=34769 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9773 st=34786 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9792 st=34800 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=467 t=34800 ct=34786 step=go4 origin=1334.2853,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9810 st=34818 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9828 st=34836 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9844 st=34850 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=468 t=34850 ct=34836 step=go4 origin=1345.4954,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9862 st=34868 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9880 st=34900 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=469 t=34900 ct=34868 step=go4 origin=1352.6698,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9900 st=34919 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9918 st=34937 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9936 st=34950 buttons=0 wbuttons=0 weapon=23 up=0 forward=127 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=470 t=34950 ct=34937 step=go4 origin=1368.1396,-376,-151.875 vel=224,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=9955 st=34968 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9971 st=34985 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=9991 st=35000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=471 t=35000 ct=34985 step=stop3 origin=1377.7999,-376,-151.875 vel=183,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10009 st=35018 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10026 st=35034 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10047 st=35050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=472 t=35050 ct=35034 step=stop3 origin=1385.2465,-376,-151.875 vel=138,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10063 st=35066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10080 st=35083 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10099 st=35100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=473 t=35100 ct=35083 step=stop3 origin=1390.871,-376,-151.875 vel=104,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10116 st=35116 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10138 st=35150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=474 t=35150 ct=35116 step=stop3 origin=1393.8368,-376,-151.875 vel=85,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10158 st=35169 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10174 st=35185 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10191 st=35200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=475 t=35200 ct=35185 step=stop3 origin=1397.9016,-376,-151.875 vel=47,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10208 st=35217 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10226 st=35235 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10244 st=35250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=476 t=35250 ct=35235 step=stop3 origin=1399.3488,-376,-151.875 vel=20,0,0 legs=157 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10262 st=35268 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10280 st=35300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=477 t=35300 ct=35268 step=stop3 origin=1399.5629,-376,-151.875 vel=2,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10296 st=35316 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10317 st=35337 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10333 st=35350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=478 t=35350 ct=35337 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10352 st=35368 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10368 st=35384 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10387 st=35400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=479 t=35400 ct=35384 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10405 st=35418 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10421 st=35434 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10439 st=35450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=480 t=35450 ct=35434 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10456 st=35466 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10475 st=35485 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10491 st=35500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=481 t=35500 ct=35485 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10508 st=35516 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10524 st=35533 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10543 st=35550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=482 t=35550 ct=35533 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10559 st=35566 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10581 st=35600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=483 t=35600 ct=35566 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10602 st=35621 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10618 st=35637 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10635 st=35650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=484 t=35650 ct=35637 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10663 st=35678 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10679 st=35694 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10697 st=35700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=485 t=35700 ct=35678 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10714 st=35716 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10732 st=35734 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10748 st=35750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=486 t=35750 ct=35734 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10765 st=35766 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10782 st=35800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=487 t=35800 ct=35766 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10800 st=35817 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10816 st=35833 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10834 st=35850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=488 t=35850 ct=35833 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10852 st=35868 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10868 st=35884 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10886 st=35900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=489 t=35900 ct=35884 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10906 st=35919 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10923 st=35936 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=10939 st=35950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=490 t=35950 ct=35936 step=stop3 origin=1399.5629,-376,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=10959 st=35969 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=10979 st=35989 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=10997 st=36000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=491 t=36000 ct=35989 step=strafe_right origin=1399.5629,-377.62842,-151.875 vel=0,-52,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11019 st=36021 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11037 st=36050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=492 t=36050 ct=36021 step=strafe_right origin=1399.5629,-380.14252,-151.875 vel=0,-86,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11057 st=36070 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11076 st=36088 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11094 st=36100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=493 t=36100 ct=36088 step=strafe_right origin=1399.5629,-388.98853,-151.875 vel=0,-152,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11112 st=36117 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11128 st=36150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=494 t=36150 ct=36117 step=strafe_right origin=1399.5629,-393.8722,-151.875 vel=0,-173,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11147 st=36168 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11165 st=36186 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11181 st=36202 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11197 st=36200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=495 t=36200 ct=36186 step=strafe_right origin=1399.5629,-406.24805,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11215 st=36217 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11234 st=36250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=496 t=36250 ct=36217 step=strafe_right origin=1399.5629,-411.8082,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11252 st=36267 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11268 st=36284 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11285 st=36300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=497 t=36300 ct=36284 step=strafe_right origin=1399.5629,-423.82535,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11302 st=36316 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11321 st=36336 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11339 st=36350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=498 t=36350 ct=36336 step=strafe_right origin=1399.5629,-433.15204,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11360 st=36371 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11379 st=36389 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11398 st=36400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=499 t=36400 ct=36371 step=strafe_right origin=1399.5629,-439.42966,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11418 st=36420 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11435 st=36450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=500 t=36450 ct=36420 step=strafe_right origin=1399.5629,-448.2183,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11451 st=36466 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11471 st=36486 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11489 st=36500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=501 t=36500 ct=36486 step=strafe_right origin=1399.5629,-460.05603,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11507 st=36517 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11523 st=36533 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11539 st=36550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=502 t=36550 ct=36533 step=strafe_right origin=1399.5629,-468.48596,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11558 st=36568 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11574 st=36584 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11592 st=36600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=503 t=36600 ct=36584 step=strafe_right origin=1399.5629,-477.63333,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11609 st=36617 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11630 st=36650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=504 t=36650 ct=36617 step=strafe_right origin=1399.5629,-483.55222,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11647 st=36666 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11664 st=36683 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=11685 st=36700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=505 t=36700 ct=36683 step=strafe_swap origin=1399.5629,-494.6328,-151.875 vel=0,-135,0 legs=667 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11701 st=36716 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=11718 st=36732 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=11734 st=36750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=506 t=36750 ct=36732 step=strafe_swap origin=1399.5629,-497.6186,-151.875 vel=0,-25,0 legs=667 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11751 st=36767 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=11768 st=36783 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=11786 st=36800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=507 t=36800 ct=36783 step=strafe_swap origin=1399.5629,-496.03735,-151.875 vel=0,49,0 legs=667 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11806 st=36820 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11822 st=36836 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11838 st=36850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=508 t=36850 ct=36836 step=strafe_right2 origin=1399.5629,-494.59253,-151.875 vel=0,-11,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11857 st=36868 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11876 st=36887 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11892 st=36900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=509 t=36900 ct=36887 step=strafe_right2 origin=1399.5629,-497.0071,-151.875 vel=0,-65,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11910 st=36918 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11928 st=36936 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11946 st=36950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=510 t=36950 ct=36936 step=strafe_right2 origin=1399.5629,-501.90762,-151.875 vel=0,-117,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=11964 st=36967 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11980 st=36984 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=11996 st=37000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=511 t=37000 ct=36984 step=strafe_right2 origin=1399.5629,-508.93765,-151.875 vel=0,-160,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12016 st=37019 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12037 st=37050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=512 t=37050 ct=37019 step=strafe_right2 origin=1399.5629,-515.09344,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12053 st=37066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12078 st=37091 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12095 st=37100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=513 t=37100 ct=37091 step=strafe_right2 origin=1399.5629,-528.0074,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12114 st=37119 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12130 st=37135 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12147 st=37150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=514 t=37150 ct=37135 step=strafe_right2 origin=1399.5629,-535.89923,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12163 st=37166 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12180 st=37182 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12199 st=37200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=515 t=37200 ct=37166 step=strafe_right2 origin=1399.5629,-541.4594,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12220 st=37220 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12240 st=37250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=516 t=37250 ct=37220 step=strafe_right2 origin=1399.5629,-551.14484,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12257 st=37266 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12276 st=37285 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12292 st=37300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=517 t=37300 ct=37285 step=strafe_right2 origin=1399.5629,-562.8032,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12308 st=37316 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12328 st=37350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!snap msg=518 t=37350 ct=37316 step=strafe_right2 origin=1399.5629,-568.3634,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12345 st=37366 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12363 st=37384 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12383 st=37404 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=127 angles=0,32768,0 world=0,0,0
+!cmd ms=12402 st=37400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=519 t=37400 ct=37384 step=stop4 origin=1399.5629,-580.5599,-151.875 vel=0,-179,0 legs=154 torso=0 movementDir=166 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12419 st=37416 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12437 st=37450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=520 t=37450 ct=37416 step=stop4 origin=1399.5629,-586.1533,-151.875 vel=0,-167,0 legs=154 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12456 st=37468 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12473 st=37486 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12490 st=37500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=521 t=37500 ct=37486 step=stop4 origin=1399.5629,-594.97,-151.875 vel=0,-111,0 legs=154 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12509 st=37519 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12528 st=37538 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12545 st=37550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=522 t=37550 ct=37538 step=stop4 origin=1399.5629,-599.6702,-151.875 vel=0,-81,0 legs=154 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12565 st=37569 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12582 st=37600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=523 t=37600 ct=37569 step=stop4 origin=1399.5629,-601.7705,-151.875 vel=0,-64,0 legs=154 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12598 st=37616 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12616 st=37634 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12634 st=37650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=524 t=37650 ct=37634 step=stop4 origin=1399.5629,-604.34296,-151.875 vel=0,-28,0 legs=154 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12656 st=37671 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12674 st=37689 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12692 st=37700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=525 t=37700 ct=37689 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12712 st=37720 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12731 st=37738 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12747 st=37750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=526 t=37750 ct=37738 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12764 st=37767 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12783 st=37800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=527 t=37800 ct=37767 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12801 st=37817 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12818 st=37835 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12835 st=37850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=528 t=37850 ct=37835 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12851 st=37866 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12868 st=37883 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12887 st=37900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=529 t=37900 ct=37883 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12906 st=37919 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12924 st=37937 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12942 st=37950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=530 t=37950 ct=37937 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=12963 st=37970 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=12979 st=37987 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13002 st=38000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=531 t=38000 ct=37987 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13022 st=38019 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13040 st=38050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=532 t=38050 ct=38019 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13056 st=38066 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13078 st=38088 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13095 st=38100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=533 t=38100 ct=38088 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13113 st=38118 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13133 st=38150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=534 t=38150 ct=38118 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13150 st=38166 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13166 st=38182 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13183 st=38200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=535 t=38200 ct=38182 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13201 st=38218 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13221 st=38237 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13240 st=38250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=536 t=38250 ct=38237 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13259 st=38268 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13275 st=38284 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13295 st=38300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=537 t=38300 ct=38284 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13315 st=38319 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13335 st=38350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=538 t=38350 ct=38319 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13355 st=38369 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13375 st=38389 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=13393 st=38400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=539 t=38400 ct=38389 step=stop4 origin=1399.5629,-604.8066,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13411 st=38418 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13429 st=38436 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13445 st=38450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=540 t=38450 ct=38436 step=strafe_left origin=1399.5629,-603.41675,-151.875 vel=0,48,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13467 st=38471 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13483 st=38500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=541 t=38500 ct=38471 step=strafe_left origin=1399.5629,-600.7438,-151.875 vel=0,85,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13500 st=38517 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13518 st=38535 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13535 st=38550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=542 t=38550 ct=38535 step=strafe_left origin=1399.5629,-592.4496,-151.875 vel=0,149,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13551 st=38566 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13569 st=38584 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13587 st=38600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=543 t=38600 ct=38584 step=strafe_left origin=1399.5629,-584.04474,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13608 st=38620 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13626 st=38638 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13642 st=38650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=544 t=38650 ct=38638 step=strafe_left origin=1399.5629,-574.3593,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13662 st=38669 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13678 st=38686 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13695 st=38700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=545 t=38700 ct=38686 step=strafe_left origin=1399.5629,-565.75,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13715 st=38720 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13731 st=38750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=546 t=38750 ct=38720 step=strafe_left origin=1399.5629,-559.65173,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13750 st=38768 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13766 st=38784 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13786 st=38800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=547 t=38800 ct=38784 step=strafe_left origin=1399.5629,-548.1727,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13804 st=38818 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13820 st=38834 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13836 st=38850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=548 t=38850 ct=38834 step=strafe_left origin=1399.5629,-539.2048,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13853 st=38866 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13869 st=38882 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13887 st=38900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=549 t=38900 ct=38882 step=strafe_left origin=1399.5629,-530.5955,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13906 st=38919 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13923 st=38936 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13939 st=38950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=550 t=38950 ct=38936 step=strafe_left origin=1399.5629,-520.9101,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=13959 st=38969 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13978 st=38988 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=13994 st=39000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=551 t=39000 ct=38988 step=strafe_left origin=1399.5629,-511.58337,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14015 st=39021 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14034 st=39050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=552 t=39050 ct=39021 step=strafe_left origin=1399.5629,-505.6645,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14052 st=39068 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14070 st=39086 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14088 st=39100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=553 t=39100 ct=39086 step=strafe_left origin=1399.5629,-494.00607,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14107 st=39119 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14124 st=39135 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14142 st=39150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=554 t=39150 ct=39135 step=strafe_left origin=1399.5629,-485.21744,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14161 st=39169 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14179 st=39187 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14196 st=39200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=555 t=39200 ct=39187 step=strafe_left origin=1399.5629,-475.89072,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14214 st=39218 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14234 st=39250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=556 t=39250 ct=39218 step=strafe_left origin=1399.5629,-470.33057,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14253 st=39268 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14275 st=39290 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14294 st=39300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=557 t=39300 ct=39290 step=strafe_left origin=1399.5629,-457.41663,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14315 st=39321 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14331 st=39350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=558 t=39350 ct=39321 step=strafe_left origin=1399.5629,-451.85645,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14348 st=39366 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14367 st=39386 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14386 st=39400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=559 t=39400 ct=39386 step=strafe_left origin=1399.5629,-440.19806,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14402 st=39416 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14422 st=39436 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14441 st=39450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=560 t=39450 ct=39436 step=strafe_left origin=1399.5629,-431.23007,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14460 st=39468 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14476 st=39484 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14495 st=39500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=561 t=39500 ct=39484 step=strafe_left origin=1399.5629,-422.6208,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14513 st=39518 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14529 st=39550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=562 t=39550 ct=39518 step=strafe_left origin=1399.5629,-416.52255,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14549 st=39569 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14566 st=39586 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14585 st=39600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=563 t=39600 ct=39586 step=strafe_left origin=1399.5629,-404.32605,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14603 st=39618 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14620 st=39634 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14638 st=39650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=564 t=39650 ct=39634 step=strafe_left origin=1399.5629,-395.71677,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14657 st=39668 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14675 st=39686 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!cmd ms=14694 st=39700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=-127 angles=0,32768,0 world=0,0,0
+!snap msg=565 t=39700 ct=39686 step=strafe_left origin=1399.5629,-386.39005,-151.875 vel=0,179,0 legs=155 torso=0 movementDir=90 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14712 st=39718 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14730 st=39736 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14750 st=39750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=566 t=39750 ct=39736 step=stop5 origin=1399.5629,-378.3649,-151.875 vel=0,145,0 legs=155 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14769 st=39768 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14786 st=39800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=567 t=39800 ct=39768 step=stop5 origin=1399.5629,-374.318,-151.875 vel=0,121,0 legs=155 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14805 st=39818 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14821 st=39834 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14839 st=39850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=568 t=39850 ct=39834 step=stop5 origin=1399.5629,-368.20648,-151.875 vel=0,81,0 legs=155 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14860 st=39871 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14878 st=39889 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14896 st=39900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=569 t=39900 ct=39889 step=stop5 origin=1399.5629,-364.88004,-151.875 vel=0,50,0 legs=155 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14915 st=39919 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14933 st=39950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=570 t=39950 ct=39919 step=stop5 origin=1399.5629,-363.75912,-151.875 vel=0,34,0 legs=155 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=14950 st=39966 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14969 st=39985 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=14985 st=40000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=571 t=40000 ct=39985 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15002 st=40016 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15022 st=40036 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15040 st=40050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=572 t=40050 ct=40036 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15058 st=40068 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15076 st=40086 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15094 st=40100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=573 t=40100 ct=40086 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15110 st=40116 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15130 st=40150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=574 t=40150 ct=40116 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15150 st=40170 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15169 st=40188 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15185 st=40200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=575 t=40200 ct=40188 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15207 st=40221 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15223 st=40237 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15240 st=40250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=576 t=40250 ct=40237 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15260 st=40269 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15278 st=40287 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15297 st=40300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=577 t=40300 ct=40287 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15314 st=40317 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15333 st=40350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=578 t=40350 ct=40317 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15351 st=40368 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15368 st=40384 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15386 st=40400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=579 t=40400 ct=40384 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15406 st=40419 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15422 st=40436 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15442 st=40450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=580 t=40450 ct=40436 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15460 st=40467 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15479 st=40487 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15497 st=40500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=581 t=40500 ct=40487 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15515 st=40518 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15533 st=40550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=582 t=40550 ct=40518 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15553 st=40569 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15569 st=40586 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15587 st=40600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=583 t=40600 ct=40586 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15606 st=40618 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15623 st=40636 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15643 st=40650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=584 t=40650 ct=40636 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15659 st=40666 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15680 st=40686 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15697 st=40700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=585 t=40700 ct=40686 step=stop5 origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15715 st=40717 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15735 st=40750 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=586 t=40750 ct=40717 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15752 st=40767 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15768 st=40783 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15785 st=40800 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=587 t=40800 ct=40783 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15803 st=40818 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15819 st=40834 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15837 st=40850 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=588 t=40850 ct=40834 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15857 st=40869 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15875 st=40887 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15892 st=40900 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=589 t=40900 ct=40887 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15909 st=40917 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15927 st=40934 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15946 st=40950 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=590 t=40950 ct=40934 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15963 st=40966 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=15980 st=41000 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=591 t=41000 ct=40966 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=15998 st=41018 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16014 st=41034 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16031 st=41051 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16047 st=41050 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=592 t=41050 ct=41034 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16067 st=41069 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16083 st=41100 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=593 t=41100 ct=41069 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16100 st=41117 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16119 st=41136 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16137 st=41150 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=594 t=41150 ct=41136 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16153 st=41166 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16172 st=41185 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16190 st=41200 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=595 t=41200 ct=41185 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16206 st=41216 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16225 st=41234 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16243 st=41250 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=596 t=41250 ct=41234 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16259 st=41266 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16277 st=41284 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16294 st=41300 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=597 t=41300 ct=41284 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16312 st=41318 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16328 st=41334 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16346 st=41350 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=598 t=41350 ct=41334 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16364 st=41367 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16384 st=41400 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=599 t=41400 ct=41367 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16403 st=41419 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16419 st=41435 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16439 st=41450 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=600 t=41450 ct=41435 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16458 st=41468 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16474 st=41484 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16492 st=41500 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=601 t=41500 ct=41484 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16512 st=41519 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16531 st=41550 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=602 t=41550 ct=41519 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16549 st=41567 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16566 st=41585 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16583 st=41600 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=603 t=41600 ct=41585 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16604 st=41621 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16620 st=41637 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16641 st=41650 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=604 t=41650 ct=41637 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16659 st=41667 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16677 st=41686 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!cmd ms=16695 st=41700 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0
+!snap msg=605 t=41700 ct=41686 step=end origin=1399.5629,-363.10248,-151.875 vel=0,0,0 legs=697 torso=0 movementDir=0 pm_flags=262144 view=0,0 weaponstate=0 weapAnim=0
+!cmd ms=16713 st=41717 buttons=0 wbuttons=0 weapon=23 up=0 forward=0 right=0 angles=0,32768,0 world=0,0,0

@@ -40,12 +40,42 @@ pub struct Push {
 }
 
 /// Retail's jitter term off the caller's 31-bit `rand()`: 1.1's `-1 -
-/// r/2^30`, 1.5's and UO's `r/2^31 + r/2^31 - 1` (cod11-player-clip.md 6.4).
-/// The 1.5 term is exact in an `f64`, as on the x87 stack.
+/// r/2^30`, 1.5's and UO's `r/2^31 + r/2^31 - 1` (cod11-player-clip.md 6.4,
+/// 13.4). Both are exact in an `f64`, as on the x87 stack.
 fn jitter(rules: StuckRules, rand: &mut impl FnMut() -> u32) -> f64 {
+    let r = rand() as f64;
     match rules {
-        StuckRules::V1_1 => (-1.0 - rand() as f32 / (1u32 << 30) as f32) as f64,
-        StuckRules::V1_5 => rand() as f64 / 2147483648.0 * 2.0 - 1.0,
+        StuckRules::V1_1 => -1.0 - r / 1073741824.0,
+        StuckRules::V1_5 => r / 2147483648.0 * 2.0 - 1.0,
+    }
+}
+
+/// The push direction: the separation plus the jitter, summed on the x87
+/// stack and stored, then each module's `VectorNormalize2D`. 1.1d's keeps
+/// the squared length, the reciprocal and the products on the stack and
+/// stores only the length; 1.5b's and UO's store the squared length and
+/// the reciprocal as floats (player-clip doc 13.4).
+fn push_dir(rules: StuckRules, d: Vec2, jx: f64, jy: f64) -> Vec2 {
+    let x = (d.x as f64 + jx) as f32;
+    let y = (d.y as f64 + jy) as f32;
+    let (xd, yd) = (x as f64, y as f64);
+    match rules {
+        StuckRules::V1_1 => {
+            let len = (xd * xd + yd * yd).sqrt() as f32;
+            if len == 0.0 {
+                return Vec2::new(x, y);
+            }
+            let il = 1.0 / len as f64;
+            Vec2::new((xd * il) as f32, (yd * il) as f32)
+        }
+        StuckRules::V1_5 => {
+            let len = ((xd * xd + yd * yd) as f32).sqrt();
+            if len == 0.0 {
+                return Vec2::new(x, y);
+            }
+            let il = 1.0 / len;
+            Vec2::new(x * il, y * il)
+        }
     }
 }
 
@@ -99,13 +129,7 @@ pub fn stuck_in_client(
         let d = (other.origin - my.origin).truncate();
         let jx = jitter(rules, &mut rand);
         let jy = jitter(rules, &mut rand);
-        let dir = match rules {
-            StuckRules::V1_1 => (d + Vec2::new(jx as f32, jy as f32)).normalize_or_zero(),
-            // The sum stays on the x87 stack until its store.
-            StuckRules::V1_5 => {
-                Vec2::new((d.x as f64 + jx) as f32, (d.y as f64 + jy) as f32).normalize_or_zero()
-            }
-        };
+        let dir = push_dir(rules, d, jx, jy);
         let mut s_me = if my.vel_xy.length_squared() > 0.0 {
             my.speed
         } else {
@@ -220,5 +244,170 @@ mod tests {
             }),
         ];
         assert!(stuck_in_client(0, &views, StuckRules::V1_1, || MID).is_some());
+    }
+
+    /// One end frame of a capture's pair: each slot's origin and whether it
+    /// moved, and the higher slot's velocity after its push.
+    struct CapturedPush {
+        lo: [f32; 3],
+        hi: [f32; 3],
+        lo_moving: bool,
+        hi_moving: bool,
+        hi_vel: [f32; 2],
+        /// The origins are a capture's three-decimal print, so the push
+        /// reads to that, not to the bit.
+        rounded: bool,
+    }
+
+    /// Replays a capture's push frames on glibc's `rand()` from `seed`
+    /// after `skip` draws: per frame the lower slot scans and draws, then
+    /// the higher one, whose push both velocities keep.
+    fn replay(rules: StuckRules, seed: u32, skip: usize, lo_slot: usize, frames: &[CapturedPush]) {
+        let mut g = vcod_common::rng::GlibcRand::new(seed);
+        for _ in 0..skip {
+            g.next_u31();
+        }
+        for (n, f) in frames.iter().enumerate() {
+            let at = |o: [f32; 3], moving: bool| StuckView {
+                origin: Vec3::from(o),
+                vel_xy: if moving { Vec2::X } else { Vec2::ZERO },
+                ..view(0.0, 0.0)
+            };
+            let spec = StuckView {
+                own_view: false,
+                ..view(500.0, 0.0)
+            };
+            let mut views = vec![Some(spec); lo_slot];
+            views.push(Some(at(f.lo, f.lo_moving)));
+            views.push(Some(at(f.hi, f.hi_moving)));
+            stuck_in_client(lo_slot, &views, rules, || g.next_u31()).expect("the lower slot");
+            let p = stuck_in_client(lo_slot + 1, &views, rules, || g.next_u31())
+                .expect("the higher slot");
+            let want = Vec2::from(f.hi_vel);
+            if f.rounded {
+                assert!((p.self_vel - want).length() < 0.05, "push {n}: {p:?}");
+            } else {
+                assert_eq!(p.self_vel, want, "push {n}");
+                let lo_want = if f.lo_moving == f.hi_moving {
+                    -want
+                } else {
+                    Vec2::ZERO
+                };
+                assert_eq!(p.other_vel, lo_want, "push {n}");
+            }
+        }
+    }
+
+    impl std::fmt::Debug for Push {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{} {:?} {:?}", self.other, self.self_vel, self.other_vel)
+        }
+    }
+
+    /// 1.1d's push velocities in `mp_carentan-dm-bump-overlap-*` (target
+    /// slot 0, walker slot 1), to the bit, off `srand(631)` past six
+    /// draws: both still, then pushed, then the walker walking into a
+    /// still target four frames running (player-clip doc 13.4).
+    #[test]
+    fn the_11_overlap_capture_replays_from_its_seed() {
+        let still = |hi: [f32; 3], hi_vel: [f32; 2]| CapturedPush {
+            lo: [1145.3181, -330.0834, -151.64139],
+            hi,
+            lo_moving: false,
+            hi_moving: true,
+            hi_vel,
+            rounded: false,
+        };
+        let frames = [
+            CapturedPush {
+                lo: [932.0, -376.0, -150.875],
+                hi: [932.0, -376.0, -151.875],
+                lo_moving: false,
+                hi_moving: false,
+                hi_vel: [126.06007, 142.15787],
+                rounded: false,
+            },
+            CapturedPush {
+                lo: [925.825, -382.9607, -151.8514],
+                hi: [937.8682, -369.41397, -151.875],
+                lo_moving: true,
+                hi_moving: true,
+                hi_vel: [128.05652, 140.36215],
+                rounded: false,
+            },
+            CapturedPush {
+                lo: [1145.3181, -330.0834, -150.875],
+                ..still([1145.3181, -330.0834, -151.875], [79.05528, 172.7723])
+            },
+            still([1149.8934, -321.8941, -151.875], [99.19997, 162.04741]),
+            still([1155.3969, -314.23483, -151.875], [111.7774, 153.64183]),
+            still([1161.658, -306.8345, -151.875], [111.84219, 153.59467]),
+        ];
+        replay(StuckRules::V1_1, 631, 6, 0, &frames);
+    }
+
+    /// The `RIDE` pushes of `mp_carentan-dm-pushcand-1.5.txt` and `-uo.txt`
+    /// (a spectator in slot 0, `p1` and `p2` in 1 and 2), off `srand(428)`
+    /// and `srand(439)` past eight draws each: the stacked pair, its next
+    /// frame (origins printed to three decimals) and the half pair.
+    #[test]
+    fn the_15_and_uo_pushcand_captures_replay_from_their_seeds() {
+        let push = |lo: [f32; 3], hi: [f32; 3], vel: [f32; 2], rounded: bool| CapturedPush {
+            lo,
+            hi,
+            lo_moving: rounded,
+            hi_moving: rounded,
+            // The capture logs p1's, the lower slot's: the higher's is
+            // its reverse.
+            hi_vel: [-vel[0], -vel[1]],
+            rounded,
+        };
+        let stack = [-215.0, 2430.0, -30.0];
+        let half = [-200.0, 2430.0, -30.0];
+        replay(
+            StuckRules::V1_5,
+            428,
+            8,
+            1,
+            &[
+                push(stack, stack, [-170.53241, -83.77766], false),
+                push(
+                    [-223.542, 2425.804, -30.99],
+                    [-203.551, 2435.624, -31.792],
+                    [-166.98854, -90.635666],
+                    true,
+                ),
+                push(stack, half, [-189.8796, -6.762784], false),
+            ],
+        );
+        replay(
+            StuckRules::V1_5,
+            439,
+            8,
+            1,
+            &[
+                push(stack, stack, [179.16396, 63.247704], false),
+                push(
+                    [-206.047, 2433.155, -30.99],
+                    [-229.684, 2424.825, -31.874],
+                    [178.51088, 65.068146],
+                    true,
+                ),
+                push(stack, half, [-189.5686, -12.796347], false),
+            ],
+        );
+    }
+
+    /// The draw's ends against the binaries' constants: 1.1d's `-1 -
+    /// r/2^30` spans (-3, -1], 1.5b's `2r/2^31 - 1` [-1, 1).
+    #[test]
+    fn the_jitter_spans_each_modules_band() {
+        let j = |rules, r: u32| jitter(rules, &mut || r);
+        assert_eq!(j(StuckRules::V1_1, 0), -1.0);
+        assert_eq!(j(StuckRules::V1_1, 1 << 30), -2.0);
+        assert_eq!(j(StuckRules::V1_1, i32::MAX as u32), -3.0 + 2f64.powi(-30));
+        assert_eq!(j(StuckRules::V1_5, 0), -1.0);
+        assert_eq!(j(StuckRules::V1_5, 1 << 30), 0.0);
+        assert_eq!(j(StuckRules::V1_5, i32::MAX as u32), 1.0 - 2f64.powi(-30));
     }
 }

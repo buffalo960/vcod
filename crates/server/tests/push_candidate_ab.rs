@@ -20,9 +20,9 @@
 //! The same recipe on 1.5b (`-1.5.txt`) and UO (`-uo.txt`): there the
 //! spectator does not keep `StuckInClient` off, so the stacked and half
 //! pairs are shoved apart before the slab moves (movers doc 12, "The
-//! candidate trace"). Which way rides retail's `rand()`, so ours takes each
-//! push's velocities from the capture's `RIDE` lines
-//! (`Server::pin_stuck_velocities`).
+//! candidate trace"). Which way rides retail's `rand()`, so ours draws each
+//! push's jitter from glibc's `rand()` under the seed recovered off the
+//! capture's `RIDE` lines (`Server::pin_stuck_rand`, player-clip doc 13.4).
 //!
 //! `PUSHCAND_REPORT=1` prints both logs side by side.
 //!
@@ -32,7 +32,6 @@ mod common;
 
 use common::{ADDR, ADDR_B, ADDR_C, ClientEnd, FRAME_MS, Join, ProbeHold, Queues, holding};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::net::protocol::PROTOCOL_V6;
@@ -64,31 +63,15 @@ fn rows<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
         .collect()
 }
 
-/// The capture's `StuckInClient` pushes: each `p1`/`p2` `RIDE` line's
-/// horizontal velocity, keyed by its snapshot time and the client's slot.
-fn stuck_pins(text: &str) -> HashMap<(i32, usize), [f32; 2]> {
-    let mut pins = HashMap::new();
-    for l in text.lines() {
-        let Some((slot, rest)) = WHO
-            .iter()
-            .enumerate()
-            .find_map(|(i, w)| Some((i + 1, l.strip_prefix(w)?.strip_prefix(" RIDE ")?)))
-        else {
-            continue;
-        };
-        let field = |k: &str| {
-            rest.split_whitespace()
-                .find_map(|t| t.strip_prefix(k))
-                .expect("a RIDE field")
-        };
-        let t: i32 = field("t=").parse().unwrap();
-        let v: Vec<f32> = field("vel=")
-            .split(',')
-            .map(|c| c.parse().unwrap())
-            .collect();
-        pins.insert((t, slot), [v[0], v[1]]);
+/// The glibc `srand` seed of the capture's server and the `rand()` draws
+/// before its first `StuckInClient` push, recovered off the `RIDE` lines
+/// (player-clip doc 13.4); 1.1's spectator keeps the push off.
+fn stuck_seed(fixture: &str) -> Option<(u32, usize)> {
+    match fixture {
+        FIXTURE_15 => Some((428, 8)),
+        FIXTURE_UO => Some((439, 8)),
+        _ => None,
     }
-    pins
 }
 
 struct Ours {
@@ -100,14 +83,21 @@ struct Ours {
 /// The probe on ours: the spectator, then both allied clients joined so
 /// their first snapshots fall on retail's, `late` starting each that much
 /// earlier.
-fn run_once(fs: vcod_common::pk3::Pk3Fs, retail: &str, late: [i64; 2]) -> Ours {
+fn run_once(
+    fs: vcod_common::pk3::Pk3Fs,
+    retail: &str,
+    seed: Option<(u32, usize)>,
+    late: [i64; 2],
+) -> Ours {
     let p = vcod_server::server::install_protocol(&fs);
     let bsp_path = fs.resolve_map(MAP).expect("map in the mounted paks");
     let bsp = vcod_common::bsp::parse(&fs.read(&bsp_path).unwrap()).unwrap();
     let mut now = Instant::now();
     let mut sv = vcod_server::Server::new(common::cfg(MAP, "probe_pushcand"), now);
     sv.set_protocol(p);
-    sv.pin_stuck_velocities(stuck_pins(retail));
+    if let Some((seed, skip)) = seed {
+        sv.pin_stuck_rand(seed, skip);
+    }
     sv.overlay_script(
         "maps/mp/gametypes/probe_pushcand",
         include_str!("../../gsc/tests/fixtures/semantics/client-probes/probe_pushcand.gsc"),
@@ -234,13 +224,13 @@ fn check(fs: fn() -> Option<vcod_common::pk3::Pk3Fs>, fixture: &str) {
         return;
     };
     let retail_text = std::fs::read_to_string(fixture).unwrap();
-    let mut ours = run_once(first_fs, &retail_text, [0, 0]);
+    let mut ours = run_once(first_fs, &retail_text, stuck_seed(fixture), [0, 0]);
     // A join that took a frame more or less than retail's runs again,
     // shifted by the difference.
     let want: [i32; 2] = WHO.map(|who| common::cmds_ran(&retail_text, who)[0].0);
     if ours.first.iter().zip(want).any(|(f, w)| *f != Some(w)) {
         let late = std::array::from_fn(|i| ours.first[i].map_or(0, |f| (f - want[i]) as i64));
-        ours = run_once(fs().unwrap(), &retail_text, late);
+        ours = run_once(fs().unwrap(), &retail_text, stuck_seed(fixture), late);
     }
     assert!(
         ours.log.iter().any(|l| l.contains("PROBE done")),

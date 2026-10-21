@@ -515,6 +515,20 @@ pub fn run_one(host: &mut GameHost, cx: &mut vcod_gsc::Cx, id: EntId) -> (Vec<Do
     }
     if let Some(a) = reached_at {
         let _ = host.write_field(cx, id, angles_atom, vcod_gsc::Value::Vector(a.into()));
+        // A trace turns a brush model by `r.currentAngles` as it finds them
+        // (0x8090f18 hands 0x80568d8 the entity's +0x140), so the quantized
+        // angles clip from here on with no link (movers doc 22).
+        let model = host
+            .ents
+            .get(id)
+            .and_then(|e| e.brush_model)
+            .filter(|&n| n > 0);
+        if let Some(model) = model {
+            let (origin, _) = pose(host, cx, id);
+            if let Some(world) = &host.world {
+                world.collision.set_model_pose(model as usize, origin, a);
+            }
+        }
     }
     host.movers.rows.insert(id, m);
     // A push runs first and a blocked one never reaches this
