@@ -650,37 +650,9 @@ fn vehicle_fire(
         else {
             continue;
         };
+        // The fire call spawned a shell gun's round itself
+        // (`vehicle::fire::launch_shell`).
         if shot.projectile {
-            // `Weapon_Artillery_Fire`: a shell, the driver credited through
-            // the vehicle.
-            rt.with_host(|h, cx| {
-                let Some(def) = h.weapons.get(shot.weapon).cloned() else {
-                    return;
-                };
-                let shell = crate::game::missile::Shell {
-                    drop_at_ms: None,
-                    speed: def.projectile_speed,
-                    damage: def.damage,
-                    vehicle: Some(id),
-                };
-                let kind = crate::game::missile::explosion_type(&def.proj_explosion_type);
-                let now = h.level_time_ms;
-                if let Err(e) = h.missiles.fire_rocket(
-                    &mut h.ents,
-                    cx,
-                    shot.attacker,
-                    shot.weapon as u8,
-                    shot.muzzle,
-                    shot.dir,
-                    shell,
-                    kind,
-                    true,
-                    now,
-                ) {
-                    log::warn!("vehicle {} shell not spawned: {e:?}", id.0);
-                }
-                crate::game::vehicle::fire::landed(h, &shot, false);
-            });
             continue;
         }
         let name = crate::items::item_name(rt.host.defs, shot.weapon).unwrap_or_default();

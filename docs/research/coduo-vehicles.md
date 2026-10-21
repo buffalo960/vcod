@@ -1548,6 +1548,17 @@ face.
   fires from `tag_altfire` (164) and `fireGunner` (0x8fc7a) along
   `tag_secondary_flash` (165); both refuse while overheated, add
   `fireHeat` and hold their loop 200 ms (VERIFIED decompile).
+- **Inside the call, and only with a driver.** `fireTurret` compares the
+  vehicle record's `+0x3a0` with 0x3ff (0x8ee8a) and on a match jumps to
+  its epilogue (0x8f574), past every fire (VERIFIED disassembly).
+  INFERRED: `+0x3a0` is the driver's number. VERIFIED, live capture
+  (`client-probes/probe_shellfuse`, `cod11-combat.md` 13.7): on an empty
+  Panzer IV it spawns no `rocket`, and with a driver the shell is listed
+  by `getEntArray("rocket", "classname")` on the calling thread's next
+  instruction. vcod: a shell gun fires in the builtin
+  (`vehicle::fire::launch_shell`); a bullet gun's round still waits for
+  the server's trace after the threads. Before 2026-10-21 a shell waited
+  too.
 - **The bend's arithmetic.** `fireTurret` (0x8f0fe..0x8f2ae) takes the
   aim point less `tag_flash`'s origin, each component stored, through
   the stored `VectorNormalize` (0x3a1c3); `vectoangles` (0x3aded) of the

@@ -214,6 +214,57 @@ pub fn prepare(host: &mut GameHost, cx: &mut Cx, id: EntId, gun: Gun) -> Option<
     })
 }
 
+/// Whether `gun` on vehicle `id` fires a shell (`weaponType` projectile),
+/// which the fire call spawns itself ([`launch_shell`]); a bullet gun's
+/// round waits for the server's trace.
+pub fn fires_shell(host: &GameHost, id: EntId, gun: Gun) -> bool {
+    let Some(v) = host.vehicles.live.get(&id) else {
+        return false;
+    };
+    let weapon = match gun {
+        Gun::Main => v.weapons[0],
+        Gun::Alt => v.weapons[1],
+        Gun::Gunner => v.weapons[2],
+    };
+    host.weapons
+        .get(weapon)
+        .is_some_and(|d| d.weapon_type == "projectile")
+}
+
+/// `Weapon_Artillery_Fire`'s `fire_rocket` inside the fire call, as
+/// `CMD_VEH_FireTurret` runs it: the shell exists, with its number and
+/// `classname`, before the calling thread's next instruction
+/// (docs/research/cod11-combat.md 13.7). The driver is credited through
+/// the vehicle.
+pub fn launch_shell(host: &mut GameHost, cx: &mut Cx, shot: &Shot) {
+    let Some(def) = host.weapons.get(shot.weapon).cloned() else {
+        return;
+    };
+    let shell = crate::game::missile::Shell {
+        drop_at_ms: None,
+        speed: def.projectile_speed,
+        damage: def.damage,
+        vehicle: Some(shot.vehicle),
+    };
+    let kind = crate::game::missile::explosion_type(&def.proj_explosion_type);
+    let now = host.level_time_ms;
+    if let Err(e) = host.missiles.fire_rocket(
+        &mut host.ents,
+        cx,
+        shot.attacker,
+        shot.weapon as u8,
+        shot.muzzle,
+        shot.dir,
+        shell,
+        kind,
+        true,
+        now,
+    ) {
+        log::warn!("vehicle {} shell not spawned: {e:?}", shot.vehicle.0);
+    }
+    landed(host, shot, false);
+}
+
 /// What the fire call leaves on the vehicle once its round is out: the gun
 /// in `s.weapon`, the fire event on its own ring (163 main, 164 alt, 165
 /// gunner; a bullet's parm the weapon with bit 7 unless it struck a

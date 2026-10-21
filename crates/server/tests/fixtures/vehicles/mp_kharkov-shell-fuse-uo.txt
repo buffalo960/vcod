@@ -1,0 +1,26 @@
+# Retail CoD UO 1.51b dedicated server, 2026-10-21: the PROBE lines of
+# client-probes/probe_shellfuse on mp_kharkov, +set probe_vehicletype panzeriv_mp.
+# COD_VERSION=uo PORT=34751 PROBE_SECS=62 tools/run_probe.sh client-probes/probe_shellfuse
+#   mp_kharkov +set probe_vehicletype panzeriv_mp
+# then, 18 s in, the driver: vcod --game-dir <UO> --mod-dir uo --net-probe 127.0.0.1:34751
+#   --probe-team axis --probe-vehicle sit --save-snapshots --capture-tag uo-shellfuse --probe-secs 40
+# (crates/common/tests/fixtures/net/*-uo-shellfuse.bin). The driverless fireTurret spawns no
+# rocket; the Panzer IV's two shells are pinned in the air and go off on their 15 s fuse, the
+# first over the Elefant, the second over the Panzer with client 0 in its second seat.
+PROBE vehicle 162 panzeriv_mp (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE target 192 elefant_mp (-1494.00, 6195.00, -59.55) (7.43, -65.00, 1.38) health 2900
+PROBE idlefire 2050 rockets 0 0
+PROBE place 20000 0 (-1327.39, 6203.84, -56.75) 5.30678
+PROBE seat 30050 1
+PROBE fire 33050 0 (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE shell 33050 0 464 (-1399.66, 6197.63, 7.09) (-1494.00, 6195.00, 120.45)
+PROBE fire 35050 1 (-1218.00, 6214.00, -64.75) (6.16, -85.00, -2.87)
+PROBE shell 35050 1 465 (-1399.66, 6197.63, 7.09) (-1218.00, 6214.00, 115.25)
+PROBE seat 42200 2
+PROBE unseat 42200
+PROBE vdamage target 48100 76 MOD_PROJECTILE_SPLASH (-1494.00, 6195.00, 130.00) (0.00, 0.00, -1.00) 162 464 2824
+PROBE hit 50050 0 dmg 18 mod MOD_PROJECTILE_SPLASH loc none att 162 inf 465
+PROBE vdamage self 50100 81 MOD_PROJECTILE_SPLASH (-1218.00, 6214.00, 125.00) (0.00, 0.00, -1.00) 162 465 2819
+PROBE seat 54200 1
+PROBE unseat 54200
+PROBE unseat 58550

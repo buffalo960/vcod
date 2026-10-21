@@ -331,9 +331,10 @@ fn clear_turret_target(
     Ok(Value::Undefined)
 }
 
-/// The three fire methods queue the shot for the server, which traces it
-/// against the bodies (`CMD_VEH_FireTurret` 0x8ee02, `CMD_VEH_FireAltTurret`
-/// 0x8f57e, `G_VEH_FireGunner` 0x8fc7a).
+/// The three fire methods (`CMD_VEH_FireTurret` 0x8ee02,
+/// `CMD_VEH_FireAltTurret` 0x8f57e, `G_VEH_FireGunner` 0x8fc7a): a shell
+/// gun spawns its shell inside the call; a bullet gun queues the shot for
+/// the server, which traces it against the bodies.
 fn fire(
     host: &mut GameHost,
     cx: &mut Cx,
@@ -341,7 +342,13 @@ fn fire(
     gun: Gun,
 ) -> Result<Value, ErrorKind> {
     let id = living_vehicle(host, cx, recv)?;
-    host.vehicles.fire_ops.push((id, gun));
+    if crate::game::vehicle::fire::fires_shell(host, id, gun) {
+        if let Some(shot) = crate::game::vehicle::fire::prepare(host, cx, id, gun) {
+            crate::game::vehicle::fire::launch_shell(host, cx, &shot);
+        }
+    } else {
+        host.vehicles.fire_ops.push((id, gun));
+    }
     Ok(Value::Undefined)
 }
 

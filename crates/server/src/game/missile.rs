@@ -241,6 +241,9 @@ pub struct Missile {
     ground: i32,
     /// When the explode event went on the ring, if it has.
     exploded_ms: Option<i32>,
+    /// `G_ExplodeMissile` set it off (the fuse), which ORs in
+    /// [`EFLAGS_EXPLODED`]; `G_MissileImpact` sets no such bit.
+    fused: bool,
     /// United Offensive's missile rules: its bounce, its explode's type in
     /// `es.scale` and no concussion entity.
     pub uo: bool,
@@ -1009,6 +1012,7 @@ impl Missile {
         self.events
             .add(EV_GRENADE_EXPLODE, dir_to_byte(normal.into()));
         self.exploded_ms = Some(now_ms);
+        self.fused = true;
         // UO's blast centre is the end of a trace 10 up (0x5e2b5).
         let org = self.origin;
         let at = match world {
@@ -1171,11 +1175,12 @@ impl Missile {
             }
         };
         let exploded = self.exploded_ms.is_some();
-        // A popped smoke grenade stays a missile; a shell's impact sets no
-        // explode flag.
+        // A popped smoke grenade stays a missile; an impact sets no explode
+        // flag, the fuse does, a shell's or a rocket's too (UO 0x5e435,
+        // 1.5b 0x547dc; combat doc 13.7).
         let general = exploded && self.free_at_ms.is_none();
         set("eType", if general { ET_GENERAL } else { ET_MISSILE });
-        let flag = general && self.shell.is_none();
+        let flag = general && self.fused;
         set(
             "eFlags",
             self.eflags | if flag { EFLAGS_EXPLODED } else { 0 },
@@ -1388,6 +1393,7 @@ impl Missiles {
             surf_type: 0,
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
+            fused: false,
             uo: self.uo,
             falls: self.falls,
             explosion_type: 0,
@@ -1444,6 +1450,7 @@ impl Missiles {
             surf_type: 0,
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
+            fused: false,
             uo: self.uo,
             falls: self.falls,
             explosion_type: 0,
@@ -1600,6 +1607,7 @@ impl Missiles {
             surf_type: 0,
             ground: ENTITYNUM_WORLD as i32,
             exploded_ms: None,
+            fused: false,
             uo: true,
             falls: true,
             explosion_type,
@@ -1686,6 +1694,7 @@ impl Missiles {
             surf_type: 0,
             ground: ENTITYNUM_NONE as i32,
             exploded_ms: None,
+            fused: false,
             uo: self.uo,
             falls: self.falls,
             explosion_type,
@@ -1848,6 +1857,27 @@ impl Missiles {
     /// A missile's `s.weapon`, gone off or not.
     pub fn weapon_of(&self, id: EntId) -> Option<u8> {
         self.live.iter().find(|m| m.id == id).map(|m| m.weapon)
+    }
+
+    /// A script `origin` write on a live missile: `Scr_SetOrigin`'s
+    /// `G_SetOrigin` (1.1d 0x5c61c, UO 0x6e801) puts `trType` 0 at the
+    /// point with no delta and moves `r.currentOrigin`. 1.5's and UO's
+    /// `G_RunMissile` then drops it from there when nothing is under it,
+    /// so a write every frame holds it (combat doc 13.7). `false` when `id`
+    /// is no live missile.
+    pub fn set_origin(&mut self, id: EntId, origin: Vec3) -> bool {
+        let Some(m) = self.live.iter_mut().find(|m| m.id == id) else {
+            return false;
+        };
+        m.origin = origin;
+        m.traj = Trajectory {
+            tr_type: TR_STATIONARY,
+            tr_time: 0,
+            tr_duration: 0,
+            base: origin,
+            delta: Vec3::ZERO,
+        };
+        true
     }
 
     /// A live missile's `r.currentOrigin`.

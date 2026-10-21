@@ -7062,6 +7062,51 @@ the vehicle is live (pinned by
 `a_blast_charged_to_a_vehicle_names_it`). Before 2026-10-21 vcod charged
 the driver's slot.
 
+The fuse measured, UO 1.51b, 2026-10-21: `client-probes/probe_shellfuse`
+on mp_kharkov calls `fireTurret` on the empty Panzer IV (162), then seats
+client 0 in it, fires twice and pins each shell with an `origin` write
+every frame, the first 180 above the Elefant (192), the second 180 above
+the Panzer, where client 0 sits in the second seat by the time it goes
+off (fixtures `crates/server/tests/fixtures/vehicles/mp_kharkov-shell-fuse-uo.txt`
+and `crates/common/tests/fixtures/net/*-uo-shellfuse.bin`, recipe in the
+first's header). Each row is VERIFIED, live capture:
+
+| What | Retail |
+|---|---|
+| `fireTurret` with no driver | no `rocket` spawned (0 before, 0 after) |
+| shell 0, fired at 33050 | its explode on the wire at 48050, 15000 on, at the pin truncated, (-1494, 6195, 120); `eType` 0, `eFlags` 0x8080 |
+| the Elefant's `damage` notify | 76 `MOD_PROJECTILE_SPLASH`, attacker 162 (the Panzer), inflictor the shell |
+| shell 1, fired at 35050 | its explode at 50050, (-1218, 6214, 115), `eFlags` 0x8080 |
+| client 0's `CodeCallback_PlayerDamage`, second seat | 18 `MOD_PROJECTILE_SPLASH`, `sHitLoc` `none`, `eAttacker` 162, `eInflictor` the shell |
+| the Panzer's own `damage` notify | 81 `MOD_PROJECTILE_SPLASH`, attacker 162 |
+
+So the vehicle is the attacker on a vehicle and on a player, and the
+rider who fired, now out of the driver's seat, is charged nothing. Not
+measured: a shell whose driver left the server before the fuse.
+
+VERIFIED, live capture: the probe's `pin` thread, which loops while its
+shell is defined and then logs `PROBE gone`, never logged it; the thread
+ended with its entity. VERIFIED: `Scr_SetOrigin` (UO 0x6e801, 1.1d
+0x5c61c) calls `G_SetOrigin` (UO 0x7a17a), which writes `trBase`, zeroes
+`trType`, `trTime`, `trDuration` and `trDelta` and copies the point into
+`r.currentOrigin`; UO's `G_RunMissile` (0x5ee7d) then turns a `trType` 0
+missile whose ground is not 0x3fe and has nothing within its trace below
+into `trType` 5 at `level.time` from that point (12.6). INFERRED: the
+evaluation at that same `level.time` moves it nothing, so a write every
+frame holds it. VERIFIED: UO's `G_ExplodeMissile` ORs `eFlags` 0x80
+(0x5e435; 0x100 in 1.1's layout) and 1.5b's 0x100 (0x547dc). INFERRED,
+decompile read: UO's `G_MissileImpact` sets 0x100000 on a vehicle hit and
+no such bit.
+
+vcod: `Missiles::set_origin` (from `GameHost::set_field`) is the
+`G_SetOrigin`; the explode flag rides `Missile::fused`, set by the fuse
+alone. Before 2026-10-21 the fire waited for the server's pass after the
+threads, an `origin` write left a missile's flight alone, and a rocket's
+or a shell's fuse explode went out without the bit. Pinned by
+`crates/server/tests/vehicle_fuse_ab.rs`, every probe line and both
+explodes exact (times past the placement and the first seat, the shells
+named by their order: ours numbers temp entities apart).
+
 VERIFIED, UO: the `r.ownerNum` copy from `+0x330` (0x5e2db..0x5e2f3) runs
 ahead of the explode's two traces, which pass the missile (`*param_1`)
 under mask 0x11 (0x5e519 down, 0x5e745 the 10 up; 0x5e616 is the water
