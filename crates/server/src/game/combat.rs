@@ -1369,10 +1369,10 @@ pub struct BodyPose {
     pub input: vcod_common::playerpose::BodyInput,
     pub angles: vcod_common::playerpose::BodyAngles,
     pub slope: vcod_common::playerpose::BodySlope,
-    /// A gunner's legs blend, the turret placement's leaves.
-    pub turret_leaves: Option<Vec<(usize, f32)>>,
+    /// A gunner's legs blend, the turret placement's rows.
+    pub turret_leaves: Option<Vec<vcod_common::turretpose::TurretRow>>,
     /// `ClientSim::gunner_left`.
-    pub turret_left: Option<(usize, Vec<(usize, f32)>)>,
+    pub turret_left: Option<(usize, Vec<vcod_common::turretpose::TurretRow>)>,
     /// A UO rider's seat: the frame the body is posed in and the
     /// controllers' rider branch (docs/research/coduo-vehicles.md 11.4).
     pub seat: Option<vcod_common::playerpose::BodySeat>,

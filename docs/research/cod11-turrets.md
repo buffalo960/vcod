@@ -2314,10 +2314,11 @@ their leaves) and `looping`; the placement hands them to
 clock's current clip (`ChannelClock::set_sync_frequency`, stepped with
 the stored increment), and keeps the group last left with its leaves
 (`gunner_left`). `playerpose::pose_player` poses each legs layer: the
-current one by the placement's leaves, a turret group fading out by the
-leaves it was left with (`PoseInputs::turret_left`), any other clip as
-itself; under `node_time` (1.5 and UO) every leaf samples its group's
-node time. The client draws with the current group's leaves only.
+current one by the placement's rows and leaves, a turret group fading
+out by the rows it was left with (`PoseInputs::turret_left`), any other
+clip as itself; under `node_time` (1.5 and UO) every leaf samples its
+group's node time. The client draws with the current group's rows only,
+without the rows the search walks past (below).
 
 #### The captures
 
@@ -2329,7 +2330,7 @@ grid of `bulletTrace`s through his back along the gun's base forward
 (rows 30..54 over his origin, 6 apart) and logs each cell's distance to
 him (`probe_turret.gsc` gungrid). `turret_ab`'s
 `the_gunner_grid_capture_matches_*` replay them on retail's clock and
-hold every cell on a mounted frame within `GRID_NEAR` (0.1). A first
+hold every cell on a mounted frame within `GUNGRID_NEAR` (0.05). A first
 1.5b take had a 200 ms client stall at 27600 and a second the gunner off
 the gun by 4.8 at the first snapshot; both were discarded (the captures
 are the third).
@@ -2383,26 +2384,68 @@ pick is not logged): our first snapshot reads 697, the idle's node time
 both servers (UO 20450 cell 14 0.28, 1.5b 19050 cell 18 0.10 and 19100
 cell 14 0.28, the edge cells below).
 
+#### The rows
+
+VERIFIED, `coduo_lnxded` 0x80bdbdc (the tree walk, cod11-combat.md 3.1,
+"The pose on 1.5 and UO"): a node with two or more weighted children
+walks each into a buffer and a nested one scales its rotation sum to its
+own weight (`weight / sqrt(|q|^2)`) before its parent sums it. The
+turret group (`standMG42_aim`, `standMG42_fire`) is such a node over its
+rows, and each row over its column pair. INFERRED: a row's two leaves
+are normalized to the row's weight before the rows blend, which a flat
+sum of the leaves at their products of weights does not do once the two
+rows' column pairs sum to different lengths.
+
+VERIFIED, game.mp.uo 0x6ac06 (1.5b game.mp 0x61389, the same calls): the
+search's first pass sets, for every row it walks, the row's goal weight
+to 1.0 and its column pair's to `1 - f` and `f` (the `f` leaf only when
+`f` is not 0), each at goal time 1.0 (`trap_XAnimSetGoalWeight`, UO
+syscall 100, `coduo_lnxded` 0x80c1072 into 0x80c05a2), before the
+second `trap_XAnimClearTreeGoalWeightsStrict` and the second pass.
+VERIFIED, 0x80c05a2: the goal goes to `+0x1c` of the node's half, the
+remaining time `|goal - weight| * time` to `+0x18`; under 0.001
+(0x80ea444, the float 0.001) the weight takes the goal and the time 0,
+otherwise a weight of 0 is raised to `0.001 * goal` (`+0x20`).
+VERIFIED, syscall 0x58 (0x80bfdca, each descendant through 0x80bfc22):
+the strict clear zeroes goal, time and weight only of a node
+0x80bfbdc reads inactive; a weighted one keeps its weight and gets goal
+0 at the time given (0 here). INFERRED: a row the search walked past and
+did not keep (every row before the pair it blends, every row but the
+last when no row reaches the target) is raised from 0 to 0.001, its
+leaves to `0.001 * (1 - f)` and `0.001 * f`, and the second pass touches
+none of them, so they stand beside the blend. The rows walked first are
+`15up` then `level` (engine child order, 7.2): a placement that blends
+`level` and `15down` keeps `15up` at 0.001; one that breaks on `15up`
+walks past nothing.
+
+vcod: `GunnerPlacement::rows` (each row's weight and its leaves', engine
+order) and `passed` (the rows walked past, at the first pass's goals);
+`GunnerPlacement::posed_rows` puts the passed ones at 0.001 times their
+goals ahead of the blend on 1.5 and UO (`ClientSim::set_gunner_blend`),
+and `pose_player` hands the group to the walk as a node over row nodes
+(`skeleton::Blend`, `PoseBuffer::blend_tree`).
+
+vcod measurement (`TURRET_REPORT=1`): before either change every frame
+on two rows sat 0.01 to 0.03 off, frames on `15up` alone exact. The
+nested walk alone halved most of those; with the passed row at 0.001
+every frame of the yaw rest, the target phase and the pitch rest is
+retail's to under 0.0005 on both servers, and the right-arc cell (row
+42, 12 right, 37.2635 on both servers) misses `bip01 r finger22` as
+retail's does: ours had grazed the box's `z` face, at most 0.018 deep
+along a ray nearly parallel to it, a pose 0.02 off moved it. The crouch
+re-mount (UO up to 1.7 off before, 1.5b 0.27) sits within 0.021 and the
+mount's frames within 0.05, every frame of both captures within 0.05
+but one cell.
+
 #### What is left
 
-- vcod measurement: one cell (row 42, 12 to the right) reads 2.45 nearer
-  on ours on every frame the barrel rests at the yaw sweep's right arc,
-  on 1.5b and UO alike (37.2635 against 34.81). The pose elsewhere on
-  those frames matches to 0.02. vcod measurement, UO 22100: ours grazes
-  `bip01 r finger22`'s box (hit location 10, 34.81 in, 0.22 deep), and
-  `bip01 r hand`'s box behind it reads 37.253, retail's to 0.01, so
-  retail's ray misses the finger. Not run down: the finger's pose, or a
-  body model whose finger box differs (the gunner's models are not
-  logged; `PROBE models` covers the axis target only).
-- vcod measurement: single cells on single frames of the mount and the
-  sweeps, 0.1 to 1.6 off (UO 20450, 21100, 24850, 24950; 1.5b 19050,
-  19100, 20200, 20450).
-- vcod measurement: the re-mount from a crouch: on UO the head-height
-  cells (row 54, cells 22 and 23) 0.1 to 0.14 off for six frames
-  (33850..34100) and cell 13 1.7 off on the first (33800); on 1.5b cell
-  13 0.15 and 0.27 on the first two (32550, 32600). The mounted
-  controllers move none of them (forced off or to their targets, the
-  cells hold).
+- vcod measurement: one edge cell on one frame, 1.5b 20200 cell 5 (row
+  36, 12 right) 0.12 off while the rest of the frame is within 0.005.
+- vcod measurement: frames where the blend changes rows or columns (the
+  mount, the crouch re-mount, column changes in the sweeps) read 0.01 to
+  0.05 off. INFERRED, 0x80c05a2: a leaf entering the blend stands at
+  `0.001 * goal` until the weight step and one leaving keeps its weight
+  under the strict clear, which vcod does not keep across frames.
 
 ## 14. The client
 
