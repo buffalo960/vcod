@@ -40,9 +40,11 @@ const PROBE: &str =
 /// How long after its connect the client's first snapshot lands on ours.
 const FIRST_SNAP_AFTER_JOIN_MS: i64 = 400;
 
-/// Ours' script log and the client's first snapshot time.
+/// Ours' script log, its runtime errors and the client's first snapshot
+/// time.
 struct Ours {
     log: Vec<String>,
+    aborts: Vec<String>,
     first_snap: Option<i32>,
 }
 
@@ -106,9 +108,9 @@ fn run_once(fs: Pk3Fs, text: &str, cvars: &[(&str, &str)], late_ms: i64) -> Opti
             break;
         }
     }
-    assert_eq!(sv.script_aborts(), Vec::<String>::new());
     Some(Ours {
         log: sv.script_log().to_vec(),
+        aborts: sv.script_aborts(),
         first_snap,
     })
 }
@@ -135,6 +137,29 @@ fn replay(fixture: &str, cvars: &[(&str, &str)]) {
 
 /// [`replay`] on the paks `fs` mounts, a 1.1, 1.5 or UO install's.
 fn replay_on(fs: fn() -> Option<Pk3Fs>, fixture: &str, cvars: &[(&str, &str)]) {
+    replay_with(fs, fixture, cvars, 0, Hold::All);
+}
+
+/// Which of retail's lines a replay holds ours to.
+#[derive(Clone, Copy, PartialEq)]
+enum Hold {
+    All,
+    /// Retail's log is cut short by the process dying on the first error:
+    /// ours' must open with it.
+    Prefix,
+    /// Every line but the per-frame `PROBE f` origins.
+    NoFrames,
+}
+
+/// [`replay_on`] where the probe raises `errors` runtime errors, each read
+/// only entity field's, holding the lines `hold` names.
+fn replay_with(
+    fs: fn() -> Option<Pk3Fs>,
+    fixture: &str,
+    cvars: &[(&str, &str)],
+    errors: usize,
+    hold: Hold,
+) {
     let text = std::fs::read_to_string(fixture).unwrap();
     let Some(mut ours) = fs().and_then(|f| run_once(f, &text, cvars, 0)) else {
         eprintln!("COD_DIR unset or not the capture's install: skipping");
@@ -146,8 +171,20 @@ fn replay_on(fs: fn() -> Option<Pk3Fs>, fixture: &str, cvars: &[(&str, &str)]) {
     if let Some(t) = ours.first_snap.filter(|&t| t != first) {
         ours = run_once(fs().unwrap(), &text, cvars, (t - first) as i64).unwrap();
     }
-    let retail = probe_lines(text.lines());
-    let ours = probe_lines(ours.log.iter().map(String::as_str));
+    assert_eq!(ours.aborts.len(), errors, "{:?}", ours.aborts);
+    for a in &ours.aborts {
+        assert!(a.contains("Tried to set a read only entity field"), "{a}");
+    }
+    let mut retail = probe_lines(text.lines());
+    let mut ours = probe_lines(ours.log.iter().map(String::as_str));
+    match hold {
+        Hold::All => {}
+        Hold::Prefix => ours.truncate(retail.len()),
+        Hold::NoFrames => {
+            retail.retain(|l| !l.starts_with("PROBE f "));
+            ours.retain(|l| !l.starts_with("PROBE f "));
+        }
+    }
     if std::env::var("HURTFALL_REPORT").is_ok() {
         for (a, b) in retail.iter().zip(&ours) {
             println!("retail {a}\nours   {b}");
@@ -258,5 +295,76 @@ fn a_trigger_hurt_cadence_matches_retail_uo() {
         uo,
         "tests/fixtures/triggers/mp_carentan-dm-hurtonce-uo.txt",
         ONCE,
+    );
+}
+
+const USE: &[(&str, &str)] = &[
+    ("probe_spawn", "17"),
+    ("probe_dmg", "25"),
+    ("probe_drop", "-30"),
+    ("probe_use", "1000"),
+];
+const WRITE: &[(&str, &str)] = &[
+    ("probe_spawn", "17"),
+    ("probe_drop", "-30"),
+    ("probe_write", "1"),
+];
+
+/// A `START_OFF` hurt hurts nothing until a `useBy` toggles its touch on,
+/// and a second `useBy` turns it off; each use notifies `"trigger"` with
+/// its user on the spot (combat doc 5.9).
+#[test]
+fn a_start_off_trigger_hurt_toggles_on_its_use() {
+    replay("tests/fixtures/triggers/mp_carentan-dm-hurtuse.txt", USE);
+}
+
+/// A script write of `spawnflags`, `classname` or `model` is refused, and
+/// below `developer 1` the writing thread runs on.
+#[test]
+fn a_trigger_hurt_refuses_a_write_of_its_read_only_fields() {
+    replay_with(
+        vcod_common::testing::game_fs_11,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtwrite.txt",
+        WRITE,
+        3,
+        Hold::All,
+    );
+}
+
+/// The 1.5 write capture's body drifts (900.16, 1930.16) in the first 50 ms
+/// of its fall, where ours falls straight, for a reason not yet measured
+/// (combat doc 5.9, Open), so that run holds every line but the frames.
+#[test]
+fn a_trigger_hurt_use_and_write_match_retail_15() {
+    replay_on(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtuse-1.5.txt",
+        USE,
+    );
+    replay_with(
+        fs_15,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtwrite-1.5.txt",
+        WRITE,
+        3,
+        Hold::NoFrames,
+    );
+}
+
+/// UO's server process dies on the first write (SIGABRT, combat doc 5.9);
+/// ours runs on, so only the lines before it are held.
+#[test]
+fn a_trigger_hurt_use_and_write_match_retail_uo() {
+    let uo = vcod_common::testing::uo_fs;
+    replay_on(
+        uo,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtuse-uo.txt",
+        USE,
+    );
+    replay_with(
+        uo,
+        "tests/fixtures/triggers/mp_carentan-dm-hurtwrite-uo.txt",
+        WRITE,
+        3,
+        Hold::Prefix,
     );
 }

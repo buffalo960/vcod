@@ -3980,7 +3980,7 @@ impl ScriptRuntime {
         shape: crate::game::trigger::TriggerShape,
         dmg: i32,
     ) {
-        self.host.triggers.register_hurt(id, shape, 0);
+        self.host.triggers.register_hurt(id, shape, 0, 0, 0.0);
         let host = &mut self.host;
         self.vm.with_cx(|cx| {
             let atom = cx.intern_folded("dmg");
