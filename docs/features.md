@@ -35,9 +35,11 @@ something, the bullet links it.
 
 - Opens on the stock main menu and server browser, drawn from the game's own
   `ui_mp/*.menu` files. The browser's three sources are retail's: Local
-  (a `getinfo` broadcast to ports 28960-28963), Internet (what
-  `codmaster.activision.com` knows, `coduomaster.activision.com` with
-  `--mod-dir uo`) and Favorites (kept in `servercache.dat`
+  (a `getinfo` broadcast to ports 28960-28963), Internet (what the
+  `master.cod.pm` master lists for the install's own protocol: 1 on
+  1.1, 6 on 1.5 on port 20510, 22 on UO on 20610, at most one request a
+  second; a server whose `getinfo` names another protocol is dropped)
+  and Favorites (kept in `servercache.dat`
   beside `CoDMP.exe`, the file retail uses). It pings, filters (by game
   type too), shows when each source was last refreshed, sorts by
   column, joins on double-click, and runs the stock password, server info,
@@ -527,8 +529,8 @@ console.
   off-LAN player and does nothing to a LAN one, which has no guid. After
   `killserver` the process sits there deaf, since there is no stdin
   console.
-- A heartbeat reaches the master, which probes back. I haven't seen vcod
-  listed yet.
+- The heartbeat to `master.cod.pm` has not been tried against the live
+  master; tests heartbeat a loopback fake.
 - A server speaks one patch, 1.1, 1.5 or UO, as each retail binary does. On 1.5
   everyone, bots too, moves by 1.5's rules (as far as the client's
   prediction models them), and so do the bots' nav graph's walks.

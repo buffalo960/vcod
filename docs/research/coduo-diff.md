@@ -2058,7 +2058,8 @@ loopback (`COD_VERSION=uo tools/run_server.sh`, mp_cassino dm,
   vehicle and tracer cvars, `sv_night`, `sv_obituary`, `bg_nofatigue`,
   `bg_lmg_yawcap`, `cg_hudcompassMaxRange`, `scr_allow_jeeps` and
   `scr_allow_tanks` (`S`, `L`, default 1), `sv_master1
-  coduomaster.activision.com`. The mirror adds `bg_lmg_yawcap`,
+  coduomaster.activision.com` (vcod's row reads `master.cod.pm`, whose
+  UO list is on port 20610). The mirror adds `bg_lmg_yawcap`,
   `bg_nofatigue` and `cg_hudcompassMaxRange` to 1.5's set (VERIFIED, the
   gamestate's 155, 156, 165); systeminfo adds `sv_allowDownload`,
   `sv_night` and `sv_obituary` to 1.5's rows (VERIFIED, configstring 1).
