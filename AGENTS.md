@@ -114,9 +114,10 @@ check.
   and no A/B gate runs in CI, only on a machine with an install. `nightly.yml`
   rebuilds the rolling `nightly` release on master pushes that touch code
   (docs, tools and `*.md` are path-ignored); `workflow_dispatch` forces one.
-- The server's integration tests are one binary, `--test server`
-  (`crates/server/tests/main.rs`): a new file there needs its `mod` line,
-  and a file's tests filter by its name (`-- vehicle_ab::`).
+- Each crate's integration tests are one binary named after the crate
+  (`--test server`, `--test common`, `--test gsc`; `tests/main.rs`): a new
+  file there needs its `mod` line, and a file's tests filter by its name
+  (`-- vehicle_ab::`).
 - Ignored tests to run when you touch their area, in release: `nav_census`
   (all stock nav graphs, ~8 s, 65 s of CPU: `cargo test --release -p
   vcod-server --test server -- --ignored nav_census::`) and the ignored
