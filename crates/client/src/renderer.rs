@@ -8708,7 +8708,7 @@ mod tests {
     fn noise_wgsl_tables_are_the_common_ones() {
         let src = include_str!("noise.wgsl");
         let array = |name: &str| -> Vec<String> {
-            let start = src.find(&format!("const {name}")).expect(name);
+            let start = src.find(&format!("var<private> {name}:")).expect(name);
             let body = &src[start..];
             let open = body.find(">(").unwrap() + 2;
             let close = body.find(");").unwrap();
