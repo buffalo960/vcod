@@ -17,7 +17,7 @@ bytemuck = { version = "1", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 ctrlc = { version = "3", features = ["termination"] }
 env_logger = "0.11"
-glam = "0.34"
+glam = "0.33"
 image = { version = "0.25", default-features = false, features = ["tga", "jpeg"] }
 kira = { version = "0.12", default-features = false, features = ["cpal", "mp3", "wav", "pcm"] }
 log = "0.4"
@@ -43,6 +43,10 @@ strip = "symbols"
 # keep file:line in backtraces.
 [profile.dev]
 debug = "line-tables-only"
+# The suites spend most of their CPU in pmove, collision and the gsc VM;
+# at opt-level 0 the workspace suite took 143 s, at 1 it takes 31 s, and an
+# edit rebuilds no slower.
+opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3

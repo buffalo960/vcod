@@ -809,12 +809,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glam"
-version = "0.34.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eece6af6447501f08d55ff4f6aed8a2753e4224e51899bccf3d5ae3d2de564b1"
-
-[[package]]
 name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1081,7 +1075,7 @@ checksum = "aae7115ef1161313b8f71f49487702a662ab333bd2a47bf69af410b69112a519"
 dependencies = [
  "atomic-arena",
  "cpal",
- "glam 0.33.12",
+ "glam",
  "mint",
  "pastey",
  "rtrb",
@@ -2505,7 +2499,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
- "glam 0.34.0",
+ "glam",
  "jiff",
  "kira",
  "log",
@@ -2525,7 +2519,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
- "glam 0.34.0",
+ "glam",
  "image",
  "libc",
  "log",
@@ -2551,7 +2545,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
- "glam 0.34.0",
+ "glam",
  "log",
  "vcod-common",
  "vcod-gsc",

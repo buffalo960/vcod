@@ -8,6 +8,8 @@ readme.workspace = true
 rust-version.workspace = true
 publish = false
 description = "Virtual machine for the Call of Duty (2003) 1.1 GSC script language"
+# tests/main.rs links every test file into one binary (`cargo test --test gsc`).
+autotests = false
 
 [dependencies]
 anyhow.workspace = true
@@ -16,3 +18,7 @@ log.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 vcod-common.workspace = true
+
+[[test]]
+name = "gsc"
+path = "tests/main.rs"
