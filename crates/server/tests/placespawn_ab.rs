@@ -19,7 +19,7 @@
 //! Needs `COD_DIR`; without the paks it returns early. `PLACEBITS_MAP=<map>`
 //! runs one map.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;

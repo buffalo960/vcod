@@ -21,7 +21,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{FRAME_MS, Sample, parse_fixture, replay};
 use std::collections::{BTreeMap, BTreeSet};

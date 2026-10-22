@@ -6,7 +6,7 @@
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
 
-mod common;
+use crate::common;
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};

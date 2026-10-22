@@ -18,7 +18,7 @@
 //! Each gate returns early unless `COD_DIR` is the install its capture came
 //! from.
 
-mod common;
+use crate::common;
 
 use common::Queues;
 use std::cell::RefCell;

@@ -1,7 +1,7 @@
 //! The connect handshake, the client roster and the snapshot stream, driven
 //! through the in-process client harness in `common`.
 
-mod common;
+use crate::common;
 
 use common::{ClientEnd, Queues, connect, step, step_dropping_reply};
 use std::cell::RefCell;

@@ -2,7 +2,7 @@
 //! vcod's client asks the server for a pak, is sent to an HTTP server on
 //! loopback, fetches it there and finishes the handshake.
 
-mod common;
+use crate::common;
 
 use common::{Queues, connect, step};
 use std::cell::RefCell;

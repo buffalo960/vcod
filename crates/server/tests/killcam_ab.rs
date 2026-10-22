@@ -10,7 +10,7 @@
 //!
 //! Needs `COD_DIR` for our half; the retail half reads only the fixtures.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues};
 use std::cell::RefCell;

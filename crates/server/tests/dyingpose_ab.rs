@@ -14,7 +14,7 @@
 //! install, the 1.5 ones at a 1.5 or UO install (its `main/`), the UO ones
 //! at a UO install.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues, step};
 use std::cell::RefCell;

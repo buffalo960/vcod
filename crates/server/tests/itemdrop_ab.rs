@@ -28,7 +28,7 @@
 //! Needs `COD_DIR`: a 1.1 install runs the 1.1d fixture, a UO one (whose
 //! `main/` is 1.5's) the 1.5b and UO ones; without the paks they return.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

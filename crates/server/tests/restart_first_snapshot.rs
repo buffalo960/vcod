@@ -8,7 +8,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{ADDR, ClientEnd, Queues};
 use std::cell::RefCell;

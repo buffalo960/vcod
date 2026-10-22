@@ -11,7 +11,7 @@
 //! `VEHICLE_REPORT=1` prints every snapshot's differences. Needs `COD_DIR`
 //! at a UO install; without one it returns early.
 
-mod common;
+use crate::common;
 
 use common::{ClientEnd, Join, Queues, step};
 use std::cell::RefCell;

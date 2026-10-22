@@ -5,7 +5,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use std::rc::Rc;
 use std::time::Instant;

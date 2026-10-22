@@ -16,7 +16,7 @@
 //! install, the 1.5b rows a 1.5 or UO one, the UO ones a UO one; each
 //! returns early without.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues, step};
 use std::cell::RefCell;

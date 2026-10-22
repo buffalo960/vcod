@@ -16,7 +16,7 @@
 //! `MOVESHOT_REPORT=1` prints both sides. The 1.5 capture runs at a 1.5
 //! install, the UO ones at a UO install.
 
-mod common;
+use crate::common;
 
 use glam::Vec3;
 use std::cell::RefCell;

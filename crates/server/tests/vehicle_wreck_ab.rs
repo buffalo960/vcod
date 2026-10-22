@@ -7,7 +7,7 @@
 //! `WRECK_REPORT=1` prints both sides' events. Needs `COD_DIR` at a UO
 //! install; without one it returns early.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::rc::Rc;

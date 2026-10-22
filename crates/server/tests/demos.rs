@@ -6,7 +6,7 @@
 //! (docs/research/cod11-demos.md). Needs `COD_DIR` (UO's install runs UO,
 //! else 1.1); without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{ClientEnd, Queues};
 use std::cell::RefCell;

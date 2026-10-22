@@ -19,7 +19,7 @@
 //! runs at a 1.1 install, the 1.5 one at a 1.5 or UO install (UO's `main/`
 //! is 1.5's), the UO one at a UO install.
 
-mod common;
+use crate::common;
 
 use glam::Vec3;
 use std::cell::RefCell;

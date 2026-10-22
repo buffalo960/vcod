@@ -17,8 +17,6 @@
 //! the cmd's wish direction there. Needs `COD_DIR`; without the paks it
 //! returns early.
 
-mod common;
-
 use glam::Vec3;
 use std::collections::BTreeMap;
 use vcod_common::collision::CollisionWorld;

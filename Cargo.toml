@@ -39,5 +39,10 @@ strip = "symbols"
 # kira/symphonia/cpal are unusably slow unoptimized (crackle, seconds per
 # decode); optimizing every dependency in dev builds costs one cold build.
 # Profiles only take effect at the workspace root.
+# Full debuginfo made each test binary ~150 MB, mostly DWARF; line tables
+# keep file:line in backtraces.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 3

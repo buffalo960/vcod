@@ -14,7 +14,7 @@
 //! was sent, timed from the step's line. `CULL15_REPORT=1` prints both
 //! sides. Needs `COD_DIR` at a 1.5 install; on any other it returns early.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};

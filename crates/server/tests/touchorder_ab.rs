@@ -31,7 +31,7 @@
 //! Each test runs at its own install's `COD_DIR`: 1.1, 1.5 (a UO install's
 //! `main/` counts) or UO.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues, step};
 use std::cell::RefCell;

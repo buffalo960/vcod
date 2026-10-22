@@ -7,7 +7,7 @@
 //!
 //! Each test needs `COD_DIR` at its install; otherwise it returns early.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues};
 use std::cell::RefCell;

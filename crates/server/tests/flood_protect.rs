@@ -5,7 +5,7 @@
 //! two of them 500 ms apart get one `b` answer, and one 900 ms later gets
 //! its own.
 
-mod common;
+use crate::common;
 
 use common::{Queues, connect, step};
 use std::cell::RefCell;

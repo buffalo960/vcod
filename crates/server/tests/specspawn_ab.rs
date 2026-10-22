@@ -13,7 +13,7 @@
 //! The tests need `COD_DIR` at the install each names and return early
 //! without.
 
-mod common;
+use crate::common;
 
 use common::{Queues, step};
 use std::cell::RefCell;

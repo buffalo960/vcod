@@ -22,7 +22,7 @@
 //! `PB_FIXTURE=<path>` runs a `probe_rays` gate against another capture. The tests need `COD_DIR` at the install
 //! each names and return early without.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues, step};
 use std::cell::RefCell;

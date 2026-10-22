@@ -41,7 +41,7 @@
 //! run at a 1.1 install, the 1.5 one at a 1.5 or UO install and the UO one at a
 //! UO install.
 
-mod common;
+use crate::common;
 
 use common::{ADDR, ClientEnd, FRAME_MS, Join, Queues, holding, step_at};
 use std::cell::RefCell;
