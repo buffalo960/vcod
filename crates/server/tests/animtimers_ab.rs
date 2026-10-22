@@ -16,7 +16,7 @@
 //! 1.1 captures run at a 1.1 install, the 1.5 one at a 1.5 or UO install,
 //! the UO one at a UO install.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

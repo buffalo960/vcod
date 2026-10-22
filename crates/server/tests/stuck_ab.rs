@@ -20,7 +20,7 @@
 //! ours and retail's. The server half needs `COD_DIR`; the rest runs
 //! anywhere.
 
-mod common;
+use crate::common;
 
 use common::{ClientEnd, Join, Queues};
 use glam::{Vec2, Vec3};

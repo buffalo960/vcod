@@ -5,7 +5,7 @@
 //! (docs/research/cod11-votes.md). The 1.1d run needs `COD_DIR` at a 1.1
 //! install, the 1.5b run at a 1.5 one; each returns early otherwise.
 
-mod common;
+use crate::common;
 
 use common::{ADDR, ADDR_B, ADDR_C, ClientEnd, Join, Queues};
 use std::cell::RefCell;

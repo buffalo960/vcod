@@ -15,7 +15,7 @@
 //! install (a UO one's `main/` is 1.5's), the UO ones at a UO install;
 //! without the paks each returns early.
 
-mod common;
+use crate::common;
 
 use common::{Sample, Trace, parse_fixture};
 use std::collections::BTreeSet;

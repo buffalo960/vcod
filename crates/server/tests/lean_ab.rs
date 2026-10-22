@@ -13,7 +13,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{parse_fixture, replay};
 use glam::Vec3;

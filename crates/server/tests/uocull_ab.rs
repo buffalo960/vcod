@@ -23,7 +23,7 @@
 //! "Which entities a client is sent"; cod11-hud-protocol.md 9). The 1.1
 //! one runs at a 1.1 install, 1.5's is in `cull15_ab`.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};

@@ -10,7 +10,7 @@
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
 
-mod common;
+use crate::common;
 
 use common::{Queues, holding, join_pair, step_pair};
 use std::cell::RefCell;

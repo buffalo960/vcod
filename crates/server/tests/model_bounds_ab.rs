@@ -9,7 +9,7 @@
 //! ones at a UO install (its `main/` is 1.5's); each returns early without.
 //! `MB_REPORT=1` prints both logs.
 
-mod common;
+use crate::common;
 
 use std::rc::Rc;
 use std::time::Instant;

@@ -28,7 +28,7 @@
 //!
 //! Needs `COD_DIR`; without the paks the test returns early.
 
-mod common;
+use crate::common;
 
 use common::{ADDR, ADDR_B, ADDR_C, ClientEnd, FRAME_MS, Join, ProbeHold, Queues, holding};
 use std::cell::RefCell;

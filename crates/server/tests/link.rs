@@ -7,7 +7,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{ClientEnd, FRAME_MS, Join, Queues, step_pair};
 use std::cell::RefCell;

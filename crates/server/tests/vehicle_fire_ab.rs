@@ -10,7 +10,7 @@
 //! `VEHFIRE_ENTS=1` every non-body entity per snapshot. Needs `COD_DIR` at a UO
 //! install; without one it returns early.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::rc::Rc;

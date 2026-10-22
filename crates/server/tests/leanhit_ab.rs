@@ -15,7 +15,7 @@
 //! `LH_REPORT=1` prints both logs and each phase's median cell. Needs
 //! `COD_DIR` at a 1.1, 1.5 or UO install.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues};
 use std::cell::RefCell;

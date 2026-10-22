@@ -42,7 +42,7 @@
 //! run only at a 1.1 install (`testing::game_fs_11`), the UO ones only at a
 //! UO install (`testing::uo_fs`).
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::net::SocketAddr;

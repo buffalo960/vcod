@@ -12,7 +12,7 @@
 //! `SHELL_REPORT=1` prints both sides. Needs `COD_DIR` at a UO install;
 //! without one it returns early.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues, step};
 use std::cell::RefCell;

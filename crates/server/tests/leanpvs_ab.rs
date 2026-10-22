@@ -8,7 +8,7 @@
 //!
 //! `LPVS_REPORT=1` prints ours' changes. Needs `COD_DIR` at a 1.1 install.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues};
 use std::cell::RefCell;

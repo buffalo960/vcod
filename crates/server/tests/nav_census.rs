@@ -5,7 +5,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early. Ignored by default
 //! (about 3 min, 2300 s of CPU): run it with `cargo test -p vcod-server
-//! --test nav_census -- --ignored` after touching nav.
+//! --test server -- --ignored nav_census::` after touching nav.
 //!
 //! The United Offensive census runs only with `COD_DIR` at a UO install
 //! (`uo/` beside `main/`) and returns at once otherwise, so it costs the

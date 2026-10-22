@@ -21,7 +21,7 @@
 //! `RISE_REPORT=1` prints both sides' rows. Needs `COD_DIR`; without the
 //! paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{Join, Queues};
 use std::cell::RefCell;

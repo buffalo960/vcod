@@ -9,6 +9,8 @@ rust-version.workspace = true
 publish = false
 build = "../version.rs"
 description = "Call of Duty (2003) 1.1 dedicated server, in progress"
+# tests/main.rs links every test file into one binary (`cargo test --test server`).
+autotests = false
 
 [dependencies]
 vcod-common.workspace = true
@@ -19,3 +21,7 @@ ctrlc.workspace = true
 env_logger.workspace = true
 log.workspace = true
 glam.workspace = true
+
+[[test]]
+name = "server"
+path = "tests/main.rs"

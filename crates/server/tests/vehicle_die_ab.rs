@@ -9,7 +9,7 @@
 //! `DIE_REPORT=1` prints both sides' lines. Needs `COD_DIR` at a UO
 //! install; without one it returns early.
 
-mod common;
+use crate::common;
 
 use common::{ClientEnd, Queues, step_pair};
 use std::cell::RefCell;

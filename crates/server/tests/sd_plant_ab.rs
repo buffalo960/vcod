@@ -19,7 +19,7 @@
 //!
 //! Needs `COD_DIR`; without the paks both tests return early.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

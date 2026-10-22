@@ -18,7 +18,7 @@
 //!
 //! Needs `COD_DIR`; without the paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::{NetchanEvent, NetchanKind};
 use std::cell::RefCell;

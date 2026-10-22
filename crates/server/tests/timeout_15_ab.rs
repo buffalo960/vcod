@@ -7,7 +7,7 @@
 //! Needs `COD_DIR` at a 1.5 install; on a 1.1 one (the suite's usual) or
 //! without paks it returns early.
 
-mod common;
+use crate::common;
 
 use common::Queues;
 use std::cell::RefCell;

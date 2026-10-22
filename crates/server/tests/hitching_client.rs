@@ -7,7 +7,7 @@
 //! goes quiet for half a second and then sends one cmd gets the whole gap
 //! simulated. `docs/protocol-1.1.md`, "How long a cmd is simulated for".
 
-mod common;
+use crate::common;
 
 use common::{Queues, connect, step};
 use std::cell::RefCell;

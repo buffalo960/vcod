@@ -12,7 +12,7 @@
 //!
 //! Needs `COD_DIR`; without the paks the smoke test returns early.
 
-mod common;
+use crate::common;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
