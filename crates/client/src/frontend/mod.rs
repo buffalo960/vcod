@@ -381,7 +381,9 @@ impl Ui {
         let arenas = create::load_arenas(fs);
         let mut browser = Browser::default();
         browser.columns = server_columns(&menus);
-        browser.master_host = vcod_common::net::protocol::install_protocol(fs).master;
+        // The install's own protocol only: 1.1, 1.5 or UO 1.51.
+        browser.master_query =
+            browser::MasterQuery::of(vcod_common::net::protocol::install_protocol(fs));
         let fonts = UiFonts::load(fs)
             .map_err(|e| log::warn!("ui: {e}, drawing no text"))
             .ok();
@@ -455,10 +457,10 @@ impl Ui {
     /// Takes `browser`'s lists, laid out by this UI's `joinserver.menu` and
     /// asking this UI's install's master.
     pub fn set_browser(&mut self, browser: Browser) {
-        let master_host = self.browser.master_host;
+        let master_query = self.browser.master_query;
         self.browser = browser;
         self.browser.columns = server_columns(&self.menus);
-        self.browser.master_host = master_host;
+        self.browser.master_query = master_query;
     }
 
     /// Whether a menu is up and taking input.

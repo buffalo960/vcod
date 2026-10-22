@@ -287,9 +287,14 @@ check.
   <file>` runs a gametype from disk (how a client probe runs against ours),
   `--set NAME=VALUE` is retail's `+set`, `--bots N [--bots-shoot]` adds
   clients, `--trace` logs per-snapshot timing.
-- Public servers: `codmaster.activision.com:20510` still answers
-  `getservers 1 full empty`. A 60-100 s spectator capture during a round
-  shows every combat event.
+- Public servers: vcod's browser and heartbeat use `master.cod.pm`, whose
+  operator allowed it: ports 20510 (CoD 1.1 to 1.5, protocols 1-6) and
+  20610 (UO, 21 and 22). Ask `getservers <protocol> full empty` with one
+  protocol, never 0 (all games), at most once a second
+  (`net::master::master_send_allowed`); a list may come in several
+  packets ending `\EOT`, the last `\EOF`. Retail's Activision masters are
+  not contacted. A 60-100 s spectator capture during a round shows every
+  combat event.
 
 ### The probe client
 

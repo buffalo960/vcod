@@ -649,6 +649,16 @@ nine-column list in 1.1's six, shifted a column right (issue #3).
   unknown one is refused whole, so the main menu stays up.
 - Ping pacing (32 `getinfo`s in flight, a 1.5 s timeout, 5 s for the master)
   is vcod's own; retail's numbers were not measured.
+- The Internet source asks `master.cod.pm` (its operator allowed it), not
+  section 5's Activision host: `getservers <protocol> full empty` with the
+  install's protocol alone (1 on 1.1, 6 on 1.5, both on port 20510; 22 on
+  UO, port 20610), never 0, which lists every game. One request a refresh
+  and at most one a second to a master host, process-wide
+  (`net::master::master_send_allowed`); a list that comes in several
+  packets is read whole, not asked again. A listed server whose
+  `infoResponse` names another protocol is dropped. Live, 2026-10-22:
+  `getservers 1` listed 49 servers in one packet, `6` 51, UO's `22` 134
+  in two (the first ending `\EOT`, the last `\EOF`). VERIFIED capture.
 - Text is placed as RTCW's `Item_SetTextExtents` does: baseline at
   `rect.y + textaligny`, x at `textalignx` moved left by the width (right
   aligned) or half of it (centred); an owner draw with no label draws at

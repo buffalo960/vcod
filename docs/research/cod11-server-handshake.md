@@ -465,7 +465,10 @@ on a spare port, a UDP listener standing in for the master, `vcod
 --net-probe` as the client, and `rcon status` polled 0.5-0.6 s apart for the
 zombie timing. Each claim carries its own label; the scripts were throwaway.
 vcod's port is `crates/server/src/master.rs`, `crates/server/src/rcon.rs`
-and the zombie half of `Server::drop_client`.
+and the zombie half of `Server::drop_client`. vcod's heartbeat goes to
+`master.cod.pm` (`sv_master1`'s default; its operator allowed it) on the
+protocol's port of it, 20510 or UO's 20610, in place of retail's fixed
+20510, and drops a packet to a master host within a second of the last.
 
 ### Master heartbeat (`SV_MasterHeartbeat`, 0x808ba0c)
 
