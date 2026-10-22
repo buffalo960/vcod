@@ -107,7 +107,8 @@ pub const REGISTRY: &[(&str, &str, &str)] = &[
     ("sv_mapname", "SR", ""),
     ("sv_mapRotation", "", ""),
     ("sv_mapRotationCurrent", "", ""),
-    ("sv_master1", "", "codmaster.activision.com"),
+    // Retail's `codmaster.activision.com`; vcod lists on cod.pm's.
+    ("sv_master1", "", "master.cod.pm"),
     ("sv_master2", "A", ""),
     ("sv_master3", "A", ""),
     ("sv_master4", "A", ""),
@@ -295,7 +296,8 @@ pub const REGISTRY_V22: &[(&str, &str, &str)] = &[
     ("scr_allow_jeeps", "SL", "1"),
     ("scr_allow_tanks", "SL", "1"),
     ("shortversion", "SR", "1.51"),
-    ("sv_master1", "", "coduomaster.activision.com"),
+    // Retail's `coduomaster.activision.com`; vcod lists on cod.pm's.
+    ("sv_master1", "", "master.cod.pm"),
     ("sv_night", "R", "0"),
     ("sv_obituary", "", "1"),
     (

@@ -2517,9 +2517,9 @@ impl Server {
     /// connected client.
     fn game_complete_status(&mut self, arg: &str) {
         let mut resolve = self.resolver;
-        let (text, to) = self
-            .masters
-            .game_complete_status(self.dedicated, &mut resolve);
+        let (text, to) =
+            self.masters
+                .game_complete_status(self.dedicated, self.svs_time_ms(), &mut resolve);
         self.print(&text);
         if to.is_empty() {
             return;
@@ -6432,8 +6432,9 @@ impl Server {
             .iter()
             .any(|(n, _)| n.eq_ignore_ascii_case("sv_master1"))
         {
-            self.masters.set(0, p.master);
+            self.masters.set(0, p.master.host);
         }
+        self.masters.set_port(p.master.port);
         if let Some(w) = &self.world {
             w.collision
                 .set_arith(vcod_common::patch::Arith::for_protocol(p));
@@ -17015,7 +17016,7 @@ mod tests {
         let t = Instant::now();
         let mut sv = Server::new(cfg(), t);
         sv.set_protocol(&PROTOCOL_V22);
-        assert_eq!(sv.masters.name(0), "coduomaster.activision.com");
+        assert_eq!(sv.masters.name(0), "master.cod.pm");
         sv.set_cvar("sv_master1", "127.0.0.1");
         sv.set_protocol(&PROTOCOL_V22);
         assert_eq!(sv.masters.name(0), "127.0.0.1");
@@ -17031,7 +17032,7 @@ mod tests {
         let _ = connected(&mut sv, addr(5), t);
         sv.tick(t);
         sv.take_outgoing();
-        let master = addr(crate::master::MASTER_PORT);
+        let master = addr(crate::master::DEFAULT_MASTER.port);
         let ask = |sv: &mut Server, line: &str, at: Instant| {
             sv.handle_packet(addr(9), &oob(&format!("rcon pw {line}")), at);
             let out = sv.take_outgoing();
@@ -17046,22 +17047,19 @@ mod tests {
         let (reply, sent) = ask(&mut sv, "gameCompleteStatus abc", t);
         assert_eq!(
             reply,
-            ["print\nSending gameCompleteStatus to codmaster.activision.com\n"]
+            ["print\nSending gameCompleteStatus to master.cod.pm\n"]
         );
         assert!(sent.is_empty(), "{sent:?}");
         sv.set_cvar("sv_master2", "127.0.0.1");
-        let (reply, sent) = ask(
-            &mut sv,
-            "gameCompleteStatus abc",
-            t + Duration::from_millis(500),
-        );
+        // A second past the heartbeat, which went to the same host.
+        let at = t + Duration::from_millis(1500);
+        sv.tick_frames(at, 30);
+        let (reply, sent) = ask(&mut sv, "gameCompleteStatus abc", at);
         assert_eq!(
             reply,
-            [
-                "print\nSending gameCompleteStatus to codmaster.activision.com\n\
+            ["print\nSending gameCompleteStatus to master.cod.pm\n\
               Resolving 127.0.0.1\n127.0.0.1 resolved to 127.0.0.1:20510\n\
-              Sending gameCompleteStatus to 127.0.0.1\n"
-            ]
+              Sending gameCompleteStatus to 127.0.0.1\n"]
         );
         assert_eq!(sent.len(), 1);
         let (head, players) = sent[0]
@@ -17074,11 +17072,9 @@ mod tests {
         assert!(head.ends_with("\\challenge\\abc"), "{head}");
         assert!(!head.contains("pswrd"), "{head}");
         assert_eq!(players.lines().count(), 1, "{players}");
-        let (_, sent) = ask(
-            &mut sv,
-            "gameCompleteStatus",
-            t + Duration::from_millis(1000),
-        );
+        let at = t + Duration::from_millis(3000);
+        sv.tick_frames(at, 30);
+        let (_, sent) = ask(&mut sv, "gameCompleteStatus", at);
         assert!(!sent[0].contains("challenge"), "{sent:?}");
     }
 
@@ -17090,7 +17086,7 @@ mod tests {
         let beats = |sv: &mut Server| -> Vec<String> {
             sv.take_outgoing()
                 .into_iter()
-                .filter(|(to, _)| *to == addr(crate::master::MASTER_PORT))
+                .filter(|(to, _)| *to == addr(crate::master::DEFAULT_MASTER.port))
                 .map(|(_, p)| String::from_utf8_lossy(&p[4..]).into_owned())
                 .collect()
         };
@@ -17101,9 +17097,15 @@ mod tests {
         assert_eq!(beats(&mut sv), ["heartbeat COD-1\n"]);
         sv.tick(t);
         assert!(beats(&mut sv).is_empty());
+        // One packet a second to a master: the beat a new client forces
+        // waits that out.
         let _ = connected(&mut sv, addr(5), t);
         sv.tick(t);
+        assert!(beats(&mut sv).is_empty());
+        sv.push_console("heartbeat");
+        sv.tick_frames(t, 20);
         assert_eq!(beats(&mut sv), ["heartbeat COD-1\n"]);
+        sv.tick_frames(t, 20);
         sv.push_console("quit");
         sv.tick(t);
         assert_eq!(beats(&mut sv), ["heartbeat flatline\n"]);

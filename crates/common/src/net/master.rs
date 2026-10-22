@@ -3,20 +3,83 @@
 //! list row shows. Measured in docs/research/cod11-front-end.md, "Master
 //! query".
 
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use super::connectionless::info_value_for_key;
 
-/// `CL_GlobalServers_f` (CoDMP.exe 0x413890) asks one fixed host, the
-/// install's [`super::protocol::Protocol::master`], on `PORT_MASTER`.
-pub const MASTER_PORT: u16 = 20510;
+/// The master vcod lists on and asks: cod.pm's, used with its operator's
+/// permission. Retail's own (`codmaster.activision.com`,
+/// `coduomaster.activision.com`) are documented in the research docs and
+/// never contacted.
+pub const MASTER_HOST: &str = "master.cod.pm";
 
-/// What the stock browser's refresh ends up sending: the UI runs
+/// A master server: its host and the port one game's list lives on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Master {
+    pub host: &'static str,
+    pub port: u16,
+}
+
+/// cod.pm's ports: CoD 1.1 to 1.5 (protocols 1 to 6) on retail's
+/// `PORT_MASTER` 20510 (`CL_GlobalServers_f`, CoDMP.exe 0x413890), United
+/// Offensive (21, 22) on 20610.
+pub const COD1_MASTER: Master = Master {
+    host: MASTER_HOST,
+    port: 20510,
+};
+pub const UO_MASTER: Master = Master {
+    host: MASTER_HOST,
+    port: 20610,
+};
+
+/// The query the stock browser's refresh ends up sending: the UI runs
 /// `globalservers 0 <protocol> full empty` (ui_mp_x86.dll 0x4000ebe4) and
 /// `CL_GlobalServers_f` sends `getservers` with the arguments past the master
-/// number. The master lists one protocol per query, so vcod asks for both
-/// the ones it speaks (1.5's UI carries the same format string).
-pub const GETSERVERS: [&str; 2] = ["getservers 1 full empty", "getservers 6 full empty"];
+/// number. vcod asks for exactly one protocol, the install's; protocol 0
+/// would list every game's servers and is never sent.
+pub fn getservers(protocol: u32) -> String {
+    assert_ne!(protocol, 0, "getservers 0 lists every protocol");
+    format!("getservers {protocol} full empty")
+}
+
+/// The fewest milliseconds between two packets to one master host.
+pub const MASTER_INTERVAL_MS: u64 = 1000;
+
+/// At most one packet per [`MASTER_INTERVAL_MS`] to each master host, on a
+/// clock the caller passes in milliseconds.
+#[derive(Debug, Default)]
+pub struct RateLimiter {
+    last: HashMap<IpAddr, u64>,
+}
+
+impl RateLimiter {
+    /// Whether a packet to `host` may go at `now_ms`; a yes counts as sent.
+    pub fn allow(&mut self, host: IpAddr, now_ms: u64) -> bool {
+        match self.last.get(&host) {
+            Some(&t) if now_ms < t.saturating_add(MASTER_INTERVAL_MS) => false,
+            _ => {
+                self.last.insert(host, now_ms);
+                true
+            }
+        }
+    }
+}
+
+/// [`RateLimiter::allow`] on the process's one limiter and the monotonic
+/// clock: every master packet the client sends asks this first.
+pub fn master_send_allowed(host: IpAddr) -> bool {
+    static START: OnceLock<Instant> = OnceLock::new();
+    static LIMIT: OnceLock<Mutex<RateLimiter>> = OnceLock::new();
+    let now = Instant::now().duration_since(*START.get_or_init(Instant::now));
+    LIMIT
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .allow(host, now.as_millis() as u64)
+}
 
 /// The ping request (`CL_Ping_f`'s `getinfo xxx`, CoDMP.exe 0x5660e0).
 pub const GETINFO: &str = "getinfo xxx";
@@ -171,6 +234,32 @@ mod tests {
         body.extend_from_slice(b"\\EOT\0\0\0\\");
         assert_eq!(parse_servers_response(&body).len(), 1);
         assert!(parse_servers_response(b"\\\x01\x02").is_empty());
+    }
+
+    #[test]
+    fn one_packet_a_second_to_each_master_host() {
+        let (a, b): (IpAddr, IpAddr) = ("10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap());
+        let mut r = RateLimiter::default();
+        assert!(r.allow(a, 5000));
+        assert!(!r.allow(a, 5000));
+        assert!(!r.allow(a, 5999));
+        // Another host keeps its own budget.
+        assert!(r.allow(b, 5500));
+        assert!(r.allow(a, 6000));
+        assert!(!r.allow(b, 6499));
+        assert!(r.allow(b, 6500));
+    }
+
+    #[test]
+    fn the_query_names_one_protocol() {
+        assert_eq!(getservers(1), "getservers 1 full empty");
+        assert_eq!(getservers(22), "getservers 22 full empty");
+    }
+
+    #[test]
+    #[should_panic]
+    fn protocol_0_is_never_asked() {
+        getservers(0);
     }
 
     #[test]

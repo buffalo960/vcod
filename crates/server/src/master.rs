@@ -4,21 +4,24 @@
 //! `gameCompleteStatus`. Numbers and addresses are in
 //! docs/research/cod11-server-handshake.md, "Master heartbeat" and "Console
 //! commands over rcon".
+//!
+//! vcod lists on cod.pm's master ([`vcod_common::net::master::MASTER_HOST`])
+//! instead of retail's, on the protocol's port, and sends each master host
+//! at most one packet a second ([`RateLimiter`]).
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use vcod_common::net::connectionless::build_oob;
+use vcod_common::net::master::{COD1_MASTER, Master, RateLimiter};
 
 /// `HEARTBEAT_MSEC` (`add eax,0x2bf20` at 0x808ba3d).
 pub const HEARTBEAT_MS: i32 = 180_000;
-/// `PORT_MASTER` (`push 0x501e` at 0x808baff). Every master gets it: retail's
-/// `strstr(":", name)` has its arguments swapped, so a port in the cvar is
-/// parsed and then overwritten.
-pub const MASTER_PORT: u16 = 20510;
 /// `sv_master1`'s default until the protocol's ([`Protocol::master`],
-/// `Server::set_protocol`); `sv_master2..5` default empty.
+/// `Server::set_protocol`); `sv_master2..5` default empty. Retail's is
+/// `codmaster.activision.com` on `PORT_MASTER` 20510 (`push 0x501e` at
+/// 0x808baff).
 ///
 /// [`Protocol::master`]: vcod_common::net::protocol::Protocol::master
-pub const DEFAULT_MASTER: &str = "codmaster.activision.com";
+pub const DEFAULT_MASTER: Master = COD1_MASTER;
 pub const HEARTBEAT_GAME: &str = "COD-1";
 pub const FLATLINE: &str = "flatline";
 pub const MAX_MASTERS: usize = 5;
@@ -34,13 +37,18 @@ pub struct Masters {
     /// resolves into its table alone.
     status_addrs: [Option<SocketAddr>; MAX_MASTERS],
     next_ms: i32,
+    /// The port every master gets, the protocol's: retail's
+    /// `strstr(":", name)` has its arguments swapped, so a port in the cvar
+    /// is parsed and then overwritten.
+    port: u16,
+    limit: RateLimiter,
 }
 
 impl Default for Masters {
     fn default() -> Self {
         Masters {
             names: [
-                DEFAULT_MASTER.to_string(),
+                DEFAULT_MASTER.host.to_string(),
                 String::new(),
                 String::new(),
                 String::new(),
@@ -50,11 +58,30 @@ impl Default for Masters {
             addrs: [None; MAX_MASTERS],
             status_addrs: [None; MAX_MASTERS],
             next_ms: 0,
+            port: DEFAULT_MASTER.port,
+            limit: RateLimiter::default(),
         }
     }
 }
 
 impl Masters {
+    /// Every master's port, the protocol's; each resolves again.
+    pub fn set_port(&mut self, port: u16) {
+        if self.port != port {
+            self.port = port;
+            self.dirty = [true; MAX_MASTERS];
+        }
+    }
+
+    /// Whether a packet to `to` may go now, at most one a second to a host.
+    fn allow(&mut self, to: SocketAddr, now_ms: i32) -> bool {
+        let ok = self.limit.allow(to.ip(), now_ms.max(0) as u64);
+        if !ok {
+            log::info!("master {to}: held to one packet a second, dropped");
+        }
+        ok
+    }
+
     /// `sv_master<n>` for `n` in 1..=5; anything else is not one of them.
     pub fn index(cvar: &str) -> Option<usize> {
         let n = cvar
@@ -109,7 +136,7 @@ impl Masters {
                 log::info!("Resolving {}", self.names[i]);
                 match resolve(&self.names[i]) {
                     Some(mut a) => {
-                        a.set_port(MASTER_PORT);
+                        a.set_port(self.port);
                         log::info!("{} resolved to {a}", self.names[i]);
                         self.addrs[i] = Some(a);
                     }
@@ -121,7 +148,9 @@ impl Masters {
                     }
                 }
             }
-            if let Some(a) = self.addrs[i] {
+            if let Some(a) = self.addrs[i]
+                && self.allow(a, now_ms)
+            {
                 log::info!("Sending heartbeat to {}", self.names[i]);
                 out.push((a, build_oob(&format!("heartbeat {text}\n"))));
             }
@@ -136,6 +165,7 @@ impl Masters {
     pub fn game_complete_status(
         &mut self,
         dedicated: i32,
+        now_ms: i32,
         resolve: &mut dyn FnMut(&str) -> Option<SocketAddr>,
     ) -> (String, Vec<SocketAddr>) {
         let (mut text, mut out) = (String::new(), Vec::new());
@@ -151,7 +181,7 @@ impl Masters {
                 text.push_str(&format!("Resolving {}\n", self.names[i]));
                 match resolve(&self.names[i]) {
                     Some(mut a) => {
-                        a.set_port(MASTER_PORT);
+                        a.set_port(self.port);
                         text.push_str(&format!("{} resolved to {a}\n", self.names[i]));
                         self.status_addrs[i] = Some(a);
                     }
@@ -167,7 +197,11 @@ impl Masters {
                 "Sending gameCompleteStatus to {}\n",
                 self.names[i]
             ));
-            out.extend(self.status_addrs[i]);
+            if let Some(a) = self.status_addrs[i]
+                && self.allow(a, now_ms)
+            {
+                out.push(a);
+            }
         }
         (text, out)
     }
@@ -185,13 +219,10 @@ impl Masters {
 }
 
 /// `NET_StringToAdr` for a master name: the first IPv4 address it resolves
-/// to. The port is replaced by [`MASTER_PORT`] either way.
+/// to. [`Masters`] replaces the port with the protocol's either way.
 pub fn resolve(name: &str) -> Option<SocketAddr> {
     let host = name.rsplit_once(':').map_or(name, |(h, _)| h);
-    (host, MASTER_PORT)
-        .to_socket_addrs()
-        .ok()?
-        .find(SocketAddr::is_ipv4)
+    (host, 0).to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)
 }
 
 #[cfg(test)]
@@ -211,7 +242,7 @@ mod tests {
         m.set(0, "127.0.0.1");
         assert_eq!(m.heartbeat(2, 0, HEARTBEAT_GAME, &mut local).len(), 1);
         m.set(1, "127.0.0.1");
-        let (text, to) = m.game_complete_status(2, &mut local);
+        let (text, to) = m.game_complete_status(2, 1000, &mut local);
         assert_eq!(
             text,
             "Sending gameCompleteStatus to 127.0.0.1\nResolving 127.0.0.1\n\
@@ -220,9 +251,9 @@ mod tests {
         );
         assert_eq!(to, vec!["127.0.0.1:20510".parse().unwrap()]);
         m.force();
-        assert_eq!(m.heartbeat(2, 0, HEARTBEAT_GAME, &mut local).len(), 1);
+        assert_eq!(m.heartbeat(2, 2000, HEARTBEAT_GAME, &mut local).len(), 1);
         assert_eq!(
-            m.game_complete_status(1, &mut local),
+            m.game_complete_status(1, 3000, &mut local),
             (String::new(), vec![])
         );
     }
@@ -246,17 +277,47 @@ mod tests {
         );
         m.force();
         assert_eq!(
-            m.heartbeat(2, 50 + HEARTBEAT_MS + 50, HEARTBEAT_GAME, &mut local)
+            m.heartbeat(2, 50 + HEARTBEAT_MS + 1000, HEARTBEAT_GAME, &mut local)
                 .len(),
             1
         );
+    }
+
+    /// A forced heartbeat inside a second of the last packet to that host
+    /// is dropped, and the timer still runs from it.
+    #[test]
+    fn one_packet_a_second_to_a_master() {
+        let mut m = Masters::default();
+        assert_eq!(m.heartbeat(2, 0, HEARTBEAT_GAME, &mut local).len(), 1);
+        m.force();
+        assert!(m.heartbeat(2, 999, HEARTBEAT_GAME, &mut local).is_empty());
+        assert!(m.shutdown(2, 999, &mut local).is_empty());
+        assert!(m.game_complete_status(2, 999, &mut local).1.is_empty());
+        assert_eq!(m.shutdown(2, 1000, &mut local).len(), 1);
+    }
+
+    #[test]
+    fn the_protocols_port_reaches_every_master() {
+        let mut m = Masters::default();
+        m.set_port(vcod_common::net::master::UO_MASTER.port);
+        m.set(1, "127.0.0.2");
+        let mut r = |n: &str| {
+            Some(SocketAddr::new(
+                n.parse().unwrap_or([127, 0, 0, 1].into()),
+                0,
+            ))
+        };
+        let out = m.heartbeat(2, 0, HEARTBEAT_GAME, &mut r);
+        let to: Vec<String> = out.iter().map(|(a, _)| a.to_string()).collect();
+        assert_eq!(to, ["127.0.0.1:20610", "127.0.0.2:20610"]);
+        assert_eq!(m.name(0), "master.cod.pm");
     }
 
     #[test]
     fn flatline_ignores_the_timer_but_not_dedicated() {
         let mut m = Masters::default();
         assert_eq!(m.heartbeat(2, 50, HEARTBEAT_GAME, &mut local).len(), 1);
-        let out = m.shutdown(2, 100, &mut local);
+        let out = m.shutdown(2, 1050, &mut local);
         assert_eq!(out[0].1, b"\xff\xff\xff\xffheartbeat flatline\n");
         assert!(Masters::default().shutdown(1, 0, &mut local).is_empty());
     }
@@ -282,12 +343,17 @@ mod tests {
         let mut calls = Vec::new();
         let mut r = |n: &str| {
             calls.push(n.to_string());
-            local(n)
+            let ip = if n == DEFAULT_MASTER.host {
+                [127, 0, 0, 1]
+            } else {
+                [127, 0, 0, 2]
+            };
+            Some(SocketAddr::from((ip, 29463)))
         };
         assert_eq!(m.heartbeat(2, 0, HEARTBEAT_GAME, &mut r).len(), 2);
         m.force();
-        assert_eq!(m.heartbeat(2, 50, HEARTBEAT_GAME, &mut r).len(), 2);
-        assert_eq!(calls, [DEFAULT_MASTER, "127.0.0.2:1234"]);
+        assert_eq!(m.heartbeat(2, 1000, HEARTBEAT_GAME, &mut r).len(), 2);
+        assert_eq!(calls, [DEFAULT_MASTER.host, "127.0.0.2:1234"]);
         assert_eq!(Masters::index("sv_master6"), None);
         assert_eq!(Masters::index("sv_masterx"), None);
     }

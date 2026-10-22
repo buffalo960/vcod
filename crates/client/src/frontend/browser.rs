@@ -13,9 +13,10 @@ use std::time::{Duration, Instant};
 
 use vcod_common::net::connectionless::{build_oob, parse_oob};
 use vcod_common::net::master::{
-    GETINFO, GETSERVERS, LAN_PORTS, LAN_ROUNDS, MASTER_PORT, ServerInfo, parse_address,
-    parse_servers_response,
+    GETINFO, LAN_PORTS, LAN_ROUNDS, Master, ServerInfo, getservers, master_send_allowed,
+    parse_address, parse_servers_response,
 };
+use vcod_common::net::protocol::Protocol;
 use vcod_common::net::server_cache::{self, Entry, MAX_FAVORITES};
 
 /// Pings in flight at once, and how long one waits for its reply. vcod's
@@ -29,6 +30,23 @@ const MASTER_TIMEOUT: Duration = Duration::from_secs(5);
 const LAN_WINDOW: Duration = Duration::from_millis(1000);
 /// `MAX_OTHER_SERVERS`, the Local list's cap.
 const MAX_LOCAL: usize = 0x80;
+
+/// The master an Internet refresh asks and the one protocol it asks for:
+/// the install's, never another the client could also join.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MasterQuery {
+    pub master: Master,
+    pub protocol: u32,
+}
+
+impl MasterQuery {
+    pub fn of(p: &Protocol) -> MasterQuery {
+        MasterQuery {
+            master: p.master,
+            protocol: p.version,
+        }
+    }
+}
 
 /// `ui_netSource`'s values, in the order the source owner draw cycles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,9 +170,13 @@ pub enum AddFavorite {
 pub struct Browser {
     socket: Option<UdpSocket>,
     resolve: Option<mpsc::Receiver<Option<SocketAddr>>>,
+    /// The master's resolved address, waiting on the rate limit
+    /// ([`master_send_allowed`]) until its `getservers` goes.
+    master_due: Option<SocketAddr>,
+    /// The address the `getservers` went to; its answers are taken.
     master: Option<SocketAddr>,
-    /// The install's master host ([`vcod_common::net::protocol::Protocol::master`]).
-    pub master_host: &'static str,
+    /// The install's master and protocol.
+    pub master_query: MasterQuery,
     started: Option<Instant>,
     pub source: Source,
     /// Indexed by [`Source`].
@@ -181,8 +203,9 @@ impl Default for Browser {
         Browser {
             socket: None,
             resolve: None,
+            master_due: None,
             master: None,
-            master_host: vcod_common::net::protocol::PROTOCOL_V1.master,
+            master_query: MasterQuery::of(&vcod_common::net::protocol::PROTOCOL_V1),
             started: None,
             source: Source::Local,
             lists: Default::default(),
@@ -264,14 +287,15 @@ impl Browser {
         };
         let now = Instant::now();
         self.resolve = None;
+        self.master_due = None;
         self.master = None;
         self.started = Some(now);
         match self.source {
             Source::Internet => {
                 let (tx, rx) = mpsc::channel();
-                let host = self.master_host;
+                let m = self.master_query.master;
                 std::thread::spawn(move || {
-                    let addr = (host, MASTER_PORT)
+                    let addr = (m.host, m.port)
                         .to_socket_addrs()
                         .ok()
                         .and_then(|mut a| a.find(SocketAddr::is_ipv4));
@@ -331,6 +355,7 @@ impl Browser {
     pub fn stop(&mut self) {
         self.socket = None;
         self.resolve = None;
+        self.master_due = None;
         if matches!(self.status, Status::Master | Status::Pinging) {
             self.finish();
         }
@@ -368,20 +393,28 @@ impl Browser {
             && let Ok(addr) = rx.try_recv()
         {
             self.resolve = None;
-            match (addr, &self.socket) {
-                (Some(addr), Some(socket)) => {
-                    log::info!("browser: requesting servers from {addr}");
-                    for query in GETSERVERS {
-                        let _ = socket.send_to(&build_oob(query), addr);
-                    }
-                    self.master = Some(addr);
-                }
-                _ => {
-                    log::warn!("browser: cannot resolve {}", self.master_host);
+            match addr {
+                Some(addr) => self.master_due = Some(addr),
+                None => {
+                    log::warn!("browser: cannot resolve {}", self.master_query.master.host);
                     self.status = Status::Failed;
                     self.socket = None;
                 }
             }
+        }
+        // One `getservers` per refresh, sent once the master's host is out
+        // of its last second; a list in several packets is not asked again.
+        if let (Some(addr), Some(socket)) = (self.master_due, &self.socket)
+            && master_send_allowed(addr.ip())
+        {
+            let q = self.master_query;
+            log::info!(
+                "browser: requesting protocol {} servers from {addr}",
+                q.protocol
+            );
+            let _ = socket.send_to(&build_oob(&getservers(q.protocol)), addr);
+            self.master_due = None;
+            self.master = Some(addr);
         }
         let Some(socket) = self.socket.take() else {
             return;
@@ -407,6 +440,15 @@ impl Browser {
                     // Latin-1, as the font indexes glyphs by byte.
                     let text: String = rest.iter().map(|&b| b as char).collect();
                     let info = ServerInfo::parse(&text);
+                    // The master lists by what a server told it; one that
+                    // answers with another protocol is dropped.
+                    if self.source == Source::Internet
+                        && info.protocol != 0
+                        && info.protocol != self.master_query.protocol
+                    {
+                        self.list_mut().retain(|s| s.addr != from4);
+                        continue;
+                    }
                     let started = self.started;
                     let local = self.source == Source::Local;
                     let list = self.list_mut();
@@ -870,6 +912,37 @@ mod tests {
         let b = Browser::with_cache(path);
         assert_eq!(b.lists[2].len(), 1);
         assert_eq!(b.lists[2][0].name, "Other");
+    }
+
+    /// The Internet list against cod.pm's live master: one `getservers 1`
+    /// on port 20510, then a `getinfo` to every server it lists. Run with
+    /// `cargo test -p vcod --bins master_list_live -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn master_list_live() {
+        let mut b = Browser {
+            source: Source::Internet,
+            ..Browser::default()
+        };
+        b.refresh();
+        let t0 = Instant::now();
+        while matches!(b.status, Status::Master | Status::Pinging)
+            && t0.elapsed() < Duration::from_secs(60)
+        {
+            b.poll(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let rows = b.rows();
+        for s in &rows {
+            let i = s.info.as_ref().unwrap();
+            println!(
+                "{} {:?} {} {} ping {:?}",
+                s.addr, i.hostname, i.mapname, i.protocol, s.ping
+            );
+        }
+        println!("listed {} answered {}", b.list().len(), rows.len());
+        assert!(rows.iter().all(|s| s.info.as_ref().unwrap().protocol == 1));
+        assert!(!rows.is_empty());
     }
 
     /// The LAN scan against real servers: run ours and the retail one on
