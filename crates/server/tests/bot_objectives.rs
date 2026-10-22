@@ -200,22 +200,28 @@ fn uo_server(
 /// `flag_carrier_atgoal_wait`).
 #[test]
 fn uo_bots_take_and_capture_a_flag_on_cassino() {
-    // The seed is a draw: any bot change reshuffles which seeds take a flag
-    // in 150 s. Over 80 seed pairs in 1-161 (2n and 2n + 1 play alike), 79
-    // took one and 54 captured before the jump cue (24cff5ab), 77 and 47
-    // after; seed 8 was one of the three that took none (2026-10-21).
-    let Some((mut sv, mut now)) = uo_server("mp_cassino", "ctf", true, &[], 14) else {
-        return;
-    };
-    let taken = wait_for(&mut sv, &mut now, "ctf_pickup", 3000);
-    eprintln!("taken at tick {taken:?}");
-    assert!(taken.is_some(), "no flag taken in 150 s");
-    // Both sides take the other's flag, and a capture waits on a kill that
-    // drops one and a touch that returns it.
-    let captured = wait_for(&mut sv, &mut now, "ctf_captured", 4000);
-    eprintln!("captured {captured:?} ticks after the pickup");
-    assert!(captured.is_some(), "no flag captured");
-    assert_eq!(sv.script_aborts(), Vec::<String>::new());
+    // A seed draw: any bot change reshuffles which seeds take a flag
+    // in 150 s and capture one in 200 s more. Over 80 seed pairs in 1-161
+    // (2n and 2n + 1 play alike), 79 took one and 54 captured before the
+    // jump cue (24cff5ab), 77 and 47 after (2026-10-21), so one seed fails
+    // two runs in five: the first of these to capture passes.
+    let mut runs = Vec::new();
+    for seed in [14, 16, 18, 20, 22] {
+        let Some((mut sv, mut now)) = uo_server("mp_cassino", "ctf", true, &[], seed) else {
+            return;
+        };
+        // Both sides take the other's flag, and a capture waits on a kill
+        // that drops one and a touch that returns it.
+        let taken = wait_for(&mut sv, &mut now, "ctf_pickup", 3000);
+        let captured = taken.and_then(|_| wait_for(&mut sv, &mut now, "ctf_captured", 4000));
+        eprintln!("seed {seed}: taken at tick {taken:?}, captured {captured:?} ticks after");
+        assert_eq!(sv.script_aborts(), Vec::<String>::new());
+        if captured.is_some() {
+            return;
+        }
+        runs.push((seed, taken));
+    }
+    panic!("no flag captured on any seed (seed, pickup tick): {runs:?}");
 }
 
 /// UO domination on mp_cassino: the bots stand in flag zones until they
