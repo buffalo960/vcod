@@ -127,8 +127,10 @@ check.
   graph build each). With
   `COD_DIR` at a UO install the same two files carry UO's: `nav_census`'s
   19-map UO census (20-60 s by load, 340 s of CPU) and `bots.rs`'s
-  mp_cassino six-bot tdm run and its walled-in spawns test (the file
-  ~12 s, 60 s of CPU), and `tests/bot_vehicles.rs` its bots boarding,
+  mp_cassino six-bot tdm run, its walled-in spawns test and four
+  mp_foy `bas` rounds (`uo_bots_breach_bases_until_a_bas_round_ends`,
+  the two `four_*_bas_round` runs, `a_seeded_bas_match_replays_beside_another`),
+  which hold the file at ~7 min in release, and `tests/bot_vehicles.rs` its bots boarding,
   driving and firing mp_cassino's tanks, rockets at one and
   mp_kharkov's jeep (~30 s); with a 1.1 install they
   return at once. `--example bot_vehicles` (UO) plays each seed with
