@@ -1,7 +1,10 @@
 // R_NoiseGet4f (CoDMP.exe 0x4dd4f0) over R_NoiseInit's tables (0x4dd490),
 // for `deformVertexes normal`. The tables are vcod_common::shader's
 // NOISE_TABLE and NOISE_PERM, which a renderer test holds this file to.
-const NOISE_PERM = array<u32, 256>(
+// Private, not `const`: naga copies a const array into a local at every
+// dynamic index, 80 copies per noise_get4f, and the drivers then took
+// seconds per stage pipeline (lavapipe: minutes to build the renderer).
+var<private> NOISE_PERM: array<u32, 256> = array<u32, 256>(
     148u, 41u, 80u, 144u, 31u, 51u, 119u, 33u, 168u, 20u, 226u, 18u, 221u, 94u, 181u, 180u,
     60u, 48u, 81u, 200u, 120u, 198u, 76u, 31u, 254u, 34u, 130u, 81u, 152u, 221u, 79u, 161u,
     54u, 17u, 222u, 244u, 208u, 102u, 165u, 242u, 107u, 67u, 244u, 65u, 65u, 21u, 172u, 227u,
@@ -19,7 +22,7 @@ const NOISE_PERM = array<u32, 256>(
     17u, 249u, 174u, 223u, 91u, 170u, 17u, 173u, 87u, 112u, 75u, 0u, 185u, 32u, 246u, 57u,
     161u, 121u, 253u, 6u, 248u, 172u, 153u, 246u, 250u, 10u, 101u, 63u, 219u, 208u, 142u, 146u,
 );
-const NOISE_TABLE = array<f32, 256>(
+var<private> NOISE_TABLE: array<f32, 256> = array<f32, 256>(
     -0.798150599, -0.270912796, -0.278298289, -0.330484927, 0.433149219, 0.320780039, -0.329264194, 0.1101413,
     0.0232245848, -0.967101038, -0.275856793, -0.329508334, 0.31272316, 0.633899987, 0.125583664, 0.495651126,
     0.184423357, -0.727774918, 0.0395214707, -0.479354233, 0.133701593, 0.109469891, 0.247291476, 0.729117692,
