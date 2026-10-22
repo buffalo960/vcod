@@ -43,6 +43,10 @@ strip = "symbols"
 # keep file:line in backtraces.
 [profile.dev]
 debug = "line-tables-only"
+# The suites spend most of their CPU in pmove, collision and the gsc VM;
+# at opt-level 0 the workspace suite took 143 s, at 1 it takes 31 s, and an
+# edit rebuilds no slower.
+opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
