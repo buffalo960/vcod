@@ -222,20 +222,37 @@ impl ViewWeapon {
         ViewWeapon::new(self.skeleton.clone(), self.anims.clone(), self.def.clone())
     }
 
-    /// Poses the sight layer: `AdsUp` at `frac` while `raising`, else
-    /// `AdsDown` at `1 - frac`. Retail keeps one of the two weighted at all
-    /// times, so the hip position is `AdsDown`'s last frame, not the bind
-    /// pose (docs/research/xanim-v14-format.md, "The sight layer"). Call it
-    /// before the main clip, which then overrides whatever it keys.
-    pub fn pose_sight(&mut self, frac: f32, raising: bool) {
+    /// Poses the sight layer and the main clip as sibling nodes of the view
+    /// tree, each at weight 1 ([`skeleton::PoseBuffer::blend_nodes`]): a bone
+    /// one of them keys takes its pose, a bone both key their blend. The
+    /// sight layer is `AdsUp` at `frac` while `raising`, else `AdsDown` at
+    /// `1 - frac`, so the hip is `AdsDown`'s last frame, not the bind pose
+    /// (docs/research/xanim-v14-format.md, "The sight layer"). A main clip
+    /// of `AdsUp` or `AdsDown` (`--walk`'s sight states) plays idle, as the
+    /// wire's `weapAnim` 0 does. A clip not loaded plays idle.
+    pub fn pose(&mut self, frac: f32, raising: bool, main: weapon::WeaponAnim, main_pos: f32) {
+        use weapon::WeaponAnim;
         let (which, t) = if raising {
-            (weapon::WeaponAnim::AdsUp, frac)
+            (WeaponAnim::AdsUp, frac)
         } else {
-            (weapon::WeaponAnim::AdsDown, 1.0 - frac)
+            (WeaponAnim::AdsDown, 1.0 - frac)
         };
-        if let Some((clip, binding)) = self.anims.get(&which) {
+        let anims = self.anims.clone();
+        let sight = anims.get(&which).map(|(clip, binding)| {
             let t = t.clamp(0.0, 1.0) * clip.duration();
-            self.pose.apply(clip, binding, clip.frame_pos(t, false));
+            (&**clip, binding, clip.frame_pos(t, false), 1.0)
+        });
+        let (main, main_pos) = match main {
+            WeaponAnim::AdsUp | WeaponAnim::AdsDown => (WeaponAnim::Idle, 0.0),
+            m => (m, main_pos),
+        };
+        let (clip, binding) = anims.get(&main).unwrap_or(&anims[&WeaponAnim::Idle]);
+        let main = [(&**clip, binding, main_pos, 1.0)];
+        match &sight {
+            Some(s) => self
+                .pose
+                .blend_nodes(&[(std::slice::from_ref(s), 1.0), (&main, 1.0)]),
+            None => self.pose.blend_nodes(&[(&main, 1.0)]),
         }
     }
 }
@@ -273,7 +290,7 @@ mod tests {
                     reload: false,
                 },
             );
-            let (anim, binding) = w
+            let (anim, _) = w
                 .anims
                 .get(&out.anim)
                 .or_else(|| w.anims.get(&weapon::WeaponAnim::Idle))
@@ -284,7 +301,7 @@ mod tests {
                 "{:?} frame {frame} out of range",
                 out.anim
             );
-            w.pose.apply(anim, binding, frame);
+            w.pose(out.ads_frac, step > 120, out.anim, frame);
             for (i, model) in models.iter().enumerate() {
                 let mats = w.pose.skin_matrices(&w.skeleton, i);
                 assert_eq!(mats.len(), model.bones.len(), "model {i} bone count");
@@ -302,9 +319,7 @@ mod tests {
     /// Model-space `tag_flash` (X forward, Y left, Z up) after the sight layer
     /// at `frac` and the idle clip on top, as a frame at rest draws it.
     fn rest_flash(w: &mut ViewWeapon, frac: f32) -> glam::Vec3 {
-        w.pose_sight(frac, frac > 0.0);
-        let (idle, binding) = &w.anims[&weapon::WeaponAnim::Idle];
-        w.pose.apply(idle, binding, 0.0);
+        w.pose(frac, frac > 0.0, weapon::WeaponAnim::Idle, 0.0);
         let bi = w.skeleton.bone_index("tag_flash").expect("tag_flash");
         w.pose.bone_world(&w.skeleton, bi).0
     }
@@ -330,6 +345,27 @@ mod tests {
         }
     }
 
+    /// United Offensive's newer rigs key `tag_torso` in every clip at the hip
+    /// and author the sight clips to centre the gun only in the blend with
+    /// idle: `adsUpAnim` alone ends 3 units left of the eye and 2 up.
+    #[test]
+    fn uo_rigs_centre_the_sight_in_the_blend_with_idle() {
+        let Some(fs) = vcod_common::testing::uo_fs() else {
+            return;
+        };
+        for name in ["gewehr43_mp", "svt40_mp"] {
+            let (_, rig) = load_view_weapon(&fs, name, None).expect("viewmodel");
+            let mut w = rig.expect("anim rig");
+            let hip = rest_flash(&mut w, 0.0);
+            assert!(hip.y < -1.0 && hip.z < -2.0, "{name} hip {hip}");
+            let sight = rest_flash(&mut w, 1.0);
+            assert!(
+                sight.y.abs() < 1.0 && sight.z.abs() < 2.5,
+                "{name} sight {sight}"
+            );
+        }
+    }
+
     /// Every stock weapon file at rest (sight layer down, idle on top) holds
     /// the gun ahead of, right of and below the eye. A rig that leaves
     /// `tag_torso` at its zeroed bind puts `tag_weapon` behind the eye, the
@@ -346,9 +382,7 @@ mod tests {
             let Some((_, Some(mut w))) = load_view_weapon(&fs, name, None) else {
                 continue;
             };
-            w.pose_sight(0.0, false);
-            let (idle, binding) = &w.anims[&weapon::WeaponAnim::Idle];
-            w.pose.apply(idle, binding, 0.0);
+            w.pose(0.0, false, weapon::WeaponAnim::Idle, 0.0);
             let bi = w.skeleton.bone_index("tag_weapon").expect("tag_weapon");
             let p = w.pose.bone_world(&w.skeleton, bi).0;
             assert!(
@@ -462,7 +496,7 @@ mod tests {
         };
         let (_, rig) = load_view_weapon(&fs, "m1carbine_mp", None).expect("carbine viewmodel");
         let mut w = rig.expect("anim rig");
-        w.pose_sight(0.5, true);
+        w.pose(0.5, true, weapon::WeaponAnim::AdsUp, 0.0);
         let at = |w: &ViewWeapon, bone: &str| {
             let bi = w.skeleton.bone_index(bone).expect(bone);
             w.pose.bone_world(&w.skeleton, bi).0

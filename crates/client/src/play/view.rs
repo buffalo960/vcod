@@ -176,17 +176,6 @@ fn held_trend(last: &mut i32, trend: i32, frac: f32) -> i32 {
     *last
 }
 
-/// Seconds into `anim`'s clip, and whether it loops. The sight clips follow
-/// the frac, so a raised sight holds `AdsUp`'s last frame.
-fn clip_time(anim: WeaponAnim, ms: f64, frac: f32, clip_secs: f32) -> (f32, bool) {
-    match anim {
-        WeaponAnim::AdsUp => (frac.clamp(0.0, 1.0) * clip_secs, false),
-        WeaponAnim::AdsDown => ((1.0 - frac.clamp(0.0, 1.0)) * clip_secs, false),
-        WeaponAnim::Idle | WeaponAnim::EmptyIdle => ((ms / 1000.0) as f32, true),
-        _ => ((ms / 1000.0) as f32, false),
-    }
-}
-
 /// The lean's own term in the viewmodel's position (cgame `0x30036990`,
 /// combat doc 15.5): `(1 - fWeaponPosFrac) * f * 1.6` units along the right
 /// vector of `(0, 0, f * -2)`, `f` being `GetLeanFraction(leanf)`. View
@@ -547,22 +536,22 @@ impl OnlineView {
         let (_, ms_in, trend) = self.clock.update(ps.weap_anim, frac, now_ms);
         let trend = held_trend(&mut self.trend, trend, frac);
 
-        w.pose_sight(frac, frac >= 1.0 || trend > 0);
         let def = &w.def;
-        let wanted = weapon::view_anim(def, ps.weap_anim, frac, trend, clip_empty);
-        let idle = weapon::view_anim(def, 0, frac, trend, clip_empty);
+        let wanted = weapon::view_anim(def, ps.weap_anim, clip_empty);
+        let idle = weapon::view_anim(def, 0, clip_empty);
         let clip_ms = w
             .anims
             .get(&wanted)
             .map_or(0.0, |(a, _)| f64::from(a.duration()) * 1000.0);
         let (anim, ms) = weapon::resolve(def, wanted, ms_in, clip_ms, idle);
         // A clip named but not loaded plays idle, as `--walk` does.
-        let (anim, (clip, binding)) = match w.anims.get(&anim) {
-            Some(c) => (anim, c),
-            None => (WeaponAnim::Idle, &w.anims[&WeaponAnim::Idle]),
+        let (anim, clip) = match w.anims.get(&anim) {
+            Some((c, _)) => (anim, c),
+            None => (WeaponAnim::Idle, &w.anims[&WeaponAnim::Idle].0),
         };
-        let (t, looping) = clip_time(anim, ms, frac, clip.duration());
-        w.pose.apply(clip, binding, clip.frame_pos(t, looping));
+        let looping = matches!(anim, WeaponAnim::Idle | WeaponAnim::EmptyIdle);
+        let pos = clip.frame_pos((ms / 1000.0) as f32, looping);
+        w.pose(frac, frac >= 1.0 || trend > 0, anim, pos);
         // two models, hands then gun, in set_viewmodel order
         let bone_sets = (0..2)
             .map(|m| w.pose.skin_matrices(&w.skeleton, m))
@@ -859,33 +848,6 @@ mod tests {
         assert_eq!(held_trend(&mut last, -1, 0.7), -1);
         assert_eq!(held_trend(&mut last, 0, 0.7), -1);
         assert_eq!(held_trend(&mut last, 0, 0.0), 0, "settled down");
-    }
-
-    /// A raised sight holds `AdsUp`'s last frame: neither looping nor
-    /// restarting, however long it is held.
-    #[test]
-    fn raised_sight_holds_the_last_ads_up_frame() {
-        let secs = 0.3;
-        for ms in [0.0, 150.0, 10_000.0] {
-            assert_eq!(clip_time(WeaponAnim::AdsUp, ms, 1.0, secs), (secs, false));
-        }
-        assert_eq!(clip_time(WeaponAnim::AdsUp, 0.0, 0.5, secs), (0.15, false));
-        assert_eq!(clip_time(WeaponAnim::AdsDown, 0.0, 1.0, secs), (0.0, false));
-        assert_eq!(
-            clip_time(WeaponAnim::AdsDown, 0.0, 0.0, secs),
-            (secs, false)
-        );
-        assert_eq!(clip_time(WeaponAnim::Idle, 2500.0, 0.0, secs), (2.5, true));
-    }
-
-    /// `resolve` keeps `HoldFire` past its clip; played once, it clamps to
-    /// the last frame rather than looping.
-    #[test]
-    fn held_grenade_holds_its_last_frame() {
-        assert_eq!(
-            clip_time(WeaponAnim::HoldFire, 10_000.0, 0.0, 0.6),
-            (10.0, false)
-        );
     }
 
     /// The flash lands on the pixel the viewmodel's projection draws its
