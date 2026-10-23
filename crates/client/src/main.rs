@@ -6463,19 +6463,14 @@ impl ApplicationHandler for App {
                                     reload: *reload_edge,
                                 },
                             );
-                            w.pose_sight(out.ads_frac, *ads_held);
-                            let clip = w
-                                .anims
-                                .get(&out.anim)
-                                .or_else(|| w.anims.get(&weapon::WeaponAnim::Idle));
-                            if let Some((anim, binding)) = clip {
-                                let frame = anim.frame_pos(out.anim_time, out.looping);
-                                w.pose.apply(anim, binding, frame);
-                                // two models, hands then gun, in set_viewmodel order
-                                bone_sets = (0..2)
-                                    .map(|m| w.pose.skin_matrices(&w.skeleton, m))
-                                    .collect();
-                            }
+                            let frame = w.anims.get(&out.anim).map_or(0.0, |(anim, _)| {
+                                anim.frame_pos(out.anim_time, out.looping)
+                            });
+                            w.pose(out.ads_frac, *ads_held, out.anim, frame);
+                            // two models, hands then gun, in set_viewmodel order
+                            bone_sets = (0..2)
+                                .map(|m| w.pose.skin_matrices(&w.skeleton, m))
+                                .collect();
                             fov = weapon::view_fov_x(
                                 cg_fov(&self.shell),
                                 Some(&w.def),

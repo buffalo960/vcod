@@ -794,22 +794,13 @@ pub fn load(fs: &Pk3Fs, name: &str) -> Result<WeaponDef> {
 
 /// Picks the viewmodel clip for the wire's `ps.weapAnim`
 /// (docs/research/cod11-combat.md, 1.2; index table there, constants in
-/// `crates/common/src/pmove/weapon.rs`). Index 0 reads `frac_trend` for the
-/// sight clips and `def` for whether the weapon has an empty idle.
-pub fn view_anim(
-    def: &WeaponDef,
-    weap_anim: i32,
-    ads_frac: f32,
-    frac_trend: i32,
-    clip_empty: bool,
-) -> WeaponAnim {
+/// `crates/common/src/pmove/weapon.rs`). Index 0 reads `def` for whether the
+/// weapon has an empty idle; the sight clips are a layer of their own beside
+/// it (docs/research/xanim-v14-format.md, "The sight layer").
+pub fn view_anim(def: &WeaponDef, weap_anim: i32, clip_empty: bool) -> WeaponAnim {
     match weap_anim & !crate::net::flags::ANIM_TOGGLEBIT {
         0 => {
-            if ads_frac >= 1.0 || frac_trend > 0 {
-                WeaponAnim::AdsUp
-            } else if frac_trend < 0 {
-                WeaponAnim::AdsDown
-            } else if clip_empty && def.anim_keys.contains(&WeaponAnim::EmptyIdle) {
+            if clip_empty && def.anim_keys.contains(&WeaponAnim::EmptyIdle) {
                 WeaponAnim::EmptyIdle
             } else {
                 WeaponAnim::Idle
@@ -2127,26 +2118,22 @@ mod tests {
         for (index, want) in cases {
             // Each index is tested both bare and with the restart toggle set,
             // since the mapping must mask it off first.
-            assert_eq!(view_anim(&def, index, 0.0, 0, false), want, "index {index}");
+            assert_eq!(view_anim(&def, index, false), want, "index {index}");
             assert_eq!(
-                view_anim(&def, index | 512, 0.0, 0, false),
+                view_anim(&def, index | 512, false),
                 want,
                 "index {index} | 512"
             );
         }
 
-        // Index 0, idle: ads_frac >= 1 or a rising trend hold AdsUp, a
-        // falling trend holds AdsDown, an empty clip with the key present
-        // shows EmptyIdle, and otherwise it's plain Idle.
-        assert_eq!(view_anim(&def, 0, 1.0, 0, false), WeaponAnim::AdsUp);
-        assert_eq!(view_anim(&def, 0, 0.4, 1, false), WeaponAnim::AdsUp);
-        assert_eq!(view_anim(&def, 0, 0.4, -1, false), WeaponAnim::AdsDown);
-        assert_eq!(view_anim(&def, 0, 0.0, 0, true), WeaponAnim::EmptyIdle);
-        assert_eq!(view_anim(&def, 0, 0.0, 0, false), WeaponAnim::Idle);
+        // Index 0, idle: an empty clip with the key present shows
+        // EmptyIdle, and otherwise it's plain Idle.
+        assert_eq!(view_anim(&def, 0, true), WeaponAnim::EmptyIdle);
+        assert_eq!(view_anim(&def, 0, false), WeaponAnim::Idle);
 
         // No emptyIdleAnim in the file: clip_empty falls back to plain Idle.
         let bare = WeaponDef::default();
-        assert_eq!(view_anim(&bare, 0, 0.0, 0, true), WeaponAnim::Idle);
+        assert_eq!(view_anim(&bare, 0, true), WeaponAnim::Idle);
     }
 
     #[test]
