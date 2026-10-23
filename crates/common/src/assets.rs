@@ -82,6 +82,16 @@ pub fn parse_dds(data: &[u8]) -> Result<Image> {
             w = (w / 2).max(1);
             h = (h / 2).max(1);
         }
+        // wgpu takes a BC texture only in whole blocks; retail's GL takes
+        // the odd ones (mp_kharkov's 2-wide env/kharkov2_dn)
+        if width % 4 != 0 || height % 4 != 0 {
+            let px = decode_bc(format, width, height, &mips[0]);
+            return Ok(Image {
+                width,
+                height,
+                data: ImageData::Rgba8(px),
+            });
+        }
         Ok(Image {
             width,
             height,
@@ -122,6 +132,91 @@ pub fn parse_dds(data: &[u8]) -> Result<Image> {
     } else {
         bail!("unsupported DDS pixel format flags {pf_flags:#x}")
     }
+}
+
+/// One BC level of `width` x `height` as RGBA, the blocks' spare edge
+/// texels cut off.
+fn decode_bc(format: TextureFormat, width: u32, height: u32, data: &[u8]) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let block_size = format.block_size() as usize;
+    let mut px = vec![0u8; w * h * 4];
+    for (i, block) in data.chunks_exact(block_size).enumerate() {
+        let (bx, by) = (i % w.div_ceil(4) * 4, i / w.div_ceil(4) * 4);
+        let (alpha, colour) = match format {
+            TextureFormat::Bc1RgbaUnorm => (None, block),
+            _ => (Some(&block[..8]), &block[8..]),
+        };
+        let texels = bc_colour_block(colour, format == TextureFormat::Bc1RgbaUnorm);
+        for t in 0..16 {
+            let (x, y) = (bx + t % 4, by + t / 4);
+            if x >= w || y >= h {
+                continue;
+            }
+            let mut c = texels[t];
+            match (format, alpha) {
+                (TextureFormat::Bc2RgbaUnorm, Some(a)) => {
+                    let n = (a[t / 2] >> (4 * (t % 2))) & 0x0F;
+                    c[3] = n * 17;
+                }
+                (TextureFormat::Bc3RgbaUnorm, Some(a)) => {
+                    let bits = u64::from_le_bytes([a[2], a[3], a[4], a[5], a[6], a[7], 0, 0]);
+                    c[3] = bc3_alpha(a[0], a[1], (bits >> (3 * t)) & 7);
+                }
+                _ => {}
+            }
+            let o = (y * w + x) * 4;
+            px[o..o + 4].copy_from_slice(&c);
+        }
+    }
+    px
+}
+
+/// The 16 texels of a BC colour block. `bc1` honours the `c0 <= c1`
+/// three-colour mode with its transparent code; BC2 and BC3 always take four.
+fn bc_colour_block(b: &[u8], bc1: bool) -> [[u8; 4]; 16] {
+    let c0 = u16::from_le_bytes([b[0], b[1]]);
+    let c1 = u16::from_le_bytes([b[2], b[3]]);
+    let rgb = |c: u16| {
+        let (r, g, b) = (
+            u32::from(c >> 11),
+            u32::from((c >> 5) & 0x3F),
+            u32::from(c & 0x1F),
+        );
+        [r * 255 / 31, g * 255 / 63, b * 255 / 31]
+    };
+    let (e0, e1) = (rgb(c0), rgb(c1));
+    let mix = |a: u32, b: u32, n: u32, d: u32| ((d - n) * a + n * b) / d;
+    let mut palette = [[0u8; 4]; 4];
+    for k in 0..3 {
+        palette[0][k] = e0[k] as u8;
+        palette[1][k] = e1[k] as u8;
+        if !bc1 || c0 > c1 {
+            palette[2][k] = mix(e0[k], e1[k], 1, 3) as u8;
+            palette[3][k] = mix(e0[k], e1[k], 2, 3) as u8;
+        } else {
+            palette[2][k] = mix(e0[k], e1[k], 1, 2) as u8;
+        }
+    }
+    palette[0][3] = 255;
+    palette[1][3] = 255;
+    palette[2][3] = 255;
+    palette[3][3] = if !bc1 || c0 > c1 { 255 } else { 0 };
+    let bits = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
+    std::array::from_fn(|t| palette[((bits >> (2 * t)) & 3) as usize])
+}
+
+/// BC3 alpha code `k` between endpoints `a0` and `a1`.
+fn bc3_alpha(a0: u8, a1: u8, k: u64) -> u8 {
+    let (a0, a1, k) = (u32::from(a0), u32::from(a1), k as u32);
+    let a = match (a0 > a1, k) {
+        (_, 0) => a0,
+        (_, 1) => a1,
+        (true, k) => ((8 - k) * a0 + (k - 1) * a1) / 7,
+        (false, 6) => 0,
+        (false, 7) => 255,
+        (false, k) => ((6 - k) * a0 + (k - 1) * a1) / 5,
+    };
+    a as u8
 }
 
 /// Retail's `*default`, bound for every material whose image cannot be found:
@@ -423,19 +518,8 @@ pub fn has_cutout_alpha(img: &Image) -> bool {
                     .iter()
                     .any(|b| b[..8].iter().any(|&n| n & 0x0F < 8 || n >> 4 < 8)),
                 TextureFormat::Bc3RgbaUnorm => top.as_chunks::<16>().0.iter().any(|b| {
-                    let (a0, a1) = (u32::from(b[0]), u32::from(b[1]));
                     let bits = u64::from_le_bytes([b[2], b[3], b[4], b[5], b[6], b[7], 0, 0]);
-                    (0..16).any(|t| {
-                        let a = match (a0 > a1, (bits >> (3 * t)) & 7) {
-                            (_, 0) => a0,
-                            (_, 1) => a1,
-                            (true, k) => ((8 - k as u32) * a0 + (k as u32 - 1) * a1) / 7,
-                            (false, 6) => 0,
-                            (false, 7) => 255,
-                            (false, k) => ((6 - k as u32) * a0 + (k as u32 - 1) * a1) / 5,
-                        };
-                        a < 128
-                    })
+                    (0..16).any(|t| bc3_alpha(b[0], b[1], (bits >> (3 * t)) & 7) < 128)
                 }),
             }
         }
@@ -542,6 +626,26 @@ mod tests {
             }
             _ => panic!("expected BC data"),
         }
+    }
+
+    #[test]
+    fn unaligned_dxt_decodes_to_rgba() {
+        // 2x2 DXT1, one block: c0 pure red, c1 pure blue, codes 0,1 / 2,3
+        let mut d = dds_header(2, 2, b"DXT1", 1);
+        d.extend_from_slice(&0xF800u16.to_le_bytes());
+        d.extend_from_slice(&0x001Fu16.to_le_bytes());
+        d.extend_from_slice(&[0b0100, 0b1110, 0, 0]);
+        let img = parse_dds(&d).unwrap();
+        assert_eq!((img.width, img.height), (2, 2));
+        let ImageData::Rgba8(px) = img.data else {
+            panic!("expected RGBA");
+        };
+        assert_eq!(
+            px,
+            [
+                255, 0, 0, 255, 0, 0, 255, 255, 170, 0, 85, 255, 85, 0, 170, 255
+            ]
+        );
     }
 
     #[test]
