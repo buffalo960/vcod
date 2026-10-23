@@ -3405,6 +3405,34 @@ mod tests {
         out
     }
 
+    /// A played demo's messages ack the recorder's reliable commands, past
+    /// the playback's own sequence of 0: a command queued then (the `cp`
+    /// after the load) is no overflow. A client whose server stops acking
+    /// still drops once the ring is full.
+    #[test]
+    fn a_demo_ack_past_the_sequence_is_no_overflow() {
+        let now = Instant::now();
+        let demo = retail_demo("net/gamestate.bin", "net/snapshots.bin");
+        let mut c = NetClient::play_demo(FakeTransport::default(), now, &PROTOCOL_V1, demo);
+        assert!(c.pump_demo(now, None).contains(&NetEvent::GamestateReady));
+        // The first snapshot acks the recorder's command 1.
+        c.pump_demo(now, Some(i32::MIN));
+        assert!(c.netchan.reliable_acknowledge > c.netchan.reliable_sequence);
+        c.send_reliable("cp 1 2");
+        assert!(c.events.iter().all(|e| !matches!(e, NetEvent::Dropped(_))));
+        assert_ne!(c.state(), NetState::Disconnected);
+
+        let mut c = active_client();
+        let len = c.netchan.reliable.len() as u32;
+        let ack = c.netchan.reliable_acknowledge;
+        while c.netchan.reliable_sequence.wrapping_sub(ack) < len {
+            c.send_reliable("say x");
+            assert_ne!(c.state(), NetState::Disconnected);
+        }
+        c.send_reliable("say x");
+        assert_eq!(c.state(), NetState::Disconnected);
+    }
+
     /// Every protocol's retail capture played as a demo parses to the
     /// frames the snapshot gates parse it to, frame for frame, and ends
     /// on the trailer.
