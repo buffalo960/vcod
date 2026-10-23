@@ -185,6 +185,18 @@ first snapshot never slews; thawing a frozen demo jumps to the wall
 clock's time. `CL_WritePacket` sends nothing while one plays (INFERRED:
 `0x40b940` and `0x40ba6d` read `0x15ef004`).
 
+A demo's messages carry the recorder's `reliableAcknowledge`, past the
+playback's own reliable sequence of 0: the first message after the
+gamestate in `crates/common/tests/fixtures/net/snapshots.bin` acks 1
+(VERIFIED, its first record). Q3's `CL_AddReliableCommand` (`code/client/cl_main.c`) takes
+`clc.reliableSequence - clc.reliableAcknowledge` on `int`s, so that
+negative gap is no overflow (VERIFIED, the GPL source). vcod's
+`NetClient::send_reliable` compares the gap signed for that reason: an
+unsigned one wrapped and dropped the playback with `reliable command
+overflow` on the `cp` after the load, before a frame drew
+(`a_demo_ack_past_the_sequence_is_no_overflow`). CoDMP.exe's own compare
+has not been located (its overflow error string is not in the image).
+
 `CL_DemoCompleted` (`0x40e920`), on the trailer or a short read: with
 `timedemo` set it prints `%i frames, %3.1f seconds: %3.1f fps` (the
 frames, the ms since `timeDemoStart` times 0.001, and frames times 1000

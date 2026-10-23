@@ -799,11 +799,14 @@ impl<T: Transport> NetClient<T> {
     pub fn send_reliable(&mut self, cmd: &str) {
         // A full ring means the server stopped acking; overwriting unacked slots
         // desyncs the scramble key. The reference client treats it as fatal.
+        // The difference is signed, as Q3's `CL_AddReliableCommand` takes it:
+        // a demo's messages ack the recorder's commands, past a playback's
+        // own sequence of 0, and that is no overflow.
         if self
             .netchan
             .reliable_sequence
-            .wrapping_sub(self.netchan.reliable_acknowledge)
-            >= self.netchan.reliable.len() as u32
+            .wrapping_sub(self.netchan.reliable_acknowledge) as i32
+            >= self.netchan.reliable.len() as i32
         {
             self.drop("reliable command overflow");
             return;
@@ -3400,6 +3403,34 @@ mod tests {
         out.extend_from_slice(&snaps);
         out.extend_from_slice(&[0xff; 8]);
         out
+    }
+
+    /// A played demo's messages ack the recorder's reliable commands, past
+    /// the playback's own sequence of 0: a command queued then (the `cp`
+    /// after the load) is no overflow. A client whose server stops acking
+    /// still drops once the ring is full.
+    #[test]
+    fn a_demo_ack_past_the_sequence_is_no_overflow() {
+        let now = Instant::now();
+        let demo = retail_demo("net/gamestate.bin", "net/snapshots.bin");
+        let mut c = NetClient::play_demo(FakeTransport::default(), now, &PROTOCOL_V1, demo);
+        assert!(c.pump_demo(now, None).contains(&NetEvent::GamestateReady));
+        // The first snapshot acks the recorder's command 1.
+        c.pump_demo(now, Some(i32::MIN));
+        assert!(c.netchan.reliable_acknowledge > c.netchan.reliable_sequence);
+        c.send_reliable("cp 1 2");
+        assert!(c.events.iter().all(|e| !matches!(e, NetEvent::Dropped(_))));
+        assert_ne!(c.state(), NetState::Disconnected);
+
+        let mut c = active_client();
+        let len = c.netchan.reliable.len() as u32;
+        let ack = c.netchan.reliable_acknowledge;
+        while c.netchan.reliable_sequence.wrapping_sub(ack) < len {
+            c.send_reliable("say x");
+            assert_ne!(c.state(), NetState::Disconnected);
+        }
+        c.send_reliable("say x");
+        assert_eq!(c.state(), NetState::Disconnected);
     }
 
     /// Every protocol's retail capture played as a demo parses to the
