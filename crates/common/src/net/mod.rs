@@ -799,11 +799,14 @@ impl<T: Transport> NetClient<T> {
     pub fn send_reliable(&mut self, cmd: &str) {
         // A full ring means the server stopped acking; overwriting unacked slots
         // desyncs the scramble key. The reference client treats it as fatal.
+        // The difference is signed, as Q3's `CL_AddReliableCommand` takes it:
+        // a demo's messages ack the recorder's commands, past a playback's
+        // own sequence of 0, and that is no overflow.
         if self
             .netchan
             .reliable_sequence
-            .wrapping_sub(self.netchan.reliable_acknowledge)
-            >= self.netchan.reliable.len() as u32
+            .wrapping_sub(self.netchan.reliable_acknowledge) as i32
+            >= self.netchan.reliable.len() as i32
         {
             self.drop("reliable command overflow");
             return;
